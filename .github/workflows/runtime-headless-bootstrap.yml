@@ -1,0 +1,54 @@
+name: Runtime headless development prerequisites
+on:
+  push:
+    branches: [codex/linux-headless-runtime]
+    paths: [.github/workflows/runtime-headless-bootstrap.yml]
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Locate existing runtime and GPU integration seams
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          root=Path('experiments/WebScene.NativeEngine.Probe')
+          queries={
+            'native/webscene_native_engine.cpp':['struct webscene_engine','begin_evaluate','webscene_engine_enqueue','webscene_gpu_image_retain','webscene_scene_retain_gpu_image_v3','struct worker','task_kind','enum class','worker_loop'],
+            'native/webscene_v8_runtime.cpp':['platform_dawn_canvas_host','platform_canvas_backend','webgpu_policy','gpu_canvas_entry','end_webgpu','ProcessEvents','webgpu_wake'],
+            'native/webscene_v8_runtime_canvas.inc':['platform_dawn_canvas_host','make_platform_webgpu_canvas_host'],
+            'native/webscene_native_engine.h':['evaluate','text','input_event','checkpoint','struct webscene_engine_options'],
+            'CMakeLists.txt':['WEBSCENE_V8_ROOT','WEBSCENE_V8_OUTPUT_ROOT','libstdc++','V8_POINTER_COMPRESSION','V8_PARTITION_ALLOC'],
+          }
+          for name, terms in queries.items():
+            lines=(root/name).read_text().splitlines()
+            print('\nFILE',name,'LINES',len(lines))
+            for term in terms:
+              hits=[i for i,line in enumerate(lines,1) if term in line]
+              print(term, hits[:40])
+              for n in hits[:2]:
+                for j in range(max(1,n-3), min(len(lines)+1,n+12)):
+                  print(f'{j}: {lines[j-1]}')
+          PY
+      - uses: actions/cache/restore@v4
+        id: v8
+        with:
+          path: |
+            artifacts/native-engine-v8/linux-x64/v8/include
+            artifacts/native-engine-v8/linux-x64/v8/out/x64/ReleasePartitionAlloc/args.gn
+            artifacts/native-engine-v8/linux-x64/v8/out/x64/ReleasePartitionAlloc/obj/libv8_monolith.a
+            artifacts/native-engine-v8/linux-x64/v8/out/x64/ReleasePartitionAlloc/icudtl.dat
+            artifacts/native-engine-v8/linux-x64/v8/out/x64/ReleasePartitionAlloc/gen/third_party/partition_alloc/src
+            artifacts/native-engine-v8/linux-x64/v8/LICENSE
+            artifacts/native-engine-v8/linux-x64/v8/third_party/icu/LICENSE
+            artifacts/native-engine-v8/linux-x64/v8/third_party/partition_alloc/src
+          key: headless-runtime-v8-inspection-${{ github.sha }}
+          restore-keys: |
+            webscene-v8-sdk-v12-v8-15.3.10-pa-no-process-shim-ubuntu22-gcc12-lld-no-crel-shared-inspector-linux-x64-
+      - name: Record restored dependency metadata
+        run: |
+          find artifacts/native-engine-v8 -name args.gn -exec cat {} \; 2>/dev/null || true
+          find artifacts/native-engine-v8 -name libv8_monolith.a -printf '%p %s bytes\n' 2>/dev/null || true

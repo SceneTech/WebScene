@@ -1,0 +1,45 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><style>
+body { margin:0; background:#ffffff; color:#111111; }
+#increment { position:absolute; left:16px; top:16px; width:120px; height:32px; }
+#count { position:absolute; left:150px; top:16px; }
+#scene { position:absolute; left:16px; top:64px; width:64px; height:64px; }
+</style></head><body>
+<button id="increment">Increment</button><span id="count">0</span>
+<canvas id="scene" width="64" height="64"></canvas>
+<script>
+window.runtimeReady=false; window.failure=''; window.workerValue=0; window.rafCount=0;
+window.count=0;
+requestAnimationFrame(()=>{window.rafCount++;});
+const workerSource='onmessage=e=>postMessage(e.data+1)';
+const workerUrl=URL.createObjectURL(new Blob([workerSource],{type:'text/javascript'}));
+const worker=new Worker(workerUrl);
+worker.onmessage=e=>{window.workerValue=e.data;worker.terminate();URL.revokeObjectURL(workerUrl);};
+worker.postMessage(41);
+(async()=>{
+  if(!navigator.gpu)throw new Error('WebGPU not admitted');
+  const adapter=await navigator.gpu.requestAdapter();
+  if(!adapter)throw new Error('No admitted Vulkan adapter');
+  const device=await adapter.requestDevice();
+  const canvas=document.getElementById('scene');
+  const context=canvas.getContext('webgpu');
+  if(!context)throw new Error('No Runtime WebGPU canvas');
+  context.configure({device,format:'bgra8unorm',alphaMode:'opaque'});
+  function render(){
+    const encoder=device.createCommandEncoder();
+    const texture=context.getCurrentTexture();
+    const pass=encoder.beginRenderPass({colorAttachments:[{
+      view:texture.createView(),loadOp:'clear',storeOp:'store',
+      clearValue:window.count?{r:0,g:1,b:0,a:1}:{r:1,g:0,b:0,a:1}
+    }]});
+    pass.end(); device.queue.submit([encoder.finish()]);
+  }
+  document.getElementById('increment').addEventListener('click',()=>{
+    window.count++; document.getElementById('count').textContent=String(window.count); render();
+  });
+  window.addEventListener('resize',()=>{
+    canvas.width=Math.max(1,innerWidth-32);canvas.height=48;render();
+  });
+  render(); window.runtimeReady=true;
+})().catch(error=>{window.failure=String(error);});
+</script></body></html>

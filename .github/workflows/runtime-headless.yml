@@ -1,0 +1,112 @@
+name: Linux Runtime headless SDK
+on:
+  push:
+    branches: [codex/linux-headless-runtime]
+    paths: ['src/WebScene.Sdk/**', 'experiments/WebScene.NativeEngine.Probe/**', 'eng/sdk/**', 'tests/RuntimeHeadless/**', '.github/workflows/runtime-headless.yml']
+  pull_request:
+    paths: ['src/WebScene.Sdk/**', 'experiments/WebScene.NativeEngine.Probe/**', 'eng/sdk/**', 'tests/RuntimeHeadless/**', '.github/workflows/runtime-headless.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: runtime-headless-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  runtime:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      CC: clang-18
+      CXX: clang++-18
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install compiler and Runtime prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-18 clang-tools-18 lld-18 ninja-build libssl-dev zlib1g-dev libvulkan-dev mesa-vulkan-drivers vulkan-tools
+          python3 -m pip install 'cmake==3.31.6'
+      - uses: actions/cache/restore@v4
+        id: v8
+        with:
+          path: |
+            artifacts/native-engine-v8/linux-x64/v8/include
+            artifacts/native-engine-v8/linux-x64/v8/out/x64/ReleasePartitionAlloc/args.gn
+            artifacts/native-engine-v8/linux-x64/v8/out/x64/ReleasePartitionAlloc/obj/libv8_monolith.a
+            artifacts/native-engine-v8/linux-x64/v8/out/x64/ReleasePartitionAlloc/icudtl.dat
+            artifacts/native-engine-v8/linux-x64/v8/out/x64/ReleasePartitionAlloc/gen/third_party/partition_alloc/src
+            artifacts/native-engine-v8/linux-x64/v8/LICENSE
+            artifacts/native-engine-v8/linux-x64/v8/third_party/icu/LICENSE
+            artifacts/native-engine-v8/linux-x64/v8/third_party/partition_alloc/src
+          key: runtime-headless-v8-15.3.10-pa-${{ hashFiles('eng/sdk/verify-linux-v8.py', 'scripts/build-native-engine-runtime.sh') }}
+          restore-keys: |
+            webscene-v8-sdk-v12-v8-15.3.10-pa-no-process-shim-ubuntu22-gcc12-lld-no-crel-shared-inspector-linux-x64-
+      - name: Build the existing pinned V8 dependency on a cold cache
+        if: steps.v8.outputs.cache-matched-key == ''
+        env:
+          WEBSCENE_NATIVE_V8_ONLY: 1
+        run: scripts/build-native-engine-runtime.sh --rid linux-x64 --partition-alloc
+      - name: Validate V8 version, build flags and binary inventory
+        run: |
+          mkdir -p artifacts/runtime-headless-evidence
+          python3 eng/sdk/verify-linux-v8.py --root artifacts/native-engine-v8/linux-x64/v8 --output artifacts/native-engine-v8/linux-x64/v8/out/x64/ReleasePartitionAlloc --manifest artifacts/runtime-headless-evidence/v8.json
+      - uses: actions/cache/save@v4
+        if: steps.v8.outputs.cache-hit != 'true'
+        with:
+          path: |
+            artifacts/native-engine-v8/linux-x64/v8/include
+            artifacts/native-engine-v8/linux-x64/v8/out/x64/ReleasePartitionAlloc/args.gn
+            artifacts/native-engine-v8/linux-x64/v8/out/x64/ReleasePartitionAlloc/obj/libv8_monolith.a
+            artifacts/native-engine-v8/linux-x64/v8/out/x64/ReleasePartitionAlloc/icudtl.dat
+            artifacts/native-engine-v8/linux-x64/v8/out/x64/ReleasePartitionAlloc/gen/third_party/partition_alloc/src
+            artifacts/native-engine-v8/linux-x64/v8/LICENSE
+            artifacts/native-engine-v8/linux-x64/v8/third_party/icu/LICENSE
+            artifacts/native-engine-v8/linux-x64/v8/third_party/partition_alloc/src
+          key: ${{ steps.v8.outputs.cache-primary-key }}
+      - uses: ./.github/actions/graphics-sdk
+        with:
+          rid: linux-x64
+          component: dawn
+      - name: Build and install the explicit Runtime SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install 'cmake==3.31.6'
+          cmake --version
+          cmake -G Ninja -S src/WebScene.Sdk -B artifacts/runtime-headless-build -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang-18 -DCMAKE_CXX_COMPILER=clang++-18 -DWEBSCENE_SDK_CXX_ABI=libstdc++ -DWEBSCENE_SDK_RUNTIME=ON -DWEBSCENE_SDK_WEBGPU=ON -DWEBSCENE_GRAPHICS_SDK_ROOT="$PWD/artifacts/graphics-sdk/linux-x64" -DWEBSCENE_V8_ROOT="$PWD/artifacts/native-engine-v8/linux-x64/v8" -DWEBSCENE_V8_OUTPUT_ROOT="$PWD/artifacts/native-engine-v8/linux-x64/v8/out/x64/ReleasePartitionAlloc" -DCMAKE_INSTALL_PREFIX="$PWD/artifacts/runtime-sdk" 2>&1 | tee artifacts/runtime-headless-evidence/configure.log
+          cmake --build artifacts/runtime-headless-build --parallel 2 2>&1 | tee artifacts/runtime-headless-evidence/build.log
+          cmake --install artifacts/runtime-headless-build 2>&1 | tee artifacts/runtime-headless-evidence/install.log
+      - name: Build independent installed Runtime consumer and exercise real pixels
+        shell: bash
+        env:
+          WEBSCENE_HEADLESS_FORCE_SOFTWARE_ADAPTER: '1'
+        run: |
+          set -euo pipefail
+          unset DISPLAY WAYLAND_DISPLAY
+          export VK_ICD_FILENAMES=$(find /usr/share/vulkan/icd.d -name '*lvp*.json' | head -1)
+          test -n "$VK_ICD_FILENAMES"
+          export XDG_RUNTIME_DIR="$RUNNER_TEMP/runtime-headless"
+          mkdir -p "$XDG_RUNTIME_DIR" && chmod 700 "$XDG_RUNTIME_DIR"
+          vulkaninfo --summary > artifacts/runtime-headless-evidence/vulkan.txt 2>&1
+          cmake -G Ninja -S tests/RuntimeHeadless -B artifacts/runtime-headless-consumer -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$PWD/artifacts/runtime-sdk" -DCMAKE_TOOLCHAIN_FILE="$PWD/artifacts/runtime-sdk/lib/cmake/WebScene/WebSceneToolchain.cmake"
+          cmake --build artifacts/runtime-headless-consumer --parallel 2 2>&1 | tee artifacts/runtime-headless-evidence/consumer-build.log
+          ctest --test-dir artifacts/runtime-headless-consumer --output-on-failure --output-junit runtime-tests.xml 2>&1 | tee artifacts/runtime-headless-evidence/consumer-tests.log
+          git rev-parse HEAD > artifacts/runtime-headless-evidence/webscene-revision.txt
+          tar -czf artifacts/webscene-runtime-sdk-linux-x64.tar.gz -C artifacts runtime-sdk
+          sha256sum artifacts/webscene-runtime-sdk-linux-x64.tar.gz > artifacts/webscene-runtime-sdk-linux-x64.tar.gz.sha256
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: runtime-headless-evidence
+          path: |
+            artifacts/runtime-headless-evidence/
+            artifacts/runtime-headless-consumer/runtime-tests.xml
+            artifacts/runtime-headless-consumer/Testing/Temporary/
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        with:
+          name: webscene-runtime-sdk-linux-x64
+          path: |
+            artifacts/webscene-runtime-sdk-linux-x64.tar.gz
+            artifacts/webscene-runtime-sdk-linux-x64.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 14

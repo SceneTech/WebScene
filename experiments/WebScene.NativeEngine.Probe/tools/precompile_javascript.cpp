@@ -36,7 +36,7 @@ int write_cpp(const webscene_precompiled_javascript_v1* entry, void* user)
     byte_list(out, entry->data, entry->data_length);
     out << "\n};\nconst webscene_precompiled_javascript_v1 entry = {\n"
            "sizeof(webscene_precompiled_javascript_v1),1," << entry->is_module << ','
-        << entry->cached_data_version_tag << ",{“;
+        << entry->cached_data_version_tag << ",{";
     byte_list(out, entry->source_sha256, 32);
     out << "\n},{";
     byte_list(out, entry->payload_sha256, 32);

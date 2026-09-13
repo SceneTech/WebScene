@@ -22,6 +22,9 @@ public sealed class NativeAbiExportTests
     [InlineData("webscene_engine_take_diagnostic")]
     [InlineData("webscene_engine_copy_runtime_failure")]
     [InlineData("webscene_engine_register_compiled_document_v1")]
+    [InlineData("webscene_register_precompiled_javascript_v1")]
+    [InlineData("webscene_get_precompiled_javascript_stats_v1")]
+    [InlineData("webscene_precompile_javascript_v1")]
     public void MissingDiagnosticExportIsDetected(string omittedFunction)
     {
         var declarations = ReadPublicFunctions();
@@ -54,7 +57,7 @@ public sealed class NativeAbiExportTests
     }
 
     private static string[] ReadPublicFunctions() =>
-        new[] { "webscene_native_engine.h", "webscene/compiled_document.hpp" }
+        new[] { "webscene_native_engine.h", "webscene/compiled_document.hpp", "webscene_precompiled_javascript.h" }
             .SelectMany(header => NativeAbiContract.PublicFunctions(
                 File.ReadAllText(Path.Combine(NativeDirectory(), header)))).ToArray();
 

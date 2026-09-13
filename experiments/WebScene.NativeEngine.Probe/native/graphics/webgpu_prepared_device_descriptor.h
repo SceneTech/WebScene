@@ -4,6 +4,8 @@
 #include "webgpu_required_limits.h"
 #include <algorithm>
 #include <memory>
+#include <cstdlib>
+#include <string_view>
 namespace webscene::graphics {
 enum class webgpu_device_request_error { none,unsupported_feature,operation_error };
 // Owns all storage borrowed by the Dawn descriptor. Non-movable because the
@@ -69,6 +71,16 @@ public:
                 if(!adapter.HasFeature(feature))return {};
                 features.push_back(feature);
             }
+        }
+        if(interop==webgpu_canvas_interop::offscreen) {
+            if(!adapter.HasFeature(wgpu::FeatureName::ImplicitDeviceSynchronization)) return {};
+            wgpu::AdapterInfo info{};
+            if(adapter.GetInfo(&info)!=wgpu::Status::Success) return {};
+            const auto* setting=std::getenv("WEBSCENE_HEADLESS_FORCE_SOFTWARE_ADAPTER");
+            const bool software=setting && std::string_view(setting)=="1";
+            const bool hardware=info.adapterType==wgpu::AdapterType::DiscreteGPU || info.adapterType==wgpu::AdapterType::IntegratedGPU;
+            if(software ? info.adapterType!=wgpu::AdapterType::CPU : !hardware) return {};
+            features.push_back(wgpu::FeatureName::ImplicitDeviceSynchronization);
         }
         error=webgpu_device_request_error::none; return result;
     }

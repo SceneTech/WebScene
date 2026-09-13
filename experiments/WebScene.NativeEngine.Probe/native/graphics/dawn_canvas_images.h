@@ -1,13 +1,14 @@
 #pragma once
 #include "owned_image_pool.h"
 #include <webgpu/webgpu_cpp.h>
+#include <vector>
 
 namespace webscene::graphics {
 // Engine-thread allocator. Pool tickets retain native references independently
 // of the canvas owner. This does not grant a lease permission to destroy Device.
 class dawn_canvas_images {
     struct storage final : image_provider_lifetime {
-        struct slot { wgpu::Texture texture; image_metadata metadata{}; uint64_t bytes{}; };
+        struct slot { wgpu::Texture texture; image_metadata metadata{}; uint64_t bytes{}; wgpu::TextureUsage usage{}; std::vector<wgpu::TextureFormat> view_formats; };
         mutable std::mutex mutex;
         wgpu::Device device;
         std::array<slot,3> slots;
@@ -87,7 +88,7 @@ public:
         :storage_(std::make_shared<storage>(std::move(device))),pool_(storage_,tickets,std::move(wake)),byte_limit_(byte_limit) {
         if (!storage_->device || !byte_limit) throw std::invalid_argument("Dawn image storage requires device and budget");
     }
-    std::optional<frame> acquire(image_metadata metadata) {
+    std::optional<frame> acquire(image_metadata metadata, const wgpu::TextureDescriptor* requested = nullptr) {
         check_thread();
         wgpu::TextureFormat format;
         uint32_t pixel_bytes=4;
@@ -104,6 +105,23 @@ public:
             || !metadata.width || !metadata.height || metadata.width>limits.maxTextureDimension2D
             || metadata.height>limits.maxTextureDimension2D)
             throw std::invalid_argument("invalid canvas texture dimensions");
+        // Runtime GPUCanvasConfiguration must retain the requested usage and
+        // view formats. CopySrc is an internal capability for explicit capture.
+        const auto usage = requested ? requested->usage | wgpu::TextureUsage::CopySrc
+            : wgpu::TextureUsage::RenderAttachment | wgpu::TextureUsage::TextureBinding
+                | wgpu::TextureUsage::CopySrc | wgpu::TextureUsage::CopyDst;
+        std::vector<wgpu::TextureFormat> view_formats;
+        if (requested) {
+            if (requested->dimension != wgpu::TextureDimension::e2D || requested->mipLevelCount != 1
+                || requested->sampleCount != 1 || requested->size.depthOrArrayLayers != 1
+                || requested->size.width != metadata.width || requested->size.height != metadata.height
+                || requested->format != format || requested->nextInChain)
+                throw std::invalid_argument("Invalid offscreen canvas texture descriptor");
+            if (requested->viewFormatCount) {
+                if (!requested->viewFormats) throw std::invalid_argument("Missing canvas view formats");
+                view_formats.assign(requested->viewFormats, requested->viewFormats + requested->viewFormatCount);
+            }
+        }
         const uint64_t pixels=uint64_t(metadata.width)*metadata.height;
         if (pixels>byte_limit_/pixel_bytes) return {};
         const auto bytes=pixels*pixel_bytes;
@@ -115,7 +133,8 @@ public:
         std::lock_guard lock(storage_->mutex);
         auto& slot=storage_->slots[writer->slot()];
         const bool reuse=slot.texture && slot.metadata.width==metadata.width
-            && slot.metadata.height==metadata.height && slot.metadata.format==metadata.format;
+            && slot.metadata.height==metadata.height && slot.metadata.format==metadata.format
+            && slot.usage==usage && slot.view_formats==view_formats;
         metadata.allocation=reuse ? slot.metadata.allocation : new_owner_token();
         // Validate all portable fields before changing native storage.
         writer->set_metadata(metadata);
@@ -139,13 +158,14 @@ public:
             wgpu::TextureDescriptor descriptor{};
             descriptor.size={metadata.width,metadata.height,1};
             descriptor.format=format;
-            descriptor.usage=wgpu::TextureUsage::RenderAttachment | wgpu::TextureUsage::TextureBinding
-                | wgpu::TextureUsage::CopySrc | wgpu::TextureUsage::CopyDst;
+            descriptor.usage=usage;
+            descriptor.viewFormatCount=view_formats.size();
+            descriptor.viewFormats=view_formats.data();
             slot.texture=storage_->device.CreateTexture(&descriptor);
             if (!slot.texture) throw std::runtime_error("Dawn canvas texture creation failed");
             slot.bytes=bytes; storage_->resident_bytes+=bytes; ++storage_->created;
         }
-        slot.metadata=metadata;
+        slot.metadata=metadata; slot.usage=usage; slot.view_formats=std::move(view_formats);
         return frame{std::move(*writer),slot.texture,metadata};
     }
     // Native presenter only. Keep the consumer alive through its GPU fence;
@@ -168,6 +188,7 @@ public:
     uint64_t resident_bytes() const { check_thread(); return storage_->resident_bytes; }
     uint64_t created_images() const { check_thread(); return storage_->created; }
     size_t busy_images() const { return pool_.busy_images(); }
+    image_lease_pool::occupancy inspect_occupancy() const { return pool_.inspect_occupancy(); }
     void close() { pool_.close(); }
 };
 } // namespace webscene::graphics

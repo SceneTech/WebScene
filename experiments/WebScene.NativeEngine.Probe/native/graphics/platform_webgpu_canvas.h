@@ -22,4 +22,14 @@ inline constexpr auto platform_canvas_backend=wgpu::BackendType::D3D12;
 inline auto make_platform_webgpu_canvas_host(std::shared_ptr<platform_dawn_canvas_host> provider,
     std::function<image_metadata()> metadata) {return make_dxgi_webgpu_canvas_host(std::move(provider),std::move(metadata));}
 }
+#elif defined(__linux__)
+#include "dawn_offscreen_canvas_host.h"
+namespace webscene::graphics {
+using platform_dawn_canvas_host=dawn_offscreen_canvas_host;
+using platform_dawn_scene_snapshot=dawn_offscreen_scene_snapshot;
+inline constexpr auto platform_canvas_interop=webgpu_canvas_interop::offscreen;
+inline constexpr auto platform_canvas_backend=wgpu::BackendType::Vulkan;
+inline auto make_platform_webgpu_canvas_host(std::shared_ptr<platform_dawn_canvas_host> provider,
+    std::function<image_metadata()> metadata) {return make_offscreen_webgpu_canvas_host(std::move(provider),std::move(metadata));}
+}
 #endif

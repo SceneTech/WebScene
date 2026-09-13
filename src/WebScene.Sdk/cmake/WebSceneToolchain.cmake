@@ -1,3 +1,10 @@
+if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux" AND EXISTS "${CMAKE_CURRENT_LIST_DIR}/WebSceneLinuxProfile.cmake")
+  include("${CMAKE_CURRENT_LIST_DIR}/WebSceneLinuxProfile.cmake")
+  if(WebScene_SDK_CXX_ABI STREQUAL "libstdc++")
+    include("${CMAKE_CURRENT_LIST_DIR}/WebSceneLinuxSystemToolchain.cmake")
+    return()
+  endif()
+endif()
 # Linux and macOS use the same pinned compiler, but distinct system/ABI profiles.
 if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux")
   if(NOT WEBSCENE_LLVM_ROOT)

@@ -103,7 +103,7 @@ if(WEBSCENE_NATIVE_ENGINE_ENABLE_GRAPHICS)
     set(webscene_graphics_libraries dawn::webgpu_dawn)
     # The native macOS presenter shares Metal textures directly with Skia.
     # Windows requires ANGLE for the D3D11/EGL composition bridge.
-    if(APPLE)
+    if(NOT WIN32)
         add_compile_definitions(WEBSCENE_GRAPHICS_ENABLE_ANGLE=0)
     else()
         list(APPEND WEBSCENE_GRAPHICS_COMPONENTS angle)
@@ -132,7 +132,7 @@ if(WEBSCENE_NATIVE_ENGINE_ENABLE_GRAPHICS)
                 COMMAND "${CMAKE_COMMAND}" -E copy_if_different
                     "$<TARGET_FILE:${library}>" "$<TARGET_FILE_DIR:webscene_graphics_dawn_event_tests>")
         endforeach()
-        if(NOT APPLE)
+        if(WIN32)
             add_executable(webscene_graphics_angle_context_tests tests/graphics_angle_context_tests.cpp)
             target_compile_features(webscene_graphics_angle_context_tests PRIVATE cxx_std_20)
             target_include_directories(webscene_graphics_angle_context_tests PRIVATE native)
@@ -171,7 +171,7 @@ if(WEBSCENE_NATIVE_ENGINE_ENABLE_GRAPHICS)
     elseif(UNIX)
         set_target_properties(webscene_native_engine PROPERTIES BUILD_RPATH "$ORIGIN")
     endif()
-    if(NOT APPLE)
+    if(WIN32)
         foreach(library EGL GLESv2)
             add_custom_command(TARGET webscene_native_engine POST_BUILD
                 COMMAND "${CMAKE_COMMAND}" -E copy_if_different

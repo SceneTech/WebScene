@@ -571,8 +571,9 @@ jobs:
     env:
       # PR builds intentionally reuse package versions. Keep their extracted
       # packages isolated so a self-hosted runner cannot consume an older build
-      # of the same version from its persistent global NuGet cache.
-      NUGET_PACKAGES: ${{ runner.temp }}/webscene-nuget-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.rid }}
+      # of the same version from its persistent global NuGet cache. runner.temp
+      # is unavailable while GitHub evaluates a job-level environment.
+      NUGET_PACKAGES: ${{ github.workspace }}/artifacts/nuget-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.rid }}
     steps:
     - uses: actions/checkout@v4
     - name: Setup .NET

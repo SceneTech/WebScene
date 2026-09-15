@@ -1554,8 +1554,8 @@ void test_pointer_cursor_and_external_anchor_host_handoff(webscene_engine* engin
         + std::string(8192U, 'x');
     execute(
         engine,
-        "try { window.open(" + quote(oversized_url)
-            + "); globalThis.oversizedWindowAccepted = true; } "
+        "try { window.open('" + oversized_url
+            + "'); globalThis.oversizedWindowAccepted = true; } "
               "catch { globalThis.oversizedWindowAccepted = false; }",
         "native-window-open-oversized.js");
     require(

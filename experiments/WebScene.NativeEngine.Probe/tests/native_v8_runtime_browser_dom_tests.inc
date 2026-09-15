@@ -2876,8 +2876,9 @@ void test_fullscreen_host_completion(webscene_engine* engine)
             == R"("[true,[\"surface\",null]]")",
         "fullscreen exit state/event did not reach the document");
 
-    execute(engine, "__fullscreenEvents = []",
-        "native-fullscreen-reset-events.js");
+    require(evaluate(engine, "(__fullscreenEvents = [], true)",
+                "native-fullscreen-reset-events.js") == "true",
+        "fullscreen event reset did not drain through the engine worker");
     require(webscene_engine_set_window_fullscreen_v1(engine, 1U) != 0,
         "native fullscreen entry was rejected");
     require(evaluate_until_equals(engine,

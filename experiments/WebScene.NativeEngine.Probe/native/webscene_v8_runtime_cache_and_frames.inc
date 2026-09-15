@@ -1398,21 +1398,8 @@
 
         install_console(local_context, global);
 
-        auto performance = v8::Object::New(isolate);
-        performance->Set(local_context, js_string(isolate, "now"), v8::Function::New(local_context, performance_now).ToLocalChecked()).Check();
-        performance->Set(
-            local_context,
-            js_string(isolate, "getEntriesByName"),
-            v8::Function::New(local_context, performance_get_entries_by_name).ToLocalChecked()).Check();
-        performance->Set(local_context, js_string(isolate, "mark"),
-            v8::Function::New(local_context, performance_entry).ToLocalChecked()).Check();
-        performance->Set(local_context, js_string(isolate, "measure"),
-            v8::Function::New(local_context, performance_entry).ToLocalChecked()).Check();
-        performance->Set(local_context, js_string(isolate, "clearMarks"),
-            v8::Function::New(local_context, console_log).ToLocalChecked()).Check();
-        performance->Set(local_context, js_string(isolate, "clearMeasures"),
-            v8::Function::New(local_context, console_log).ToLocalChecked()).Check();
-        global->Set(local_context, js_string(isolate, "performance"), performance).Check();
+        install_performance_clock(local_context, global);
+        install_performance_timeline(local_context);
 
         // React's scheduler prefers MessageChannel over timers. Keep the ports
         // realm-local and route delivery through this frame's setTimeout so a

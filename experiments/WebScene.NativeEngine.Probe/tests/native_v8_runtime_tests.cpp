@@ -829,6 +829,7 @@ int main()
     test_generated_idl_attributes_are_prototype_accessors(engine);
     test_document_links_is_a_live_named_html_collection(engine);
     test_scrollspy_product_neutral_primitives(engine);
+    test_native_performance_timeline_identity(engine);
     test_clipboard_write_text_host_handoff(engine);
     test_clipboard_read_host_completion(engine);
     test_native_clipboard_shortcut_events(engine);

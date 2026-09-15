@@ -141,43 +141,34 @@
         info.GetReturnValue().Set(v8::Number::New(info.GetIsolate(), now));
     }
 
-    static void performance_get_entries_by_name(const v8::FunctionCallbackInfo<v8::Value>& info)
+    static double performance_time_origin_milliseconds()
     {
-        current(info.GetIsolate())->record_feature(
-            "web-api",
-            "Performance.getEntriesByName",
-            "unsupported",
-            "performance entries are not retained",
-            "web-api-binding");
-        // The probe does not retain a Performance Timeline yet. Returning an
-        // empty sequence is the browser-correct result when no matching entry
-        // has been recorded and lets consumers feature-test marks safely.
-        info.GetReturnValue().Set(v8::Array::New(info.GetIsolate()));
+        const auto wall = std::chrono::duration<double, std::milli>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        const auto monotonic = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        return wall - monotonic;
     }
 
-    static void performance_entry(const v8::FunctionCallbackInfo<v8::Value>& info)
+    void install_performance_clock(
+        v8::Local<v8::Context> local_context,
+        v8::Local<v8::Object> global)
     {
-        current(info.GetIsolate())->record_feature(
-            "web-api",
-            "Performance.mark/measure",
-            "partially-supported",
-            "entry-shaped return values without Performance Timeline retention",
-            "web-api-binding");
-        auto result = v8::Object::New(info.GetIsolate());
-        auto local_context = info.GetIsolate()->GetCurrentContext();
-        result->Set(
+        auto performance = v8::Object::New(isolate);
+        performance->Set(
             local_context,
-            js_string(info.GetIsolate(), "name"),
-            info.Length() > 0 ? info[0]
-                : v8::Local<v8::Value>(js_string(info.GetIsolate(), ""))).Check();
-        result->Set(
+            js_string(isolate, "now"),
+            v8::Function::New(local_context, performance_now).ToLocalChecked()).Check();
+        performance->DefineOwnProperty(
             local_context,
-            js_string(info.GetIsolate(), "startTime"),
-            v8::Number::New(info.GetIsolate(), std::chrono::duration<double, std::milli>(
-                std::chrono::steady_clock::now().time_since_epoch()).count())).Check();
-        result->Set(local_context, js_string(info.GetIsolate(), "duration"),
-            v8::Number::New(info.GetIsolate(), 0)).Check();
-        info.GetReturnValue().Set(result);
+            js_string(isolate, "timeOrigin"),
+            v8::Number::New(isolate, performance_time_origin_milliseconds()),
+            static_cast<v8::PropertyAttribute>(
+                v8::ReadOnly | v8::DontEnum | v8::DontDelete)).Check();
+        global->Set(
+            local_context,
+            js_string(isolate, "performance"),
+            performance).Check();
     }
 
     static void image_constructor(const v8::FunctionCallbackInfo<v8::Value>& info)

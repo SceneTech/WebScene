@@ -12,7 +12,7 @@ assert.equal(/<\/script/i.test(script), false, 'script must be safe to embed in 
 function setup() {
   let clock = 100;
   const now = () => clock;
-  const performance = { now, mark() {}, measure() {}, getEntriesByName: () => [] };
+  const performance = { now, timeOrigin: 1_700_000_000_000 };
   const realm = createContext({ performance, DOMException, structuredClone });
   runInContext(script, realm);
   return { performance, realm, now, advance(value) { clock = value; } };
@@ -24,6 +24,22 @@ test('fresh lifecycle navigation lookup succeeds without invented navigation dat
   assert.equal(performance.getEntriesByType('navigation').at(0), undefined);
   assert.equal(performance.getEntriesByType('resource').length, 0);
   assert.equal(performance.now, now, 'retain the native animation-frame clock coordinate system');
+  assert.equal(performance.timeOrigin, 1_700_000_000_000);
+});
+
+test('Code OSS browser timing selection and direct measures use one timeline', () => {
+  const { performance } = setup();
+  assert.equal(typeof performance.timeOrigin, 'number',
+    'a numeric timeOrigin is required for Code OSS to select browser User Timing');
+  const codeOssMark = (name, options) => performance.mark(name, options);
+  codeOssMark('code/didLoadWorkbenchMain', { startTime: 10 });
+  codeOssMark('code/didStartWorkbench', { startTime: 35 });
+  const measured = performance.measure(
+    'perf: workbench create & restore',
+    'code/didLoadWorkbenchMain',
+    'code/didStartWorkbench');
+  assert.equal(measured.startTime, 10);
+  assert.equal(measured.duration, 25);
 });
 
 test('marks and measures retain real elapsed times and serialize their entries', () => {

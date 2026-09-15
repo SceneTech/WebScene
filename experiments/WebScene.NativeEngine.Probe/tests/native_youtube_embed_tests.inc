@@ -44,6 +44,17 @@ void test_youtube_embed_fallback()
         }
         return false;
     };
+    const auto take_external_url = [&]() {
+        const auto request = take_typed_host_request(engine);
+        require(!request
+                || request.kind == WEBSCENE_HOST_REQUEST_OPEN_EXTERNAL_URL_V1,
+            "YouTube fallback emitted an unexpected typed host request");
+        return request.url;
+    };
+    const auto has_no_host_request = [&]() {
+        return take_host_request(engine).empty()
+            && !take_typed_host_request(engine);
+    };
     require(wait_for("!!document.getElementById('video').contentDocument.getElementById('webscene-watch')"),
         "static YouTube iframe did not receive fallback");
     require(wait_for("document.getElementById('video').contentDocument.querySelector('img').naturalWidth === 1280"),
@@ -69,7 +80,7 @@ void test_youtube_embed_fallback()
     require(scroll(20) == "80", "wheel over fallback did not chain to outer page");
     execute(engine, "document.scrollingElement.scrollTop=0", "embed-scroll-reset.js");
     evaluate(engine, "true", "embed-scroll-reset-barrier.js");
-    require(take_host_request(engine).empty(), "loading a fallback opened the browser without activation");
+    require(has_no_host_request(), "loading a fallback opened the browser without activation");
     require(evaluate(engine, R"JS((() => {
         const d = document.getElementById('video').contentDocument;
         return [d.getElementById('webscene-title').textContent,
@@ -79,26 +90,26 @@ void test_youtube_embed_fallback()
     // Click uses the existing external host request, not iframe navigation.
     execute(engine, "document.getElementById('video').contentDocument.getElementById('webscene-watch').click()", "embed-click.js");
     evaluate(engine, "true", "embed-click-barrier.js");
-    require(take_host_request(engine).find("https://www.youtube.com/watch?v=CLnjOkR1vzk") != std::string::npos,
+    require(take_external_url() == "https://www.youtube.com/watch?v=CLnjOkR1vzk",
         "fallback click did not hand off to external browser");
     execute(engine, "document.getElementById('video').contentDocument.getElementById('webscene-watch').focus()", "embed-focus.js");
     require(evaluate(engine, "document.getElementById('video').contentDocument.activeElement.id", "embed-focus-barrier.js") == "\"webscene-watch\"", "fallback link was not focused");
     keyboard_input(engine, WEBSCENE_INPUT_KEY_DOWN, 13U, 8001U);
     keyboard_input(engine, WEBSCENE_INPUT_KEY_UP, 13U, 8002U);
     evaluate(engine, "true", "embed-key-barrier.js");
-    require(take_host_request(engine).find("https://www.youtube.com/watch?v=CLnjOkR1vzk") != std::string::npos,
+    require(take_external_url() == "https://www.youtube.com/watch?v=CLnjOkR1vzk",
         "fallback Enter activation did not hand off to external browser");
     pointer_button(engine, WEBSCENE_INPUT_POINTER_DOWN, 20, 20, 8003U, true);
     pointer_button(engine, WEBSCENE_INPUT_POINTER_UP, 20, 20, 8004U, false);
     evaluate(engine, "true", "embed-pointer-barrier.js");
-    require(take_host_request(engine).find("https://www.youtube.com/watch?v=CLnjOkR1vzk") != std::string::npos,
+    require(take_external_url() == "https://www.youtube.com/watch?v=CLnjOkR1vzk",
         "fallback native pointer activation did not reach the anchor");
     execute(engine, "document.getElementById('video').contentDocument.getElementById('webscene-watch').addEventListener('keydown', e => e.preventDefault())", "embed-cancel-key.js");
     evaluate(engine, "true", "embed-cancel-handler-barrier.js");
     keyboard_input(engine, WEBSCENE_INPUT_KEY_DOWN, 13U, 8005U);
     keyboard_input(engine, WEBSCENE_INPUT_KEY_UP, 13U, 8006U);
     evaluate(engine, "true", "embed-cancel-barrier.js");
-    require(take_host_request(engine).empty(), "cancelled Enter still opened the browser");
+    require(has_no_host_request(), "cancelled Enter still opened the browser");
     execute(engine, "document.getElementById('video').src = 'https://www.youtube-nocookie.com/embed/rFoJd63r3ag?autoplay=1'", "embed-change.js");
     require(wait_for("document.getElementById('video').contentDocument.getElementById('webscene-watch')?.href === 'https://www.youtube.com/watch?v=rFoJd63r3ag'"),
         "dynamic privacy-enhanced embed navigation did not replace fallback");
@@ -114,7 +125,7 @@ void test_youtube_embed_fallback()
         "missing thumbnail fixture unexpectedly loaded");
     execute(engine, "document.getElementById('video').contentDocument.getElementById('webscene-watch').click()", "embed-broken-click.js");
     evaluate(engine, "true", "embed-broken-barrier.js");
-    require(take_host_request(engine).find("https://www.youtube.com/watch?v=rFoJd63r3ag") != std::string::npos,
+    require(take_external_url() == "https://www.youtube.com/watch?v=rFoJd63r3ag",
         "missing thumbnail made fallback link unusable");
     execute(engine, "const ordinary = document.createElement('iframe'); ordinary.id='ordinaryFrame'; ordinary.src='https://embed.test/ordinary.html'; document.body.appendChild(ordinary)", "ordinary-frame.js");
     require(wait_for("!!document.getElementById('ordinaryFrame').contentDocument.getElementById('ordinary')"),
@@ -127,14 +138,14 @@ void test_youtube_embed_fallback()
     pointer_button(engine, WEBSCENE_INPUT_POINTER_DOWN, 160, 90, 8101U, true);
     pointer_button(engine, WEBSCENE_INPUT_POINTER_UP, 160, 90, 8102U, false);
     evaluate(engine, "true", "embed-multiple-frame-click-barrier.js");
-    require(take_host_request(engine).find("https://www.youtube.com/watch?v=rFoJd63r3ag") != std::string::npos,
+    require(take_external_url() == "https://www.youtube.com/watch?v=rFoJd63r3ag",
         "clicking the first embed image stopped working after a second iframe loaded");
     execute(engine, "window.embedClicks=0; document.getElementById('video').contentDocument.getElementById('webscene-watch').addEventListener('click', e => { window.embedClicks++; e.preventDefault(); })", "embed-multiple-frame-listener.js");
     evaluate(engine, "true", "embed-listener-barrier.js");
     pointer_button(engine, WEBSCENE_INPUT_POINTER_DOWN, 160, 90, 8103U, true);
     pointer_button(engine, WEBSCENE_INPUT_POINTER_UP, 160, 90, 8104U, false);
     require(evaluate(engine, "window.embedClicks", "embed-listener-result.js") == "1", "first-frame listener was dispatched in the wrong realm");
-    require(take_host_request(engine).empty(), "cancelled first-frame click opened the browser");
+    require(has_no_host_request(), "cancelled first-frame click opened the browser");
     execute(engine, "document.getElementById('video').src = 'https://www.youtube.com/embed/AbCdEf01234'", "embed-quality-fallback.js");
     require(wait_for("document.getElementById('video').contentDocument.querySelector('img')?.naturalWidth === 480"),
         "failed high-resolution image and successful tiny placeholder did not fall back");

@@ -2738,6 +2738,91 @@ void test_clipboard_read_host_completion(webscene_engine* engine)
         "clipboard queue saturation did not reject explicitly");
 }
 
+void test_native_clipboard_shortcut_events(webscene_engine* engine)
+{
+    execute(engine, R"JS(
+        document.body.innerHTML = '<textarea id="editor"></textarea>';
+        const editor = document.getElementById('editor');
+        globalThis.__clipboardShortcutEvents = [];
+        editor.addEventListener('copy', event => {
+          event.clipboardData.setData('text/plain', 'shortcut copy');
+          event.clipboardData.setData('text/html', '<b>shortcut copy</b>');
+          event.preventDefault();
+          __clipboardShortcutEvents.push([
+            event.type, event.bubbles, event.cancelable,
+            event.clipboardData.types.join(',')]);
+        });
+        editor.addEventListener('cut', event => {
+          event.clipboardData.setData('text/plain', 'shortcut cut');
+          event.preventDefault();
+          __clipboardShortcutEvents.push([event.type]);
+        });
+        editor.addEventListener('paste', event => {
+          event.preventDefault();
+          __clipboardShortcutEvents.push([
+            event.type, event.clipboardData.getData('text/plain')]);
+        });
+        editor.focus();
+    )JS", "native-clipboard-shortcuts-setup.js");
+
+    constexpr auto modifier = WEBSCENE_INPUT_MODIFIER_META;
+    keyboard_input(engine, WEBSCENE_INPUT_KEY_DOWN, 'C', 9761U, modifier);
+    require(evaluate(engine, "true", "native-clipboard-copy-shortcut-barrier.js") == "true",
+        "native copy shortcut did not drain through the engine worker");
+    auto request = take_typed_host_request(engine);
+    require(request.kind == WEBSCENE_HOST_REQUEST_CLIPBOARD_WRITE_V1
+                && request.flags == WEBSCENE_HOST_REQUEST_CLIPBOARD_REPLACE_V1
+                && request.content_type == "text/plain"
+                && std::string(request.bytes.begin(), request.bytes.end()) == "shortcut copy",
+        "native copy event did not hand its plain text to the host");
+    require(webscene_engine_complete_host_request_v1(
+                engine, request.id, 0U, "text/plain", nullptr, 0U, nullptr) != 0,
+        "native copy plain-text completion was rejected");
+    request = take_typed_host_request(engine);
+    require(request.kind == WEBSCENE_HOST_REQUEST_CLIPBOARD_WRITE_V1
+                && request.flags == 0U
+                && request.content_type == "text/html"
+                && std::string(request.bytes.begin(), request.bytes.end())
+                    == "<b>shortcut copy</b>",
+        "native copy event did not preserve its HTML representation");
+    require(webscene_engine_complete_host_request_v1(
+                engine, request.id, 0U, "text/html", nullptr, 0U, nullptr) != 0,
+        "native copy HTML completion was rejected");
+
+    keyboard_input(engine, WEBSCENE_INPUT_KEY_DOWN, 'x', 9762U, modifier);
+    require(evaluate(engine, "true", "native-clipboard-cut-shortcut-barrier.js") == "true",
+        "native cut shortcut did not drain through the engine worker");
+    request = take_typed_host_request(engine);
+    require(request.kind == WEBSCENE_HOST_REQUEST_CLIPBOARD_WRITE_V1
+                && request.flags == WEBSCENE_HOST_REQUEST_CLIPBOARD_REPLACE_V1
+                && request.content_type == "text/plain"
+                && std::string(request.bytes.begin(), request.bytes.end()) == "shortcut cut",
+        "native cut event did not hand its plain text to the host");
+    require(webscene_engine_complete_host_request_v1(
+                engine, request.id, 0U, "text/plain", nullptr, 0U, nullptr) != 0,
+        "native cut completion was rejected");
+
+    keyboard_input(engine, WEBSCENE_INPUT_KEY_DOWN, 'V', 9763U, modifier);
+    require(evaluate(engine, "true", "native-clipboard-paste-shortcut-barrier.js") == "true",
+        "native paste shortcut did not drain through the engine worker");
+    request = take_typed_host_request(engine);
+    require(request.kind == WEBSCENE_HOST_REQUEST_CLIPBOARD_READ_V1
+                && request.content_type == "text/plain",
+        "native paste event did not request plain text from the host");
+    constexpr uint8_t paste[] = {'s','h','o','r','t','c','u','t',' ','p','a','s','t','e'};
+    require(webscene_engine_complete_host_request_v1(
+                engine, request.id, 0U, "text/plain",
+                paste, sizeof(paste), nullptr) != 0,
+        "native paste completion was rejected");
+    require(evaluate(engine, R"JS(
+        JSON.stringify(__clipboardShortcutEvents)
+    )JS", "native-clipboard-shortcuts-result.js")
+        == R"JSON([["copy",true,true,"text/plain,text/html"],["cut"],["paste","shortcut paste"]])JSON",
+        "native clipboard shortcuts did not dispatch browser-compatible events");
+    require(!take_typed_host_request(engine),
+        "native clipboard shortcuts retained an unexpected host request");
+}
+
 void test_clipboard_maximum_payload_gate(webscene_engine* engine)
 {
     constexpr size_t maximum_bytes = 16U * 1024U * 1024U;

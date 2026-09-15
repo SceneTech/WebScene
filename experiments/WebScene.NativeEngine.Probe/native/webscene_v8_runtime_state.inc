@@ -134,6 +134,13 @@
     std::vector<connected_resource_task> connected_resources;
     std::mutex host_request_mutex;
     std::deque<std::string> host_requests;
+    struct host_promise_target {
+        std::string operation;
+        uint32_t target_node_id{};
+        v8::Global<v8::Context> context;
+        v8::Global<v8::Promise::Resolver> resolver;
+    };
+    std::unordered_map<uint64_t, host_promise_target> host_promise_targets;
     std::function<void()> host_request_available;
     std::function<void()> interop_callback_available;
     v8_dom_runtime::interop_callback_sink_v3 interop_callback_sink;
@@ -142,6 +149,7 @@
     std::mutex console_message_mutex;
     std::deque<std::string> console_messages;
     uint64_t next_host_request_id{0};
+    dom_node* fullscreen_element{nullptr};
     std::atomic<bool> file_service_enabled{false};
     std::atomic<uint32_t> native_media_policy{0};
     std::mutex file_requests_mutex;
@@ -372,6 +380,7 @@
     dom_node* active_element{nullptr};
     bool focus_visible{false};
     bool document_visible{true};
+    bool document_focused{true};
     double last_animation_frame_timestamp_ms{0};
     double caret_blink_epoch_ms{0};
     std::string frame_last_error_value;

@@ -442,6 +442,8 @@ private:
     std::atomic<bool> low_memory_requested_{false};
     std::atomic<bool> host_visible_{true};
     std::atomic<bool> visibility_changed_{false};
+    std::atomic<bool> host_focused_{true};
+    std::atomic<bool> focus_changed_{false};
     std::atomic<uint32_t> preferred_color_scheme_{
         WEBSCENE_PREFERRED_COLOR_SCHEME_LIGHT};
     std::atomic<bool> preferred_color_scheme_changed_{false};
@@ -1291,6 +1293,42 @@ size_t webscene_engine_take_host_request(
         : engine->take_host_request(destination, destination_capacity);
 }
 
+uint8_t webscene_engine_discard_host_request_v1(webscene_engine* engine)
+{
+    return engine != nullptr && engine->discard_host_request() ? 1U : 0U;
+}
+
+uint8_t webscene_engine_complete_host_request_v1(
+    webscene_engine* engine,
+    uint64_t request_id,
+    uint32_t status,
+    const char* content_type,
+    const uint8_t* bytes,
+    size_t byte_count,
+    const char* error_message)
+{
+    constexpr size_t maximum_clipboard_bytes = 16U * 1024U * 1024U;
+    if (engine == nullptr || request_id == 0U || status > 2U
+        || byte_count > maximum_clipboard_bytes
+        || (byte_count != 0U && bytes == nullptr)) {
+        return 0U;
+    }
+    webscene_native::native_host_completion completion;
+    completion.id = request_id;
+    completion.status = status;
+    completion.content_type = content_type == nullptr ? "" : content_type;
+    completion.error = error_message == nullptr ? "" : error_message;
+    if (completion.content_type.size() > 256U || completion.error.size() > 4096U)
+        return 0U;
+    if (status == 0U) {
+        if (byte_count != 0U && completion.content_type.empty()) return 0U;
+        if (byte_count != 0U) completion.bytes.assign(bytes, bytes + byte_count);
+    } else if (byte_count != 0U) {
+        return 0U;
+    }
+    return engine->complete_host_request(std::move(completion)) ? 1U : 0U;
+}
+
 void webscene_engine_configure_diagnostics(
     webscene_engine* engine, uint32_t flags,
     webscene_diagnostic_available_callback callback, void* user_data)
@@ -1414,6 +1452,12 @@ uint8_t webscene_engine_request_low_memory(webscene_engine* engine)
 uint8_t webscene_engine_set_visible(webscene_engine* engine, uint8_t visible)
 {
     return engine != nullptr && engine->set_visible(visible != 0) ? 1U : 0U;
+}
+
+uint8_t webscene_engine_set_window_focused_v1(
+    webscene_engine* engine, uint8_t focused)
+{
+    return engine != nullptr && engine->set_focused(focused != 0) ? 1U : 0U;
 }
 
 uint8_t webscene_engine_set_preferred_color_scheme(

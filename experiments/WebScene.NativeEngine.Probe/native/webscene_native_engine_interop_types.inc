@@ -413,6 +413,7 @@ using script_work_request =
     std::variant<
         script_request,
         webscene_native::native_file_completion,
+        webscene_native::native_host_completion,
         url_request,
         interop_evaluate_work_v3,
         interop_invoke_work_v3,

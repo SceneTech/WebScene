@@ -2556,3 +2556,152 @@ void test_window_scroll_primitives(webscene_engine* engine)
         result == R"JSON({"methods":["function","function",true],"numeric":[120,140,120,140],"topOnly":[120,210],"leftOnly":[170,210],"clamped":[0,true,true],"frameMethods":["function","function"]})JSON",
         "Window scrolling primitives were inconsistent: " + result);
 }
+
+uint64_t host_request_id(std::string_view request);
+
+void test_clipboard_write_text_host_handoff(webscene_engine* engine)
+{
+    execute(engine, R"JS(
+        globalThis.__clipboardWriteState = 'pending';
+        navigator.clipboard.writeText('VS CODE OSS CLIPBOARD').then(
+          () => { __clipboardWriteState = 'fulfilled'; },
+          error => { __clipboardWriteState = error.name + ':' + error.message; });
+    )JS", "native-clipboard-write-text.js");
+    const auto request = take_host_request(engine);
+    require(
+        request.find(R"("kind":"writeClipboard")") != std::string::npos
+            && request.find(R"("requestId":)") != std::string::npos
+            && request.find(R"("contentType":"text/plain")") != std::string::npos
+            && request.find("VlMgQ09ERSBPU1MgQ0xJUEJPQVJE") != std::string::npos,
+        "Clipboard.writeText did not preserve UTF-8 bytes in its host handoff: "
+            + request);
+    require(
+        webscene_engine_complete_host_request_v1(
+            engine, host_request_id(request), 0U, "text/plain",
+            nullptr, 0U, nullptr) != 0,
+        "Clipboard.writeText completion was rejected");
+    require(
+        evaluate(
+            engine,
+            "__clipboardWriteState",
+            "native-clipboard-write-text-result.js") == R"("fulfilled")",
+        "Clipboard.writeText promise did not fulfill after native completion");
+}
+
+uint64_t host_request_id(std::string_view request)
+{
+    constexpr std::string_view marker{"\"requestId\":"};
+    const auto begin = request.find(marker);
+    require(begin != std::string_view::npos, "host request did not contain requestId");
+    const auto digits = begin + marker.size();
+    uint64_t result = 0;
+    const auto parsed = std::from_chars(
+        request.data() + digits, request.data() + request.size(), result);
+    require(parsed.ec == std::errc{} && result != 0U,
+        "host request contained an invalid requestId");
+    return result;
+}
+
+void test_clipboard_read_host_completion(webscene_engine* engine)
+{
+    execute(engine, R"JS(
+        globalThis.__clipboardReadState = 'pending';
+        navigator.clipboard.readText().then(
+          value => { __clipboardReadState = value; },
+          error => { __clipboardReadState = error.name; });
+    )JS", "native-clipboard-read-text.js");
+    auto request = take_host_request(engine);
+    require(
+        request.find(R"("kind":"readClipboard")") != std::string::npos
+            && request.find(R"("contentType":"text/plain")") != std::string::npos,
+        "Clipboard.readText did not emit a typed host request: " + request);
+    constexpr uint8_t text[] = {'n','a','t','i','v','e',' ','p','a','s','t','e'};
+    require(
+        webscene_engine_complete_host_request_v1(
+            engine, host_request_id(request), 0U, "text/plain",
+            text, sizeof(text), nullptr) != 0,
+        "Clipboard.readText completion was rejected");
+    require(
+        evaluate(
+            engine,
+            "__clipboardReadState",
+            "native-clipboard-read-text-result.js") == R"("native paste")",
+        "Clipboard.readText did not resolve with native UTF-8 text");
+
+    execute(engine, R"JS(
+        globalThis.__clipboardCancelState = 'pending';
+        navigator.clipboard.readText().then(
+          () => { __clipboardCancelState = 'fulfilled'; },
+          error => { __clipboardCancelState = error.name; });
+    )JS", "native-clipboard-read-cancel.js");
+    request = take_host_request(engine);
+    require(
+        webscene_engine_complete_host_request_v1(
+            engine, host_request_id(request), 1U, nullptr, nullptr, 0U, nullptr) != 0,
+        "Clipboard cancellation completion was rejected");
+    require(
+        evaluate(
+            engine,
+            "__clipboardCancelState",
+            "native-clipboard-read-cancel-result.js") == R"("AbortError")",
+        "Clipboard cancellation did not reject with AbortError");
+
+    require(
+        webscene_engine_complete_host_request_v1(
+            engine, 0U, 0U, "text/plain", text, sizeof(text), nullptr) == 0,
+        "zero host request ID was accepted");
+    require(
+        webscene_engine_complete_host_request_v1(
+            engine, 1U, 3U, nullptr, nullptr, 0U, nullptr) == 0,
+        "invalid host completion status was accepted");
+}
+
+void test_fullscreen_host_completion(webscene_engine* engine)
+{
+    execute(engine, R"JS(
+        document.body.innerHTML = '<main id="surface">fullscreen</main>';
+        globalThis.__fullscreenEvents = [];
+        globalThis.__fullscreenState = 'pending';
+        document.addEventListener('fullscreenchange', () => {
+          __fullscreenEvents.push(document.fullscreenElement?.id || null);
+        });
+        document.getElementById('surface').requestFullscreen().then(
+          () => { __fullscreenState = document.fullscreenElement?.id || 'missing'; },
+          error => { __fullscreenState = error.name; });
+    )JS", "native-fullscreen-enter.js");
+    auto request = take_host_request(engine);
+    require(
+        request.find(R"("kind":"enterFullscreen")") != std::string::npos
+            && request.find(R"("targetNodeId":)") != std::string::npos,
+        "Element.requestFullscreen did not emit a typed host request: " + request);
+    require(webscene_engine_complete_host_request_v1(
+                engine, host_request_id(request), 0U, nullptr,
+                nullptr, 0U, nullptr) != 0,
+        "fullscreen enter completion was rejected");
+    require(evaluate(
+                engine,
+                "JSON.stringify([__fullscreenState,__fullscreenEvents])",
+                "native-fullscreen-enter-result.js")
+            == R"("[\"surface\",[\"surface\"]]")",
+        "fullscreen enter state/event did not reach the document");
+
+    execute(engine, R"JS(
+        globalThis.__fullscreenExitState = 'pending';
+        document.exitFullscreen().then(
+          () => { __fullscreenExitState = document.fullscreenElement === null; },
+          error => { __fullscreenExitState = error.name; });
+    )JS", "native-fullscreen-exit.js");
+    request = take_host_request(engine);
+    require(request.find(R"("kind":"exitFullscreen")") != std::string::npos,
+        "Document.exitFullscreen did not emit a typed host request: " + request);
+    require(webscene_engine_complete_host_request_v1(
+                engine, host_request_id(request), 0U, nullptr,
+                nullptr, 0U, nullptr) != 0,
+        "fullscreen exit completion was rejected");
+    require(evaluate(
+                engine,
+                "JSON.stringify([__fullscreenExitState,__fullscreenEvents])",
+                "native-fullscreen-exit-result.js")
+            == R"("[true,[\"surface\",null]]")",
+        "fullscreen exit state/event did not reach the document");
+}

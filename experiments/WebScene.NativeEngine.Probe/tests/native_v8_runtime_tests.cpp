@@ -828,6 +828,9 @@ int main()
     test_generated_idl_attributes_are_prototype_accessors(engine);
     test_document_links_is_a_live_named_html_collection(engine);
     test_scrollspy_product_neutral_primitives(engine);
+    test_clipboard_write_text_host_handoff(engine);
+    test_clipboard_read_host_completion(engine);
+    test_fullscreen_host_completion(engine);
     test_component_library_dom_discovery_primitives(engine);
     test_document_id_index_preserves_tree_and_root_semantics(engine);
     test_dom_selector_apis_throw_syntax_error_for_invalid_selectors(engine);

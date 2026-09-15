@@ -715,6 +715,9 @@ struct v8_dom_runtime::implementation final {
             js_string(isolate, "click"),
             v8::FunctionTemplate::New(isolate, element_click));
         element->PrototypeTemplate()->Set(
+            js_string(isolate, "requestFullscreen"),
+            v8::FunctionTemplate::New(isolate, element_request_fullscreen));
+        element->PrototypeTemplate()->Set(
             js_string(isolate, "reset"),
             v8::FunctionTemplate::New(isolate, form_reset));
         element_template.Reset(isolate, element);
@@ -949,6 +952,12 @@ struct v8_dom_runtime::implementation final {
         document_template->SetNativeDataProperty(
             js_string(isolate, "visibilityState"),
             get_document_visibility_state);
+        document_template->SetNativeDataProperty(
+            js_string(isolate, "fullscreenElement"),
+            get_document_fullscreen_element);
+        document_template->SetNativeDataProperty(
+            js_string(isolate, "fullscreenEnabled"),
+            get_document_fullscreen_enabled);
         document_template->SetNativeDataProperty(js_string(isolate, "links"), get_document_links);
         document_template->SetNativeDataProperty(js_string(isolate, "styleSheets"), get_document_style_sheets);
         document_template->SetNativeDataProperty(
@@ -1055,6 +1064,9 @@ struct v8_dom_runtime::implementation final {
         document_template->Set(
             js_string(isolate, "hasFocus"),
             v8::FunctionTemplate::New(isolate, document_has_focus));
+        document_template->Set(
+            js_string(isolate, "exitFullscreen"),
+            v8::FunctionTemplate::New(isolate, document_exit_fullscreen));
         document_template->Set(
             js_string(isolate, "getSelection"),
             v8::FunctionTemplate::New(isolate, get_selection));
@@ -3067,6 +3079,14 @@ struct v8_dom_runtime::implementation final {
             v8::Function::New(local_context, window_open).ToLocalChecked()).Check();
         global->Set(
             local_context,
+            js_string(isolate, "close"),
+            v8::Function::New(local_context, window_close).ToLocalChecked()).Check();
+        global->Set(
+            local_context,
+            js_string(isolate, "focus"),
+            v8::Function::New(local_context, window_focus).ToLocalChecked()).Check();
+        global->Set(
+            local_context,
             js_string(isolate, "requestAnimationFrame"),
             v8::Function::New(local_context, request_animation_frame).ToLocalChecked()).Check();
         global->Set(
@@ -3364,6 +3384,10 @@ struct v8_dom_runtime::implementation final {
             local_context,
             js_string(isolate, "toString"),
             v8::Function::New(local_context, location_to_string).ToLocalChecked()).Check();
+        location->Set(
+            local_context,
+            js_string(isolate, "reload"),
+            v8::Function::New(local_context, location_reload).ToLocalChecked()).Check();
         global->Set(local_context, js_string(isolate, "location"), location).Check();
 
         install_navigator(isolate, local_context, global);
@@ -4071,6 +4095,12 @@ struct v8_dom_runtime::implementation final {
             v8::Function::New(
                 local_context,
                 write_clipboard).ToLocalChecked()).Check();
+        global->Set(
+            local_context,
+            js_string(isolate, "__webSceneReadClipboard"),
+            v8::Function::New(
+                local_context,
+                read_clipboard).ToLocalChecked()).Check();
         constexpr std::string_view source = R"JS(
           (() => {
             class WebSceneClipboardItem {
@@ -4100,6 +4130,30 @@ struct v8_dom_runtime::implementation final {
               }
             }
             const clipboard = {
+              async readText() {
+                __webSceneRecordWebApi(
+                  'Clipboard.readText', 'supported',
+                  'UTF-8 text read through the native host');
+                const result = await __webSceneReadClipboard('text/plain');
+                return new TextDecoder().decode(result.bytes);
+              },
+              async read() {
+                __webSceneRecordWebApi(
+                  'Clipboard.read', 'partially-supported',
+                  'one bounded native clipboard item');
+                const result = await __webSceneReadClipboard('*/*');
+                return [new WebSceneClipboardItem({
+                  [result.type]: new Blob([result.bytes], { type: result.type })
+                })];
+              },
+              async writeText(text) {
+                __webSceneRecordWebApi(
+                  'Clipboard.writeText', 'supported',
+                  'UTF-8 text handoff to the desktop host');
+                return this.write([new WebSceneClipboardItem({
+                  'text/plain': new Blob([String(text)], { type: 'text/plain' })
+                })]);
+              },
               async write(items) {
                 __webSceneRecordWebApi(
                   'Clipboard.write', 'partially-supported',
@@ -4113,9 +4167,7 @@ struct v8_dom_runtime::implementation final {
                 }
                 for (const type of item.types) {
                   const blob = await item.getType(type);
-                  if (!__webSceneWriteClipboard(type, blob)) {
-                    throw new DOMException('The host rejected the clipboard write', 'NotAllowedError');
-                  }
+                  await __webSceneWriteClipboard(type, blob);
                 }
               }
             };
@@ -4138,6 +4190,14 @@ struct v8_dom_runtime::implementation final {
         std::lock_guard lock(host_request_mutex);
         if (host_requests.empty()) return false;
         request = std::move(host_requests.front());
+        host_requests.pop_front();
+        return true;
+    }
+
+    bool discard_host_request()
+    {
+        std::lock_guard lock(host_request_mutex);
+        if (host_requests.empty()) return false;
         host_requests.pop_front();
         return true;
     }
@@ -4268,8 +4328,11 @@ struct v8_dom_runtime::implementation final {
 
     bool queue_external_url(const std::string& authored)
     {
+        constexpr size_t maximum_external_url_bytes = 8192U;
+        if (authored.size() > maximum_external_url_bytes) return false;
         const auto& base = current_base_address();
         const auto resolved = resolve_resource_url(authored, base);
+        if (resolved.size() > maximum_external_url_bytes) return false;
         const auto lower = lower_html_name(resolved);
         if (!lower.starts_with("https://") && !lower.starts_with("http://")) return true;
 
@@ -4318,6 +4381,50 @@ struct v8_dom_runtime::implementation final {
         proxy->Set(local_context, js_string(info.GetIsolate(), "opener"), v8::Null(info.GetIsolate())).Check();
         proxy->Set(local_context, js_string(info.GetIsolate(), "closed"), v8::False(info.GetIsolate())).Check();
         info.GetReturnValue().Set(proxy);
+    }
+
+    bool queue_top_level_window_action(
+        v8::Local<v8::Context> local_context,
+        const char* kind)
+    {
+        if (local_context != context.Get(isolate)) return true;
+        auto request = v8::Object::New(isolate);
+        request->Set(
+            local_context,
+            js_string(isolate, "kind"),
+            js_string(isolate, kind)).Check();
+        return enqueue_host_request(local_context, request);
+    }
+
+    static void window_close(const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        auto local_context = info.GetIsolate()->GetCurrentContext();
+        if (self == nullptr || local_context != self->context.Get(info.GetIsolate()))
+            return;
+        auto global = local_context->Global();
+        auto event = self->create_event_instance(local_context);
+        event->Set(local_context, js_string(info.GetIsolate(), "type"),
+            js_string(info.GetIsolate(), "beforeunload")).Check();
+        event->Set(local_context, js_string(info.GetIsolate(), "bubbles"),
+            v8::False(info.GetIsolate())).Check();
+        event->Set(local_context, js_string(info.GetIsolate(), "cancelable"),
+            v8::True(info.GetIsolate())).Check();
+        v8::Local<v8::Value> dispatcher;
+        v8::Local<v8::Value> dispatch_result;
+        v8::Local<v8::Value> arguments[] = {event};
+        if (global->Get(local_context, js_string(info.GetIsolate(), "dispatchEvent"))
+                .ToLocal(&dispatcher)
+            && dispatcher->IsFunction()
+            && dispatcher.As<v8::Function>()->Call(
+                    local_context, global, 1, arguments).ToLocal(&dispatch_result)
+            && dispatch_result->IsFalse()) {
+            return;
+        }
+        if (!self->queue_top_level_window_action(local_context, "closeWindow")) {
+            info.GetIsolate()->ThrowException(v8::Exception::Error(
+                js_string(info.GetIsolate(), "WebScene rejected the close-window request")));
+        }
     }
 
     static void record_web_api_use(const v8::FunctionCallbackInfo<v8::Value>& info)
@@ -4573,6 +4680,12 @@ bool v8_dom_runtime::load_url(
 bool v8_dom_runtime::set_visible(bool visible)
 {
     return impl_->set_visible(visible)
+        && impl_->promote_pending_promise_error();
+}
+
+bool v8_dom_runtime::set_focused(bool focused)
+{
+    return impl_->set_focused(focused)
         && impl_->promote_pending_promise_error();
 }
 
@@ -6155,5 +6268,21 @@ void v8_dom_runtime::complete_file_request(native_file_completion& completion) {
         if(impl_->console_messages.size()<1024)
             impl_->console_messages.push_back("error\nNative file completion: "+impl_->last_error);
     }
+}
+void v8_dom_runtime::complete_host_request(native_host_completion& completion) {
+    v8::Locker locker(impl_->isolate);
+    v8::Isolate::Scope isolate_scope(impl_->isolate);
+    v8::HandleScope handles(impl_->isolate);
+    v8::TryCatch caught(impl_->isolate);
+    impl_->complete_native_host(completion);
+    if(caught.HasCaught()) {
+        impl_->last_error=impl_->describe_reported_exception(caught);
+        std::lock_guard lock(impl_->console_message_mutex);
+        if(impl_->console_messages.size()<1024)
+            impl_->console_messages.push_back("error\nNative host completion: "+impl_->last_error);
+    }
+}
+bool v8_dom_runtime::discard_host_request() {
+    return impl_->discard_host_request();
 }
 }

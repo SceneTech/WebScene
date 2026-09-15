@@ -1750,6 +1750,9 @@ void test_pointer_cursor_and_external_anchor_host_handoff(webscene_engine* engin
             error => { globalThis.__screenshotCopyState = String(error); });
         })()
     )JS", "native-tradingview-canvas-copy.js");
+    require(evaluate(engine, "true",
+                "native-tradingview-canvas-copy-barrier.js") == "true",
+        "TradingView canvas copy did not drain through the engine worker");
     const auto screenshot_clipboard_request = take_typed_host_request(engine);
     require(
         screenshot_clipboard_request.kind

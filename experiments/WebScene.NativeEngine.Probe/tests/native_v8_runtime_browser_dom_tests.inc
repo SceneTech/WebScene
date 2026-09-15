@@ -207,6 +207,37 @@ void test_specialized_content_properties(webscene_engine* engine)
         "specialized meta/template content properties diverged: " + result);
 }
 
+void test_child_collection_item(webscene_engine* engine)
+{
+    const auto result = evaluate(engine, R"JS(
+        (() => {
+          const host = document.createElement('div');
+          host.append('leading text');
+          const first = document.createElement('span');
+          const second = document.createElement('button');
+          host.append(first, second);
+          return {
+            children: [
+              typeof host.children.item,
+              host.children.item(0) === first,
+              host.children.item(1) === second,
+              host.children.item(2)
+            ],
+            childNodes: [
+              typeof host.childNodes.item,
+              host.childNodes.item(0).nodeType,
+              host.childNodes.item(1) === first,
+              host.childNodes.item(9)
+            ]
+          };
+        })()
+    )JS", "native-child-collection-item.js");
+    const auto expected = R"JSON({"children":["function",true,true,null],"childNodes":["function",3,true,null]})JSON";
+    require(
+        result == expected,
+        "child collection item lookup diverged: " + result);
+}
+
 void test_textarea_child_text_value_lifecycle(webscene_engine* engine)
 {
     const auto result = evaluate(engine, R"JS(

@@ -398,6 +398,10 @@
         for (uint32_t index = 0; index < children.size(); ++index) {
             result->Set(local_context, index, self->wrap_node(*children[index])).Check();
         }
+        result->Set(
+            local_context,
+            js_string(info.GetIsolate(), "item"),
+            v8::Function::New(local_context, collection_item).ToLocalChecked()).Check();
         info.GetReturnValue().Set(result);
     }
 

@@ -3298,6 +3298,10 @@ struct v8_dom_runtime::implementation final {
             local_context,
             js_string(isolate, "HTMLCollection"),
             get_html_collection_constructor).Check();
+        global->SetLazyDataProperty(
+            local_context,
+            js_string(isolate, "DOMTokenList"),
+            get_dom_token_list_constructor).Check();
         install_document_constructor(
             local_context,
             global,

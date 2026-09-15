@@ -769,11 +769,19 @@
         }
     }
 
-    static dom_node* class_list_node(const v8::FunctionCallbackInfo<v8::Value>& info)
+    static dom_node* class_list_node(v8::Local<v8::Object> object)
     {
-        return info.Data()->IsExternal()
-            ? static_cast<dom_node*>(info.Data().As<v8::External>()->Value(v8::kExternalPointerTypeTagDefault))
+        return object->InternalFieldCount() > 0
+            ? static_cast<dom_node*>(object->GetAlignedPointerFromInternalField(
+                0,
+                v8::kEmbedderDataTypeTagDefault))
             : nullptr;
+    }
+
+    static dom_node* class_list_node(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        return class_list_node(info.This());
     }
 
     static void class_list_value_getter_bridge(
@@ -809,15 +817,10 @@
         self->recascade_dynamic_state_subject(*node, "classList.value");
     }
 
-    bool has_class(const dom_node& node, std::string_view value) const
+    const std::vector<std::string>& class_tokens(const dom_node& node) const
     {
         auto known = compiled_class_token_lists.find(node.class_name);
-        if (known != compiled_class_token_lists.end()) {
-            return std::find(
-                known->second.begin(),
-                known->second.end(),
-                value) != known->second.end();
-        }
+        if (known != compiled_class_token_lists.end()) return known->second;
         const std::string_view classes(node.class_name);
         const auto html_whitespace = [](unsigned char character) {
             return character == ' ' || character == '\t' || character == '\n'
@@ -832,7 +835,10 @@
             while (cursor < classes.size()
                 && !html_whitespace(static_cast<unsigned char>(classes[cursor]))) ++cursor;
             if (cursor > start) {
-                tokens.emplace_back(classes.substr(start, cursor - start));
+                const auto token = classes.substr(start, cursor - start);
+                if (std::find(tokens.begin(), tokens.end(), token) == tokens.end()) {
+                    tokens.emplace_back(token);
+                }
             }
         }
         if (compiled_class_token_lists.size()
@@ -840,36 +846,63 @@
             compiled_class_token_lists.clear();
         }
         known = compiled_class_token_lists.emplace(node.class_name, std::move(tokens)).first;
-        return std::find(
-            known->second.begin(),
-            known->second.end(),
-            value) != known->second.end();
+        return known->second;
     }
 
-    bool remove_class(dom_node& node, const std::string& removed)
+    bool has_class(const dom_node& node, std::string_view value) const
     {
-        if (!has_class(node, removed)) return false;
-        const auto html_whitespace = [](unsigned char character) {
+        const auto& tokens = class_tokens(node);
+        return std::find(
+            tokens.begin(),
+            tokens.end(),
+            value) != tokens.end();
+    }
+
+    static bool class_token_has_ascii_whitespace(std::string_view token)
+    {
+        return std::ranges::any_of(token, [](unsigned char character) {
             return character == ' ' || character == '\t' || character == '\n'
                 || character == '\f' || character == '\r';
-        };
-        std::string result;
-        size_t cursor = 0;
-        while (cursor < node.class_name.size()) {
-            while (cursor < node.class_name.size()
-                && html_whitespace(static_cast<unsigned char>(node.class_name[cursor]))) ++cursor;
-            const auto start = cursor;
-            while (cursor < node.class_name.size()
-                && !html_whitespace(static_cast<unsigned char>(node.class_name[cursor]))) ++cursor;
-            const auto item = node.class_name.substr(start, cursor - start);
-            if (item.empty() || item == removed) continue;
-            if (!result.empty()) result.push_back(' ');
-            result += item;
+        });
+    }
+
+    static bool validate_class_token(
+        const v8::FunctionCallbackInfo<v8::Value>& info,
+        const std::string& token)
+    {
+        if (token.empty()) {
+            throw_dom_exception(
+                info,
+                "The token provided must not be empty.",
+                "SyntaxError");
+            return false;
         }
-        node.class_name = std::move(result);
-        if (node.class_name.empty()) node.attributes.erase("class");
-        else node.attributes["class"] = node.class_name;
+        if (class_token_has_ascii_whitespace(token)) {
+            throw_dom_exception(
+                info,
+                "The token provided contains HTML space characters, which are not valid in tokens.",
+                "InvalidCharacterError");
+            return false;
+        }
         return true;
+    }
+
+    void set_class_tokens(
+        dom_node& node,
+        const std::vector<std::string>& tokens,
+        std::string_view reason)
+    {
+        std::string serialized;
+        for (const auto& token : tokens) {
+            if (!serialized.empty()) serialized.push_back(' ');
+            serialized += token;
+        }
+        node.class_name = std::move(serialized);
+        // Updating a DOMTokenList serializes the ordered set back into its
+        // associated attribute. The attribute remains present when the set is
+        // empty, matching the DOM Standard's update steps.
+        node.attributes["class"] = node.class_name;
+        recascade_dynamic_state_subject(node, reason);
     }
 
     static void class_list_add(const v8::FunctionCallbackInfo<v8::Value>& info)
@@ -880,18 +913,19 @@
             self->profile_named("DOMTokenList.add"));
         auto* node = class_list_node(info);
         if (node == nullptr) return;
-        auto changed = false;
+        auto tokens = self->class_tokens(*node);
+        std::vector<std::string> additions;
         for (int index = 0; index < info.Length(); ++index) {
             const auto value = to_utf8(info.GetIsolate(), info[index]);
-            if (!value.empty() && !self->has_class(*node, value)) {
-                if (!node->class_name.empty()) node->class_name.push_back(' ');
-                node->class_name += value;
-                node->attributes["class"] = node->class_name;
-                changed = true;
+            if (!validate_class_token(info, value)) return;
+            if (std::find(tokens.begin(), tokens.end(), value) == tokens.end()
+                && std::find(additions.begin(), additions.end(), value) == additions.end()) {
+                additions.push_back(value);
             }
         }
-        if (changed) {
-            self->recascade_dynamic_state_subject(*node, "classList.add");
+        if (!additions.empty()) {
+            tokens.insert(tokens.end(), additions.begin(), additions.end());
+            self->set_class_tokens(*node, tokens, "classList.add");
         }
     }
 
@@ -903,12 +937,19 @@
             self->profile_named("DOMTokenList.remove"));
         auto* node = class_list_node(info);
         if (node == nullptr || info.Length() < 1) return;
-        auto changed = false;
+        std::vector<std::string> removals;
         for (int index = 0; index < info.Length(); ++index) {
-            changed |= self->remove_class(*node, to_utf8(info.GetIsolate(), info[index]));
+            auto value = to_utf8(info.GetIsolate(), info[index]);
+            if (!validate_class_token(info, value)) return;
+            removals.push_back(std::move(value));
         }
-        if (changed) {
-            self->recascade_dynamic_state_subject(*node, "classList.remove");
+        auto tokens = self->class_tokens(*node);
+        const auto original_size = tokens.size();
+        std::erase_if(tokens, [&](const std::string& token) {
+            return std::find(removals.begin(), removals.end(), token) != removals.end();
+        });
+        if (tokens.size() != original_size) {
+            self->set_class_tokens(*node, tokens, "classList.remove");
         }
     }
 
@@ -932,21 +973,329 @@
         auto* node = class_list_node(info);
         if (node == nullptr || info.Length() < 1) return;
         const auto value = to_utf8(info.GetIsolate(), info[0]);
+        if (!validate_class_token(info, value)) return;
         const auto present = self->has_class(*node, value);
         const auto enabled = info.Length() > 1 ? info[1]->BooleanValue(info.GetIsolate()) : !present;
-        auto changed = false;
+        auto tokens = self->class_tokens(*node);
         if (enabled && !present) {
-            if (!node->class_name.empty()) node->class_name.push_back(' ');
-            node->class_name += value;
-            node->attributes["class"] = node->class_name;
-            changed = true;
+            tokens.push_back(value);
+            self->set_class_tokens(*node, tokens, "classList.toggle");
         } else if (!enabled && present) {
-            changed = self->remove_class(*node, value);
-        }
-        if (changed) {
-            self->recascade_dynamic_state_subject(*node, "classList.toggle");
+            std::erase(tokens, value);
+            self->set_class_tokens(*node, tokens, "classList.toggle");
         }
         info.GetReturnValue().Set(v8::Boolean::New(info.GetIsolate(), enabled));
+    }
+
+    static void class_list_length(const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        binding_callback_timer binding_timer(self->profile(binding_category::dom_property));
+        auto* node = class_list_node(info);
+        if (node == nullptr) return;
+        info.GetReturnValue().Set(v8::Integer::NewFromUnsigned(
+            info.GetIsolate(),
+            static_cast<uint32_t>(self->class_tokens(*node).size())));
+    }
+
+    static void class_list_item(const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        binding_callback_timer binding_timer(self->profile(binding_category::dom_property));
+        auto* node = class_list_node(info);
+        if (node == nullptr) return;
+        const auto index = info.Length() > 0
+            ? info[0]->Uint32Value(info.GetIsolate()->GetCurrentContext()).FromMaybe(0)
+            : 0U;
+        const auto& tokens = self->class_tokens(*node);
+        info.GetReturnValue().Set(index < tokens.size()
+            ? v8::Local<v8::Value>(js_dom_string(info.GetIsolate(), tokens[index]))
+            : v8::Local<v8::Value>(v8::Null(info.GetIsolate())));
+    }
+
+    static void class_list_replace(const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        binding_callback_timer binding_timer(
+            self->profile(binding_category::dom_mutation),
+            self->profile_named("DOMTokenList.replace"));
+        auto* node = class_list_node(info);
+        if (node == nullptr) return;
+        const auto old_token = info.Length() > 0
+            ? to_utf8(info.GetIsolate(), info[0])
+            : std::string{"undefined"};
+        const auto new_token = info.Length() > 1
+            ? to_utf8(info.GetIsolate(), info[1])
+            : std::string{"undefined"};
+        if (!validate_class_token(info, old_token)
+            || !validate_class_token(info, new_token)) return;
+        auto tokens = self->class_tokens(*node);
+        const auto old_position = std::find(tokens.begin(), tokens.end(), old_token);
+        if (old_position == tokens.end()) {
+            info.GetReturnValue().Set(false);
+            return;
+        }
+        if (old_token == new_token) {
+            info.GetReturnValue().Set(true);
+            return;
+        }
+        const auto new_position = std::find(tokens.begin(), tokens.end(), new_token);
+        if (new_position == tokens.end()) {
+            *old_position = new_token;
+        } else if (old_position != new_position) {
+            tokens.erase(old_position);
+        }
+        self->set_class_tokens(*node, tokens, "classList.replace");
+        info.GetReturnValue().Set(true);
+    }
+
+    static v8::Local<v8::Private> class_list_iterator_list_key(v8::Isolate* isolate)
+    {
+        return v8::Private::ForApi(
+            isolate, js_string(isolate, "WebScene.DOMTokenListIterator.list"));
+    }
+
+    static v8::Local<v8::Private> class_list_iterator_index_key(v8::Isolate* isolate)
+    {
+        return v8::Private::ForApi(
+            isolate, js_string(isolate, "WebScene.DOMTokenListIterator.index"));
+    }
+
+    static void class_list_iterator_identity(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        info.GetReturnValue().Set(info.This());
+    }
+
+    static void class_list_iterator_next(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        auto context = info.GetIsolate()->GetCurrentContext();
+        v8::Local<v8::Value> list_value;
+        v8::Local<v8::Value> index_value;
+        if (!info.This()->GetPrivate(
+                context, class_list_iterator_list_key(info.GetIsolate())).ToLocal(&list_value)
+            || !info.This()->GetPrivate(
+                context, class_list_iterator_index_key(info.GetIsolate())).ToLocal(&index_value)
+            || !list_value->IsObject()) {
+            info.GetIsolate()->ThrowException(v8::Exception::TypeError(
+                js_string(info.GetIsolate(), "Illegal invocation")));
+            return;
+        }
+        auto* node = class_list_node(list_value.As<v8::Object>());
+        const auto index = index_value->Uint32Value(context).FromMaybe(0);
+        const auto& tokens = self->class_tokens(*node);
+        auto result = v8::Object::New(info.GetIsolate());
+        const auto done = index >= tokens.size();
+        v8::Local<v8::Value> value = v8::Undefined(info.GetIsolate());
+        if (!done) {
+            const auto kind = info.Data()->Int32Value(context).FromMaybe(1);
+            if (kind == 0) {
+                value = v8::Integer::NewFromUnsigned(info.GetIsolate(), index);
+            } else if (kind == 2) {
+                auto pair = v8::Array::New(info.GetIsolate(), 2);
+                pair->Set(context, 0, v8::Integer::NewFromUnsigned(info.GetIsolate(), index)).Check();
+                pair->Set(context, 1, js_dom_string(info.GetIsolate(), tokens[index])).Check();
+                value = pair;
+            } else {
+                value = js_dom_string(info.GetIsolate(), tokens[index]);
+            }
+            info.This()->SetPrivate(
+                context,
+                class_list_iterator_index_key(info.GetIsolate()),
+                v8::Integer::NewFromUnsigned(info.GetIsolate(), index + 1)).Check();
+        }
+        result->Set(context, js_string(info.GetIsolate(), "value"), value).Check();
+        result->Set(context, js_string(info.GetIsolate(), "done"),
+            v8::Boolean::New(info.GetIsolate(), done)).Check();
+        info.GetReturnValue().Set(result);
+    }
+
+    static void class_list_iterator(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto context = info.GetIsolate()->GetCurrentContext();
+        auto iterator = v8::Object::New(info.GetIsolate());
+        iterator->SetPrivate(
+            context,
+            class_list_iterator_list_key(info.GetIsolate()),
+            info.This()).Check();
+        iterator->SetPrivate(
+            context,
+            class_list_iterator_index_key(info.GetIsolate()),
+            v8::Integer::NewFromUnsigned(info.GetIsolate(), 0)).Check();
+        iterator->DefineOwnProperty(
+            context,
+            js_string(info.GetIsolate(), "next"),
+            v8::Function::New(context, class_list_iterator_next, info.Data()).ToLocalChecked(),
+            v8::DontEnum).Check();
+        iterator->DefineOwnProperty(
+            context,
+            v8::Symbol::GetIterator(info.GetIsolate()),
+            v8::Function::New(context, class_list_iterator_identity).ToLocalChecked(),
+            v8::DontEnum).Check();
+        iterator->DefineOwnProperty(
+            context,
+            v8::Symbol::GetToStringTag(info.GetIsolate()),
+            js_string(info.GetIsolate(), "DOMTokenList Iterator"),
+            static_cast<v8::PropertyAttribute>(v8::ReadOnly | v8::DontEnum)).Check();
+        info.GetReturnValue().Set(iterator);
+    }
+
+    static void class_list_for_each(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        auto* node = class_list_node(info);
+        if (node == nullptr) return;
+        if (info.Length() < 1 || !info[0]->IsFunction()) {
+            info.GetIsolate()->ThrowException(v8::Exception::TypeError(
+                js_string(info.GetIsolate(), "DOMTokenList.forEach requires a callback")));
+            return;
+        }
+        auto context = info.GetIsolate()->GetCurrentContext();
+        auto callback = info[0].As<v8::Function>();
+        auto receiver = info.Length() > 1 ? info[1] : v8::Undefined(info.GetIsolate());
+        uint32_t index = 0;
+        while (index < self->class_tokens(*node).size()) {
+            auto token = js_dom_string(info.GetIsolate(), self->class_tokens(*node)[index]);
+            v8::Local<v8::Value> arguments[] = {
+                token,
+                v8::Integer::NewFromUnsigned(info.GetIsolate(), index),
+                info.This()};
+            if (callback->Call(context, receiver, 3, arguments).IsEmpty()) return;
+            ++index;
+        }
+    }
+
+    static v8::Intercepted class_list_indexed_getter(
+        uint32_t index,
+        const v8::PropertyCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        auto* node = class_list_node(info.Holder());
+        if (self == nullptr || node == nullptr) return v8::Intercepted::kNo;
+        const auto& tokens = self->class_tokens(*node);
+        if (index >= tokens.size()) return v8::Intercepted::kNo;
+        info.GetReturnValue().Set(js_dom_string(info.GetIsolate(), tokens[index]));
+        return v8::Intercepted::kYes;
+    }
+
+    static v8::Intercepted class_list_indexed_query(
+        uint32_t index,
+        const v8::PropertyCallbackInfo<v8::Integer>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        auto* node = class_list_node(info.Holder());
+        if (self == nullptr || node == nullptr
+            || index >= self->class_tokens(*node).size()) return v8::Intercepted::kNo;
+        info.GetReturnValue().Set(v8::Integer::New(info.GetIsolate(), v8::ReadOnly));
+        return v8::Intercepted::kYes;
+    }
+
+    static void class_list_indexed_enumerator(
+        const v8::PropertyCallbackInfo<v8::Array>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        auto* node = class_list_node(info.Holder());
+        const auto size = self == nullptr || node == nullptr
+            ? size_t{0}
+            : self->class_tokens(*node).size();
+        auto result = v8::Array::New(info.GetIsolate(), static_cast<int>(size));
+        auto context = info.GetIsolate()->GetCurrentContext();
+        for (uint32_t index = 0; index < size; ++index) {
+            result->Set(context, index,
+                v8::Integer::NewFromUnsigned(info.GetIsolate(), index)).Check();
+        }
+        info.GetReturnValue().Set(result);
+    }
+
+    static void dom_token_list_constructor(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        if (info.IsConstructCall() && info.Length() == 1 && info[0]->IsExternal()) {
+            info.This()->SetAlignedPointerInInternalField(
+                0,
+                info[0].As<v8::External>()->Value(v8::kExternalPointerTypeTagDefault),
+                v8::kEmbedderDataTypeTagDefault);
+            info.GetReturnValue().Set(info.This());
+            return;
+        }
+        info.GetIsolate()->ThrowException(v8::Exception::TypeError(
+            js_string(info.GetIsolate(), "Illegal constructor")));
+    }
+
+    v8::Local<v8::FunctionTemplate> ensure_dom_token_list_template()
+    {
+        if (!dom_token_list_template.IsEmpty()) {
+            return dom_token_list_template.Get(isolate);
+        }
+        auto token_list = v8::FunctionTemplate::New(isolate, dom_token_list_constructor);
+        token_list->SetClassName(js_string(isolate, "DOMTokenList"));
+        token_list->InstanceTemplate()->SetInternalFieldCount(1);
+        token_list->InstanceTemplate()->SetHandler(v8::IndexedPropertyHandlerConfiguration(
+            class_list_indexed_getter,
+            nullptr,
+            class_list_indexed_query,
+            nullptr,
+            class_list_indexed_enumerator));
+        auto signature = v8::Signature::New(isolate, token_list);
+        const auto method = [&](const char* name, v8::FunctionCallback callback, int length = 0,
+                                v8::Local<v8::Value> data = {}) {
+            token_list->PrototypeTemplate()->Set(
+                js_string(isolate, name),
+                v8::FunctionTemplate::New(
+                    isolate, callback, data, signature, length,
+                    v8::ConstructorBehavior::kThrow));
+        };
+        method("add", class_list_add, 0);
+        method("remove", class_list_remove, 0);
+        method("contains", class_list_contains, 1);
+        method("toggle", class_list_toggle, 1);
+        method("item", class_list_item, 1);
+        method("replace", class_list_replace, 2);
+        method("keys", class_list_iterator, 0, v8::Integer::New(isolate, 0));
+        method("entries", class_list_iterator, 0, v8::Integer::New(isolate, 2));
+        method("forEach", class_list_for_each, 1);
+        auto length_getter = v8::FunctionTemplate::New(
+            isolate, class_list_length, {}, signature, 0,
+            v8::ConstructorBehavior::kThrow);
+        token_list->PrototypeTemplate()->SetAccessorProperty(
+            js_string(isolate, "length"), length_getter);
+        auto value_getter = v8::FunctionTemplate::New(
+            isolate, class_list_value_getter_bridge, {}, signature, 0,
+            v8::ConstructorBehavior::kThrow);
+        auto value_setter = v8::FunctionTemplate::New(
+            isolate, class_list_value_setter_bridge, {}, signature, 1,
+            v8::ConstructorBehavior::kThrow);
+        token_list->PrototypeTemplate()->SetAccessorProperty(
+            js_string(isolate, "value"), value_getter, value_setter);
+        auto values = v8::FunctionTemplate::New(
+            isolate,
+            class_list_iterator,
+            v8::Integer::New(isolate, 1),
+            signature,
+            0,
+            v8::ConstructorBehavior::kThrow);
+        token_list->PrototypeTemplate()->Set(js_string(isolate, "values"), values);
+        token_list->PrototypeTemplate()->Set(v8::Symbol::GetIterator(isolate), values);
+        token_list->PrototypeTemplate()->Set(
+            v8::Symbol::GetToStringTag(isolate),
+            js_string(isolate, "DOMTokenList"),
+            static_cast<v8::PropertyAttribute>(v8::ReadOnly | v8::DontEnum));
+        dom_token_list_template.Reset(isolate, token_list);
+        return token_list;
+    }
+
+    static void get_dom_token_list_constructor(
+        v8::Local<v8::Name>,
+        const v8::PropertyCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        if (self == nullptr) return;
+        info.GetReturnValue().Set(self->ensure_dom_token_list_template()
+            ->GetFunction(info.GetIsolate()->GetCurrentContext()).ToLocalChecked());
     }
 
     static void get_class_list(

@@ -72,8 +72,8 @@ void test_table_cell_click_copies_text_to_host()
             std::this_thread::sleep_for(std::chrono::milliseconds(2));
         }
         require(state == R"("copied")", "table cell click failed: " + state);
-        require(evaluate(engine, realm + ".legacyCopyResult", "table-cell-legacy-result.js") == "false",
-            "unsupported legacy copy must not claim success");
+        require(evaluate(engine, realm + ".legacyCopyResult", "table-cell-legacy-result.js") == "true",
+            "legacy copy did not report its dispatched clipboard event");
         pointer_button(engine, WEBSCENE_INPUT_POINTER_DOWN, 20, 70, 803U, true);
         pointer_button(engine, WEBSCENE_INPUT_POINTER_UP, 20, 70, 804U, false);
         evaluate(engine, realm + ".copyState", "table-cell-empty-click-barrier.js");

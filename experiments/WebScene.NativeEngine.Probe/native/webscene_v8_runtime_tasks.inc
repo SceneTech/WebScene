@@ -2273,7 +2273,7 @@
                 local_context,
                 js_string(isolate, "__webSceneClipboardShortcut")).ToLocal(&helper)
             || !helper->IsFunction()) {
-            return true;
+            return false;
         }
         v8::Local<v8::Value> arguments[] = {
             js_string(isolate, type),
@@ -2284,7 +2284,7 @@
             return false;
         }
         perform_microtask_checkpoint();
-        return true;
+        return result->BooleanValue(isolate);
     }
 
     static size_t previous_utf8_boundary(const std::string& value, size_t index)
@@ -2828,6 +2828,13 @@
 
     bool dispatch_input(const webscene_input_event& input, bool defer_cursor_update = false)
     {
+        struct user_input_dispatch_scope {
+            bool& active;
+            bool previous;
+            explicit user_input_dispatch_scope(bool& value)
+                : active(value), previous(value) { active = true; }
+            ~user_input_dispatch_scope() { active = previous; }
+        } dispatch_scope{dispatching_user_input};
         current_input_sequence = input.sequence;
         if (input.kind == WEBSCENE_INPUT_POINTER_DOWN
             || input.kind == WEBSCENE_INPUT_KEY_DOWN) {

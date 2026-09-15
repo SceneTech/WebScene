@@ -54,6 +54,8 @@ void test_table_cell_click_copies_text_to_host()
             "table cell fixture did not initialize");
         pointer_button(engine, WEBSCENE_INPUT_POINTER_DOWN, 20, 20, 801U, true);
         pointer_button(engine, WEBSCENE_INPUT_POINTER_UP, 20, 20, 802U, false);
+        require(evaluate(engine, "true", "table-cell-copy-request-barrier.js") == "true",
+            "table cell copy did not drain through the engine worker");
         const auto request = take_typed_host_request(engine);
         require(request.kind == WEBSCENE_HOST_REQUEST_CLIPBOARD_WRITE_V1
                 && request.content_type == "text/plain"

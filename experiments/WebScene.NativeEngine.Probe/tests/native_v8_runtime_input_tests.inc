@@ -1538,7 +1538,8 @@ void test_pointer_cursor_and_external_anchor_host_handoff(webscene_engine* engin
         addEventListener('beforeunload', event => event.preventDefault(), { once: true });
         close();
     )JS", "native-window-close-veto.js");
-    require(!take_typed_host_request(engine),
+    require(evaluate(engine, "true", "native-window-close-veto-barrier.js") == "true"
+            && !take_typed_host_request(engine),
         "cancelled beforeunload still reached the native close host path");
 
     require(evaluate(engine, "location.reload(); true", "native-window-reload.js")
@@ -1812,9 +1813,11 @@ void test_typed_window_host_request_performance(webscene_engine* engine)
     constexpr unsigned batch_size = 1000U;
     const auto started = std::chrono::steady_clock::now();
     for (unsigned offset = 0; offset < operation_count; offset += batch_size) {
-        execute(engine, R"JS(
+        require(evaluate(engine, R"JS(
             for (let index = 0; index < 1000; ++index) focus();
-        )JS", "native-window-request-performance.js");
+            true
+        )JS", "native-window-request-performance.js") == "true",
+            "typed window request batch did not drain through the engine worker");
         for (unsigned index = 0; index < batch_size; ++index) {
             const auto request = take_typed_host_request(engine);
             require(request.kind == WEBSCENE_HOST_REQUEST_WINDOW_FOCUS_V1,

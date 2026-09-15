@@ -2607,6 +2607,8 @@ void test_clipboard_write_text_host_handoff(webscene_engine* engine)
           () => { __clipboardWriteState = 'fulfilled'; },
           error => { __clipboardWriteState = error.name + ':' + error.message; });
     )JS", "native-clipboard-write-text.js");
+    require(evaluate(engine, "true", "native-clipboard-write-text-barrier.js") == "true",
+        "Clipboard.writeText did not drain through the engine worker");
     const auto request = take_typed_host_request(engine);
     require(
         request.kind == WEBSCENE_HOST_REQUEST_CLIPBOARD_WRITE_V1
@@ -2653,6 +2655,8 @@ void test_clipboard_read_host_completion(webscene_engine* engine)
           value => { __clipboardReadState = value; },
           error => { __clipboardReadState = error.name; });
     )JS", "native-clipboard-read-text.js");
+    require(evaluate(engine, "true", "native-clipboard-read-text-barrier.js") == "true",
+        "Clipboard.readText did not drain through the engine worker");
     auto request = take_typed_host_request(engine);
     require(
         request.kind == WEBSCENE_HOST_REQUEST_CLIPBOARD_READ_V1
@@ -2682,6 +2686,8 @@ void test_clipboard_read_host_completion(webscene_engine* engine)
           () => { __clipboardCancelState = 'fulfilled'; },
           error => { __clipboardCancelState = error.name; });
     )JS", "native-clipboard-read-cancel.js");
+    require(evaluate(engine, "true", "native-clipboard-read-cancel-barrier.js") == "true",
+        "cancelled Clipboard.readText did not drain through the engine worker");
     request = take_typed_host_request(engine);
     require(
         webscene_engine_complete_host_request_v1(
@@ -2713,6 +2719,8 @@ void test_clipboard_read_host_completion(webscene_engine* engine)
           __clipboardQuotaState = values;
         });
     )JS", "native-clipboard-queue-saturation.js");
+    require(evaluate(engine, "true", "native-clipboard-queue-saturation-barrier.js") == "true",
+        "clipboard saturation batch did not drain through the engine worker");
     for (unsigned index = 0; index < 16U; ++index) {
         const auto pending = take_typed_host_request(engine);
         require(pending.kind == WEBSCENE_HOST_REQUEST_CLIPBOARD_READ_V1,
@@ -2744,6 +2752,8 @@ void test_clipboard_maximum_payload_gate(webscene_engine* engine)
           () => { __maximumClipboardState = 'fulfilled'; },
           error => { __maximumClipboardState = error.name; });
     )JS", "native-clipboard-maximum-payload.js");
+    require(evaluate(engine, "true", "native-clipboard-maximum-payload-barrier.js") == "true",
+        "maximum clipboard payload did not drain through the engine worker");
     const auto request = take_typed_host_request(engine);
     require(request.kind == WEBSCENE_HOST_REQUEST_CLIPBOARD_WRITE_V1
                 && request.content_type == "text/plain"
@@ -2825,6 +2835,8 @@ void test_fullscreen_host_completion(webscene_engine* engine)
           () => { __fullscreenState = document.fullscreenElement?.id || 'missing'; },
           error => { __fullscreenState = error.name; });
     )JS", "native-fullscreen-enter.js");
+    require(evaluate(engine, "true", "native-fullscreen-enter-barrier.js") == "true",
+        "fullscreen enter did not drain through the engine worker");
     auto request = take_typed_host_request(engine);
     require(
         request.kind == WEBSCENE_HOST_REQUEST_FULLSCREEN_ENTER_V1
@@ -2847,6 +2859,8 @@ void test_fullscreen_host_completion(webscene_engine* engine)
           () => { __fullscreenExitState = document.fullscreenElement === null; },
           error => { __fullscreenExitState = error.name; });
     )JS", "native-fullscreen-exit.js");
+    require(evaluate(engine, "true", "native-fullscreen-exit-barrier.js") == "true",
+        "fullscreen exit did not drain through the engine worker");
     request = take_typed_host_request(engine);
     require(request.kind == WEBSCENE_HOST_REQUEST_FULLSCREEN_EXIT_V1
                 && request.id != 0U,

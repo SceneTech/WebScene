@@ -15,6 +15,32 @@ public sealed class ReleaseCompatibilityGateTests
     }
 
     [Fact]
+    public void MacosReleaseRuntimePublishesExactBoundedNativeSymbols()
+    {
+        var builder = File.ReadAllText(Path.Combine(
+            s_repositoryRoot,
+            "scripts",
+            "build-native-engine-runtime.sh"));
+        Assert.Contains("-gline-tables-only", builder, StringComparison.Ordinal);
+        Assert.Contains("dsymutil \"$native_path\"", builder, StringComparison.Ordinal);
+        Assert.Contains("strip -S \"$native_path\"", builder, StringComparison.Ordinal);
+        Assert.True(
+            builder.IndexOf("dsymutil \"$native_path\"", StringComparison.Ordinal)
+                < builder.IndexOf("strip -S \"$native_path\"", StringComparison.Ordinal),
+            "The exact runtime must be symbolized before its package copy is stripped.");
+
+        var workflow = File.ReadAllText(Path.Combine(
+            s_repositoryRoot,
+            ".github",
+            "workflows",
+            "native-runtime-packages.yml"));
+        Assert.Contains("name: Upload exact macOS native symbols", workflow, StringComparison.Ordinal);
+        Assert.Contains("path: artifacts/native-engine-runtime-build/**/*.dSYM/**", workflow, StringComparison.Ordinal);
+        Assert.Contains("compression-level: 9", workflow, StringComparison.Ordinal);
+        Assert.Contains("retention-days: 3", workflow, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void RequiredProfileContainsTheEstablishedReleaseDenominator()
     {
         var profilePath = Path.Combine(

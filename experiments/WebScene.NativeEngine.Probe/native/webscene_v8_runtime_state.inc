@@ -380,6 +380,8 @@
     uint64_t current_input_sequence{0};
     uint32_t pending_text_input_target_id{0U};
     bool pending_text_input_from_keydown{false};
+    bool dispatching_user_input{false};
+    bool executing_legacy_clipboard_command{false};
     dom_node* active_element{nullptr};
     bool focus_visible{false};
     bool document_visible{true};

@@ -2747,9 +2747,17 @@ void test_native_clipboard_shortcut_events(webscene_engine*)
         const editor = document.getElementById('editor');
         globalThis.__clipboardShortcutEvents = [];
         globalThis.__clipboardShortcutKeys = [];
+        globalThis.__clipboardExecCommandResults = [];
         editor.addEventListener('keydown', event => {
           __clipboardShortcutKeys.push([
             event.key, event.metaKey, event.ctrlKey, event.defaultPrevented]);
+          const command = event.metaKey && /^[cxv]$/i.test(event.key)
+            ? ({c: 'copy', x: 'cut', v: 'paste'})[event.key.toLowerCase()]
+            : undefined;
+          if (command) {
+            event.preventDefault();
+            __clipboardExecCommandResults.push(document.execCommand(command));
+          }
         });
         editor.addEventListener('copy', event => {
           event.clipboardData.setData('text/plain', 'shortcut copy');
@@ -2771,6 +2779,12 @@ void test_native_clipboard_shortcut_events(webscene_engine*)
         });
         editor.focus();
     )JS", "native-clipboard-shortcuts-setup.js");
+
+    require(evaluate(engine, "document.execCommand('copy')",
+                "native-clipboard-exec-command-without-input.js") == "false",
+        "legacy clipboard command ran without current native user input");
+    require(!take_typed_host_request(engine),
+        "legacy clipboard command without user input reached the host");
 
     constexpr auto modifier = WEBSCENE_INPUT_MODIFIER_META;
     webscene_engine_metrics metrics{};
@@ -2848,6 +2862,13 @@ void test_native_clipboard_shortcut_events(webscene_engine*)
             == R"JSON([["copy",true,true,"text/plain,text/html"],["cut"],["paste","shortcut paste"]])JSON",
         "native clipboard shortcuts did not dispatch browser-compatible events: "
             + shortcut_events);
+    require(evaluate(engine, "__clipboardExecCommandResults",
+                "native-clipboard-exec-command-results.js")
+                == "[true,true,true]",
+        "prevented native shortcuts did not execute document clipboard commands");
+    require(evaluate(engine, "document.execCommand('unsupported-command')",
+                "native-clipboard-unsupported-exec-command.js") == "false",
+        "unsupported legacy command claimed success");
     require(!take_typed_host_request(engine),
         "native clipboard shortcuts retained an unexpected host request");
     webscene_engine_destroy(engine);

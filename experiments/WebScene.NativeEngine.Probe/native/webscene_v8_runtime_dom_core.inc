@@ -4382,12 +4382,43 @@
                 "InvalidStateError");
             return;
         }
-        // This component runtime has no legacy editing command executor. The
-        // command algorithm returns false for unsupported/disabled commands;
-        // never claim a successful copy or dispatch an event without executing
-        // it. Clipboard helpers can then use the implemented async clipboard API.
+        v8::String::Utf8Value command_utf8(isolate, command);
+        std::string command_name = *command_utf8 == nullptr
+            ? std::string{} : std::string(*command_utf8, command_utf8.length());
+        std::transform(
+            command_name.begin(), command_name.end(), command_name.begin(),
+            [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
+        if (command_name == "copy" || command_name == "cut"
+            || command_name == "paste") {
+            if (!self->dispatching_user_input
+                || self->executing_legacy_clipboard_command) {
+                info.GetReturnValue().Set(false);
+                return;
+            }
+            auto* target = self->active_element == nullptr
+                ? &self->active_root() : self->active_element;
+            if (self->document.is_inert(*target)) {
+                info.GetReturnValue().Set(false);
+                return;
+            }
+            self->executing_legacy_clipboard_command = true;
+            const bool dispatched = self->dispatch_clipboard_shortcut(
+                *target, command_name.c_str());
+            self->executing_legacy_clipboard_command = false;
+            if (dispatched) {
+                self->record_feature(
+                    "web-api", "Document.execCommand", "supported",
+                    "copy/cut/paste dispatch browser clipboard events through the bounded native clipboard bridge",
+                    "web-api-binding");
+            }
+            info.GetReturnValue().Set(dispatched);
+            return;
+        }
+        // Other legacy editing commands still have no executor. Return false
+        // without mutating the DOM so callers can choose their supported
+        // asynchronous or application-level fallback.
         self->record_feature("web-api", "Document.execCommand", "unsupported",
-            "legacy editing commands return false; use navigator.clipboard for copying",
+            "unsupported legacy editing commands return false without mutation",
             "web-api-binding");
         info.GetReturnValue().Set(false);
     }

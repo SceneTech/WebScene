@@ -17,6 +17,7 @@ on:
     branches:
     - main
     - release/*
+    - feature/code-oss-browser-compatibility
     paths:
     - '.github/workflows/native-runtime-packages.yml'
     - '.github/actions/graphics-sdk/**'
@@ -29,6 +30,7 @@ on:
     - 'scripts/pack-packages.sh'
     - 'scripts/verify-cross-rid-compatibility.py'
     - 'scripts/tests/test_verify_cross_rid_compatibility.py'
+    - 'scripts/tests/test_workflow_trigger_policy.py'
     - 'scripts/verify-release-packages.py'
     - 'src/WebScene.Backend.Abstractions/**'
     - 'src/WebScene.Backend.Avalonia/**'
@@ -59,6 +61,8 @@ jobs:
       run: |
         python3 -m unittest \
           scripts/tests/test_verify_cross_rid_compatibility.py
+    - name: Verify workflow trigger and publication policy
+      run: python3 -m unittest scripts/tests/test_workflow_trigger_policy.py -v
     - name: Setup .NET
       uses: actions/setup-dotnet@v5
       with:

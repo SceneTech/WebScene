@@ -10,6 +10,7 @@ on:
     branches:
     - main
     - release/*
+    - feature/code-oss-browser-compatibility
 
 jobs:
   build-and-test:
@@ -19,7 +20,7 @@ jobs:
         os:
         - [self-hosted, Linux, X64]
         - [self-hosted, macOS, ARM64]
-    name: Build and test ${{ matrix.os }}
+    name: Build and test ${{ join(matrix.os, ' / ') }}
     runs-on: ${{ matrix.os }}
     steps:
     - uses: actions/checkout@v4
@@ -35,6 +36,8 @@ jobs:
       uses: actions/setup-python@v5
       with:
         python-version: '3.12'
+    - name: Workflow trigger and publication policy
+      run: python -m unittest scripts/tests/test_workflow_trigger_policy.py -v
     - name: Install Linux text-rendering fonts
       if: runner.os == 'Linux'
       shell: bash

@@ -2738,6 +2738,46 @@ void test_clipboard_read_host_completion(webscene_engine* engine)
         "clipboard queue saturation did not reject explicitly");
 }
 
+void test_native_performance_timeline_identity(webscene_engine* engine)
+{
+    const auto result = evaluate(engine, R"JS((() => {
+      const probe = (performance, prefix) => {
+        const mark = performance.mark;
+        const measure = performance.measure;
+        const origin = performance.timeOrigin;
+        mark(prefix + '-start', { startTime: 12 });
+        mark(prefix + '-end', { startTime: 42 });
+        const entry = measure(
+          prefix + '-span', prefix + '-start', prefix + '-end');
+        try { performance.timeOrigin = 0; } catch {}
+        return {
+          finiteOrigin: Number.isFinite(origin),
+          wallClockAligned:
+            Math.abs(Date.now() - (origin + performance.now())) < 1000,
+          readOnlyOrigin: performance.timeOrigin === origin,
+          capturedIdentity:
+            mark === performance.mark && measure === performance.measure,
+          sameTimeline:
+            performance.getEntriesByName(prefix + '-span', 'measure')[0]
+              === entry,
+          startTime: entry.startTime,
+          duration: entry.duration
+        };
+      };
+      const frame = document.createElement('iframe');
+      document.body.appendChild(frame);
+      return {
+        main: probe(performance, 'native-main'),
+        frame: probe(frame.contentWindow.performance, 'native-frame')
+      };
+    })())JS", "native-performance-timeline-identity.js");
+    require(
+        result
+            == R"JSON({"main":{"finiteOrigin":true,"wallClockAligned":true,"readOnlyOrigin":true,"capturedIdentity":true,"sameTimeline":true,"startTime":12,"duration":30},"frame":{"finiteOrigin":true,"wallClockAligned":true,"readOnlyOrigin":true,"capturedIdentity":true,"sameTimeline":true,"startTime":12,"duration":30}})JSON",
+        "main/frame Performance methods did not share one retained timeline: "
+            + result);
+}
+
 void test_native_clipboard_shortcut_events(webscene_engine*)
 {
     auto* engine = webscene_engine_create(0);

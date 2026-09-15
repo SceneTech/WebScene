@@ -68,9 +68,17 @@ void test_indexeddb_persistence_and_transaction_contract()
         });
         stage = 'write-v1';
         const write = database.transaction('ItemTable', 'readwrite');
-        write.objectStore('ItemTable').put(
-          { nested: { enabled: true }, list: [1, 2, 3], bytes: new Uint8Array([0, 7, 255]) },
-          'alpha');
+        const source = {
+          nested: { enabled: true },
+          list: [1, 2, 3],
+          bytes: new Uint8Array([0, 7, 255]),
+          date: new Date(456),
+          map: new Map([['theme', 'dark']])
+        };
+        write.objectStore('ItemTable').put(source, 'alpha');
+        source.nested.enabled = false;
+        source.bytes[1] = 99;
+        source.map.set('theme', 'mutated');
         write.objectStore('ItemTable').put('second', 'beta');
         await transactionDone(write);
 
@@ -130,7 +138,12 @@ void test_indexeddb_persistence_and_transaction_contract()
         "&&indexedDbProbe.cursorValues.length===2"
         "&&indexedDbProbe.cursorValues[0][0]==='alpha'"
         "&&indexedDbProbe.cursorValues[0][1].nested.enabled"
-        "&&indexedDbProbe.cursorValues[0][1].bytes[2]===255",
+        "&&indexedDbProbe.cursorValues[0][1].bytes[2]===255"
+        "&&indexedDbProbe.cursorValues[0][1].bytes[1]===7"
+        "&&indexedDbProbe.cursorValues[0][1].date instanceof Date"
+        "&&indexedDbProbe.cursorValues[0][1].date.getTime()===456"
+        "&&indexedDbProbe.cursorValues[0][1].map instanceof Map"
+        "&&indexedDbProbe.cursorValues[0][1].map.get('theme')==='dark'",
         "indexeddb-runtime-result.js") == "true",
         "upgrade, rollback, structured clone, or cursor behavior changed");
     webscene_engine_destroy(engine);
@@ -155,6 +168,10 @@ void test_indexeddb_persistence_and_transaction_contract()
             restored: request.result.nested.enabled
               && request.result.list.join(',') === '1,2,3'
               && request.result.bytes[1] === 7
+              && request.result.date instanceof Date
+              && request.result.date.getTime() === 456
+              && request.result.map instanceof Map
+              && request.result.map.get('theme') === 'dark'
           };
           database.close();
           resolve();

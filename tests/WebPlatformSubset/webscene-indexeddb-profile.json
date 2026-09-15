@@ -17,6 +17,8 @@
         "indexeddb-transaction-commit-rollback",
         "indexeddb-cursor",
         "indexeddb-structured-clone",
+        "indexeddb-put-snapshot-isolation",
+        "indexeddb-date-map-clone",
         "indexeddb-request-error-cancellation",
         "indexeddb-quota",
         "indexeddb-close-reopen-persistence",
@@ -32,7 +34,7 @@
         "webscene_indexeddb_storage_tests:test_cross_process_conflict",
         "webscene_indexeddb_storage_tests:test_interrupted_write_and_stale_lock_recovery"
       ],
-      "reason": "Project-owned WPT-style reduction of the exact versioned ItemTable flow used by VS Code OSS. Persistence/restart, quota, corruption recovery, and process-conflict behavior are gated by the paired native tests because they require host lifecycle or file-system control."
+      "reason": "Project-owned WPT-style reduction of the exact versioned ItemTable flow used by VS Code OSS. It verifies synchronous put snapshot isolation plus typed-array, Date, and Map restoration. Persistence/restart, quota, corruption recovery, and process-conflict behavior are gated by the paired native tests because they require host lifecycle or file-system control."
     }
   ],
   "harnessBlocked": [

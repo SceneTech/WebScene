@@ -38,7 +38,16 @@
     record("created object store is observable", database.objectStoreNames.contains("ItemTable"));
 
     const write = database.transaction("ItemTable", "readwrite");
-    write.objectStore("ItemTable").put({ value: 1, bytes: new Uint8Array([3, 5, 8]) }, "alpha");
+    const source = {
+      value: 1,
+      bytes: new Uint8Array([3, 5, 8]),
+      date: new Date(456),
+      map: new Map([["theme", "dark"]])
+    };
+    write.objectStore("ItemTable").put(source, "alpha");
+    source.value = 99;
+    source.bytes[1] = 99;
+    source.map.set("theme", "mutated");
     write.objectStore("ItemTable").put({ value: 2 }, "beta");
     await transactionPromise(write);
 
@@ -54,7 +63,13 @@
     const rolledBack = await requestPromise(rollbackRead.objectStore("ItemTable").get("alpha"));
     await transactionPromise(rollbackRead);
     record("aborted transaction rolls back writes", rolledBack.value === 1);
-    record("structured values and typed arrays round trip", rolledBack.bytes[2] === 8);
+    record("put snapshots structured values before the caller mutates them",
+      rolledBack.value === 1 && rolledBack.bytes[1] === 5);
+    record("Date and Map structured values round trip",
+      rolledBack.date instanceof Date && rolledBack.date.getTime() === 456 &&
+      rolledBack.map instanceof Map && rolledBack.map.get("theme") === "dark");
+    rolledBack.bytes[1] = 42;
+    rolledBack.map.set("theme", "read-mutation");
 
     const cursorRead = database.transaction("ItemTable", "readonly");
     const keys = [];
@@ -96,7 +111,9 @@
     const persisted = await requestPromise(persistedRead.objectStore("ItemTable").get("alpha"));
     await transactionPromise(persistedRead);
     record("close and reopen reloads the durable snapshot",
-      persisted.value === 1 && persisted.bytes[1] === 5);
+      persisted.value === 1 && persisted.bytes[1] === 5 &&
+      persisted.date instanceof Date && persisted.date.getTime() === 456 &&
+      persisted.map instanceof Map && persisted.map.get("theme") === "dark");
 
     const second = await open();
     const firstWrite = first.transaction("ItemTable", "readwrite");

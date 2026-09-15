@@ -2841,9 +2841,9 @@ void test_native_clipboard_shortcut_events(webscene_engine*)
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
-    const auto shortcut_events = evaluate(engine, R"JS(
-        JSON.stringify(__clipboardShortcutEvents)
-    )JS", "native-clipboard-shortcuts-result.js");
+    const auto shortcut_events = evaluate(engine,
+        "__clipboardShortcutEvents",
+        "native-clipboard-shortcuts-result.js");
     require(shortcut_events
             == R"JSON([["copy",true,true,"text/plain,text/html"],["cut"],["paste","shortcut paste"]])JSON",
         "native clipboard shortcuts did not dispatch browser-compatible events: "

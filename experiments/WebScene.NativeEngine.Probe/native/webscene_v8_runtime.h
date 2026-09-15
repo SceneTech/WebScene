@@ -51,6 +51,20 @@ struct native_host_completion {
     std::vector<uint8_t> bytes;
     std::string error;
 };
+struct native_host_request {
+    webscene_host_request_v1 view{};
+    std::string content_type;
+    std::vector<uint8_t> bytes;
+    std::string url;
+    void bind() {
+        view.struct_size = sizeof(view);
+        view.version = 1;
+        view.content_type = content_type.empty() ? nullptr : content_type.c_str();
+        view.bytes = bytes.empty() ? nullptr : bytes.data();
+        view.byte_count = bytes.size();
+        view.url = url.empty() ? nullptr : url.c_str();
+    }
+};
 
 class native_document;
 struct dom_node;
@@ -303,6 +317,7 @@ public:
     void complete_file_request(native_file_completion& completion);
     void complete_host_request(native_host_completion& completion);
     bool try_take_host_request(std::string& request);
+    std::unique_ptr<native_host_request> take_typed_host_request();
     bool discard_host_request();
     bool try_take_console_message(std::string& message);
     bool inspector_available() const noexcept;
@@ -323,6 +338,7 @@ public:
     bool refresh_media_environment();
     bool set_visible(bool visible);
     bool set_focused(bool focused);
+    bool set_fullscreen(bool fullscreen);
     bool dispatch_input(const webscene_input_event& event, bool defer_cursor_update = false);
     // Worker-only: call after publication layout and ResizeObserver delivery.
     void refresh_pointer_cursor_after_layout();

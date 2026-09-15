@@ -1217,6 +1217,10 @@ WEBSCENE_API uint8_t webscene_engine_set_visible(webscene_engine* engine, uint8_
  * top-level focus/blur events. Repeated values are coalesced. */
 WEBSCENE_API uint8_t webscene_engine_set_window_focused_v1(
     webscene_engine* engine, uint8_t focused);
+/* Synchronizes fullscreen changes initiated by native window controls. Script
+ * initiated transitions use the typed request/completion path. */
+WEBSCENE_API uint8_t webscene_engine_set_window_fullscreen_v1(
+    webscene_engine* engine, uint8_t fullscreen);
 /*
  * Updates the host's effective color preference. The worker re-evaluates CSS
  * media rules and subsequent Window.matchMedia snapshots against this value.
@@ -1370,6 +1374,39 @@ WEBSCENE_API uint8_t webscene_engine_complete_file_request_v1(webscene_engine* e
     uint64_t request_id, uint32_t status, const webscene_file_data_v1* files,
     size_t file_count, const char* error_message);
 
+/* Typed native desktop request ABI. Request memory is immutable and remains
+ * valid until release. Byte payloads are capped at 16 MiB, strings are UTF-8,
+ * and at most 16 completion-bearing operations may be pending per document. */
+enum {
+    WEBSCENE_HOST_REQUEST_OPEN_EXTERNAL_URL_V1 = 1,
+    WEBSCENE_HOST_REQUEST_CLIPBOARD_READ_V1 = 2,
+    WEBSCENE_HOST_REQUEST_CLIPBOARD_WRITE_V1 = 3,
+    WEBSCENE_HOST_REQUEST_WINDOW_FOCUS_V1 = 4,
+    WEBSCENE_HOST_REQUEST_WINDOW_CLOSE_V1 = 5,
+    WEBSCENE_HOST_REQUEST_WINDOW_RELOAD_V1 = 6,
+    WEBSCENE_HOST_REQUEST_FULLSCREEN_ENTER_V1 = 7,
+    WEBSCENE_HOST_REQUEST_FULLSCREEN_EXIT_V1 = 8
+};
+enum {
+    WEBSCENE_HOST_REQUEST_CLIPBOARD_REPLACE_V1 = 1U << 0U
+};
+typedef struct webscene_host_request_v1 {
+    uint32_t struct_size, version;
+    uint64_t request_id;
+    uint32_t kind, flags;
+    uint64_t target_node_id;
+    const char* content_type;
+    const uint8_t* bytes;
+    size_t byte_count;
+    const char* url;
+} webscene_host_request_v1;
+WEBSCENE_API const webscene_host_request_v1*
+webscene_engine_take_typed_host_request_v1(webscene_engine* engine);
+WEBSCENE_API void webscene_host_request_release_v1(
+    const webscene_host_request_v1* request);
+
+/* JSON compatibility queue retained for older host integrations and unrelated
+ * application-defined messages. New desktop capabilities use the typed ABI. */
 WEBSCENE_API size_t webscene_engine_take_host_request(
     webscene_engine* engine,
     char* destination,

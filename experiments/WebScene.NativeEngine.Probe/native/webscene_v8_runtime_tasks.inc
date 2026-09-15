@@ -2795,6 +2795,10 @@
     bool dispatch_input(const webscene_input_event& input, bool defer_cursor_update = false)
     {
         current_input_sequence = input.sequence;
+        if (input.kind == WEBSCENE_INPUT_POINTER_DOWN
+            || input.kind == WEBSCENE_INPUT_KEY_DOWN) {
+            last_user_activation = std::chrono::steady_clock::now();
+        }
         auto isolate_locker = lock_shared_isolate();
         v8::Isolate::Scope isolate_scope(isolate);
         v8::HandleScope handle_scope(isolate);

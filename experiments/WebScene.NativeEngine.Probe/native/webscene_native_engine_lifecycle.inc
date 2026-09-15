@@ -148,6 +148,14 @@
 #endif
         return {};
     }
+    std::unique_ptr<webscene_native::native_host_request>
+    take_typed_host_request() {
+#if defined(WEBSCENE_NATIVE_ENGINE_WITH_V8)
+        std::lock_guard lock(file_runtime_mutex_);
+        if (file_runtime_ready_) return runtime_->take_typed_host_request();
+#endif
+        return {};
+    }
     bool enqueue(const webscene_input_event& event)
     {
         if (event.kind == WEBSCENE_INPUT_RESIZE) {
@@ -234,6 +242,13 @@
     {
         host_focused_.store(focused, std::memory_order_release);
         focus_changed_.store(true, std::memory_order_release);
+        signal_worker();
+        return true;
+    }
+    bool set_fullscreen(bool fullscreen)
+    {
+        host_fullscreen_.store(fullscreen, std::memory_order_release);
+        fullscreen_changed_.store(true, std::memory_order_release);
         signal_worker();
         return true;
     }

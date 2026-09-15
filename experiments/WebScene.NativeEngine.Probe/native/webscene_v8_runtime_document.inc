@@ -1216,6 +1216,10 @@
             local_context,
             js_string(isolate, "toString"),
             v8::Function::New(local_context, location_to_string).ToLocalChecked()).Check();
+        location->Set(
+            local_context,
+            js_string(isolate, "reload"),
+            v8::Function::New(local_context, location_reload).ToLocalChecked()).Check();
         std::string secure_host = host;
         if (const auto at = secure_host.rfind('@'); at != std::string::npos) secure_host.erase(0, at + 1);
         if (secure_host.starts_with("[")) {

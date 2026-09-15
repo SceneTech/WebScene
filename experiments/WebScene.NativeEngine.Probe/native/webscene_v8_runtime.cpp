@@ -4165,9 +4165,10 @@ struct v8_dom_runtime::implementation final {
                 if (!(item instanceof WebSceneClipboardItem)) {
                   throw new TypeError('Clipboard.write requires ClipboardItem values');
                 }
-                for (const type of item.types) {
+                for (let index = 0; index < item.types.length; ++index) {
+                  const type = item.types[index];
                   const blob = await item.getType(type);
-                  await __webSceneWriteClipboard(type, blob);
+                  await __webSceneWriteClipboard(type, blob, index === 0);
                 }
               }
             };
@@ -4200,6 +4201,29 @@ struct v8_dom_runtime::implementation final {
         if (host_requests.empty()) return false;
         host_requests.pop_front();
         return true;
+    }
+
+    bool enqueue_typed_host_request(std::unique_ptr<native_host_request> request)
+    {
+        if (!request) return false;
+        {
+            std::lock_guard lock(host_request_mutex);
+            constexpr size_t maximum_host_requests = 1024U;
+            if (host_requests.size() + typed_host_requests.size()
+                >= maximum_host_requests) return false;
+            typed_host_requests.push_back(std::move(request));
+        }
+        if (host_request_available) host_request_available();
+        return true;
+    }
+
+    std::unique_ptr<native_host_request> take_typed_host_request()
+    {
+        std::lock_guard lock(host_request_mutex);
+        if (typed_host_requests.empty()) return {};
+        auto request = std::move(typed_host_requests.front());
+        typed_host_requests.pop_front();
+        return request;
     }
 
     uint32_t current_cursor_kind() const noexcept
@@ -4336,27 +4360,16 @@ struct v8_dom_runtime::implementation final {
         const auto lower = lower_html_name(resolved);
         if (!lower.starts_with("https://") && !lower.starts_with("http://")) return true;
 
-        auto local_context = isolate->GetCurrentContext();
-        auto request = v8::Object::New(isolate);
-        request->Set(
-            local_context,
-            js_string(isolate, "kind"),
-            js_string(isolate, "openExternalUrl")).Check();
-        request->Set(
-            local_context,
-            js_string(isolate, "url"),
-            js_string(isolate, resolved.c_str())).Check();
-        request->Set(
-            local_context,
-            js_string(isolate, "disposition"),
-            js_string(isolate, "systemDefaultBrowser")).Check();
+        auto request = std::make_unique<native_host_request>();
+        request->view.kind = WEBSCENE_HOST_REQUEST_OPEN_EXTERNAL_URL_V1;
+        request->url = resolved;
         record_feature(
             "html",
             "anchor-external-navigation",
             "supported",
             "http(s) activation emits a host request without replacing the WebScene document",
             "default-action");
-        return enqueue_host_request(local_context, request);
+        return enqueue_typed_host_request(std::move(request));
     }
 
     static void window_open(const v8::FunctionCallbackInfo<v8::Value>& info)
@@ -4385,15 +4398,12 @@ struct v8_dom_runtime::implementation final {
 
     bool queue_top_level_window_action(
         v8::Local<v8::Context> local_context,
-        const char* kind)
+        uint32_t kind)
     {
         if (local_context != context.Get(isolate)) return true;
-        auto request = v8::Object::New(isolate);
-        request->Set(
-            local_context,
-            js_string(isolate, "kind"),
-            js_string(isolate, kind)).Check();
-        return enqueue_host_request(local_context, request);
+        auto request = std::make_unique<native_host_request>();
+        request->view.kind = kind;
+        return enqueue_typed_host_request(std::move(request));
     }
 
     static void window_close(const v8::FunctionCallbackInfo<v8::Value>& info)
@@ -4421,7 +4431,8 @@ struct v8_dom_runtime::implementation final {
             && dispatch_result->IsFalse()) {
             return;
         }
-        if (!self->queue_top_level_window_action(local_context, "closeWindow")) {
+        if (!self->queue_top_level_window_action(
+                local_context, WEBSCENE_HOST_REQUEST_WINDOW_CLOSE_V1)) {
             info.GetIsolate()->ThrowException(v8::Exception::Error(
                 js_string(info.GetIsolate(), "WebScene rejected the close-window request")));
         }
@@ -4686,6 +4697,12 @@ bool v8_dom_runtime::set_visible(bool visible)
 bool v8_dom_runtime::set_focused(bool focused)
 {
     return impl_->set_focused(focused)
+        && impl_->promote_pending_promise_error();
+}
+
+bool v8_dom_runtime::set_fullscreen(bool fullscreen)
+{
+    return impl_->set_fullscreen(fullscreen)
         && impl_->promote_pending_promise_error();
 }
 
@@ -6284,5 +6301,8 @@ void v8_dom_runtime::complete_host_request(native_host_completion& completion) {
 }
 bool v8_dom_runtime::discard_host_request() {
     return impl_->discard_host_request();
+}
+std::unique_ptr<native_host_request> v8_dom_runtime::take_typed_host_request() {
+    return impl_->take_typed_host_request();
 }
 }

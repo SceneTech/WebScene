@@ -2092,6 +2092,17 @@ void wait_for_document_visibility(webscene_engine* engine, bool hidden)
     }
 }
 
+void wait_for_document_focus(webscene_engine* engine, bool focused)
+{
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    const auto expected = focused ? "true" : "false";
+    while (evaluate(engine, "document.hasFocus()", "document-focus-ready.js") != expected) {
+        require(std::chrono::steady_clock::now() < deadline,
+            "host focus did not reach the document");
+        std::this_thread::yield();
+    }
+}
+
 void test_document_direction_and_visibility_are_native_properties()
 {
     auto* engine = webscene_engine_create(0);
@@ -2124,11 +2135,14 @@ void test_document_direction_and_visibility_are_native_properties()
         engine,
         R"JS(
           globalThis.__visibilityEvents = [];
+          globalThis.__focusEvents = [];
           document.addEventListener('visibilitychange', () => {
             __visibilityEvents.push(document.visibilityState);
             Promise.resolve().then(() =>
               __visibilityEvents.push(`microtask:${document.visibilityState}`));
           });
+          addEventListener('focus', () => __focusEvents.push('focus'));
+          addEventListener('blur', () => __focusEvents.push('blur'));
         )JS",
         "native-document-visibility-events.js");
 
@@ -2165,6 +2179,34 @@ void test_document_direction_and_visibility_are_native_properties()
     require(
         visible == R"({"hidden":false,"visibilityState":"visible","events":["hidden","microtask:hidden","visible","microtask:visible"]})",
         "Document visibility did not follow the restored host state: " + visible);
+
+    require(webscene_engine_set_window_focused_v1(engine, 0U) != 0,
+        "document state engine rejected native blur");
+    wait_for_document_focus(engine, false);
+    require(webscene_engine_set_window_focused_v1(engine, 1U) != 0,
+        "document state engine rejected native focus");
+    wait_for_document_focus(engine, true);
+    require(evaluate(engine,
+                "({ focused: document.hasFocus(), events: __focusEvents })",
+                "native-document-focus-state.js")
+                == R"({"focused":true,"events":["blur","focus"]})",
+        "Document focus state/events did not follow native key-window changes");
+
+    const auto transition_started = std::chrono::steady_clock::now();
+    for (unsigned index = 0; index < 10000U; ++index) {
+        require(webscene_engine_set_window_focused_v1(
+                    engine, static_cast<uint8_t>(index & 1U)) != 0,
+            "native focus transition stress input was rejected");
+    }
+    require(webscene_engine_set_window_focused_v1(engine, 1U) != 0,
+        "final native focus state was rejected");
+    wait_for_document_focus(engine, true);
+    const auto transition_elapsed = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - transition_started).count();
+    require(transition_elapsed < 1.0,
+        "10,000 native focus transitions exceeded one second");
+    std::cout << "Native focus transition gate: operations=10000 elapsed="
+              << transition_elapsed << "s\n";
     webscene_engine_destroy(engine);
 }
 
@@ -2557,8 +2599,6 @@ void test_window_scroll_primitives(webscene_engine* engine)
         "Window scrolling primitives were inconsistent: " + result);
 }
 
-uint64_t host_request_id(std::string_view request);
-
 void test_clipboard_write_text_host_handoff(webscene_engine* engine)
 {
     execute(engine, R"JS(
@@ -2567,17 +2607,18 @@ void test_clipboard_write_text_host_handoff(webscene_engine* engine)
           () => { __clipboardWriteState = 'fulfilled'; },
           error => { __clipboardWriteState = error.name + ':' + error.message; });
     )JS", "native-clipboard-write-text.js");
-    const auto request = take_host_request(engine);
+    const auto request = take_typed_host_request(engine);
     require(
-        request.find(R"("kind":"writeClipboard")") != std::string::npos
-            && request.find(R"("requestId":)") != std::string::npos
-            && request.find(R"("contentType":"text/plain")") != std::string::npos
-            && request.find("VlMgQ09ERSBPU1MgQ0xJUEJPQVJE") != std::string::npos,
-        "Clipboard.writeText did not preserve UTF-8 bytes in its host handoff: "
-            + request);
+        request.kind == WEBSCENE_HOST_REQUEST_CLIPBOARD_WRITE_V1
+            && request.flags == WEBSCENE_HOST_REQUEST_CLIPBOARD_REPLACE_V1
+            && request.id != 0U
+            && request.content_type == "text/plain"
+            && std::string(request.bytes.begin(), request.bytes.end())
+                == "VS CODE OSS CLIPBOARD",
+        "Clipboard.writeText did not preserve bytes in its typed host handoff");
     require(
         webscene_engine_complete_host_request_v1(
-            engine, host_request_id(request), 0U, "text/plain",
+            engine, request.id, 0U, "text/plain",
             nullptr, 0U, nullptr) != 0,
         "Clipboard.writeText completion was rejected");
     require(
@@ -2588,37 +2629,40 @@ void test_clipboard_write_text_host_handoff(webscene_engine* engine)
         "Clipboard.writeText promise did not fulfill after native completion");
 }
 
-uint64_t host_request_id(std::string_view request)
-{
-    constexpr std::string_view marker{"\"requestId\":"};
-    const auto begin = request.find(marker);
-    require(begin != std::string_view::npos, "host request did not contain requestId");
-    const auto digits = begin + marker.size();
-    uint64_t result = 0;
-    const auto parsed = std::from_chars(
-        request.data() + digits, request.data() + request.size(), result);
-    require(parsed.ec == std::errc{} && result != 0U,
-        "host request contained an invalid requestId");
-    return result;
-}
-
 void test_clipboard_read_host_completion(webscene_engine* engine)
 {
+    auto* inactive_engine = webscene_engine_create(0);
+    require(inactive_engine != nullptr,
+        "clipboard activation engine creation failed");
+    execute(inactive_engine, R"JS(
+        globalThis.__clipboardActivationState = 'pending';
+        navigator.clipboard.readText().catch(
+          error => { __clipboardActivationState = error.name; });
+    )JS", "native-clipboard-read-without-activation.js");
+    require(evaluate(inactive_engine, "__clipboardActivationState",
+                "native-clipboard-read-without-activation-result.js")
+                == R"("NotAllowedError")"
+            && !take_typed_host_request(inactive_engine),
+        "clipboard read without user activation reached the host");
+    webscene_engine_destroy(inactive_engine);
+    keyboard_input(engine, WEBSCENE_INPUT_KEY_DOWN, 'C', 9751U);
+    evaluate(engine, "true", "native-clipboard-user-activation-barrier.js");
     execute(engine, R"JS(
         globalThis.__clipboardReadState = 'pending';
         navigator.clipboard.readText().then(
           value => { __clipboardReadState = value; },
           error => { __clipboardReadState = error.name; });
     )JS", "native-clipboard-read-text.js");
-    auto request = take_host_request(engine);
+    auto request = take_typed_host_request(engine);
     require(
-        request.find(R"("kind":"readClipboard")") != std::string::npos
-            && request.find(R"("contentType":"text/plain")") != std::string::npos,
-        "Clipboard.readText did not emit a typed host request: " + request);
+        request.kind == WEBSCENE_HOST_REQUEST_CLIPBOARD_READ_V1
+            && request.id != 0U && request.content_type == "text/plain"
+            && request.bytes.empty(),
+        "Clipboard.readText did not emit the typed host request");
     constexpr uint8_t text[] = {'n','a','t','i','v','e',' ','p','a','s','t','e'};
     require(
         webscene_engine_complete_host_request_v1(
-            engine, host_request_id(request), 0U, "text/plain",
+            engine, request.id, 0U, "text/plain",
             text, sizeof(text), nullptr) != 0,
         "Clipboard.readText completion was rejected");
     require(
@@ -2627,6 +2671,10 @@ void test_clipboard_read_host_completion(webscene_engine* engine)
             "__clipboardReadState",
             "native-clipboard-read-text-result.js") == R"("native paste")",
         "Clipboard.readText did not resolve with native UTF-8 text");
+    require(webscene_engine_complete_host_request_v1(
+                engine, request.id, 0U, "text/plain",
+                text, sizeof(text), nullptr) != 0,
+        "duplicate stale clipboard completion was not safely admitted");
 
     execute(engine, R"JS(
         globalThis.__clipboardCancelState = 'pending';
@@ -2634,10 +2682,10 @@ void test_clipboard_read_host_completion(webscene_engine* engine)
           () => { __clipboardCancelState = 'fulfilled'; },
           error => { __clipboardCancelState = error.name; });
     )JS", "native-clipboard-read-cancel.js");
-    request = take_host_request(engine);
+    request = take_typed_host_request(engine);
     require(
         webscene_engine_complete_host_request_v1(
-            engine, host_request_id(request), 1U, nullptr, nullptr, 0U, nullptr) != 0,
+            engine, request.id, 1U, nullptr, nullptr, 0U, nullptr) != 0,
         "Clipboard cancellation completion was rejected");
     require(
         evaluate(
@@ -2654,6 +2702,69 @@ void test_clipboard_read_host_completion(webscene_engine* engine)
         webscene_engine_complete_host_request_v1(
             engine, 1U, 3U, nullptr, nullptr, 0U, nullptr) == 0,
         "invalid host completion status was accepted");
+
+    execute(engine, R"JS(
+        globalThis.__clipboardQuotaState = 'pending';
+        const operations = [];
+        for (let index = 0; index < 17; ++index) {
+          operations.push(navigator.clipboard.readText().catch(error => error.name));
+        }
+        Promise.all(operations).then(values => {
+          __clipboardQuotaState = values;
+        });
+    )JS", "native-clipboard-queue-saturation.js");
+    for (unsigned index = 0; index < 16U; ++index) {
+        const auto pending = take_typed_host_request(engine);
+        require(pending.kind == WEBSCENE_HOST_REQUEST_CLIPBOARD_READ_V1,
+            "clipboard queue lost a bounded pending read");
+        require(webscene_engine_complete_host_request_v1(
+                    engine, pending.id, 1U, nullptr, nullptr, 0U, nullptr) != 0,
+            "clipboard queue cancellation was rejected");
+    }
+    require(!take_typed_host_request(engine),
+        "clipboard queue exceeded its 16-operation limit");
+    require(evaluate(engine,
+                "__clipboardQuotaState.filter(value => value === 'AbortError').length === 16"
+                " && __clipboardQuotaState.at(-1) === 'QuotaExceededError'",
+                "native-clipboard-queue-saturation-result.js") == "true",
+        "clipboard queue saturation did not reject explicitly");
+}
+
+void test_clipboard_maximum_payload_gate(webscene_engine* engine)
+{
+    constexpr size_t maximum_bytes = 16U * 1024U * 1024U;
+    const auto started = std::chrono::steady_clock::now();
+    execute(engine, R"JS(
+        globalThis.__maximumClipboardState = 'pending';
+        const bytes = new Uint8Array(16 * 1024 * 1024);
+        bytes.fill(97);
+        navigator.clipboard.write([
+          new ClipboardItem({ 'text/plain': new Blob([bytes], { type: 'text/plain' }) })
+        ]).then(
+          () => { __maximumClipboardState = 'fulfilled'; },
+          error => { __maximumClipboardState = error.name; });
+    )JS", "native-clipboard-maximum-payload.js");
+    const auto request = take_typed_host_request(engine);
+    require(request.kind == WEBSCENE_HOST_REQUEST_CLIPBOARD_WRITE_V1
+                && request.content_type == "text/plain"
+                && request.bytes.size() == maximum_bytes
+                && request.bytes.front() == 'a'
+                && request.bytes.back() == 'a',
+        "maximum clipboard payload changed in the typed host ABI");
+    require(webscene_engine_complete_host_request_v1(
+                engine, request.id, 0U, "text/plain",
+                nullptr, 0U, nullptr) != 0,
+        "maximum clipboard payload completion was rejected");
+    require(evaluate(engine, "__maximumClipboardState",
+                "native-clipboard-maximum-payload-result.js")
+                == R"("fulfilled")",
+        "maximum clipboard payload promise did not settle");
+    const auto elapsed = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - started).count();
+    require(elapsed < 5.0,
+        "maximum clipboard payload round trip exceeded five seconds");
+    std::cout << "Typed clipboard maximum-payload gate: bytes="
+              << maximum_bytes << " elapsed=" << elapsed << "s\n";
 }
 
 void test_fullscreen_host_completion(webscene_engine* engine)
@@ -2669,13 +2780,13 @@ void test_fullscreen_host_completion(webscene_engine* engine)
           () => { __fullscreenState = document.fullscreenElement?.id || 'missing'; },
           error => { __fullscreenState = error.name; });
     )JS", "native-fullscreen-enter.js");
-    auto request = take_host_request(engine);
+    auto request = take_typed_host_request(engine);
     require(
-        request.find(R"("kind":"enterFullscreen")") != std::string::npos
-            && request.find(R"("targetNodeId":)") != std::string::npos,
-        "Element.requestFullscreen did not emit a typed host request: " + request);
+        request.kind == WEBSCENE_HOST_REQUEST_FULLSCREEN_ENTER_V1
+            && request.id != 0U && request.target_node_id != 0U,
+        "Element.requestFullscreen did not emit a typed host request");
     require(webscene_engine_complete_host_request_v1(
-                engine, host_request_id(request), 0U, nullptr,
+                engine, request.id, 0U, nullptr,
                 nullptr, 0U, nullptr) != 0,
         "fullscreen enter completion was rejected");
     require(evaluate(
@@ -2691,11 +2802,12 @@ void test_fullscreen_host_completion(webscene_engine* engine)
           () => { __fullscreenExitState = document.fullscreenElement === null; },
           error => { __fullscreenExitState = error.name; });
     )JS", "native-fullscreen-exit.js");
-    request = take_host_request(engine);
-    require(request.find(R"("kind":"exitFullscreen")") != std::string::npos,
-        "Document.exitFullscreen did not emit a typed host request: " + request);
+    request = take_typed_host_request(engine);
+    require(request.kind == WEBSCENE_HOST_REQUEST_FULLSCREEN_EXIT_V1
+                && request.id != 0U,
+        "Document.exitFullscreen did not emit a typed host request");
     require(webscene_engine_complete_host_request_v1(
-                engine, host_request_id(request), 0U, nullptr,
+                engine, request.id, 0U, nullptr,
                 nullptr, 0U, nullptr) != 0,
         "fullscreen exit completion was rejected");
     require(evaluate(
@@ -2704,4 +2816,22 @@ void test_fullscreen_host_completion(webscene_engine* engine)
                 "native-fullscreen-exit-result.js")
             == R"("[true,[\"surface\",null]]")",
         "fullscreen exit state/event did not reach the document");
+
+    execute(engine, "__fullscreenEvents = []",
+        "native-fullscreen-reset-events.js");
+    require(webscene_engine_set_window_fullscreen_v1(engine, 1U) != 0,
+        "native fullscreen entry was rejected");
+    require(evaluate_until_equals(engine,
+                "document.fullscreenElement === document.body",
+                "native-fullscreen-state-entered.js", "true") == "true",
+        "native-initiated fullscreen state did not reach the document");
+    require(webscene_engine_set_window_fullscreen_v1(engine, 0U) != 0,
+        "native fullscreen exit was rejected");
+    require(evaluate_until_equals(engine,
+                "document.fullscreenElement === null",
+                "native-fullscreen-state-exited.js", "true") == "true",
+        "native-initiated fullscreen exit did not reach the document");
+    require(evaluate(engine, "__fullscreenEvents.length",
+                "native-fullscreen-event-count.js") == "2",
+        "native-initiated fullscreen did not dispatch enter and exit events");
 }

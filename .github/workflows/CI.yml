@@ -18,7 +18,7 @@ jobs:
       matrix:
         os:
         - [self-hosted, Linux, X64]
-        - [self-hosted, webscene-gpu, osx-arm64]
+        - [self-hosted, macOS, ARM64]
     name: Build and test ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     steps:
@@ -96,12 +96,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-        - os: [self-hosted, webscene-gpu, osx-arm64]
+        - os: [self-hosted, macOS, ARM64]
           rid: osx-arm64
           executable: WebScene.GpuHost.Probe
           avalonia: 11
           avalonia12Sample: false
-        - os: [self-hosted, webscene-gpu, osx-arm64]
+        - os: [self-hosted, macOS, ARM64]
           rid: osx-arm64
           executable: WebScene.GpuHost.Probe
           avalonia: 12

@@ -153,7 +153,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-        - os: [self-hosted, webscene-gpu, osx-arm64]
+        - os: [self-hosted, macOS, ARM64]
           rid: osx-arm64
           cpu: arm64
           monolith: libv8_monolith.a
@@ -554,7 +554,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-        - os: [self-hosted, webscene-gpu, osx-arm64]
+        - os: [self-hosted, macOS, ARM64]
           rid: osx-arm64
         - os: [self-hosted, Linux, X64]
           rid: linux-x64

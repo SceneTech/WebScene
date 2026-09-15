@@ -788,6 +788,13 @@
       "reason": "Required after direct Chrome authority and the native runner pass all 3/3 ParentNode append assertions, and the native retained-runtime unit gate independently covers variadic node/text insertion with connected stylesheet recascade. Evidence: artifacts/web-platform-parentnode-append-chrome-v1-20260723, artifacts/web-platform-parentnode-append-managed-v3-20260723, artifacts/web-platform-parentnode-append-native-v2-20260723, and the webscene_native_engine_tests runtime suite."
     },
     {
+      "path": "contracts/dom-fragment-atomic-attachment.html",
+      "type": "testharness",
+      "capabilities": ["append-child-document-fragment", "atomic-tree-insertion", "structural-selector-invalidation"],
+      "evidence": ["native-fragment-attach-regression", "fragment-attach-abba-benchmark"],
+      "reason": "Product-neutral regression for panel and component trees transferred through DocumentFragment. It verifies that :empty, :has(), :first-child, :nth-child(), and :last-child are matched only after the complete fragment is connected."
+    },
+    {
       "path": "contracts/dom-mouse-event-constructor.html",
       "type": "contract",
       "capabilities": ["mouse-event-constructor", "mouse-event-init", "mouse-event-inheritance", "constructed-event-dispatch"],

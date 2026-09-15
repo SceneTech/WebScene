@@ -90,14 +90,20 @@ internal sealed unsafe class NativeWptEngineEnvironment : IWptEngineEnvironment
         }
 
         NativeApi.Configure(libraryPath);
-        _managedHostEngine = nativeNavigation || html.Contains("@font-face", StringComparison.OrdinalIgnoreCase);
+        _managedHostEngine = nativeNavigation
+            || html.Contains("@font-face", StringComparison.OrdinalIgnoreCase)
+            || !string.IsNullOrWhiteSpace(options.NativeStorageDirectory);
         if (_managedHostEngine)
         {
             // Navigation and font contracts use the product resource-loading,
             // registration and measurement path, not a separate harness font map.
             NativeWebSceneApi.ConfigureLibraryPath(libraryPath);
             _engine = NativeWebSceneApi.EngineCreate(0, options.NativeCacheDirectory,
-                new AvaloniaResourceLoader { ScriptBaseDirectory = fontBaseDirectory ?? upstreamRoot }, _ => { });
+                new AvaloniaResourceLoader { ScriptBaseDirectory = fontBaseDirectory ?? upstreamRoot },
+                _ => { },
+                persistentStorageDirectory: options.NativeStorageDirectory,
+                persistentStoragePartitionKey: options.NativeStoragePartitionKey,
+                persistentStorageQuotaBytes: options.NativeStorageQuotaBytes);
             _renderer.SetWebTypefaceRegistry(NativeWebSceneApi.GetWebTypefaceRegistry(_engine));
         }
         else _engine = NativeApi.Create(options.NativeCacheDirectory);

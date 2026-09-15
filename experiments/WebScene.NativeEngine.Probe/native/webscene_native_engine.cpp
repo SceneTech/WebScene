@@ -407,6 +407,9 @@ private:
     webscene_frame_trace frame_trace_;
     uint32_t command_count_;
     std::string compilation_cache_directory_;
+    std::string storage_directory_;
+    std::string storage_partition_key_;
+    uint64_t storage_quota_bytes_{0};
     webscene_resource_load_callback resource_load_callback_{nullptr};
     void* resource_load_user_data_{nullptr};
     webscene_resource_load_callback_v2 resource_load_callback_v2_{nullptr};
@@ -902,6 +905,8 @@ webscene_engine* webscene_engine_create_with_options(const webscene_engine_optio
                 options->compilation_cache_directory,
                 options->compilation_cache_directory_length);
         }
+        std::string storage_directory;
+        std::string storage_partition_key;
         constexpr auto resource_callback_options_size =
             offsetof(webscene_engine_options, scene_published_callback);
         const auto has_resource_callback =
@@ -936,10 +941,31 @@ webscene_engine* webscene_engine_create_with_options(const webscene_engine_optio
             options->struct_size >= offsetof(webscene_engine_options, stylesheet_consumed_callback);
         const auto has_stylesheet_consumed_callback =
             options->struct_size >= offsetof(webscene_engine_options, webgpu_policy_callback);
-        const auto has_webgpu_policy = options->struct_size >= sizeof(webscene_engine_options);
+        const auto has_webgpu_policy = options->struct_size
+            >= offsetof(webscene_engine_options, storage_directory);
+        constexpr auto storage_options_size =
+            offsetof(webscene_engine_options, storage_quota_bytes)
+            + sizeof(uint64_t);
+        const auto has_storage_options = options->struct_size
+            >= storage_options_size;
+        if (has_storage_options && options->storage_directory != nullptr
+            && options->storage_directory_length > 0U) {
+            storage_directory.assign(
+                options->storage_directory,
+                options->storage_directory_length);
+        }
+        if (has_storage_options && options->storage_partition_key != nullptr
+            && options->storage_partition_key_length > 0U) {
+            storage_partition_key.assign(
+                options->storage_partition_key,
+                options->storage_partition_key_length);
+        }
         return new webscene_engine(
             options->simulated_chart_command_count,
             std::move(cache_directory),
+            std::move(storage_directory),
+            std::move(storage_partition_key),
+            has_storage_options ? options->storage_quota_bytes : 0U,
             has_resource_callback ? options->resource_load_callback : nullptr,
             has_resource_callback ? options->resource_load_user_data : nullptr,
             has_resource_callback_v2 ? options->resource_load_callback_v2 : nullptr,

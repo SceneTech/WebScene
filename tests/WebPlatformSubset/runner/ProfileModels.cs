@@ -207,5 +207,8 @@ internal sealed record RunnerOptions
     public TimeSpan Timeout { get; init; } = TimeSpan.FromSeconds(10);
     public string? NativeLibraryPath { get; init; }
     public string? NativeCacheDirectory { get; init; }
+    public string? NativeStorageDirectory { get; init; }
+    public string? NativeStoragePartitionKey { get; init; }
+    public ulong NativeStorageQuotaBytes { get; init; }
     public string? ChromiumPath { get; init; }
 }

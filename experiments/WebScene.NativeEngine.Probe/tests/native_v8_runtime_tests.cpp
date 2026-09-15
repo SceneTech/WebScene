@@ -531,6 +531,7 @@ int main()
             auto* focused_engine = webscene_engine_create(0);
             require(focused_engine != nullptr, "focused engine creation failed");
             test_dom_traversal_cloning_primitives(focused_engine);
+            test_specialized_content_properties(focused_engine);
             webscene_engine_destroy(focused_engine);
             return 0;
         }
@@ -826,6 +827,7 @@ int main()
     test_document_position(engine);
     test_dom_box_dimensions_primitives(engine);
     test_dom_traversal_cloning_primitives(engine);
+    test_specialized_content_properties(engine);
     test_fragment_replacement_and_inline_script_lifecycle(engine);
     test_textarea_child_text_value_lifecycle(engine);
     test_secondary_click(engine);

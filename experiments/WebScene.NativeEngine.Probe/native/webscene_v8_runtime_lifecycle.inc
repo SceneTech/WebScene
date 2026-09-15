@@ -201,8 +201,10 @@
         html_dialog_element_template.Reset();
         html_form_element_template.Reset();
         html_select_element_template.Reset();
+        html_meta_element_template.Reset();
         html_script_element_template.Reset();
         html_slot_element_template.Reset();
+        html_template_element_template.Reset();
         html_style_element_template.Reset();
         shadow_root_template.Reset();
         document_fragment_template.Reset();

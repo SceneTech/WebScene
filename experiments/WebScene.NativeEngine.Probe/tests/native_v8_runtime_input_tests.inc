@@ -1541,7 +1541,9 @@ void test_pointer_cursor_and_external_anchor_host_handoff(webscene_engine* engin
     require(!take_typed_host_request(engine),
         "cancelled beforeunload still reached the native close host path");
 
-    execute(engine, "location.reload()", "native-window-reload.js");
+    require(evaluate(engine, "location.reload(); true", "native-window-reload.js")
+                == "true",
+        "Location.reload script did not drain through the engine worker");
     const auto reload_request = take_typed_host_request(engine);
     require(reload_request.kind == WEBSCENE_HOST_REQUEST_WINDOW_RELOAD_V1,
         "Location.reload did not emit a typed native reload request");

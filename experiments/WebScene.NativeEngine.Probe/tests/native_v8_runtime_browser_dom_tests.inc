@@ -2744,6 +2744,11 @@ void test_native_clipboard_shortcut_events(webscene_engine* engine)
         document.body.innerHTML = '<textarea id="editor"></textarea>';
         const editor = document.getElementById('editor');
         globalThis.__clipboardShortcutEvents = [];
+        globalThis.__clipboardShortcutKeys = [];
+        editor.addEventListener('keydown', event => {
+          __clipboardShortcutKeys.push([
+            event.key, event.metaKey, event.ctrlKey, event.defaultPrevented]);
+        });
         editor.addEventListener('copy', event => {
           event.clipboardData.setData('text/plain', 'shortcut copy');
           event.clipboardData.setData('text/html', '<b>shortcut copy</b>');
@@ -2771,12 +2776,17 @@ void test_native_clipboard_shortcut_events(webscene_engine* engine)
     webscene_engine_get_metrics(engine, &metrics);
     wait_for_consumed_inputs(engine, metrics.enqueued_inputs,
         "native copy shortcut was not consumed");
+    const auto copy_state = evaluate(engine,
+        "JSON.stringify({ events: __clipboardShortcutEvents,"
+        " keys: __clipboardShortcutKeys, active: document.activeElement?.id,"
+        " helper: typeof __webSceneClipboardShortcut })",
+        "native-clipboard-copy-shortcut-state.js");
     auto request = take_typed_host_request(engine);
     require(request.kind == WEBSCENE_HOST_REQUEST_CLIPBOARD_WRITE_V1
                 && request.flags == WEBSCENE_HOST_REQUEST_CLIPBOARD_REPLACE_V1
                 && request.content_type == "text/plain"
                 && std::string(request.bytes.begin(), request.bytes.end()) == "shortcut copy",
-        "native copy event did not hand its plain text to the host");
+        "native copy event did not hand its plain text to the host: " + copy_state);
     require(webscene_engine_complete_host_request_v1(
                 engine, request.id, 0U, "text/plain", nullptr, 0U, nullptr) != 0,
         "native copy plain-text completion was rejected");

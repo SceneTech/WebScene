@@ -2834,6 +2834,13 @@ void test_native_clipboard_shortcut_events(webscene_engine*)
                 engine, request.id, 0U, "text/plain",
                 paste, sizeof(paste), nullptr) != 0,
         "native paste completion was rejected");
+    for (auto attempt = 0; attempt < 250; ++attempt) {
+        if (evaluate(engine, "__clipboardShortcutEvents.length",
+                "native-clipboard-shortcut-event-count.js") == "3") {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
     const auto shortcut_events = evaluate(engine, R"JS(
         JSON.stringify(__clipboardShortcutEvents)
     )JS", "native-clipboard-shortcuts-result.js");

@@ -2767,9 +2767,9 @@ void test_native_clipboard_shortcut_events(webscene_engine* engine)
 
     constexpr auto modifier = WEBSCENE_INPUT_MODIFIER_META;
     webscene_engine_metrics metrics{};
-    webscene_engine_get_metrics(engine, &metrics);
     keyboard_input(engine, WEBSCENE_INPUT_KEY_DOWN, 'C', 9761U, modifier);
-    wait_for_consumed_inputs(engine, metrics.consumed_inputs + 1U,
+    webscene_engine_get_metrics(engine, &metrics);
+    wait_for_consumed_inputs(engine, metrics.enqueued_inputs,
         "native copy shortcut was not consumed");
     auto request = take_typed_host_request(engine);
     require(request.kind == WEBSCENE_HOST_REQUEST_CLIPBOARD_WRITE_V1
@@ -2791,9 +2791,9 @@ void test_native_clipboard_shortcut_events(webscene_engine* engine)
                 engine, request.id, 0U, "text/html", nullptr, 0U, nullptr) != 0,
         "native copy HTML completion was rejected");
 
-    webscene_engine_get_metrics(engine, &metrics);
     keyboard_input(engine, WEBSCENE_INPUT_KEY_DOWN, 'x', 9762U, modifier);
-    wait_for_consumed_inputs(engine, metrics.consumed_inputs + 1U,
+    webscene_engine_get_metrics(engine, &metrics);
+    wait_for_consumed_inputs(engine, metrics.enqueued_inputs,
         "native cut shortcut was not consumed");
     request = take_typed_host_request(engine);
     require(request.kind == WEBSCENE_HOST_REQUEST_CLIPBOARD_WRITE_V1
@@ -2805,9 +2805,9 @@ void test_native_clipboard_shortcut_events(webscene_engine* engine)
                 engine, request.id, 0U, "text/plain", nullptr, 0U, nullptr) != 0,
         "native cut completion was rejected");
 
-    webscene_engine_get_metrics(engine, &metrics);
     keyboard_input(engine, WEBSCENE_INPUT_KEY_DOWN, 'V', 9763U, modifier);
-    wait_for_consumed_inputs(engine, metrics.consumed_inputs + 1U,
+    webscene_engine_get_metrics(engine, &metrics);
+    wait_for_consumed_inputs(engine, metrics.enqueued_inputs,
         "native paste shortcut was not consumed");
     request = take_typed_host_request(engine);
     require(request.kind == WEBSCENE_HOST_REQUEST_CLIPBOARD_READ_V1

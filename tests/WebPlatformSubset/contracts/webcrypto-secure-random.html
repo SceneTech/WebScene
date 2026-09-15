@@ -1,0 +1,128 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Web Crypto secure random window, iframe, and worker contract</title>
+<script>
+window.__webSceneWptState = {complete:false,harness:null,results:[],errors:[],diagnostics:[]};
+const record = (name, condition, message = 'Contract failed') =>
+  __webSceneWptState.results.push({name,status:condition?'PASS':'FAIL',message:condition?null:message,stack:null});
+const finish = () => {
+  const state = __webSceneWptState;
+  state.harness={status:state.results.some(result=>result.status!=='PASS')?1:0,message:null,stack:null};
+  state.complete=true;
+};
+
+const checkCrypto = (realmCrypto, label) => {
+  record(`${label} exposes Crypto`, Object.prototype.toString.call(realmCrypto) === '[object Crypto]');
+  record(`${label} leaves incomplete SubtleCrypto absent`, typeof realmCrypto.subtle === 'undefined');
+  record(`${label} exposes Web IDL method names and arities`,
+    realmCrypto.getRandomValues.name === 'getRandomValues'
+      && realmCrypto.getRandomValues.length === 1
+      && realmCrypto.randomUUID.name === 'randomUUID'
+      && realmCrypto.randomUUID.length === 0);
+  const values = new Uint32Array(16);
+  record(`${label} returns the input view`, realmCrypto.getRandomValues(values) === values);
+  record(`${label} fills complete integer elements as bytes`, values.some(value => value > 255));
+  const uuid = realmCrypto.randomUUID();
+  record(`${label} creates an RFC 4122 version 4 UUID`,
+    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(uuid));
+};
+let pendingRealms = 2;
+const completeRealm = () => { if (--pendingRealms === 0) finish(); };
+
+try {
+  checkCrypto(crypto, 'Window');
+  for (const invalid of [new Float32Array(1), new Float64Array(1), new DataView(new ArrayBuffer(1)), {}]) {
+    let typeError = false;
+    try { crypto.getRandomValues(invalid); } catch (error) { typeError = error instanceof TypeError; }
+    record('getRandomValues rejects non-integer views', typeError);
+  }
+  const oversized = new Uint8Array(65537);
+  oversized.fill(0x5a);
+  let quotaError = false;
+  try { crypto.getRandomValues(oversized); }
+  catch (error) {
+    quotaError = error instanceof DOMException && error.name === 'QuotaExceededError';
+  }
+  record('getRandomValues enforces its 65,536-byte quota', quotaError);
+  record('Quota rejection does not mutate the destination', oversized.every(byte => byte === 0x5a));
+  record('getRandomValues accepts the exact quota',
+    crypto.getRandomValues(new Uint8Array(65536)).byteLength === 65536);
+  const offsetBacking = new Uint8Array(32);
+  offsetBacking.fill(0x5a);
+  crypto.getRandomValues(offsetBacking.subarray(8, 24));
+  record('getRandomValues respects view byte offset and length',
+    offsetBacking.slice(0, 8).every(byte => byte === 0x5a)
+      && offsetBacking.slice(24).every(byte => byte === 0x5a)
+      && !offsetBacking.slice(8, 24).every(byte => byte === 0x5a));
+  const empty = new Uint8Array(0);
+  record('getRandomValues accepts an empty integer view', crypto.getRandomValues(empty) === empty);
+  let illegalInvocation = false;
+  try { const unbound = crypto.getRandomValues; unbound(new Uint8Array(1)); }
+  catch (error) { illegalInvocation = error instanceof TypeError; }
+  record('Crypto methods require a Crypto receiver', illegalInvocation);
+  let uuidIllegalInvocation = false;
+  try { const unbound = crypto.randomUUID; unbound(); }
+  catch (error) { uuidIllegalInvocation = error instanceof TypeError; }
+  record('randomUUID requires a Crypto receiver', uuidIllegalInvocation);
+
+  const frame = document.createElement('iframe');
+  document.body.appendChild(frame);
+  addEventListener('message', event => {
+    if (!event.data || event.data.webcryptoRealm !== 'iframe') return;
+    const result = event.data;
+    record('Iframe secure random completes without error', !result.error, result.error);
+    record('Iframe returns and fills the input view', result.same && result.filled);
+    record('Iframe creates an RFC 4122 version 4 UUID',
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(result.uuid || ''));
+    record('Iframe leaves incomplete SubtleCrypto absent', result.subtle === 'undefined');
+    completeRealm();
+  });
+  const child = frame.contentDocument;
+  child.open();
+  child.write(`<script>
+    try {
+      const values = new Uint32Array(16);
+      const same = crypto.getRandomValues(values) === values;
+      const filled = values.some(value => value > 255);
+      parent.postMessage({webcryptoRealm:'iframe', same, filled,
+        uuid:crypto.randomUUID(), subtle:typeof crypto.subtle}, '*');
+    } catch (error) {
+      parent.postMessage({webcryptoRealm:'iframe', error:String(error)}, '*');
+    }
+  <\/script>`);
+  child.close();
+
+  const workerSource = `onmessage = () => {
+    try {
+      const values = new Uint32Array(16);
+      const same = crypto.getRandomValues(values) === values;
+      const filled = values.some(value => value > 255);
+      const uuid = crypto.randomUUID();
+      postMessage({same, filled, uuid, subtle: typeof crypto.subtle});
+    } catch (error) { postMessage({error: String(error)}); }
+  };`;
+  const workerUrl = URL.createObjectURL(new Blob([workerSource], {type:'text/javascript'}));
+  const worker = new Worker(workerUrl);
+  URL.revokeObjectURL(workerUrl);
+  worker.onmessage = event => {
+    const result = event.data || {};
+    record('Worker secure random completes without error', !result.error, result.error);
+    record('Worker returns and fills the input view', result.same && result.filled);
+    record('Worker creates an RFC 4122 version 4 UUID',
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(result.uuid || ''));
+    record('Worker leaves incomplete SubtleCrypto absent', result.subtle === 'undefined');
+    worker.terminate();
+    completeRealm();
+  };
+  worker.onerror = event => {
+    __webSceneWptState.errors.push(event.message);
+    record('Worker secure random completes without error', false, event.message);
+    completeRealm();
+  };
+  worker.postMessage('run');
+} catch (error) {
+  __webSceneWptState.errors.push(String(error));
+  record('Web Crypto secure random contract completed', false, String(error));
+  finish();
+}
+</script>

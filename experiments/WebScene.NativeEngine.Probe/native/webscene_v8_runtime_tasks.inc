@@ -2264,6 +2264,29 @@
         webscene_native::forms::ensure_text_value(node);
     }
 
+    bool dispatch_clipboard_shortcut(dom_node& target, const char* type)
+    {
+        auto local_context = context_for_node(target);
+        auto global = local_context->Global();
+        v8::Local<v8::Value> helper;
+        if (!global->Get(
+                local_context,
+                js_string(isolate, "__webSceneClipboardShortcut")).ToLocal(&helper)
+            || !helper->IsFunction()) {
+            return true;
+        }
+        v8::Local<v8::Value> arguments[] = {
+            js_string(isolate, type),
+            wrap_node(target)};
+        v8::Local<v8::Value> result;
+        if (!helper.As<v8::Function>()->Call(
+                local_context, global, 2, arguments).ToLocal(&result)) {
+            return false;
+        }
+        perform_microtask_checkpoint();
+        return true;
+    }
+
     static size_t previous_utf8_boundary(const std::string& value, size_t index)
     {
         return webscene_native::forms::previous_utf8_boundary(value,index);
@@ -2430,6 +2453,17 @@
                 }
             }
             return true;
+        }
+        const auto clipboard_modifier = (input.flags
+            & (WEBSCENE_INPUT_MODIFIER_CONTROL | WEBSCENE_INPUT_MODIFIER_META)) != 0U
+            && (input.flags & WEBSCENE_INPUT_MODIFIER_ALT) == 0U;
+        if (!prevented && clipboard_modifier) {
+            if (key_code == 'C' || key_code == 'c')
+                return dispatch_clipboard_shortcut(*target, "copy");
+            if (key_code == 'X' || key_code == 'x')
+                return dispatch_clipboard_shortcut(*target, "cut");
+            if (key_code == 'V' || key_code == 'v')
+                return dispatch_clipboard_shortcut(*target, "paste");
         }
         if (prevented || !is_text_control(target)) return true;
         ensure_form_value(*target);

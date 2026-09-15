@@ -4172,6 +4172,61 @@ struct v8_dom_runtime::implementation final {
                 }
               }
             };
+            const createClipboardData = () => {
+              const values = Object.create(null);
+              const normalize = type => String(type).toLowerCase();
+              return Object.freeze({
+                get types() { return Object.keys(values); },
+                files: Object.freeze([]),
+                items: Object.freeze([]),
+                getData(type) { return values[normalize(type)] || ''; },
+                setData(type, value) {
+                  values[normalize(type)] = String(value);
+                },
+                clearData(type = undefined) {
+                  if (type === undefined) {
+                    for (const key of Object.keys(values)) delete values[key];
+                  } else {
+                    delete values[normalize(type)];
+                  }
+                }
+              });
+            };
+            const dispatchClipboardEvent = (type, target, clipboardData) => {
+              const event = new Event(type, {
+                bubbles: true, cancelable: true, composed: true
+              });
+              Object.defineProperty(event, 'clipboardData', {
+                value: clipboardData, enumerable: true
+              });
+              target.dispatchEvent(event);
+            };
+            Object.defineProperty(globalThis, '__webSceneClipboardShortcut', {
+              configurable: true,
+              value(type, target) {
+                if (!target || typeof target.dispatchEvent !== 'function') return false;
+                const clipboardData = createClipboardData();
+                if (type === 'paste') {
+                  clipboard.readText().then(text => {
+                    clipboardData.setData('text/plain', text);
+                    dispatchClipboardEvent(type, target, clipboardData);
+                  }).catch(() => {});
+                  return true;
+                }
+                dispatchClipboardEvent(type, target, clipboardData);
+                const items = Object.create(null);
+                for (const itemType of ['text/plain', 'text/html']) {
+                  if (clipboardData.types.includes(itemType)) {
+                    items[itemType] = new Blob(
+                      [clipboardData.getData(itemType)], { type: itemType });
+                  }
+                }
+                if (Object.keys(items).length !== 0) {
+                  clipboard.write([new WebSceneClipboardItem(items)]).catch(() => {});
+                }
+                return true;
+              }
+            });
             Object.defineProperty(globalThis, 'ClipboardItem', {
               value: WebSceneClipboardItem, configurable: true
             });

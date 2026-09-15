@@ -1868,23 +1868,6 @@
                     }
                   },
                   configurable: true
-                },
-                crypto: {
-                  value: {
-                    getRandomValues(array) {
-                      __webSceneRecordWebApi(
-                        'Crypto.getRandomValues', 'partially-supported',
-                        'integer TypedArray filling without a cryptographic entropy guarantee');
-                      if (!ArrayBuffer.isView(array) || array instanceof DataView) {
-                        throw new TypeError('Expected an integer TypedArray');
-                      }
-                      for (let index = 0; index < array.length; index++) {
-                        array[index] = Math.floor(Math.random() * 256);
-                      }
-                      return array;
-                    }
-                  },
-                  configurable: true
                 }
               });
             })();
@@ -1898,6 +1881,7 @@
             local_context,
             js_string(isolate, message_channel_bootstrap.c_str())).ToLocalChecked();
         message_channel_script->Run(local_context).ToLocalChecked();
+        install_crypto_globals(local_context, global);
         install_indexeddb(local_context);
         install_clipboard_api(local_context);
         install_websocket_globals(local_context);

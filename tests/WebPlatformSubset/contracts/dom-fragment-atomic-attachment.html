@@ -10,8 +10,12 @@
   #host > .item:first-child { width: 3px; }
   #host > .item:nth-child(2) { width: 4px; }
   #host > .item:last-child { width: 5px; }
+  #populated > .before + .item { margin-left: 6px; }
+  #populated > .item:nth-child(3) { padding-left: 7px; }
+  #populated > .item:last-child { border-left-width: 8px; border-left-style: solid; }
 </style>
 <section id="host"></section>
+<section id="populated"><div class="before"></div></section>
 <script>
 test(() => {
   const fragment = document.createDocumentFragment();
@@ -30,4 +34,19 @@ test(() => {
   assert_equals(getComputedStyle(host).minHeight, '2px');
   assert_not_equals(getComputedStyle(host).height, '1px');
 }, 'appendChild transfers a fragment before structural selector matching');
+
+test(() => {
+  const fragment = document.createDocumentFragment();
+  for (let index = 0; index < 3; ++index) {
+    const item = document.createElement('div');
+    item.className = 'item';
+    fragment.appendChild(item);
+  }
+  populated.appendChild(fragment);
+  const items = populated.querySelectorAll('.item');
+  assert_equals(items.length, 3);
+  assert_equals(getComputedStyle(items[0]).marginLeft, '6px');
+  assert_equals(getComputedStyle(items[1]).paddingLeft, '7px');
+  assert_equals(getComputedStyle(items[2]).borderLeftWidth, '8px');
+}, 'fragment attachment recalculates selectors across existing sibling boundaries');
 </script>

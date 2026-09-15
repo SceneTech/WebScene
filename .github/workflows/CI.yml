@@ -35,6 +35,13 @@ jobs:
       uses: actions/setup-python@v5
       with:
         python-version: '3.12'
+    - name: Install Linux text-rendering fonts
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y fontconfig fonts-noto-color-emoji
+        fc-cache -f
     - name: Select Xcode toolchain
       if: runner.os == 'macOS'
       shell: bash

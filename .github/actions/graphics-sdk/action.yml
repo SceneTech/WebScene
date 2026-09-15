@@ -22,7 +22,19 @@ runs:
       env:
         SDK_INPUTS: ${{ hashFiles('eng/graphics/dependencies.lock.json', 'eng/graphics/windows-runtime.json', 'eng/graphics/build.py', 'eng/graphics/DawnSymbolBoundary.cmake', 'eng/graphics/dawn_exports.py', 'eng/graphics/install-windows-sdk.ps1', '.github/actions/graphics-sdk/action.yml') }}
       run: |
-        echo "key=webscene-graphics-sdk-v1-${{ inputs.component }}-${{ inputs.rid }}-${ImageVersion:?Runner image version is required}-$SDK_INPUTS" >> "$GITHUB_OUTPUT"
+        set -euo pipefail
+        {
+          uname -a
+          if command -v sw_vers >/dev/null 2>&1; then sw_vers; fi
+          if command -v xcrun >/dev/null 2>&1; then
+            xcrun clang --version
+            xcrun --sdk macosx --show-sdk-version
+          elif command -v clang >/dev/null 2>&1; then
+            clang --version
+          fi
+        } > "$RUNNER_TEMP/webscene-toolchain.txt"
+        TOOLCHAIN_ID=$(python -c 'import hashlib, os, pathlib; p = pathlib.Path(os.environ["RUNNER_TEMP"]) / "webscene-toolchain.txt"; print(hashlib.sha256(p.read_bytes()).hexdigest()[:16])')
+        echo "key=webscene-graphics-sdk-v2-${{ inputs.component }}-${{ inputs.rid }}-$TOOLCHAIN_ID-$SDK_INPUTS" >> "$GITHUB_OUTPUT"
     - id: sdk-cache
       name: Restore pinned graphics SDK
       if: inputs.clean != 'true'

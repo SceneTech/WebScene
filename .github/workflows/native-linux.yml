@@ -31,7 +31,7 @@ jobs:
       - name: Install pinned build tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y ninja-build
+          sudo apt-get install -y ninja-build patchelf
           python3 -m pip install --break-system-packages 'cmake==3.31.6'
       - uses: actions/cache@v4
         with:
@@ -62,6 +62,7 @@ jobs:
           cmake -G Ninja -S src/WebScene.Sdk -B artifacts/native-sdk -DCMAKE_BUILD_TYPE=Release -DWEBSCENE_SDK_WEBGPU=OFF -DCMAKE_TOOLCHAIN_FILE="$PWD/src/WebScene.Sdk/cmake/WebSceneToolchain.cmake" -DCMAKE_INSTALL_PREFIX="$PWD/artifacts/sdk"
           cmake --build artifacts/native-sdk --parallel 2 2>&1 | tee artifacts/native-sdk-build.log
           cmake --install artifacts/native-sdk
+          python3 eng/sdk/stage-linux-runtime.py --llvm "$WEBSCENE_LLVM_ROOT" --sdk artifacts/sdk
           cmake -G Ninja -S tests/SDKLinux -B artifacts/native-sdk-consumer -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="$PWD/src/WebScene.Sdk/cmake/WebSceneToolchain.cmake" -DCMAKE_PREFIX_PATH="$PWD/artifacts/sdk" -DWEBSCENE_TEST_WEBGPU=OFF
           cmake --build artifacts/native-sdk-consumer --parallel 2 2>&1 | tee artifacts/native-sdk-consumer-build.log
           ctest --test-dir artifacts/native-sdk-consumer --output-on-failure --output-junit installed-sdk-tests.xml 2>&1 | tee artifacts/native-sdk-consumer-tests.log

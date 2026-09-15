@@ -33,15 +33,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ninja-build patchelf
           python3 -m pip install --break-system-packages 'cmake==3.31.6'
-      - uses: actions/cache@v4
-        with:
-          path: ~/.cache/webscene/llvm-22.1.1
-          key: linux-cxx-llvm-22.1.1-efc4d945744f951d-v2
       - name: Install checksum-pinned LLVM
         run: |
-          python3 eng/sdk/install-linux-llvm.py "$HOME/.cache/webscene/llvm-22.1.1"
-          echo "WEBSCENE_LLVM_ROOT=$HOME/.cache/webscene/llvm-22.1.1" >> "$GITHUB_ENV"
-          echo "$HOME/.cache/webscene/llvm-22.1.1/bin" >> "$GITHUB_PATH"
+          llvm_root="$HOME/.cache/webscene/llvm-22.1.1-immutable-v3"
+          python3 eng/sdk/install-linux-llvm.py "$llvm_root"
+          echo "WEBSCENE_LLVM_ROOT=$llvm_root" >> "$GITHUB_ENV"
+          echo "$llvm_root/bin" >> "$GITHUB_PATH"
       - uses: actions/cache@v4
         with:
           path: |

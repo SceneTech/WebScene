@@ -2740,6 +2740,27 @@ void test_clipboard_read_host_completion(webscene_engine* engine)
 
 void test_native_performance_timeline_identity(webscene_engine* engine)
 {
+    execute(engine, R"JS((() => {
+      const frame = document.createElement('iframe');
+      document.body.appendChild(frame);
+      frame.contentDocument.open();
+      frame.contentDocument.write(
+        '<html><body><script>'
+        + 'globalThis.__nativePerformanceFrameReady = true;'
+        + '</script></body></html>');
+      frame.contentDocument.close();
+      globalThis.__nativePerformanceFrame = frame;
+    })())JS", "native-performance-frame-setup.js");
+    require(
+        evaluate_until_equals(
+            engine,
+            "globalThis.__nativePerformanceFrame?.contentWindow"
+                ".__nativePerformanceFrameReady === true"
+                " && typeof globalThis.__nativePerformanceFrame.contentWindow"
+                ".performance?.mark === 'function'",
+            "native-performance-frame-ready.js",
+            "true") == "true",
+        "iframe Performance timeline was not installed after hydration");
     const auto result = evaluate(engine, R"JS((() => {
       const probe = (performance, prefix) => {
         const mark = performance.mark;
@@ -2764,14 +2785,11 @@ void test_native_performance_timeline_identity(webscene_engine* engine)
           duration: entry.duration
         };
       };
-      const frame = document.createElement('iframe');
-      document.body.appendChild(frame);
-      frame.contentDocument.open();
-      frame.contentDocument.write('<html><body></body></html>');
-      frame.contentDocument.close();
       return {
         main: probe(performance, 'native-main'),
-        frame: probe(frame.contentWindow.performance, 'native-frame')
+        frame: probe(
+          globalThis.__nativePerformanceFrame.contentWindow.performance,
+          'native-frame')
       };
     })())JS", "native-performance-timeline-identity.js");
     require(

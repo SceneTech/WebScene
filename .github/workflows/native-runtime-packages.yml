@@ -559,6 +559,11 @@ jobs:
         - os: [self-hosted, Linux, X64]
           rid: linux-x64
     runs-on: ${{ matrix.os }}
+    env:
+      # PR builds intentionally reuse package versions. Keep their extracted
+      # packages isolated so a self-hosted runner cannot consume an older build
+      # of the same version from its persistent global NuGet cache.
+      NUGET_PACKAGES: ${{ runner.temp }}/webscene-nuget-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.rid }}
     steps:
     - uses: actions/checkout@v4
     - name: Setup .NET

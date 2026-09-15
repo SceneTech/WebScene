@@ -562,6 +562,9 @@ struct v8_dom_runtime::implementation final {
             js_string(isolate, "DOCUMENT_POSITION_IMPLEMENTATION_SPECIFIC"),
             v8::Integer::New(isolate, 32));
         element->PrototypeTemplate()->Set(
+            js_string(isolate, "hasChildNodes"),
+            v8::FunctionTemplate::New(isolate, has_child_nodes));
+        element->PrototypeTemplate()->Set(
             js_string(isolate, "appendChild"),
             v8::FunctionTemplate::New(isolate, append_child));
         element->PrototypeTemplate()->Set(
@@ -995,6 +998,9 @@ struct v8_dom_runtime::implementation final {
         document_template->Set(
             js_string(isolate, "createEvent"),
             v8::FunctionTemplate::New(isolate, document_create_event));
+        document_template->Set(
+            js_string(isolate, "hasChildNodes"),
+            v8::FunctionTemplate::New(isolate, has_child_nodes));
         document_template->Set(
             js_string(isolate, "appendChild"),
             v8::FunctionTemplate::New(isolate, append_child));

@@ -42,6 +42,7 @@
         }
       ],
       "methods": [
+        { "name": "hasChildNodes", "callback": "has_child_nodes", "length": 0 },
         { "name": "appendChild", "callback": "append_child", "length": 1 },
         { "name": "insertBefore", "callback": "insert_before", "length": 2 },
         { "name": "removeChild", "callback": "remove_child", "length": 1 },

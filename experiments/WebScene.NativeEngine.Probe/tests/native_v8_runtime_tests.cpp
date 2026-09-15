@@ -819,6 +819,7 @@ int main()
     test_listener_added_during_dispatch_waits_for_next_event(engine);
     test_node_filter_tree_walker_focus_navigation(engine);
     test_node_iterator_dompurify_traversal(engine);
+    test_node_has_child_nodes_contract_and_performance(engine);
     test_node_iterator_linear_performance_gate();
     test_table_cell_click_copies_text_to_host();
     test_synthetic_window_resize_dispatch_uses_outer_listener_registry(engine);

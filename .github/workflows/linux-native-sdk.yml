@@ -29,8 +29,10 @@ jobs:
           git archive --format=tar.gz HEAD > artifacts/linux-native/source.tar.gz
       - name: Install compiler and native prerequisites
         run: |
-          sudo apt-get update
-          sudo apt-get install -y patchelf ninja-build libfontconfig1-dev libfreetype-dev libvulkan-dev mesa-vulkan-drivers vulkan-tools
+          sudo flock /var/lock/webscene-apt.lock bash -c '
+            apt-get update
+            apt-get install -y patchelf ninja-build libfontconfig1-dev libfreetype-dev libvulkan-dev mesa-vulkan-drivers vulkan-tools
+          '
           python3 -m pip install --break-system-packages cmake==3.31.6
       - name: Install checksum-pinned LLVM
         run: |

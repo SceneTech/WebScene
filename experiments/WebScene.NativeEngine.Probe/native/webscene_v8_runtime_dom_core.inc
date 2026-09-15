@@ -4446,6 +4446,18 @@
         info.GetReturnValue().Set(info[0]);
     }
 
+    static void has_child_nodes(const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        binding_callback_timer binding_timer(
+            self->profile(binding_category::dom_query),
+            self->profile_named("Node.hasChildNodes"));
+        const auto* node = unwrap_node(info.This());
+        info.GetReturnValue().Set(v8::Boolean::New(
+            info.GetIsolate(),
+            node != nullptr && !node->children.empty()));
+    }
+
     static void append_nodes(const v8::FunctionCallbackInfo<v8::Value>& info)
     {
         auto* self = current(info.GetIsolate());

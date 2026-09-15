@@ -31,6 +31,10 @@ jobs:
       uses: actions/setup-node@v4
       with:
         node-version: 22
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
     - name: Restore
       run: dotnet restore WebScene.sln
     - name: Verify immutable GPU compatibility fixture
@@ -112,6 +116,22 @@ jobs:
     - uses: actions/setup-dotnet@v5
       with:
         global-json-file: global.json
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+    - name: Select Xcode toolchain
+      shell: bash
+      run: |
+        set -euo pipefail
+        developer_dir=/Applications/Xcode.app/Contents/Developer
+        if [[ ! -d "$developer_dir" ]]; then
+          echo "Xcode is required for macOS NativeAOT; Command Line Tools alone are not supported." >&2
+          exit 1
+        fi
+        echo "DEVELOPER_DIR=$developer_dir" >> "$GITHUB_ENV"
+        DEVELOPER_DIR="$developer_dir" xcrun clang --version
+        DEVELOPER_DIR="$developer_dir" xcrun --sdk macosx --show-sdk-path
     - name: Publish NativeAOT with reflection JSON disabled
       shell: bash
       run: |

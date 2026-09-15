@@ -2748,7 +2748,6 @@ void test_native_clipboard_shortcut_events(webscene_engine*)
         globalThis.__clipboardShortcutEvents = [];
         globalThis.__clipboardShortcutKeys = [];
         globalThis.__clipboardExecCommandResults = [];
-        globalThis.__clipboardExecCommandProgress = [];
         editor.addEventListener('keydown', event => {
           __clipboardShortcutKeys.push([
             event.key, event.metaKey, event.ctrlKey, event.defaultPrevented]);
@@ -2757,15 +2756,7 @@ void test_native_clipboard_shortcut_events(webscene_engine*)
             : undefined;
           if (command) {
             event.preventDefault();
-            __clipboardExecCommandProgress.push(`enter:${command}`);
-            try {
-              __clipboardExecCommandResults.push(document.execCommand(command));
-              __clipboardExecCommandProgress.push(`return:${command}`);
-            } catch (error) {
-              __clipboardExecCommandResults.push(
-                `${error?.name || 'Error'}: ${error?.message || error}`);
-              __clipboardExecCommandProgress.push(`throw:${command}`);
-            }
+            __clipboardExecCommandResults.push(document.execCommand(command));
           }
         });
         editor.addEventListener('copy', event => {
@@ -2830,7 +2821,7 @@ void test_native_clipboard_shortcut_events(webscene_engine*)
                 engine, request.id, 0U, "text/html", nullptr, 0U, nullptr) != 0,
         "native copy HTML completion was rejected");
 
-    keyboard_input(engine, WEBSCENE_INPUT_KEY_DOWN, 'x', 9762U, modifier);
+    keyboard_input(engine, WEBSCENE_INPUT_KEY_DOWN, 'X', 9762U, modifier);
     webscene_engine_get_metrics(engine, &metrics);
     wait_for_consumed_inputs(engine, metrics.enqueued_inputs,
         "native cut shortcut was not consumed");
@@ -2878,9 +2869,7 @@ void test_native_clipboard_shortcut_events(webscene_engine*)
         "native-clipboard-exec-command-results.js");
     require(exec_command_results == "[true,true,true]",
         "prevented native shortcuts did not execute document clipboard commands: "
-            + exec_command_results + " progress="
-            + evaluate(engine, "__clipboardExecCommandProgress",
-                "native-clipboard-exec-command-progress.js"));
+            + exec_command_results);
     require(evaluate(engine, "document.execCommand('unsupported-command')",
                 "native-clipboard-unsupported-exec-command.js") == "false",
         "unsupported legacy command claimed success");

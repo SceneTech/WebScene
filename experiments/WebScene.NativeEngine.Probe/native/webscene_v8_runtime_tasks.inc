@@ -2283,13 +2283,7 @@
                 local_context, global, 2, arguments).ToLocal(&result)) {
             return false;
         }
-        // Clipboard reads enqueue their host request synchronously and the host
-        // completion performs the checkpoint that dispatches paste. Re-entering
-        // a checkpoint from document.execCommand('paste') can resume the read
-        // continuation before the keydown listener records the command result.
-        // Copy and cut still need this checkpoint to advance their async Blob
-        // extraction far enough to publish the native write request.
-        if (std::string_view{type} != "paste") perform_microtask_checkpoint();
+        perform_microtask_checkpoint();
         return result->BooleanValue(isolate);
     }
 

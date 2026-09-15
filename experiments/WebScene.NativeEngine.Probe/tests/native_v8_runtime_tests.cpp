@@ -832,6 +832,7 @@ int main()
     test_clipboard_write_text_host_handoff(engine);
     test_clipboard_read_host_completion(engine);
     test_clipboard_maximum_payload_gate(engine);
+    test_clipboard_small_round_trip_performance(engine);
     test_fullscreen_host_completion(engine);
     test_component_library_dom_discovery_primitives(engine);
     test_document_id_index_preserves_tree_and_root_semantics(engine);

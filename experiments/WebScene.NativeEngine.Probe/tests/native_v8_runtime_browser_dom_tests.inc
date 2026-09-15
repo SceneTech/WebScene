@@ -2767,6 +2767,49 @@ void test_clipboard_maximum_payload_gate(webscene_engine* engine)
               << maximum_bytes << " elapsed=" << elapsed << "s\n";
 }
 
+void test_clipboard_small_round_trip_performance(webscene_engine* engine)
+{
+    constexpr unsigned operation_count = 10000U;
+    constexpr unsigned batch_size = 16U;
+    execute(engine, "globalThis.__clipboardPerformanceCompleted = 0",
+        "native-clipboard-performance-setup.js");
+    const auto started = std::chrono::steady_clock::now();
+    for (unsigned offset = 0; offset < operation_count; offset += batch_size) {
+        execute(engine, R"JS(
+            for (let index = 0; index < 16; ++index) {
+              navigator.clipboard.writeText('x').then(() => {
+                ++globalThis.__clipboardPerformanceCompleted;
+              });
+            }
+        )JS", "native-clipboard-performance-batch.js");
+        for (unsigned index = 0; index < batch_size; ++index) {
+            const auto request = take_typed_host_request(engine);
+            require(request.kind == WEBSCENE_HOST_REQUEST_CLIPBOARD_WRITE_V1
+                    && request.id != 0U
+                    && request.content_type == "text/plain"
+                    && request.bytes == std::vector<uint8_t>{'x'},
+                "typed clipboard request changed under round-trip load");
+            require(webscene_engine_complete_host_request_v1(
+                        engine, request.id, 0U, "text/plain",
+                        nullptr, 0U, nullptr) != 0,
+                "typed clipboard completion was rejected under load");
+        }
+    }
+    require(evaluate(engine,
+                "__clipboardPerformanceCompleted === 10000",
+                "native-clipboard-performance-result.js") == "true",
+        "typed clipboard promises did not all settle under load");
+    require(!take_typed_host_request(engine),
+        "typed clipboard round-trip retained a host request");
+    const auto elapsed = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - started).count();
+    require(elapsed < 10.0,
+        "10,000 typed clipboard round trips exceeded ten seconds");
+    std::cout << "Typed clipboard round-trip gate: operations="
+              << operation_count << " pendingHighWater=" << batch_size
+              << " payloadBytes=1 elapsed=" << elapsed << "s\n";
+}
+
 void test_fullscreen_host_completion(webscene_engine* engine)
 {
     execute(engine, R"JS(

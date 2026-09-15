@@ -4525,8 +4525,21 @@
                 fragment_child->parent = nullptr;
                 fragment_child->visible = true;
                 if (!self->document.append_child(*parent, *fragment_child)) continue;
+#if defined(WEBSCENE_NATIVE_ENGINE_FRAGMENT_ATTACH_CONTROL)
                 self->recascade_connected_subtree(*fragment_child);
                 self->recascade_connected_node(*parent);
+#endif
+            }
+#if !defined(WEBSCENE_NATIVE_ENGINE_FRAGMENT_ATTACH_CONTROL)
+            // DocumentFragment insertion is one tree mutation. Match structural
+            // selectors against the completed sibling list and recascade the
+            // affected parent subtree once. Styling every child and parent as
+            // it is transferred repeats selector matching and leaves earlier
+            // siblings with transient :last-child/:nth-child results.
+            self->recascade_connected_subtree(*parent, "appendChild.fragment");
+#endif
+            for (auto* fragment_child : children) {
+                if (fragment_child == nullptr || fragment_child->parent != parent) continue;
                 self->activate_connected_stylesheet(*fragment_child);
                 self->enqueue_connected_resources_subtree(
                     *fragment_child,

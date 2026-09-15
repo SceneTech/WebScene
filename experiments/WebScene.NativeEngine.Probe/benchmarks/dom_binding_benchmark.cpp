@@ -94,6 +94,8 @@ int main(int argc, char** argv)
         && std::string_view(argv[3]) == "positional-selectors";
     const auto named_property_workload = argc > 3
         && std::string_view(argv[3]) == "named-properties";
+    const auto fragment_attach_workload = argc > 3
+        && std::string_view(argv[3]) == "fragment-attach";
     constexpr std::string_view lifecycle_source = "1";
     constexpr std::string_view selector_source = R"JS(
 (() => {
@@ -183,10 +185,47 @@ int main(int argc, char** argv)
   return checksum;
 })()
 )JS";
+    constexpr std::string_view fragment_attach_source = R"JS(
+(() => {
+  const style = document.createElement('style');
+  style.textContent = `
+    .fragment-panel:empty { width: 1px; }
+    .fragment-panel:has(.fragment-item) { min-height: 2px; }
+    .fragment-panel > .fragment-item:nth-child(2n) { height: 3px; }
+    .fragment-panel > .fragment-item:last-child { width: 4px; }
+  `;
+  document.body.appendChild(style);
+  let checksum = 0;
+  for (let iteration = 0; iteration < 24; ++iteration) {
+    const panel = document.createElement('section');
+    panel.className = 'fragment-panel';
+    document.body.appendChild(panel);
+    const fragment = document.createDocumentFragment();
+    for (let index = 0; index < 256; ++index) {
+      const item = document.createElement('div');
+      item.className = 'fragment-item';
+      item.textContent = String(index);
+      fragment.appendChild(item);
+    }
+    panel.appendChild(fragment);
+    const last = panel.lastElementChild;
+    if (panel.children.length !== 256
+        || getComputedStyle(last).width !== '4px') {
+      throw new Error('fragment structural cascade diverged');
+    }
+    checksum += panel.children.length;
+    panel.remove();
+  }
+  if (checksum !== 6144) throw new Error(`unexpected checksum ${checksum}`);
+  return checksum;
+})()
+)JS";
     const auto source = positional_selector_workload
         ? positional_selector_source
         : selector_workload
         ? selector_source
+        : fragment_attach_workload
+            ? fragment_attach_source
         : named_property_workload
             ? named_property_source
             : lifecycle_source;
@@ -194,6 +233,8 @@ int main(int argc, char** argv)
         ? std::string_view("positional-selector-runtime-benchmark.js")
         : selector_workload
         ? std::string_view("selector-runtime-benchmark.js")
+        : fragment_attach_workload
+            ? std::string_view("fragment-attach-runtime-benchmark.js")
         : named_property_workload
             ? std::string_view("named-property-runtime-benchmark.js")
             : std::string_view("dom-binding-benchmark.js");
@@ -220,7 +261,9 @@ int main(int argc, char** argv)
         std::cout << std::fixed << std::setprecision(3)
                   << "samples=" << samples
                   << " warmups=" << warmups
-                  << " mode=" << (selector_workload
+                  << " mode=" << (fragment_attach_workload
+                        ? "fragment-attach"
+                        : selector_workload
                         ? "selectors"
                         : positional_selector_workload
                             ? "positional-selectors"

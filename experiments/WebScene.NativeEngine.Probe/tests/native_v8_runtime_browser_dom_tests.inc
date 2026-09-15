@@ -2766,6 +2766,9 @@ void test_native_performance_timeline_identity(webscene_engine* engine)
       };
       const frame = document.createElement('iframe');
       document.body.appendChild(frame);
+      frame.contentDocument.open();
+      frame.contentDocument.write('<html><body></body></html>');
+      frame.contentDocument.close();
       return {
         main: probe(performance, 'native-main'),
         frame: probe(frame.contentWindow.performance, 'native-frame')

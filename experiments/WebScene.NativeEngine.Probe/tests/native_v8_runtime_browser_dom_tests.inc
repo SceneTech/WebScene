@@ -2793,6 +2793,10 @@ void test_native_clipboard_shortcut_events(webscene_engine*)
                 engine, request.id, 0U, "text/plain", nullptr, 0U, nullptr) != 0,
         "native copy plain-text completion was rejected");
     request = take_typed_host_request(engine);
+    for (auto attempt = 0; attempt < 250 && !request; ++attempt) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        request = take_typed_host_request(engine);
+    }
     require(request.kind == WEBSCENE_HOST_REQUEST_CLIPBOARD_WRITE_V1
                 && request.flags == 0U
                 && request.content_type == "text/html"

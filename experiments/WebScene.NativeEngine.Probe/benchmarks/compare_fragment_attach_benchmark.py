@@ -38,9 +38,9 @@ def main() -> int:
     parser.add_argument("--control", type=Path, required=True)
     parser.add_argument("--candidate", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--blocks", type=int, default=4)
-    parser.add_argument("--samples", type=int, default=5)
-    parser.add_argument("--warmups", type=int, default=1)
+    parser.add_argument("--blocks", type=int, default=6)
+    parser.add_argument("--samples", type=int, default=7)
+    parser.add_argument("--warmups", type=int, default=2)
     parser.add_argument("--minimum-improvement-percent", type=float, default=10)
     args = parser.parse_args()
     binaries = {"control": args.control.resolve(), "candidate": args.candidate.resolve()}

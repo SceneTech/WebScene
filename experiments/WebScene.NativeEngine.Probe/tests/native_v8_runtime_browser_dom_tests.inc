@@ -2775,13 +2775,15 @@ void test_clipboard_small_round_trip_performance(webscene_engine* engine)
         "native-clipboard-performance-setup.js");
     const auto started = std::chrono::steady_clock::now();
     for (unsigned offset = 0; offset < operation_count; offset += batch_size) {
-        execute(engine, R"JS(
+        require(evaluate(engine, R"JS(
             for (let index = 0; index < 16; ++index) {
               navigator.clipboard.writeText('x').then(() => {
                 ++globalThis.__clipboardPerformanceCompleted;
               });
             }
-        )JS", "native-clipboard-performance-batch.js");
+            true
+        )JS", "native-clipboard-performance-batch.js") == "true",
+            "typed clipboard performance batch did not drain through the engine worker");
         for (unsigned index = 0; index < batch_size; ++index) {
             const auto request = take_typed_host_request(engine);
             require(request.kind == WEBSCENE_HOST_REQUEST_CLIPBOARD_WRITE_V1

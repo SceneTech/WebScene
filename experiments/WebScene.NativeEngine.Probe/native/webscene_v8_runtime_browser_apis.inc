@@ -221,6 +221,53 @@
         if (target_context.IsEmpty()) return;
         if (source_context.IsEmpty()) source_context = target_context;
 
+        if (self->pending_window_messages.size()
+                >= maximum_pending_window_messages
+            || self->pending_window_message_bytes
+                >= maximum_pending_window_message_bytes) {
+            throw_dom_exception(
+                info,
+                "Window message queue capacity exhausted",
+                "QuotaExceededError");
+            return;
+        }
+
+        auto target_origin = std::string("*");
+        v8::Local<v8::Value> transfer = v8::Undefined(isolate);
+        if (info.Length() > 1 && info[1]->IsObject() && !info[1]->IsArray()) {
+            v8::Local<v8::Value> target_origin_value;
+            if (!info[1].As<v8::Object>()->Get(
+                    isolate->GetCurrentContext(),
+                    js_string(isolate, "targetOrigin")).ToLocal(&target_origin_value)) {
+                return;
+            }
+            if (!target_origin_value->IsUndefined()) {
+                target_origin = to_utf8(isolate, target_origin_value);
+            }
+            if (!info[1].As<v8::Object>()->Get(
+                    isolate->GetCurrentContext(),
+                    js_string(isolate, "transfer")).ToLocal(&transfer)) {
+                return;
+            }
+        } else {
+            if (info.Length() > 1 && !info[1]->IsUndefined()) {
+                target_origin = to_utf8(isolate, info[1]);
+            }
+            if (info.Length() > 2) transfer = info[2];
+        }
+
+        clone_packet packet;
+        if (!serialize_clone(
+                info,
+                info[0],
+                transfer,
+                packet,
+                maximum_pending_window_message_bytes
+                    - self->pending_window_message_bytes)) {
+            return;
+        }
+        const auto packet_bytes = clone_packet_size(packet);
+
         const auto read_origin = [&](v8::Local<v8::Context> local_context) {
             v8::Context::Scope scope(local_context);
             v8::Local<v8::Value> location_value;
@@ -241,11 +288,10 @@
         self->pending_window_messages.push_back(pending_window_message{
             v8::Global<v8::Context>(isolate, target_context),
             v8::Global<v8::Context>(isolate, source_context),
-            v8::Global<v8::Value>(isolate, info[0]),
-            info.Length() > 1 && !info[1]->IsUndefined()
-                ? to_utf8(isolate, info[1])
-                : std::string("*"),
+            std::move(packet),
+            std::move(target_origin),
             read_origin(source_context)});
+        self->pending_window_message_bytes += packet_bytes;
     }
 
     static void get_window_frames(

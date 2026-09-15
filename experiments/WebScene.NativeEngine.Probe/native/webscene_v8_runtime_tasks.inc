@@ -349,11 +349,13 @@
         if (pending_window_messages.empty()) return true;
         auto task = std::move(pending_window_messages.front());
         pending_window_messages.pop_front();
+        const auto packet_bytes = clone_packet_size(task.packet);
+        pending_window_message_bytes = packet_bytes > pending_window_message_bytes
+            ? 0U : pending_window_message_bytes - packet_bytes;
 
         auto target_context = task.target_context.Get(isolate);
         auto source_context = task.source_context.Get(isolate);
-        auto data = task.data.Get(isolate);
-        if (target_context.IsEmpty() || source_context.IsEmpty() || data.IsEmpty()) {
+        if (target_context.IsEmpty() || source_context.IsEmpty()) {
             return true;
         }
 
@@ -384,15 +386,26 @@
             return true;
         }
 
+        std::vector<v8::Local<v8::Object>> transferred_ports;
+        v8::Local<v8::Value> data;
+        v8::TryCatch decode_error(isolate);
+        const auto decoded = deserialize_clone(
+            isolate,
+            target_context,
+            task.packet,
+            &transferred_ports).ToLocal(&data);
+        if (!decoded) decode_error.Reset();
         auto event = v8::Object::New(isolate);
         event->Set(
             target_context,
             js_string(isolate, "type"),
-            js_string(isolate, "message")).Check();
-        event->Set(
-            target_context,
-            js_string(isolate, "data"),
-            data).Check();
+            js_string(isolate, decoded ? "message" : "messageerror")).Check();
+        if (decoded) {
+            event->Set(
+                target_context,
+                js_string(isolate, "data"),
+                data).Check();
+        }
         event->Set(
             target_context,
             js_string(isolate, "origin"),
@@ -405,10 +418,13 @@
             target_context,
             js_string(isolate, "lastEventId"),
             js_string(isolate, "")).Check();
-        event->Set(
-            target_context,
-            js_string(isolate, "ports"),
-            v8::Array::New(isolate)).Check();
+        auto ports = v8::Array::New(
+            isolate,
+            static_cast<int>(transferred_ports.size()));
+        for (uint32_t index = 0; index < transferred_ports.size(); ++index) {
+            ports->Set(target_context, index, transferred_ports[index]).Check();
+        }
+        event->Set(target_context, js_string(isolate, "ports"), ports).Check();
         event->Set(
             target_context,
             js_string(isolate, "bubbles"),
@@ -573,6 +589,7 @@
         if(drain_media())return true;
 #endif
         if (has_worker_messages()) return drain_worker_message();
+        if (has_message_port_messages()) return drain_message_port_message();
         if (websocket_transport.has_pending_events()) {
             return drain_websocket_event();
         }

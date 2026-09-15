@@ -62,6 +62,7 @@
 
     ~implementation()
     {
+        stop_message_ports();
         stop_workers();
         // The storage worker never touches V8. Join it before persistent
         // resolver handles and the isolate are released.
@@ -158,6 +159,8 @@
         media_query_lists.clear();
         timers.clear();
         pending_window_messages.clear();
+        pending_window_message_bytes = 0U;
+        message_port_bindings.clear();
         pending_dialog_close_events.clear();
         pending_programmatic_scroll_events.clear();
         pending_interop_promises.clear();

@@ -1,0 +1,44 @@
+<!doctype html>
+<title>Worker structured clone and transferable MessagePort contract</title>
+<script>
+window.__webSceneWptState = {complete:false,harness:null,results:[],errors:[],diagnostics:[]};
+window.record = (name, condition) => __webSceneWptState.results.push({
+  name,status:condition?'PASS':'FAIL',message:condition?null:'Contract failed',stack:null
+});
+window.finish = () => {
+  const s=__webSceneWptState;
+  s.harness={status:s.results.some(r=>r.status!=='PASS')?1:0,message:null,stack:null};
+  s.complete=true;
+};
+
+try {
+  const worker = new Worker('./resources/workers/message-port.js', {name:'wpt-message-port'});
+  const channel = new MessageChannel();
+  const payload = {map:new Map([[7,'seven']]),date:new Date(456)};
+  payload.self = payload;
+  const bytes = new Uint8Array([41]);
+  channel.port1.onmessage = event => {
+    record('Worker receives cycles and built-in structured clone values', event.data.valid);
+    record('Worker transfers ArrayBuffer ownership back through MessagePort',
+      event.data.bytes[0] === 42 && event.data.bytes.byteLength === 1);
+    record('Transferred MessagePort event shape is browser-compatible',
+      event.target === channel.port1 && event.ports.length === 0 && event.origin === '');
+    worker.terminate();
+    channel.port1.close();
+    finish();
+  };
+  worker.onerror = event => {
+    __webSceneWptState.errors.push(event.message);
+    record('Worker completed without an error event', false);
+    finish();
+  };
+  worker.postMessage({payload,port:channel.port2,bytes}, [channel.port2,bytes.buffer]);
+  record('Worker postMessage detaches transferred ArrayBuffer', bytes.byteLength === 0);
+  record('Transferred endpoint retains MessagePort interface identity', channel.port2 instanceof MessagePort);
+  channel.port1.start();
+} catch (error) {
+  __webSceneWptState.errors.push(String(error));
+  record('Worker MessagePort contract completed', false);
+  finish();
+}
+</script>

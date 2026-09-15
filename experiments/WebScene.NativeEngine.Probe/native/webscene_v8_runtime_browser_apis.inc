@@ -317,12 +317,8 @@
         // A child browsing context may focus its own active element but must
         // not activate the top-level operating-system window.
         if (local_context != self->context.Get(info.GetIsolate())) return;
-        auto request = v8::Object::New(info.GetIsolate());
-        request->Set(
-            local_context,
-            js_string(info.GetIsolate(), "kind"),
-            js_string(info.GetIsolate(), "focusWindow")).Check();
-        if (!self->enqueue_host_request(local_context, request)) {
+        if (!self->queue_top_level_window_action(
+                local_context, WEBSCENE_HOST_REQUEST_WINDOW_FOCUS_V1)) {
             info.GetIsolate()->ThrowException(v8::Exception::Error(
                 js_string(info.GetIsolate(), "WebScene rejected the focus-window request")));
         }
@@ -1437,6 +1433,46 @@
         return true;
     }
 
+    bool set_fullscreen(bool fullscreen)
+    {
+        if (document_fullscreen == fullscreen) return true;
+        document_fullscreen = fullscreen;
+        auto isolate_locker = lock_shared_isolate();
+        v8::Isolate::Scope isolate_scope(isolate);
+        v8::HandleScope handle_scope(isolate);
+        auto local_context = context.Get(isolate);
+        if (local_context.IsEmpty()) return true;
+        v8::Context::Scope context_scope(local_context);
+        fullscreen_element = fullscreen ? &document.body() : nullptr;
+        auto target = document_object.Get(isolate);
+        if (target.IsEmpty()) return true;
+        auto event = create_event_instance(local_context);
+        event->Set(local_context, js_string(isolate, "type"),
+            js_string(isolate, "fullscreenchange")).Check();
+        event->Set(local_context, js_string(isolate, "bubbles"),
+            v8::True(isolate)).Check();
+        event->Set(local_context, js_string(isolate, "cancelable"),
+            v8::False(isolate)).Check();
+        v8::Local<v8::Value> dispatcher;
+        if (!target->Get(local_context, js_string(isolate, "dispatchEvent"))
+                .ToLocal(&dispatcher)
+            || !dispatcher->IsFunction()) {
+            last_error = "Document fullscreen dispatcher is unavailable";
+            return false;
+        }
+        v8::TryCatch try_catch(isolate);
+        v8::Local<v8::Value> arguments[] = {event};
+        if (dispatcher.As<v8::Function>()->Call(
+                local_context, target, 1, arguments).IsEmpty()) {
+            last_error = "Document fullscreen dispatch failed: "
+                + describe_reported_exception(try_catch, local_context);
+            ++frame_script_error_count;
+            return false;
+        }
+        perform_microtask_checkpoint();
+        return true;
+    }
+
     bool dispatch_transition_events()
     {
         auto events = document.take_transition_events();
@@ -1945,9 +1981,8 @@
             }
             resolver->Reject(local_context, error).Check();
         };
-        if (self == nullptr || local_context != self->context.Get(info.GetIsolate())
-            || info.Length() < 2 || !info[1]->IsObject()) {
-            reject("Clipboard writes require the active top-level document", "NotAllowedError");
+        if (self == nullptr || info.Length() < 2 || !info[1]->IsObject()) {
+            reject("Clipboard writes require an active document", "NotAllowedError");
             return;
         }
         const auto content_type = to_utf8(info.GetIsolate(), info[0]);
@@ -1964,30 +1999,21 @@
             return;
         }
         auto payload = info[1].As<v8::Object>();
-        auto request = v8::Object::New(info.GetIsolate());
         const auto request_id = ++self->next_host_request_id;
-        request->Set(
-            local_context,
-            js_string(info.GetIsolate(), "requestId"),
-            v8::Number::New(info.GetIsolate(), static_cast<double>(request_id))).Check();
-        request->Set(
-            local_context,
-            js_string(info.GetIsolate(), "kind"),
-            js_string(info.GetIsolate(), "writeClipboard")).Check();
-        request->Set(
-            local_context,
-            js_string(info.GetIsolate(), "contentType"),
-            js_string(info.GetIsolate(), content_type.c_str())).Check();
+        auto request = std::make_unique<native_host_request>();
+        request->view.request_id = request_id;
+        request->view.kind = WEBSCENE_HOST_REQUEST_CLIPBOARD_WRITE_V1;
+        request->view.flags = info.Length() > 2 && info[2]->BooleanValue(info.GetIsolate())
+            ? WEBSCENE_HOST_REQUEST_CLIPBOARD_REPLACE_V1 : 0U;
+        request->content_type = content_type;
 
         v8::Local<v8::Value> canvas_node_id;
         if (payload->Get(
                 local_context,
                 js_string(info.GetIsolate(), "_canvasNodeId")).ToLocal(&canvas_node_id)
             && canvas_node_id->IsUint32()) {
-            request->Set(
-                local_context,
-                js_string(info.GetIsolate(), "canvasNodeId"),
-                canvas_node_id).Check();
+            request->view.target_node_id =
+                canvas_node_id.As<v8::Uint32>()->Value();
         } else {
             v8::Local<v8::Value> bytes_value;
             if (!payload->Get(
@@ -2005,19 +2031,15 @@
             auto backing = view->Buffer()->GetBackingStore();
             const auto* bytes = static_cast<const uint8_t*>(backing->Data())
                 + view->ByteOffset();
-            const auto data_url = "data:" + content_type + ";base64,"
-                + base64_encode_bytes(bytes, view->ByteLength());
-            request->Set(
-                local_context,
-                js_string(info.GetIsolate(), "url"),
-                js_string(info.GetIsolate(), data_url.c_str())).Check();
+            if (view->ByteLength() != 0U)
+                request->bytes.assign(bytes, bytes + view->ByteLength());
         }
         host_promise_target target;
         target.operation = "writeClipboard";
         target.context.Reset(info.GetIsolate(), local_context);
         target.resolver.Reset(info.GetIsolate(), resolver);
         self->host_promise_targets.emplace(request_id, std::move(target));
-        if (!self->enqueue_host_request(local_context, request)) {
+        if (!self->enqueue_typed_host_request(std::move(request))) {
             self->host_promise_targets.erase(request_id);
             reject("The host request queue is full", "QuotaExceededError");
         }
@@ -2043,6 +2065,13 @@
             reject("Clipboard reads require the active top-level document", "NotAllowedError");
             return;
         }
+        constexpr auto user_activation_lifetime = std::chrono::seconds(5);
+        if (self->last_user_activation.time_since_epoch().count() == 0
+            || std::chrono::steady_clock::now() - self->last_user_activation
+                > user_activation_lifetime) {
+            reject("Clipboard reads require recent native user activation", "NotAllowedError");
+            return;
+        }
         const auto content_type = info.Length() == 0
             ? std::string{"text/plain"}
             : to_utf8(info.GetIsolate(), info[0]);
@@ -2056,25 +2085,16 @@
             return;
         }
         const auto request_id = ++self->next_host_request_id;
-        auto request = v8::Object::New(info.GetIsolate());
-        request->Set(
-            local_context,
-            js_string(info.GetIsolate(), "requestId"),
-            v8::Number::New(info.GetIsolate(), static_cast<double>(request_id))).Check();
-        request->Set(
-            local_context,
-            js_string(info.GetIsolate(), "kind"),
-            js_string(info.GetIsolate(), "readClipboard")).Check();
-        request->Set(
-            local_context,
-            js_string(info.GetIsolate(), "contentType"),
-            js_string(info.GetIsolate(), content_type.c_str())).Check();
+        auto request = std::make_unique<native_host_request>();
+        request->view.request_id = request_id;
+        request->view.kind = WEBSCENE_HOST_REQUEST_CLIPBOARD_READ_V1;
+        request->content_type = content_type;
         host_promise_target target;
         target.operation = "readClipboard";
         target.context.Reset(info.GetIsolate(), local_context);
         target.resolver.Reset(info.GetIsolate(), resolver);
         self->host_promise_targets.emplace(request_id, std::move(target));
-        if (!self->enqueue_host_request(local_context, request)) {
+        if (!self->enqueue_typed_host_request(std::move(request))) {
             self->host_promise_targets.erase(request_id);
             reject("The host request queue is full", "QuotaExceededError");
         }

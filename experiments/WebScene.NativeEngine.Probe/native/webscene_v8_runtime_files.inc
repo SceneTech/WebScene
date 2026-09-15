@@ -93,8 +93,7 @@
         host_promise_targets.erase(found);
         auto local_context = target.context.Get(isolate);
         auto resolver = target.resolver.Get(isolate);
-        if (local_context.IsEmpty() || resolver.IsEmpty()
-            || local_context != context.Get(isolate)) return;
+        if (local_context.IsEmpty() || resolver.IsEmpty()) return;
         v8::Context::Scope context_scope(local_context);
         if (completion.status != 0U) {
             const auto message = completion.error.empty()
@@ -121,9 +120,25 @@
         }
         if (target.operation == "enterFullscreen"
             || target.operation == "exitFullscreen") {
-            fullscreen_element = target.operation == "enterFullscreen"
+            const bool enter = target.operation == "enterFullscreen";
+            auto* requested_element = enter
                 ? document.find_by_native_id(target.target_node_id)
                 : nullptr;
+            if (enter && (requested_element == nullptr
+                          || !is_connected(*requested_element))) {
+                auto error = v8::Exception::Error(js_string(
+                    isolate, "The fullscreen target is no longer connected"));
+                if (error->IsObject()) {
+                    error.As<v8::Object>()->Set(
+                        local_context, js_string(isolate, "name"),
+                        js_string(isolate, "TypeError")).Check();
+                }
+                resolver->Reject(local_context, error).Check();
+                perform_microtask_checkpoint();
+                return;
+            }
+            document_fullscreen = enter;
+            fullscreen_element = requested_element;
             auto document_target = document_object.Get(isolate);
             if (!document_target.IsEmpty()) {
                 auto event = create_event_instance(local_context);

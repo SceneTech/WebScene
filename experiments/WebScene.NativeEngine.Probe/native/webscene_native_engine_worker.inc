@@ -326,6 +326,15 @@
                     set_last_error(runtime_->last_error());
                 }
             }
+            if (fullscreen_changed_.exchange(false, std::memory_order_acq_rel)) {
+                const auto host_fullscreen =
+                    host_fullscreen_.load(std::memory_order_acquire);
+                if (runtime_ != nullptr
+                    && !runtime_->set_fullscreen(host_fullscreen)) {
+                    script_errors_.fetch_add(1, std::memory_order_relaxed);
+                    set_last_error(runtime_->last_error());
+                }
+            }
             if (low_memory_requested_.exchange(false, std::memory_order_acq_rel)
                 && runtime_ != nullptr) {
                 runtime_->notify_low_memory();
@@ -1287,6 +1296,7 @@
                     || low_memory_requested_.load(std::memory_order_acquire)
                     || visibility_changed_.load(std::memory_order_acquire)
                     || focus_changed_.load(std::memory_order_acquire)
+                    || fullscreen_changed_.load(std::memory_order_acquire)
                     || preferred_color_scheme_changed_.load(
                         std::memory_order_acquire);
                 });

@@ -134,6 +134,7 @@
     std::vector<connected_resource_task> connected_resources;
     std::mutex host_request_mutex;
     std::deque<std::string> host_requests;
+    std::deque<std::unique_ptr<native_host_request>> typed_host_requests;
     struct host_promise_target {
         std::string operation;
         uint32_t target_node_id{};
@@ -150,6 +151,8 @@
     std::deque<std::string> console_messages;
     uint64_t next_host_request_id{0};
     dom_node* fullscreen_element{nullptr};
+    bool document_fullscreen{false};
+    std::chrono::steady_clock::time_point last_user_activation{};
     std::atomic<bool> file_service_enabled{false};
     std::atomic<uint32_t> native_media_policy{0};
     std::mutex file_requests_mutex;

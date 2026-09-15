@@ -444,6 +444,8 @@ private:
     std::atomic<bool> visibility_changed_{false};
     std::atomic<bool> host_focused_{true};
     std::atomic<bool> focus_changed_{false};
+    std::atomic<bool> host_fullscreen_{false};
+    std::atomic<bool> fullscreen_changed_{false};
     std::atomic<uint32_t> preferred_color_scheme_{
         WEBSCENE_PREFERRED_COLOR_SCHEME_LIGHT};
     std::atomic<bool> preferred_color_scheme_changed_{false};
@@ -1293,6 +1295,22 @@ size_t webscene_engine_take_host_request(
         : engine->take_host_request(destination, destination_capacity);
 }
 
+const webscene_host_request_v1*
+webscene_engine_take_typed_host_request_v1(webscene_engine* engine)
+{
+    if (engine == nullptr) return nullptr;
+    auto request = engine->take_typed_host_request();
+    if (!request) return nullptr;
+    request->bind();
+    return &request.release()->view;
+}
+
+void webscene_host_request_release_v1(
+    const webscene_host_request_v1* request)
+{
+    delete reinterpret_cast<const webscene_native::native_host_request*>(request);
+}
+
 uint8_t webscene_engine_discard_host_request_v1(webscene_engine* engine)
 {
     return engine != nullptr && engine->discard_host_request() ? 1U : 0U;
@@ -1458,6 +1476,12 @@ uint8_t webscene_engine_set_window_focused_v1(
     webscene_engine* engine, uint8_t focused)
 {
     return engine != nullptr && engine->set_focused(focused != 0) ? 1U : 0U;
+}
+
+uint8_t webscene_engine_set_window_fullscreen_v1(
+    webscene_engine* engine, uint8_t fullscreen)
+{
+    return engine != nullptr && engine->set_fullscreen(fullscreen != 0) ? 1U : 0U;
 }
 
 uint8_t webscene_engine_set_preferred_color_scheme(

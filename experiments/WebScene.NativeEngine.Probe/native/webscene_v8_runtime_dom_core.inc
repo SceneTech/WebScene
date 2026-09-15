@@ -4321,28 +4321,19 @@
             return;
         }
         const auto request_id = ++self->next_host_request_id;
-        auto request = v8::Object::New(info.GetIsolate());
-        request->Set(
-            local_context,
-            js_string(info.GetIsolate(), "requestId"),
-            v8::Number::New(info.GetIsolate(), static_cast<double>(request_id))).Check();
-        request->Set(
-            local_context,
-            js_string(info.GetIsolate(), "kind"),
-            js_string(info.GetIsolate(), enter ? "enterFullscreen" : "exitFullscreen")).Check();
-        if (enter) {
-            request->Set(
-                local_context,
-                js_string(info.GetIsolate(), "targetNodeId"),
-                v8::Integer::NewFromUnsigned(info.GetIsolate(), target->id)).Check();
-        }
+        auto request = std::make_unique<native_host_request>();
+        request->view.request_id = request_id;
+        request->view.kind = enter
+            ? WEBSCENE_HOST_REQUEST_FULLSCREEN_ENTER_V1
+            : WEBSCENE_HOST_REQUEST_FULLSCREEN_EXIT_V1;
+        request->view.target_node_id = enter ? target->id : 0U;
         host_promise_target promise_target;
         promise_target.operation = enter ? "enterFullscreen" : "exitFullscreen";
         promise_target.target_node_id = enter ? target->id : 0U;
         promise_target.context.Reset(info.GetIsolate(), local_context);
         promise_target.resolver.Reset(info.GetIsolate(), resolver);
         self->host_promise_targets.emplace(request_id, std::move(promise_target));
-        if (!self->enqueue_host_request(local_context, request)) {
+        if (!self->enqueue_typed_host_request(std::move(request))) {
             self->host_promise_targets.erase(request_id);
             reject("The host request queue is full", "QuotaExceededError");
         }
@@ -4423,7 +4414,8 @@
         auto local_context = info.GetIsolate()->GetCurrentContext();
         if (self == nullptr || local_context != self->context.Get(info.GetIsolate()))
             return;
-        if (!self->queue_top_level_window_action(local_context, "reloadWindow")) {
+        if (!self->queue_top_level_window_action(
+                local_context, WEBSCENE_HOST_REQUEST_WINDOW_RELOAD_V1)) {
             info.GetIsolate()->ThrowException(v8::Exception::Error(
                 js_string(info.GetIsolate(), "WebScene rejected the reload request")));
         }

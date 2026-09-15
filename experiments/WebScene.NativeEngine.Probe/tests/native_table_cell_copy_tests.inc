@@ -54,6 +54,15 @@ void test_table_cell_click_copies_text_to_host()
             "table cell fixture did not initialize");
         pointer_button(engine, WEBSCENE_INPUT_POINTER_DOWN, 20, 20, 801U, true);
         pointer_button(engine, WEBSCENE_INPUT_POINTER_UP, 20, 20, 802U, false);
+        const auto request = take_typed_host_request(engine);
+        require(request.kind == WEBSCENE_HOST_REQUEST_CLIPBOARD_WRITE_V1
+                && request.content_type == "text/plain"
+                && std::string(request.bytes.begin(), request.bytes.end()) == "123.45",
+            "table cell text did not reach the typed clipboard host handoff");
+        require(webscene_engine_complete_host_request_v1(
+                    engine, request.id, 0U, "text/plain",
+                    nullptr, 0U, nullptr) != 0,
+            "table cell clipboard completion was rejected");
         std::string state;
         for (int attempt = 0; attempt < 100; ++attempt) {
             state = evaluate(engine, realm + ".copyState", "table-cell-copy-state.js");
@@ -63,15 +72,10 @@ void test_table_cell_click_copies_text_to_host()
         require(state == R"("copied")", "table cell click failed: " + state);
         require(evaluate(engine, realm + ".legacyCopyResult", "table-cell-legacy-result.js") == "false",
             "unsupported legacy copy must not claim success");
-        const auto request = take_host_request(engine);
-        require(request.find(R"("kind":"writeClipboard")") != std::string::npos
-                && request.find(R"("contentType":"text/plain")") != std::string::npos
-                && request.find("data:text/plain;base64,MTIzLjQ1") != std::string::npos,
-            "table cell text did not reach the clipboard host handoff: " + request);
         pointer_button(engine, WEBSCENE_INPUT_POINTER_DOWN, 20, 70, 803U, true);
         pointer_button(engine, WEBSCENE_INPUT_POINTER_UP, 20, 70, 804U, false);
         evaluate(engine, realm + ".copyState", "table-cell-empty-click-barrier.js");
-        require(take_host_request(engine).empty(), "empty cell generated a duplicate clipboard write");
+        require(!take_typed_host_request(engine), "empty cell generated a duplicate clipboard write");
         webscene_engine_destroy(engine);
     }
 }

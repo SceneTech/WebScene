@@ -2862,10 +2862,12 @@ void test_native_clipboard_shortcut_events(webscene_engine*)
             == R"JSON([["copy",true,true,"text/plain,text/html"],["cut"],["paste","shortcut paste"]])JSON",
         "native clipboard shortcuts did not dispatch browser-compatible events: "
             + shortcut_events);
-    require(evaluate(engine, "__clipboardExecCommandResults",
-                "native-clipboard-exec-command-results.js")
-                == "[true,true,true]",
-        "prevented native shortcuts did not execute document clipboard commands");
+    const auto exec_command_results = evaluate(engine,
+        "__clipboardExecCommandResults",
+        "native-clipboard-exec-command-results.js");
+    require(exec_command_results == "[true,true,true]",
+        "prevented native shortcuts did not execute document clipboard commands: "
+            + exec_command_results);
     require(evaluate(engine, "document.execCommand('unsupported-command')",
                 "native-clipboard-unsupported-exec-command.js") == "false",
         "unsupported legacy command claimed success");

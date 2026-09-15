@@ -1380,6 +1380,10 @@
             local_context,
             js_string(isolate, "__webSceneRecordWebApi"),
             v8::Function::New(local_context, record_web_api_use).ToLocalChecked()).Check();
+        global->Set(
+            local_context,
+            js_string(isolate, "structuredClone"),
+            v8::Function::New(local_context, structured_clone, {}, 1).ToLocalChecked()).Check();
 
         const auto& current_frame_base = current_base_address();
         const auto frame_href = !current_frame_base.empty()
@@ -1894,6 +1898,7 @@
         install_custom_elements_platform(local_context);
         install_fetch_globals(local_context);
         install_intersection_observer_polyfill(local_context);
+        install_web_api_compatibility(local_context);
         static_cast<void>(frame_body);
     }
 

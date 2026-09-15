@@ -290,7 +290,12 @@ void native_document::layout_children(dom_node& parent)
         parent.scroll_content_height = parent.layout.height;
         parent.scroll_viewport_width = parent.layout.width;
         parent.scroll_viewport_height = parent.layout.height;
-        return;
+        // Authored option nodes do not generate boxes for a collapsed select,
+        // but a native popup is hosted in the select's private shadow tree.
+        // Continue only when that tree exists so its fixed panel and rows get
+        // geometry for painting and top-layer hit testing.
+        const auto* shadow = shadow_dom(parent);
+        if (shadow == nullptr || shadow->root == nullptr) return;
     }
     if (composed_children(parent).empty() && !has_before && !has_after && !has_inside_marker) {
         return;

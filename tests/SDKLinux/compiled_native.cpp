@@ -1,7 +1,7 @@
 #include <webscene/native_web.hpp>
 #include <stdexcept>
 #include <iostream>
-import linux.contract.ui;
+import webscene.contract.ui;
 void require(bool value,const char* message){if(!value)throw std::runtime_error(message);}
 int main() {
   using namespace webscene::native_web;

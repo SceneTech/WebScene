@@ -84,6 +84,23 @@
         document.mark_dirty();
     }
 
+    void select_popup_set_inline_style(dom_node& node,std::string value)
+    {
+        node.clear_authored_style();
+        node.style.clear_grid();
+        node.style.clear_table();
+        node.style.inline_property_mask=0U;
+        node.style.important_property_mask=0U;
+        uint64_t inline_property_mask=0U;
+        for(const auto& declaration:parse_css_declarations(value,true)) {
+            if(!store_inline_declaration(node,declaration)) continue;
+            apply_css_declaration(node,declaration,true);
+            inline_property_mask|=inline_style_mask(declaration.name);
+        }
+        node.style.inline_property_mask|=inline_property_mask;
+        node.attributes["style"]=std::move(value);
+    }
+
     bool ensure_select_popup_template(dom_node& select)
     {
         if(select_popup_root(select)!=nullptr) return true;
@@ -118,11 +135,11 @@
         auto& panel=document.create_element("div");
         panel.attributes["data-webscene-select-popup"]="";
         panel.attributes["role"]="listbox";
-        panel.attributes["style"]="display:none;position:fixed;box-sizing:border-box;overflow-y:auto;padding:4px;border:1px solid rgba(127,127,127,.45);border-radius:6px;z-index:2147483000";
+        select_popup_set_inline_style(panel,"display:none;position:fixed;box-sizing:border-box;overflow-y:auto;padding:4px;border:1px solid rgba(127,127,127,.45);border-radius:6px;z-index:2147483000");
         document.append_child(root,panel);
         auto& items=document.create_element("div");
         items.attributes["data-webscene-select-items"]="";
-        items.attributes["style"]="display:block;box-sizing:border-box";
+        select_popup_set_inline_style(items,"display:block;box-sizing:border-box");
         document.append_child(panel,items);
 #endif
         document.refresh_shadow_distributions();
@@ -192,7 +209,7 @@
             if(hot) style+="background:rgba(96,145,255,.32);";
             else if(selected) style+="background:rgba(127,127,127,.18);";
             else style+="background:transparent;";
-            row->attributes["style"]=std::move(style);
+            select_popup_set_inline_style(*row,std::move(style));
         }
         select_popup_apply_private_styles(*root);
     }
@@ -223,7 +240,7 @@
             auto& row=document.create_element("div");
             row.attributes["data-webscene-select-option"]=std::to_string(option.id);
             row.attributes["role"]="option";
-            row.attributes["style"]="display:block;box-sizing:border-box;min-height:30px;padding:6px 10px;border-radius:4px;white-space:nowrap;cursor:default;color:inherit;background:transparent";
+            select_popup_set_inline_style(row,"display:block;box-sizing:border-box;min-height:30px;padding:6px 10px;border-radius:4px;white-space:nowrap;cursor:default;color:inherit;background:transparent");
             if(forms::option_is_disabled(option)) row.attributes["aria-disabled"]="true";
             if(forms::option_is_selected(option)) row.attributes["aria-selected"]="true";
             add_text(row,forms::option_label(option));
@@ -236,7 +253,7 @@
             auto& group=document.create_element("div");
             group.attributes["data-webscene-select-group"]="";
             group.attributes["role"]="group";
-            group.attributes["style"]="display:block;box-sizing:border-box;padding:7px 10px 4px;opacity:.62;color:inherit";
+            select_popup_set_inline_style(group,"display:block;box-sizing:border-box;padding:7px 10px 4px;opacity:.62;color:inherit");
             const auto label=child->attributes.find("label");
             add_text(group,label==child->attributes.end()?std::string{}:label->second);
             document.append_child(*items,group);
@@ -271,7 +288,7 @@
             <<"px;width:"<<width<<"px;max-height:"<<height
             <<"px;overflow-y:auto;padding:4px;background:"<<background<<";color:"<<foreground
             <<";border:1px solid rgba(127,127,127,.45);border-radius:6px;z-index:2147483000";
-        panel->attributes["style"]=style.str();
+        select_popup_set_inline_style(*panel,style.str());
         select_popup_apply_private_styles(*root);
     }
 
@@ -324,7 +341,7 @@
         panel->attributes.erase("data-webscene-highlighted-option");
         if(pointer_dismissal) panel->attributes["data-webscene-dismiss-pointer"]="true";
         else panel->attributes.erase("data-webscene-dismiss-pointer");
-        panel->attributes["style"]="display:none;position:fixed";
+        select_popup_set_inline_style(*panel,"display:none;position:fixed");
         select_popup_apply_private_styles(*root);
     }
 
@@ -431,9 +448,20 @@
             close_select_popup(*select,input.kind==WEBSCENE_INPUT_POINTER_DOWN);
             return input.kind==WEBSCENE_INPUT_POINTER_DOWN?std::optional<bool>(true):std::nullopt;
         }
-        const auto hit=select_popup_hit_from_node(hit_target);
-        const auto inside=hit.select==select;
+        auto hit=select_popup_hit_from_node(hit_target);
         auto* panel=select_popup_panel(*select);
+        // A native collapsed-select popup is a top-layer control. Resolve its
+        // subtree before interpreting the ordinary document hit so overlapping
+        // authored content cannot receive a pointer that is inside the popup.
+        if(panel!=nullptr) {
+            ensure_layout();
+            if(auto* popup_target=document.hit_test(
+                    *panel,static_cast<float>(input.x),static_cast<float>(input.y));
+                popup_target!=nullptr) {
+                hit=select_popup_hit_from_node(popup_target);
+            }
+        }
+        const auto inside=hit.select==select;
         if(input.kind==WEBSCENE_INPUT_WHEEL && inside) {
             if(panel) {
                 ensure_layout();

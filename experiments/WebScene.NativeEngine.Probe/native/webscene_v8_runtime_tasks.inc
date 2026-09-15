@@ -2810,16 +2810,6 @@
             || input.kind == WEBSCENE_INPUT_KEY_UP || input.kind == WEBSCENE_INPUT_TEXT;
         auto* initial_hit_target = keyboard ? nullptr : document.hit_test(
             document.body(), static_cast<float>(input.x), static_cast<float>(input.y));
-        if (!keyboard
-            && (input.kind == WEBSCENE_INPUT_POINTER_MOVE
-                || input.kind == WEBSCENE_INPUT_POINTER_DOWN
-                || input.kind == WEBSCENE_INPUT_POINTER_UP
-                || input.kind == WEBSCENE_INPUT_WHEEL)) {
-            if (auto handled = dispatch_select_popup_pointer_input(
-                    input, initial_hit_target); handled.has_value()) {
-                return *handled;
-            }
-        }
         auto* input_owner = keyboard ? active_element
             : pointer_capture_target != nullptr ? pointer_capture_target : initial_hit_target;
         if (input_owner != nullptr) local_context = context_for_node(*input_owner);
@@ -2831,6 +2821,20 @@
             report_inspector_exception(try_catch, local_context);
 #endif
         };
+        // Popup dispatch queries the active V8 realm and can emit input/change
+        // events. Enter the input owner's context before asking for the active
+        // popup; GetCurrentContext is empty before this scope and dereferencing
+        // it crashed the first pointer event in native applications.
+        if (!keyboard
+            && (input.kind == WEBSCENE_INPUT_POINTER_MOVE
+                || input.kind == WEBSCENE_INPUT_POINTER_DOWN
+                || input.kind == WEBSCENE_INPUT_POINTER_UP
+                || input.kind == WEBSCENE_INPUT_WHEEL)) {
+            if (auto handled = dispatch_select_popup_pointer_input(
+                    input, initial_hit_target); handled.has_value()) {
+                return *handled;
+            }
+        }
         const auto leave_host = [&]() -> bool {
             // OS/control exits need not have a final mousemove. Clear :hover
             // before dispatch, with no destination element (relatedTarget=null).

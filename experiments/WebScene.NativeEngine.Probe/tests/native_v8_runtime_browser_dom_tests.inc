@@ -58,6 +58,42 @@ void test_fragment_replacement_and_inline_script_lifecycle(webscene_engine* engi
         "fragment replacement or inline script lifecycle diverged: " + result);
 }
 
+void test_fragment_append_applies_structural_selectors_after_atomic_attachment(
+    webscene_engine* engine)
+{
+    const auto result = evaluate(engine, R"JS(
+        (() => {
+          document.body.innerHTML = `<style>
+            #fragment-host:empty { height: 1px; }
+            #fragment-host:has(.item) { min-height: 2px; }
+            #fragment-host > .item:first-child { width: 3px; }
+            #fragment-host > .item:nth-child(2) { width: 4px; }
+            #fragment-host > .item:last-child { width: 5px; }
+          </style><section id="fragment-host"></section>`;
+          const host = document.getElementById('fragment-host');
+          const fragment = document.createDocumentFragment();
+          for (let index = 0; index < 3; ++index) {
+            const item = document.createElement('div');
+            item.className = 'item';
+            fragment.appendChild(item);
+          }
+          const returned = host.appendChild(fragment);
+          return {
+            returnedFragment: returned === fragment,
+            fragmentEmpty: fragment.childNodes.length === 0,
+            childCount: host.children.length,
+            widths: Array.from(host.children, item =>
+              getComputedStyle(item).width),
+            minHeight: getComputedStyle(host).minHeight,
+            height: getComputedStyle(host).height
+          };
+        })()
+    )JS", "native-fragment-atomic-attachment.js");
+    require(
+        result == R"JSON({"returnedFragment":true,"fragmentEmpty":true,"childCount":3,"widths":["3px","4px","5px"],"minHeight":"2px","height":"2px"})JSON",
+        "fragment attachment structural cascade diverged: " + result);
+}
+
 void test_dom_box_dimensions_primitives(webscene_engine* engine)
 {
     const auto result = evaluate(engine, R"JS(

@@ -159,6 +159,14 @@ int main()
             test_modal_backdrop_scene(focused_engine);
             webscene_engine_destroy(focused_engine);return 0;
         }
+        if (selected == "fragment-attach") {
+            auto* focused_engine = webscene_engine_create(0);
+            require(focused_engine != nullptr, "fragment attach engine creation failed");
+            test_fragment_append_applies_structural_selectors_after_atomic_attachment(
+                focused_engine);
+            webscene_engine_destroy(focused_engine);
+            return 0;
+        }
         if (selected == "paint-only-cascade") {
             auto* focused_engine=webscene_engine_create(0);
             require(focused_engine != nullptr,"paint invalidation engine creation failed");
@@ -968,6 +976,7 @@ int main()
     test_specialized_content_properties(engine);
     test_child_collection_item(engine);
     test_fragment_replacement_and_inline_script_lifecycle(engine);
+    test_fragment_append_applies_structural_selectors_after_atomic_attachment(engine);
     test_textarea_child_text_value_lifecycle(engine);
     test_secondary_click(engine);
     test_primary_click_mouse_event_detail(engine);

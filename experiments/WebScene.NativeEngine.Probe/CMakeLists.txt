@@ -226,6 +226,12 @@ option(WEBSCENE_NATIVE_ENGINE_BUILD_CSS_PARSER_BENCHMARK
     "Build the V8-free selected CSS syntax parser microbenchmark" OFF)
 option(WEBSCENE_NATIVE_ENGINE_BUILD_DOM_BINDING_BENCHMARK
     "Build the native V8 DOM binding lifecycle benchmark" OFF)
+option(WEBSCENE_NATIVE_ENGINE_FRAGMENT_ATTACH_CONTROL
+    "Retain per-child fragment attachment recascades for A/B measurement" OFF)
+if(WEBSCENE_NATIVE_ENGINE_FRAGMENT_ATTACH_CONTROL)
+    target_compile_definitions(webscene_native_engine PRIVATE
+        WEBSCENE_NATIVE_ENGINE_FRAGMENT_ATTACH_CONTROL=1)
+endif()
 option(WEBSCENE_NATIVE_ENGINE_SELECTOR_SIBLING_SCAN_EXPERIMENT
     "Experimentally replace positional-selector sibling vectors with direct scans" OFF)
 option(WEBSCENE_NATIVE_ENGINE_SELECTOR_SIBLING_BENCHMARK_COUNTERS

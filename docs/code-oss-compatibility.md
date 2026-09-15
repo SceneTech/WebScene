@@ -54,7 +54,12 @@ with earlier hosts.
 `navigator.clipboard` supports Promise-based text and typed operations with a
 16 MiB representation limit, at most 16 pending completion-bearing operations,
 explicit MIME rejection, recent native user activation for reads, and
-navigation cancellation. Window requests share a bounded queue. Native hosts
+navigation cancellation. Native Ctrl/Command-C, X, and V input also dispatches
+the standard bubbling, cancelable `copy`, `cut`, and `paste` events expected by
+browser editors. Copy and cut collect plain-text and HTML representations from
+the event before the async host write; paste captures the initiating target and
+dispatches after the bounded host read completes. A canceled `keydown` never
+reaches this default behavior. Window requests share a bounded queue. Native hosts
 can publish focus and fullscreen state back into the active document, which
 updates `document.hasFocus()`, fullscreen state, and their standard events.
 Scripted close dispatches cancelable `beforeunload` before reaching the host.
@@ -114,6 +119,10 @@ sleeps. A separate gate moves the maximum 16 MiB clipboard payload through the
 typed ABI within five seconds. Native contracts also cover no-activation reads,
 unsupported input, cancellation, queue saturation, stale/double completion,
 navigation teardown, close veto, and native-initiated fullscreen changes.
+The native shortcut contract additionally verifies byte-exact plain-text and
+HTML host writes plus a completed host read delivered through `ClipboardEvent`
+shape, covering the path used by Monaco rather than only direct Clipboard API
+calls.
 
 Measurements were recorded on 2026-09-15 with Node 25.1.0 on macOS, Node
 18.19.1 in Ubuntu 24.04, and Node 24.19.0 in Windows 11. The VM runs used the

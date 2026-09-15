@@ -2738,8 +2738,10 @@ void test_clipboard_read_host_completion(webscene_engine* engine)
         "clipboard queue saturation did not reject explicitly");
 }
 
-void test_native_clipboard_shortcut_events(webscene_engine* engine)
+void test_native_clipboard_shortcut_events(webscene_engine*)
 {
+    auto* engine = webscene_engine_create(0);
+    require(engine != nullptr, "native clipboard shortcut engine creation failed");
     execute(engine, R"JS(
         document.body.innerHTML = '<textarea id="editor"></textarea>';
         const editor = document.getElementById('editor');
@@ -2835,6 +2837,7 @@ void test_native_clipboard_shortcut_events(webscene_engine* engine)
         "native clipboard shortcuts did not dispatch browser-compatible events");
     require(!take_typed_host_request(engine),
         "native clipboard shortcuts retained an unexpected host request");
+    webscene_engine_destroy(engine);
 }
 
 void test_clipboard_maximum_payload_gate(webscene_engine* engine)

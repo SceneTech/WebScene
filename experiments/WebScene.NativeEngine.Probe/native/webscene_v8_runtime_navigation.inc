@@ -117,6 +117,9 @@
         stop_workers();
         file_targets.clear();
         { std::lock_guard lock(file_requests_mutex); file_requests.clear(); }
+        cancel_native_host_promises("The document navigated before the native host completed the request");
+        fullscreen_element = nullptr;
+        { std::lock_guard lock(host_request_mutex); host_requests.clear(); }
         object_url_file_data.clear();
         object_url_binary.clear();
         object_urls.clear();

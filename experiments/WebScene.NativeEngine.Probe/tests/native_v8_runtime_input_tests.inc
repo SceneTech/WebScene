@@ -1525,6 +1525,45 @@ void test_pointer_cursor_and_external_anchor_host_handoff(webscene_engine* engin
                 != std::string::npos,
         "window.open did not use the safe external host handoff: " + popup_request);
 
+    require(
+        evaluate(engine,
+            "(() => { focus(); close(); return [typeof focus, typeof close]; })()",
+            "native-window-actions.js") == R"(["function","function"])",
+        "top-level focus/close methods were not installed");
+    const auto focus_request = take_host_request(engine);
+    const auto close_request = take_host_request(engine);
+    require(
+        focus_request.find(R"("kind":"focusWindow")") != std::string::npos
+            && close_request.find(R"("kind":"closeWindow")") != std::string::npos,
+        "top-level focus/close did not emit ordered host requests: "
+            + focus_request + " / " + close_request);
+
+    execute(engine, R"JS(
+        addEventListener('beforeunload', event => event.preventDefault(), { once: true });
+        close();
+    )JS", "native-window-close-veto.js");
+    require(take_host_request(engine).empty(),
+        "cancelled beforeunload still reached the native close host path");
+
+    execute(engine, "location.reload()", "native-window-reload.js");
+    const auto reload_request = take_host_request(engine);
+    require(reload_request.find(R"("kind":"reloadWindow")") != std::string::npos,
+        "Location.reload did not emit a native reload request: " + reload_request);
+
+    const auto oversized_url = std::string("https://example.com/")
+        + std::string(8192U, 'x');
+    execute(
+        engine,
+        "try { window.open(" + quote(oversized_url)
+            + "); globalThis.oversizedWindowAccepted = true; } "
+              "catch { globalThis.oversizedWindowAccepted = false; }",
+        "native-window-open-oversized.js");
+    require(
+        evaluate(engine, "oversizedWindowAccepted", "native-window-open-oversized-result.js")
+                == "false"
+            && take_host_request(engine).empty(),
+        "oversized external URL reached the host request queue");
+
     pointer_button(engine, WEBSCENE_INPUT_POINTER_DOWN, 20, 70, 504U, true);
     pointer_button(engine, WEBSCENE_INPUT_POINTER_UP, 20, 70, 505U, false);
     require(

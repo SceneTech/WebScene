@@ -1213,6 +1213,10 @@ WEBSCENE_API uint8_t webscene_engine_request_low_memory(webscene_engine* engine)
  * worker; returning visible before the deadline cancels it.
  */
 WEBSCENE_API uint8_t webscene_engine_set_visible(webscene_engine* engine, uint8_t visible);
+/* Publishes native key-window focus to document.hasFocus() and standard
+ * top-level focus/blur events. Repeated values are coalesced. */
+WEBSCENE_API uint8_t webscene_engine_set_window_focused_v1(
+    webscene_engine* engine, uint8_t focused);
 /*
  * Updates the host's effective color preference. The worker re-evaluates CSS
  * media rules and subsequent Window.matchMedia snapshots against this value.
@@ -1370,6 +1374,24 @@ WEBSCENE_API size_t webscene_engine_take_host_request(
     webscene_engine* engine,
     char* destination,
     size_t destination_capacity);
+/* Consumes the oldest JSON compatibility request without allocating its
+ * payload. Hosts use this after rejecting an oversized item so one malformed
+ * request cannot permanently block the FIFO. */
+WEBSCENE_API uint8_t webscene_engine_discard_host_request_v1(
+    webscene_engine* engine);
+/* Completes a request carrying a numeric requestId from take_host_request.
+ * status: 0 completed, 1 cancelled, 2 denied/failed. Inputs are copied before
+ * return. Clipboard data is limited to 16 MiB, content_type to 256 bytes and
+ * error_message to 4096 bytes. Completion is delivered on the engine worker;
+ * stale request IDs are safely ignored there. */
+WEBSCENE_API uint8_t webscene_engine_complete_host_request_v1(
+    webscene_engine* engine,
+    uint64_t request_id,
+    uint32_t status,
+    const char* content_type,
+    const uint8_t* bytes,
+    size_t byte_count,
+    const char* error_message);
 /*
  * Removes one V8 console entry. The UTF-8 payload is `<level>\n<message>`;
  * querying with a null/short destination reports the required byte count

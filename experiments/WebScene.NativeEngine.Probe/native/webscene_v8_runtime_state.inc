@@ -58,6 +58,7 @@
     v8::Global<v8::ObjectTemplate> frame_document_template;
     v8::Global<v8::ObjectTemplate> frame_window_template;
     v8::Global<v8::FunctionTemplate> html_collection_template;
+    v8::Global<v8::FunctionTemplate> dom_token_list_template;
     v8::Global<v8::Object> dom_implementation_object;
     v8::Global<v8::Object> document_object;
     v8::Global<v8::ObjectTemplate> document_template;

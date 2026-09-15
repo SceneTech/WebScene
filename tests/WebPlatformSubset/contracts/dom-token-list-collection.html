@@ -1,0 +1,119 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>DOMTokenList collection API and live mutation</title>
+<body>
+<script>
+  const state = window.__webSceneWptState = {
+    complete: false, harness: null, results: [], errors: [], diagnostics: []
+  };
+  function assert(condition, message) { if (!condition) throw new Error(message); }
+  function assertThrows(name, body, message) {
+    let thrown = null;
+    try { body(); } catch (error) { thrown = error; }
+    assert(thrown && thrown.name === name,
+      `${message}: expected ${name}, got ${thrown && thrown.name}`);
+  }
+  function test(name, body) {
+    try {
+      body();
+      state.results.push({ name, status: "PASS", message: null, stack: null });
+    } catch (error) {
+      state.results.push({ name, status: "FAIL", message: String(error.message || error), stack: error.stack || null });
+    }
+  }
+
+  test("DOMTokenList exposes a live indexed collection", () => {
+    const node = document.createElement("div");
+    node.className = "alpha beta alpha gamma";
+    const tokens = node.classList;
+    assert(Object.prototype.toString.call(tokens) === "[object DOMTokenList]", "brand mismatch");
+    assert(tokens instanceof DOMTokenList, "constructor prototype mismatch");
+    assert(tokens.length === 3, `length was ${tokens.length}`);
+    assert(tokens.item(0) === "alpha" && tokens.item(2) === "gamma", "item order mismatch");
+    assert(tokens.item(3) === null && tokens.item(0xffffffff) === null, "out-of-range item must be null");
+    assert(tokens[0] === "alpha" && tokens[2] === "gamma" && tokens[3] === undefined,
+      "indexed access mismatch");
+    const descriptor = Object.getOwnPropertyDescriptor(tokens, "0");
+    assert(descriptor && descriptor.value === "alpha" && descriptor.enumerable
+      && descriptor.configurable && !descriptor.writable, "indexed descriptor mismatch");
+    assert(Object.keys(tokens).join(",") === "0,1,2", `indexed keys were ${Object.keys(tokens)}`);
+    node.setAttribute("class", "after reconnect");
+    assert(tokens.length === 2 && tokens[0] === "after", "setAttribute was not reflected live");
+    document.body.appendChild(node);
+    node.remove();
+    document.body.appendChild(node);
+    node.className = "live again";
+    assert(node.classList === tokens && tokens.item(1) === "again", "detach/reconnect lost liveness");
+  });
+
+  test("DOMTokenList iterators and forEach follow collection order", () => {
+    const node = document.createElement("div");
+    node.className = "a b c";
+    const tokens = node.classList;
+    assert(tokens.values === tokens[Symbol.iterator], "values and @@iterator must share identity");
+    assert([...tokens].join(",") === "a,b,c", "spread mismatch");
+    assert([...tokens.keys()].join(",") === "0,1,2", "keys mismatch");
+    assert([...tokens.values()].join(",") === "a,b,c", "values mismatch");
+    assert(JSON.stringify([...tokens.entries()]) === '[[0,"a"],[1,"b"],[2,"c"]]', "entries mismatch");
+    const visited = [];
+    const receiver = { marker: true };
+    tokens.forEach(function(value, index, list) {
+      assert(this === receiver, "forEach thisArg mismatch");
+      assert(list === tokens, "forEach list argument mismatch");
+      visited.push(`${index}:${value}`);
+    }, receiver);
+    assert(visited.join(",") === "0:a,1:b,2:c", `forEach visited ${visited}`);
+    const iterator = tokens.values();
+    assert(iterator[Symbol.iterator]() === iterator, "iterator must be iterable");
+    assert(iterator.next().value === "a", "live iterator first item mismatch");
+    tokens.remove("b");
+    assert(iterator.next().value === "c", "iterator did not observe live mutation");
+    const end = iterator.next();
+    assert(end.done === true && end.value === undefined
+      && Object.keys(end).join(",") === "value,done", "iterator did not finish with a standard result");
+  });
+
+  test("replace preserves ordered-set semantics", () => {
+    const node = document.createElement("div");
+    node.className = "a b c";
+    assert(node.classList.replace("b", "d") === true && node.className === "a d c",
+      `new-token replace produced '${node.className}'`);
+    assert(node.classList.replace("a", "d") === true && node.className === "d c",
+      `existing-token replace produced '${node.className}'`);
+    assert(node.classList.replace("missing", "x") === false && node.className === "d c",
+      "missing-token replace mutated the list");
+  });
+
+  test("token mutations reject invalid tokens atomically", () => {
+    const add = document.createElement("div"); add.className = "keep";
+    assertThrows("SyntaxError", () => add.classList.add("ok", ""), "add atomicity");
+    assert(add.className === "keep", "add partially mutated before throwing");
+    const remove = document.createElement("div"); remove.className = "keep drop";
+    assertThrows("InvalidCharacterError", () => remove.classList.remove("drop", "bad token"), "remove atomicity");
+    assert(remove.className === "keep drop", "remove partially mutated before throwing");
+    assertThrows("SyntaxError", () => add.classList.toggle(""), "toggle validation");
+    assertThrows("InvalidCharacterError", () => add.classList.replace("keep", "bad token"), "replace validation");
+    assert(add.classList.contains("") === false && add.classList.contains("bad token") === false,
+      "contains must return false for invalid search tokens");
+    remove.classList.remove("keep", "drop");
+    assert(remove.hasAttribute("class") && remove.getAttribute("class") === "",
+      "empty token list must retain the class attribute");
+  });
+
+  setTimeout(() => {
+    test("asynchronous tree twistie assignment uses item without throwing", () => {
+      const twistie = document.createElement("div");
+      twistie.className = "monaco-tl-twistie collapsible";
+      document.body.appendChild(twistie);
+      twistie.className = twistie.classList.item(0);
+      twistie.classList.add("collapsed");
+      assert(twistie.className === "monaco-tl-twistie collapsed", `twistie class was '${twistie.className}'`);
+    });
+
+    const failure = state.results.find(result => result.status !== "PASS");
+    state.harness = failure
+      ? { status: 1, message: failure.message, stack: failure.stack }
+      : { status: 0, message: null, stack: null };
+    state.complete = true;
+  }, 0);
+</script>

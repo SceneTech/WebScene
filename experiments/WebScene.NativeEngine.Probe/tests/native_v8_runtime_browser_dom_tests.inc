@@ -1378,6 +1378,113 @@ void test_node_iterator_linear_performance_gate()
     webscene_engine_destroy(engine);
 }
 
+void test_dom_token_list_collection_performance_gate()
+{
+    auto* engine = webscene_engine_create(0);
+    require(engine != nullptr, "DOMTokenList performance engine creation failed");
+
+    const auto acknowledge_latest_scene = [&](std::string_view failure) {
+        const webscene_scene_view* scene = nullptr;
+        for (auto attempt = 0; attempt < 100 && scene == nullptr; ++attempt) {
+            scene = webscene_engine_acquire_latest_scene(engine);
+            if (scene == nullptr) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            }
+        }
+        require(scene != nullptr, failure);
+        require(webscene_scene_acknowledge(scene) != 0,
+            "DOMTokenList performance scene acknowledgement failed");
+        webscene_scene_release(scene);
+    };
+
+    acknowledge_latest_scene("DOMTokenList performance fixture had no initial scene");
+    webscene_engine_metrics before_setup{};
+    webscene_engine_get_metrics(engine, &before_setup);
+    execute_and_wait(engine, R"JS(
+        document.body.innerHTML = '<div id="tokens" class="alpha beta gamma delta"></div>'
+    )JS", "native-dom-token-list-performance-setup.js");
+    for (auto attempt = 0; attempt < 100; ++attempt) {
+        webscene_engine_metrics current{};
+        webscene_engine_get_metrics(engine, &current);
+        if (current.published_scenes > before_setup.published_scenes) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    acknowledge_latest_scene("DOMTokenList performance setup scene was not published");
+
+    webscene_engine_metrics baseline{};
+    webscene_engine_get_metrics(engine, &baseline);
+    const auto read_result = evaluate(engine, R"JS(
+        (() => {
+          const tokens = document.getElementById('tokens').classList;
+          let checksum = 0;
+          const started = performance.now();
+          for (let index = 0; index < 100000; ++index) {
+            checksum += tokens.length;
+            checksum += tokens.item(index & 3).length;
+            checksum += tokens[index & 3].length;
+          }
+          return `${checksum}|${performance.now() - started}`;
+        })()
+    )JS", "native-dom-token-list-read-performance.js");
+    const auto read_payload = read_result.size() >= 2
+            && read_result.front() == '"' && read_result.back() == '"'
+        ? read_result.substr(1, read_result.size() - 2)
+        : read_result;
+    const auto read_separator = read_payload.find('|');
+    require(read_separator != std::string::npos
+            && read_payload.substr(0, read_separator) == "1350000",
+        "DOMTokenList read performance checksum regressed: " + read_result);
+    const auto read_milliseconds = std::stod(read_payload.substr(read_separator + 1));
+    require(read_milliseconds < 2000.0,
+        "100,000 DOMTokenList collection reads exceeded two seconds");
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    webscene_engine_metrics after_read{};
+    webscene_engine_get_metrics(engine, &after_read);
+    require(after_read.published_scenes == baseline.published_scenes,
+        "DOMTokenList collection reads published an unchanged scene");
+    require(after_read.layout_passes == baseline.layout_passes,
+        "DOMTokenList collection reads forced layout");
+
+    const auto mutation_result = evaluate(engine, R"JS(
+        (() => {
+          const tokens = document.getElementById('tokens').classList;
+          const started = performance.now();
+          for (let index = 0; index < 10000; ++index) {
+            if ((index & 1) === 0) tokens.replace('alpha', 'replacement');
+            else tokens.replace('replacement', 'alpha');
+          }
+          return `${tokens.value}|${performance.now() - started}`;
+        })()
+    )JS", "native-dom-token-list-mutation-performance.js");
+    const auto mutation_payload = mutation_result.size() >= 2
+            && mutation_result.front() == '"' && mutation_result.back() == '"'
+        ? mutation_result.substr(1, mutation_result.size() - 2)
+        : mutation_result;
+    const auto mutation_separator = mutation_payload.find('|');
+    require(mutation_separator != std::string::npos
+            && mutation_payload.substr(0, mutation_separator)
+                == "alpha beta gamma delta",
+        "DOMTokenList mutation performance result regressed: " + mutation_result);
+    const auto mutation_milliseconds = std::stod(
+        mutation_payload.substr(mutation_separator + 1));
+    require(mutation_milliseconds < 5000.0,
+        "10,000 DOMTokenList replacements exceeded five seconds");
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    webscene_engine_metrics after_mutation{};
+    webscene_engine_get_metrics(engine, &after_mutation);
+    require(after_mutation.published_scenes <= baseline.published_scenes + 1U,
+        "DOMTokenList mutation task published more than one coalesced scene");
+    require(after_mutation.layout_passes <= baseline.layout_passes + 1U,
+        "DOMTokenList mutation task forced repeated layout passes");
+    std::cout << "DOMTokenList gate: reads=100000 readMs=" << read_milliseconds
+              << " mutations=10000 mutationMs=" << mutation_milliseconds
+              << " publishedDelta="
+              << (after_mutation.published_scenes - baseline.published_scenes)
+              << " layoutDelta="
+              << (after_mutation.layout_passes - baseline.layout_passes) << '\n';
+    webscene_engine_destroy(engine);
+}
+
 void test_animation_frame_dispatch_is_attributed()
 {
     auto* engine = webscene_engine_create(0);

@@ -137,6 +137,10 @@ int main()
             test_idle_v8_foreground_completion();
             return 0;
         }
+        if (selected == "dom-token-list") {
+            test_dom_token_list_collection_performance_gate();
+            return 0;
+        }
         if(selected=="modal-backdrop") {
             auto* focused_engine=webscene_engine_create(0);
             require(focused_engine!=nullptr,"backdrop engine creation failed");
@@ -840,6 +844,7 @@ int main()
     test_node_iterator_dompurify_traversal(engine);
     test_node_has_child_nodes_contract_and_performance(engine);
     test_node_iterator_linear_performance_gate();
+    test_dom_token_list_collection_performance_gate();
     test_table_cell_click_copies_text_to_host();
     test_synthetic_window_resize_dispatch_uses_outer_listener_registry(engine);
     test_document_create_event_and_init_event(engine);

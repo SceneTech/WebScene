@@ -49,6 +49,7 @@
 
     ~implementation()
     {
+        stop_message_ports();
         stop_workers();
 #if defined(WEBSCENE_NATIVE_ENGINE_ENABLE_MEDIA)
         clear_media_bindings();
@@ -142,6 +143,8 @@
         media_query_lists.clear();
         timers.clear();
         pending_window_messages.clear();
+        pending_window_message_bytes = 0U;
+        message_port_bindings.clear();
         pending_dialog_close_events.clear();
         pending_programmatic_scroll_events.clear();
         pending_interop_promises.clear();

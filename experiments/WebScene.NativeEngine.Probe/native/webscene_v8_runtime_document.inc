@@ -1255,6 +1255,10 @@
         global->DefineOwnProperty(local_context, js_string(isolate, "isSecureContext"),
             v8::Boolean::New(isolate, secure), v8::ReadOnly).Check();
         global->Set(local_context, js_string(isolate, "location"), location).Check();
+        global->Set(
+            local_context,
+            js_string(isolate, "origin"),
+            js_string(isolate, origin.c_str())).Check();
         v8::Local<v8::Value> document_value;
         if (global->Get(
                 local_context,

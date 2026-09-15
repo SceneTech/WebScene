@@ -125,7 +125,17 @@
     std::vector<event_listener_registration> resize_listeners;
     std::vector<std::unique_ptr<media_query_list_state>> media_query_lists;
     std::vector<timer_task> timers;
+    static constexpr size_t maximum_pending_window_messages = 256U;
+    static constexpr size_t maximum_pending_window_message_bytes =
+        16U * 1024U * 1024U;
     std::deque<pending_window_message> pending_window_messages;
+    size_t pending_window_message_bytes{};
+    static constexpr size_t maximum_message_port_bindings = 4096U;
+    static constexpr size_t maximum_message_port_queue_messages = 256U;
+    static constexpr size_t maximum_message_port_queue_bytes = 16U * 1024U * 1024U;
+    std::shared_ptr<message_port_runtime_wake> message_port_wake =
+        std::make_shared<message_port_runtime_wake>();
+    std::vector<std::unique_ptr<message_port_binding>> message_port_bindings;
     std::vector<pending_dialog_close_event> pending_dialog_close_events;
     std::vector<pending_programmatic_scroll_event>
         pending_programmatic_scroll_events;

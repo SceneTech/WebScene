@@ -20,7 +20,13 @@ the underlying WebScene Blob, DOM, stylesheet, event, and timing objects exist:
   `getEntriesByType`, `getEntriesByName`, marks, measures, and clears;
 - asynchronous `FileReader` reads over WebScene's byte-preserving Blob;
 - top-level stylesheet insertion, deletion, live rule access, and style-rule
-  declaration mutation through the owning native style element.
+  declaration mutation through the owning native style element;
+- dedicated classic and module workers in independent V8 isolates, including
+  structured clone, transferable `ArrayBuffer` and `MessagePort` ownership,
+  ordered error delivery, prompt termination, and navigation shutdown;
+- native `MessageChannel`/`MessagePort` in top-level, worker, and iframe realms,
+  plus structured-clone `Window.postMessage`, same-origin `origin`/`source`,
+  transfer lists, and receiver-side `messageerror` delivery.
 
 These are transitional WebScene implementations with focused regression tests.
 They remove application-owned global patches while preserving the native
@@ -91,9 +97,10 @@ starting Node, evaluating JavaScript, or rendering a test-owned element is not
 sufficient. Retain runtime diagnostics and a native screenshot with every
 failed smoke run.
 
-The current adapters do not certify extension webviews, transferable
-MessagePorts, persistent IndexedDB storage, complete HTTP/fetch behavior,
-accessibility, IME, drag and drop, or all extension APIs.
+The current adapters do not certify extension webviews, cross-origin iframe or
+worker CORS/credentials behavior, `SharedWorker`, `ServiceWorker`, persistent
+IndexedDB storage, complete HTTP/fetch behavior, accessibility, IME, drag and
+drop, or all extension APIs.
 
 ## Quality and performance gates
 
@@ -112,6 +119,7 @@ regressions without turning temporary hosted-runner load into a flaky result:
 | Complete 10,000 one-byte typed clipboard writes | 10,000 ms | pending latest package matrix | pending latest package matrix | pending latest package matrix |
 | Drain 10,000 typed window requests | 5,000 ms | pending latest package matrix | pending latest package matrix | pending latest package matrix |
 | Apply 10,000 native focus transitions | 1,000 ms | pending latest package matrix | pending latest package matrix | pending latest package matrix |
+| Complete 10,000 MessagePort worker round trips | 10,000 ms | <1,000 ms for the complete worker/iframe regression executable | pending latest package matrix | pending latest package matrix |
 
 The clipboard load gate uses batches of 16, reports that pending-request high
 water mark, completes every Promise, and verifies an empty queue without timing
@@ -123,6 +131,15 @@ The native shortcut contract additionally verifies byte-exact plain-text and
 HTML host writes plus a completed host read delivered through `ClipboardEvent`
 shape, covering the path used by Monaco rather than only direct Clipboard API
 calls.
+
+The worker and iframe gate additionally enforces 256-message and 16 MiB queue
+limits, a 16 MiB clone-packet limit, 64 live dedicated workers, 4,096 live
+`MessagePort` wrappers, and 16 retained worker errors of at most 4 KiB each. It
+checks duplicate-transfer rejection before detachment, cyclic/built-in clone
+values, `event.ports` identity, iframe source and origin, repeated termination,
+receiver-side `messageerror`, and cleanup on navigation. The focused Aureon WPT
+candidate profile carries the same browser-facing cases; the direct native
+regressions remain the release-blocking lifetime and performance evidence.
 
 Measurements were recorded on 2026-09-15 with Node 25.1.0 on macOS, Node
 18.19.1 in Ubuntu 24.04, and Node 24.19.0 in Windows 11. The VM runs used the

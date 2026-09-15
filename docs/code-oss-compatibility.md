@@ -36,6 +36,28 @@ native implementations and their complete acceptance boundaries are tracked in
 [FileReader #73](https://github.com/SceneTech/WebScene/issues/73), and
 [stylesheet CSSOM #74](https://github.com/SceneTech/WebScene/issues/74).
 
+## Web Crypto boundary
+
+Code OSS 1.137's shipped browser workbench and worker extension host reach
+`crypto.getRandomValues()` and `crypto.randomUUID()` for UUIDs, authentication
+nonces and verifier material, WebSocket keys and masks, and built-in extension
+identifiers. WebScene supplies both operations from the operating-system CSPRNG:
+`getentropy()` on Apple/BSD, `getrandom()` on Linux, and `BCryptGenRandom()` on
+Windows. There is no userspace PRNG fallback. The binding enforces integer
+TypedArrays and the 65,536-byte Web Crypto quota in window, iframe, and dedicated
+worker realms.
+
+Code OSS also has reachable SHA-1/SHA-256, AES-GCM, AES-CBC, and HMAC paths.
+WebScene leaves `crypto.subtle` absent because its V8 embedder has no vetted
+cross-platform provider or complete `CryptoKey` ownership model. Exposing a
+partial object would cause Code OSS feature detection to enter paths whose key,
+algorithm, Promise, and error semantics are not implemented. Provider selection,
+opaque key storage, zeroization, async execution, WPT vectors, and staged
+algorithm coverage are tracked in
+[SubtleCrypto provider #102](https://github.com/SceneTech/WebScene/issues/102).
+The secure-random slice is tracked in
+[OS CSPRNG and randomUUID #101](https://github.com/SceneTech/WebScene/issues/101).
+
 ## Authentication boundary
 
 The resource response ABI still cannot transport general HTTP status/headers
@@ -120,6 +142,7 @@ regressions without turning temporary hosted-runner load into a flaky result:
 | Drain 10,000 typed window requests | 5,000 ms | pending latest package matrix | pending latest package matrix | pending latest package matrix |
 | Apply 10,000 native focus transitions | 1,000 ms | pending latest package matrix | pending latest package matrix | pending latest package matrix |
 | Complete 10,000 MessagePort worker round trips | 10,000 ms | <1,000 ms for the complete worker/iframe regression executable | pending latest package matrix | pending latest package matrix |
+| Complete 4,096 16-byte CSPRNG requests | 2,000 ms | 10 ms | pending latest package matrix | pending latest package matrix |
 
 The clipboard load gate uses batches of 16, reports that pending-request high
 water mark, completes every Promise, and verifies an empty queue without timing

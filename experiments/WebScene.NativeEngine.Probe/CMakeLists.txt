@@ -89,7 +89,8 @@ else()
 endif()
 add_library(webscene_native_engine ${webscene_runtime_kind}
     native/webscene_native_engine.cpp
-    native/webscene_indexeddb_storage.cpp)
+    native/webscene_indexeddb_storage.cpp
+    native/webscene_secure_random.cpp)
 if(TARGET webscene_core)
     target_link_libraries(webscene_native_engine PRIVATE webscene_core)
 else()
@@ -100,6 +101,24 @@ endif()
 target_compile_features(webscene_native_engine PRIVATE cxx_std_20)
 target_compile_definitions(webscene_native_engine PRIVATE WEBSCENE_NATIVE_ENGINE_BUILD)
 target_include_directories(webscene_native_engine PUBLIC native)
+
+if(WIN32)
+    target_link_libraries(webscene_native_engine PRIVATE bcrypt)
+endif()
+
+if(BUILD_TESTING)
+    add_executable(webscene_secure_random_tests
+        tests/secure_random_tests.cpp
+        native/webscene_secure_random.cpp)
+    target_compile_features(webscene_secure_random_tests PRIVATE cxx_std_20)
+    target_include_directories(webscene_secure_random_tests PRIVATE native)
+    if(WIN32)
+        target_link_libraries(webscene_secure_random_tests PRIVATE bcrypt)
+    endif()
+    add_test(NAME webscene_secure_random_tests COMMAND webscene_secure_random_tests)
+    set_tests_properties(webscene_secure_random_tests PROPERTIES
+        LABELS "webcrypto;security;performance" TIMEOUT 10)
+endif()
 
 option(WEBSCENE_NATIVE_ENGINE_ENABLE_MEDIA "Build native HTML media and Web Audio services" ON)
 if(WEBSCENE_NATIVE_ENGINE_ENABLE_MEDIA)

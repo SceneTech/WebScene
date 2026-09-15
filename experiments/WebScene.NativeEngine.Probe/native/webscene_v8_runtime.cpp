@@ -26,6 +26,7 @@
 #include "webscene_indexeddb_storage.h"
 #include "webscene_indexeddb_compatibility.h"
 #include "webscene_stylesheet_cssom_compatibility.h"
+#include "webscene_secure_random.h"
 
 #include "webscene_native_dom.h"
 #include "webscene_native_style_defaults.h"
@@ -3058,6 +3059,142 @@ struct v8_dom_runtime::implementation final {
         }
     }
 
+    static bool is_web_crypto_integer_array(v8::Local<v8::Value> value)
+    {
+        return value->IsInt8Array()
+            || value->IsUint8Array()
+            || value->IsUint8ClampedArray()
+            || value->IsInt16Array()
+            || value->IsUint16Array()
+            || value->IsInt32Array()
+            || value->IsUint32Array()
+            || value->IsBigInt64Array()
+            || value->IsBigUint64Array();
+    }
+
+    static bool require_crypto_receiver(const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        if (info.Data()->IsObject() && info.This() == info.Data().As<v8::Object>()) return true;
+        info.GetIsolate()->ThrowException(v8::Exception::TypeError(
+            js_string(info.GetIsolate(), "Illegal invocation")));
+        return false;
+    }
+
+    static void crypto_get_random_values(const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* isolate = info.GetIsolate();
+        if (!require_crypto_receiver(info)) return;
+        if (info.Length() < 1 || !is_web_crypto_integer_array(info[0])) {
+            isolate->ThrowException(v8::Exception::TypeError(
+                js_string(isolate, "Crypto.getRandomValues requires an integer TypedArray")));
+            return;
+        }
+        auto view = info[0].As<v8::ArrayBufferView>();
+        auto buffer = view->Buffer();
+        if (buffer->WasDetached()) {
+            isolate->ThrowException(v8::Exception::TypeError(
+                js_string(isolate, "Crypto.getRandomValues cannot fill a detached TypedArray")));
+            return;
+        }
+        if (view->ByteLength() > web_crypto_random_quota) {
+            throw_dom_exception(
+                info,
+                "Crypto.getRandomValues requests are limited to 65,536 bytes",
+                "QuotaExceededError");
+            return;
+        }
+        auto backing = buffer->GetBackingStore();
+        auto output = std::span<std::uint8_t>{};
+        if (view->ByteLength() != 0U) {
+            auto* destination = static_cast<std::uint8_t*>(backing->Data()) + view->ByteOffset();
+            output = {destination, view->ByteLength()};
+        }
+        if (!fill_secure_random(output)) {
+            throw_dom_exception(
+                info,
+                "The operating-system secure random source failed",
+                "OperationError");
+            return;
+        }
+        if (auto* self = current(isolate); self != nullptr) {
+            self->record_feature(
+                "web-api",
+                "Crypto.getRandomValues",
+                "supported",
+                "integer TypedArray filling from the operating-system CSPRNG",
+                "native-binding");
+        }
+        info.GetReturnValue().Set(info[0]);
+    }
+
+    static void crypto_random_uuid(const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* isolate = info.GetIsolate();
+        if (!require_crypto_receiver(info)) return;
+        std::array<std::uint8_t, 16> bytes{};
+        if (!fill_secure_random(bytes)) {
+            throw_dom_exception(
+                info,
+                "The operating-system secure random source failed",
+                "OperationError");
+            return;
+        }
+        bytes[6] = static_cast<std::uint8_t>((bytes[6] & 0x0fU) | 0x40U);
+        bytes[8] = static_cast<std::uint8_t>((bytes[8] & 0x3fU) | 0x80U);
+        constexpr char digits[] = "0123456789abcdef";
+        std::array<char, 36> uuid{};
+        std::size_t output = 0;
+        for (std::size_t index = 0; index < bytes.size(); ++index) {
+            if (index == 4U || index == 6U || index == 8U || index == 10U) uuid[output++] = '-';
+            uuid[output++] = digits[bytes[index] >> 4U];
+            uuid[output++] = digits[bytes[index] & 0x0fU];
+        }
+        if (auto* self = current(isolate); self != nullptr) {
+            self->record_feature(
+                "web-api",
+                "Crypto.randomUUID",
+                "supported",
+                "RFC 4122 version 4 UUIDs from the operating-system CSPRNG",
+                "native-binding");
+        }
+        info.GetReturnValue().Set(v8::String::NewFromUtf8(
+            isolate,
+            uuid.data(),
+            v8::NewStringType::kNormal,
+            static_cast<int>(uuid.size())).ToLocalChecked());
+    }
+
+    void install_crypto_globals(
+        v8::Local<v8::Context> local_context,
+        v8::Local<v8::Object> global)
+    {
+        auto crypto = v8::Object::New(isolate);
+        auto get_random_values = v8::Function::New(
+            local_context, crypto_get_random_values, crypto, 1).ToLocalChecked();
+        auto random_uuid = v8::Function::New(
+            local_context, crypto_random_uuid, crypto, 0).ToLocalChecked();
+        crypto->DefineOwnProperty(
+            local_context,
+            js_string(isolate, "getRandomValues"),
+            get_random_values,
+            v8::DontEnum).Check();
+        crypto->DefineOwnProperty(
+            local_context,
+            js_string(isolate, "randomUUID"),
+            random_uuid,
+            v8::DontEnum).Check();
+        crypto->DefineOwnProperty(
+            local_context,
+            v8::Symbol::GetToStringTag(isolate),
+            js_string(isolate, "Crypto"),
+            static_cast<v8::PropertyAttribute>(v8::ReadOnly | v8::DontEnum)).Check();
+        global->DefineOwnProperty(
+            local_context,
+            js_string(isolate, "crypto"),
+            crypto,
+            static_cast<v8::PropertyAttribute>(v8::ReadOnly | v8::DontEnum)).Check();
+    }
+
     void install_globals(v8::Local<v8::Context> local_context)
     {
         auto global = local_context->Global();
@@ -3708,21 +3845,7 @@ struct v8_dom_runtime::implementation final {
               URL: { value: WebSceneURL, configurable: true },
               URLSearchParams: { value: WebSceneURLSearchParams, configurable: true },
               FormData: { value: WebSceneFormData, configurable: true },
-              DOMException: { value: WebSceneDOMException, configurable: true },
-              crypto: { value: {
-                getRandomValues(array) {
-                  __webSceneRecordWebApi(
-                    'Crypto.getRandomValues', 'partially-supported',
-                    'integer TypedArray filling without a cryptographic entropy guarantee');
-                  if (!ArrayBuffer.isView(array) || array instanceof DataView) {
-                    throw new TypeError('Expected an integer TypedArray');
-                  }
-                  for (let index = 0; index < array.length; index++) {
-                    array[index] = Math.floor(Math.random() * 256);
-                  }
-                  return array;
-                }
-              }, configurable: true }
+              DOMException: { value: WebSceneDOMException, configurable: true }
             });
         )JS"};
         std::string crypto_source;
@@ -3731,6 +3854,7 @@ struct v8_dom_runtime::implementation final {
             local_context,
             js_string(isolate, std::string(crypto_source).c_str())).ToLocalChecked();
         crypto_script->Run(local_context).ToLocalChecked();
+        install_crypto_globals(local_context, local_context->Global());
         local_context->Global()->Set(local_context, js_string(isolate, "structuredClone"),
             v8::Function::New(local_context, structured_clone, {}, 1).ToLocalChecked()).Check();
         install_indexeddb(local_context);

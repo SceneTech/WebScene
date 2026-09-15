@@ -5,6 +5,15 @@ include(CTest)
 include(FetchContent)
 
 if(BUILD_TESTING)
+    add_executable(webscene_indexeddb_storage_tests
+        tests/indexeddb_storage_tests.cpp
+        native/webscene_indexeddb_storage.cpp)
+    target_compile_features(webscene_indexeddb_storage_tests PRIVATE cxx_std_20)
+    target_include_directories(webscene_indexeddb_storage_tests PRIVATE native)
+    add_test(NAME webscene_indexeddb_storage_tests
+        COMMAND webscene_indexeddb_storage_tests)
+    set_tests_properties(webscene_indexeddb_storage_tests PROPERTIES
+        LABELS "storage;durability;performance" TIMEOUT 20)
     add_executable(webscene_graphics_scene_abi_layout_tests tests/graphics_scene_abi_layout_tests.c)
     target_compile_features(webscene_graphics_scene_abi_layout_tests PRIVATE c_std_11)
     target_include_directories(webscene_graphics_scene_abi_layout_tests PRIVATE native)
@@ -14,6 +23,7 @@ if(BUILD_TESTING)
     target_include_directories(webscene_graphics_canvas_backing_tests PRIVATE native)
     add_test(NAME webscene_graphics_canvas_backing_tests COMMAND webscene_graphics_canvas_backing_tests)
     find_package(Threads REQUIRED)
+    target_link_libraries(webscene_indexeddb_storage_tests PRIVATE Threads::Threads)
     add_executable(webscene_graphics_image_lease_tests tests/graphics_image_lease_tests.cpp)
     target_compile_features(webscene_graphics_image_lease_tests PRIVATE cxx_std_20)
     target_include_directories(webscene_graphics_image_lease_tests PRIVATE native)
@@ -77,7 +87,9 @@ if(WEBSCENE_NATIVE_ENGINE_STATIC)
 else()
     set(webscene_runtime_kind SHARED)
 endif()
-add_library(webscene_native_engine ${webscene_runtime_kind} native/webscene_native_engine.cpp)
+add_library(webscene_native_engine ${webscene_runtime_kind}
+    native/webscene_native_engine.cpp
+    native/webscene_indexeddb_storage.cpp)
 if(TARGET webscene_core)
     target_link_libraries(webscene_native_engine PRIVATE webscene_core)
 else()
@@ -732,10 +744,14 @@ if(WEBSCENE_NATIVE_ENGINE_ENABLE_V8)
         add_test(NAME webscene_native_engine_tests COMMAND webscene_native_engine_tests)
         add_test(NAME webscene_native_idle_v8_platform COMMAND webscene_native_engine_tests)
         add_test(NAME webscene_native_select_popup_context COMMAND webscene_native_engine_tests)
+        add_test(NAME webscene_native_indexeddb_contract COMMAND webscene_native_engine_tests)
         set_tests_properties(webscene_native_idle_v8_platform PROPERTIES
             ENVIRONMENT "WEBSCENE_NATIVE_ENGINE_TEST_FILTER=idle-v8-platform")
         set_tests_properties(webscene_native_select_popup_context PROPERTIES
             ENVIRONMENT "WEBSCENE_NATIVE_ENGINE_TEST_FILTER=select-popup-context")
+        set_tests_properties(webscene_native_indexeddb_contract PROPERTIES
+            ENVIRONMENT "WEBSCENE_NATIVE_ENGINE_TEST_FILTER=indexeddb"
+            LABELS "storage;indexeddb;durability" TIMEOUT 60)
         set_tests_properties(webscene_native_engine_tests PROPERTIES
             ENVIRONMENT
                 "WEBSCENE_V8_DETAILED_MEMORY_METRICS=1;WEBSCENE_INTEROP_STRESS=1")

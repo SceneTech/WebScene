@@ -202,7 +202,8 @@
             },
             [this] {
                 signal_worker();
-            }, &diagnostics_);
+            }, &diagnostics_, storage_directory_, storage_partition_key_,
+            storage_quota_bytes_);
         runtime_->set_work_metrics_enabled(
             runtime_work_metrics_enabled_.load(std::memory_order_acquire));
         if (stylesheet_consumed_callback_ != nullptr) {

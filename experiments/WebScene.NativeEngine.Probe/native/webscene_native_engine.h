@@ -836,6 +836,18 @@ typedef struct webscene_engine_options {
     void* stylesheet_consumed_user_data;
     webscene_webgpu_policy_callback webgpu_policy_callback;
     void* webgpu_policy_user_data;
+    /*
+     * Durable browser storage is disabled unless both strings are supplied.
+     * storage_partition_key is a stable host-owned application/profile id;
+     * the runtime still partitions its files by the document's effective
+     * origin below that key. Hosts may therefore keep a random loopback port
+     * out of the profile identity without merging unrelated applications.
+     */
+    const char* storage_directory;
+    size_t storage_directory_length;
+    const char* storage_partition_key;
+    size_t storage_partition_key_length;
+    uint64_t storage_quota_bytes;
 } webscene_engine_options;
 
 enum {

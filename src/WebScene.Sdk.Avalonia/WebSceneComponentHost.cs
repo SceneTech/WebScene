@@ -64,6 +64,15 @@ public sealed class WebSceneComponentHost : Decorator, IAsyncDisposable
     public static readonly StyledProperty<string?> CompilationCacheDirectoryProperty =
         AvaloniaProperty.Register<WebSceneComponentHost, string?>(nameof(CompilationCacheDirectory));
 
+    public static readonly StyledProperty<string?> PersistentStorageDirectoryProperty =
+        AvaloniaProperty.Register<WebSceneComponentHost, string?>(nameof(PersistentStorageDirectory));
+
+    public static readonly StyledProperty<string?> PersistentStoragePartitionKeyProperty =
+        AvaloniaProperty.Register<WebSceneComponentHost, string?>(nameof(PersistentStoragePartitionKey));
+
+    public static readonly StyledProperty<ulong> PersistentStorageQuotaBytesProperty =
+        AvaloniaProperty.Register<WebSceneComponentHost, ulong>(nameof(PersistentStorageQuotaBytes));
+
     public static readonly StyledProperty<bool> AutoMountProperty =
         AvaloniaProperty.Register<WebSceneComponentHost, bool>(
             nameof(AutoMount),
@@ -120,6 +129,24 @@ public sealed class WebSceneComponentHost : Decorator, IAsyncDisposable
     {
         get => GetValue(CompilationCacheDirectoryProperty);
         set => SetValue(CompilationCacheDirectoryProperty, value);
+    }
+
+    public string? PersistentStorageDirectory
+    {
+        get => GetValue(PersistentStorageDirectoryProperty);
+        set => SetValue(PersistentStorageDirectoryProperty, value);
+    }
+
+    public string? PersistentStoragePartitionKey
+    {
+        get => GetValue(PersistentStoragePartitionKeyProperty);
+        set => SetValue(PersistentStoragePartitionKeyProperty, value);
+    }
+
+    public ulong PersistentStorageQuotaBytes
+    {
+        get => GetValue(PersistentStorageQuotaBytesProperty);
+        set => SetValue(PersistentStorageQuotaBytesProperty, value);
     }
 
     public bool AutoMount
@@ -399,6 +426,10 @@ public sealed class WebSceneComponentHost : Decorator, IAsyncDisposable
                 Source = resources.DocumentUrl,
                 NativeLibraryPath = ResolveNativeLibraryPath(NativeLibraryPath),
                 CompilationCacheDirectory = CompilationCacheDirectory,
+                PersistentStorageDirectory = PersistentStorageDirectory,
+                PersistentStoragePartitionKey = PersistentStoragePartitionKey
+                    ?? package.Manifest.Id,
+                PersistentStorageQuotaBytes = PersistentStorageQuotaBytes,
                 DocumentStartScripts = DocumentStartScripts,
                 ResourceLoader = resources
             },

@@ -66,6 +66,11 @@ Use `--test <substring>` for a focused document,
 `--timeout-seconds <seconds>` to alter the per-document timeout, and
 `--native-cache-directory <path>` to isolate V8 cache evidence.
 
+The separate IndexedDB candidate profile requires
+`--native-storage-directory <path>` and `--native-storage-partition <key>`; an
+optional `--native-storage-quota-bytes <bytes>` sets its partition quota. See
+`docs/architecture/indexeddb-persistence.md` for its lifecycle and native gates.
+
 Static reftests and self-verifying visual tests can also collect an independent
 Chromium differential or color-oracle result:
 

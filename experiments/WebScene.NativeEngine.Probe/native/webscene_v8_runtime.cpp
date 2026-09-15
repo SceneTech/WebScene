@@ -23,6 +23,8 @@
 #include "webscene_embed_fallback.h"
 #include "webscene_performance_timeline_compatibility.h"
 #include "webscene_file_reader_compatibility.h"
+#include "webscene_indexeddb_storage.h"
+#include "webscene_indexeddb_compatibility.h"
 #include "webscene_stylesheet_cssom_compatibility.h"
 
 #include "webscene_native_dom.h"
@@ -3727,6 +3729,7 @@ struct v8_dom_runtime::implementation final {
         crypto_script->Run(local_context).ToLocalChecked();
         local_context->Global()->Set(local_context, js_string(isolate, "structuredClone"),
             v8::Function::New(local_context, structured_clone, {}, 1).ToLocalChecked()).Check();
+        install_indexeddb(local_context);
         install_performance_timeline(local_context);
         auto worker_constructor=v8::Function::New(local_context, worker_construct, {}, 1).ToLocalChecked();
         v8::Local<v8::Value> event_target,worker_prototype,event_prototype;
@@ -4635,6 +4638,7 @@ struct v8_dom_runtime::implementation final {
     }
 
 #include "webscene_v8_runtime_clone.inc"
+#include "webscene_v8_runtime_indexeddb.inc"
 #include "webscene_v8_runtime_modules.inc"
 #include "webscene_v8_runtime_workers.inc"
 #include "webscene_v8_runtime_media.inc"
@@ -4749,16 +4753,22 @@ v8_dom_runtime::v8_dom_runtime(
     std::function<void()> interop_callback_available,
     interop_callback_sink_v3 interop_callback_sink,
     std::function<void()> runtime_work_available,
-    runtime_diagnostics* diagnostics)
+    runtime_diagnostics* diagnostics,
+    std::string storage_directory,
+    std::string storage_partition_key,
+    uint64_t storage_quota_bytes)
     : impl_(std::make_unique<implementation>(
         document,
         std::move(viewport_provider),
         std::move(compilation_cache_directory),
         std::move(load_resource),
-          std::move(host_request_available),
-          std::move(interop_callback_available),
-          std::move(interop_callback_sink),
-          std::move(runtime_work_available), diagnostics))
+        std::move(host_request_available),
+        std::move(interop_callback_available),
+        std::move(interop_callback_sink),
+        std::move(runtime_work_available), diagnostics,
+        std::move(storage_directory),
+        std::move(storage_partition_key),
+        storage_quota_bytes))
 {
 }
 
@@ -5354,6 +5364,7 @@ bool v8_dom_runtime::has_pending_tasks() const noexcept
 #endif
 #endif
     return impl_->has_pending_detached_dom_collection()
+        || impl_->indexeddb_work_ready.load(std::memory_order_acquire)
         || impl_->websocket_transport.has_pending_events()
         || !impl_->pending_window_messages.empty()
         || impl_->has_worker_messages()

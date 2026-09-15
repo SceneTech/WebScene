@@ -16,6 +16,9 @@ internal static class CommandLine
         var timeout = TimeSpan.FromSeconds(10);
         string? nativeLibraryPath = null;
         string? nativeCacheDirectory = null;
+        string? nativeStorageDirectory = null;
+        string? nativeStoragePartitionKey = null;
+        ulong nativeStorageQuotaBytes = 0;
         string? chromiumPath = null;
 
         for (var index = 0; index < args.Length; index++)
@@ -47,6 +50,15 @@ internal static class CommandLine
                 case "--native-cache-directory":
                     nativeCacheDirectory = Path.GetFullPath(RequireValue(args, ref index));
                     break;
+                case "--native-storage-directory":
+                    nativeStorageDirectory = Path.GetFullPath(RequireValue(args, ref index));
+                    break;
+                case "--native-storage-partition":
+                    nativeStoragePartitionKey = RequireValue(args, ref index);
+                    break;
+                case "--native-storage-quota-bytes":
+                    nativeStorageQuotaBytes = ulong.Parse(RequireValue(args, ref index));
+                    break;
                 case "--chromium-path":
                     chromiumPath = Path.GetFullPath(RequireValue(args, ref index));
                     break;
@@ -74,6 +86,9 @@ internal static class CommandLine
             Timeout = timeout,
             NativeLibraryPath = nativeLibraryPath,
             NativeCacheDirectory = nativeCacheDirectory,
+            NativeStorageDirectory = nativeStorageDirectory,
+            NativeStoragePartitionKey = nativeStoragePartitionKey,
+            NativeStorageQuotaBytes = nativeStorageQuotaBytes,
             ChromiumPath = chromiumPath
         };
     }
@@ -115,6 +130,9 @@ internal static class CommandLine
         Console.WriteLine("  --timeout-seconds <seconds>         Per-document timeout (default: 10)");
         Console.WriteLine("  --native-library <path>              Native engine library for native mode");
         Console.WriteLine("  --native-cache-directory <path>      Native V8 compilation cache");
+        Console.WriteLine("  --native-storage-directory <path>    Native durable browser storage root");
+        Console.WriteLine("  --native-storage-partition <key>     Stable native storage profile key");
+        Console.WriteLine("  --native-storage-quota-bytes <bytes> Native storage profile quota");
         Console.WriteLine("  --chromium-path <path>               Optional Chromium rendering oracle executable");
         Console.WriteLine("  --output <directory>                Artifact directory");
         Console.WriteLine("  --manifest <path>                   Profile manifest path");

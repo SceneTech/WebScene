@@ -4175,10 +4175,32 @@ struct v8_dom_runtime::implementation final {
             const createClipboardData = () => {
               const values = Object.create(null);
               const normalize = type => String(type).toLowerCase();
+              const createStringItem = type => Object.freeze({
+                kind: 'string',
+                type,
+                getAsFile() { return null; },
+                getAsString(callback) {
+                  if (typeof callback !== 'function') return;
+                  const value = values[type] || '';
+                  Promise.resolve().then(() => callback(value));
+                }
+              });
+              const items = Object.freeze({
+                get length() { return Object.keys(values).length; },
+                item(index) {
+                  const type = Object.keys(values)[Number(index)];
+                  return type === undefined ? null : createStringItem(type);
+                },
+                *[Symbol.iterator]() {
+                  for (const type of Object.keys(values)) {
+                    yield createStringItem(type);
+                  }
+                }
+              });
               return Object.freeze({
                 get types() { return Object.keys(values); },
                 files: Object.freeze([]),
-                items: Object.freeze([]),
+                items,
                 getData(type) { return values[normalize(type)] || ''; },
                 setData(type, value) {
                   values[normalize(type)] = String(value);

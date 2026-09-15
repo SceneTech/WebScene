@@ -2004,7 +2004,8 @@
         request->view.request_id = request_id;
         request->view.kind = WEBSCENE_HOST_REQUEST_CLIPBOARD_WRITE_V1;
         request->view.flags = info.Length() > 2 && info[2]->BooleanValue(info.GetIsolate())
-            ? WEBSCENE_HOST_REQUEST_CLIPBOARD_REPLACE_V1 : 0U;
+            ? static_cast<uint32_t>(WEBSCENE_HOST_REQUEST_CLIPBOARD_REPLACE_V1)
+            : 0U;
         request->content_type = content_type;
 
         v8::Local<v8::Value> canvas_node_id;

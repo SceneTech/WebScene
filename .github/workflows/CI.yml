@@ -16,7 +16,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os:
+        - [self-hosted, Linux, X64]
+        - [self-hosted, webscene-gpu, osx-arm64]
     name: Build and test ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     steps:
@@ -94,17 +96,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-        - os: macos-latest
+        - os: [self-hosted, webscene-gpu, osx-arm64]
           rid: osx-arm64
           executable: WebScene.GpuHost.Probe
           avalonia: 11
           avalonia12Sample: false
-        - os: windows-latest
-          rid: win-x64
-          executable: WebScene.GpuHost.Probe.exe
-          avalonia: 11
-          avalonia12Sample: false
-        - os: macos-latest
+        - os: [self-hosted, webscene-gpu, osx-arm64]
           rid: osx-arm64
           executable: WebScene.GpuHost.Probe
           avalonia: 12

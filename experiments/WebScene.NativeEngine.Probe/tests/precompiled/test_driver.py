@@ -21,7 +21,10 @@ class DriverTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='js inputs ')
         self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
+        # macOS exposes the temporary directory through /var while filesystem
+        # canonicalization returns /private/var. Keep expected dependency paths
+        # canonical so the contract is independent of that system symlink.
+        self.root = Path(self.temp.name).resolve()
 
     def file(self, name, data):
         path = self.root / name

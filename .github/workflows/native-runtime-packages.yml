@@ -49,7 +49,7 @@ permissions:
 
 jobs:
   metadata:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     outputs:
       package-version: ${{ steps.version.outputs.package-version }}
       publish: ${{ steps.version.outputs.publish }}
@@ -94,7 +94,7 @@ jobs:
     name: Require successful CI for release commit
     needs: metadata
     if: needs.metadata.outputs.publish == 'true'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     steps:
     - name: Require successful CI for the exact commit
       env:
@@ -121,7 +121,7 @@ jobs:
   packages:
     name: Pack .NET packages
     needs: metadata
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     steps:
     - uses: actions/checkout@v4
       with:
@@ -153,7 +153,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-        - os: macos-latest
+        - os: [self-hosted, webscene-gpu, osx-arm64]
           rid: osx-arm64
           cpu: arm64
           monolith: libv8_monolith.a
@@ -164,7 +164,7 @@ jobs:
           v8_cache_generation: v9-v8-15.3.10-pa-no-process-shim-macos-inspector
           v8_cache_script: scripts/build-native-engine-runtime.sh
           v8_cache_patch: packaging/WebScene.NativeEngine.Runtime/patches/V8PartitionAllocMacVisibilityPatch.txt
-        - os: ubuntu-latest
+        - os: [self-hosted, Linux, X64]
           rid: linux-x64
           cpu: x64
           monolith: libv8_monolith.a
@@ -175,17 +175,6 @@ jobs:
           v8_cache_generation: v12-v8-15.3.10-pa-no-process-shim-ubuntu22-gcc12-lld-no-crel-shared-inspector
           v8_cache_script: scripts/build-native-engine-runtime.sh
           v8_cache_patch: packaging/WebScene.NativeEngine.Runtime/patches/V8BuildNoCrelPatch.txt
-        - os: windows-2022
-          rid: win-x64
-          cpu: x64
-          monolith: v8_monolith.lib
-          script: windows
-          v8_revision: 15.3.10
-          partition_alloc: true
-          v8_configuration: ReleasePartitionAlloc
-          v8_cache_generation: v9-v8-15.3.10-pa-windows-compat-inspector
-          v8_cache_script: scripts/build-native-engine-runtime.ps1
-          v8_cache_patch: packaging/WebScene.NativeEngine.Runtime/patches/V8WindowsCompatibilityPatch.txt
     runs-on: ${{ matrix.os }}
     steps:
     - uses: actions/checkout@v4
@@ -461,7 +450,7 @@ jobs:
   required-evidence:
     name: Verify cross-RID required evidence
     needs: [metadata, native]
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     steps:
     - uses: actions/checkout@v4
     - name: Download required compatibility evidence
@@ -477,7 +466,6 @@ jobs:
           --selection required \
           --expected-rid osx-arm64 \
           --expected-rid linux-x64 \
-          --expected-rid win-x64 \
           --output artifacts/required-compatibility/cross-rid-summary.json
     - name: Upload cross-RID required summary
       uses: actions/upload-artifact@v4
@@ -489,7 +477,7 @@ jobs:
   package-set:
     name: Verify release package set
     needs: [metadata, packages, native, required-evidence]
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     steps:
     - uses: actions/checkout@v4
     - name: Download .NET packages
@@ -511,7 +499,6 @@ jobs:
           --version '${{ needs.metadata.outputs.package-version }}' \
           --native-rid osx-arm64 \
           --native-rid linux-x64 \
-          --native-rid win-x64 \
           --output artifacts/nuget-packages/release-packages.json
         shasum -a 256 \
           artifacts/nuget-packages/*.nupkg \
@@ -533,7 +520,7 @@ jobs:
     needs: [metadata, native]
     if: always() && needs.metadata.result == 'success'
     continue-on-error: true
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     steps:
     - uses: actions/checkout@v4
     - name: Download candidate compatibility evidence
@@ -551,7 +538,6 @@ jobs:
           --selection candidate \
           --expected-rid osx-arm64 \
           --expected-rid linux-x64 \
-          --expected-rid win-x64 \
           --output artifacts/candidate-compatibility/cross-rid-summary.json
     - name: Upload cross-RID candidate summary
       if: always()
@@ -568,12 +554,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-        - os: macos-latest
+        - os: [self-hosted, webscene-gpu, osx-arm64]
           rid: osx-arm64
-        - os: ubuntu-latest
+        - os: [self-hosted, Linux, X64]
           rid: linux-x64
-        - os: windows-2022
-          rid: win-x64
     runs-on: ${{ matrix.os }}
     steps:
     - uses: actions/checkout@v4
@@ -617,7 +601,7 @@ jobs:
     name: Publish to NuGet.org
     needs: [metadata, consumer, release-ci-gate]
     if: needs.metadata.outputs.publish == 'true'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     environment: nuget.org
     permissions:
       contents: read

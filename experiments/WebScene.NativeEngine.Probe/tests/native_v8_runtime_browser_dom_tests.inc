@@ -2834,11 +2834,13 @@ void test_native_clipboard_shortcut_events(webscene_engine*)
                 engine, request.id, 0U, "text/plain",
                 paste, sizeof(paste), nullptr) != 0,
         "native paste completion was rejected");
-    require(evaluate(engine, R"JS(
+    const auto shortcut_events = evaluate(engine, R"JS(
         JSON.stringify(__clipboardShortcutEvents)
-    )JS", "native-clipboard-shortcuts-result.js")
-        == R"JSON([["copy",true,true,"text/plain,text/html"],["cut"],["paste","shortcut paste"]])JSON",
-        "native clipboard shortcuts did not dispatch browser-compatible events");
+    )JS", "native-clipboard-shortcuts-result.js");
+    require(shortcut_events
+            == R"JSON([["copy",true,true,"text/plain,text/html"],["cut"],["paste","shortcut paste"]])JSON",
+        "native clipboard shortcuts did not dispatch browser-compatible events: "
+            + shortcut_events);
     require(!take_typed_host_request(engine),
         "native clipboard shortcuts retained an unexpected host request");
     webscene_engine_destroy(engine);

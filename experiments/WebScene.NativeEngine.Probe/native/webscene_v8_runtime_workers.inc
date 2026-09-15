@@ -35,6 +35,35 @@
     static constexpr size_t maximum_worker_errors = 16U;
     static constexpr size_t maximum_worker_error_length = 4096U;
 
+    void install_worker_constructor(v8::Local<v8::Context> local_context) {
+        auto worker_constructor = v8::Function::New(
+            local_context,
+            worker_construct,
+            {},
+            1).ToLocalChecked();
+        v8::Local<v8::Value> event_target;
+        v8::Local<v8::Value> worker_prototype;
+        v8::Local<v8::Value> event_prototype;
+        if (local_context->Global()->Get(
+                local_context,
+                js_string(isolate, "EventTarget")).ToLocal(&event_target)
+            && event_target->IsFunction()
+            && worker_constructor->Get(
+                local_context,
+                js_string(isolate, "prototype")).ToLocal(&worker_prototype)
+            && event_target.As<v8::Object>()->Get(
+                local_context,
+                js_string(isolate, "prototype")).ToLocal(&event_prototype)) {
+            worker_prototype.As<v8::Object>()->SetPrototype(
+                local_context,
+                event_prototype).FromMaybe(false);
+        }
+        local_context->Global()->Set(
+            local_context,
+            js_string(isolate, "Worker"),
+            worker_constructor).Check();
+    }
+
     static v8::MaybeLocal<v8::Value> worker_transfer(
         const v8::FunctionCallbackInfo<v8::Value>& info) {
         if (info.Length() < 2) return v8::Undefined(info.GetIsolate());
@@ -337,6 +366,8 @@
                     auto realm=child->context.Get(child->isolate);v8::Context::Scope scope(realm);
                     if(packet&&!child->dispatch_worker_message(realm,realm->Global(),&*packet))report(child->last_error);
                     child->drain_tasks();
+                    child->perform_microtask_checkpoint();
+                    if (!child->promote_pending_promise_error()) report(child->last_error);
                 }
                 {std::lock_guard lock(raw->mutex);raw->running_isolate=nullptr;}
                 child->isolate->CancelTerminateExecution();

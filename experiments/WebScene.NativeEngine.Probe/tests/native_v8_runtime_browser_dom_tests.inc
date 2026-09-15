@@ -2744,6 +2744,11 @@ void test_native_clipboard_shortcut_events(webscene_engine* engine)
         document.body.innerHTML = '<textarea id="editor"></textarea>';
         const editor = document.getElementById('editor');
         globalThis.__clipboardShortcutEvents = [];
+        globalThis.__clipboardShortcutKeys = [];
+        editor.addEventListener('keydown', event => {
+          __clipboardShortcutKeys.push([
+            event.key, event.metaKey, event.ctrlKey, event.defaultPrevented]);
+        });
         editor.addEventListener('copy', event => {
           event.clipboardData.setData('text/plain', 'shortcut copy');
           event.clipboardData.setData('text/html', '<b>shortcut copy</b>');
@@ -2770,7 +2775,9 @@ void test_native_clipboard_shortcut_events(webscene_engine* engine)
     require(evaluate(engine, "true", "native-clipboard-copy-shortcut-barrier.js") == "true",
         "native copy shortcut did not drain through the engine worker");
     const auto copy_events = evaluate(engine,
-        "JSON.stringify(__clipboardShortcutEvents)",
+        "JSON.stringify({ events: __clipboardShortcutEvents,"
+        " keys: __clipboardShortcutKeys, active: document.activeElement?.id,"
+        " helper: typeof __webSceneClipboardShortcut })",
         "native-clipboard-copy-shortcut-events.js");
     auto request = take_typed_host_request(engine);
     require(request.kind == WEBSCENE_HOST_REQUEST_CLIPBOARD_WRITE_V1

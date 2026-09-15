@@ -832,6 +832,7 @@ int main()
     test_clipboard_write_text_host_handoff(engine);
     test_clipboard_read_host_completion(engine);
     test_native_clipboard_shortcut_events(engine);
+    test_native_legacy_clipboard_completion_stress(engine);
     test_clipboard_maximum_payload_gate(engine);
     test_clipboard_small_round_trip_performance(engine);
     test_fullscreen_host_completion(engine);

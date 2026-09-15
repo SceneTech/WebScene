@@ -301,6 +301,15 @@ jobs:
           --upstream-v8 \
           --partition-alloc \
           --output "$GITHUB_WORKSPACE/artifacts/nuget-packages"
+    - name: Upload exact macOS native symbols
+      if: matrix.rid == 'osx-arm64'
+      uses: actions/upload-artifact@v4
+      with:
+        name: native-symbols-${{ matrix.rid }}-${{ needs.metadata.outputs.package-version }}
+        path: artifacts/native-engine-runtime-build/**/*.dSYM/**
+        if-no-files-found: error
+        compression-level: 9
+        retention-days: 3
     - name: Build, pack, and test Linux runtime
       if: matrix.rid == 'linux-x64'
       shell: bash

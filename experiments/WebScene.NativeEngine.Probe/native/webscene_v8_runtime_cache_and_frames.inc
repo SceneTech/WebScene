@@ -924,6 +924,24 @@
             }
         }
 
+        // Packaged caches are immutable and independent of installed resource URLs.
+        // Preserve the existing local/shared caches above and persistent path below.
+        if (const auto packaged = find_precompiled_javascript(source, false)) {
+            const auto source_value = create_script_source_value(key, source, std::move(immutable_source));
+            const auto name_value = v8::String::NewFromUtf8(isolate, document_name.data(),
+                v8::NewStringType::kNormal, static_cast<int>(document_name.size())).ToLocalChecked();
+            v8::Local<v8::UnboundScript> unbound;
+            const auto started = std::chrono::steady_clock::now();
+            const auto accepted = consume_precompiled_classic(isolate, source_value, name_value, *packaged, unbound);
+            compilation_time_nanosecond_count += static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started).count());
+            if (!accepted) return false;
+            retain_shared_compiled_script(key, key_digest, unbound, source.size());
+            retain_compiled_script(key, key_digest, unbound, source.size());
+            script = unbound->BindToCurrentContext();
+            return true;
+        }
+
         const auto process_acquisition = acquire_process_compilation(key);
         std::shared_ptr<const immutable_byte_buffer> shared_bytes;
         auto has_persistent = false;

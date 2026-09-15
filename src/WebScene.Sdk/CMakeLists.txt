@@ -64,3 +64,11 @@ include(CMakePackageConfigHelpers)
 write_basic_package_version_file("${CMAKE_BINARY_DIR}/WebSceneConfigVersion.cmake"
   VERSION ${PROJECT_VERSION} COMPATIBILITY SameMinorVersion)
 install(FILES "${CMAKE_BINARY_DIR}/WebSceneConfigVersion.cmake" DESTINATION lib/cmake/WebScene)
+
+# The host compiler and its initialization assets are SDK tools, never app payloads.
+install(TARGETS webscene-jsc RUNTIME DESTINATION bin)
+install(FILES "${WEBSCENE_ROOT}/experiments/WebScene.NativeEngine.Probe/native/webscene_precompiled_javascript.h" DESTINATION include)
+install(PROGRAMS tools/precompile_javascript.py DESTINATION share/webscene/tools)
+install(FILES "${WEBSCENE_V8_OUTPUT_ROOT}/icudtl.dat"
+  "${CMAKE_BINARY_DIR}/runtime/webscene_bootstrap_snapshot.bin"
+  "${CMAKE_BINARY_DIR}/runtime/webscene_bootstrap_snapshot.meta" DESTINATION bin)

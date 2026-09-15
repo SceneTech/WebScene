@@ -29,10 +29,15 @@
         for (auto& entry : module_map)
             if (entry.url == url && entry.realm.Get(isolate) == realm)
                 return entry.module.Get(isolate);
-        v8::ScriptOrigin origin(js_dom_string(isolate, url), 0, 0, false, -1, {}, false, false, true);
-        v8::ScriptCompiler::Source input(js_dom_string(isolate, std::string(source)), origin);
         v8::Local<v8::Module> result;
-        if (!v8::ScriptCompiler::CompileModule(isolate, &input).ToLocal(&result)) return {};
+        if (const auto packaged = find_precompiled_javascript(source, true)) {
+            if (!consume_precompiled_module(isolate, js_dom_string(isolate, std::string(source)),
+                    js_dom_string(isolate, url), *packaged, result)) return {};
+        } else {
+            v8::ScriptOrigin origin(js_dom_string(isolate, url), 0, 0, false, -1, {}, false, false, true);
+            v8::ScriptCompiler::Source input(js_dom_string(isolate, std::string(source)), origin);
+            if (!v8::ScriptCompiler::CompileModule(isolate, &input).ToLocal(&result)) return {};
+        }
         module_map.push_back({url, v8::Global<v8::Context>(isolate, realm),
             v8::Global<v8::Module>(isolate, result)});
         return result;

@@ -1,9 +1,9 @@
 # Code OSS native runtime compatibility
 
-Status: development integration. Code OSS 1.137.0 reaches farther through the
-native AppScene/WebScene stack with three runtime-owned compatibility slices,
-but the complete workbench/editor smoke is not yet qualified. This work does
-not add or depend on Electron, CEF, WKWebView, or a browser process.
+Status: development integration. Code OSS 1.137.0's complete native
+workbench/editor smoke passes against the development runtime. The typed desktop
+capability revision still requires a fresh combined package qualification. This
+work does not add or depend on Electron, CEF, WKWebView, or a browser process.
 
 The reference consumer is
 [`SceneTech/vscode-demo`](https://github.com/SceneTech/vscode-demo). It starts
@@ -40,6 +40,32 @@ tests are tracked in
 [resource ABI and cookies #75](https://github.com/SceneTech/WebScene/issues/75).
 The token-specific bridge must remain outside WebScene until that general
 contract exists.
+
+## Native desktop capability boundary
+
+WebScene exposes standard browser behavior instead of an Electron emulation
+layer. The versioned `webscene_host_request_v1` ABI carries external HTTP(S)
+URLs, clipboard reads/writes, window focus/close/reload, and fullscreen
+enter/exit. Hosts lease immutable request memory and release it explicitly.
+Clipboard byte payloads therefore avoid base64 and JSON allocation. The older
+bounded JSON queue remains available for application messages and compatibility
+with earlier hosts.
+
+`navigator.clipboard` supports Promise-based text and typed operations with a
+16 MiB representation limit, at most 16 pending completion-bearing operations,
+explicit MIME rejection, recent native user activation for reads, and
+navigation cancellation. Window requests share a bounded queue. Native hosts
+can publish focus and fullscreen state back into the active document, which
+updates `document.hasFocus()`, fullscreen state, and their standard events.
+Scripted close dispatches cancelable `beforeunload` before reaching the host.
+
+The Code OSS `server-web` target does not load Electron main/sandbox entry
+points. Its shipped `out/vs` tree has no direct `electron` module import, so a
+general Electron shim would add surface area without helping DOM, Monaco,
+layout, input, worker, rendering, or scheduling performance. AppScene owns the
+operating-system side of the typed ABI. Menus, dialogs, notifications,
+secondary windows, power events, and protocol registration remain
+evidence-gated capabilities; they are not installed speculatively.
 
 ## Open PR interaction
 
@@ -78,6 +104,16 @@ regressions without turning temporary hosted-runner load into a flaky result:
 | Read an 8 MiB Blob | 3,000 ms | 9 ms | 528 ms | 33 ms |
 | Retain 50,000 marks | 1,500 ms | 54 ms | 239 ms | 75 ms |
 | Publish 450 stylesheet mutations | 2,000 ms | 19 ms | 71 ms | 23 ms |
+| Complete 10,000 one-byte typed clipboard writes | 10,000 ms | pending latest package matrix | pending latest package matrix | pending latest package matrix |
+| Drain 10,000 typed window requests | 5,000 ms | pending latest package matrix | pending latest package matrix | pending latest package matrix |
+| Apply 10,000 native focus transitions | 1,000 ms | pending latest package matrix | pending latest package matrix | pending latest package matrix |
+
+The clipboard load gate uses batches of 16, reports that pending-request high
+water mark, completes every Promise, and verifies an empty queue without timing
+sleeps. A separate gate moves the maximum 16 MiB clipboard payload through the
+typed ABI within five seconds. Native contracts also cover no-activation reads,
+unsupported input, cancellation, queue saturation, stale/double completion,
+navigation teardown, close veto, and native-initiated fullscreen changes.
 
 Measurements were recorded on 2026-09-15 with Node 25.1.0 on macOS, Node
 18.19.1 in Ubuntu 24.04, and Node 24.19.0 in Windows 11. The VM runs used the

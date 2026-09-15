@@ -44,6 +44,27 @@ struct native_file_completion {
     std::vector<native_file_data> files;
     std::string error;
 };
+struct native_host_completion {
+    uint64_t id{};
+    uint32_t status{};
+    std::string content_type;
+    std::vector<uint8_t> bytes;
+    std::string error;
+};
+struct native_host_request {
+    webscene_host_request_v1 view{};
+    std::string content_type;
+    std::vector<uint8_t> bytes;
+    std::string url;
+    void bind() {
+        view.struct_size = sizeof(view);
+        view.version = 1;
+        view.content_type = content_type.empty() ? nullptr : content_type.c_str();
+        view.bytes = bytes.empty() ? nullptr : bytes.data();
+        view.byte_count = bytes.size();
+        view.url = url.empty() ? nullptr : url.c_str();
+    }
+};
 
 class native_document;
 struct dom_node;
@@ -250,7 +271,10 @@ public:
         std::function<void()> interop_callback_available = {},
         interop_callback_sink_v3 interop_callback_sink = {},
         std::function<void()> runtime_work_available = {},
-        class runtime_diagnostics* diagnostics = nullptr);
+        class runtime_diagnostics* diagnostics = nullptr,
+        std::string storage_directory = {},
+        std::string storage_partition_key = {},
+        uint64_t storage_quota_bytes = 0);
     ~v8_dom_runtime();
 
     v8_dom_runtime(const v8_dom_runtime&) = delete;
@@ -294,7 +318,10 @@ public:
     void set_native_media_policy(uint32_t flags);
     std::unique_ptr<native_file_request> take_file_request();
     void complete_file_request(native_file_completion& completion);
+    void complete_host_request(native_host_completion& completion);
     bool try_take_host_request(std::string& request);
+    std::unique_ptr<native_host_request> take_typed_host_request();
+    bool discard_host_request();
     bool try_take_console_message(std::string& message);
     bool inspector_available() const noexcept;
     uint64_t connect_inspector(
@@ -313,6 +340,8 @@ public:
     void update_gpu_presentation_images(const std::vector<std::shared_ptr<const webscene_gpu_image_lease_v3>>& images);
     bool refresh_media_environment();
     bool set_visible(bool visible);
+    bool set_focused(bool focused);
+    bool set_fullscreen(bool fullscreen);
     bool dispatch_input(const webscene_input_event& event, bool defer_cursor_update = false);
     // Worker-only: call after publication layout and ResizeObserver delivery.
     void refresh_pointer_cursor_after_layout();

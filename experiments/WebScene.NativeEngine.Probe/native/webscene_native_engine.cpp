@@ -407,6 +407,9 @@ private:
     webscene_frame_trace frame_trace_;
     uint32_t command_count_;
     std::string compilation_cache_directory_;
+    std::string storage_directory_;
+    std::string storage_partition_key_;
+    uint64_t storage_quota_bytes_{0};
     webscene_resource_load_callback resource_load_callback_{nullptr};
     void* resource_load_user_data_{nullptr};
     webscene_resource_load_callback_v2 resource_load_callback_v2_{nullptr};
@@ -442,6 +445,10 @@ private:
     std::atomic<bool> low_memory_requested_{false};
     std::atomic<bool> host_visible_{true};
     std::atomic<bool> visibility_changed_{false};
+    std::atomic<bool> host_focused_{true};
+    std::atomic<bool> focus_changed_{false};
+    std::atomic<bool> host_fullscreen_{false};
+    std::atomic<bool> fullscreen_changed_{false};
     std::atomic<uint32_t> preferred_color_scheme_{
         WEBSCENE_PREFERRED_COLOR_SCHEME_LIGHT};
     std::atomic<bool> preferred_color_scheme_changed_{false};
@@ -898,6 +905,8 @@ webscene_engine* webscene_engine_create_with_options(const webscene_engine_optio
                 options->compilation_cache_directory,
                 options->compilation_cache_directory_length);
         }
+        std::string storage_directory;
+        std::string storage_partition_key;
         constexpr auto resource_callback_options_size =
             offsetof(webscene_engine_options, scene_published_callback);
         const auto has_resource_callback =
@@ -932,10 +941,31 @@ webscene_engine* webscene_engine_create_with_options(const webscene_engine_optio
             options->struct_size >= offsetof(webscene_engine_options, stylesheet_consumed_callback);
         const auto has_stylesheet_consumed_callback =
             options->struct_size >= offsetof(webscene_engine_options, webgpu_policy_callback);
-        const auto has_webgpu_policy = options->struct_size >= sizeof(webscene_engine_options);
+        const auto has_webgpu_policy = options->struct_size
+            >= offsetof(webscene_engine_options, storage_directory);
+        constexpr auto storage_options_size =
+            offsetof(webscene_engine_options, storage_quota_bytes)
+            + sizeof(uint64_t);
+        const auto has_storage_options = options->struct_size
+            >= storage_options_size;
+        if (has_storage_options && options->storage_directory != nullptr
+            && options->storage_directory_length > 0U) {
+            storage_directory.assign(
+                options->storage_directory,
+                options->storage_directory_length);
+        }
+        if (has_storage_options && options->storage_partition_key != nullptr
+            && options->storage_partition_key_length > 0U) {
+            storage_partition_key.assign(
+                options->storage_partition_key,
+                options->storage_partition_key_length);
+        }
         return new webscene_engine(
             options->simulated_chart_command_count,
             std::move(cache_directory),
+            std::move(storage_directory),
+            std::move(storage_partition_key),
+            has_storage_options ? options->storage_quota_bytes : 0U,
             has_resource_callback ? options->resource_load_callback : nullptr,
             has_resource_callback ? options->resource_load_user_data : nullptr,
             has_resource_callback_v2 ? options->resource_load_callback_v2 : nullptr,
@@ -1291,6 +1321,58 @@ size_t webscene_engine_take_host_request(
         : engine->take_host_request(destination, destination_capacity);
 }
 
+const webscene_host_request_v1*
+webscene_engine_take_typed_host_request_v1(webscene_engine* engine)
+{
+    if (engine == nullptr) return nullptr;
+    auto request = engine->take_typed_host_request();
+    if (!request) return nullptr;
+    request->bind();
+    return &request.release()->view;
+}
+
+void webscene_host_request_release_v1(
+    const webscene_host_request_v1* request)
+{
+    delete reinterpret_cast<const webscene_native::native_host_request*>(request);
+}
+
+uint8_t webscene_engine_discard_host_request_v1(webscene_engine* engine)
+{
+    return engine != nullptr && engine->discard_host_request() ? 1U : 0U;
+}
+
+uint8_t webscene_engine_complete_host_request_v1(
+    webscene_engine* engine,
+    uint64_t request_id,
+    uint32_t status,
+    const char* content_type,
+    const uint8_t* bytes,
+    size_t byte_count,
+    const char* error_message)
+{
+    constexpr size_t maximum_clipboard_bytes = 16U * 1024U * 1024U;
+    if (engine == nullptr || request_id == 0U || status > 2U
+        || byte_count > maximum_clipboard_bytes
+        || (byte_count != 0U && bytes == nullptr)) {
+        return 0U;
+    }
+    webscene_native::native_host_completion completion;
+    completion.id = request_id;
+    completion.status = status;
+    completion.content_type = content_type == nullptr ? "" : content_type;
+    completion.error = error_message == nullptr ? "" : error_message;
+    if (completion.content_type.size() > 256U || completion.error.size() > 4096U)
+        return 0U;
+    if (status == 0U) {
+        if (byte_count != 0U && completion.content_type.empty()) return 0U;
+        if (byte_count != 0U) completion.bytes.assign(bytes, bytes + byte_count);
+    } else if (byte_count != 0U) {
+        return 0U;
+    }
+    return engine->complete_host_request(std::move(completion)) ? 1U : 0U;
+}
+
 void webscene_engine_configure_diagnostics(
     webscene_engine* engine, uint32_t flags,
     webscene_diagnostic_available_callback callback, void* user_data)
@@ -1414,6 +1496,18 @@ uint8_t webscene_engine_request_low_memory(webscene_engine* engine)
 uint8_t webscene_engine_set_visible(webscene_engine* engine, uint8_t visible)
 {
     return engine != nullptr && engine->set_visible(visible != 0) ? 1U : 0U;
+}
+
+uint8_t webscene_engine_set_window_focused_v1(
+    webscene_engine* engine, uint8_t focused)
+{
+    return engine != nullptr && engine->set_focused(focused != 0) ? 1U : 0U;
+}
+
+uint8_t webscene_engine_set_window_fullscreen_v1(
+    webscene_engine* engine, uint8_t fullscreen)
+{
+    return engine != nullptr && engine->set_fullscreen(fullscreen != 0) ? 1U : 0U;
 }
 
 uint8_t webscene_engine_set_preferred_color_scheme(

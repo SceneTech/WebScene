@@ -18,9 +18,12 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <limits>
+#include <locale>
 #include <mutex>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -69,6 +72,7 @@ uint8_t measure_baseline_fixture_text(
 // feature; shared fixtures remain visible without additional test-only APIs.
 #include "native_v8_runtime_document_tests.inc"
 #include "native_v8_runtime_test_support.inc"
+#include "native_v8_runtime_indexeddb_tests.inc"
 #if defined(WEBSCENE_NATIVE_ENGINE_WITH_V8_INSPECTOR)
 #include "native_v8_runtime_inspector_tests.inc"
 #endif
@@ -125,6 +129,10 @@ int main()
     if (const auto* filter = std::getenv("WEBSCENE_NATIVE_ENGINE_TEST_FILTER");
         filter != nullptr) {
         const auto selected = std::string_view(filter);
+        if (selected == "indexeddb") {
+            test_indexeddb_runtime_contract();
+            return 0;
+        }
         if (selected == "idle-v8-platform") {
             test_idle_v8_foreground_completion();
             return 0;
@@ -134,6 +142,14 @@ int main()
             require(focused_engine!=nullptr,"backdrop engine creation failed");
             test_modal_backdrop_scene(focused_engine);
             webscene_engine_destroy(focused_engine);return 0;
+        }
+        if (selected == "fragment-attach") {
+            auto* focused_engine = webscene_engine_create(0);
+            require(focused_engine != nullptr, "fragment attach engine creation failed");
+            test_fragment_append_applies_structural_selectors_after_atomic_attachment(
+                focused_engine);
+            webscene_engine_destroy(focused_engine);
+            return 0;
         }
         if (selected == "paint-only-cascade") {
             auto* focused_engine=webscene_engine_create(0);
@@ -514,6 +530,8 @@ int main()
             auto* focused_engine = webscene_engine_create(0);
             require(focused_engine != nullptr, "focused engine creation failed");
             test_dom_traversal_cloning_primitives(focused_engine);
+            test_specialized_content_properties(focused_engine);
+            test_child_collection_item(focused_engine);
             webscene_engine_destroy(focused_engine);
             return 0;
         }
@@ -651,6 +669,7 @@ int main()
     test_executed_compilation_units_enrich_persistent_cache();
     test_process_wide_compilation_single_flight();
     test_canvas_text_metrics_use_host_font_axes();
+    test_indexeddb_runtime_contract();
     auto* engine = webscene_engine_create(64);
     require(engine != nullptr, "engine creation failed");
 #if defined(WEBSCENE_NATIVE_ENGINE_WITH_V8_INSPECTOR)
@@ -740,6 +759,7 @@ int main()
     test_inline_block_preserves_vertical_padding(engine);
     test_pointer_hit_targets_and_related_targets_are_elements(engine);
     test_pointer_cursor_and_external_anchor_host_handoff(engine);
+    test_typed_window_host_request_performance(engine);
     test_enter_dispatches_browser_keypress_for_interval_commit(engine);
     test_css_linear_gradient_reaches_the_retained_scene(engine);
     {
@@ -807,13 +827,19 @@ int main()
     test_document_position(engine);
     test_dom_box_dimensions_primitives(engine);
     test_dom_traversal_cloning_primitives(engine);
+    test_specialized_content_properties(engine);
+    test_child_collection_item(engine);
     test_fragment_replacement_and_inline_script_lifecycle(engine);
+    test_fragment_append_applies_structural_selectors_after_atomic_attachment(engine);
     test_textarea_child_text_value_lifecycle(engine);
     test_secondary_click(engine);
     test_primary_click_mouse_event_detail(engine);
     test_event_listener_options_reach_native_input_and_resize(engine);
     test_listener_added_during_dispatch_waits_for_next_event(engine);
     test_node_filter_tree_walker_focus_navigation(engine);
+    test_node_iterator_dompurify_traversal(engine);
+    test_node_has_child_nodes_contract_and_performance(engine);
+    test_node_iterator_linear_performance_gate();
     test_table_cell_click_copies_text_to_host();
     test_synthetic_window_resize_dispatch_uses_outer_listener_registry(engine);
     test_document_create_event_and_init_event(engine);
@@ -821,6 +847,16 @@ int main()
     test_generated_idl_attributes_are_prototype_accessors(engine);
     test_document_links_is_a_live_named_html_collection(engine);
     test_scrollspy_product_neutral_primitives(engine);
+    test_native_performance_timeline_identity(engine);
+    test_clipboard_write_text_host_handoff(engine);
+    test_clipboard_read_host_completion(engine);
+    test_native_clipboard_shortcut_events(engine);
+    test_native_image_clipboard_maximum_payload(engine);
+    test_native_legacy_clipboard_completion_stress(engine);
+    test_native_pending_legacy_clipboard_shutdown(engine);
+    test_clipboard_maximum_payload_gate(engine);
+    test_clipboard_small_round_trip_performance(engine);
+    test_fullscreen_host_completion(engine);
     test_component_library_dom_discovery_primitives(engine);
     test_document_id_index_preserves_tree_and_root_semantics(engine);
     test_dom_selector_apis_throw_syntax_error_for_invalid_selectors(engine);

@@ -836,6 +836,18 @@ typedef struct webscene_engine_options {
     void* stylesheet_consumed_user_data;
     webscene_webgpu_policy_callback webgpu_policy_callback;
     void* webgpu_policy_user_data;
+    /*
+     * Durable browser storage is disabled unless both strings are supplied.
+     * storage_partition_key is a stable host-owned application/profile id;
+     * the runtime still partitions its files by the document's effective
+     * origin below that key. Hosts may therefore keep a random loopback port
+     * out of the profile identity without merging unrelated applications.
+     */
+    const char* storage_directory;
+    size_t storage_directory_length;
+    const char* storage_partition_key;
+    size_t storage_partition_key_length;
+    uint64_t storage_quota_bytes;
 } webscene_engine_options;
 
 enum {
@@ -1213,6 +1225,14 @@ WEBSCENE_API uint8_t webscene_engine_request_low_memory(webscene_engine* engine)
  * worker; returning visible before the deadline cancels it.
  */
 WEBSCENE_API uint8_t webscene_engine_set_visible(webscene_engine* engine, uint8_t visible);
+/* Publishes native key-window focus to document.hasFocus() and standard
+ * top-level focus/blur events. Repeated values are coalesced. */
+WEBSCENE_API uint8_t webscene_engine_set_window_focused_v1(
+    webscene_engine* engine, uint8_t focused);
+/* Synchronizes fullscreen changes initiated by native window controls. Script
+ * initiated transitions use the typed request/completion path. */
+WEBSCENE_API uint8_t webscene_engine_set_window_fullscreen_v1(
+    webscene_engine* engine, uint8_t fullscreen);
 /*
  * Updates the host's effective color preference. The worker re-evaluates CSS
  * media rules and subsequent Window.matchMedia snapshots against this value.
@@ -1366,10 +1386,61 @@ WEBSCENE_API uint8_t webscene_engine_complete_file_request_v1(webscene_engine* e
     uint64_t request_id, uint32_t status, const webscene_file_data_v1* files,
     size_t file_count, const char* error_message);
 
+/* Typed native desktop request ABI. Request memory is immutable and remains
+ * valid until release. Byte payloads are capped at 16 MiB, strings are UTF-8,
+ * and at most 16 completion-bearing operations may be pending per document. */
+enum {
+    WEBSCENE_HOST_REQUEST_OPEN_EXTERNAL_URL_V1 = 1,
+    WEBSCENE_HOST_REQUEST_CLIPBOARD_READ_V1 = 2,
+    WEBSCENE_HOST_REQUEST_CLIPBOARD_WRITE_V1 = 3,
+    WEBSCENE_HOST_REQUEST_WINDOW_FOCUS_V1 = 4,
+    WEBSCENE_HOST_REQUEST_WINDOW_CLOSE_V1 = 5,
+    WEBSCENE_HOST_REQUEST_WINDOW_RELOAD_V1 = 6,
+    WEBSCENE_HOST_REQUEST_FULLSCREEN_ENTER_V1 = 7,
+    WEBSCENE_HOST_REQUEST_FULLSCREEN_EXIT_V1 = 8
+};
+enum {
+    WEBSCENE_HOST_REQUEST_CLIPBOARD_REPLACE_V1 = 1U << 0U
+};
+typedef struct webscene_host_request_v1 {
+    uint32_t struct_size, version;
+    uint64_t request_id;
+    uint32_t kind, flags;
+    uint64_t target_node_id;
+    const char* content_type;
+    const uint8_t* bytes;
+    size_t byte_count;
+    const char* url;
+} webscene_host_request_v1;
+WEBSCENE_API const webscene_host_request_v1*
+webscene_engine_take_typed_host_request_v1(webscene_engine* engine);
+WEBSCENE_API void webscene_host_request_release_v1(
+    const webscene_host_request_v1* request);
+
+/* JSON compatibility queue retained for older host integrations and unrelated
+ * application-defined messages. New desktop capabilities use the typed ABI. */
 WEBSCENE_API size_t webscene_engine_take_host_request(
     webscene_engine* engine,
     char* destination,
     size_t destination_capacity);
+/* Consumes the oldest JSON compatibility request without allocating its
+ * payload. Hosts use this after rejecting an oversized item so one malformed
+ * request cannot permanently block the FIFO. */
+WEBSCENE_API uint8_t webscene_engine_discard_host_request_v1(
+    webscene_engine* engine);
+/* Completes a request carrying a numeric requestId from take_host_request.
+ * status: 0 completed, 1 cancelled, 2 denied/failed. Inputs are copied before
+ * return. Clipboard data is limited to 16 MiB, content_type to 256 bytes and
+ * error_message to 4096 bytes. Completion is delivered on the engine worker;
+ * stale request IDs are safely ignored there. */
+WEBSCENE_API uint8_t webscene_engine_complete_host_request_v1(
+    webscene_engine* engine,
+    uint64_t request_id,
+    uint32_t status,
+    const char* content_type,
+    const uint8_t* bytes,
+    size_t byte_count,
+    const char* error_message);
 /*
  * Removes one V8 console entry. The UTF-8 payload is `<level>\n<message>`;
  * querying with a null/short destination reports the required byte count

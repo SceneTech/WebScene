@@ -755,9 +755,9 @@
     {
       "path": "contracts/dom-treewalker-nodefilter-focus-navigation.html",
       "type": "contract",
-      "capabilities": ["nodefilter-constants", "document-create-tree-walker", "treewalker-filter-semantics", "focus-navigation-tree-traversal"],
-      "evidence": ["browser-authorized-order-menu-focus-management", "native-treewalker-regression", "actual-tradingview-order-menu-proof"],
-      "reason": "Product-neutral reduction of the focus-navigation primitive used by the TradingView order-menu portal. It verifies SHOW_ELEMENT filtering, FILTER_ACCEPT/SKIP/REJECT subtree semantics, currentNode/root identity and boundaries, document-order traversal, sibling navigation across skipped wrappers, and the lastChild/previousNode pattern used to locate focusable descendants."
+      "capabilities": ["nodefilter-constants", "document-create-tree-walker", "document-create-node-iterator", "treewalker-filter-semantics", "node-iterator-dompurify-traversal", "focus-navigation-tree-traversal"],
+      "evidence": ["browser-authorized-order-menu-focus-management", "native-treewalker-regression", "native-node-iterator-regression", "actual-tradingview-order-menu-proof"],
+      "reason": "Product-neutral reduction of the focus-navigation primitive used by the TradingView order-menu portal and the DOMPurify traversal used by Code OSS chat rendering. It verifies SHOW_ELEMENT filtering, FILTER_ACCEPT/SKIP/REJECT semantics, currentNode/root identity and boundaries, TreeWalker navigation across skipped wrappers, and root-inclusive NodeIterator forward/reverse document-order traversal."
     },
     {
       "path": "contracts/dom-scope-descendant-selector.html",
@@ -786,6 +786,13 @@
       "capabilities": ["parentnode-append", "variadic-node-insertion", "append-string-to-text", "document-fragment-flattening", "node-move-order"],
       "evidence": ["ecosystem-runtime-unit-reduction"],
       "reason": "Required after direct Chrome authority and the native runner pass all 3/3 ParentNode append assertions, and the native retained-runtime unit gate independently covers variadic node/text insertion with connected stylesheet recascade. Evidence: artifacts/web-platform-parentnode-append-chrome-v1-20260723, artifacts/web-platform-parentnode-append-managed-v3-20260723, artifacts/web-platform-parentnode-append-native-v2-20260723, and the webscene_native_engine_tests runtime suite."
+    },
+    {
+      "path": "contracts/dom-fragment-atomic-attachment.html",
+      "type": "testharness",
+      "capabilities": ["append-child-document-fragment", "atomic-tree-insertion", "structural-selector-invalidation"],
+      "evidence": ["native-fragment-attach-regression", "fragment-attach-abba-benchmark"],
+      "reason": "Product-neutral regression for panel and component trees transferred through DocumentFragment. It verifies that :empty, :has(), :first-child, :nth-child(), and :last-child are matched only after the complete fragment is connected."
     },
     {
       "path": "contracts/dom-mouse-event-constructor.html",
@@ -1428,9 +1435,9 @@
     {
       "path": "contracts/dom-webidl-binding-shape.html",
       "type": "contract",
-      "capabilities": ["webidl-interface-inheritance", "webidl-operation-brands", "webidl-descriptors", "dom-wrapper-identity"],
+      "capabilities": ["webidl-interface-inheritance", "webidl-operation-brands", "webidl-descriptors", "dom-wrapper-identity", "node-direct-child-presence"],
       "evidence": ["generated-webidl-to-v8-evaluation"],
-      "reason": "Candidate decision fixture for the generated EventTarget to HTMLElement binding slice. It measures distinct constructors and prototype inheritance, HTML/text/SVG wrapper brands, operation placement and lengths, illegal invocation, constructor behavior, attribute descriptor placement, and wrapper identity."
+      "reason": "Candidate decision fixture for the generated EventTarget to HTMLElement binding slice. It measures distinct constructors and prototype inheritance, HTML/text/SVG wrapper brands, operation placement and lengths, illegal invocation, constructor behavior, attribute descriptor placement, wrapper identity, and live constant-time Node.hasChildNodes behavior."
     },
     {
       "path": "dom/events/AddEventListenerOptions-once.any.js",

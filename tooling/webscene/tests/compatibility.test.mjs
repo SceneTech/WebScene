@@ -17,3 +17,11 @@ test('unsupported and undeclared APIs produce stable diagnostics', () => {
   assert.deepEqual(diagnostics.map(item => item.code), ['WEBSCENE1003', 'WEBSCENE2007']);
   assert.equal(diagnostics[0].line, 2);
 });
+
+test('IndexedDB requires the durable storage capability', () => {
+  const missing = checkSource('indexedDB.open("state")', manifest);
+  assert.equal(missing[0].code, 'WEBSCENE1002');
+  assert.equal(missing[0].requiredCapability, 'storage.indexeddb');
+  const declared = { ...manifest, capabilities: [...manifest.capabilities, 'storage.indexeddb'] };
+  assert.deepEqual(checkSource('indexedDB.open("state")', declared), []);
+});

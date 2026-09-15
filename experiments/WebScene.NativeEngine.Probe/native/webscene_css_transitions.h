@@ -15,9 +15,10 @@ inline std::optional<float> css_time_ms(std::string_view text) {
     if(text.front()=='+') text.remove_prefix(1);
     if(text.empty() || (text.front()!='-' && text.front()!='.' &&
         (text.front()<'0' || text.front()>'9')) || text.back()<'0' || text.back()>'9') return std::nullopt;
-    float value{};
-    const auto parsed=std::from_chars(text.data(),text.data()+text.size(),value);
-    if(parsed.ec!=std::errc{} || parsed.ptr!=text.data()+text.size() ||
+    const std::string number{text};
+    char* parsed_end = nullptr;
+    const auto value = std::strtof(number.c_str(), &parsed_end);
+    if(parsed_end != number.c_str()+number.size() ||
         !std::isfinite(value*multiplier)) return std::nullopt;
     return value*multiplier;
 }

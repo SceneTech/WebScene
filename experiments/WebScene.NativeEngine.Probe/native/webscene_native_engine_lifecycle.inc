@@ -1,6 +1,9 @@
     explicit webscene_engine(
         uint32_t command_count,
         std::string compilation_cache_directory = {},
+        std::string storage_directory = {},
+        std::string storage_partition_key = {},
+        uint64_t storage_quota_bytes = 0,
         webscene_resource_load_callback resource_load_callback = nullptr,
         void* resource_load_user_data = nullptr,
         webscene_resource_load_callback_v2 resource_load_callback_v2 = nullptr,
@@ -30,6 +33,9 @@
                     ? minimum_command_count
                     : command_count))
         , compilation_cache_directory_(std::move(compilation_cache_directory))
+        , storage_directory_(std::move(storage_directory))
+        , storage_partition_key_(std::move(storage_partition_key))
+        , storage_quota_bytes_(storage_quota_bytes)
         , resource_load_callback_(resource_load_callback)
         , resource_load_user_data_(resource_load_user_data)
         , resource_load_callback_v2_(resource_load_callback_v2)
@@ -106,6 +112,21 @@
         signal_worker();
         return true;
     }
+    bool complete_host_request(webscene_native::native_host_completion completion) {
+        std::lock_guard lock(script_mutex_);
+        if (script_work_.size() >= 1024) return false;
+        script_work_.emplace_back(std::move(completion));
+        signal_worker();
+        return true;
+    }
+    bool discard_host_request() {
+#if defined(WEBSCENE_NATIVE_ENGINE_WITH_V8)
+        std::lock_guard lock(file_runtime_mutex_);
+        return file_runtime_ready_ && runtime_->discard_host_request();
+#else
+        return false;
+#endif
+    }
     void retire_file_runtime() {
 #if defined(WEBSCENE_NATIVE_ENGINE_WITH_V8)
         std::unique_ptr<webscene_native::v8_dom_runtime> retired;
@@ -135,6 +156,14 @@
 #if defined(WEBSCENE_NATIVE_ENGINE_WITH_V8)
         std::lock_guard lock(file_runtime_mutex_);
         if (file_runtime_ready_) return runtime_->take_file_request();
+#endif
+        return {};
+    }
+    std::unique_ptr<webscene_native::native_host_request>
+    take_typed_host_request() {
+#if defined(WEBSCENE_NATIVE_ENGINE_WITH_V8)
+        std::lock_guard lock(file_runtime_mutex_);
+        if (file_runtime_ready_) return runtime_->take_typed_host_request();
 #endif
         return {};
     }
@@ -216,6 +245,21 @@
     {
         host_visible_.store(visible, std::memory_order_release);
         visibility_changed_.store(true, std::memory_order_release);
+        signal_worker();
+        return true;
+    }
+
+    bool set_focused(bool focused)
+    {
+        host_focused_.store(focused, std::memory_order_release);
+        focus_changed_.store(true, std::memory_order_release);
+        signal_worker();
+        return true;
+    }
+    bool set_fullscreen(bool fullscreen)
+    {
+        host_fullscreen_.store(fullscreen, std::memory_order_release);
+        fullscreen_changed_.store(true, std::memory_order_release);
         signal_worker();
         return true;
     }

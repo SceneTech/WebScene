@@ -21,6 +21,11 @@
 #endif
 #include "webscene_runtime_diagnostics.h"
 #include "webscene_embed_fallback.h"
+#include "webscene_performance_timeline_compatibility.h"
+#include "webscene_file_reader_compatibility.h"
+#include "webscene_indexeddb_storage.h"
+#include "webscene_indexeddb_compatibility.h"
+#include "webscene_stylesheet_cssom_compatibility.h"
 
 #include "webscene_native_dom.h"
 #include "webscene_native_style_defaults.h"
@@ -302,6 +307,10 @@ struct v8_dom_runtime::implementation final {
     {
         prune_persistent_compilation_cache();
         initialize_v8_process();
+        {
+            std::lock_guard lock(message_port_wake->mutex);
+            message_port_wake->notify = runtime_work_available;
+        }
         if (!force_dedicated_isolate && std::getenv("WEBSCENE_V8_SHARED_ISOLATE") != nullptr) {
             try {
                 shared_isolate = acquire_shared_isolate();
@@ -563,6 +572,9 @@ struct v8_dom_runtime::implementation final {
             js_string(isolate, "DOCUMENT_POSITION_IMPLEMENTATION_SPECIFIC"),
             v8::Integer::New(isolate, 32));
         element->PrototypeTemplate()->Set(
+            js_string(isolate, "hasChildNodes"),
+            v8::FunctionTemplate::New(isolate, has_child_nodes));
+        element->PrototypeTemplate()->Set(
             js_string(isolate, "appendChild"),
             v8::FunctionTemplate::New(isolate, append_child));
         element->PrototypeTemplate()->Set(
@@ -712,6 +724,9 @@ struct v8_dom_runtime::implementation final {
         element->PrototypeTemplate()->Set(
             js_string(isolate, "click"),
             v8::FunctionTemplate::New(isolate, element_click));
+        element->PrototypeTemplate()->Set(
+            js_string(isolate, "requestFullscreen"),
+            v8::FunctionTemplate::New(isolate, element_request_fullscreen));
         element->PrototypeTemplate()->Set(
             js_string(isolate, "reset"),
             v8::FunctionTemplate::New(isolate, form_reset));
@@ -947,6 +962,12 @@ struct v8_dom_runtime::implementation final {
         document_template->SetNativeDataProperty(
             js_string(isolate, "visibilityState"),
             get_document_visibility_state);
+        document_template->SetNativeDataProperty(
+            js_string(isolate, "fullscreenElement"),
+            get_document_fullscreen_element);
+        document_template->SetNativeDataProperty(
+            js_string(isolate, "fullscreenEnabled"),
+            get_document_fullscreen_enabled);
         document_template->SetNativeDataProperty(js_string(isolate, "links"), get_document_links);
         document_template->SetNativeDataProperty(js_string(isolate, "styleSheets"), get_document_style_sheets);
         document_template->SetNativeDataProperty(
@@ -996,6 +1017,9 @@ struct v8_dom_runtime::implementation final {
         document_template->Set(
             js_string(isolate, "createEvent"),
             v8::FunctionTemplate::New(isolate, document_create_event));
+        document_template->Set(
+            js_string(isolate, "hasChildNodes"),
+            v8::FunctionTemplate::New(isolate, has_child_nodes));
         document_template->Set(
             js_string(isolate, "appendChild"),
             v8::FunctionTemplate::New(isolate, append_child));
@@ -1050,6 +1074,9 @@ struct v8_dom_runtime::implementation final {
         document_template->Set(
             js_string(isolate, "hasFocus"),
             v8::FunctionTemplate::New(isolate, document_has_focus));
+        document_template->Set(
+            js_string(isolate, "exitFullscreen"),
+            v8::FunctionTemplate::New(isolate, document_exit_fullscreen));
         document_template->Set(
             js_string(isolate, "getSelection"),
             v8::FunctionTemplate::New(isolate, get_selection));
@@ -2508,6 +2535,88 @@ struct v8_dom_runtime::implementation final {
                 return next;
               }
             }
+            )JS",
+            R"JS(
+            class WebSceneNodeIterator {
+              constructor(root, whatToShow = nodeFilterConstants.SHOW_ALL, filter = null) {
+                if (!root || typeof root.nodeType !== 'number') {
+                  throw new TypeError('NodeIterator root must be a Node');
+                }
+                if (filter != null && typeof filter !== 'function'
+                    && typeof filter.acceptNode !== 'function') {
+                  throw new TypeError('NodeIterator filter must be callable');
+                }
+                Object.defineProperties(this, {
+                  root: { value: root, enumerable: true },
+                  whatToShow: {
+                    value: Number(whatToShow) >>> 0, enumerable: true
+                  },
+                  filter: { value: filter ?? null, enumerable: true }
+                });
+                this._nodes = [];
+                this._index = -1;
+                this._referenceNode = root;
+                this._pointerBeforeReferenceNode = true;
+
+                // Build one bounded document-order snapshot. This makes the
+                // DOMPurify traversal O(n), retains at most one reference per
+                // node below root, and remains safe when the sanitizer removes
+                // a node that the iterator has already returned.
+                const visit = node => {
+                  const mask = node.nodeType > 0 && node.nodeType <= 32
+                    ? (1 << (node.nodeType - 1)) >>> 0
+                    : 0;
+                  if ((this.whatToShow & mask) !== 0) {
+                    const callback = this.filter == null
+                      ? null
+                      : typeof this.filter === 'function'
+                        ? this.filter
+                        : this.filter.acceptNode;
+                    const decision = callback == null
+                      ? nodeFilterConstants.FILTER_ACCEPT
+                      : Number(callback.call(this.filter, node));
+                    if (decision === nodeFilterConstants.FILTER_ACCEPT) {
+                      this._nodes.push(node);
+                    }
+                  }
+                  // NodeIterator treats FILTER_REJECT like FILTER_SKIP: neither
+                  // result prunes descendants.
+                  for (let child = node.firstChild; child; child = child.nextSibling) {
+                    visit(child);
+                  }
+                };
+                visit(root);
+              }
+              get referenceNode() { return this._referenceNode; }
+              get pointerBeforeReferenceNode() {
+                return this._pointerBeforeReferenceNode;
+              }
+              nextNode() {
+                if (this._pointerBeforeReferenceNode && this._index >= 0) {
+                  this._pointerBeforeReferenceNode = false;
+                  return this._referenceNode;
+                }
+                const nextIndex = this._index + 1;
+                if (nextIndex >= this._nodes.length) return null;
+                this._index = nextIndex;
+                this._referenceNode = this._nodes[this._index];
+                this._pointerBeforeReferenceNode = false;
+                return this._referenceNode;
+              }
+              previousNode() {
+                if (!this._pointerBeforeReferenceNode && this._index >= 0) {
+                  this._pointerBeforeReferenceNode = true;
+                  return this._referenceNode;
+                }
+                const previousIndex = this._index - 1;
+                if (previousIndex < 0) return null;
+                this._index = previousIndex;
+                this._referenceNode = this._nodes[this._index];
+                this._pointerBeforeReferenceNode = true;
+                return this._referenceNode;
+              }
+              detach() {}
+            }
 
             const installTreeWalkerPlatform = () => {
               const createTreeWalker = function(
@@ -2520,6 +2629,15 @@ struct v8_dom_runtime::implementation final {
                 ?? Object.getPrototypeOf(document);
               Object.defineProperty(documentPrototype, 'createTreeWalker', {
                 value: createTreeWalker, writable: true, configurable: true
+              });
+              const createNodeIterator = function(
+                  root,
+                  whatToShow = nodeFilterConstants.SHOW_ALL,
+                  filter = null) {
+                return new WebSceneNodeIterator(root, whatToShow, filter);
+              };
+              Object.defineProperty(documentPrototype, 'createNodeIterator', {
+                value: createNodeIterator, writable: true, configurable: true
               });
             };
             )JS",
@@ -2863,6 +2981,9 @@ struct v8_dom_runtime::implementation final {
               },
               TreeWalker: {
                 value: WebSceneTreeWalker, writable: true, configurable: true
+              },
+              NodeIterator: {
+                value: WebSceneNodeIterator, writable: true, configurable: true
               }
             });
           })();
@@ -2966,6 +3087,14 @@ struct v8_dom_runtime::implementation final {
             local_context,
             js_string(isolate, "open"),
             v8::Function::New(local_context, window_open).ToLocalChecked()).Check();
+        global->Set(
+            local_context,
+            js_string(isolate, "close"),
+            v8::Function::New(local_context, window_close).ToLocalChecked()).Check();
+        global->Set(
+            local_context,
+            js_string(isolate, "focus"),
+            v8::Function::New(local_context, window_focus).ToLocalChecked()).Check();
         global->Set(
             local_context,
             js_string(isolate, "requestAnimationFrame"),
@@ -3210,24 +3339,7 @@ struct v8_dom_runtime::implementation final {
         global->Set(local_context, js_string(isolate, "opener"), v8::Null(isolate)).Check();
         global->Set(local_context, js_string(isolate, "name"), js_string(isolate, "")).Check();
 
-        auto performance = v8::Object::New(isolate);
-        performance->Set(
-            local_context,
-            js_string(isolate, "now"),
-            v8::Function::New(local_context, performance_now).ToLocalChecked()).Check();
-        performance->Set(
-            local_context,
-            js_string(isolate, "getEntriesByName"),
-            v8::Function::New(local_context, performance_get_entries_by_name).ToLocalChecked()).Check();
-        performance->Set(local_context, js_string(isolate, "mark"),
-            v8::Function::New(local_context, performance_entry).ToLocalChecked()).Check();
-        performance->Set(local_context, js_string(isolate, "measure"),
-            v8::Function::New(local_context, performance_entry).ToLocalChecked()).Check();
-        performance->Set(local_context, js_string(isolate, "clearMarks"),
-            v8::Function::New(local_context, console_log).ToLocalChecked()).Check();
-        performance->Set(local_context, js_string(isolate, "clearMeasures"),
-            v8::Function::New(local_context, console_log).ToLocalChecked()).Check();
-        global->Set(local_context, js_string(isolate, "performance"), performance).Check();
+        install_performance_clock(local_context, global);
         global->Set(
             local_context,
             js_string(isolate, "__webSceneCreateObjectUrl"),
@@ -3265,6 +3377,10 @@ struct v8_dom_runtime::implementation final {
             local_context,
             js_string(isolate, "toString"),
             v8::Function::New(local_context, location_to_string).ToLocalChecked()).Check();
+        location->Set(
+            local_context,
+            js_string(isolate, "reload"),
+            v8::Function::New(local_context, location_reload).ToLocalChecked()).Check();
         global->Set(local_context, js_string(isolate, "location"), location).Check();
 
         install_navigator(isolate, local_context, global);
@@ -3617,6 +3733,8 @@ struct v8_dom_runtime::implementation final {
         crypto_script->Run(local_context).ToLocalChecked();
         local_context->Global()->Set(local_context, js_string(isolate, "structuredClone"),
             v8::Function::New(local_context, structured_clone, {}, 1).ToLocalChecked()).Check();
+        install_indexeddb(local_context);
+        install_performance_timeline(local_context);
         auto worker_constructor=v8::Function::New(local_context, worker_construct, {}, 1).ToLocalChecked();
         v8::Local<v8::Value> event_target,worker_prototype,event_prototype;
         if(local_context->Global()->Get(local_context,js_string(isolate,"EventTarget")).ToLocal(&event_target)
@@ -3628,11 +3746,13 @@ struct v8_dom_runtime::implementation final {
         install_clipboard_api(local_context);
         install_websocket_globals(local_context);
         install_editor_web_platform_globals(local_context);
+        install_message_channel(local_context);
         install_tree_walker_platform(local_context);
         install_custom_elements_platform(local_context);
         local_context->Global()->Set(local_context,js_string(isolate,"__webSceneRevokeObjectUrl"),v8::Function::New(local_context,revoke_object_url).ToLocalChecked()).Check();
         install_fetch_globals(local_context);
         install_intersection_observer_polyfill(local_context);
+        install_web_api_compatibility(local_context);
 #if defined(WEBSCENE_NATIVE_ENGINE_ENABLE_MEDIA)
         install_media_globals(local_context);
 #endif
@@ -3971,8 +4091,18 @@ struct v8_dom_runtime::implementation final {
             v8::Function::New(
                 local_context,
                 write_clipboard).ToLocalChecked()).Check();
+        global->Set(
+            local_context,
+            js_string(isolate, "__webSceneReadClipboard"),
+            v8::Function::New(
+                local_context,
+                read_clipboard).ToLocalChecked()).Check();
         constexpr std::string_view source = R"JS(
           (() => {
+            const supportedClipboardTypes = Object.freeze([
+              'image/png', 'image/jpeg', 'image/tiff',
+              'text/plain', 'text/html'
+            ]);
             class WebSceneClipboardItem {
               constructor(items, options = {}) {
                 if (items === null || typeof items !== 'object') {
@@ -3996,10 +4126,44 @@ struct v8_dom_runtime::implementation final {
                 });
               }
               static supports(type) {
-                return ['image/png', 'text/plain', 'text/html'].includes(String(type));
+                return supportedClipboardTypes.includes(String(type).toLowerCase());
               }
             }
             const clipboard = {
+              async readText() {
+                __webSceneRecordWebApi(
+                  'Clipboard.readText', 'supported',
+                  'UTF-8 text read through the native host');
+                const result = await __webSceneReadClipboard('text/plain');
+                if (result.type !== 'text/plain') {
+                  throw new DOMException(
+                    'The native host returned a non-text clipboard item',
+                    'DataError');
+                }
+                return new TextDecoder().decode(result.bytes);
+              },
+              async read() {
+                __webSceneRecordWebApi(
+                  'Clipboard.read', 'partially-supported',
+                  'one bounded native clipboard item');
+                const result = await __webSceneReadClipboard('*/*');
+                if (!WebSceneClipboardItem.supports(result.type)) {
+                  throw new DOMException(
+                    `The native host returned unsupported type ${result.type}`,
+                    'NotSupportedError');
+                }
+                return [new WebSceneClipboardItem({
+                  [result.type]: new Blob([result.bytes], { type: result.type })
+                })];
+              },
+              async writeText(text) {
+                __webSceneRecordWebApi(
+                  'Clipboard.writeText', 'supported',
+                  'UTF-8 text handoff to the desktop host');
+                return this.write([new WebSceneClipboardItem({
+                  'text/plain': new Blob([String(text)], { type: 'text/plain' })
+                })]);
+              },
               async write(items) {
                 __webSceneRecordWebApi(
                   'Clipboard.write', 'partially-supported',
@@ -4011,14 +4175,126 @@ struct v8_dom_runtime::implementation final {
                 if (!(item instanceof WebSceneClipboardItem)) {
                   throw new TypeError('Clipboard.write requires ClipboardItem values');
                 }
-                for (const type of item.types) {
+                for (let index = 0; index < item.types.length; ++index) {
+                  const type = item.types[index];
                   const blob = await item.getType(type);
-                  if (!__webSceneWriteClipboard(type, blob)) {
-                    throw new DOMException('The host rejected the clipboard write', 'NotAllowedError');
-                  }
+                  await __webSceneWriteClipboard(type, blob, index === 0);
                 }
               }
             };
+            const createClipboardData = () => {
+              const values = Object.create(null);
+              const files = [];
+              const normalize = type => String(type).toLowerCase();
+              const createStringItem = type => Object.freeze({
+                kind: 'string',
+                type,
+                getAsFile() { return null; },
+                getAsString(callback) {
+                  if (typeof callback !== 'function') return;
+                  const value = values[type] || '';
+                  Promise.resolve().then(() => callback(value));
+                }
+              });
+              const createFileItem = file => Object.freeze({
+                kind: 'file',
+                type: file.type,
+                getAsFile() { return file; },
+                getAsString() {}
+              });
+              const allItems = () => [
+                ...Object.keys(values).map(createStringItem),
+                ...files.map(createFileItem)
+              ];
+              const items = Object.freeze({
+                get length() { return allItems().length; },
+                item(index) {
+                  return allItems()[Number(index)] || null;
+                },
+                *[Symbol.iterator]() {
+                  yield* allItems();
+                }
+              });
+              const clipboardData = Object.freeze({
+                get types() {
+                  const result = Object.keys(values);
+                  if (files.length !== 0) result.push('Files');
+                  return result;
+                },
+                get files() { return Object.freeze(files.slice()); },
+                items,
+                getData(type) { return values[normalize(type)] || ''; },
+                setData(type, value) {
+                  values[normalize(type)] = String(value);
+                },
+                clearData(type = undefined) {
+                  if (type === undefined) {
+                    for (const key of Object.keys(values)) delete values[key];
+                  } else {
+                    delete values[normalize(type)];
+                  }
+                }
+              });
+              const extensionForType = type => ({
+                'image/png': 'png',
+                'image/jpeg': 'jpg',
+                'image/tiff': 'tiff'
+              })[type] || 'bin';
+              return Object.freeze({
+                clipboardData,
+                addFile(type, blob) {
+                  type = normalize(type);
+                  const bytes = blob instanceof Blob ? blob._bytes : blob;
+                  files.push(new File(
+                    [bytes], `clipboard.${extensionForType(type)}`, { type }));
+                }
+              });
+            };
+            const dispatchClipboardEvent = (type, target, clipboardData) => {
+              const event = new Event(type, {
+                bubbles: true, cancelable: true, composed: true
+              });
+              Object.defineProperty(event, 'clipboardData', {
+                value: clipboardData, enumerable: true
+              });
+              target.dispatchEvent(event);
+            };
+            Object.defineProperty(globalThis, '__webSceneClipboardShortcut', {
+              configurable: true,
+              value(type, target) {
+                if (!target || typeof target.dispatchEvent !== 'function') return false;
+                const transfer = createClipboardData();
+                const clipboardData = transfer.clipboardData;
+                if (type === 'paste') {
+                  clipboard.read().then(async sourceItems => {
+                    for (const sourceItem of sourceItems) {
+                      for (const itemType of sourceItem.types) {
+                        const blob = await sourceItem.getType(itemType);
+                        if (itemType.startsWith('text/')) {
+                          clipboardData.setData(itemType, await blob.text());
+                        } else {
+                          transfer.addFile(itemType, blob);
+                        }
+                      }
+                    }
+                    dispatchClipboardEvent(type, target, clipboardData);
+                  }).catch(() => {});
+                  return true;
+                }
+                dispatchClipboardEvent(type, target, clipboardData);
+                const items = Object.create(null);
+                for (const itemType of ['text/plain', 'text/html']) {
+                  if (clipboardData.types.includes(itemType)) {
+                    items[itemType] = new Blob(
+                      [clipboardData.getData(itemType)], { type: itemType });
+                  }
+                }
+                if (Object.keys(items).length !== 0) {
+                  clipboard.write([new WebSceneClipboardItem(items)]).catch(() => {});
+                }
+                return true;
+              }
+            });
             Object.defineProperty(globalThis, 'ClipboardItem', {
               value: WebSceneClipboardItem, configurable: true
             });
@@ -4040,6 +4316,37 @@ struct v8_dom_runtime::implementation final {
         request = std::move(host_requests.front());
         host_requests.pop_front();
         return true;
+    }
+
+    bool discard_host_request()
+    {
+        std::lock_guard lock(host_request_mutex);
+        if (host_requests.empty()) return false;
+        host_requests.pop_front();
+        return true;
+    }
+
+    bool enqueue_typed_host_request(std::unique_ptr<native_host_request> request)
+    {
+        if (!request) return false;
+        {
+            std::lock_guard lock(host_request_mutex);
+            constexpr size_t maximum_host_requests = 1024U;
+            if (host_requests.size() + typed_host_requests.size()
+                >= maximum_host_requests) return false;
+            typed_host_requests.push_back(std::move(request));
+        }
+        if (host_request_available) host_request_available();
+        return true;
+    }
+
+    std::unique_ptr<native_host_request> take_typed_host_request()
+    {
+        std::lock_guard lock(host_request_mutex);
+        if (typed_host_requests.empty()) return {};
+        auto request = std::move(typed_host_requests.front());
+        typed_host_requests.pop_front();
+        return request;
     }
 
     uint32_t current_cursor_kind() const noexcept
@@ -4168,32 +4475,24 @@ struct v8_dom_runtime::implementation final {
 
     bool queue_external_url(const std::string& authored)
     {
+        constexpr size_t maximum_external_url_bytes = 8192U;
+        if (authored.size() > maximum_external_url_bytes) return false;
         const auto& base = current_base_address();
         const auto resolved = resolve_resource_url(authored, base);
+        if (resolved.size() > maximum_external_url_bytes) return false;
         const auto lower = lower_html_name(resolved);
         if (!lower.starts_with("https://") && !lower.starts_with("http://")) return true;
 
-        auto local_context = isolate->GetCurrentContext();
-        auto request = v8::Object::New(isolate);
-        request->Set(
-            local_context,
-            js_string(isolate, "kind"),
-            js_string(isolate, "openExternalUrl")).Check();
-        request->Set(
-            local_context,
-            js_string(isolate, "url"),
-            js_string(isolate, resolved.c_str())).Check();
-        request->Set(
-            local_context,
-            js_string(isolate, "disposition"),
-            js_string(isolate, "systemDefaultBrowser")).Check();
+        auto request = std::make_unique<native_host_request>();
+        request->view.kind = WEBSCENE_HOST_REQUEST_OPEN_EXTERNAL_URL_V1;
+        request->url = resolved;
         record_feature(
             "html",
             "anchor-external-navigation",
             "supported",
             "http(s) activation emits a host request without replacing the WebScene document",
             "default-action");
-        return enqueue_host_request(local_context, request);
+        return enqueue_typed_host_request(std::move(request));
     }
 
     static void window_open(const v8::FunctionCallbackInfo<v8::Value>& info)
@@ -4218,6 +4517,48 @@ struct v8_dom_runtime::implementation final {
         proxy->Set(local_context, js_string(info.GetIsolate(), "opener"), v8::Null(info.GetIsolate())).Check();
         proxy->Set(local_context, js_string(info.GetIsolate(), "closed"), v8::False(info.GetIsolate())).Check();
         info.GetReturnValue().Set(proxy);
+    }
+
+    bool queue_top_level_window_action(
+        v8::Local<v8::Context> local_context,
+        uint32_t kind)
+    {
+        if (local_context != context.Get(isolate)) return true;
+        auto request = std::make_unique<native_host_request>();
+        request->view.kind = kind;
+        return enqueue_typed_host_request(std::move(request));
+    }
+
+    static void window_close(const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        auto local_context = info.GetIsolate()->GetCurrentContext();
+        if (self == nullptr || local_context != self->context.Get(info.GetIsolate()))
+            return;
+        auto global = local_context->Global();
+        auto event = self->create_event_instance(local_context);
+        event->Set(local_context, js_string(info.GetIsolate(), "type"),
+            js_string(info.GetIsolate(), "beforeunload")).Check();
+        event->Set(local_context, js_string(info.GetIsolate(), "bubbles"),
+            v8::False(info.GetIsolate())).Check();
+        event->Set(local_context, js_string(info.GetIsolate(), "cancelable"),
+            v8::True(info.GetIsolate())).Check();
+        v8::Local<v8::Value> dispatcher;
+        v8::Local<v8::Value> dispatch_result;
+        v8::Local<v8::Value> arguments[] = {event};
+        if (global->Get(local_context, js_string(info.GetIsolate(), "dispatchEvent"))
+                .ToLocal(&dispatcher)
+            && dispatcher->IsFunction()
+            && dispatcher.As<v8::Function>()->Call(
+                    local_context, global, 1, arguments).ToLocal(&dispatch_result)
+            && dispatch_result->IsFalse()) {
+            return;
+        }
+        if (!self->queue_top_level_window_action(
+                local_context, WEBSCENE_HOST_REQUEST_WINDOW_CLOSE_V1)) {
+            info.GetIsolate()->ThrowException(v8::Exception::Error(
+                js_string(info.GetIsolate(), "WebScene rejected the close-window request")));
+        }
     }
 
     static void record_web_api_use(const v8::FunctionCallbackInfo<v8::Value>& info)
@@ -4302,6 +4643,7 @@ struct v8_dom_runtime::implementation final {
     }
 
 #include "webscene_v8_runtime_clone.inc"
+#include "webscene_v8_runtime_indexeddb.inc"
 #include "webscene_v8_runtime_modules.inc"
 #include "webscene_v8_runtime_workers.inc"
 #include "webscene_v8_runtime_media.inc"
@@ -4323,6 +4665,7 @@ struct v8_dom_runtime::implementation final {
 #include "webscene_v8_runtime_compiled_templates.inc"
 #include "webscene_v8_runtime_style.inc"
 #include "webscene_v8_runtime_browser_apis.inc"
+#include "webscene_v8_runtime_web_api_compatibility.inc"
     static void promise_rejected(v8::PromiseRejectMessage message)
     {
         auto* isolate = v8::Isolate::GetCurrent();
@@ -4415,16 +4758,22 @@ v8_dom_runtime::v8_dom_runtime(
     std::function<void()> interop_callback_available,
     interop_callback_sink_v3 interop_callback_sink,
     std::function<void()> runtime_work_available,
-    runtime_diagnostics* diagnostics)
+    runtime_diagnostics* diagnostics,
+    std::string storage_directory,
+    std::string storage_partition_key,
+    uint64_t storage_quota_bytes)
     : impl_(std::make_unique<implementation>(
         document,
         std::move(viewport_provider),
         std::move(compilation_cache_directory),
         std::move(load_resource),
-          std::move(host_request_available),
-          std::move(interop_callback_available),
-          std::move(interop_callback_sink),
-          std::move(runtime_work_available), diagnostics))
+        std::move(host_request_available),
+        std::move(interop_callback_available),
+        std::move(interop_callback_sink),
+        std::move(runtime_work_available), diagnostics,
+        std::move(storage_directory),
+        std::move(storage_partition_key),
+        storage_quota_bytes))
 {
 }
 
@@ -4472,6 +4821,18 @@ bool v8_dom_runtime::load_url(
 bool v8_dom_runtime::set_visible(bool visible)
 {
     return impl_->set_visible(visible)
+        && impl_->promote_pending_promise_error();
+}
+
+bool v8_dom_runtime::set_focused(bool focused)
+{
+    return impl_->set_focused(focused)
+        && impl_->promote_pending_promise_error();
+}
+
+bool v8_dom_runtime::set_fullscreen(bool fullscreen)
+{
+    return impl_->set_fullscreen(fullscreen)
         && impl_->promote_pending_promise_error();
 }
 
@@ -5008,9 +5369,11 @@ bool v8_dom_runtime::has_pending_tasks() const noexcept
 #endif
 #endif
     return impl_->has_pending_detached_dom_collection()
+        || impl_->indexeddb_work_ready.load(std::memory_order_acquire)
         || impl_->websocket_transport.has_pending_events()
         || !impl_->pending_window_messages.empty()
         || impl_->has_worker_messages()
+        || impl_->has_message_port_messages()
         || impl_->has_ready_fetch_task()
         || !impl_->pending_dialog_close_events.empty()
         || !impl_->pending_programmatic_scroll_events.empty()
@@ -6054,5 +6417,24 @@ void v8_dom_runtime::complete_file_request(native_file_completion& completion) {
         if(impl_->console_messages.size()<1024)
             impl_->console_messages.push_back("error\nNative file completion: "+impl_->last_error);
     }
+}
+void v8_dom_runtime::complete_host_request(native_host_completion& completion) {
+    v8::Locker locker(impl_->isolate);
+    v8::Isolate::Scope isolate_scope(impl_->isolate);
+    v8::HandleScope handles(impl_->isolate);
+    v8::TryCatch caught(impl_->isolate);
+    impl_->complete_native_host(completion);
+    if(caught.HasCaught()) {
+        impl_->last_error=impl_->describe_reported_exception(caught);
+        std::lock_guard lock(impl_->console_message_mutex);
+        if(impl_->console_messages.size()<1024)
+            impl_->console_messages.push_back("error\nNative host completion: "+impl_->last_error);
+    }
+}
+bool v8_dom_runtime::discard_host_request() {
+    return impl_->discard_host_request();
+}
+std::unique_ptr<native_host_request> v8_dom_runtime::take_typed_host_request() {
+    return impl_->take_typed_host_request();
 }
 }

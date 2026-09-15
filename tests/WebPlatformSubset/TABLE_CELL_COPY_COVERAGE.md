@@ -11,7 +11,8 @@ It does not modify the OS clipboard.
 namespace exclusions, creation/cloning, delegated clicks, and iframe realms.
 `contracts/dom-unsupported-editing-command.html` checks the bounded unsupported
 command path, argument conversion, receiver validation, and non-HTML rejection.
-These 11 assertions pass unchanged in Chromium and native macOS ARM64. They remain
+The native fixture additionally checks synchronous legacy copy during current
+pointer input. These assertions pass in native macOS ARM64. They remain
 candidates pending cross-RID qualification; the native pointer regression is also
 included in the full native test executable, not only its focused filter.
 

@@ -1,0 +1,1 @@
+self.workerHelperValue = 42;

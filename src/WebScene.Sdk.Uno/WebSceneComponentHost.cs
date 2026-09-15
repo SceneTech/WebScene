@@ -75,6 +75,27 @@ public sealed class WebSceneComponentHost : ContentControl, IAsyncDisposable
             typeof(WebSceneComponentHost),
             new PropertyMetadata(null));
 
+    public static readonly DependencyProperty PersistentStorageDirectoryProperty =
+        DependencyProperty.Register(
+            nameof(PersistentStorageDirectory),
+            typeof(string),
+            typeof(WebSceneComponentHost),
+            new PropertyMetadata(null));
+
+    public static readonly DependencyProperty PersistentStoragePartitionKeyProperty =
+        DependencyProperty.Register(
+            nameof(PersistentStoragePartitionKey),
+            typeof(string),
+            typeof(WebSceneComponentHost),
+            new PropertyMetadata(null));
+
+    public static readonly DependencyProperty PersistentStorageQuotaBytesProperty =
+        DependencyProperty.Register(
+            nameof(PersistentStorageQuotaBytes),
+            typeof(ulong),
+            typeof(WebSceneComponentHost),
+            new PropertyMetadata(0UL));
+
     public static readonly DependencyProperty AutoMountProperty =
         DependencyProperty.Register(
             nameof(AutoMount),
@@ -137,6 +158,24 @@ public sealed class WebSceneComponentHost : ContentControl, IAsyncDisposable
     {
         get => (string?)GetValue(CompilationCacheDirectoryProperty);
         set => SetValue(CompilationCacheDirectoryProperty, value);
+    }
+
+    public string? PersistentStorageDirectory
+    {
+        get => (string?)GetValue(PersistentStorageDirectoryProperty);
+        set => SetValue(PersistentStorageDirectoryProperty, value);
+    }
+
+    public string? PersistentStoragePartitionKey
+    {
+        get => (string?)GetValue(PersistentStoragePartitionKeyProperty);
+        set => SetValue(PersistentStoragePartitionKeyProperty, value);
+    }
+
+    public ulong PersistentStorageQuotaBytes
+    {
+        get => (ulong)GetValue(PersistentStorageQuotaBytesProperty);
+        set => SetValue(PersistentStorageQuotaBytesProperty, value);
     }
 
     public bool AutoMount
@@ -418,6 +457,10 @@ public sealed class WebSceneComponentHost : ContentControl, IAsyncDisposable
                 Source = resources.DocumentUrl,
                 NativeLibraryPath = ResolveNativeLibraryPath(NativeLibraryPath),
                 CompilationCacheDirectory = CompilationCacheDirectory,
+                PersistentStorageDirectory = PersistentStorageDirectory,
+                PersistentStoragePartitionKey = PersistentStoragePartitionKey
+                    ?? package.Manifest.Id,
+                PersistentStorageQuotaBytes = PersistentStorageQuotaBytes,
                 DocumentStartScripts = DocumentStartScripts,
                 ResourceLoader = resources
             },

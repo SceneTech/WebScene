@@ -758,8 +758,9 @@ void test_controlled_switch_native_activation_matches_browser_semantics()
         activated == R"JSON({"checked":true,"ownDescriptor":true,"setterCalls":0,"syntheticChanges":1,"tracked":"true","events":["click:true:false","synthetic-change","input","change"],"focused":true,"focusWithin":true,"translate":[3,3]})JSON",
         "native activation did not preserve React-controlled switch semantics: "
             + activated);
-    require(
-        webscene_engine_requires_animation_frame(engine) != 0,
+    wait_for_animation_frame_demand(
+        engine,
+        true,
         "controlled switch transform transition did not request a host frame");
 
     webscene_engine_request_scene_checkpoint(engine);
@@ -1496,14 +1497,11 @@ void test_pointer_cursor_and_external_anchor_host_handoff(webscene_engine* engin
     require(
         evaluate(engine, "true", "native-external-link-click-barrier.js") == "true",
         "external anchor click did not drain");
-    const auto request = take_host_request(engine);
+    const auto request = take_typed_host_request(engine);
     require(
-        request.find(R"("kind":"openExternalUrl")") != std::string::npos
-            && request.find(R"("url":"https://example.com/?source=webscene")")
-                != std::string::npos
-            && request.find(R"("disposition":"systemDefaultBrowser")")
-                != std::string::npos,
-        "external anchor activation did not emit the typed host request: " + request);
+        request.kind == WEBSCENE_HOST_REQUEST_OPEN_EXTERNAL_URL_V1
+            && request.url == "https://example.com/?source=webscene",
+        "external anchor activation did not emit the typed host request");
     require(
         evaluate(engine, "location.href", "native-location-after.js") == location_before,
         "external anchor activation replaced the trusted WebScene document");
@@ -1515,21 +1513,62 @@ void test_pointer_cursor_and_external_anchor_host_handoff(webscene_engine* engin
         "const opened = window.open(url.toString(), '_blank'); "
         "opened.opener = null; return { closed: opened.closed, location: location.href }; })()",
         "native-window-open-handoff.js");
-    const auto popup_request = take_host_request(engine);
+    const auto popup_request = take_typed_host_request(engine);
     require(
         popup.find(R"("closed":false)") != std::string::npos
             && popup.find(location_before.substr(1U, location_before.size() - 2U))
                 != std::string::npos
-            && popup_request.find(R"("kind":"openExternalUrl")") != std::string::npos
-            && popup_request.find(R"("url":"https://example.com/chart/?utm_medium=library")")
-                != std::string::npos,
-        "window.open did not use the safe external host handoff: " + popup_request);
+            && popup_request.kind == WEBSCENE_HOST_REQUEST_OPEN_EXTERNAL_URL_V1
+            && popup_request.url
+                == "https://example.com/chart/?utm_medium=library",
+        "window.open did not use the safe external host handoff");
+
+    require(
+        evaluate(engine,
+            "(() => { focus(); close(); return [typeof focus, typeof close]; })()",
+            "native-window-actions.js") == R"(["function","function"])",
+        "top-level focus/close methods were not installed");
+    const auto focus_request = take_typed_host_request(engine);
+    const auto close_request = take_typed_host_request(engine);
+    require(
+        focus_request.kind == WEBSCENE_HOST_REQUEST_WINDOW_FOCUS_V1
+            && close_request.kind == WEBSCENE_HOST_REQUEST_WINDOW_CLOSE_V1,
+        "top-level focus/close did not emit ordered typed host requests");
+
+    execute(engine, R"JS(
+        addEventListener('beforeunload', event => event.preventDefault(), { once: true });
+        close();
+    )JS", "native-window-close-veto.js");
+    require(evaluate(engine, "true", "native-window-close-veto-barrier.js") == "true"
+            && !take_typed_host_request(engine),
+        "cancelled beforeunload still reached the native close host path");
+
+    require(evaluate(engine, "location.reload(); true", "native-window-reload.js")
+                == "true",
+        "Location.reload script did not drain through the engine worker");
+    const auto reload_request = take_typed_host_request(engine);
+    require(reload_request.kind == WEBSCENE_HOST_REQUEST_WINDOW_RELOAD_V1,
+        "Location.reload did not emit a typed native reload request");
+
+    const auto oversized_url = std::string("https://example.com/")
+        + std::string(8192U, 'x');
+    execute(
+        engine,
+        "try { window.open('" + oversized_url
+            + "'); globalThis.oversizedWindowAccepted = true; } "
+              "catch { globalThis.oversizedWindowAccepted = false; }",
+        "native-window-open-oversized.js");
+    require(
+        evaluate(engine, "oversizedWindowAccepted", "native-window-open-oversized-result.js")
+                == "false"
+            && !take_typed_host_request(engine),
+        "oversized external URL reached the host request queue");
 
     pointer_button(engine, WEBSCENE_INPUT_POINTER_DOWN, 20, 70, 504U, true);
     pointer_button(engine, WEBSCENE_INPUT_POINTER_UP, 20, 70, 505U, false);
     require(
         evaluate(engine, "true", "native-cancelled-link-barrier.js") == "true"
-            && take_host_request(engine).empty(),
+            && !take_typed_host_request(engine),
         "preventDefault did not suppress external navigation handoff");
 
     pointer_move(engine, 20, 110, 506U);
@@ -1713,6 +1752,21 @@ void test_pointer_cursor_and_external_anchor_host_handoff(webscene_engine* engin
             error => { globalThis.__screenshotCopyState = String(error); });
         })()
     )JS", "native-tradingview-canvas-copy.js");
+    require(evaluate(engine, "true",
+                "native-tradingview-canvas-copy-barrier.js") == "true",
+        "TradingView canvas copy did not drain through the engine worker");
+    const auto screenshot_clipboard_request = take_typed_host_request(engine);
+    require(
+        screenshot_clipboard_request.kind
+                == WEBSCENE_HOST_REQUEST_CLIPBOARD_WRITE_V1
+            && screenshot_clipboard_request.content_type == "image/png"
+            && screenshot_clipboard_request.target_node_id != 0U
+            && screenshot_clipboard_request.bytes.empty(),
+        "TradingView canvas copy did not reach the typed host clipboard request");
+    require(webscene_engine_complete_host_request_v1(
+                engine, screenshot_clipboard_request.id, 0U, "image/png",
+                nullptr, 0U, nullptr) != 0,
+        "TradingView canvas clipboard completion was rejected");
     auto screenshot_copy_state = std::string{};
     for (auto attempt = 0; attempt < 100; ++attempt) {
         screenshot_copy_state = evaluate(
@@ -1725,17 +1779,6 @@ void test_pointer_cursor_and_external_anchor_host_handoff(webscene_engine* engin
     require(
         screenshot_copy_state == R"("done")",
         "TradingView ClipboardItem promise did not resolve: " + screenshot_copy_state);
-    const auto screenshot_clipboard_request = take_host_request(engine);
-    require(
-        screenshot_clipboard_request.find(R"("kind":"writeClipboard")")
-                != std::string::npos
-            && screenshot_clipboard_request.find(R"("contentType":"image/png")")
-                != std::string::npos
-            && screenshot_clipboard_request.find(R"("canvasNodeId":)")
-                != std::string::npos,
-        "TradingView canvas copy did not reach the typed host clipboard request: "
-            + screenshot_clipboard_request);
-
     const auto screenshot_node_id = static_cast<uint32_t>(std::stoul(evaluate(
         engine,
         "globalThis.__screenshotCanvas.__websceneNativeNodeId",
@@ -1763,6 +1806,31 @@ void test_pointer_cursor_and_external_anchor_host_handoff(webscene_engine* engin
     }
     require(released,
         "the exported screenshot canvas remained in later retained scenes");
+}
+
+void test_typed_window_host_request_performance(webscene_engine* engine)
+{
+    constexpr unsigned operation_count = 10000U;
+    constexpr unsigned batch_size = 1000U;
+    const auto started = std::chrono::steady_clock::now();
+    for (unsigned offset = 0; offset < operation_count; offset += batch_size) {
+        require(evaluate(engine, R"JS(
+            for (let index = 0; index < 1000; ++index) focus();
+            true
+        )JS", "native-window-request-performance.js") == "true",
+            "typed window request batch did not drain through the engine worker");
+        for (unsigned index = 0; index < batch_size; ++index) {
+            const auto request = take_typed_host_request(engine);
+            require(request.kind == WEBSCENE_HOST_REQUEST_WINDOW_FOCUS_V1,
+                "typed window request order changed under load");
+        }
+    }
+    const auto elapsed = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - started).count();
+    require(elapsed < 5.0,
+        "10,000 typed window host requests exceeded five seconds");
+    std::cout << "Typed window host request gate: operations="
+              << operation_count << " elapsed=" << elapsed << "s\n";
 }
 
 void test_css_linear_gradient_reaches_the_retained_scene(webscene_engine* engine)

@@ -18,10 +18,62 @@
         double animation_timestamp_ms{-1};
     };
 
+    struct message_port_endpoint;
+
+    struct clone_packet {
+        std::vector<uint8_t> bytes;
+        std::vector<std::shared_ptr<v8::BackingStore>> transfers;
+        std::vector<std::shared_ptr<message_port_endpoint>> port_transfers;
+    };
+
+    struct message_port_runtime_wake final {
+        std::mutex mutex;
+        bool stopped{false};
+        std::function<void()> notify;
+
+        void signal()
+        {
+            std::function<void()> callback;
+            {
+                std::lock_guard lock(mutex);
+                if (stopped) return;
+                callback = notify;
+            }
+            if (callback) callback();
+        }
+
+        void stop()
+        {
+            std::lock_guard lock(mutex);
+            stopped = true;
+            notify = {};
+        }
+    };
+
+    struct message_port_channel final {
+        std::mutex mutex;
+        std::array<std::deque<clone_packet>, 2U> incoming;
+        std::array<size_t, 2U> incoming_bytes{};
+        std::array<bool, 2U> closed{};
+        std::array<std::weak_ptr<message_port_runtime_wake>, 2U> wake;
+    };
+
+    struct message_port_endpoint final {
+        std::shared_ptr<message_port_channel> channel;
+        size_t side{};
+    };
+
+    struct message_port_binding final {
+        std::shared_ptr<message_port_endpoint> endpoint;
+        v8::Global<v8::Context> context;
+        v8::Global<v8::Object> wrapper;
+        bool transferred{false};
+    };
+
     struct pending_window_message final {
         v8::Global<v8::Context> target_context;
         v8::Global<v8::Context> source_context;
-        v8::Global<v8::Value> data;
+        clone_packet packet;
         std::string target_origin;
         std::string source_origin;
     };
@@ -65,6 +117,17 @@
 
     struct pending_callback_promise final {
         v8::Global<v8::Promise::Resolver> resolver;
+    };
+
+    struct pending_indexeddb_promise final {
+        v8::Global<v8::Context> context;
+        v8::Global<v8::Promise::Resolver> resolver;
+        bool deserialize_data{false};
+    };
+
+    struct indexeddb_completion final {
+        uint64_t id{0};
+        indexeddb_storage_result result;
     };
 
     struct frame_script final {

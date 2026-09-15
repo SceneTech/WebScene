@@ -8,10 +8,16 @@
         v8_dom_runtime::interop_callback_sink_v3
             interop_callback_sink_value,
         std::function<void()> runtime_work_available_value,
-        runtime_diagnostics* diagnostics_value)
+        runtime_diagnostics* diagnostics_value,
+        std::string storage_directory_value,
+        std::string storage_partition_key_value,
+        uint64_t storage_quota_bytes_value)
         : document(document_value)
         , viewport_provider(std::move(viewport_provider_value))
         , load_resource_callback(std::move(resource_loader_value))
+        , storage_directory(std::move(storage_directory_value))
+        , storage_partition_key(std::move(storage_partition_key_value))
+        , storage_quota_bytes(storage_quota_bytes_value)
         , host_request_available(std::move(host_request_available_value))
         , interop_callback_available(std::move(interop_callback_available_value))
         , interop_callback_sink(std::move(interop_callback_sink_value))
@@ -40,6 +46,13 @@
         , profile_css(std::getenv("WEBSCENE_PROBE_PROFILE_CSS") != nullptr)
 #endif
     {
+        if (!storage_directory.empty() && !storage_partition_key.empty()) {
+            indexeddb = std::make_unique<indexeddb_storage>(
+                std::filesystem::path(storage_directory),
+                storage_partition_key,
+                storage_quota_bytes);
+            if (!indexeddb->available()) indexeddb.reset();
+        }
 #if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
         if (profile_startup) {
             startup_profile_started = std::chrono::steady_clock::now();
@@ -49,7 +62,11 @@
 
     ~implementation()
     {
+        stop_message_ports();
         stop_workers();
+        // The storage worker never touches V8. Join it before persistent
+        // resolver handles and the isolate are released.
+        indexeddb.reset();
 #if defined(WEBSCENE_NATIVE_ENGINE_ENABLE_MEDIA)
         clear_media_bindings();
         media_initializer_key.Reset();
@@ -142,10 +159,23 @@
         media_query_lists.clear();
         timers.clear();
         pending_window_messages.clear();
+        pending_window_message_bytes = 0U;
+        message_port_bindings.clear();
         pending_dialog_close_events.clear();
         pending_programmatic_scroll_events.clear();
         pending_interop_promises.clear();
         pending_callback_promises.clear();
+        {
+            std::lock_guard lock(indexeddb_completion_mutex);
+            indexeddb_completions.clear();
+        }
+        pending_indexeddb_promises.clear();
+        // Native host and file completions can still be pending when a window
+        // closes. Their persistent context/resolver handles must be released
+        // while the isolate is alive; member destruction happens after this
+        // body and therefore after isolate disposal below.
+        host_promise_targets.clear();
+        file_targets.clear();
         pending_fetches.clear();
         interop_handles.clear();
         pending_promise_rejections.clear();
@@ -201,8 +231,10 @@
         html_dialog_element_template.Reset();
         html_form_element_template.Reset();
         html_select_element_template.Reset();
+        html_meta_element_template.Reset();
         html_script_element_template.Reset();
         html_slot_element_template.Reset();
+        html_template_element_template.Reset();
         html_style_element_template.Reset();
         shadow_root_template.Reset();
         document_fragment_template.Reset();

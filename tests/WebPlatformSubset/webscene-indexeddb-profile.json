@@ -1,0 +1,64 @@
+{
+  "profile": "webscene-indexeddb-code-oss-1",
+  "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+  "runtime": "v8",
+  "viewport": {
+    "width": 800,
+    "height": 600,
+    "deviceScaleFactor": 1
+  },
+  "required": [],
+  "candidate": [
+    {
+      "path": "contracts/indexeddb-code-oss-storage.html",
+      "type": "contract",
+      "capabilities": [
+        "indexeddb-open-upgrade-versionchange",
+        "indexeddb-transaction-commit-rollback",
+        "indexeddb-cursor",
+        "indexeddb-structured-clone",
+        "indexeddb-request-error-cancellation",
+        "indexeddb-quota",
+        "indexeddb-close-reopen-persistence",
+        "indexeddb-engine-restart-persistence",
+        "indexeddb-corruption-recovery",
+        "indexeddb-cross-connection-conflict",
+        "indexeddb-cross-process-conflict",
+        "indexeddb-interrupted-write-recovery"
+      ],
+      "evidence": [
+        "webscene_native_indexeddb_contract:test_indexeddb_persistence_and_transaction_contract",
+        "webscene_native_indexeddb_contract:test_indexeddb_quota_and_corruption_failures",
+        "webscene_indexeddb_storage_tests:test_cross_process_conflict",
+        "webscene_indexeddb_storage_tests:test_interrupted_write_and_stale_lock_recovery"
+      ],
+      "reason": "Project-owned WPT-style reduction of the exact versioned ItemTable flow used by VS Code OSS. Persistence/restart, quota, corruption recovery, and process-conflict behavior are gated by the paired native tests because they require host lifecycle or file-system control."
+    }
+  ],
+  "harnessBlocked": [
+    {
+      "path": "IndexedDB/idbobjectstore-request-source.any.js",
+      "type": "testharness",
+      "capabilities": ["indexeddb-object-store-request"],
+      "reason": "Upstream candidate pending broader keyPath, autoIncrement, and IDL coverage."
+    },
+    {
+      "path": "IndexedDB/idbcursor-continue.any.js",
+      "type": "testharness",
+      "capabilities": ["indexeddb-cursor"],
+      "reason": "Upstream candidate pending IDBKeyRange and complete IndexedDB key ordering."
+    },
+    {
+      "path": "IndexedDB/transaction-abort-request-error.any.js",
+      "type": "testharness",
+      "capabilities": ["indexeddb-transaction-rollback"],
+      "reason": "Upstream candidate pending full transaction active-state timing and event propagation."
+    }
+  ],
+  "excluded": [
+    {
+      "area": "IndexedDB indexes and key generators",
+      "reason": "This compatibility slice deliberately rejects indexes, keyPath stores, and autoIncrement until their algorithms and upstream WPT groups are implemented."
+    }
+  ]
+}

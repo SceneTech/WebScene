@@ -22,6 +22,40 @@
       "nativeNavigation": true
     },
     {
+      "path": "contracts/worker-messageport-structured-clone.html",
+      "type": "contract",
+      "capabilities": [
+        "dedicated-workers",
+        "structured-clone",
+        "messageport-transfer",
+        "arraybuffer-transfer"
+      ],
+      "reason": "Focused Code OSS worker-host transport candidate with cycles, built-in clone values, transferable ownership, and MessageEvent shape.",
+      "nativeNavigation": true
+    },
+    {
+      "path": "contracts/iframe-window-messageport-origin.html",
+      "type": "contract",
+      "capabilities": [
+        "iframe-window-postmessage",
+        "same-origin-event-origin",
+        "messageport-transfer"
+      ],
+      "reason": "Focused Code OSS iframe bootstrap candidate matching the extension-host MessagePort handoff.",
+      "nativeNavigation": true
+    },
+    {
+      "path": "contracts/worker-termination-queue-messageerror.html",
+      "type": "contract",
+      "capabilities": [
+        "worker-termination",
+        "bounded-message-queues",
+        "messageerror"
+      ],
+      "reason": "WebScene resource-bound candidate covering prompt termination, deterministic saturation, and receiver-side clone failure delivery.",
+      "nativeNavigation": true
+    },
+    {
       "path": "contracts/svg-inline-style.html",
       "type": "contract",
       "nativeNavigation": true,

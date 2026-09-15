@@ -10,6 +10,7 @@ on:
     branches:
     - main
     - release/*
+    - feature/code-oss-browser-compatibility
 
 jobs:
   build-and-test:
@@ -42,6 +43,8 @@ jobs:
       run: |
         echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
         "$HOME/.cargo/bin/cargo" --version
+    - name: Workflow trigger and publication policy
+      run: python -m unittest scripts/tests/test_workflow_trigger_policy.py -v
     - name: Install Linux text-rendering fonts
       if: runner.os == 'Linux'
       shell: bash

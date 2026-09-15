@@ -2748,6 +2748,7 @@ void test_native_clipboard_shortcut_events(webscene_engine*)
         globalThis.__clipboardShortcutEvents = [];
         globalThis.__clipboardShortcutKeys = [];
         globalThis.__clipboardExecCommandResults = [];
+        globalThis.__clipboardExecCommandProgress = [];
         editor.addEventListener('keydown', event => {
           __clipboardShortcutKeys.push([
             event.key, event.metaKey, event.ctrlKey, event.defaultPrevented]);
@@ -2756,7 +2757,15 @@ void test_native_clipboard_shortcut_events(webscene_engine*)
             : undefined;
           if (command) {
             event.preventDefault();
-            __clipboardExecCommandResults.push(document.execCommand(command));
+            __clipboardExecCommandProgress.push(`enter:${command}`);
+            try {
+              __clipboardExecCommandResults.push(document.execCommand(command));
+              __clipboardExecCommandProgress.push(`return:${command}`);
+            } catch (error) {
+              __clipboardExecCommandResults.push(
+                `${error?.name || 'Error'}: ${error?.message || error}`);
+              __clipboardExecCommandProgress.push(`throw:${command}`);
+            }
           }
         });
         editor.addEventListener('copy', event => {
@@ -2869,7 +2878,9 @@ void test_native_clipboard_shortcut_events(webscene_engine*)
         "native-clipboard-exec-command-results.js");
     require(exec_command_results == "[true,true,true]",
         "prevented native shortcuts did not execute document clipboard commands: "
-            + exec_command_results);
+            + exec_command_results + " progress="
+            + evaluate(engine, "__clipboardExecCommandProgress",
+                "native-clipboard-exec-command-progress.js"));
     require(evaluate(engine, "document.execCommand('unsupported-command')",
                 "native-clipboard-unsupported-exec-command.js") == "false",
         "unsupported legacy command claimed success");

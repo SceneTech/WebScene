@@ -2742,7 +2742,7 @@ void test_native_clipboard_shortcut_events(webscene_engine*)
 {
     auto* engine = webscene_engine_create(0);
     require(engine != nullptr, "native clipboard shortcut engine creation failed");
-    execute(engine, R"JS(
+    execute_and_wait(engine, R"JS(
         document.body.innerHTML = '<textarea id="editor"></textarea>';
         const editor = document.getElementById('editor');
         globalThis.__clipboardShortcutEvents = [];

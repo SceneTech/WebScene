@@ -537,8 +537,13 @@ void test_collapsed_single_select_native_activation(webscene_engine* engine)
         "select popup fixture did not complete layout");
 
     const auto click = [&](double x,double y,uint64_t& sequence) {
+        const auto consumed_before = consumed_input_count(engine);
         pointer_button(engine, WEBSCENE_INPUT_POINTER_DOWN, x, y, sequence++, true);
         pointer_button(engine, WEBSCENE_INPUT_POINTER_UP, x, y, sequence++, false);
+        wait_for_consumed_inputs(
+            engine,
+            consumed_before + 2U,
+            "native select click was not consumed");
     };
     uint64_t sequence = 601U;
     click(60, 40, sequence);
@@ -563,7 +568,21 @@ void test_collapsed_single_select_native_activation(webscene_engine* engine)
         "pointer selection did not commit the popup option exactly once: " + chosen);
 
     execute(engine, "observed = [];", "native-select-popup-reset.js");
+    auto closed = evaluate(engine, R"JS((() => {
+      const hit = document.elementFromPoint(60, 40);
+      return {hitTag: hit?.tagName ?? null, hitId: hit?.id ?? null, observed};
+    })())JS", "native-select-popup-closed-hit.js");
+    require(closed == R"JSON({"hitTag":"SELECT","hitId":"choice","observed":[]})JSON",
+        "a closed native select popup remained in the document hit-test path: " + closed);
+
     click(60, 40, sequence);
+    auto reopened = evaluate(engine, R"JS(({
+      value: choice.value,
+      observed
+    }))JS", "native-select-popup-reopen.js");
+    require(reopened == R"JSON({"value":"return","observed":["click"]})JSON",
+        "reopening a collapsed select did not dispatch exactly one click: " + reopened);
+
     click(320, 205, sequence);
     auto cancelled = evaluate(engine, R"JS(({
       value: choice.value,

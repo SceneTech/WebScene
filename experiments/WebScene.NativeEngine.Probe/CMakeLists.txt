@@ -1264,3 +1264,5 @@ if(BUILD_TESTING AND APPLE AND WEBSCENE_NATIVE_ENGINE_ENABLE_GRAPHICS)
     target_link_libraries(webscene_graphics_iosurface_fixture PRIVATE dawn::webgpu_dawn
         "-framework CoreFoundation" "-framework IOSurface" "-framework CoreVideo" "-framework OpenGL")
 endif()
+
+include("${CMAKE_CURRENT_LIST_DIR}/cmake/PrecompiledJavaScript.cmake")

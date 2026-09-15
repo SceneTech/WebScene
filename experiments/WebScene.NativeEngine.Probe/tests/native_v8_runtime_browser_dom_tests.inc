@@ -1228,6 +1228,62 @@ void test_node_iterator_dompurify_traversal(webscene_engine* engine)
         "NodeIterator DOMPurify traversal regressed: " + result);
 }
 
+void test_node_has_child_nodes_contract_and_performance(webscene_engine* engine)
+{
+    const auto result = evaluate(engine, R"JS(
+        (() => {
+          const parent = document.createElement('div');
+          const child = document.createElement('span');
+          const text = document.createTextNode('leaf');
+          const fragment = document.createDocumentFragment();
+          const initial = [
+            parent.hasChildNodes(),
+            child.hasChildNodes(),
+            text.hasChildNodes(),
+            fragment.hasChildNodes()
+          ];
+          fragment.appendChild(child);
+          const fragmentWithChild = fragment.hasChildNodes();
+          parent.appendChild(fragment);
+          const afterAppend = [
+            parent.hasChildNodes(),
+            child.hasChildNodes(),
+            fragment.hasChildNodes()
+          ];
+          parent.removeChild(child);
+          const afterRemove = parent.hasChildNodes();
+
+          parent.innerHTML = '<i></i>'.repeat(4096);
+          const started = performance.now();
+          let truthyCalls = 0;
+          for (let index = 0; index < 4096; ++index) {
+            if (parent.hasChildNodes()) ++truthyCalls;
+          }
+          const elapsed = performance.now() - started;
+
+          let invalidReceiver = false;
+          try { Node.prototype.hasChildNodes.call({}); } catch (error) {
+            invalidReceiver = error instanceof TypeError;
+          }
+          return {
+            initial,
+            fragmentWithChild,
+            afterAppend,
+            afterRemove,
+            ownsMethod: Object.prototype.hasOwnProperty.call(
+              Node.prototype, 'hasChildNodes'),
+            length: Node.prototype.hasChildNodes.length,
+            invalidReceiver,
+            truthyCalls,
+            underFiveSeconds: elapsed < 5000
+          };
+        })()
+    )JS", "native-node-has-child-nodes.js");
+    require(
+        result == R"JSON({"initial":[false,false,false,false],"fragmentWithChild":true,"afterAppend":[true,false,false],"afterRemove":false,"ownsMethod":true,"length":0,"invalidReceiver":true,"truthyCalls":4096,"underFiveSeconds":true})JSON",
+        "Node.hasChildNodes contract or constant-time performance regressed: " + result);
+}
+
 void test_node_iterator_linear_performance_gate(webscene_engine* engine)
 {
     const auto result = evaluate(engine, R"JS(

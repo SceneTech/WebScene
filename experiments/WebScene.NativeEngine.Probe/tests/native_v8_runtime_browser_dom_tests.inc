@@ -173,6 +173,40 @@ void test_dom_traversal_cloning_primitives(webscene_engine* engine)
         "DOM traversal/cloning primitives diverged: " + result);
 }
 
+void test_specialized_content_properties(webscene_engine* engine)
+{
+    const auto result = evaluate(engine, R"JS(
+        (() => {
+          const meta = document.createElement('meta');
+          const template = document.createElement('template');
+          const ordinary = document.createElement('div');
+          meta.content = 'theme-color';
+          template.innerHTML = '<span>template child</span>';
+          ordinary.content = 'application expando';
+          return {
+            constructors: [
+              meta.constructor.name,
+              template.constructor.name,
+              meta instanceof HTMLMetaElement,
+              template instanceof HTMLTemplateElement
+            ],
+            meta: [meta.content, meta.getAttribute('content')],
+            template: [template.content.nodeType, template.content.firstElementChild.localName],
+            ordinary: [ordinary.content, ordinary.hasAttribute('content')],
+            ownership: [
+              Object.hasOwn(HTMLMetaElement.prototype, 'content'),
+              Object.hasOwn(HTMLTemplateElement.prototype, 'content'),
+              Object.hasOwn(HTMLElement.prototype, 'content')
+            ]
+          };
+        })()
+    )JS", "native-specialized-content-properties.js");
+    const auto expected = R"JSON({"constructors":["HTMLMetaElement","HTMLTemplateElement",true,true],"meta":["theme-color","theme-color"],"template":[11,"span"],"ordinary":["application expando",false],"ownership":[true,true,false]})JSON";
+    require(
+        result == expected,
+        "specialized meta/template content properties diverged: " + result);
+}
+
 void test_textarea_child_text_value_lifecycle(webscene_engine* engine)
 {
     const auto result = evaluate(engine, R"JS(

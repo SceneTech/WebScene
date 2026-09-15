@@ -76,6 +76,28 @@
     assert(walker.nextSibling() === null, "nextSibling escaped the TreeWalker root");
   });
 
+  test("NodeIterator provides root-bounded DOMPurify traversal", () => {
+    const iterator = document.createNodeIterator(
+      root,
+      NodeFilter.SHOW_ELEMENT,
+      node => node.matches("button, #deep")
+        ? NodeFilter.FILTER_ACCEPT
+        : node.classList.contains("reject")
+          ? NodeFilter.FILTER_REJECT
+          : NodeFilter.FILTER_SKIP);
+    assert(iterator instanceof NodeIterator,
+      "createNodeIterator did not return a NodeIterator");
+    assert(iterator.root === root, "NodeIterator root identity changed");
+    const ids = [];
+    for (let node = iterator.nextNode(); node; node = iterator.nextNode()) ids.push(node.id);
+    assert(ids.join(",") === "first,nested,rejected,last,deep",
+      `NodeIterator order was ${ids.join(",")}`);
+    assert(iterator.previousNode()?.id === "deep",
+      "NodeIterator did not reverse from the end boundary");
+    assert(iterator.previousNode()?.id === "last",
+      "NodeIterator reverse order was incorrect");
+  });
+
   const failure = state.results.find(result => result.status !== "PASS");
   state.harness = failure
     ? { status: 1, message: failure.message, stack: failure.stack }

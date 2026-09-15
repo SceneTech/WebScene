@@ -755,9 +755,9 @@
     {
       "path": "contracts/dom-treewalker-nodefilter-focus-navigation.html",
       "type": "contract",
-      "capabilities": ["nodefilter-constants", "document-create-tree-walker", "treewalker-filter-semantics", "focus-navigation-tree-traversal"],
-      "evidence": ["browser-authorized-order-menu-focus-management", "native-treewalker-regression", "actual-tradingview-order-menu-proof"],
-      "reason": "Product-neutral reduction of the focus-navigation primitive used by the TradingView order-menu portal. It verifies SHOW_ELEMENT filtering, FILTER_ACCEPT/SKIP/REJECT subtree semantics, currentNode/root identity and boundaries, document-order traversal, sibling navigation across skipped wrappers, and the lastChild/previousNode pattern used to locate focusable descendants."
+      "capabilities": ["nodefilter-constants", "document-create-tree-walker", "document-create-node-iterator", "treewalker-filter-semantics", "node-iterator-dompurify-traversal", "focus-navigation-tree-traversal"],
+      "evidence": ["browser-authorized-order-menu-focus-management", "native-treewalker-regression", "native-node-iterator-regression", "actual-tradingview-order-menu-proof"],
+      "reason": "Product-neutral reduction of the focus-navigation primitive used by the TradingView order-menu portal and the DOMPurify traversal used by Code OSS chat rendering. It verifies SHOW_ELEMENT filtering, FILTER_ACCEPT/SKIP/REJECT semantics, currentNode/root identity and boundaries, TreeWalker navigation across skipped wrappers, and root-inclusive NodeIterator forward/reverse document-order traversal."
     },
     {
       "path": "contracts/dom-scope-descendant-selector.html",

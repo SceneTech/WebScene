@@ -1140,6 +1140,124 @@ void test_node_filter_tree_walker_focus_navigation(webscene_engine* engine)
         "NodeFilter/TreeWalker focus navigation regressed: " + result);
 }
 
+void test_node_iterator_dompurify_traversal(webscene_engine* engine)
+{
+    const auto result = evaluate(engine, R"JS(
+        (() => {
+          document.body.innerHTML = '<main id="root">before<!--comment--><section><span>inside</span></section>after</main>';
+          const root = document.getElementById('root');
+          const mask = NodeFilter.SHOW_ELEMENT
+            | NodeFilter.SHOW_TEXT
+            | NodeFilter.SHOW_COMMENT;
+          let filterCalls = 0;
+          const iterator = document.createNodeIterator(root, mask, {
+            acceptNode(node) {
+              ++filterCalls;
+              return node.nodeType === Node.ELEMENT_NODE
+                  && node.localName === 'section'
+                ? NodeFilter.FILTER_REJECT
+                : NodeFilter.FILTER_ACCEPT;
+            }
+          });
+          const forward = [];
+          for (let node = iterator.nextNode(); node; node = iterator.nextNode()) {
+            forward.push(node.nodeType === Node.ELEMENT_NODE
+              ? node.localName
+              : node.nodeType === Node.COMMENT_NODE
+                ? `#comment:${node.data}`
+                : `#text:${node.data}`);
+          }
+          const endState = [
+            iterator.referenceNode.nodeName,
+            iterator.pointerBeforeReferenceNode
+          ];
+          const backwards = [
+            iterator.previousNode()?.nodeName ?? null,
+            iterator.previousNode()?.nodeName ?? null,
+            iterator.nextNode()?.nodeName ?? null
+          ];
+
+          const functionFilter = document.createNodeIterator(
+            root,
+            NodeFilter.SHOW_ELEMENT,
+            node => node.localName === 'span'
+              ? NodeFilter.FILTER_ACCEPT
+              : NodeFilter.FILTER_SKIP);
+          const functionFiltered = [];
+          for (let node = functionFilter.nextNode(); node;
+               node = functionFilter.nextNode()) {
+            functionFiltered.push(node.localName);
+          }
+
+          const fragment = document.createDocumentFragment();
+          const detached = document.createElement('strong');
+          fragment.appendChild(detached);
+          const detachedIterator = document.createNodeIterator(
+            fragment, NodeFilter.SHOW_ALL);
+
+          let invalidRoot = false;
+          let invalidFilter = false;
+          try { document.createNodeIterator(null); } catch (error) {
+            invalidRoot = error instanceof TypeError;
+          }
+          try { document.createNodeIterator(root, mask, {}); } catch (error) {
+            invalidFilter = error instanceof TypeError;
+          }
+
+          return {
+            instance: iterator instanceof NodeIterator,
+            root: iterator.root === root,
+            whatToShow: iterator.whatToShow,
+            filterCalls,
+            forward,
+            endState,
+            backwards,
+            functionFiltered,
+            detached: [
+              detachedIterator.nextNode() === fragment,
+              detachedIterator.nextNode() === detached,
+              detachedIterator.nextNode()
+            ],
+            invalidRoot,
+            invalidFilter
+          };
+        })()
+    )JS", "native-node-iterator-dompurify.js");
+    require(
+        result == R"JSON({"instance":true,"root":true,"whatToShow":133,"filterCalls":7,"forward":["main","#text:before","#comment:comment","span","#text:inside","#text:after"],"endState":["#text",false],"backwards":["#text","#text","#text"],"functionFiltered":["span"],"detached":[true,true,null],"invalidRoot":true,"invalidFilter":true})JSON",
+        "NodeIterator DOMPurify traversal regressed: " + result);
+}
+
+void test_node_iterator_linear_performance_gate(webscene_engine* engine)
+{
+    const auto result = evaluate(engine, R"JS(
+        (() => {
+          document.body.innerHTML = `<div id="iterator-root">${'<i></i>'.repeat(50000)}</div>`;
+          const root = document.getElementById('iterator-root');
+          let filterCalls = 0;
+          const started = performance.now();
+          const iterator = document.createNodeIterator(
+            root,
+            NodeFilter.SHOW_ELEMENT,
+            () => {
+              ++filterCalls;
+              return NodeFilter.FILTER_ACCEPT;
+            });
+          let visited = 0;
+          while (iterator.nextNode()) ++visited;
+          const elapsed = performance.now() - started;
+          return {
+            visited,
+            filterCalls,
+            underFiveSeconds: elapsed < 5000
+          };
+        })()
+    )JS", "native-node-iterator-performance.js");
+    require(
+        result == R"JSON({"visited":50001,"filterCalls":50001,"underFiveSeconds":true})JSON",
+        "50,000-node NodeIterator linear performance gate failed: " + result);
+}
+
 void test_animation_frame_dispatch_is_attributed()
 {
     auto* engine = webscene_engine_create(0);

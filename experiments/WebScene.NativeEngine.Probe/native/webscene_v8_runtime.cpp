@@ -2507,6 +2507,88 @@ struct v8_dom_runtime::implementation final {
                 return next;
               }
             }
+            )JS",
+            R"JS(
+            class WebSceneNodeIterator {
+              constructor(root, whatToShow = nodeFilterConstants.SHOW_ALL, filter = null) {
+                if (!root || typeof root.nodeType !== 'number') {
+                  throw new TypeError('NodeIterator root must be a Node');
+                }
+                if (filter != null && typeof filter !== 'function'
+                    && typeof filter.acceptNode !== 'function') {
+                  throw new TypeError('NodeIterator filter must be callable');
+                }
+                Object.defineProperties(this, {
+                  root: { value: root, enumerable: true },
+                  whatToShow: {
+                    value: Number(whatToShow) >>> 0, enumerable: true
+                  },
+                  filter: { value: filter ?? null, enumerable: true }
+                });
+                this._nodes = [];
+                this._index = -1;
+                this._referenceNode = root;
+                this._pointerBeforeReferenceNode = true;
+
+                // Build one bounded document-order snapshot. This makes the
+                // DOMPurify traversal O(n), retains at most one reference per
+                // node below root, and remains safe when the sanitizer removes
+                // a node that the iterator has already returned.
+                const visit = node => {
+                  const mask = node.nodeType > 0 && node.nodeType <= 32
+                    ? (1 << (node.nodeType - 1)) >>> 0
+                    : 0;
+                  if ((this.whatToShow & mask) !== 0) {
+                    const callback = this.filter == null
+                      ? null
+                      : typeof this.filter === 'function'
+                        ? this.filter
+                        : this.filter.acceptNode;
+                    const decision = callback == null
+                      ? nodeFilterConstants.FILTER_ACCEPT
+                      : Number(callback.call(this.filter, node));
+                    if (decision === nodeFilterConstants.FILTER_ACCEPT) {
+                      this._nodes.push(node);
+                    }
+                  }
+                  // NodeIterator treats FILTER_REJECT like FILTER_SKIP: neither
+                  // result prunes descendants.
+                  for (let child = node.firstChild; child; child = child.nextSibling) {
+                    visit(child);
+                  }
+                };
+                visit(root);
+              }
+              get referenceNode() { return this._referenceNode; }
+              get pointerBeforeReferenceNode() {
+                return this._pointerBeforeReferenceNode;
+              }
+              nextNode() {
+                if (this._pointerBeforeReferenceNode && this._index >= 0) {
+                  this._pointerBeforeReferenceNode = false;
+                  return this._referenceNode;
+                }
+                const nextIndex = this._index + 1;
+                if (nextIndex >= this._nodes.length) return null;
+                this._index = nextIndex;
+                this._referenceNode = this._nodes[this._index];
+                this._pointerBeforeReferenceNode = false;
+                return this._referenceNode;
+              }
+              previousNode() {
+                if (!this._pointerBeforeReferenceNode && this._index >= 0) {
+                  this._pointerBeforeReferenceNode = true;
+                  return this._referenceNode;
+                }
+                const previousIndex = this._index - 1;
+                if (previousIndex < 0) return null;
+                this._index = previousIndex;
+                this._referenceNode = this._nodes[this._index];
+                this._pointerBeforeReferenceNode = true;
+                return this._referenceNode;
+              }
+              detach() {}
+            }
 
             const installTreeWalkerPlatform = () => {
               const createTreeWalker = function(
@@ -2519,6 +2601,15 @@ struct v8_dom_runtime::implementation final {
                 ?? Object.getPrototypeOf(document);
               Object.defineProperty(documentPrototype, 'createTreeWalker', {
                 value: createTreeWalker, writable: true, configurable: true
+              });
+              const createNodeIterator = function(
+                  root,
+                  whatToShow = nodeFilterConstants.SHOW_ALL,
+                  filter = null) {
+                return new WebSceneNodeIterator(root, whatToShow, filter);
+              };
+              Object.defineProperty(documentPrototype, 'createNodeIterator', {
+                value: createNodeIterator, writable: true, configurable: true
               });
             };
             )JS",
@@ -2862,6 +2953,9 @@ struct v8_dom_runtime::implementation final {
               },
               TreeWalker: {
                 value: WebSceneTreeWalker, writable: true, configurable: true
+              },
+              NodeIterator: {
+                value: WebSceneNodeIterator, writable: true, configurable: true
               }
             });
           })();

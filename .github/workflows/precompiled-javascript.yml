@@ -1,0 +1,36 @@
+name: Precompiled JavaScript contracts
+on:
+  pull_request:
+    paths:
+      - 'experiments/WebScene.NativeEngine.Probe/**'
+      - 'src/WebScene.Sdk/**'
+      - '.github/workflows/precompiled-javascript.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  portable-v8-contract:
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install native adapter prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libssl-dev cmake ninja-build
+      - name: Build test adapter against real V8 (not the production SDK)
+        working-directory: experiments/WebScene.NativeEngine.Probe
+        run: |
+          NODE_ROOT="$(dirname "$(dirname "$(command -v node)")")"
+          c++ -std=c++20 -shared -fPIC -I"$NODE_ROOT/include/node" -Inative \
+            tests/precompiled/node_adapter.cpp -lcrypto -o tests/precompiled/adapter.node
+      - name: Execute cold-process V8 contracts
+        run: node experiments/WebScene.NativeEngine.Probe/tests/precompiled/test_v8.cjs
+      - name: Build driver and CMake contracts
+        run: python -m unittest discover -s experiments/WebScene.NativeEngine.Probe/tests/precompiled -p 'test_*.py' -v

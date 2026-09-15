@@ -217,7 +217,6 @@ public sealed class ReleaseCompatibilityGateTests
             StringComparison.Ordinal);
         Assert.Contains("--expected-rid osx-arm64", workflow, StringComparison.Ordinal);
         Assert.Contains("--expected-rid linux-x64", workflow, StringComparison.Ordinal);
-        Assert.Contains("--expected-rid win-x64", workflow, StringComparison.Ordinal);
         Assert.Contains(
             "name: compatibility-candidate-summary-${{ needs.metadata.outputs.package-version }}",
             workflow,

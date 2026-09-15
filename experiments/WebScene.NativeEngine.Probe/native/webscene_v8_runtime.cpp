@@ -12,6 +12,7 @@
 #include "graphics/v8_webgpu_canvas_context.h"
 #endif
 #include "webscene_v8_runtime.h"
+#include "webscene_precompiled_javascript.h"
 #include "webscene_frame_trace.h"
 #if defined(WEBSCENE_NATIVE_ENGINE_ENABLE_GRAPHICS)
 #include "graphics/graphics_service.h"
@@ -256,7 +257,10 @@ namespace webscene_native {
 namespace {
 
 #include "webscene_v8_runtime_support.inc"
+#include "webscene_precompiled_javascript_support.inc"
 } // namespace
+
+#include "webscene_precompiled_javascript_api.inc"
 
 void prewarm_v8_process()
 {

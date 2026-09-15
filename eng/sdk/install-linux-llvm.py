@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Install the checksum-pinned Linux C++ compiler without unrelated LLVM SDKs."""
 import argparse
+import fcntl
 import hashlib
 import json
 from pathlib import Path, PurePosixPath
@@ -28,7 +29,7 @@ def keep(member):
         return member.isdir() or "clang" in parts or ".so" in parts[-1] or parts[-1].endswith(".ld")
     return parts[-1].startswith(("LICENSE", "NOTICE")) or parts[:2] == ("share", "licenses")
 
-def install(destination):
+def install_unlocked(destination):
     destination = destination.resolve()
     stamp = destination / "webscene-toolchain.json"
     if stamp.is_file():
@@ -60,6 +61,14 @@ def install(destination):
         shutil.move(str(children[0]), destination)
         stamp.write_text(json.dumps({"version": VERSION, "archiveSha256": SHA256, "url": URL,
                                      "profile": "native-cxx"}, indent=2) + "\n")
+
+def install(destination):
+    destination = destination.resolve()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    lock = destination.with_name(destination.name + ".install.lock")
+    with lock.open("w") as lock_file:
+        fcntl.flock(lock_file, fcntl.LOCK_EX)
+        install_unlocked(destination)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)

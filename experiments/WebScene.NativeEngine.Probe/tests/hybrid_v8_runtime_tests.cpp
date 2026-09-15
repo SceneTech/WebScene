@@ -218,6 +218,9 @@ void test_iframe_worker_extension_host_port_bootstrap() {
       const child = frame.contentDocument;
       child.open();
       child.write(`<!doctype html><script>
+        if (typeof Worker !== 'function') {
+          throw Error('Worker is not installed in the iframe realm');
+        }
         onmessage = event => {
           if (event.origin !== origin || !(event.data.port instanceof MessagePort)
               || !(event.data.port instanceof EventTarget)

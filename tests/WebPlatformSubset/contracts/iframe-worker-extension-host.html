@@ -1,0 +1,73 @@
+<!doctype html>
+<title>Iframe extension host creates a module Worker</title>
+<script>
+window.__webSceneWptState = {complete:false,harness:null,results:[],errors:[],diagnostics:[]};
+window.record = (name, condition) => __webSceneWptState.results.push({
+  name,status:condition?'PASS':'FAIL',message:condition?null:'Contract failed',stack:null
+});
+window.finish = () => {
+  const s=__webSceneWptState;
+  s.harness={status:s.results.some(r=>r.status!=='PASS')?1:0,message:null,stack:null};
+  s.complete=true;
+};
+
+addEventListener('message', event => {
+  if (event.data && event.data.type === 'worker-error') {
+    __webSceneWptState.errors.push(event.data.message);
+    record('Iframe-created module Worker completed without errors', false);
+    finish();
+    return;
+  }
+  if (event.data && event.data.type === 'worker-started') {
+    record('Iframe-created module Worker starts in its isolated realm', true);
+    return;
+  }
+  if (event.data !== 'vscode.bootstrap.nls') return;
+  const frame = document.querySelector('iframe');
+  record('Extension-host iframe preserves source Window identity',
+    event.source === frame.contentWindow);
+  record('Extension-host iframe uses the parent origin', event.origin === origin);
+  const channel = new MessageChannel();
+  channel.port1.onmessage = response => {
+    record('Iframe-created module Worker bridges its transferred port', response.data === 42);
+    channel.port1.close();
+    finish();
+  };
+  event.source.postMessage(
+    {type:'vscode.init', port:channel.port2}, origin, [channel.port2]);
+  channel.port1.postMessage(41);
+});
+
+try {
+  const frame = document.createElement('iframe');
+  document.body.appendChild(frame);
+  const child = frame.contentDocument;
+  child.open();
+  child.write(`<script>
+    const workerModuleUrl = new URL(
+      './resources/aureon/iframe-worker-extension-host-module.js', location.href).href;
+    const source = \`await import(\${JSON.stringify(workerModuleUrl)});\`;
+    const blob = new Blob([source], {type:'application/javascript'});
+    const worker = new Worker(URL.createObjectURL(blob), {
+      name:'LocalWebWorker', type:'module'
+    });
+    if (!(worker instanceof Worker) || !(worker instanceof EventTarget))
+      throw Error('iframe Worker interface identity changed');
+    worker.onerror = event => parent.postMessage({
+      type:'worker-error', message:event.message
+    }, '*');
+    worker.onmessage = event => {
+      if (event.data === 'worker-started') {
+        parent.postMessage({type:'worker-started'}, '*');
+      }
+    };
+    onmessage = event => worker.postMessage(event.data, event.ports);
+    parent.postMessage('vscode.bootstrap.nls', '*');
+  <\/script>`);
+  child.close();
+} catch (error) {
+  __webSceneWptState.errors.push(String(error));
+  record('Iframe extension-host Worker bootstrap completed', false);
+  finish();
+}
+</script>

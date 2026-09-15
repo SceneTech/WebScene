@@ -3735,14 +3735,7 @@ struct v8_dom_runtime::implementation final {
             v8::Function::New(local_context, structured_clone, {}, 1).ToLocalChecked()).Check();
         install_indexeddb(local_context);
         install_performance_timeline(local_context);
-        auto worker_constructor=v8::Function::New(local_context, worker_construct, {}, 1).ToLocalChecked();
-        v8::Local<v8::Value> event_target,worker_prototype,event_prototype;
-        if(local_context->Global()->Get(local_context,js_string(isolate,"EventTarget")).ToLocal(&event_target)
-            &&event_target->IsFunction()
-            &&worker_constructor->Get(local_context,js_string(isolate,"prototype")).ToLocal(&worker_prototype)
-            &&event_target.As<v8::Object>()->Get(local_context,js_string(isolate,"prototype")).ToLocal(&event_prototype))
-            worker_prototype.As<v8::Object>()->SetPrototype(local_context,event_prototype).FromMaybe(false);
-        local_context->Global()->Set(local_context, js_string(isolate, "Worker"),worker_constructor).Check();
+        install_worker_constructor(local_context);
         install_clipboard_api(local_context);
         install_websocket_globals(local_context);
         install_editor_web_platform_globals(local_context);

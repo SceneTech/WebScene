@@ -45,6 +45,17 @@
       "nativeNavigation": true
     },
     {
+      "path": "contracts/iframe-worker-extension-host.html",
+      "type": "contract",
+      "capabilities": [
+        "iframe-worker-constructor",
+        "module-workers",
+        "messageport-transfer"
+      ],
+      "reason": "Code OSS-shaped regression proving its hydrated extension-host iframe can construct a module Worker and bridge the transferred bootstrap port.",
+      "nativeNavigation": true
+    },
+    {
       "path": "contracts/worker-termination-queue-messageerror.html",
       "type": "contract",
       "capabilities": [

@@ -832,9 +832,9 @@
     {
       "path": "contracts/dom-fragment-atomic-attachment.html",
       "type": "testharness",
-      "capabilities": ["append-child-document-fragment", "atomic-tree-insertion", "structural-selector-invalidation"],
+      "capabilities": ["append-child-document-fragment", "atomic-tree-insertion", "structural-selector-invalidation", "existing-sibling-selector-invalidation"],
       "evidence": ["native-fragment-attach-regression", "fragment-attach-abba-benchmark"],
-      "reason": "Product-neutral regression for panel and component trees transferred through DocumentFragment. It verifies that :empty, :has(), :first-child, :nth-child(), and :last-child are matched only after the complete fragment is connected."
+      "reason": "Product-neutral regression for panel and component trees transferred through DocumentFragment. It verifies that :empty, :has(), :first-child, :nth-child(), adjacent-sibling, and :last-child selectors are matched only after the complete fragment is connected, including attachment after an existing child."
     },
     {
       "path": "contracts/dom-mouse-event-constructor.html",

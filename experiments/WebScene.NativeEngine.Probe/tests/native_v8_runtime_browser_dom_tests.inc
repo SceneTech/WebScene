@@ -2681,6 +2681,30 @@ void test_clipboard_read_host_completion(webscene_engine* engine)
         "duplicate stale clipboard completion was not safely admitted");
 
     execute(engine, R"JS(
+        globalThis.__clipboardUnsupportedState = 'pending';
+        navigator.clipboard.read().then(
+          () => { __clipboardUnsupportedState = 'fulfilled'; },
+          error => { __clipboardUnsupportedState = error.name; });
+    )JS", "native-clipboard-read-unsupported.js");
+    require(evaluate(engine, "true",
+                "native-clipboard-read-unsupported-barrier.js") == "true",
+        "unsupported Clipboard.read did not drain through the engine worker");
+    request = take_typed_host_request(engine);
+    require(request.kind == WEBSCENE_HOST_REQUEST_CLIPBOARD_READ_V1
+                && request.content_type == "*/*",
+        "Clipboard.read did not emit its wildcard typed host request");
+    constexpr uint8_t unsupported[] = {1U};
+    require(webscene_engine_complete_host_request_v1(
+                engine, request.id, 0U, "application/octet-stream",
+                unsupported, sizeof(unsupported), nullptr) != 0,
+        "unsupported clipboard host completion was rejected before delivery");
+    require(evaluate(engine,
+                "__clipboardUnsupportedState",
+                "native-clipboard-read-unsupported-result.js")
+                == R"("NotSupportedError")",
+        "Clipboard.read admitted an unsupported host MIME type");
+
+    execute(engine, R"JS(
         globalThis.__clipboardCancelState = 'pending';
         navigator.clipboard.readText().then(
           () => { __clipboardCancelState = 'fulfilled'; },
@@ -2840,15 +2864,28 @@ void test_native_clipboard_shortcut_events(webscene_engine*)
             event.type, event.clipboardData.getData('text/plain')]);
           const items = Array.from(event.clipboardData.items);
           let synchronous = true;
-          Promise.all(items.map(item => new Promise(resolve => {
-            item.getAsString(value => resolve([
-              item.kind, item.type, value, item.getAsFile(), synchronous]));
-          }))).then(values => {
+          Promise.all(items.map(item => {
+            if (item.kind === 'file') {
+              const file = item.getAsFile();
+              return file.arrayBuffer().then(buffer => [
+                item.kind, item.type, file.name, file.size,
+                Array.from(new Uint8Array(buffer)).join(','), synchronous
+              ]);
+            }
+            return new Promise(resolve => {
+              item.getAsString(value => resolve([
+                item.kind, item.type, value, item.getAsFile(), synchronous]));
+            });
+          })).then(values => {
             __clipboardPasteItems = {
               values,
               length: event.clipboardData.items.length,
               first: event.clipboardData.items.item(0)?.type,
-              missing: event.clipboardData.items.item(1)
+              missing: event.clipboardData.items.item(items.length),
+              types: Array.from(event.clipboardData.types),
+              files: Array.from(event.clipboardData.files).map(file => [
+                file.name, file.type, file.size
+              ])
             };
           });
           synchronous = false;
@@ -2917,8 +2954,8 @@ void test_native_clipboard_shortcut_events(webscene_engine*)
         "native paste shortcut was not consumed");
     request = take_typed_host_request(engine);
     require(request.kind == WEBSCENE_HOST_REQUEST_CLIPBOARD_READ_V1
-                && request.content_type == "text/plain",
-        "native paste event did not request plain text from the host");
+                && request.content_type == "*/*",
+        "native paste event did not request a supported item from the host");
     constexpr uint8_t paste[] = {'s','h','o','r','t','c','u','t',' ','p','a','s','t','e'};
     require(webscene_engine_complete_host_request_v1(
                 engine, request.id, 0U, "text/plain",
@@ -2945,13 +2982,51 @@ void test_native_clipboard_shortcut_events(webscene_engine*)
         "__clipboardPasteItems",
         "native-clipboard-paste-items-result.js");
     require(paste_items
-            == R"JSON({"values":[["string","text/plain","shortcut paste",null,false]],"length":1,"first":"text/plain","missing":null})JSON",
+            == R"JSON({"values":[["string","text/plain","shortcut paste",null,false]],"length":1,"first":"text/plain","missing":null,"types":["text/plain"],"files":[]})JSON",
         "native paste did not expose a Code OSS-compatible DataTransferItemList: "
             + paste_items);
+
+    execute(engine, "__clipboardPasteItems = 'pending'",
+        "native-clipboard-image-paste-reset.js");
+    keyboard_input(engine, WEBSCENE_INPUT_KEY_DOWN, 'V', 9764U, modifier);
+    webscene_engine_get_metrics(engine, &metrics);
+    wait_for_consumed_inputs(engine, metrics.enqueued_inputs,
+        "native image paste shortcut was not consumed");
+    request = take_typed_host_request(engine);
+    require(request.kind == WEBSCENE_HOST_REQUEST_CLIPBOARD_READ_V1
+                && request.content_type == "*/*",
+        "native image paste did not request a supported item from the host");
+    constexpr uint8_t png[] = {137U, 80U, 78U, 71U, 13U, 10U, 26U, 10U};
+    require(webscene_engine_complete_host_request_v1(
+                engine, request.id, 0U, "image/png",
+                png, sizeof(png), nullptr) != 0,
+        "native image paste completion was rejected");
+    for (auto attempt = 0; attempt < 250; ++attempt) {
+        if (evaluate(engine,
+                "__clipboardShortcutEvents.length === 4"
+                " && __clipboardExecCommandResults.length === 4"
+                " && __clipboardPasteItems !== 'pending'",
+                "native-clipboard-image-completion.js") == "true") {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    const auto image_paste_items = evaluate(engine,
+        "__clipboardPasteItems",
+        "native-clipboard-image-paste-items-result.js");
+    require(image_paste_items
+            == R"JSON({"values":[["file","image/png","clipboard.png",8,"137,80,78,71,13,10,26,10",false]],"length":1,"first":"image/png","missing":null,"types":["Files"],"files":[["clipboard.png","image/png",8]]})JSON",
+        "native image paste did not expose a bounded file item to Code OSS: "
+            + image_paste_items);
+    require(evaluate(engine,
+                "__clipboardShortcutEvents.at(-1)[0] === 'paste'"
+                " && __clipboardShortcutEvents.at(-1)[1] === ''",
+                "native-clipboard-image-event-result.js") == "true",
+        "native image paste exposed non-text bytes through getData");
     const auto exec_command_results = evaluate(engine,
         "__clipboardExecCommandResults",
         "native-clipboard-exec-command-results.js");
-    require(exec_command_results == "[true,true,true]",
+    require(exec_command_results == "[true,true,true,true]",
         "prevented native shortcuts did not execute document clipboard commands: "
             + exec_command_results);
     require(evaluate(engine, "document.execCommand('unsupported-command')",
@@ -2959,6 +3034,96 @@ void test_native_clipboard_shortcut_events(webscene_engine*)
         "unsupported legacy command claimed success");
     require(!take_typed_host_request(engine),
         "native clipboard shortcuts retained an unexpected host request");
+    webscene_engine_destroy(engine);
+}
+
+void test_native_image_clipboard_maximum_payload(webscene_engine*)
+{
+    auto* engine = webscene_engine_create(0);
+    require(engine != nullptr,
+        "maximum image clipboard engine creation failed");
+    execute_and_wait(engine, R"JS(
+        document.body.innerHTML = '<textarea id="image-paste"></textarea>';
+        const editor = document.getElementById('image-paste');
+        globalThis.__maximumImagePaste = 'pending';
+        editor.addEventListener('keydown', event => {
+          if (event.metaKey && event.key.toLowerCase() === 'v') {
+            event.preventDefault();
+            document.execCommand('paste');
+          }
+        });
+        editor.addEventListener('paste', event => {
+          event.preventDefault();
+          const item = event.clipboardData.items.item(0);
+          const file = item?.getAsFile();
+          if (!file) {
+            __maximumImagePaste = 'missing-file';
+            return;
+          }
+          file.arrayBuffer().then(buffer => {
+            const bytes = new Uint8Array(buffer);
+            __maximumImagePaste = {
+              kind: item.kind,
+              type: item.type,
+              name: file.name,
+              sizeExact: file.size === 16 * 1024 * 1024,
+              lengthExact: bytes.byteLength === 16 * 1024 * 1024,
+              first: bytes[0],
+              last: bytes[bytes.length - 1],
+              files: event.clipboardData.files.length,
+              types: Array.from(event.clipboardData.types)
+            };
+          });
+        });
+        editor.focus();
+    )JS", "native-maximum-image-paste-setup.js");
+
+    keyboard_input(engine, WEBSCENE_INPUT_KEY_DOWN, 'V', 9771U,
+        WEBSCENE_INPUT_MODIFIER_META);
+    webscene_engine_metrics metrics{};
+    webscene_engine_get_metrics(engine, &metrics);
+    wait_for_consumed_inputs(engine, metrics.enqueued_inputs,
+        "maximum image paste shortcut was not consumed");
+    const auto request = take_typed_host_request(engine);
+    require(request.kind == WEBSCENE_HOST_REQUEST_CLIPBOARD_READ_V1
+                && request.content_type == "*/*",
+        "maximum image paste did not request a supported host item");
+
+    constexpr size_t maximum_bytes = 16U * 1024U * 1024U;
+    std::vector<uint8_t> png(maximum_bytes, 97U);
+    png.front() = 137U;
+    png.back() = 10U;
+    require(webscene_engine_complete_host_request_v1(
+                engine, request.id, 0U, "image/png",
+                png.data(), maximum_bytes + 1U, nullptr) == 0,
+        "image clipboard completion admitted a payload above 16 MiB");
+    const auto started = std::chrono::steady_clock::now();
+    require(webscene_engine_complete_host_request_v1(
+                engine, request.id, 0U, "image/png",
+                png.data(), png.size(), nullptr) != 0,
+        "maximum image clipboard completion was rejected");
+    for (auto attempt = 0; attempt < 500; ++attempt) {
+        if (evaluate(engine,
+                "__maximumImagePaste !== 'pending'",
+                "native-maximum-image-paste-completion.js") == "true") {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    const auto result = evaluate(engine,
+        "__maximumImagePaste",
+        "native-maximum-image-paste-result.js");
+    require(result
+            == R"JSON({"kind":"file","type":"image/png","name":"clipboard.png","sizeExact":true,"lengthExact":true,"first":137,"last":10,"files":1,"types":["Files"]})JSON",
+        "maximum image paste changed bytes or transfer metadata: " + result);
+    require(!take_typed_host_request(engine),
+        "maximum image paste retained a host request");
+    const auto elapsed = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - started).count();
+    require(elapsed < 5.0,
+        "maximum image clipboard paste exceeded five seconds");
+    std::cout << "Image clipboard maximum-payload gate: bytes="
+              << maximum_bytes << " elapsed=" << elapsed << "s\n";
     webscene_engine_destroy(engine);
 }
 

@@ -4091,6 +4091,10 @@ struct v8_dom_runtime::implementation final {
                 read_clipboard).ToLocalChecked()).Check();
         constexpr std::string_view source = R"JS(
           (() => {
+            const supportedClipboardTypes = Object.freeze([
+              'image/png', 'image/jpeg', 'image/tiff',
+              'text/plain', 'text/html'
+            ]);
             class WebSceneClipboardItem {
               constructor(items, options = {}) {
                 if (items === null || typeof items !== 'object') {
@@ -4114,7 +4118,7 @@ struct v8_dom_runtime::implementation final {
                 });
               }
               static supports(type) {
-                return ['image/png', 'text/plain', 'text/html'].includes(String(type));
+                return supportedClipboardTypes.includes(String(type).toLowerCase());
               }
             }
             const clipboard = {
@@ -4123,6 +4127,11 @@ struct v8_dom_runtime::implementation final {
                   'Clipboard.readText', 'supported',
                   'UTF-8 text read through the native host');
                 const result = await __webSceneReadClipboard('text/plain');
+                if (result.type !== 'text/plain') {
+                  throw new DOMException(
+                    'The native host returned a non-text clipboard item',
+                    'DataError');
+                }
                 return new TextDecoder().decode(result.bytes);
               },
               async read() {
@@ -4130,6 +4139,11 @@ struct v8_dom_runtime::implementation final {
                   'Clipboard.read', 'partially-supported',
                   'one bounded native clipboard item');
                 const result = await __webSceneReadClipboard('*/*');
+                if (!WebSceneClipboardItem.supports(result.type)) {
+                  throw new DOMException(
+                    `The native host returned unsupported type ${result.type}`,
+                    'NotSupportedError');
+                }
                 return [new WebSceneClipboardItem({
                   [result.type]: new Blob([result.bytes], { type: result.type })
                 })];
@@ -4162,6 +4176,7 @@ struct v8_dom_runtime::implementation final {
             };
             const createClipboardData = () => {
               const values = Object.create(null);
+              const files = [];
               const normalize = type => String(type).toLowerCase();
               const createStringItem = type => Object.freeze({
                 kind: 'string',
@@ -4173,21 +4188,32 @@ struct v8_dom_runtime::implementation final {
                   Promise.resolve().then(() => callback(value));
                 }
               });
+              const createFileItem = file => Object.freeze({
+                kind: 'file',
+                type: file.type,
+                getAsFile() { return file; },
+                getAsString() {}
+              });
+              const allItems = () => [
+                ...Object.keys(values).map(createStringItem),
+                ...files.map(createFileItem)
+              ];
               const items = Object.freeze({
-                get length() { return Object.keys(values).length; },
+                get length() { return allItems().length; },
                 item(index) {
-                  const type = Object.keys(values)[Number(index)];
-                  return type === undefined ? null : createStringItem(type);
+                  return allItems()[Number(index)] || null;
                 },
                 *[Symbol.iterator]() {
-                  for (const type of Object.keys(values)) {
-                    yield createStringItem(type);
-                  }
+                  yield* allItems();
                 }
               });
-              return Object.freeze({
-                get types() { return Object.keys(values); },
-                files: Object.freeze([]),
+              const clipboardData = Object.freeze({
+                get types() {
+                  const result = Object.keys(values);
+                  if (files.length !== 0) result.push('Files');
+                  return result;
+                },
+                get files() { return Object.freeze(files.slice()); },
                 items,
                 getData(type) { return values[normalize(type)] || ''; },
                 setData(type, value) {
@@ -4199,6 +4225,20 @@ struct v8_dom_runtime::implementation final {
                   } else {
                     delete values[normalize(type)];
                   }
+                }
+              });
+              const extensionForType = type => ({
+                'image/png': 'png',
+                'image/jpeg': 'jpg',
+                'image/tiff': 'tiff'
+              })[type] || 'bin';
+              return Object.freeze({
+                clipboardData,
+                addFile(type, blob) {
+                  type = normalize(type);
+                  const bytes = blob instanceof Blob ? blob._bytes : blob;
+                  files.push(new File(
+                    [bytes], `clipboard.${extensionForType(type)}`, { type }));
                 }
               });
             };
@@ -4215,10 +4255,20 @@ struct v8_dom_runtime::implementation final {
               configurable: true,
               value(type, target) {
                 if (!target || typeof target.dispatchEvent !== 'function') return false;
-                const clipboardData = createClipboardData();
+                const transfer = createClipboardData();
+                const clipboardData = transfer.clipboardData;
                 if (type === 'paste') {
-                  clipboard.readText().then(text => {
-                    clipboardData.setData('text/plain', text);
+                  clipboard.read().then(async sourceItems => {
+                    for (const sourceItem of sourceItems) {
+                      for (const itemType of sourceItem.types) {
+                        const blob = await sourceItem.getType(itemType);
+                        if (itemType.startsWith('text/')) {
+                          clipboardData.setData(itemType, await blob.text());
+                        } else {
+                          transfer.addFile(itemType, blob);
+                        }
+                      }
+                    }
                     dispatchClipboardEvent(type, target, clipboardData);
                   }).catch(() => {});
                   return true;

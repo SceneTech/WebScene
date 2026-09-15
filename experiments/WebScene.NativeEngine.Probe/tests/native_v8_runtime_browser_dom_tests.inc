@@ -2769,12 +2769,19 @@ void test_native_clipboard_shortcut_events(webscene_engine* engine)
     keyboard_input(engine, WEBSCENE_INPUT_KEY_DOWN, 'C', 9761U, modifier);
     require(evaluate(engine, "true", "native-clipboard-copy-shortcut-barrier.js") == "true",
         "native copy shortcut did not drain through the engine worker");
+    const auto copy_events = evaluate(engine,
+        "JSON.stringify(__clipboardShortcutEvents)",
+        "native-clipboard-copy-shortcut-events.js");
     auto request = take_typed_host_request(engine);
     require(request.kind == WEBSCENE_HOST_REQUEST_CLIPBOARD_WRITE_V1
                 && request.flags == WEBSCENE_HOST_REQUEST_CLIPBOARD_REPLACE_V1
                 && request.content_type == "text/plain"
                 && std::string(request.bytes.begin(), request.bytes.end()) == "shortcut copy",
-        "native copy event did not hand its plain text to the host");
+        "native copy event did not hand its plain text to the host: events="
+            + copy_events + " kind=" + std::to_string(request.kind)
+            + " flags=" + std::to_string(request.flags)
+            + " type=" + request.content_type
+            + " bytes=" + std::string(request.bytes.begin(), request.bytes.end()));
     require(webscene_engine_complete_host_request_v1(
                 engine, request.id, 0U, "text/plain", nullptr, 0U, nullptr) != 0,
         "native copy plain-text completion was rejected");

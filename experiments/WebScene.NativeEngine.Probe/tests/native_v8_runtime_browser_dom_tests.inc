@@ -2748,6 +2748,7 @@ void test_native_clipboard_shortcut_events(webscene_engine*)
         globalThis.__clipboardShortcutEvents = [];
         globalThis.__clipboardShortcutKeys = [];
         globalThis.__clipboardExecCommandResults = [];
+        globalThis.__clipboardPasteItems = 'pending';
         editor.addEventListener('keydown', event => {
           __clipboardShortcutKeys.push([
             event.key, event.metaKey, event.ctrlKey, event.defaultPrevented]);
@@ -2776,6 +2777,20 @@ void test_native_clipboard_shortcut_events(webscene_engine*)
           event.preventDefault();
           __clipboardShortcutEvents.push([
             event.type, event.clipboardData.getData('text/plain')]);
+          const items = Array.from(event.clipboardData.items);
+          let synchronous = true;
+          Promise.all(items.map(item => new Promise(resolve => {
+            item.getAsString(value => resolve([
+              item.kind, item.type, value, item.getAsFile(), synchronous]));
+          }))).then(values => {
+            __clipboardPasteItems = {
+              values,
+              length: event.clipboardData.items.length,
+              first: event.clipboardData.items.item(0)?.type,
+              missing: event.clipboardData.items.item(1)
+            };
+          });
+          synchronous = false;
         });
         editor.focus();
     )JS", "native-clipboard-shortcuts-setup.js");
@@ -2851,7 +2866,8 @@ void test_native_clipboard_shortcut_events(webscene_engine*)
     for (auto attempt = 0; attempt < 250; ++attempt) {
         if (evaluate(engine,
                 "__clipboardShortcutEvents.length === 3"
-                " && __clipboardExecCommandResults.length === 3",
+                " && __clipboardExecCommandResults.length === 3"
+                " && __clipboardPasteItems !== 'pending'",
                 "native-clipboard-shortcut-completion.js") == "true") {
             break;
         }
@@ -2864,6 +2880,13 @@ void test_native_clipboard_shortcut_events(webscene_engine*)
             == R"JSON([["copy",true,true,"text/plain,text/html"],["cut"],["paste","shortcut paste"]])JSON",
         "native clipboard shortcuts did not dispatch browser-compatible events: "
             + shortcut_events);
+    const auto paste_items = evaluate(engine,
+        "__clipboardPasteItems",
+        "native-clipboard-paste-items-result.js");
+    require(paste_items
+            == R"JSON({"values":[["string","text/plain","shortcut paste",null,false]],"length":1,"first":"text/plain","missing":null})JSON",
+        "native paste did not expose a Code OSS-compatible DataTransferItemList: "
+            + paste_items);
     const auto exec_command_results = evaluate(engine,
         "__clipboardExecCommandResults",
         "native-clipboard-exec-command-results.js");

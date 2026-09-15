@@ -1228,8 +1228,15 @@ void test_node_iterator_dompurify_traversal(webscene_engine* engine)
         "NodeIterator DOMPurify traversal regressed: " + result);
 }
 
-void test_node_iterator_linear_performance_gate(webscene_engine* engine)
+void test_node_iterator_linear_performance_gate()
 {
+    // Keep this 50,000-node stress fixture on a fresh document. The main native
+    // contract engine intentionally retains its DOM node-pool high-water mark
+    // across hundreds of tests; adding the traversal fixture there makes the
+    // gate measure unrelated suite history and exhausts the Windows
+    // PartitionAlloc lane during teardown.
+    auto* engine = webscene_engine_create(0);
+    require(engine != nullptr, "NodeIterator performance engine creation failed");
     const auto result = evaluate(engine, R"JS(
         (() => {
           document.body.innerHTML = `<div id="iterator-root">${'<i></i>'.repeat(50000)}</div>`;
@@ -1256,6 +1263,7 @@ void test_node_iterator_linear_performance_gate(webscene_engine* engine)
     require(
         result == R"JSON({"visited":50001,"filterCalls":50001,"underFiveSeconds":true})JSON",
         "50,000-node NodeIterator linear performance gate failed: " + result);
+    webscene_engine_destroy(engine);
 }
 
 void test_animation_frame_dispatch_is_attributed()

@@ -120,6 +120,17 @@
         v8::Global<v8::Promise::Resolver> resolver;
     };
 
+    struct pending_indexeddb_promise final {
+        v8::Global<v8::Context> context;
+        v8::Global<v8::Promise::Resolver> resolver;
+        bool deserialize_data{false};
+    };
+
+    struct indexeddb_completion final {
+        uint64_t id{0};
+        indexeddb_storage_result result;
+    };
+
     struct frame_script final {
         std::string source;
         std::string code;

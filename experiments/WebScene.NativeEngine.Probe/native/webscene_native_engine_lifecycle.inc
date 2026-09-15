@@ -1,6 +1,9 @@
     explicit webscene_engine(
         uint32_t command_count,
         std::string compilation_cache_directory = {},
+        std::string storage_directory = {},
+        std::string storage_partition_key = {},
+        uint64_t storage_quota_bytes = 0,
         webscene_resource_load_callback resource_load_callback = nullptr,
         void* resource_load_user_data = nullptr,
         webscene_resource_load_callback_v2 resource_load_callback_v2 = nullptr,
@@ -32,6 +35,9 @@
                     ? minimum_command_count
                     : command_count))
         , compilation_cache_directory_(std::move(compilation_cache_directory))
+        , storage_directory_(std::move(storage_directory))
+        , storage_partition_key_(std::move(storage_partition_key))
+        , storage_quota_bytes_(storage_quota_bytes)
         , resource_load_callback_(resource_load_callback)
         , resource_load_user_data_(resource_load_user_data)
         , resource_load_callback_v2_(resource_load_callback_v2)

@@ -4,13 +4,13 @@ export const profileVersion = '1.0';
 
 export const knownCapabilities = Object.freeze([
   'dom', 'css.layout', 'canvas.2d', 'svg', 'input.pointer', 'input.keyboard',
-  'input.focus', 'clipboard', 'host.commands', 'host.settings',
+  'input.focus', 'clipboard', 'storage.indexeddb', 'host.commands', 'host.settings',
   'host.notifications', 'host.network', 'host.clipboard', 'host.files'
 ]);
 
 const rules = [
   unsupported(/\bnavigator\s*\.\s*serviceWorker\b/g, 'WEBSCENE1001', 'Service workers are not supported.'),
-  unsupported(/\bindexedDB\b/g, 'WEBSCENE1002', 'IndexedDB is not supported.'),
+  requires(/\bindexedDB\b/g, 'WEBSCENE1002', 'storage.indexeddb', 'Persistent IndexedDB access must be declared.'),
   unsupported(/\b(?:Worker|SharedWorker|Worklet)\s*\(/g, 'WEBSCENE1003', 'Web workers and worklets are not supported.'),
   unsupported(/\b(?:RTCPeerConnection|MediaRecorder|AudioContext|webkitAudioContext)\b/g, 'WEBSCENE1004', 'WebRTC, recording, and Web Audio are not supported.'),
   unsupported(/\bnavigator\s*\.\s*(?:mediaDevices|geolocation)\b/g, 'WEBSCENE1005', 'Media devices and geolocation are not supported.'),

@@ -74,6 +74,7 @@ uint8_t measure_baseline_fixture_text(
 #include "native_v8_runtime_document_tests.inc"
 #include "native_v8_runtime_test_support.inc"
 #include "native_v8_runtime_lifecycle_tests.inc"
+#include "native_v8_runtime_indexeddb_tests.inc"
 #if defined(WEBSCENE_NATIVE_ENGINE_WITH_V8_INSPECTOR)
 #include "native_v8_runtime_inspector_tests.inc"
 #endif
@@ -131,6 +132,10 @@ int main()
     if (const auto* filter = std::getenv("WEBSCENE_NATIVE_ENGINE_TEST_FILTER");
         filter != nullptr) {
         const auto selected = std::string_view(filter);
+        if (selected == "indexeddb") {
+            test_indexeddb_runtime_contract();
+            return 0;
+        }
         if (selected == "idle-v8-platform") {
             test_idle_v8_foreground_completion();
             return 0;
@@ -825,6 +830,7 @@ int main()
     test_process_wide_compilation_single_flight();
     test_canvas_text_metrics_use_host_font_axes();
     test_recursive_functional_selector_survives_cache_eviction();
+    test_indexeddb_runtime_contract();
     auto* engine = webscene_engine_create(64);
     require(engine != nullptr, "engine creation failed");
 #if defined(WEBSCENE_NATIVE_ENGINE_WITH_V8_INSPECTOR)

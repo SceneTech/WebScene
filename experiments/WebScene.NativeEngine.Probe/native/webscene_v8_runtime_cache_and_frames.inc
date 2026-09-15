@@ -1886,6 +1886,7 @@
             js_string(isolate, message_channel_bootstrap.c_str())).ToLocalChecked();
         message_channel_script->Run(local_context).ToLocalChecked();
         install_crypto_globals(local_context, global);
+        install_indexeddb(local_context);
         install_clipboard_api(local_context);
         install_websocket_globals(local_context);
         install_editor_web_platform_globals(local_context);

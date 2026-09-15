@@ -416,6 +416,10 @@ public sealed partial class NativeWebSceneView : ContentControl, IAsyncDisposabl
             {
                 Directory.CreateDirectory(options.CompilationCacheDirectory);
             }
+            if (!string.IsNullOrWhiteSpace(options.PersistentStorageDirectory))
+            {
+                Directory.CreateDirectory(options.PersistentStorageDirectory);
+            }
 
             if (lifetime is null)
             {
@@ -447,7 +451,10 @@ public sealed partial class NativeWebSceneView : ContentControl, IAsyncDisposabl
                 hostRequestAvailable: OnNativeHostRequestAvailable,
                 interopCallbackAvailable: callbackSignal.Notify,
                 animationFrameRequested: _surface.OnNativeAnimationFrameRequested,
-                admitWebGpuDocument: _admitWebGpuDocument);
+                admitWebGpuDocument: _admitWebGpuDocument,
+                persistentStorageDirectory: options.PersistentStorageDirectory,
+                persistentStoragePartitionKey: options.PersistentStoragePartitionKey,
+                persistentStorageQuotaBytes: options.PersistentStorageQuotaBytes);
             if (engine == IntPtr.Zero)
             {
                 throw new InvalidOperationException(

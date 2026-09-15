@@ -2956,6 +2956,49 @@ void test_native_legacy_clipboard_completion_stress(webscene_engine*)
     webscene_engine_destroy(engine);
 }
 
+void test_native_pending_legacy_clipboard_shutdown(webscene_engine*)
+{
+    auto* engine = webscene_engine_create(0);
+    require(engine != nullptr,
+        "pending legacy clipboard shutdown engine creation failed");
+    execute_and_wait(engine, R"JS(
+        document.body.innerHTML = '<textarea id="pending-copy"></textarea>';
+        const editor = document.getElementById('pending-copy');
+        editor.addEventListener('keydown', event => {
+          if (event.metaKey && event.key.toLowerCase() === 'c') {
+            event.preventDefault();
+            document.execCommand('copy');
+          }
+        });
+        editor.addEventListener('copy', event => {
+          event.clipboardData.setData('text/plain', 'pending close');
+          event.preventDefault();
+        });
+        editor.focus();
+    )JS", "native-pending-legacy-clipboard-shutdown-setup.js");
+
+    keyboard_input(
+        engine, WEBSCENE_INPUT_KEY_DOWN, 'C', 31001U,
+        WEBSCENE_INPUT_MODIFIER_META);
+    webscene_engine_metrics metrics{};
+    webscene_engine_get_metrics(engine, &metrics);
+    wait_for_consumed_inputs(
+        engine, metrics.enqueued_inputs,
+        "pending legacy clipboard shutdown input was not consumed");
+    const auto request = take_typed_host_request(engine);
+    require(
+        request.kind == WEBSCENE_HOST_REQUEST_CLIPBOARD_WRITE_V1
+            && request.content_type == "text/plain"
+            && std::string(request.bytes.begin(), request.bytes.end())
+                == "pending close",
+        "pending legacy clipboard shutdown did not retain its host promise");
+
+    // A native window may close before the operating-system host completes a
+    // request. Destruction must release the pending persistent resolver while
+    // its V8 isolate is still alive.
+    webscene_engine_destroy(engine);
+}
+
 void test_clipboard_maximum_payload_gate(webscene_engine* engine)
 {
     constexpr size_t maximum_bytes = 16U * 1024U * 1024U;

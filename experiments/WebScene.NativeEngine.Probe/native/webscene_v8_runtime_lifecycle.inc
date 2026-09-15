@@ -146,6 +146,12 @@
         pending_programmatic_scroll_events.clear();
         pending_interop_promises.clear();
         pending_callback_promises.clear();
+        // Native host and file completions can still be pending when a window
+        // closes. Their persistent context/resolver handles must be released
+        // while the isolate is alive; member destruction happens after this
+        // body and therefore after isolate disposal below.
+        host_promise_targets.clear();
+        file_targets.clear();
         pending_fetches.clear();
         interop_handles.clear();
         pending_promise_rejections.clear();

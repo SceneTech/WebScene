@@ -31,7 +31,8 @@ internal static class CssKnownProperties
         "padding-right", "padding-top", "pointer-events", "position", "right", "row-gap", "stroke",
         "stroke-linecap", "stroke-linejoin", "stroke-width", "text-align", "text-indent", "text-transform",
         "top", "transform", "visibility", "white-space", "width", "word-spacing", "z-index",
-        "outline", "outline-color", "outline-offset", "outline-style", "outline-width"
+        "outline", "outline-color", "outline-offset", "outline-style", "outline-width",
+        "grid-template-areas"
     ];
 
     private static readonly FrozenDictionary<string, int> s_ids = Names
@@ -73,6 +74,7 @@ internal static class CssKnownProperties
             "transform" => 93, "visibility" => 94, "white-space" => 95, "width" => 96,
             "word-spacing" => 97, "z-index" => 98, "outline" => 99, "outline-color" => 100,
             "outline-offset" => 101, "outline-style" => 102, "outline-width" => 103,
+            "grid-template-areas" => 104,
             _ => -1
         };
 

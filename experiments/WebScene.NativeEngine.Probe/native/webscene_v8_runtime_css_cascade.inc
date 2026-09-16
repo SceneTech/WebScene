@@ -838,6 +838,7 @@
                 || property == "min-width" || property == "max-width"
                 || property == "min-height" || property == "max-height"
                 || property == "grid-template-columns" || property == "grid-template-rows"
+                || property == "grid-template-areas"
                 || property == "left" || property == "right"
                 || property == "top" || property == "bottom";
         };

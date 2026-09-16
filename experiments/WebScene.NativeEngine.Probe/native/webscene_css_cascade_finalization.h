@@ -61,15 +61,32 @@ inline bool grid_layout_equal(
             }
             return true;
         };
+        const auto areas_equal = [](const auto& left_areas, const auto& right_areas) {
+            if (left_areas.size() != right_areas.size()) return false;
+            for (size_t index = 0; index < left_areas.size(); ++index) {
+                const auto& left_area = left_areas[index];
+                const auto& right_area = right_areas[index];
+                if (left_area.name != right_area.name
+                    || left_area.row_start != right_area.row_start
+                    || left_area.row_end != right_area.row_end
+                    || left_area.column_start != right_area.column_start
+                    || left_area.column_end != right_area.column_end) return false;
+            }
+            return true;
+        };
         return tracks_equal(left.template_columns, right.template_columns)
             && tracks_equal(left.template_rows, right.template_rows)
             && tracks_equal(left.auto_columns, right.auto_columns)
+            && areas_equal(left.template_areas, right.template_areas)
+            && left.template_area_row_count == right.template_area_row_count
+            && left.template_area_column_count == right.template_area_column_count
             && left.subgrid_columns == right.subgrid_columns
             && left.two_columns == right.two_columns
             && left.auto_flow_column == right.auto_flow_column
             && left.fractional_rows == right.fractional_rows
             && left.span_all == right.span_all
             && left.column_start == right.column_start
+            && left.template_areas_value == right.template_areas_value
             && left.area_value == right.area_value
             && left.row_value == right.row_value
             && left.row_start_value == right.row_start_value

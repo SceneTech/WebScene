@@ -235,6 +235,13 @@ int main()
             webscene_engine_destroy(focused_engine);
             return 0;
         }
+        if (selected == "grid-template-areas") {
+            auto* focused_engine = webscene_engine_create(0);
+            require(focused_engine != nullptr, "focused grid engine creation failed");
+            test_named_grid_template_areas_layout_cssom_and_mutation(focused_engine);
+            webscene_engine_destroy(focused_engine);
+            return 0;
+        }
         if (selected == "scrollbar-style-drag") {
             auto* focused_engine = webscene_engine_create(64);
             require(focused_engine != nullptr, "focused engine creation failed");
@@ -683,6 +690,7 @@ int main()
     test_modal_backdrop_scene(engine);
     test_responsive_positioned_sizing(engine);
     test_compact_go_to_fixed_grid_tracks_preserve_trailing_space(engine);
+    test_named_grid_template_areas_layout_cssom_and_mutation(engine);
     test_go_to_tab_lines_and_calendar_scroll_ranges(engine);
     test_media_query_list_tracks_outer_and_frame_viewport_breakpoints(engine);
     test_responsive_unset_restores_auto_inset(engine);

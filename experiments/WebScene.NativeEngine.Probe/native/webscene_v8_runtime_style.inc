@@ -140,6 +140,9 @@
             node.style.align_self = align_mode::stretch;
             node.style.align_self_specified = false;
             node.style.inline_property_mask &= ~inline_align_self;
+        } else if (name == "alignContent" || name == "align-content") {
+            node.style.align_content_stretches = true;
+            node.style.inline_property_mask &= ~inline_align_content;
         } else if (name == "justifyContent" || name == "justify-content") {
             node.style.justify_content = justify_mode::start;
             node.style.inline_property_mask &= ~inline_justify_content;
@@ -708,6 +711,9 @@
                 : value == "baseline" || value == "first baseline" ? align_mode::baseline
                 : align_mode::stretch;
             node->style.inline_property_mask |= inline_align_self;
+        } else if (name == "align-content") {
+            node->style.align_content_stretches = value == "normal" || value == "stretch";
+            node->style.inline_property_mask |= inline_align_content;
         } else if (name == "justify-content") {
             node->style.justify_content = value == "center" ? justify_mode::center
                 : value == "flex-end" || value == "end" ? justify_mode::end
@@ -1553,6 +1559,8 @@
                 : node->style.align_self == align_mode::start ? "flex-start"
                 : node->style.align_self == align_mode::end ? "flex-end"
                 : node->style.align_self == align_mode::baseline ? "baseline" : "stretch";
+        } else if (name == "alignContent") {
+            value = node->style.align_content_stretches ? "stretch" : "flex-start";
         } else if (name == "justifyContent") {
             value = node->style.justify_content == justify_mode::center ? "center"
                 : node->style.justify_content == justify_mode::end ? "flex-end"
@@ -2097,6 +2105,9 @@
                 : value == "baseline" || value == "first baseline" ? align_mode::baseline
                 : align_mode::stretch;
             node->style.inline_property_mask |= inline_align_self;
+        } else if (name == "alignContent") {
+            node->style.align_content_stretches = value == "normal" || value == "stretch";
+            node->style.inline_property_mask |= inline_align_content;
         } else if (name == "justifyContent") {
             node->style.justify_content = value == "center" ? justify_mode::center
                 : value == "flex-end" || value == "end" ? justify_mode::end

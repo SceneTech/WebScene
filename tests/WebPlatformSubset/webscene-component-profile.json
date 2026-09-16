@@ -520,6 +520,13 @@
       "reason": "Product-neutral reduction of the named-area composition used by Code OSS Welcome. It covers normalized CSSOM serialization, sparse rectangular areas across fractional and minmax tracks, atomic rejection of nonrectangular or unequal rows, synchronous mutation/removal layout, and a bounded 500-mutation gate."
     },
     {
+      "path": "contracts/css-grid-auto-max-track-stretch.html",
+      "type": "contract",
+      "capabilities": ["grid-auto-maximum-track-stretch", "multi-row-align-content-stretch", "grid-track-height-mutation-publication"],
+      "evidence": ["code-oss-welcome-auto-middle-row", "webscene-issue-106"],
+      "reason": "Product-neutral reduction of the auto-maximum track sizing used by Code OSS Welcome. It compares exact Chromium/native geometry for minmax(min-content, auto), multiple stretchable rows with gaps, max-content exclusion, non-stretch align-content, synchronous height mutation, and a bounded 500-mutation publication gate."
+    },
+    {
       "path": "css/CSS2/generated-content/before-content-display-002.xht",
       "type": "reftest",
       "reference": "css/CSS2/generated-content/after-content-display-002-ref.xht",

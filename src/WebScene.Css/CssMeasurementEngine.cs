@@ -655,8 +655,10 @@ public sealed class CssMeasurementEngine
     {
         if (TryParseFixedPixelTracks(root.Style.GridTemplateColumns, out var fixedTracks))
         {
-            _ = TryParseFixedPixelTracks(root.Style.GridTemplateRows, out var fixedRowTracks);
-            return MeasureFixedPixelGrid(root, available, measurer, fixedTracks, fixedRowTracks);
+            var parsedRows = CssGridTrackList.TryParseRows(
+                root.Style.GridTemplateRows, FiniteOrZero(available.Height), out var rowTracks);
+            return MeasureFixedPixelGrid(root, available, measurer, fixedTracks, rowTracks,
+                parsedRows || string.IsNullOrWhiteSpace(root.Style.GridTemplateRows));
         }
 
         if (UsesAutoFractionColumns(root.Style))
@@ -691,13 +693,14 @@ public sealed class CssMeasurementEngine
         WebSceneSize available,
         ICssIntrinsicMeasurer measurer,
         IReadOnlyList<double> tracks,
-        IReadOnlyList<double> fixedRowTracks)
+        IReadOnlyList<CssGridTrack> rowTracks,
+        bool rowTemplateSupportsDistribution)
     {
         var availableWidth = FiniteOrInfinity(available.Width);
         var availableHeight = FiniteOrInfinity(available.Height);
         var columnGap = Math.Max(0, ResolveForMeasure(root.Style.ColumnGap, availableWidth) ?? 0);
         var rowGap = Math.Max(0, ResolveForMeasure(root.Style.RowGap, availableHeight) ?? 0);
-        var rows = fixedRowTracks.ToList();
+        var rows = rowTracks.Select(static track => track.BaseSize).ToList();
         _ = CssGridTemplateAreas.TryParse(root.Style.GridTemplateAreas, out var namedAreas);
         var row = 0;
         var column = 0;
@@ -726,8 +729,8 @@ public sealed class CssMeasurementEngine
             var trackWidth = tracks.Skip(itemColumn).Take(columnSpan).Sum()
                 + columnGap * Math.Max(0, columnSpan - 1);
             var declaredWidth = ResolveForMeasure(child.Style.Width, trackWidth);
-            var rowTrackHeight = itemRow + rowSpan <= fixedRowTracks.Count
-                ? fixedRowTracks.Skip(itemRow).Take(rowSpan).Sum()
+            var rowTrackHeight = itemRow + rowSpan <= rowTracks.Count
+                ? rows.Skip(itemRow).Take(rowSpan).Sum()
                     + rowGap * Math.Max(0, rowSpan - 1)
                 : (double?)null;
             var declaredHeight = ResolveForMeasure(child.Style.Height, rowTrackHeight ?? availableHeight);
@@ -747,7 +750,8 @@ public sealed class CssMeasurementEngine
                                   child.Style.BoxSizing)
                               ?? measured.Height) + metrics.Margin.Vertical;
             while (rows.Count < itemRow + rowSpan) rows.Add(0);
-            if (rowSpan == 1 && itemRow >= fixedRowTracks.Count)
+            if (rowSpan == 1 && (itemRow >= rowTracks.Count
+                || rowTracks[itemRow].AcceptsIntrinsicContribution))
             {
                 rows[itemRow] = Math.Max(rows[itemRow], itemHeight);
             }
@@ -768,7 +772,17 @@ public sealed class CssMeasurementEngine
         }
 
         var desiredWidth = tracks.Sum() + columnGap * Math.Max(0, tracks.Count - 1);
-        var desiredHeight = rows.Sum() + rowGap * Math.Max(0, rows.Count - 1);
+        var rowSizes = rows.ToArray();
+        var totalRowGap = rowGap * Math.Max(0, rowSizes.Length - 1);
+        CssGridTrackList.DistributeRemainingSpace(
+            rowSizes,
+            rowTracks,
+            availableHeight,
+            totalRowGap,
+            rowTemplateSupportsDistribution
+                && root.Style.AlignContent == CssLayoutAlignContent.Stretch
+                && !root.Style.Height.IsAuto);
+        var desiredHeight = rowSizes.Sum() + totalRowGap;
         return new WebSceneSize(
             LimitToAvailable(desiredWidth, availableWidth),
             LimitToAvailable(desiredHeight, availableHeight));

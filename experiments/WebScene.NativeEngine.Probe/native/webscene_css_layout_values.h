@@ -71,6 +71,7 @@ inline std::vector<node_style::grid_data::track> parse_simple_grid_tracks(
         if (token == "auto" || token == "max-content") {
             grid_track track;
             track.kind = grid_track::sizing::automatic;
+            track.maximum_is_auto = token == "auto";
             return track;
         }
         if (token == "min-content") {
@@ -106,6 +107,7 @@ inline std::vector<node_style::grid_data::track> parse_simple_grid_tracks(
                 track.minimum = native_document::parse_length(std::string(minimum));
             }
             track.fraction = parse_fraction(maximum);
+            track.maximum_is_auto = maximum == "auto";
             if (track.fraction <= 0 && maximum != "auto"
                 && maximum != "min-content" && maximum != "max-content") {
                 track.maximum = native_document::parse_length(std::string(maximum));
@@ -498,6 +500,8 @@ bool apply_flex_value(dom_node& node,const std::string& name,const std::string& 
                 : value == "flex-end" || value == "end" ? align_mode::end
                 : value == "baseline" || value == "first baseline" ? align_mode::baseline
                 : align_mode::stretch;
+        } else if (name == "align-content" && !is_inline(inline_align_content)) {
+            node.style.align_content_stretches = value == "normal" || value == "stretch";
         } else if (name == "justify-content" && !is_inline(inline_justify_content)) {
             node.style.justify_content = value == "center" ? justify_mode::center
                 : value == "flex-end" || value == "end" ? justify_mode::end

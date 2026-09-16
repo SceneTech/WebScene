@@ -285,6 +285,34 @@ public sealed class CssMeasurementEngineTests
     }
 
     [Fact]
+    public void GridMeasurementPublishesDefiniteHeightAfterAutoMaximumStretch()
+    {
+        var root = new CssLayoutNode(1, new CssLayoutStyle
+        {
+            Display = CssLayoutDisplay.Grid,
+            Height = CssLayoutLength.Pixels(400),
+            GridTemplateColumns = "700px",
+            GridTemplateRows = "25% minmax(min-content, auto) min-content",
+            GridTemplateAreas = "\"header\" \"middle\" \"footer\""
+        });
+        root.Add(new CssLayoutNode(2, new CssLayoutStyle
+            { GridArea = "header", Height = CssLayoutLength.Pixels(40) }));
+        root.Add(new CssLayoutNode(3, new CssLayoutStyle
+            { GridArea = "middle", Height = CssLayoutLength.Pixels(200) }));
+        root.Add(new CssLayoutNode(4, new CssLayoutStyle
+            { GridArea = "footer", Height = CssLayoutLength.Pixels(18) }));
+        var measurer = new RecordingMeasurer(
+            (2, new WebSceneSize(700, 40)),
+            (3, new WebSceneSize(700, 200)),
+            (4, new WebSceneSize(700, 18)));
+
+        var desired = new CssMeasurementEngine().Measure(
+            root, new WebSceneSize(700, 400), measurer);
+
+        Assert.Equal(new WebSceneSize(700, 400), desired);
+    }
+
+    [Fact]
     public void TableMeasurementSharesIntrinsicColumnWidthsAcrossRows()
     {
         var table = new CssLayoutNode(1, new CssLayoutStyle { Display = CssLayoutDisplay.Table });

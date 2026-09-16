@@ -131,6 +131,7 @@ using css_index_string_set = std::unordered_set<std::string>;
     struct hover_selector_dependency final
     {
         std::string trigger_compound;
+        compiled_css_compound compiled_trigger;
         hover_invalidation_scope scope{hover_invalidation_scope::subject};
     };
 

@@ -1452,6 +1452,103 @@ void test_hover_invalidation_updates_functional_and_sibling_subjects(
             + hovered + ", unhovered=" + unhovered);
 }
 
+void test_hover_dependency_matching_reuses_compiled_triggers(
+    webscene_engine* engine)
+{
+    execute(engine, R"JS(
+        (() => {
+          const count = 4000;
+          const selectors = ['.probe { width: 40px; height: 40px; }'];
+          for (let index = 0; index < count; ++index) {
+            selectors.push(
+              `.probe.trigger-${index}[data-kind="editor"]:not(.disabled)`
+              + `:not([aria-hidden="true"]):hover .leaf-${index}`
+              + ' { color: rgb(1, 2, 3); }');
+          }
+          let content = `<span class="leaf-${count - 1}">leaf</span>`;
+          for (let depth = 0; depth < 32; ++depth) {
+            content = `<div>${content}</div>`;
+          }
+          document.body.innerHTML = `<style>${selectors.join('\n')}</style>`
+            + `<div class="probe trigger-${count - 1}" data-kind="editor">`
+            + `${content}</div>`;
+        })()
+    )JS", "native-hover-compiled-trigger-setup.js");
+    resize(engine, 320, 200, 1051U);
+    const auto pointer_x = std::stod(evaluate(
+        engine,
+        "document.querySelector('.probe').getBoundingClientRect().x + 5",
+        "native-hover-compiled-trigger-x.js"));
+    const auto pointer_y = std::stod(evaluate(
+        engine,
+        "document.querySelector('.probe').getBoundingClientRect().y + 5",
+        "native-hover-compiled-trigger-y.js"));
+
+    // Acknowledge setup work so this measurement cannot succeed by observing
+    // the pre-hover scene. The accepted pointer sequence must reach an actual
+    // scene publication, which includes cascade and any required layout/tree
+    // work rather than ending at worker input consumption.
+    webscene_engine_request_scene_checkpoint(engine);
+    auto setup_published = false;
+    for (auto attempt = 0; attempt < 250 && !setup_published; ++attempt) {
+        const auto* scene = webscene_engine_acquire_latest_scene(engine);
+        if (scene != nullptr) {
+            setup_published = scene->header.consumed_input_sequence >= 1051U;
+            webscene_scene_acknowledge(scene);
+            webscene_scene_release(scene);
+        }
+        if (!setup_published) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    }
+    require(setup_published,
+        "cached hover dependency setup scene was not published");
+
+    webscene_engine_metrics before{};
+    webscene_engine_get_metrics(engine, &before);
+    const auto started = std::chrono::steady_clock::now();
+    pointer_move(engine, pointer_x, pointer_y, 1052U);
+    auto hover_published = false;
+    for (auto attempt = 0; attempt < 250 && !hover_published; ++attempt) {
+        const auto* scene = webscene_engine_acquire_latest_scene(engine);
+        if (scene != nullptr) {
+            hover_published = scene->header.consumed_input_sequence >= 1052U;
+            webscene_scene_acknowledge(scene);
+            webscene_scene_release(scene);
+        }
+        if (!hover_published) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    }
+    const auto elapsed = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - started).count();
+    webscene_engine_metrics after{};
+    webscene_engine_get_metrics(engine, &after);
+    const auto color = evaluate(
+        engine,
+        "getComputedStyle(document.querySelector('.leaf-3999')).color",
+        "native-hover-compiled-trigger-result.js");
+    std::cout << "Cached hover dependency gate: 4000 triggers input-to-publication in "
+        << elapsed << " ms, layoutDelta="
+        << (after.layout_passes - before.layout_passes)
+        << ", domNodes=" << after.dom_nodes << "\n";
+    require(hover_published,
+        "cached hover dependency pointer result was not published");
+    require(
+        color == R"JSON("rgb(1, 2, 3)")JSON",
+        "cached hover trigger did not preserve descendant invalidation: " + color);
+    require(
+        after.dom_nodes == before.dom_nodes,
+        "hover dependency matching changed the DOM tree size");
+    require(
+        after.layout_passes <= before.layout_passes + 1U,
+        "one hover transition caused redundant layout passes");
+    require(
+        elapsed < 30.0,
+        "4,000 cached hover dependencies across a deep path exceeded the 30 ms input-to-publication budget: "
+            + std::to_string(elapsed) + " ms");
+}
+
 void test_hover_moves_between_block_and_display_contents_child(webscene_engine* engine)
 {
     execute(engine, R"JS(

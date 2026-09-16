@@ -1248,7 +1248,7 @@
                 if (dependency.trigger_compound != "*"
                     && !css_compound_selector_matches(
                         *changed_node,
-                        dependency.trigger_compound)) {
+                        dependency.compiled_trigger)) {
                     continue;
                 }
                 switch (dependency.scope) {

@@ -11,8 +11,10 @@ get_filename_component(_ws_prefix "${CMAKE_CURRENT_LIST_DIR}/../../.." ABSOLUTE)
 if(NOT APPLE OR NOT CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
   message(FATAL_ERROR "WebScene SDK preview requires macOS ARM64")
 endif()
-if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang" OR NOT CMAKE_CXX_COMPILER_VERSION VERSION_EQUAL "22.1.1")
-  message(FATAL_ERROR "This preview requires LLVM 22.1.1 with libc++; use WebSceneToolchain.cmake")
+if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang"
+    OR CMAKE_CXX_COMPILER_VERSION VERSION_LESS "22.1.1"
+    OR NOT CMAKE_CXX_COMPILER_VERSION VERSION_LESS "22.2")
+  message(FATAL_ERROR "This preview requires LLVM 22.1.x (22.1.1 or newer) with libc++; use WebSceneToolchain.cmake")
 endif()
 if(CMAKE_OSX_DEPLOYMENT_TARGET AND CMAKE_OSX_DEPLOYMENT_TARGET VERSION_LESS "26.0")
   message(FATAL_ERROR "The qualified binary dependencies require macOS 26.0 or newer")

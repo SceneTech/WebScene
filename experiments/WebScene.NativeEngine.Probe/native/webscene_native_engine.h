@@ -727,6 +727,68 @@ typedef size_t (*webscene_resource_load_callback_v3)(
     char* destination,
     size_t destination_capacity);
 
+typedef enum webscene_fetch_credentials {
+    WEBSCENE_FETCH_CREDENTIALS_OMIT = 0,
+    WEBSCENE_FETCH_CREDENTIALS_SAME_ORIGIN = 1,
+    WEBSCENE_FETCH_CREDENTIALS_INCLUDE = 2
+} webscene_fetch_credentials;
+
+typedef struct webscene_resource_header_v4 {
+    uint32_t struct_size;
+    const char* name;
+    size_t name_length;
+    const char* value;
+    size_t value_length;
+} webscene_resource_header_v4;
+
+/* Response metadata is borrowed only for the callback invocation. The engine
+ * copies accepted fields before returning to the host. Header count and total
+ * bytes are bounded; Set-Cookie is consumed by the cookie jar and is never
+ * exposed through the JavaScript Headers object. */
+typedef struct webscene_resource_response_v4 {
+    uint32_t struct_size;
+    uint32_t status;
+    const char* status_text;
+    size_t status_text_length;
+    const char* final_url;
+    size_t final_url_length;
+    const webscene_resource_header_v4* headers;
+    size_t header_count;
+} webscene_resource_response_v4;
+
+typedef struct webscene_resource_request_context_v4 {
+    uint32_t struct_size;
+    uint32_t initiator;
+    const char* origin;
+    size_t origin_length;
+    const char* referrer;
+    size_t referrer_length;
+    uint32_t mode;
+    uint32_t destination;
+    const char* method;
+    size_t method_length;
+    const char* body;
+    size_t body_length;
+    const char* content_type;
+    size_t content_type_length;
+    uint32_t credentials;
+    const char* cookie;
+    size_t cookie_length;
+} webscene_resource_request_context_v4;
+
+typedef size_t (*webscene_resource_load_callback_v4)(
+    void* user_data,
+    uint32_t kind,
+    const char* url,
+    size_t url_length,
+    const char* entity_tag,
+    size_t entity_tag_length,
+    int64_t last_modified_unix_seconds,
+    const webscene_resource_request_context_v4* request_context,
+    webscene_resource_response_v4* response,
+    char* destination,
+    size_t destination_capacity);
+
 /*
  * Asynchronous notification emitted after an immutable scene has been
  * published. Consumers use this edge to schedule a compositor paint; they
@@ -836,6 +898,8 @@ typedef struct webscene_engine_options {
     void* stylesheet_consumed_user_data;
     webscene_webgpu_policy_callback webgpu_policy_callback;
     void* webgpu_policy_user_data;
+    webscene_resource_load_callback_v4 resource_load_callback_v4;
+    void* resource_load_v4_user_data;
 } webscene_engine_options;
 
 enum {

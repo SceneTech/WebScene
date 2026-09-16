@@ -318,7 +318,12 @@ internal sealed class AvaloniaViewport : IWebSceneViewport, IDisposable
 /// </summary>
 public sealed class AvaloniaResourceLoader : IWebSceneResourceLoader
 {
-    private static readonly HttpClient s_httpClient = new();
+    // Cookie ownership belongs to the engine-scoped browser jar. A process-wide
+    // HttpClient cookie container would leak authentication across engines.
+    private static readonly HttpClient s_httpClient = new(new HttpClientHandler
+    {
+        UseCookies = false
+    });
     private readonly List<string> _resourceSearchDirectories = new();
     private readonly List<MountedResourceDirectory> _mountedDirectories = new();
     private readonly object _archiveGate = new();
@@ -415,6 +420,10 @@ public sealed class AvaloniaResourceLoader : IWebSceneResourceLoader
                 {
                     message.Headers.TryAddWithoutValidation("Origin", request.Context.Origin);
                 }
+                if (!string.IsNullOrWhiteSpace(request.Cookie))
+                {
+                    message.Headers.TryAddWithoutValidation("Cookie", request.Cookie);
+                }
                 if (Uri.TryCreate(request.Context.Referrer, UriKind.Absolute, out var referrer))
                 {
                     message.Headers.Referrer = referrer;
@@ -457,17 +466,6 @@ public sealed class AvaloniaResourceLoader : IWebSceneResourceLoader
                 }
                 else
                 {
-                    if (!response.IsSuccessStatusCode)
-                    {
-                        throw new HttpRequestException(
-                            $"WebScene resource request failed: {(int)response.StatusCode} " +
-                            $"({response.ReasonPhrase}) {method} {resolved}; " +
-                            $"origin={request.Context.Origin ?? "<none>"}; " +
-                            $"referrer={request.Context.Referrer ?? "<none>"}; " +
-                            $"mode={request.Context.Mode}; destination={request.Context.Destination}",
-                            null,
-                            response.StatusCode);
-                    }
                     var binaryBytes = request.Kind == WebSceneResourceKind.Data ? response.Content.ReadAsByteArrayAsync().GetAwaiter().GetResult() : null;
                     resource = new WebSceneTextResource(
                         resolved.ToString(),
@@ -484,6 +482,18 @@ public sealed class AvaloniaResourceLoader : IWebSceneResourceLoader
                         IsCacheable = cachePolicy.IsCacheable
                     };
                 }
+                resource = resource with
+                {
+                    Status = (int)response.StatusCode,
+                    StatusText = response.ReasonPhrase ?? string.Empty,
+                    FinalAddress = response.RequestMessage?.RequestUri?.ToString()
+                        ?? resolved.ToString(),
+                    Headers = response.Headers
+                        .Concat(response.Content.Headers)
+                        .SelectMany(header => header.Value.Select(value =>
+                            new KeyValuePair<string, string>(header.Key, value)))
+                        .ToArray()
+                };
             }
 
             if (isSafeRead)

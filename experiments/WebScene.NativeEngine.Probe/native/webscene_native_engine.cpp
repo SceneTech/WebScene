@@ -413,6 +413,8 @@ private:
     void* resource_load_v2_user_data_{nullptr};
     webscene_resource_load_callback_v3 resource_load_callback_v3_{nullptr};
     void* resource_load_v3_user_data_{nullptr};
+    webscene_resource_load_callback_v4 resource_load_callback_v4_{nullptr};
+    void* resource_load_v4_user_data_{nullptr};
     webscene_stylesheet_consumed_callback stylesheet_consumed_callback_{nullptr};
     void* stylesheet_consumed_user_data_{nullptr};
     webscene_webgpu_policy_callback webgpu_policy_callback_{nullptr};
@@ -937,7 +939,9 @@ webscene_engine* webscene_engine_create_with_options(const webscene_engine_optio
             options->struct_size >= offsetof(webscene_engine_options, stylesheet_consumed_callback);
         const auto has_stylesheet_consumed_callback =
             options->struct_size >= offsetof(webscene_engine_options, webgpu_policy_callback);
-        const auto has_webgpu_policy = options->struct_size >= sizeof(webscene_engine_options);
+        const auto has_webgpu_policy = options->struct_size >= offsetof(
+            webscene_engine_options, resource_load_callback_v4);
+        const auto has_resource_callback_v4 = options->struct_size >= sizeof(webscene_engine_options);
         return new webscene_engine(
             options->simulated_chart_command_count,
             std::move(cache_directory),
@@ -947,6 +951,8 @@ webscene_engine* webscene_engine_create_with_options(const webscene_engine_optio
             has_resource_callback_v2 ? options->resource_load_v2_user_data : nullptr,
             has_resource_callback_v3 ? options->resource_load_callback_v3 : nullptr,
             has_resource_callback_v3 ? options->resource_load_v3_user_data : nullptr,
+            has_resource_callback_v4 ? options->resource_load_callback_v4 : nullptr,
+            has_resource_callback_v4 ? options->resource_load_v4_user_data : nullptr,
             has_scene_published_callback ? options->scene_published_callback : nullptr,
             has_scene_published_callback ? options->scene_published_user_data : nullptr,
             has_text_measure_callback ? options->text_measure_callback : nullptr,

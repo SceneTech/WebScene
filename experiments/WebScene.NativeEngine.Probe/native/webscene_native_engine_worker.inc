@@ -52,7 +52,8 @@
                 const std::string& entity_tag,
                 int64_t last_modified_unix_seconds,
                 webscene_native::v8_dom_runtime::resource_response& response) {
-                if (resource_load_callback_v3_ == nullptr
+                if (resource_load_callback_v4_ == nullptr
+                    && resource_load_callback_v3_ == nullptr
                     && resource_load_callback_v2_ == nullptr
                     && resource_load_callback_ == nullptr) return false;
                 const auto started = std::chrono::steady_clock::now();
@@ -120,8 +121,35 @@
                     request_context.body.size(),
                     request_context.content_type.data(),
                     request_context.content_type.size()};
+                const webscene_resource_request_context_v4 native_context_v4{
+                    sizeof(webscene_resource_request_context_v4),
+                    request_context.initiator,
+                    request_context.origin.data(),
+                    request_context.origin.size(),
+                    request_context.referrer.data(),
+                    request_context.referrer.size(),
+                    request_context.mode,
+                    request_context.destination,
+                    request_context.method.data(),
+                    request_context.method.size(),
+                    request_context.body.data(),
+                    request_context.body.size(),
+                    request_context.content_type.data(),
+                    request_context.content_type.size(),
+                    request_context.credentials,
+                    request_context.cookie.data(),
+                    request_context.cookie.size()};
+                webscene_resource_response_v4 native_response{};
                 const auto invoke = [&](char* destination, size_t capacity) {
-                    return resource_load_callback_v3_ != nullptr
+                    native_response = {};
+                    native_response.struct_size = sizeof(native_response);
+                    return resource_load_callback_v4_ != nullptr
+                        ? resource_load_callback_v4_(
+                            resource_load_v4_user_data_, kind, url.data(), url.size(),
+                            entity_tag.data(), entity_tag.size(),
+                            last_modified_unix_seconds, &native_context_v4,
+                            &native_response, destination, capacity)
+                        : resource_load_callback_v3_ != nullptr
                         ? resource_load_callback_v3_(
                             resource_load_v3_user_data_, kind, url.data(), url.size(),
                             entity_tag.data(), entity_tag.size(),
@@ -185,6 +213,70 @@
                 response.content.assign(
                     buffer + envelope_header_size + response_tag_length,
                     required - envelope_header_size - response_tag_length);
+                if (resource_load_callback_v4_ != nullptr) {
+                    response.has_http_metadata = true;
+                    constexpr size_t maximum_response_headers = 64U;
+                    constexpr size_t maximum_response_metadata_bytes = 64U * 1024U;
+                    constexpr size_t maximum_response_url_bytes = 8U * 1024U;
+                    if (native_response.status < 100U || native_response.status > 599U
+                        || native_response.status_text_length > 1024U
+                        || native_response.final_url_length > maximum_response_url_bytes
+                        || native_response.header_count > maximum_response_headers
+                        || (native_response.status_text_length != 0U
+                            && native_response.status_text == nullptr)
+                        || (native_response.final_url_length != 0U
+                            && native_response.final_url == nullptr)
+                        || (native_response.header_count != 0U
+                            && native_response.headers == nullptr)) {
+                        return failed("invalid-response-metadata");
+                    }
+                    response.status = native_response.status;
+                    response.status_text.assign(
+                        native_response.status_text == nullptr ? "" : native_response.status_text,
+                        native_response.status_text_length);
+                    response.final_url.assign(
+                        native_response.final_url == nullptr ? "" : native_response.final_url,
+                        native_response.final_url_length);
+                    auto metadata_bytes = response.status_text.size() + response.final_url.size();
+                    response.headers.reserve(native_response.header_count);
+                    for (size_t index = 0; index < native_response.header_count; ++index) {
+                        const auto& header = native_response.headers[index];
+                        if (header.struct_size < sizeof(webscene_resource_header_v4)
+                            || header.name == nullptr || header.name_length == 0U
+                            || (header.value_length != 0U && header.value == nullptr)) {
+                            return failed("invalid-response-metadata");
+                        }
+                        metadata_bytes += header.name_length + header.value_length;
+                        if (metadata_bytes > maximum_response_metadata_bytes) {
+                            return failed("response-metadata-too-large");
+                        }
+                        std::string name(header.name, header.name_length);
+                        std::string value(
+                            header.value == nullptr ? "" : header.value,
+                            header.value_length);
+                        const auto valid_name = std::all_of(
+                            name.begin(), name.end(), [](unsigned char character) {
+                                return std::isalnum(character) || character == '!' || character == '#'
+                                    || character == '$' || character == '%' || character == '&'
+                                    || character == '\'' || character == '*' || character == '+'
+                                    || character == '-' || character == '.' || character == '^'
+                                    || character == '_' || character == '`' || character == '|'
+                                    || character == '~';
+                            });
+                        if (!valid_name || value.find_first_of("\r\n") != std::string::npos) {
+                            return failed("invalid-response-header");
+                        }
+                        std::transform(name.begin(), name.end(), name.begin(), [](unsigned char character) {
+                            return static_cast<char>(std::tolower(character));
+                        });
+                        response.headers.emplace_back(std::move(name), std::move(value));
+                        if (response.headers.back().first == "set-cookie") {
+                            response.cacheable = false;
+                        }
+                    }
+                } else {
+                    response.final_url = url;
+                }
                 return true;
             },
             [this] {

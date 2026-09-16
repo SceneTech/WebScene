@@ -1,3 +1,71 @@
+struct resolved_native_grid_named_placement final {
+    bool has_row{false};
+    bool has_column{false};
+    size_t row{0};
+    size_t column{0};
+    size_t row_span{1};
+    size_t column_span{1};
+};
+
+static resolved_native_grid_named_placement resolve_native_grid_named_placement(
+    const node_style::grid_data& container,
+    const node_style::grid_data& placement)
+{
+    const auto find_area = [&](std::string_view name)
+        -> const node_style::grid_data::named_area* {
+        const auto first = name.find_first_not_of(" \t\r\n\f");
+        if (first == std::string_view::npos) return nullptr;
+        name = name.substr(first, name.find_last_not_of(" \t\r\n\f") - first + 1U);
+        const auto found = std::find_if(
+            container.template_areas.begin(), container.template_areas.end(),
+            [&](const auto& area) { return area.name == name; });
+        return found == container.template_areas.end() ? nullptr : &*found;
+    };
+    resolved_native_grid_named_placement result;
+    if (placement.area_value.find('/') == std::string::npos) {
+        if (const auto* area = find_area(placement.area_value)) {
+            result.has_row = true;
+            result.has_column = true;
+            result.row = area->row_start;
+            result.column = area->column_start;
+            result.row_span = area->row_end - area->row_start;
+            result.column_span = area->column_end - area->column_start;
+            return result;
+        }
+    }
+    const auto find_generated_line_area = [&](std::string_view value, std::string_view suffix)
+        -> const node_style::grid_data::named_area* {
+        const auto first = value.find_first_not_of(" \t\r\n\f");
+        if (first == std::string_view::npos) return nullptr;
+        value = value.substr(first, value.find_last_not_of(" \t\r\n\f") - first + 1U);
+        if (value.ends_with(suffix)) value.remove_suffix(suffix.size());
+        return find_area(value);
+    };
+    if (const auto* area = find_generated_line_area(
+            placement.row_start_value, "-start")) {
+        result.has_row = true;
+        result.row = area->row_start;
+        result.row_span = area->row_end - area->row_start;
+        if (const auto* end_area = find_generated_line_area(
+                placement.row_end_value, "-end")) {
+            if (end_area->row_end > result.row) result.row_span = end_area->row_end - result.row;
+        }
+    }
+    if (const auto* area = find_generated_line_area(
+            placement.column_start_value, "-start")) {
+        result.has_column = true;
+        result.column = area->column_start;
+        result.column_span = area->column_end - area->column_start;
+        if (const auto* end_area = find_generated_line_area(
+                placement.column_end_value, "-end")) {
+            if (end_area->column_end > result.column) {
+                result.column_span = end_area->column_end - result.column;
+            }
+        }
+    }
+    return result;
+}
+
 static size_t native_table_span(std::string_view text, size_t maximum = 1000, bool preserve_zero = false) {
     size_t cursor = text.find_first_not_of(" \t\n\r\f");
     if (cursor == std::string_view::npos) return 1;
@@ -1823,7 +1891,8 @@ void native_document::layout_children(dom_node& parent)
         && !parent_grid.auto_columns.empty();
     if (is_grid_container(parent.style.display)
         && (parent_grid.two_columns || implicit_column_grid
-            || !parent_grid.template_columns.empty() || !parent_grid.template_rows.empty())) {
+            || !parent_grid.template_columns.empty() || !parent_grid.template_rows.empty()
+            || !parent_grid.template_areas.empty())) {
         using grid_track = node_style::grid_data::track;
         const auto distribute_fractions = [](std::vector<float>& sizes,
             const std::vector<grid_track>& tracks, float available, float gaps) {
@@ -1907,7 +1976,7 @@ void native_document::layout_children(dom_node& parent)
             ? parent.grid_layout().column_widths.size()
             : std::max<size_t>(
                 parent_grid.two_columns && effective_columns.empty() ? 2U : 1U,
-                effective_columns.size());
+                std::max(effective_columns.size(), parent_grid.template_area_column_count));
         const auto parse_line = [](std::string_view value) -> std::optional<int32_t> {
             const auto first = value.find_first_not_of(" \t\r\n");
             if (first == std::string_view::npos) return std::nullopt;
@@ -1983,21 +2052,29 @@ void native_document::layout_children(dom_node& parent)
                 continue;
             }
             const auto& placement = child->style.grid();
+            const auto named = resolve_native_grid_named_placement(parent_grid, placement);
             auto column_span = std::min(
                 column_count,
-                placement.compiled_full_columns ? column_count : parse_span(
+                named.has_column ? named.column_span
+                : placement.compiled_full_columns ? column_count : parse_span(
                     placement.column_start_value,
                     placement.column_end_value,
                     column_count));
-            auto row_span = parse_span(
+            auto row_span = named.has_row ? named.row_span : parse_span(
                 placement.row_start_value,
                 placement.row_end_value,
-                std::max<size_t>(parent_grid.template_rows.size(), 1U));
-            const auto authored_column_start = placement.compiled_full_columns
+                std::max<size_t>(
+                    std::max(parent_grid.template_rows.size(), parent_grid.template_area_row_count),
+                    1U));
+            const auto authored_column_start = named.has_column
+                ? std::optional<int32_t>{static_cast<int32_t>(named.column + 1U)}
+                : placement.compiled_full_columns
                 ? std::optional<int32_t>{1} : parse_line(placement.column_start_value);
             const auto authored_column_end = placement.compiled_full_columns
                 ? std::optional<int32_t>{-1} : parse_line(placement.column_end_value);
-            const auto authored_row = parse_line(placement.row_start_value);
+            const auto authored_row = named.has_row
+                ? std::optional<int32_t>{static_cast<int32_t>(named.row + 1U)}
+                : parse_line(placement.row_start_value);
             auto row = authored_row.has_value() && *authored_row > 0
                 ? static_cast<size_t>(*authored_row - 1) : auto_row;
             auto column = authored_column_start.has_value()
@@ -2029,7 +2106,12 @@ void native_document::layout_children(dom_node& parent)
             if (column + column_span > column_count) {
                 column = column_count - column_span;
             }
-            while (!fits(row, column, row_span, column_span)) {
+            // Fully definite placements may overlap. Named template areas are
+            // definite in both axes, so a second item assigned to the same
+            // area must retain the area's geometry instead of being shifted
+            // into the next implicit row by the auto-placement cursor.
+            while (!(named.has_row && named.has_column)
+                && !fits(row, column, row_span, column_span)) {
                 if (!authored_column_start.has_value()
                     && !authored_column_end.has_value()) {
                     ++column;
@@ -2138,7 +2220,8 @@ void native_document::layout_children(dom_node& parent)
         }
 
         const auto row_count = std::max<size_t>(
-            occupied.size(), parent_grid.template_rows.size());
+            occupied.size(),
+            std::max(parent_grid.template_rows.size(), parent_grid.template_area_row_count));
         std::vector<float> row_heights(row_count, 0.0F);
         std::vector<float> row_minimums(row_count, 0.0F);
         const auto contains_wrapping_flex = [&](const auto& self,
@@ -4300,7 +4383,8 @@ float native_document::compute_intrinsic_size(
     const auto intrinsic_implicit_column_grid = node_grid.auto_flow_column
         && !node_grid.auto_columns.empty();
     if (is_grid_container(node.style.display)
-        && (node_grid.two_columns || intrinsic_implicit_column_grid)) {
+        && (node_grid.two_columns || intrinsic_implicit_column_grid
+            || !node_grid.template_areas.empty())) {
 #if defined(WEBSCENE_NATIVE_ENGINE_INTRINSIC_SIZE_BRANCH_BENCHMARK)
         ++intrinsic_size_branch_counts_for_benchmark[7];
 #endif
@@ -4325,8 +4409,8 @@ float native_document::compute_intrinsic_size(
             }
         }
         const auto column_count = std::max<size_t>(
-            intrinsic_implicit_column_grid ? 1U : 2U,
-            effective_columns.size());
+            grid.two_columns ? 2U : 1U,
+            std::max(effective_columns.size(), grid.template_area_column_count));
         struct intrinsic_grid_item final {
             const dom_node* node{nullptr};
             size_t row{0};
@@ -4382,19 +4466,26 @@ float native_document::compute_intrinsic_size(
                 || is_out_of_flow(child->style.position)
                 || is_collapsible_whitespace_text(*child)) continue;
             const auto& placement = child->style.grid();
+            const auto named = resolve_native_grid_named_placement(grid, placement);
             const auto column_span = std::min(
                 column_count,
-                placement.compiled_full_columns ? column_count : span_for(
+                named.has_column ? named.column_span
+                : placement.compiled_full_columns ? column_count : span_for(
                     placement.column_start_value,
                     placement.column_end_value,
                     column_count));
-            const auto row_span = span_for(
+            const auto row_span = named.has_row ? named.row_span : span_for(
                 placement.row_start_value,
                 placement.row_end_value,
-                std::max<size_t>(grid.template_rows.size(), 1U));
-            const auto authored_column = placement.compiled_full_columns
+                std::max<size_t>(
+                    std::max(grid.template_rows.size(), grid.template_area_row_count), 1U));
+            const auto authored_column = named.has_column
+                ? std::optional<int32_t>{static_cast<int32_t>(named.column + 1U)}
+                : placement.compiled_full_columns
                 ? std::optional<int32_t>{1} : parse_line(placement.column_start_value);
-            const auto authored_row = parse_line(placement.row_start_value);
+            const auto authored_row = named.has_row
+                ? std::optional<int32_t>{static_cast<int32_t>(named.row + 1U)}
+                : parse_line(placement.row_start_value);
             auto row = authored_row.has_value() && *authored_row > 0
                 ? static_cast<size_t>(*authored_row - 1) : auto_row;
             auto column = authored_column.has_value() && *authored_column > 0
@@ -4414,7 +4505,7 @@ float native_document::compute_intrinsic_size(
                 }
                 return true;
             };
-            while (!fits(row, column)) {
+            while (!(named.has_row && named.has_column) && !fits(row, column)) {
                 if (!authored_column.has_value()) {
                     ++column;
                     if (column + column_span > column_count) {

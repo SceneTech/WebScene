@@ -309,9 +309,20 @@ struct node_style final {
             sizing kind{sizing::automatic};
         };
 
+        struct named_area final {
+            std::string name;
+            size_t row_start{0};
+            size_t row_end{0};
+            size_t column_start{0};
+            size_t column_end{0};
+        };
+
         std::vector<track> template_columns;
         std::vector<track> template_rows;
         std::vector<track> auto_columns;
+        std::vector<named_area> template_areas;
+        size_t template_area_row_count{0};
+        size_t template_area_column_count{0};
         bool subgrid_columns{false};
         bool two_columns{false};
         bool auto_flow_column{false};
@@ -319,6 +330,7 @@ struct node_style final {
         bool span_all{false};
         bool compiled_full_columns{false};
         int32_t column_start{0};
+        std::string template_areas_value{"none"};
         std::string area_value{"auto"};
         std::string row_value{"auto"};
         std::string row_start_value{"auto"};

@@ -173,6 +173,69 @@ void test_compact_go_to_fixed_grid_tracks_preserve_trailing_space(
         "fullscreen Go To dialog lost its fixed tracks or trailing space: " + compact);
 }
 
+void test_named_grid_template_areas_layout_cssom_and_mutation(webscene_engine* engine)
+{
+    resize(engine, 700, 400, 2U);
+    const auto result = evaluate(engine, R"JS(
+        (() => {
+          document.body.innerHTML = `
+            <style>
+              html,body { margin:0; }
+              #grid {
+                display:grid;width:700px;height:400px;
+                grid-template-columns:1fr 6fr 1fr 6fr 1fr;
+                grid-template-rows:80px minmax(0,1fr) 40px;
+                grid-template-areas:
+                  ". header header header ."
+                  ". left . right ."
+                  ". footer footer footer .";
+              }
+              #header { grid-area:header; }
+              #header-peer { grid-area:header; }
+              #left { grid-area:left; }
+              #right { grid-area:right; }
+              #footer { grid-row:footer-start / footer-end; grid-column:footer-start / footer-end; }
+            </style>
+            <div id="grid"><div id="header"></div><div id="header-peer"></div><div id="left"></div>
+              <div id="right"></div><div id="footer"></div></div>`;
+          const rect = id => {
+            const value = document.getElementById(id).getBoundingClientRect();
+            return [value.x,value.y,value.width,value.height].map(number =>
+              Math.round(number * 1000) / 1000);
+          };
+          const grid = document.getElementById('grid');
+          const computed = getComputedStyle(grid).getPropertyValue('grid-template-areas');
+          const beforeInvalid = grid.style.gridTemplateAreas;
+          grid.style.gridTemplateAreas = '"broken broken" "broken ."';
+          const invalidIgnored = grid.style.gridTemplateAreas === beforeInvalid;
+          grid.style.gridTemplateAreas =
+            '". footer footer footer ." ". left . right ." ". header header header ."';
+          const movedHeader = rect('header');
+          grid.style.removeProperty('grid-template-areas');
+          const restoredHeader = rect('header');
+
+          const first = '". a a a ." ". b . c ." ". d d d ."';
+          const second = '". d d d ." ". b . c ." ". a a a ."';
+          const started = performance.now();
+          for (let index = 0; index < 500; index++) {
+            grid.style.gridTemplateAreas = index % 2 ? first : second;
+          }
+          const elapsed = performance.now() - started;
+          if (elapsed > 2000) throw new Error(`named-area mutation gate exceeded: ${elapsed}ms`);
+          grid.style.removeProperty('grid-template-areas');
+          return {
+            computed, invalidIgnored,
+            header:rect('header'),headerPeer:rect('header-peer'),left:rect('left'),right:rect('right'),footer:rect('footer'),
+            movedHeader,restoredHeader
+          };
+        })()
+    )JS", "native-grid-template-areas.js");
+    require(
+        result == R"JSON({"computed":"\". header header header .\" \". left . right .\" \". footer footer footer .\"","invalidIgnored":true,"header":[46.667,0,606.667,80],"headerPeer":[46.667,0,606.667,80],"left":[46.667,80,280,280],"right":[373.333,80,280,280],"footer":[46.667,360,606.667,40],"movedHeader":[46.667,360,606.667,40],"restoredHeader":[46.667,0,606.667,80]})JSON",
+        "named grid template areas diverged in parsing, layout, CSSOM, or mutation: "
+            + result);
+}
+
 void test_media_query_list_tracks_outer_and_frame_viewport_breakpoints(
     webscene_engine* engine)
 {

@@ -106,6 +106,7 @@ inline uint64_t property_mask(std::string_view name)
         if (name == "flex-basis") return inline_flex_basis;
         if (name == "flex-wrap" || name == "flexWrap") return inline_flex_wrap;
         if (name == "grid-template-columns" || name == "grid-template-rows"
+            || name == "grid-template-areas"
             || name == "grid-area" || name == "grid-row"
             || name == "grid-row-start" || name == "grid-row-end"
             || name == "grid-column" || name == "grid-column-start"

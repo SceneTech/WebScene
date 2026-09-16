@@ -257,6 +257,34 @@ public sealed class CssMeasurementEngineTests
     }
 
     [Fact]
+    public void FixedPixelGridMeasuresNamedAreaSpans()
+    {
+        var root = new CssLayoutNode(1, new CssLayoutStyle
+        {
+            Display = CssLayoutDisplay.Grid,
+            GridTemplateColumns = "20px 40px 30px",
+            GridTemplateRows = "10px 20px 15px",
+            GridTemplateAreas = "\"header header .\" \"left . right\" \"footer footer footer\"",
+            ColumnGap = CssLayoutLength.Pixels(2),
+            RowGap = CssLayoutLength.Pixels(2)
+        });
+        root.Add(new CssLayoutNode(2, new CssLayoutStyle { GridArea = "header" }));
+        root.Add(new CssLayoutNode(3, new CssLayoutStyle { GridArea = "left" }));
+        root.Add(new CssLayoutNode(4, new CssLayoutStyle { GridArea = "right" }));
+        root.Add(new CssLayoutNode(5, new CssLayoutStyle { GridArea = "footer" }));
+        var measurer = new RecordingMeasurer(
+            (2, WebSceneSize.Empty), (3, WebSceneSize.Empty),
+            (4, WebSceneSize.Empty), (5, WebSceneSize.Empty));
+
+        var desired = new CssMeasurementEngine().Measure(
+            root, new WebSceneSize(94, 49), measurer);
+
+        Assert.Equal(new WebSceneSize(94, 49), desired);
+        Assert.Equal(62, measurer.Constraints[2].Width);
+        Assert.Equal(94, measurer.Constraints[5].Width);
+    }
+
+    [Fact]
     public void TableMeasurementSharesIntrinsicColumnWidthsAcrossRows()
     {
         var table = new CssLayoutNode(1, new CssLayoutStyle { Display = CssLayoutDisplay.Table });

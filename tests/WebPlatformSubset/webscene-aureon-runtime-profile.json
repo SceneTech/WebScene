@@ -10,6 +10,40 @@
   "required": [],
   "candidate": [
     {
+      "path": "webmessaging/message-channels/basics.any.js",
+      "type": "testharness",
+      "capabilities": [
+        "window-any-js-harness",
+        "message-channel",
+        "message-port-start"
+      ],
+      "evidence": ["unchanged-pinned-wpt-messagechannel-basics"],
+      "reason": "Unchanged pinned WPT proving queued MessageChannel delivery after explicit MessagePort.start()."
+    },
+    {
+      "path": "webmessaging/Channel_postMessage_clone_port_error.any.js",
+      "type": "testharness",
+      "capabilities": [
+        "window-any-js-harness",
+        "messageport-transfer",
+        "structured-clone-error"
+      ],
+      "evidence": ["unchanged-pinned-wpt-messageport-transfer-error"],
+      "reason": "Unchanged pinned WPT requiring DataCloneError when a MessagePort attempts to transfer itself."
+    },
+    {
+      "path": "webmessaging/message-channels/close.any.js",
+      "type": "testharness",
+      "capabilities": [
+        "window-any-js-harness",
+        "message-port-close",
+        "messageport-transfer",
+        "inflight-message-delivery"
+      ],
+      "evidence": ["unchanged-pinned-wpt-messageport-close"],
+      "reason": "Unchanged pinned WPT covering closed-port suppression, transfer rejection, and delivery of messages queued before close()."
+    },
+    {
       "path": "contracts/module-worker-clone.html",
       "type": "contract",
       "capabilities": [
@@ -19,6 +53,51 @@
         "arraybuffer-transfer"
       ],
       "reason": "Project-owned regression contract; full upstream WPT conformance remains separate.",
+      "nativeNavigation": true
+    },
+    {
+      "path": "contracts/worker-messageport-structured-clone.html",
+      "type": "contract",
+      "capabilities": [
+        "dedicated-workers",
+        "structured-clone",
+        "messageport-transfer",
+        "arraybuffer-transfer"
+      ],
+      "reason": "Focused Code OSS worker-host transport candidate with cycles, built-in clone values, transferable ownership, and MessageEvent shape.",
+      "nativeNavigation": true
+    },
+    {
+      "path": "contracts/iframe-window-messageport-origin.html",
+      "type": "contract",
+      "capabilities": [
+        "iframe-window-postmessage",
+        "same-origin-event-origin",
+        "messageport-transfer"
+      ],
+      "reason": "Focused Code OSS iframe bootstrap candidate matching the extension-host MessagePort handoff.",
+      "nativeNavigation": true
+    },
+    {
+      "path": "contracts/iframe-worker-extension-host.html",
+      "type": "contract",
+      "capabilities": [
+        "iframe-worker-constructor",
+        "module-workers",
+        "messageport-transfer"
+      ],
+      "reason": "Code OSS-shaped regression proving its hydrated extension-host iframe can construct a module Worker and bridge the transferred bootstrap port.",
+      "nativeNavigation": true
+    },
+    {
+      "path": "contracts/worker-termination-queue-messageerror.html",
+      "type": "contract",
+      "capabilities": [
+        "worker-termination",
+        "bounded-message-queues",
+        "messageerror"
+      ],
+      "reason": "WebScene resource-bound candidate covering prompt termination, deterministic saturation, and receiver-side clone failure delivery.",
       "nativeNavigation": true
     },
     {

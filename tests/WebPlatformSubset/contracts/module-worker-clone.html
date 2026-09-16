@@ -32,6 +32,11 @@ try {
         if(messages.length===2){
             record('Worker has isolated module state and transfers output',messages[0][0]===42);
             record('Worker transfer detaches sender and has no document',messages[1].detached&&messages[1].documentType==='undefined');
+            record('Worker exposes DedicatedWorkerGlobalScope identity',
+                messages[1].isWebWorker&&messages[1].dedicatedIdentity
+                &&messages[1].workerIdentity&&messages[1].eventTargetIdentity
+                &&messages[1].stringTag==='[object DedicatedWorkerGlobalScope]'
+                &&messages[1].workerScopeConstructorsReject);
             w.terminate();w.terminate();finish();
         }
     };

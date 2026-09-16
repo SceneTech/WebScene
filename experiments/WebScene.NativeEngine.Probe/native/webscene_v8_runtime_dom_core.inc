@@ -800,8 +800,18 @@
         std::erase_if(
             pending_window_messages,
             [&](const auto& task) {
-                return task.target_context.Get(isolate) == local_context;
+                if (task.target_context.Get(isolate) != local_context) return false;
+                const auto bytes = clone_packet_size(task.packet);
+                pending_window_message_bytes = bytes > pending_window_message_bytes
+                    ? 0U : pending_window_message_bytes - bytes;
+                return true;
             });
+        for (auto& binding : message_port_bindings) {
+            if (binding != nullptr
+                && binding->context.Get(isolate) == local_context) {
+                close_message_port_binding(*binding);
+            }
+        }
         std::erase_if(
             pending_dialog_close_events,
             [&](const auto& task) {

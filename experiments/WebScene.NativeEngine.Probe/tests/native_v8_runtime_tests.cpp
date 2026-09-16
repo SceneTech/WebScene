@@ -133,6 +133,16 @@ int main()
             test_idle_v8_foreground_completion();
             return 0;
         }
+#if defined(WEBSCENE_NATIVE_ENGINE_WITH_V8_INSPECTOR)
+        if (selected == "iframe-worker-inspector-detach") {
+            auto* focused_engine = webscene_engine_create(0);
+            require(focused_engine != nullptr,
+                "iframe Worker Inspector engine creation failed");
+            test_v8_inspector_raw_cdp_session(focused_engine);
+            webscene_engine_destroy(focused_engine);
+            return 0;
+        }
+#endif
         if(selected=="modal-backdrop") {
             auto* focused_engine=webscene_engine_create(0);
             require(focused_engine!=nullptr,"backdrop engine creation failed");

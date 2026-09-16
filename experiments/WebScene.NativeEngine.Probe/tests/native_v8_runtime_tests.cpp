@@ -146,6 +146,13 @@ int main()
             test_worker_starts_after_engine_configuration();
             return 0;
         }
+        if (selected == "dom-punctuation-keyboard") {
+            auto* focused_engine = webscene_engine_create(0);
+            require(focused_engine != nullptr, "keyboard event engine creation failed");
+            test_dom_punctuation_keyboard_event_identity(focused_engine);
+            webscene_engine_destroy(focused_engine);
+            return 0;
+        }
         if(selected=="modal-backdrop") {
             auto* focused_engine=webscene_engine_create(0);
             require(focused_engine!=nullptr,"backdrop engine creation failed");
@@ -929,6 +936,7 @@ int main()
     test_startup_profile_names_scripts_and_tasks();
 #endif
     test_native_text_input_focus_events_and_caret(engine);
+    test_dom_punctuation_keyboard_event_identity(engine);
     test_chart_printable_key_does_not_duplicate_into_newly_focused_search_input(engine);
     test_svg_dom_parser_preserves_fill_rule(engine);
     test_frame_script_dom_presence(engine);

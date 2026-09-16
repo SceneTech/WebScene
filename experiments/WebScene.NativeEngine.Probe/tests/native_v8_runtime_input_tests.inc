@@ -384,6 +384,106 @@ void keyboard_input(
     require(webscene_engine_enqueue(engine, &input) != 0, "keyboard input was rejected");
 }
 
+void test_dom_punctuation_keyboard_event_identity(webscene_engine* engine)
+{
+    resize(engine, 360, 180, 9780U);
+    execute_and_wait(engine, R"JS(
+      (() => {
+        document.body.innerHTML = `
+          <style>
+            body { margin: 0; background: #101010; }
+            #shortcut-target { width: 100%; height: 100%; background: #202020; }
+          </style>
+          <main id="shortcut-target" tabindex="0"></main>`;
+        const shortcutTarget = document.getElementById('shortcut-target');
+        shortcutTarget.focus();
+        globalThis.__punctuationKeyboardEvents = [];
+        shortcutTarget.addEventListener('keydown', event => {
+          __punctuationKeyboardEvents.push({
+            type: event.type,
+            key: event.key,
+            code: event.code,
+            keyCode: event.keyCode,
+            which: event.which,
+            ctrlKey: event.ctrlKey
+          });
+          if (event.ctrlKey && event.code === 'Backquote') {
+            event.preventDefault();
+            shortcutTarget.style.backgroundColor = '#123456';
+          }
+        });
+        shortcutTarget.addEventListener('keyup', event => {
+          __punctuationKeyboardEvents.push({
+            type: event.type,
+            key: event.key,
+            code: event.code,
+            keyCode: event.keyCode,
+            which: event.which,
+            ctrlKey: event.ctrlKey
+          });
+        });
+      })()
+    )JS", "dom-punctuation-keyboard-setup.js");
+    const webscene_scene_view* setup_scene = nullptr;
+    for (auto attempt = 0; attempt < 250 && setup_scene == nullptr; ++attempt) {
+        setup_scene = webscene_engine_acquire_latest_scene(engine);
+        if (setup_scene == nullptr) std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    require(setup_scene != nullptr, "DOM punctuation setup scene was not published");
+    webscene_scene_acknowledge(setup_scene);
+    webscene_scene_release(setup_scene);
+
+    webscene_engine_metrics before{};
+    webscene_engine_get_metrics(engine, &before);
+    const auto consumed_before = consumed_input_count(engine);
+    keyboard_input(
+        engine,
+        WEBSCENE_INPUT_KEY_DOWN,
+        192U,
+        9781U,
+        WEBSCENE_INPUT_MODIFIER_CONTROL);
+    keyboard_input(
+        engine,
+        WEBSCENE_INPUT_KEY_UP,
+        192U,
+        9782U,
+        WEBSCENE_INPUT_MODIFIER_CONTROL);
+    wait_for_consumed_inputs(
+        engine,
+        consumed_before + 2U,
+        "DOM punctuation keyboard sequence was not consumed");
+    const auto result = evaluate(
+        engine,
+        "__punctuationKeyboardEvents",
+        "dom-punctuation-keyboard-result.js");
+    require(
+        result == R"JSON([{"type":"keydown","key":"`","code":"Backquote","keyCode":192,"which":192,"ctrlKey":true},{"type":"keyup","key":"`","code":"Backquote","keyCode":192,"which":192,"ctrlKey":true}])JSON",
+        "DOM punctuation keyboard identity diverged: " + result);
+
+    auto published_shortcut_redraw = false;
+    for (auto attempt = 0; attempt < 250 && !published_shortcut_redraw; ++attempt) {
+        webscene_engine_metrics after{};
+        webscene_engine_get_metrics(engine, &after);
+        if (after.published_scenes > before.published_scenes) {
+            const auto* scene = webscene_engine_acquire_latest_scene(engine);
+            if (scene != nullptr) {
+                for (uint32_t index = 0; index < scene->header.command_count; ++index) {
+                    published_shortcut_redraw = published_shortcut_redraw
+                        || (scene->commands[index].rgba == 0x123456FFU);
+                }
+                webscene_scene_acknowledge(scene);
+                webscene_scene_release(scene);
+            }
+        }
+        if (!published_shortcut_redraw) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+    }
+    require(
+        published_shortcut_redraw,
+        "Ctrl+Backquote DOM mutation was consumed without publishing its redraw");
+}
+
 void test_chart_printable_key_does_not_duplicate_into_newly_focused_search_input(
     webscene_engine* engine)
 {

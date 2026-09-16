@@ -1357,6 +1357,46 @@ void test_node_iterator_isolated_scaling_and_memory_gate()
         "isolated NodeIterator memory gate exceeded its 70,000-node/handle or 128 MiB V8 bound");
 }
 
+void test_native_performance_timeline_identity(webscene_engine* engine)
+{
+    const auto result = evaluate(engine, R"JS((() => {
+      const probe = (performance, prefix) => {
+        const mark = performance.mark;
+        const measure = performance.measure;
+        const origin = performance.timeOrigin;
+        mark(prefix + '-start', { startTime: 12 });
+        mark(prefix + '-end', { startTime: 42 });
+        const entry = measure(
+          prefix + '-span', prefix + '-start', prefix + '-end');
+        try { performance.timeOrigin = 0; } catch {}
+        return {
+          finiteOrigin: Number.isFinite(origin),
+          wallClockAligned:
+            Math.abs(Date.now() - (origin + performance.now())) < 1000,
+          readOnlyOrigin: performance.timeOrigin === origin,
+          capturedIdentity:
+            mark === performance.mark && measure === performance.measure,
+          sameTimeline:
+            performance.getEntriesByName(prefix + '-span', 'measure')[0]
+              === entry,
+          startTime: entry.startTime,
+          duration: entry.duration
+        };
+      };
+      const frame = document.createElement('iframe');
+      document.body.appendChild(frame);
+      return {
+        main: probe(performance, 'native-main'),
+        frame: probe(frame.contentWindow.performance, 'native-frame')
+      };
+    })())JS", "native-performance-timeline-identity.js");
+    require(
+        result
+            == R"JSON({"main":{"finiteOrigin":true,"wallClockAligned":true,"readOnlyOrigin":true,"capturedIdentity":true,"sameTimeline":true,"startTime":12,"duration":30},"frame":{"finiteOrigin":true,"wallClockAligned":true,"readOnlyOrigin":true,"capturedIdentity":true,"sameTimeline":true,"startTime":12,"duration":30}})JSON",
+        "main/frame Performance methods did not share one retained timeline: "
+            + result);
+}
+
 void test_animation_frame_dispatch_is_attributed()
 {
     auto* engine = webscene_engine_create(0);

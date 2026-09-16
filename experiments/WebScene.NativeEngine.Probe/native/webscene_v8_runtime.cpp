@@ -21,6 +21,7 @@
 #endif
 #include "webscene_runtime_diagnostics.h"
 #include "webscene_embed_fallback.h"
+#include "webscene_performance_timeline_compatibility.h"
 
 #include "webscene_native_dom.h"
 #include "webscene_native_style_defaults.h"
@@ -3341,24 +3342,7 @@ struct v8_dom_runtime::implementation final {
         global->Set(local_context, js_string(isolate, "opener"), v8::Null(isolate)).Check();
         global->Set(local_context, js_string(isolate, "name"), js_string(isolate, "")).Check();
 
-        auto performance = v8::Object::New(isolate);
-        performance->Set(
-            local_context,
-            js_string(isolate, "now"),
-            v8::Function::New(local_context, performance_now).ToLocalChecked()).Check();
-        performance->Set(
-            local_context,
-            js_string(isolate, "getEntriesByName"),
-            v8::Function::New(local_context, performance_get_entries_by_name).ToLocalChecked()).Check();
-        performance->Set(local_context, js_string(isolate, "mark"),
-            v8::Function::New(local_context, performance_entry).ToLocalChecked()).Check();
-        performance->Set(local_context, js_string(isolate, "measure"),
-            v8::Function::New(local_context, performance_entry).ToLocalChecked()).Check();
-        performance->Set(local_context, js_string(isolate, "clearMarks"),
-            v8::Function::New(local_context, console_log).ToLocalChecked()).Check();
-        performance->Set(local_context, js_string(isolate, "clearMeasures"),
-            v8::Function::New(local_context, console_log).ToLocalChecked()).Check();
-        global->Set(local_context, js_string(isolate, "performance"), performance).Check();
+        install_performance_clock(local_context, global);
         global->Set(
             local_context,
             js_string(isolate, "__webSceneCreateObjectUrl"),
@@ -3748,6 +3732,7 @@ struct v8_dom_runtime::implementation final {
         crypto_script->Run(local_context).ToLocalChecked();
         local_context->Global()->Set(local_context, js_string(isolate, "structuredClone"),
             v8::Function::New(local_context, structured_clone, {}, 1).ToLocalChecked()).Check();
+        install_performance_timeline(local_context);
         auto worker_constructor=v8::Function::New(local_context, worker_construct, {}, 1).ToLocalChecked();
         v8::Local<v8::Value> event_target,worker_prototype,event_prototype;
         if(local_context->Global()->Get(local_context,js_string(isolate,"EventTarget")).ToLocal(&event_target)
@@ -3764,6 +3749,7 @@ struct v8_dom_runtime::implementation final {
         local_context->Global()->Set(local_context,js_string(isolate,"__webSceneRevokeObjectUrl"),v8::Function::New(local_context,revoke_object_url).ToLocalChecked()).Check();
         install_fetch_globals(local_context);
         install_intersection_observer_polyfill(local_context);
+        install_web_api_compatibility(local_context);
 #if defined(WEBSCENE_NATIVE_ENGINE_ENABLE_MEDIA)
         install_media_globals(local_context);
 #endif
@@ -4454,6 +4440,7 @@ struct v8_dom_runtime::implementation final {
 #include "webscene_v8_runtime_compiled_templates.inc"
 #include "webscene_v8_runtime_style.inc"
 #include "webscene_v8_runtime_browser_apis.inc"
+#include "webscene_v8_runtime_web_api_compatibility.inc"
     static void promise_rejected(v8::PromiseRejectMessage message)
     {
         auto* isolate = v8::Isolate::GetCurrent();

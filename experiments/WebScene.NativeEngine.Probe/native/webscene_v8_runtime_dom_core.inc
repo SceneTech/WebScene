@@ -1926,6 +1926,8 @@
         object->Set(local_context, js_string(isolate, "self"), object).Check();
         object->Set(local_context, js_string(isolate, "parent"), local_context->Global()).Check();
         install_screen(local_context, object);
+        install_performance_clock(local_context, object);
+        install_performance_timeline_on_object(local_context, object);
         frame_windows[node.id].Reset(isolate, object);
         return object;
     }

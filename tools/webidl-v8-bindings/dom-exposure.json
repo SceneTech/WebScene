@@ -215,7 +215,8 @@
         { "name": "closest", "callback": "element_closest", "length": 1 },
         { "name": "insertAdjacentElement", "callback": "insert_adjacent_element", "length": 2 },
         { "name": "insertAdjacentHTML", "callback": "insert_adjacent_html", "length": 2 },
-        { "name": "attachShadow", "callback": "attach_shadow", "length": 1 }
+        { "name": "attachShadow", "callback": "attach_shadow", "length": 1 },
+        { "name": "requestFullscreen", "callback": "element_request_fullscreen", "length": 0 }
       ],
       "constants": []
     },

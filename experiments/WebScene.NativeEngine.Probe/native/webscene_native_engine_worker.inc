@@ -318,6 +318,23 @@
                         + std::chrono::milliseconds(500);
                 }
             }
+            if (focus_changed_.exchange(false, std::memory_order_acq_rel)) {
+                const auto host_focused = host_focused_.load(std::memory_order_acquire);
+                if (runtime_ != nullptr
+                    && !runtime_->set_focused(host_focused)) {
+                    script_errors_.fetch_add(1, std::memory_order_relaxed);
+                    set_last_error(runtime_->last_error());
+                }
+            }
+            if (fullscreen_changed_.exchange(false, std::memory_order_acq_rel)) {
+                const auto host_fullscreen =
+                    host_fullscreen_.load(std::memory_order_acquire);
+                if (runtime_ != nullptr
+                    && !runtime_->set_fullscreen(host_fullscreen)) {
+                    script_errors_.fetch_add(1, std::memory_order_relaxed);
+                    set_last_error(runtime_->last_error());
+                }
+            }
             if (low_memory_requested_.exchange(false, std::memory_order_acq_rel)
                 && runtime_ != nullptr) {
                 runtime_->notify_low_memory();
@@ -904,6 +921,11 @@
                     changed = true;
                     continue;
                 }
+                if (auto* host = std::get_if<webscene_native::native_host_completion>(&request)) {
+                    if (runtime_) runtime_->complete_host_request(*host);
+                    changed = true;
+                    continue;
+                }
 #endif
                 if (auto* url = std::get_if<url_request>(&request)) {
                     if (url->initial_viewport) apply(*url->initial_viewport);
@@ -1273,6 +1295,8 @@
                     || resize_pending_.load(std::memory_order_acquire)
                     || low_memory_requested_.load(std::memory_order_acquire)
                     || visibility_changed_.load(std::memory_order_acquire)
+                    || focus_changed_.load(std::memory_order_acquire)
+                    || fullscreen_changed_.load(std::memory_order_acquire)
                     || preferred_color_scheme_changed_.load(
                         std::memory_order_acquire);
                 });

@@ -268,6 +268,39 @@ std::string take_host_request(webscene_engine* engine)
     return std::string(buffer.data(), copied - 1U);
 }
 
+struct typed_host_request_snapshot {
+    uint64_t id{};
+    uint32_t kind{};
+    uint32_t flags{};
+    uint64_t target_node_id{};
+    std::string content_type;
+    std::vector<uint8_t> bytes;
+    std::string url;
+    explicit operator bool() const noexcept { return kind != 0U; }
+};
+
+typed_host_request_snapshot take_typed_host_request(webscene_engine* engine)
+{
+    typed_host_request_snapshot result;
+    const auto* request = webscene_engine_take_typed_host_request_v1(engine);
+    if (request == nullptr) return result;
+    require(request->struct_size == sizeof(*request) && request->version == 1U,
+        "typed host request ABI metadata changed");
+    result.id = request->request_id;
+    result.kind = request->kind;
+    result.flags = request->flags;
+    result.target_node_id = request->target_node_id;
+    result.content_type = request->content_type == nullptr
+        ? "" : request->content_type;
+    result.url = request->url == nullptr ? "" : request->url;
+    if (request->byte_count != 0U) {
+        require(request->bytes != nullptr, "typed host request bytes were null");
+        result.bytes.assign(request->bytes, request->bytes + request->byte_count);
+    }
+    webscene_host_request_release_v1(request);
+    return result;
+}
+
 void execute(webscene_engine* engine, std::string_view source, std::string_view name)
 {
     if (webscene_engine_execute_script(

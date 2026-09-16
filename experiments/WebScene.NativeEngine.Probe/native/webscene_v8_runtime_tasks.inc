@@ -1419,6 +1419,9 @@
         case 8: return "Backspace";
         case 9: return "Tab";
         case 13: return "Enter";
+        case 16: return "Shift";
+        case 17: return "Control";
+        case 18: return "Alt";
         case 27: return "Escape";
         case 32: return " ";
         case 33: return "PageUp";
@@ -1430,6 +1433,7 @@
         case 39: return "ArrowRight";
         case 40: return "ArrowDown";
         case 46: return "Delete";
+        case 91: return "Meta";
         case 186: return ";";
         case 187: return "=";
         case 188: return ",";
@@ -1459,6 +1463,10 @@
             return "Digit" + std::string(1, static_cast<char>(key_code));
         }
         switch (key_code) {
+        case 16: return "ShiftLeft";
+        case 17: return "ControlLeft";
+        case 18: return "AltLeft";
+        case 91: return "MetaLeft";
         case 186: return "Semicolon";
         case 187: return "Equal";
         case 188: return "Comma";

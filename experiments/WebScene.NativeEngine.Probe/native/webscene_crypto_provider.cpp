@@ -8,6 +8,7 @@
 #include <mbedtls/platform_util.h>
 #include <mbedtls/aes.h>
 #include <mbedtls/gcm.h>
+#include <mbedtls/md.h>
 #include <mbedtls/sha1.h>
 #include <mbedtls/sha256.h>
 
@@ -220,6 +221,30 @@ crypto_provider_status crypto_digest(
     return algorithm == crypto_digest_algorithm::sha1
         ? sha1_digest(input, output, stop)
         : sha256_digest(input, output, stop);
+}
+
+crypto_provider_status crypto_hmac_sign(
+    crypto_digest_algorithm algorithm,
+    std::span<const std::uint8_t> key,
+    std::span<const std::uint8_t> input,
+    std::span<std::uint8_t> output,
+    std::stop_token stop) noexcept
+{
+    if (key.empty() || output.size() != crypto_digest_size(algorithm)) {
+        return crypto_provider_status::invalid_output;
+    }
+    if (stop.stop_requested()) return crypto_provider_status::cancelled;
+    const auto type = algorithm == crypto_digest_algorithm::sha1
+        ? MBEDTLS_MD_SHA1 : MBEDTLS_MD_SHA256;
+    const auto* info = mbedtls_md_info_from_type(type);
+    if (info == nullptr
+        || mbedtls_md_hmac(
+            info, key.data(), key.size(), input.data(), input.size(), output.data()) != 0) {
+        return crypto_provider_status::provider_failure;
+    }
+    return stop.stop_requested()
+        ? crypto_provider_status::cancelled
+        : crypto_provider_status::success;
 }
 
 secure_bytes::secure_bytes(std::span<const std::uint8_t> value)

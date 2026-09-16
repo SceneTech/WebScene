@@ -41,6 +41,13 @@ void crypto_zeroize(std::span<std::uint8_t> bytes) noexcept;
     std::span<std::uint8_t> output,
     std::stop_token stop = {}) noexcept;
 
+[[nodiscard]] crypto_provider_status crypto_hmac_sign(
+    crypto_digest_algorithm algorithm,
+    std::span<const std::uint8_t> key,
+    std::span<const std::uint8_t> input,
+    std::span<std::uint8_t> output,
+    std::stop_token stop = {}) noexcept;
+
 [[nodiscard]] crypto_provider_status crypto_aes_gcm_encrypt(
     std::span<const std::uint8_t> key,
     std::span<const std::uint8_t> iv,

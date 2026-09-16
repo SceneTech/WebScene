@@ -126,6 +126,28 @@ void test_published_digest_vectors()
         "NIST SHA-256 empty vector changed");
 }
 
+void test_rfc4231_hmac_sha256_vector()
+{
+    const std::array<std::uint8_t, 20U> key{
+        0x0b,0x0b,0x0b,0x0b,0x0b,0x0b,0x0b,0x0b,0x0b,0x0b,
+        0x0b,0x0b,0x0b,0x0b,0x0b,0x0b,0x0b,0x0b,0x0b,0x0b};
+    constexpr std::array<std::uint8_t, 8U> data{'H','i',' ','T','h','e','r','e'};
+    std::array<std::uint8_t, 32U> output{};
+    require(webscene_native::crypto_hmac_sign(
+        webscene_native::crypto_digest_algorithm::sha256, key, data, output)
+            == webscene_native::crypto_provider_status::success,
+        "Mbed TLS rejected the RFC 4231 HMAC-SHA-256 vector");
+    require(hex(output) ==
+        "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7",
+        "RFC 4231 HMAC-SHA-256 signature changed");
+    std::stop_source cancelled; cancelled.request_stop();
+    require(webscene_native::crypto_hmac_sign(
+        webscene_native::crypto_digest_algorithm::sha256,
+        key, data, output, cancelled.get_token())
+            == webscene_native::crypto_provider_status::cancelled,
+        "HMAC ignored cancellation before provider entry");
+}
+
 void test_cancellation_and_output_contract()
 {
     std::array<std::uint8_t, 31U> short_output{};
@@ -195,6 +217,7 @@ int main()
 {
     try {
         test_published_digest_vectors();
+        test_rfc4231_hmac_sha256_vector();
         test_nist_aes_gcm_vector_and_authentication();
         test_nist_aes_cbc_decrypt_and_padding();
         test_cancellation_and_output_contract();

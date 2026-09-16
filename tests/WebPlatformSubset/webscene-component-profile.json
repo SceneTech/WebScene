@@ -9,6 +9,13 @@
   },
   "required": [
     {
+      "path": "contracts/webcrypto-hmac-sign.html",
+      "type": "contract",
+      "capabilities": ["subtlecrypto-hmac-sign", "crypto-cipher-bounds"],
+      "evidence": ["wpt-WebCryptoAPI-hmac-2c705104", "rfc4231-hmac-sha256-vector"],
+      "reason": "The bundled Copilot extension signs messages with HMAC. This accepted slice imports opaque raw/JWK keys and signs through the pinned provider with bounded asynchronous work."
+    },
+    {
       "path": "contracts/webcrypto-aes-cbc-decrypt.html",
       "type": "contract",
       "capabilities": ["subtlecrypto-aes-cbc-decrypt", "crypto-cipher-bounds"],

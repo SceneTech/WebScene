@@ -11,7 +11,8 @@ and decrypt. SHA-1 is available only because the Web Crypto API requires it for
 compatibility; callers must not use it for new collision-resistant designs.
 AES-CBC decrypt is available for 128, 192, and 256-bit imported raw or JWK keys
 and performs Web Crypto PKCS#7 validation inside the provider boundary. HMAC
-remains unavailable until its focused API and vector layer lands.
+supports raw/JWK import and signing with SHA-1 or SHA-256. Verification and key
+generation are outside the accepted VS Code-driven slice.
 
 Mbed TLS is Apache-2.0 licensed. Its license is included in every native runtime
 package. The 3.6 branch is upstream's long-term-support line, but this pin does

@@ -417,6 +417,65 @@ void test_web_crypto_aes_cbc_decrypt_vectors_and_errors() {
     require(result=="1", result.empty()?"AES-CBC promise did not settle":result.c_str());
 }
 
+void test_web_crypto_hmac_vectors_and_bounds() {
+    webscene_native::native_document document;
+    webscene_native::v8_dom_runtime runtime(document,
+        []{return webscene_native::v8_dom_runtime::viewport_metrics{640,480,1,0};});
+    std::string result;
+    runtime.register_compiled_template("hmac-result", [&](auto& dom, const std::string& value) -> auto& {
+        result=value; return dom.create_element("span");
+    });
+    require(runtime.initialize(), "Web Crypto HMAC runtime failed");
+    require(runtime.execute(R"JS(
+      (async()=>{
+        const hex=value=>Array.from(new Uint8Array(value),byte=>byte.toString(16).padStart(2,'0')).join('');
+        const keyBytes=new Uint8Array(20);keyBytes.fill(0x0b);
+        const data=new TextEncoder().encode('Hi There');
+        const key=await crypto.subtle.importKey('raw',keyBytes,{name:'HMAC',hash:'SHA-256'},true,['sign']);
+        if(key.algorithm.name!=='HMAC'||key.algorithm.hash.name!=='SHA-256'||key.algorithm.length!==160
+          ||key.usages.join(',')!=='sign')throw Error('HMAC CryptoKey metadata changed');
+        if(hex(await crypto.subtle.sign('HMAC',key,data))!==
+          'b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7')
+          throw Error('RFC 4231 HMAC-SHA-256 vector changed');
+        const sha1=await crypto.subtle.importKey('raw',keyBytes,{name:'HMAC',hash:'SHA-1'},false,['sign']);
+        if(hex(await crypto.subtle.sign({name:'hmac'},sha1,data))!==
+          'b617318655057264e28bc0b6fb378c8ef146be00')throw Error('RFC 2202 HMAC-SHA-1 vector changed');
+        const jwk=await crypto.subtle.exportKey('jwk',key);
+        if(jwk.alg!=='HS256'||jwk.k!=='CwsLCwsLCwsLCwsLCwsLCwsLCws')throw Error('HMAC JWK changed');
+        const copied=new Uint8Array(1024);copied.fill(0x5a);
+        const pending=crypto.subtle.sign('HMAC',key,copied);copied.fill(0);keyBytes.fill(0);
+        const expected=hex(await crypto.subtle.sign('HMAC',key,new Uint8Array(1024).fill(0x5a)));
+        if(hex(await pending)!==expected)throw Error('HMAC did not copy input at call time');
+        for(const [algorithm,keyArg,input,expectedName] of [
+          ['RSA-PSS',key,data,'NotSupportedError'],
+          ['HMAC',key,{},'TypeError'],
+          ['HMAC',key,new Uint8Array(16*1024*1024+1),'OperationError']
+        ]){let name='';try{await crypto.subtle.sign(algorithm,keyArg,input);}catch(error){name=error.name;}
+          if(name!==expectedName)throw Error(`HMAC error mismatch: ${name} != ${expectedName}`);}
+        let empty='';try{await crypto.subtle.importKey('raw',new Uint8Array(),{name:'HMAC',hash:'SHA-256'},false,['sign']);}
+        catch(error){empty=error.name;}if(empty!=='DataError')throw Error(`empty HMAC key: ${empty}`);
+        let usage='';try{await crypto.subtle.importKey('raw',new Uint8Array(32),{name:'HMAC',hash:'SHA-256'},false,['verify']);}
+        catch(error){usage=error.name;}if(usage!=='SyntaxError')throw Error(`HMAC usage: ${usage}`);
+        const payload=new Uint8Array(256*1024),started=performance.now();
+        for(let index=0;index<16;++index)await crypto.subtle.sign('HMAC',key,payload);
+        if(performance.now()-started>=8000)throw Error('4 MiB HMAC throughput exceeded bound');
+        const retained=[key,sha1];
+        for(let index=0;index<254;++index)retained.push(await crypto.subtle.importKey(
+          'raw',new Uint8Array(32),{name:'HMAC',hash:'SHA-256'},false,['sign']));
+        let capacity='';try{await crypto.subtle.importKey(
+          'raw',new Uint8Array(32),{name:'HMAC',hash:'SHA-256'},false,['sign']);}
+        catch(error){capacity=error.name;}
+        if(capacity!=='OperationError')throw Error(`CryptoKey capacity: ${capacity}`);
+        document.createCompiledTemplate('hmac-result',1);
+      })().catch(error=>document.createCompiledTemplate('hmac-result',`${error.name}: ${error.message}`));
+    )JS", "webcrypto-hmac"), runtime.last_error().c_str());
+    for(unsigned index=0;index<10000&&result.empty();++index){
+        require(runtime.pump_task(),runtime.last_error().c_str());
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    require(result=="1",result.empty()?"HMAC promise did not settle":result.c_str());
+}
+
 void test_compiled_template_shared_document() {
     webscene_native::native_document document;
     webscene_native::v8_dom_runtime runtime(document,
@@ -973,6 +1032,10 @@ int main() {
                 test_web_crypto_aes_cbc_decrypt_vectors_and_errors();
                 return 0;
             }
+            if (selected == "webcrypto-hmac") {
+                test_web_crypto_hmac_vectors_and_bounds();
+                return 0;
+            }
             if (selected == "worker-messageport") {
                 test_blob_worker_source_lifetime();
                 test_worker_message_port_contracts();
@@ -985,6 +1048,7 @@ int main() {
         test_web_crypto_aes_gcm_vectors_realms_and_bounds();
         test_web_crypto_aes_gcm_shutdown_is_bounded();
         test_web_crypto_aes_cbc_decrypt_vectors_and_errors();
+        test_web_crypto_hmac_vectors_and_bounds();
         test_blob_worker_source_lifetime();
         test_worker_message_port_contracts();
         test_compiled_template_shared_document();

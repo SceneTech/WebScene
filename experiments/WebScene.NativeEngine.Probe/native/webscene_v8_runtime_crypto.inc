@@ -431,6 +431,48 @@
         return normalized == "AES-CBC";
     }
 
+    static bool hmac_algorithm(
+        v8::Isolate* isolate,
+        v8::Local<v8::Context> local_context,
+        v8::Local<v8::Value> value,
+        crypto_digest_algorithm& hash,
+        std::string& hash_name)
+    {
+        if (!value->IsObject() || value->IsString()) return false;
+        const auto dictionary = value.As<v8::Object>();
+        v8::Local<v8::Value> name, hash_value;
+        if (!dictionary->Get(local_context, js_string(isolate, "name")).ToLocal(&name)
+            || !dictionary->Get(local_context, js_string(isolate, "hash")).ToLocal(&hash_value)) {
+            return false;
+        }
+        auto normalized = to_utf8(isolate, name);
+        std::transform(normalized.begin(), normalized.end(), normalized.begin(),
+            [](unsigned char character) { return static_cast<char>(std::toupper(character)); });
+        if (normalized != "HMAC"
+            || !normalize_digest_algorithm(isolate, local_context, hash_value, hash)) {
+            return false;
+        }
+        hash_name = hash == crypto_digest_algorithm::sha1 ? "SHA-1" : "SHA-256";
+        return true;
+    }
+
+    static bool hmac_name(
+        v8::Isolate* isolate,
+        v8::Local<v8::Context> local_context,
+        v8::Local<v8::Value> value)
+    {
+        v8::Local<v8::Value> name = value;
+        if (value->IsObject() && !value->IsString()
+            && !value.As<v8::Object>()->Get(
+                local_context, js_string(isolate, "name")).ToLocal(&name)) {
+            return false;
+        }
+        auto normalized = to_utf8(isolate, name);
+        std::transform(normalized.begin(), normalized.end(), normalized.begin(),
+            [](unsigned char character) { return static_cast<char>(std::toupper(character)); });
+        return normalized == "HMAC";
+    }
+
     static void subtle_generate_key(const v8::FunctionCallbackInfo<v8::Value>& info)
     {
         auto* isolate = info.GetIsolate();
@@ -526,12 +568,124 @@
         });
     }
 
+    static void subtle_import_hmac(const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* isolate = info.GetIsolate();
+        auto local_context = isolate->GetCurrentContext();
+        auto resolver = v8::Promise::Resolver::New(local_context).ToLocalChecked();
+        info.GetReturnValue().Set(resolver->GetPromise());
+        const auto reject = [&](v8::Local<v8::Value> error) {
+            resolver->Reject(local_context, error).FromMaybe(false);
+        };
+        const auto dom_reject = [&](const char* message, const char* name) {
+            reject(crypto_dom_exception(isolate, local_context, message, name));
+        };
+        auto* self = current(isolate);
+        crypto_digest_algorithm hash{};
+        std::string hash_name;
+        if (self == nullptr || info.Length() < 5
+            || !hmac_algorithm(isolate, local_context, info[2], hash, hash_name)) {
+            dom_reject("HMAC requires SHA-1 or SHA-256 hash parameters", "NotSupportedError");
+            return;
+        }
+        constexpr std::array<std::string_view, 1U> allowed{"sign"};
+        std::vector<std::string> usages;
+        if (!read_usages(isolate, local_context, info[4], allowed, usages)
+            || usages.empty()) {
+            dom_reject("HMAC key usages must contain sign", "SyntaxError");
+            return;
+        }
+        const auto format = to_utf8(isolate, info[0]);
+        secure_bytes material;
+        std::size_t material_size = 0U;
+        if (format == "raw") {
+            if (!copy_digest_input(info[1], material, material_size)) {
+                reject(v8::Exception::TypeError(
+                    js_string(isolate, "Raw HMAC keyData must be a BufferSource")));
+                return;
+            }
+        } else if (format == "jwk" && info[1]->IsObject()) {
+            const auto jwk = info[1].As<v8::Object>();
+            v8::Local<v8::Value> kty, encoded, alg, ext;
+            if (!jwk->Get(local_context, js_string(isolate, "kty")).ToLocal(&kty)
+                || to_utf8(isolate, kty) != "oct"
+                || !jwk->Get(local_context, js_string(isolate, "k")).ToLocal(&encoded)
+                || !encoded->IsString()
+                || !base64url_decode(to_utf8(isolate, encoded), material)) {
+                dom_reject("Invalid HMAC JSON Web Key", "DataError");
+                return;
+            }
+            material_size = material.size();
+            if (jwk->Get(local_context, js_string(isolate, "alg")).ToLocal(&alg)
+                && !alg->IsUndefined()
+                && to_utf8(isolate, alg) != (hash == crypto_digest_algorithm::sha1 ? "HS1" : "HS256")) {
+                dom_reject("HMAC JWK alg does not match hash", "DataError");
+                return;
+            }
+            if (jwk->Get(local_context, js_string(isolate, "ext")).ToLocal(&ext)
+                && ext->IsBoolean() && info[3]->BooleanValue(isolate)
+                && !ext->BooleanValue(isolate)) {
+                dom_reject("A non-extractable JWK cannot be imported as extractable", "DataError");
+                return;
+            }
+            if (!jwk_allows_usages(isolate, local_context, jwk, usages)) {
+                dom_reject("HMAC JWK key_ops does not allow sign", "DataError");
+                return;
+            }
+        } else {
+            dom_reject("HMAC supports raw and jwk key formats", "NotSupportedError");
+            return;
+        }
+        if (material_size == 0U || material_size > maximum_cipher_input_bytes) {
+            dom_reject("HMAC keyData must be non-empty and at most 16 MiB", "DataError");
+            return;
+        }
+        const auto dictionary = info[2].As<v8::Object>();
+        v8::Local<v8::Value> length_value;
+        if (dictionary->Get(local_context, js_string(isolate, "length")).ToLocal(&length_value)
+            && !length_value->IsUndefined()) {
+            if (!length_value->IsUint32()
+                || length_value.As<v8::Uint32>()->Value() != material_size * 8U) {
+                dom_reject("HMAC length must match the imported key material", "DataError");
+                return;
+            }
+        }
+        std::erase_if(self->crypto_key_bindings,
+            [](const auto& binding) { return binding == nullptr || binding->released; });
+        if (self->crypto_keys.size() >= maximum_crypto_keys) {
+            dom_reject("CryptoKey capacity is exhausted", "OperationError");
+            return;
+        }
+        crypto_key_metadata metadata{
+            "HMAC", std::move(usages), hash_name, material_size * 8U,
+            info[3]->BooleanValue(isolate)};
+        const auto realm = crypto_realm_id(isolate, local_context);
+        const auto key = self->crypto_keys.create(realm, metadata, material.view());
+        material.clear();
+        v8::Local<v8::Object> wrapper;
+        if (key == 0U || !self->create_crypto_key_wrapper(
+                local_context, key, metadata).ToLocal(&wrapper)) {
+            static_cast<void>(self->crypto_keys.destroy(key, realm));
+            dom_reject("Unable to create the HMAC CryptoKey", "OperationError");
+            return;
+        }
+        resolver->Resolve(local_context, wrapper).FromMaybe(false);
+    }
+
     static void subtle_import_key(const v8::FunctionCallbackInfo<v8::Value>& info)
     {
         auto* isolate = info.GetIsolate();
         auto local_context = isolate->GetCurrentContext();
         if (!subtle_receiver_is_valid(isolate, local_context, info.This())) {
             isolate->ThrowException(v8::Exception::TypeError(js_string(isolate, "Illegal invocation")));
+            return;
+        }
+        crypto_digest_algorithm hmac_hash{};
+        std::string hmac_hash_name;
+        if (info.Length() > 2
+            && hmac_algorithm(
+                isolate, local_context, info[2], hmac_hash, hmac_hash_name)) {
+            subtle_import_hmac(info);
             return;
         }
         auto resolver = v8::Promise::Resolver::New(local_context).ToLocalChecked();
@@ -655,7 +809,9 @@
             ? crypto_key_handle(isolate, local_context, info[1]) : 0U;
         const auto metadata = self == nullptr ? std::nullopt : self->crypto_keys.describe(key, realm);
         if (!metadata
-            || (metadata->algorithm != "AES-GCM" && metadata->algorithm != "AES-CBC")) {
+            || (metadata->algorithm != "AES-GCM"
+                && metadata->algorithm != "AES-CBC"
+                && metadata->algorithm != "HMAC")) {
             reject("The CryptoKey does not belong to this realm or algorithm", "InvalidAccessError");
             return;
         }
@@ -688,8 +844,10 @@
             copy.clear();
             jwk->Set(local_context, js_string(isolate, "k"),
                 js_string(isolate, encoded.c_str())).Check();
-            const auto alg = "A" + std::to_string(metadata->length_bits)
-                + (metadata->algorithm == "AES-GCM" ? "GCM" : "CBC");
+            const auto alg = metadata->algorithm == "HMAC"
+                ? (metadata->hash == "SHA-1" ? std::string{"HS1"} : std::string{"HS256"})
+                : "A" + std::to_string(metadata->length_bits)
+                    + (metadata->algorithm == "AES-GCM" ? "GCM" : "CBC");
             jwk->Set(local_context, js_string(isolate, "alg"), js_string(isolate, alg.c_str())).Check();
             jwk->Set(local_context, js_string(isolate, "ext"),
                 v8::Boolean::New(isolate, metadata->extractable)).Check();
@@ -703,7 +861,7 @@
             return;
         }
         copy.clear();
-        reject("AES supports raw and jwk key formats", "NotSupportedError");
+        reject("Secret keys support raw and jwk key formats", "NotSupportedError");
     }
 
     static void subtle_aes_gcm(
@@ -939,6 +1097,87 @@
         subtle_aes_gcm(info, false);
     }
 
+    static void subtle_sign(const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* isolate = info.GetIsolate();
+        auto local_context = isolate->GetCurrentContext();
+        if (!subtle_receiver_is_valid(isolate, local_context, info.This())) {
+            isolate->ThrowException(v8::Exception::TypeError(js_string(isolate, "Illegal invocation")));
+            return;
+        }
+        auto resolver = v8::Promise::Resolver::New(local_context).ToLocalChecked();
+        info.GetReturnValue().Set(resolver->GetPromise());
+        const auto reject = [&](v8::Local<v8::Value> error) {
+            resolver->Reject(local_context, error).FromMaybe(false);
+        };
+        auto* self = current(isolate);
+        if (self == nullptr || info.Length() < 3) {
+            reject(v8::Exception::TypeError(
+                js_string(isolate, "HMAC sign requires algorithm, key, and data")));
+            return;
+        }
+        if (!hmac_name(isolate, local_context, info[0])) {
+            reject(crypto_dom_exception(isolate, local_context,
+                "The requested signing algorithm is not supported", "NotSupportedError"));
+            return;
+        }
+        secure_bytes data, key_material;
+        std::size_t data_size = 0U;
+        if (!copy_digest_input(info[2], data, data_size)) {
+            reject(v8::Exception::TypeError(js_string(isolate, "HMAC data must be a BufferSource")));
+            return;
+        }
+        if (data_size > maximum_cipher_input_bytes) {
+            reject(crypto_dom_exception(isolate, local_context,
+                "HMAC input exceeds the 16 MiB runtime bound", "OperationError"));
+            return;
+        }
+        const auto realm = crypto_realm_id(isolate, local_context);
+        const auto key = crypto_key_handle(isolate, local_context, info[1]);
+        const auto metadata = self->crypto_keys.describe(key, realm);
+        if (!metadata || metadata->algorithm != "HMAC"
+            || !self->crypto_keys.use(key, realm, "sign", [&](const auto&, auto bytes) {
+                key_material = secure_bytes(bytes);
+            })) {
+            reject(crypto_dom_exception(isolate, local_context,
+                "The CryptoKey does not allow HMAC sign", "InvalidAccessError"));
+            return;
+        }
+        const auto hash = metadata->hash == "SHA-1"
+            ? crypto_digest_algorithm::sha1 : crypto_digest_algorithm::sha256;
+        const auto request_bytes = data_size + key_material.size();
+        if (self->pending_ciphers.size() >= maximum_pending_ciphers
+            || request_bytes > maximum_pending_cipher_bytes
+                - std::min(self->pending_cipher_bytes, maximum_pending_cipher_bytes)) {
+            reject(crypto_dom_exception(isolate, local_context,
+                "HMAC request capacity is exhausted", "OperationError"));
+            return;
+        }
+        pending_cipher_task task;
+        task.context.Reset(isolate, local_context);
+        task.resolver.Reset(isolate, resolver);
+        task.input_size = request_bytes;
+        const auto token = task.stop.get_token();
+        const auto notify = self->runtime_work_available;
+        task.future = std::async(std::launch::async,
+            [hash, key = std::move(key_material), data = std::move(data), token, notify]() mutable {
+                async_cipher_result result;
+                result.bytes = secure_bytes(crypto_digest_size(hash));
+                result.status = crypto_hmac_sign(
+                    hash, key.view(), data.view(), result.bytes.mutable_view(), token);
+                key.clear(); data.clear();
+                if (result.status != crypto_provider_status::success) result.bytes.clear();
+                if (notify) notify();
+                return result;
+            });
+        self->pending_cipher_bytes += request_bytes;
+        self->pending_ciphers.push_back(std::move(task));
+        self->record_feature(
+            "web-api", "SubtleCrypto.sign(HMAC)", "supported",
+            "bounded asynchronous SHA-1 and SHA-256 HMAC through pinned Mbed TLS",
+            "native-binding");
+    }
+
     static void illegal_webcrypto_constructor(
         const v8::FunctionCallbackInfo<v8::Value>& info)
     {
@@ -970,12 +1209,13 @@
             v8::FunctionCallback callback;
             int length;
         };
-        constexpr std::array<subtle_method, 5U> methods{{
+        constexpr std::array<subtle_method, 6U> methods{{
             {"generateKey", subtle_generate_key, 3},
             {"importKey", subtle_import_key, 5},
             {"exportKey", subtle_export_key, 2},
             {"encrypt", subtle_encrypt, 3},
-            {"decrypt", subtle_decrypt, 3}}};
+            {"decrypt", subtle_decrypt, 3},
+            {"sign", subtle_sign, 3}}};
         for (const auto& method : methods) {
             auto function = v8::Function::New(
                 local_context, method.callback, {}, method.length).ToLocalChecked();

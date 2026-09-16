@@ -758,8 +758,9 @@ void test_controlled_switch_native_activation_matches_browser_semantics()
         activated == R"JSON({"checked":true,"ownDescriptor":true,"setterCalls":0,"syntheticChanges":1,"tracked":"true","events":["click:true:false","synthetic-change","input","change"],"focused":true,"focusWithin":true,"translate":[3,3]})JSON",
         "native activation did not preserve React-controlled switch semantics: "
             + activated);
-    require(
-        webscene_engine_requires_animation_frame(engine) != 0,
+    wait_for_animation_frame_demand(
+        engine,
+        true,
         "controlled switch transform transition did not request a host frame");
 
     webscene_engine_request_scene_checkpoint(engine);

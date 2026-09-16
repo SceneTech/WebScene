@@ -49,4 +49,10 @@
         }
     }
 
-    void install_web_api_compatibility(v8::Local<v8::Context>) {}
+    void install_web_api_compatibility(v8::Local<v8::Context> local_context)
+    {
+        install_web_api_compatibility_script(
+            local_context,
+            "FileReader",
+            fileReaderCompatibilityScript);
+    }

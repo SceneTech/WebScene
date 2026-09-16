@@ -22,6 +22,7 @@
 #include "webscene_runtime_diagnostics.h"
 #include "webscene_embed_fallback.h"
 #include "webscene_performance_timeline_compatibility.h"
+#include "webscene_file_reader_compatibility.h"
 
 #include "webscene_native_dom.h"
 #include "webscene_native_style_defaults.h"

@@ -235,6 +235,10 @@ int main()
             webscene_engine_destroy(focused_engine);
             return 0;
         }
+        if (selected == "websocket-file-reader") {
+            test_native_websocket_browser_api();
+            return 0;
+        }
         if (selected == "media-query-list") {
             auto* focused_engine = webscene_engine_create(0);
             require(focused_engine != nullptr, "focused engine creation failed");

@@ -121,8 +121,8 @@
            Text="Media-enabled runtime packaging requires the pinned Miniaudio license." />
     <Error Condition="!Exists('$(WebSceneNativeEngineV8LicensePath)') or !Exists('$(WebSceneNativeEngineIcuLicensePath)') or !Exists('$(WebSceneNativeEngineIXWebSocketLicensePath)')"
            Text="Packing the native WebScene runtime requires valid V8, ICU, and IXWebSocket license files." />
-    <Error Condition="$([System.String]::Copy('$(WebSceneNativeEngineRid)').StartsWith('win-')) and !Exists('$(WebSceneNativeEngineMbedTlsLicensePath)')"
-           Text="Packing a Windows native WebScene runtime requires a valid WebSceneNativeEngineMbedTlsLicensePath file." />
+    <Error Condition="!Exists('$(WebSceneNativeEngineMbedTlsLicensePath)')"
+           Text="Packing a native WebScene runtime requires a valid WebSceneNativeEngineMbedTlsLicensePath file." />
     <Error Condition="'$(WebSceneNativeEngineHtmlParserNoticesPath)' != '' and !Exists('$(WebSceneNativeEngineHtmlParserNoticesPath)')"
            Text="The configured HTML parser third-party notices file does not exist: $(WebSceneNativeEngineHtmlParserNoticesPath)" />
     <Error Condition="'$(WebSceneNativeEngineActualFileName)' != '$(WebSceneNativeEngineExpectedFileName)'"

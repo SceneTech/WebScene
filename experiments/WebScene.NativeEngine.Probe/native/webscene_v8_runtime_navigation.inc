@@ -111,6 +111,7 @@
         v8::HandleScope handle_scope(isolate);
         auto local_context = context.Get(isolate);
         v8::Context::Scope context_scope(local_context);
+        cancel_crypto_tasks_for_context(local_context);
 #if defined(WEBSCENE_NATIVE_ENGINE_ENABLE_GRAPHICS)
         retire_document_graphics();
 #endif

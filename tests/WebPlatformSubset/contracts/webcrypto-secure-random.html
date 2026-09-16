@@ -13,7 +13,8 @@ const finish = () => {
 
 const checkCrypto = (realmCrypto, label) => {
   record(`${label} exposes Crypto`, Object.prototype.toString.call(realmCrypto) === '[object Crypto]');
-  record(`${label} leaves incomplete SubtleCrypto absent`, typeof realmCrypto.subtle === 'undefined');
+  record(`${label} exposes accepted SubtleCrypto digest`,
+    Object.prototype.toString.call(realmCrypto.subtle) === '[object SubtleCrypto]');
   record(`${label} exposes Web IDL method names and arities`,
     realmCrypto.getRandomValues.name === 'getRandomValues'
       && realmCrypto.getRandomValues.length === 1
@@ -74,7 +75,7 @@ try {
     record('Iframe returns and fills the input view', result.same && result.filled);
     record('Iframe creates an RFC 4122 version 4 UUID',
       /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(result.uuid || ''));
-    record('Iframe leaves incomplete SubtleCrypto absent', result.subtle === 'undefined');
+    record('Iframe exposes accepted SubtleCrypto digest', result.subtle === 'object');
     completeRealm();
   });
   const child = frame.contentDocument;
@@ -110,7 +111,7 @@ try {
     record('Worker returns and fills the input view', result.same && result.filled);
     record('Worker creates an RFC 4122 version 4 UUID',
       /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(result.uuid || ''));
-    record('Worker leaves incomplete SubtleCrypto absent', result.subtle === 'undefined');
+    record('Worker exposes accepted SubtleCrypto digest', result.subtle === 'object');
     worker.terminate();
     completeRealm();
   };

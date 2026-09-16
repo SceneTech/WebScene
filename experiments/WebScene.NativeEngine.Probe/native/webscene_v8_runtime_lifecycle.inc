@@ -49,6 +49,7 @@
 
     ~implementation()
     {
+        for (auto& digest : pending_digests) digest.stop.request_stop();
         stop_message_ports();
         stop_workers();
 #if defined(WEBSCENE_NATIVE_ENGINE_ENABLE_MEDIA)
@@ -116,6 +117,13 @@
             } catch (...) {
             }
         }
+        for (auto& digest : pending_digests) {
+            if (!digest.future.valid()) continue;
+            try {
+                static_cast<void>(digest.future.get());
+            } catch (...) {
+            }
+        }
         // Stop and join every network worker before releasing persistent V8
         // handles or disposing the isolate. Socket callbacks never touch V8,
         // but they may still be appending to the native delivery queue.
@@ -156,6 +164,9 @@
         host_promise_targets.clear();
         file_targets.clear();
         pending_fetches.clear();
+        pending_digests.clear();
+        pending_digest_bytes = 0U;
+        crypto_keys.clear();
         interop_handles.clear();
         pending_promise_rejections.clear();
 #if defined(WEBSCENE_NATIVE_ENGINE_WITH_V8_INSPECTOR)

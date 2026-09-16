@@ -772,6 +772,7 @@
     void cancel_detached_frame_context_tasks(
         v8::Local<v8::Context> local_context)
     {
+        cancel_crypto_tasks_for_context(local_context);
         uint64_t cancelled_animation_frames = 0;
         const auto cancelled_timers = std::erase_if(
             timers,

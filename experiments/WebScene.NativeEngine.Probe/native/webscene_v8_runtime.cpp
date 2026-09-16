@@ -25,6 +25,7 @@
 #include "webscene_file_reader_compatibility.h"
 #include "webscene_stylesheet_cssom_compatibility.h"
 #include "webscene_secure_random.h"
+#include "webscene_crypto_provider.h"
 
 #include "webscene_native_dom.h"
 #include "webscene_native_style_defaults.h"
@@ -3334,6 +3335,7 @@ struct v8_dom_runtime::implementation final {
             v8::Symbol::GetToStringTag(isolate),
             js_string(isolate, "Crypto"),
             static_cast<v8::PropertyAttribute>(v8::ReadOnly | v8::DontEnum)).Check();
+        install_subtle_crypto(local_context, crypto);
         global->DefineOwnProperty(
             local_context,
             js_string(isolate, "crypto"),
@@ -4878,6 +4880,7 @@ struct v8_dom_runtime::implementation final {
 #include "webscene_v8_runtime_clone.inc"
 #include "webscene_v8_runtime_modules.inc"
 #include "webscene_v8_runtime_workers.inc"
+#include "webscene_v8_runtime_crypto.inc"
 #include "webscene_v8_runtime_media.inc"
 #include "webscene_v8_runtime_navigation.inc"
     // Keep these fragments in one translation unit: their order and direct
@@ -5620,6 +5623,7 @@ bool v8_dom_runtime::has_pending_tasks() const noexcept
         || impl_->has_worker_messages()
         || impl_->has_message_port_messages()
         || impl_->has_ready_fetch_task()
+        || impl_->has_ready_digest_task()
         || !impl_->pending_dialog_close_events.empty()
         || !impl_->pending_programmatic_scroll_events.empty()
         || !impl_->pending_frame_hydrations.empty()

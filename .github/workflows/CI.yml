@@ -42,8 +42,10 @@ jobs:
       if: runner.os == 'Linux'
       shell: bash
       run: |
-        sudo apt-get update
-        sudo apt-get install -y fontconfig fonts-noto-color-emoji
+        sudo flock /var/lock/webscene-apt.lock bash -c '
+          apt-get update
+          apt-get install -y fontconfig fonts-noto-color-emoji
+        '
         fc-cache -f
     - name: Select Xcode toolchain
       if: runner.os == 'macOS'

@@ -34,8 +34,10 @@ jobs:
           key: linux-cxx-llvm-22.1.1-efc4d945744f951d-v2
       - name: Install pinned build tools
         run: |
-          sudo apt-get update
-          sudo apt-get install -y ninja-build patchelf
+          sudo flock /var/lock/webscene-apt.lock bash -c '
+            apt-get update
+            apt-get install -y ninja-build patchelf
+          '
           python3 -m pip install --break-system-packages 'cmake==3.31.6'
       - name: Install checksum-pinned LLVM
         run: |

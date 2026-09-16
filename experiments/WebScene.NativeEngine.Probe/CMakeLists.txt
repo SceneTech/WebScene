@@ -543,6 +543,20 @@ if(WEBSCENE_NATIVE_ENGINE_ENABLE_V8)
         include("${CMAKE_CURRENT_LIST_DIR}/cmake/VerifyV8Inspector.cmake")
     endif()
 
+    # Web Crypto and Windows WebSocket TLS share one audited cross-platform
+    # provider. Pin both source and digest; Web Crypto has no platform or
+    # software fallback.
+    set(ENABLE_PROGRAMS OFF CACHE BOOL "" FORCE)
+    set(ENABLE_TESTING OFF CACHE BOOL "" FORCE)
+    set(MBEDTLS_FATAL_WARNINGS OFF CACHE BOOL "" FORCE)
+    FetchContent_Declare(
+        webscene_mbedtls
+        URL https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-3.6.4/mbedtls-3.6.4.tar.bz2
+        URL_HASH SHA256=ec35b18a6c593cf98c3e30db8b98ff93e8940a8c4e690e66b41dfc011d678110)
+    FetchContent_MakeAvailable(webscene_mbedtls)
+    target_sources(webscene_native_engine PRIVATE native/webscene_crypto_provider.cpp)
+    target_link_libraries(webscene_native_engine PRIVATE mbedcrypto)
+
     # WebSocket I/O is a native implementation detail. IXWebSocket supplies a
     # portable RFC 6455 client while the WebScene adapter below owns all V8
     # lifetime/threading semantics. Pin both source and digest so release
@@ -552,14 +566,6 @@ if(WEBSCENE_NATIVE_ENGINE_ENABLE_V8)
     if(WIN32)
         # Windows release runners do not carry a stable OpenSSL SDK. Build the
         # pinned Mbed TLS release and give IXWebSocket its normal CMake targets.
-        set(ENABLE_PROGRAMS OFF CACHE BOOL "" FORCE)
-        set(ENABLE_TESTING OFF CACHE BOOL "" FORCE)
-        set(MBEDTLS_FATAL_WARNINGS OFF CACHE BOOL "" FORCE)
-        FetchContent_Declare(
-            webscene_mbedtls
-            URL https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-3.6.4/mbedtls-3.6.4.tar.bz2
-            URL_HASH SHA256=ec35b18a6c593cf98c3e30db8b98ff93e8940a8c4e690e66b41dfc011d678110)
-        FetchContent_MakeAvailable(webscene_mbedtls)
         set(USE_MBED_TLS ON CACHE BOOL "" FORCE)
         set(USE_ZLIB OFF CACHE BOOL "" FORCE)
         set(MBEDTLS_FOUND TRUE)
@@ -578,6 +584,18 @@ if(WEBSCENE_NATIVE_ENGINE_ENABLE_V8)
         URL https://github.com/machinezone/IXWebSocket/archive/refs/tags/v12.0.1.tar.gz
         URL_HASH SHA256=d23bdc91dbfe2b9ae13c322d539392d7a6b8b506560f41c90e227fa0f86a2405)
     FetchContent_MakeAvailable(webscene_ixwebsocket)
+
+    if(BUILD_TESTING)
+        add_executable(webscene_crypto_provider_tests
+            tests/crypto_provider_tests.cpp
+            native/webscene_crypto_provider.cpp)
+        target_compile_features(webscene_crypto_provider_tests PRIVATE cxx_std_20)
+        target_include_directories(webscene_crypto_provider_tests PRIVATE native)
+        target_link_libraries(webscene_crypto_provider_tests PRIVATE mbedcrypto)
+        add_test(NAME webscene_crypto_provider_tests COMMAND webscene_crypto_provider_tests)
+        set_tests_properties(webscene_crypto_provider_tests PROPERTIES
+            LABELS "webcrypto;security;performance" TIMEOUT 10)
+    endif()
 
     target_sources(webscene_native_engine PRIVATE
         native/webscene_v8_runtime.cpp

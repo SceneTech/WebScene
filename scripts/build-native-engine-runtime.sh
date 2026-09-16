@@ -442,6 +442,11 @@ if [[ ! -f "$ixwebsocket_license" ]]; then
   echo "IXWebSocket license was not found at '$ixwebsocket_license'." >&2
   exit 1
 fi
+mbedtls_license="$build_dir/_deps/webscene_mbedtls-src/LICENSE"
+if [[ ! -f "$mbedtls_license" ]]; then
+  echo "Mbed TLS license was not found at '$mbedtls_license'." >&2
+  exit 1
+fi
 if [[ "$expected_kernel" == Linux ]] \
     && readelf -SW "$native_path" 2>&1 | grep -Eq '\.crel(\.|$)'; then
   echo "Native engine output contains unsupported CREL relocation sections: $native_path" >&2
@@ -462,6 +467,7 @@ pack_args=(
   "-p:WebSceneNativeEngineV8LicensePath=$v8_license"
   "-p:WebSceneNativeEngineIcuLicensePath=$icu_license"
   "-p:WebSceneNativeEngineIXWebSocketLicensePath=$ixwebsocket_license"
+  "-p:WebSceneNativeEngineMbedTlsLicensePath=$mbedtls_license"
   "-p:WebSceneNativeEngineV8PointerCompression=true"
   "-p:WebSceneNativeEngineV8SharedCage=true"
   "-p:WebSceneNativeEngineV8OptimizeForSizeDefault=true"

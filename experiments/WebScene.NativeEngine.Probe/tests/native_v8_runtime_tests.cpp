@@ -268,6 +268,30 @@ int main()
             webscene_engine_destroy(focused_engine);
             return 0;
         }
+        if (selected == "desktop-host-capabilities") {
+            auto* focused_engine = webscene_engine_create(0);
+            require(focused_engine != nullptr,
+                "desktop host capability engine creation failed");
+            test_document_direction_and_visibility_are_native_properties();
+            test_pointer_cursor_and_external_anchor_host_handoff(focused_engine);
+            test_table_cell_click_copies_text_to_host();
+            test_youtube_embed_fallback();
+            test_typed_window_host_request_performance(focused_engine);
+            test_clipboard_write_text_host_handoff(focused_engine);
+            test_clipboard_read_host_completion(focused_engine);
+            test_native_clipboard_shortcut_events(focused_engine);
+            test_clipboard_maximum_payload_gate(focused_engine);
+            test_clipboard_small_round_trip_performance(focused_engine);
+            test_fullscreen_host_completion(focused_engine);
+            webscene_engine_destroy(focused_engine);
+            return 0;
+        }
+        if (selected == "input-diagnostics-pointer-focus") {
+            test_document_direction_and_visibility_are_native_properties();
+            test_native_legacy_clipboard_completion_stress(nullptr);
+            test_native_pending_legacy_clipboard_shutdown(nullptr);
+            return 0;
+        }
         if (selected == "media-query-list") {
             auto* focused_engine = webscene_engine_create(0);
             require(focused_engine != nullptr, "focused engine creation failed");
@@ -814,6 +838,7 @@ int main()
     test_inline_block_preserves_vertical_padding(engine);
     test_pointer_hit_targets_and_related_targets_are_elements(engine);
     test_pointer_cursor_and_external_anchor_host_handoff(engine);
+    test_typed_window_host_request_performance(engine);
     test_enter_dispatches_browser_keypress_for_interval_commit(engine);
     test_css_linear_gradient_reaches_the_retained_scene(engine);
     {
@@ -903,6 +928,14 @@ int main()
     test_scrollspy_product_neutral_primitives(engine);
     test_native_performance_timeline_identity(engine);
     test_native_mutable_stylesheet_cssom(engine);
+    test_clipboard_write_text_host_handoff(engine);
+    test_clipboard_read_host_completion(engine);
+    test_native_clipboard_shortcut_events(engine);
+    test_native_legacy_clipboard_completion_stress(engine);
+    test_native_pending_legacy_clipboard_shutdown(engine);
+    test_clipboard_maximum_payload_gate(engine);
+    test_clipboard_small_round_trip_performance(engine);
+    test_fullscreen_host_completion(engine);
     test_component_library_dom_discovery_primitives(engine);
     test_document_id_index_preserves_tree_and_root_semantics(engine);
     test_dom_selector_apis_throw_syntax_error_for_invalid_selectors(engine);

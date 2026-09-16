@@ -2281,6 +2281,29 @@
         webscene_native::forms::ensure_text_value(node);
     }
 
+    bool dispatch_clipboard_shortcut(dom_node& target, const char* type)
+    {
+        auto local_context = context_for_node(target);
+        auto global = local_context->Global();
+        v8::Local<v8::Value> helper;
+        if (!global->Get(
+                local_context,
+                js_string(isolate, "__webSceneClipboardShortcut")).ToLocal(&helper)
+            || !helper->IsFunction()) {
+            return false;
+        }
+        v8::Local<v8::Value> arguments[] = {
+            js_string(isolate, type),
+            wrap_node(target)};
+        v8::Local<v8::Value> result;
+        if (!helper.As<v8::Function>()->Call(
+                local_context, global, 2, arguments).ToLocal(&result)) {
+            return false;
+        }
+        perform_microtask_checkpoint();
+        return result->BooleanValue(isolate);
+    }
+
     static size_t previous_utf8_boundary(const std::string& value, size_t index)
     {
         return webscene_native::forms::previous_utf8_boundary(value,index);
@@ -2447,6 +2470,17 @@
                 }
             }
             return true;
+        }
+        const auto clipboard_modifier = (input.flags
+            & (WEBSCENE_INPUT_MODIFIER_CONTROL | WEBSCENE_INPUT_MODIFIER_META)) != 0U
+            && (input.flags & WEBSCENE_INPUT_MODIFIER_ALT) == 0U;
+        if (!prevented && clipboard_modifier) {
+            if (key_code == 'C' || key_code == 'c')
+                return dispatch_clipboard_shortcut(*target, "copy");
+            if (key_code == 'X' || key_code == 'x')
+                return dispatch_clipboard_shortcut(*target, "cut");
+            if (key_code == 'V' || key_code == 'v')
+                return dispatch_clipboard_shortcut(*target, "paste");
         }
         if (prevented || !is_text_control(target)) return true;
         ensure_form_value(*target);
@@ -2811,7 +2845,18 @@
 
     bool dispatch_input(const webscene_input_event& input, bool defer_cursor_update = false)
     {
+        struct user_input_dispatch_scope {
+            bool& active;
+            bool previous;
+            explicit user_input_dispatch_scope(bool& value)
+                : active(value), previous(value) { active = true; }
+            ~user_input_dispatch_scope() { active = previous; }
+        } dispatch_scope{dispatching_user_input};
         current_input_sequence = input.sequence;
+        if (input.kind == WEBSCENE_INPUT_POINTER_DOWN
+            || input.kind == WEBSCENE_INPUT_KEY_DOWN) {
+            last_user_activation = std::chrono::steady_clock::now();
+        }
         auto isolate_locker = lock_shared_isolate();
         v8::Isolate::Scope isolate_scope(isolate);
         v8::HandleScope handle_scope(isolate);

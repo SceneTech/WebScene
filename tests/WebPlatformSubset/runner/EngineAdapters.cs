@@ -459,8 +459,22 @@ internal sealed unsafe class NativeWptEngineEnvironment : IWptEngineEnvironment
         var scalar = rune.Value;
         if (scalar is >= 'a' and <= 'z') return scalar - ('a' - 'A');
         if (scalar is >= 'A' and <= 'Z' or >= '0' and <= '9' || scalar == ' ') return scalar;
-        throw new NotSupportedException(
-            $"WPT send_keys currently supports printable ASCII letters, digits, and space, not '{rune}'.");
+        return scalar switch
+        {
+            ';' => 186,
+            '=' => 187,
+            ',' => 188,
+            '-' => 189,
+            '.' => 190,
+            '/' => 191,
+            '`' => 192,
+            '[' => 219,
+            '\\' => 220,
+            ']' => 221,
+            '\'' => 222,
+            _ => throw new NotSupportedException(
+                $"WPT send_keys does not support printable character '{rune}'.")
+        };
     }
 
     private void Enqueue(NativeInputEvent input)

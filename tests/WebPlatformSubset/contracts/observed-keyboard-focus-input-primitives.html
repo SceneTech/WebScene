@@ -55,12 +55,18 @@
     const afterText = observed.slice();
     const valueAfterText = first.value;
 
+    await test_driver.send_keys(first, ";=,-./`[\\]'");
+    const afterPunctuation = observed.slice();
+    const valueAfterPunctuation = first.value;
+
     await test_driver.send_keys(first, "\uE004");
     return {
       afterClick,
       activeAfterClick,
       afterText,
       valueAfterText,
+      afterPunctuation,
+      valueAfterPunctuation,
       finalEvents: observed.slice(),
       finalActive: document.activeElement,
       finalValue: first.value
@@ -102,9 +108,40 @@
 
   promise_test(async () => {
     const state = await lifecycle;
-    const tabEvents = state.finalEvents.slice(state.afterText.length);
+    const punctuationEvents = state.afterPunctuation.slice(state.afterText.length);
+    const keyboardEvents = punctuationEvents.filter(
+      event => event.type === "keydown" || event.type === "keyup");
+    const expected = [
+      [";", "Semicolon", 186], ["=", "Equal", 187],
+      [",", "Comma", 188], ["-", "Minus", 189],
+      [".", "Period", 190], ["/", "Slash", 191],
+      ["`", "Backquote", 192], ["[", "BracketLeft", 219],
+      ["\\", "Backslash", 220], ["]", "BracketRight", 221],
+      ["'", "Quote", 222]
+    ];
+
+    assert_equals(keyboardEvents.length, expected.length * 2,
+      "every punctuation key publishes one keydown and keyup");
+    expected.forEach(([key, code, keyCode], index) => {
+      const down = keyboardEvents[index * 2];
+      const up = keyboardEvents[index * 2 + 1];
+      assert_equals(down.type, "keydown", `${code} keydown type`);
+      assert_equals(up.type, "keyup", `${code} keyup type`);
+      for (const [event, phase] of [[down, "keydown"], [up, "keyup"]]) {
+        assert_equals(event.key, key, `${code} ${phase}.key`);
+        assert_equals(event.code, code, `${code} ${phase}.code`);
+        assert_equals(event.keyCode, keyCode, `${code} ${phase}.keyCode`);
+      }
+    });
+    assert_equals(state.valueAfterPunctuation, "Z;=,-./`[\\]'",
+      "punctuation text input mutates the control value in order");
+  }, "unshifted punctuation input publishes coherent browser keyboard identities");
+
+  promise_test(async () => {
+    const state = await lifecycle;
+    const tabEvents = state.finalEvents.slice(state.afterPunctuation.length);
     assert_equals(state.finalActive, second, "Tab transfers focus to the next control");
-    assert_equals(state.finalValue, "Z", "focus transfer preserves the edited value");
+    assert_equals(state.finalValue, "Z;=,-./`[\\]'", "focus transfer preserves the edited value");
     assert_equals(matching(tabEvents, "keydown", "first").length, 1, "Tab keydown targets the old focus");
     assert_equals(matching(tabEvents, "blur", "first").length, 1, "old focus blur count");
     assert_equals(matching(tabEvents, "focusout", "first").length, 1, "old focusout count");

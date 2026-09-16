@@ -1427,6 +1427,17 @@
         case 39: return "ArrowRight";
         case 40: return "ArrowDown";
         case 46: return "Delete";
+        case 186: return ";";
+        case 187: return "=";
+        case 188: return ",";
+        case 189: return "-";
+        case 190: return ".";
+        case 191: return "/";
+        case 192: return "`";
+        case 219: return "[";
+        case 220: return "\\";
+        case 221: return "]";
+        case 222: return "'";
         default:
             if ((key_code >= '0' && key_code <= '9')
                 || (key_code >= 'A' && key_code <= 'Z')) {
@@ -1443,6 +1454,20 @@
         }
         if (key_code >= '0' && key_code <= '9') {
             return "Digit" + std::string(1, static_cast<char>(key_code));
+        }
+        switch (key_code) {
+        case 186: return "Semicolon";
+        case 187: return "Equal";
+        case 188: return "Comma";
+        case 189: return "Minus";
+        case 190: return "Period";
+        case 191: return "Slash";
+        case 192: return "Backquote";
+        case 219: return "BracketLeft";
+        case 220: return "Backslash";
+        case 221: return "BracketRight";
+        case 222: return "Quote";
+        default: break;
         }
         return keyboard_key_name(key_code);
     }

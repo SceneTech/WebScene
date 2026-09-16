@@ -1631,9 +1631,9 @@
     {
       "path": "contracts/observed-keyboard-focus-input-primitives.html",
       "type": "testharness",
-      "capabilities": ["printable-webdriver-input", "keydown-keyup-order", "beforeinput-input-order", "input-event-fields", "text-control-value-mutation", "focus-focusin-order", "blur-focusout-order", "tab-focus-transfer"],
-      "evidence": ["observed-hosted-component-native-input-feature-audit", "indicators-search-text-editing"],
-      "reason": "Product-neutral interaction reduction for keyboard, focus, and text-input lifecycles observed in complex hosted components. The adapter drives a printable ASCII key and WebDriver Tab through each engine; the assertions require event order and fields, value mutation, activeElement transfer, and both bubbling and non-bubbling focus event families. Native evidence passes 3/3 after the independent focus-visible adapter regression also passes: artifacts/observed-keyboard-focus-input-v2-native/results.json and artifacts/focus-visible-adapter-regression-v2/results.json. Managed passes 1/3 and retains explicit candidate-only gaps for beforeinput sequencing and post-Tab keyup targeting: artifacts/observed-keyboard-focus-input-v1/managed/results.json."
+      "capabilities": ["printable-webdriver-input", "punctuation-keyboard-identity", "keydown-keyup-order", "beforeinput-input-order", "input-event-fields", "text-control-value-mutation", "focus-focusin-order", "blur-focusout-order", "tab-focus-transfer"],
+      "evidence": ["observed-hosted-component-native-input-feature-audit", "indicators-search-text-editing", "dom-punctuation-keyboard-native-gate"],
+      "reason": "Product-neutral interaction reduction for keyboard, focus, and text-input lifecycles observed in complex hosted components. The adapter drives letters, the eleven unshifted DOM punctuation keys, and WebDriver Tab through the native engine; the assertions require coherent key/code/keyCode identity, event order and fields, value mutation, activeElement transfer, and both bubbling and non-bubbling focus event families. Keep candidate until every released native RID passes."
     },
     {
       "path": "contracts/observed-native-input-event-primitives.html",

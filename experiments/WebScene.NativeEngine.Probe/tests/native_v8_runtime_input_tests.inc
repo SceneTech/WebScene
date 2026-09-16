@@ -384,6 +384,164 @@ void keyboard_input(
     require(webscene_engine_enqueue(engine, &input) != 0, "keyboard input was rejected");
 }
 
+void test_dom_punctuation_keyboard_event_identity(webscene_engine* engine)
+{
+    constexpr std::array<uint32_t, 11> punctuation_codes{
+        186U, 187U, 188U, 189U, 190U, 191U,
+        192U, 219U, 220U, 221U, 222U};
+    resize(engine, 360, 180, 9780U);
+    execute_and_wait(engine, R"JS(
+      (() => {
+        document.body.innerHTML = `
+          <style>
+            body { margin: 0; background: #101010; }
+            #shortcut-target { width: 100%; height: 100%; background: #202020; }
+          </style>
+          <main id="shortcut-target" tabindex="0"></main>`;
+        const shortcutTarget = document.getElementById('shortcut-target');
+        shortcutTarget.focus();
+        globalThis.__punctuationKeyboardEvents = [];
+        globalThis.__punctuationKeyboardEventCount = 0;
+        const record = event => {
+          ++__punctuationKeyboardEventCount;
+          if (__punctuationKeyboardEvents.length >= 22) return;
+          __punctuationKeyboardEvents.push({
+            type: event.type,
+            key: event.key,
+            code: event.code,
+            keyCode: event.keyCode,
+            which: event.which,
+            ctrlKey: event.ctrlKey
+          });
+        };
+        shortcutTarget.addEventListener('keydown', event => {
+          record(event);
+          if (event.ctrlKey && event.code === 'Backquote') {
+            event.preventDefault();
+            shortcutTarget.style.backgroundColor = '#123456';
+          }
+        });
+        shortcutTarget.addEventListener('keyup', record);
+      })()
+    )JS", "dom-punctuation-keyboard-setup.js");
+    const webscene_scene_view* setup_scene = nullptr;
+    for (auto attempt = 0; attempt < 250 && setup_scene == nullptr; ++attempt) {
+        setup_scene = webscene_engine_acquire_latest_scene(engine);
+        if (setup_scene == nullptr) std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    require(setup_scene != nullptr, "DOM punctuation setup scene was not published");
+    webscene_scene_acknowledge(setup_scene);
+    webscene_scene_release(setup_scene);
+
+    webscene_engine_metrics before{};
+    webscene_engine_get_metrics(engine, &before);
+    const auto consumed_before = consumed_input_count(engine);
+    uint64_t sequence = 9781U;
+    for (const auto key_code : punctuation_codes) {
+        const auto modifiers = key_code == 192U
+            ? WEBSCENE_INPUT_MODIFIER_CONTROL
+            : 0U;
+        keyboard_input(
+            engine,
+            WEBSCENE_INPUT_KEY_DOWN,
+            key_code,
+            sequence++,
+            modifiers);
+        keyboard_input(
+            engine,
+            WEBSCENE_INPUT_KEY_UP,
+            key_code,
+            sequence++,
+            modifiers);
+    }
+    wait_for_consumed_inputs(
+        engine,
+        consumed_before + punctuation_codes.size() * 2U,
+        "DOM punctuation keyboard sequence was not consumed");
+    const auto result = evaluate(
+        engine,
+        R"JS((() => {
+          const expected = [
+            [186, ';', 'Semicolon'], [187, '=', 'Equal'],
+            [188, ',', 'Comma'], [189, '-', 'Minus'],
+            [190, '.', 'Period'], [191, '/', 'Slash'],
+            [192, '`', 'Backquote'], [219, '[', 'BracketLeft'],
+            [220, '\\', 'Backslash'], [221, ']', 'BracketRight'],
+            [222, "'", 'Quote']
+          ].flatMap(([keyCode, key, code]) => [
+            { type: 'keydown', key, code, keyCode, which: keyCode,
+              ctrlKey: keyCode === 192 },
+            { type: 'keyup', key, code, keyCode, which: keyCode,
+              ctrlKey: keyCode === 192 }
+          ]);
+          return {
+            count: __punctuationKeyboardEvents.length,
+            matches: JSON.stringify(__punctuationKeyboardEvents) === JSON.stringify(expected)
+          };
+        })())JS",
+        "dom-punctuation-keyboard-result.js");
+    require(
+        result == R"JSON({"count":22,"matches":true})JSON",
+        "DOM punctuation keyboard identity diverged: " + result);
+
+    auto published_shortcut_redraw = false;
+    for (auto attempt = 0; attempt < 250 && !published_shortcut_redraw; ++attempt) {
+        webscene_engine_metrics after{};
+        webscene_engine_get_metrics(engine, &after);
+        if (after.published_scenes > before.published_scenes) {
+            const auto* scene = webscene_engine_acquire_latest_scene(engine);
+            if (scene != nullptr) {
+                for (uint32_t index = 0; index < scene->header.command_count; ++index) {
+                    published_shortcut_redraw = published_shortcut_redraw
+                        || (scene->commands[index].rgba == 0x123456FFU);
+                }
+                webscene_scene_acknowledge(scene);
+                webscene_scene_release(scene);
+            }
+        }
+        if (!published_shortcut_redraw) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+    }
+    require(
+        published_shortcut_redraw,
+        "Ctrl+Backquote DOM mutation was consumed without publishing its redraw");
+
+    constexpr uint64_t performance_event_count = 4096U;
+    const auto performance_consumed_before = consumed_input_count(engine);
+    const auto performance_started = std::chrono::steady_clock::now();
+    for (uint64_t index = 0; index < performance_event_count; ++index) {
+        keyboard_input(
+            engine,
+            (index & 1U) == 0U ? WEBSCENE_INPUT_KEY_DOWN : WEBSCENE_INPUT_KEY_UP,
+            punctuation_codes[(index / 2U) % punctuation_codes.size()],
+            sequence++);
+    }
+    const auto performance_deadline = performance_started + std::chrono::seconds(5);
+    while (consumed_input_count(engine)
+            < performance_consumed_before + performance_event_count
+        && std::chrono::steady_clock::now() < performance_deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    const auto performance_elapsed = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - performance_started).count();
+    require(
+        consumed_input_count(engine)
+            >= performance_consumed_before + performance_event_count,
+        "punctuation keyboard dispatch exceeded its five-second bound");
+    const auto count = evaluate(
+        engine,
+        "__punctuationKeyboardEventCount",
+        "dom-punctuation-keyboard-performance-result.js");
+    require(
+        count == std::to_string(
+            punctuation_codes.size() * 2U + performance_event_count),
+        "punctuation keyboard performance run dropped DOM events: " + count);
+    std::cout << "DOM punctuation keyboard gate: events="
+              << performance_event_count << " elapsed="
+              << performance_elapsed << "s\n";
+}
+
 void test_chart_printable_key_does_not_duplicate_into_newly_focused_search_input(
     webscene_engine* engine)
 {

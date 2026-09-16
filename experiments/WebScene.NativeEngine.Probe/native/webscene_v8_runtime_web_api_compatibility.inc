@@ -55,4 +55,8 @@
             local_context,
             "FileReader",
             fileReaderCompatibilityScript);
+        install_web_api_compatibility_script(
+            local_context,
+            "stylesheet CSSOM",
+            cssCompatibilityScript);
     }

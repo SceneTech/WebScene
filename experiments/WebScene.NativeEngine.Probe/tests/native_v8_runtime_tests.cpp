@@ -239,6 +239,14 @@ int main()
             test_native_websocket_browser_api();
             return 0;
         }
+        if (selected == "stylesheet-cssom") {
+            auto* focused_engine = webscene_engine_create(0);
+            require(focused_engine != nullptr,
+                "stylesheet CSSOM engine creation failed");
+            test_native_mutable_stylesheet_cssom(focused_engine);
+            webscene_engine_destroy(focused_engine);
+            return 0;
+        }
         if (selected == "media-query-list") {
             auto* focused_engine = webscene_engine_create(0);
             require(focused_engine != nullptr, "focused engine creation failed");
@@ -871,6 +879,7 @@ int main()
     test_document_links_is_a_live_named_html_collection(engine);
     test_scrollspy_product_neutral_primitives(engine);
     test_native_performance_timeline_identity(engine);
+    test_native_mutable_stylesheet_cssom(engine);
     test_component_library_dom_discovery_primitives(engine);
     test_document_id_index_preserves_tree_and_root_semantics(engine);
     test_dom_selector_apis_throw_syntax_error_for_invalid_selectors(engine);

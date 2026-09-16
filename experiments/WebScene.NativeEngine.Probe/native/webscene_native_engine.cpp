@@ -752,8 +752,9 @@ private:
     bool native_scene_active_{false};
     std::shared_ptr<acknowledgement_state> acknowledgement_{
         std::make_shared<acknowledgement_state>()};
-    // Keep the worker last: every field it can observe is fully initialized before
-    // the thread starts, and jthread joins before those fields are destroyed.
+    // Keep the worker last. The constructor starts it only after configuration
+    // is complete, and jthread joins before the observed fields are destroyed.
+    std::atomic<bool> worker_start_ready_{false};
     std::jthread worker_;
 };
 

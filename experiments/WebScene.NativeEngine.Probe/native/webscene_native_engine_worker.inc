@@ -1,6 +1,12 @@
     void run(std::stop_token token)
     {
-        try { run_core(token); }
+        try {
+            if (!worker_start_ready_.load(std::memory_order_acquire)) {
+                throw std::logic_error(
+                    "WebScene worker started before engine configuration completed");
+            }
+            run_core(token);
+        }
         catch (const std::exception& error) {
             set_last_error(error.what());
             webscene_native::runtime_diagnostic failure;

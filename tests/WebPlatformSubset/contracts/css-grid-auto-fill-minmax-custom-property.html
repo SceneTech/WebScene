@@ -1,0 +1,60 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Auto-fill minmax tracks retain a custom-property minimum</title>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<style>
+  html, body { margin: 0; }
+  #results {
+    --minimum: 180px;
+    display: grid;
+    gap: 20px 12px;
+    grid-template-columns: repeat(auto-fill, minmax(var(--minimum), 1fr));
+    width: 1000px;
+  }
+  #top { grid-column: 1 / 3; height: 40px; }
+  #songs { grid-column: 3 / -1; height: 40px; }
+  #wide { grid-column: 1 / -1; height: 30px; }
+</style>
+<main id="results">
+  <section id="top"></section><section id="songs"></section>
+  <section id="wide"></section>
+</main>
+<script>
+  const close = (actual, expected) => Math.abs(actual - expected) <= .02;
+  const rect = id => document.getElementById(id).getBoundingClientRect();
+  const assertRect = (id, expected) => {
+    const actual = rect(id);
+    assert_true(
+      close(actual.x, expected[0]) && close(actual.y, expected[1]) &&
+      close(actual.width, expected[2]) && close(actual.height, expected[3]),
+      `${id}: ${JSON.stringify(actual)} expected ${JSON.stringify(expected)}`);
+  };
+
+  test(() => {
+    assertRect("top", [0, 0, 392.8, 40]);
+    assertRect("songs", [404.8, 0, 595.2, 40]);
+    assertRect("wide", [0, 60, 1000, 30]);
+  }, "auto-fill creates five nonzero minmax tracks from an inline custom property");
+
+  test(() => {
+    results.style.width = "800px";
+    assertRect("top", [0, 0, 394, 40]);
+    assertRect("songs", [406, 0, 394, 40]);
+    assertRect("wide", [0, 60, 800, 30]);
+  }, "auto-fill recomputes four tracks after the grid width changes");
+
+  test(() => {
+    results.style.width = "1000px";
+    results.style.setProperty(
+      "grid-template-columns", "minmax(var(--minimum), 1fr)");
+    assert_equals(rect("top").width, 1000);
+
+    results.style.setProperty(
+      "grid-template-columns",
+      "repeat(auto-fill, minmax(var(--minimum), 1fr))");
+    assertRect("top", [0, 0, 392.8, 40]);
+    assertRect("songs", [404.8, 0, 595.2, 40]);
+    assertRect("wide", [0, 60, 1000, 30]);
+  }, "CSSOM restores auto-fill semantics when the repetition mode changes");
+</script>

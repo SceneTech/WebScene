@@ -1107,6 +1107,13 @@
   ],
   "candidate": [
     {
+      "path": "contracts/css-grid-auto-fill-minmax-custom-property.html",
+      "type": "testharness",
+      "capabilities": ["css-grid", "auto-fill-tracks", "minmax", "custom-property-track-minimum", "responsive-track-count"],
+      "evidence": ["spotify-search-top-result-and-songs-grid", "direct-chrome-neutral-contract", "native-focused-regression"],
+      "reason": "Product-neutral reduction of a responsive catalog search grid. repeat(auto-fill, minmax(var(...), 1fr)) must retain the repeated track's minimum while expanding the track list, preserve explicit multi-column placement, and recompute the count when the grid width changes."
+    },
+    {
       "path": "contracts/css-grid-flex-track-minimum.html",
       "type": "testharness",
       "capabilities": ["css-grid", "fractional-track-sizing", "minmax"],

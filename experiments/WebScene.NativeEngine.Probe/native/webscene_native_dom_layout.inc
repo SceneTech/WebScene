@@ -1911,7 +1911,10 @@ void native_document::layout_children(dom_node& parent)
             ? parent.grid_layout().column_gap
             : resolve_length(parent, parent.style.column_gap, content.width, 0);
         if (parent_grid.auto_repeat_columns && effective_columns.size() == 1U) {
-            const auto& repeated = effective_columns.front();
+            // Keep the repeated track by value. vector::assign may reallocate
+            // effective_columns, so an element reference aliases storage that
+            // the operation invalidates before it has finished copying.
+            const auto repeated = effective_columns.front();
             const auto minimum = repeated.kind == grid_track::sizing::minmax
                 ? resolve_length(parent, repeated.minimum, content.width, 0)
                 : resolve_length(parent, repeated.maximum, content.width, 0);

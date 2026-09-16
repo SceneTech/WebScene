@@ -1573,6 +1573,73 @@ void test_single_fractional_grid_track_stays_one_column(webscene_engine* engine)
     }
 }
 
+void test_auto_fill_minmax_custom_property_tracks_keep_their_sizing(
+    webscene_engine* engine)
+{
+    const auto result = evaluate(engine, R"JS(
+        (() => {
+          document.body.innerHTML = `
+            <style>
+              body { margin: 0; }
+              #results {
+                --minimum: 180px;
+                display: grid;
+                gap: 20px 12px;
+                grid-template-columns: repeat(auto-fill, minmax(var(--minimum), 1fr));
+                width: 1000px;
+              }
+              #top { grid-column: 1 / 3; height: 40px; }
+              #songs { grid-column: 3 / -1; height: 40px; }
+              #wide { grid-column: 1 / -1; height: 30px; }
+            </style>
+            <main id="results">
+              <section id="top"></section><section id="songs"></section>
+              <section id="wide"></section>
+            </main>`;
+          const geometry = () => {
+            const rect = id => {
+              const value = document.getElementById(id).getBoundingClientRect();
+              return [value.x, value.y, value.width, value.height];
+            };
+            return { top: rect('top'), songs: rect('songs'), wide: rect('wide') };
+          };
+          const desktop = geometry();
+          results.style.width = '800px';
+          const compact = geometry();
+          results.style.width = '1000px';
+          results.style.setProperty(
+            'grid-template-columns', 'minmax(var(--minimum), 1fr)');
+          const oneTrack = geometry();
+          results.style.setProperty(
+            'grid-template-columns',
+            'repeat(auto-fill, minmax(var(--minimum), 1fr))');
+          const restored = geometry();
+          const close = (actual, expected) => Math.abs(actual - expected) <= .02;
+          const same = (actual, expected) => actual.every(
+            (value, index) => close(value, expected[index]));
+          return {
+            pass: same(desktop.top, [0, 0, 392.8, 40])
+              && same(desktop.songs, [404.8, 0, 595.2, 40])
+              && same(desktop.wide, [0, 60, 1000, 30])
+              && same(compact.top, [0, 0, 394, 40])
+              && same(compact.songs, [406, 0, 394, 40])
+              && same(compact.wide, [0, 60, 800, 30])
+              && close(oneTrack.top[2], 1000)
+              && same(restored.top, desktop.top)
+              && same(restored.songs, desktop.songs)
+              && same(restored.wide, desktop.wide),
+            desktop,
+            compact,
+            oneTrack,
+            restored
+          };
+        })()
+    )JS", "native-auto-fill-minmax-custom-property-grid.js");
+    require(
+        result.find(R"("pass":true)") != std::string::npos,
+        "auto-fill minmax tracks lost their custom-property minimum or placement: " + result);
+}
+
 void test_tradingview_symbol_search_display_contents_rows_join_parent_grid(
     webscene_engine* engine)
 {

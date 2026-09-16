@@ -1,5 +1,7 @@
 {
   "sdkVersion": "10.0.28000.0",
+  "x86EnvironmentSdkVersion": "10.0.26100.0",
+  "angleSourceSdkVersion": "10.0.28000.0",
   "release": "10.0.28000.2526",
   "compiler": "Redist/D3D/x64/d3dcompiler_47.dll",
   "sha256": "7b06a9669b48608ab576659f4f5ee4ec94c82e5b3109fa7290f5fbab84d544ec",

@@ -1,5 +1,5 @@
 """Exercise SDK metadata capture without building the upstream compiler tree."""
-from contextlib import ExitStack
+from contextlib import ExitStack, nullcontext
 import importlib.util
 import os
 from pathlib import Path
@@ -40,6 +40,12 @@ class AngleEnvironmentTests(unittest.TestCase):
             for name in ("copytree", "copy2", "rmtree"):
                 stack.enter_context(patch.object(builder.shutil, name))
             stack.enter_context(patch.object(builder, "sha", return_value="test-hash"))
+            stack.enter_context(patch.object(
+                builder, "resolve_windows_build_sdk",
+                return_value=("10.0.target.0", "10.0.x86.0", "10.0.source.0")))
+            stack.enter_context(patch.object(
+                builder, "patched_angle_windows_sdk",
+                return_value=nullcontext()))
             run = stack.enter_context(patch.object(builder, "run"))
             capture = stack.enter_context(patch.object(builder, "capture", return_value="metadata"))
             # Exercise the one-token Windows bootstrap command on every host,
@@ -63,4 +69,11 @@ class AngleEnvironmentTests(unittest.TestCase):
                                 if "llvm-build" in str(call.args[0][0])]
             self.assertEqual(len(compiler_queries), 1)
             self.assertEqual(compiler_queries[0].args[0][0].name, "clang-cl.exe")
+            seal = builder.seal
+            self.assertEqual(
+                seal.call_args.args[5]["windowsSdkVersion"],
+                "10.0.target.0")
+            self.assertEqual(
+                seal.call_args.args[5]["windowsX86EnvironmentSdkVersion"],
+                "10.0.x86.0")
             self.assertEqual(os.environ["DEPOT_TOOLS_WIN_TOOLCHAIN"], "1")

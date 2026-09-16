@@ -302,11 +302,11 @@
     },
     {
       "family": "dom-tree-traversal",
-      "required": ["NodeFilter constants", "Document.createTreeWalker", "whatToShow element filtering", "function and object acceptNode filters", "FILTER_ACCEPT inclusion", "FILTER_SKIP descendant traversal", "FILTER_REJECT subtree pruning", "root and mutable currentNode identity", "parent, child, sibling, and document-order navigation"],
+      "required": ["NodeFilter constants", "Document.createTreeWalker", "Document.createNodeIterator", "whatToShow filtering", "function and object acceptNode filters", "FILTER_ACCEPT inclusion", "TreeWalker FILTER_SKIP descendant traversal", "TreeWalker FILTER_REJECT subtree pruning", "NodeIterator FILTER_SKIP and FILTER_REJECT descendant traversal", "root and traversal reference identity", "parent, child, sibling, and document-order navigation", "lazy NodeIterator filtering", "filter exception propagation", "recursive filter InvalidStateError", "filter-time removal retargeting"],
       "candidate": [],
-      "productEvidence": ["order-menu focus management", "fixed-position menu portal activation"],
-      "coverage": ["contracts/dom-treewalker-nodefilter-focus-navigation.html", "test_node_filter_tree_walker_focus_navigation", "NativeTradingViewTerminal --headless-proof --open-overlay order-menu"],
-      "gap": "The product-neutral contract passes all four assertions and covers the SHOW_ELEMENT, accept/skip/reject, currentNode/root boundaries, child/sibling/document-order paths used by TradingView's focus-navigation utility. The actual hosted bundle opens its order menu without a script error and retains a visible fixed-position portal. NodeIterator, the complete Web IDL prototype/constructor surface, traversal of non-element node kinds, and mutation-during-traversal conformance remain outside this bounded implementation."
+      "productEvidence": ["order-menu focus management", "fixed-position menu portal activation", "Code OSS DOMPurify chat traversal"],
+      "coverage": ["contracts/dom-treewalker-nodefilter-focus-navigation.html", "dom/traversal/NodeIterator-removal-during-filtering.html", "test_node_filter_tree_walker_focus_navigation", "test_node_iterator_dompurify_and_filter_contracts", "NativeTradingViewTerminal --headless-proof --open-overlay order-menu"],
+      "gap": "The product-neutral contracts and pinned upstream WPT cover TreeWalker focus navigation plus root-inclusive NodeIterator element/text/comment traversal, lazy callbacks, exceptions, recursive-filter rejection, and filter-time removal retargeting used by DOMPurify in Code OSS. The iterator retains one bounded structural snapshot; general insertion adjustment, the complete Web IDL surface, and every node-kind edge case remain outside this profile."
     },
     {
       "family": "system-ui-text-paint",

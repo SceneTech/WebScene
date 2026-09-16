@@ -1,0 +1,76 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Web Crypto SHA-1 and SHA-256 digest contract</title>
+<!--
+  Pinned WPT source: WebCryptoAPI/digest/digest.https.any.js at
+  2c705104a295c48053eeddf7fe0170d790a4e853. This bounded contract retains the
+  upstream SHA-1/SHA-256 empty, short, case-normalization, altered-buffer, and
+  unsupported-algorithm cases accepted by issue #102's first digest slice.
+-->
+<script>
+window.__webSceneWptState = {complete:false,harness:null,results:[],errors:[],diagnostics:[]};
+const record = (name, condition, message = 'Contract failed') =>
+  __webSceneWptState.results.push({name,status:condition?'PASS':'FAIL',message:condition?null:message,stack:null});
+const hex = value => Array.from(new Uint8Array(value), byte =>
+  byte.toString(16).padStart(2, '0')).join('');
+const finish = () => {
+  const state = __webSceneWptState;
+  state.harness={status:state.results.some(result=>result.status!=='PASS')?1:0,message:null,stack:null};
+  state.complete=true;
+};
+
+(async () => {
+  record('Crypto exposes a realm-local SubtleCrypto object',
+    Object.prototype.toString.call(crypto.subtle) === '[object SubtleCrypto]');
+  record('digest has Web IDL name and arity',
+    crypto.subtle.digest.name === 'digest' && crypto.subtle.digest.length === 2);
+  for (const constructor of [SubtleCrypto, CryptoKey]) {
+    let rejected = false;
+    try { new constructor(); } catch (error) { rejected = error instanceof TypeError; }
+    record(`${constructor.name} has an illegal public constructor`, rejected);
+  }
+  let illegal = false;
+  try { const digest = crypto.subtle.digest; digest('SHA-256', new Uint8Array()); }
+  catch (error) { illegal = error instanceof TypeError; }
+  record('digest requires a SubtleCrypto receiver', illegal);
+
+  const empty = new Uint8Array();
+  record('WPT SHA-1 empty vector', hex(await crypto.subtle.digest('sha-1', empty)) ===
+    'da39a3ee5e6b4b0d3255bfef95601890afd80709');
+  record('WPT SHA-256 empty vector', hex(await crypto.subtle.digest({name:'SHA-256'}, empty)) ===
+    'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855');
+  const short = new Uint8Array([21,110,234,124,193,76,86,203,148,219,3,10,74,157,149,255]);
+  record('WPT SHA-1 short vector', hex(await crypto.subtle.digest({name:'sHa-1'}, short)) ===
+    'c91318cdf2396a015e3f4e6a86a0ba65b8635944');
+  record('WPT SHA-256 short vector', hex(await crypto.subtle.digest('SHA-256', short)) ===
+    'a2831186984792c7d32d59c89740687f19addc1b959e71a1cc538a3b7ed843f2');
+
+  const copied = new Uint8Array(1024); copied.fill(0x5a);
+  const pending = crypto.subtle.digest('SHA-256', copied);
+  copied.fill(0);
+  record('digest copies BufferSource during the call', hex(await pending) ===
+    'e8fb68ce4d4d002dba40c0a459d96807c96ded1c2fdefae3f56f8a0c06a4fecf');
+  const offset = new Uint8Array([0xff, 0x61, 0x62, 0x63, 0xff]);
+  record('digest observes view offset and length',
+    hex(await crypto.subtle.digest('SHA-256', offset.subarray(1, 4))) ===
+      'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad');
+
+  for (const [algorithm, data, expected] of [
+    ['AES-GCM', empty, 'NotSupportedError'],
+    ['SHA-256', {}, 'TypeError'],
+    ['SHA-256', new Uint8Array(16 * 1024 * 1024 + 1), 'OperationError']
+  ]) {
+    let name = '';
+    try { await crypto.subtle.digest(algorithm, data); } catch (error) { name = error.name; }
+    record(`digest rejects ${expected} case`, name === expected, `Received ${name}`);
+  }
+
+  const started = performance.now();
+  for (let index = 0; index < 32; ++index)
+    await crypto.subtle.digest('SHA-256', short);
+  record('bounded digest throughput completes', performance.now() - started < 4000);
+})().catch(error => {
+  __webSceneWptState.errors.push(String(error));
+  record('Web Crypto digest contract completed', false, String(error));
+}).finally(finish);
+</script>

@@ -480,6 +480,20 @@
         std::shared_future<async_fetch_result> future;
     };
 
+    struct async_digest_result final {
+        std::array<std::uint8_t, 32U> bytes{};
+        std::size_t size{};
+        crypto_provider_status status{crypto_provider_status::provider_failure};
+    };
+
+    struct pending_digest_task final {
+        v8::Global<v8::Context> context;
+        v8::Global<v8::Promise::Resolver> resolver;
+        std::shared_future<async_digest_result> future;
+        std::stop_source stop;
+        std::size_t input_size{};
+    };
+
     struct prepared_frame final {
         std::string source;
         std::string html;

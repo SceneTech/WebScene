@@ -9,11 +9,18 @@
   },
   "required": [
     {
+      "path": "contracts/webcrypto-digest.html",
+      "type": "contract",
+      "capabilities": ["subtlecrypto-digest-sha1", "subtlecrypto-digest-sha256", "crypto-realm-parity", "crypto-digest-bounds"],
+      "evidence": ["wpt-WebCryptoAPI-digest-2c705104", "vscode-oss-resource-integrity"],
+      "reason": "VS Code hashes resource and extension data in window and worker realms. This first accepted slice is limited to SHA-1 and SHA-256 digest through the pinned provider."
+    },
+    {
       "path": "contracts/webcrypto-secure-random.html",
       "type": "contract",
       "capabilities": ["crypto-get-random-values", "crypto-random-uuid", "crypto-realm-parity", "crypto-random-quota"],
       "evidence": ["vscode-oss-1.137-browser-workbench", "vscode-oss-1.137-worker-extension-host"],
-      "reason": "VS Code uses secure random bytes and UUIDs in its browser workbench and extension-host realms. SubtleCrypto remains absent until it has a vetted provider."
+      "reason": "VS Code uses secure random bytes and UUIDs in its browser workbench and extension-host realms. The separately covered digest slice uses the pinned provider."
     },
     {
       "path": "contracts/dialog-opening-lifecycle.html",

@@ -16,8 +16,8 @@ void test_web_crypto_secure_random_realms() {
     require(runtime.execute(R"JS(
         if (typeof crypto !== 'object' || Object.prototype.toString.call(crypto) !== '[object Crypto]')
           throw Error('Crypto global shape changed');
-        if (typeof crypto.subtle !== 'undefined')
-          throw Error('Incomplete SubtleCrypto was exposed');
+        if (Object.prototype.toString.call(crypto.subtle) !== '[object SubtleCrypto]')
+          throw Error('SubtleCrypto digest surface is unavailable');
         if (crypto.getRandomValues.name !== 'getRandomValues'
             || crypto.getRandomValues.length !== 1
             || crypto.randomUUID.name !== 'randomUUID'
@@ -83,7 +83,8 @@ void test_web_crypto_secure_random_realms() {
           const bytes = new Uint32Array(8);
           if (crypto.getRandomValues(bytes) !== bytes) throw Error('iframe random identity changed');
           if (!/^[0-9a-f-]{36}$/.test(crypto.randomUUID())) throw Error('iframe UUID unavailable');
-          if (typeof crypto.subtle !== 'undefined') throw Error('iframe exposed incomplete SubtleCrypto');
+          if (Object.prototype.toString.call(crypto.subtle) !== '[object SubtleCrypto]')
+            throw Error('iframe digest surface is unavailable');
           globalThis.cryptoRealmPassed = true;
         <\/script>`);
         child.close();
@@ -99,6 +100,144 @@ void test_web_crypto_secure_random_realms() {
         if (childCrypto.getRandomValues(childBytes) !== childBytes)
           throw Error('iframe Crypto object was not retained');
     )JS", "webcrypto-secure-random-iframe-result"), runtime.last_error().c_str());
+}
+
+void test_web_crypto_digest_realms_and_errors() {
+    webscene_native::native_document document;
+    webscene_native::v8_dom_runtime runtime(document,
+        []{return webscene_native::v8_dom_runtime::viewport_metrics{640,480,1,0};});
+    std::string result;
+    runtime.register_compiled_template("digest-result", [&](auto& dom, const std::string& value) -> auto& {
+        result = value;
+        return dom.create_element("span");
+    });
+    require(runtime.initialize(), "Web Crypto digest runtime failed");
+    require(runtime.execute(R"JS(
+      (async () => {
+        const hex = value => Array.from(new Uint8Array(value), byte =>
+          byte.toString(16).padStart(2, '0')).join('');
+        if (typeof SubtleCrypto !== 'function'
+            || Object.prototype.toString.call(crypto.subtle) !== '[object SubtleCrypto]'
+            || crypto.subtle.digest.name !== 'digest'
+            || crypto.subtle.digest.length !== 2)
+          throw Error('SubtleCrypto Web IDL shape changed');
+        for (const constructor of [SubtleCrypto, CryptoKey]) {
+          let rejected = false;
+          try { new constructor(); } catch (error) { rejected = error instanceof TypeError; }
+          if (!rejected) throw Error(`${constructor.name} constructor was exposed`);
+        }
+        let illegal = false;
+        try { const digest = crypto.subtle.digest; digest('SHA-256', new Uint8Array()); }
+        catch (error) { illegal = error instanceof TypeError; }
+        if (!illegal) throw Error('Unbound digest receiver was accepted');
+
+        const abc = new TextEncoder().encode('abc');
+        if (hex(await crypto.subtle.digest('SHA-256', abc)) !==
+            'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad')
+          throw Error('FIPS SHA-256 vector changed');
+        if (hex(await crypto.subtle.digest({name:'sha-1'}, abc)) !==
+            'a9993e364706816aba3e25717850c26c9cd0d89d')
+          throw Error('FIPS SHA-1 vector changed');
+        const backing = new Uint8Array([0xff, 0x61, 0x62, 0x63, 0xff]);
+        if (hex(await crypto.subtle.digest('SHA-256', backing.subarray(1, 4))) !==
+            'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad')
+          throw Error('BufferSource offset was ignored');
+        const copied = new Uint8Array(1024); copied.fill(0x5a);
+        const beforeMutation = crypto.subtle.digest('SHA-256', copied);
+        copied.fill(0);
+        if (hex(await beforeMutation) !==
+            'e8fb68ce4d4d002dba40c0a459d96807c96ded1c2fdefae3f56f8a0c06a4fecf')
+          throw Error('Digest did not copy input at call time');
+
+        for (const [algorithm, data, expected] of [
+          ['SHA-384', abc, 'NotSupportedError'],
+          ['SHA-256', {}, 'TypeError'],
+          ['SHA-256', new Uint8Array(16 * 1024 * 1024 + 1), 'OperationError']
+        ]) {
+          let name = '';
+          try { await crypto.subtle.digest(algorithm, data); } catch (error) { name = error.name; }
+          if (name !== expected) throw Error(`Digest error mismatch: ${name} != ${expected}`);
+        }
+
+        const workerUrl = URL.createObjectURL(new Blob([`
+          onmessage = async event => {
+            try {
+              const digest = await crypto.subtle.digest('SHA-256', event.data);
+              postMessage(Array.from(new Uint8Array(digest)));
+            } catch (error) { postMessage({error: String(error)}); }
+          };`], {type:'text/javascript'}));
+        const worker = new Worker(workerUrl);
+        URL.revokeObjectURL(workerUrl);
+        const workerBytes = await new Promise((resolve, reject) => {
+          worker.onmessage = event => resolve(event.data);
+          worker.onerror = event => reject(Error(event.message));
+          worker.postMessage(abc);
+        });
+        worker.terminate();
+        if (workerBytes.error || hex(Uint8Array.from(workerBytes)) !==
+            'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad')
+          throw Error(workerBytes.error || 'Worker digest vector changed');
+        document.createCompiledTemplate('digest-result', 1);
+      })().catch(error => document.createCompiledTemplate(
+        'digest-result', `${error.name}: ${error.message}`));
+    )JS", "webcrypto-digest-realms-errors"), runtime.last_error().c_str());
+    for (unsigned index = 0; index < 5000 && result.empty(); ++index) {
+        require(runtime.pump_task(), runtime.last_error().c_str());
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    require(result == "1", result.empty() ? "Digest promise did not settle" : result.c_str());
+    result.clear();
+    require(runtime.execute(R"JS(
+      const digestFrame = document.createElement('iframe');
+      document.body.appendChild(digestFrame);
+      const digestChild = digestFrame.contentDocument;
+      digestChild.open();
+      digestChild.write('<script>globalThis.digestRealmReady = true;<\/script>');
+      digestChild.close();
+    )JS", "webcrypto-digest-frame-create"), runtime.last_error().c_str());
+    for (unsigned index = 0; index < 200; ++index) {
+        require(runtime.pump_task(), runtime.last_error().c_str());
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    require(runtime.execute(R"JS(
+      (async () => {
+        const hex = value => Array.from(new Uint8Array(value), byte =>
+          byte.toString(16).padStart(2, '0')).join('');
+        if (!digestFrame.contentWindow || !digestFrame.contentWindow.digestRealmReady)
+          throw Error('Iframe digest realm did not hydrate');
+        const abc = new TextEncoder().encode('abc');
+        const childSubtle = digestFrame.contentWindow.crypto.subtle;
+        if (hex(await childSubtle.digest('SHA-256', abc)) !==
+            'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad')
+          throw Error('Iframe digest vector changed');
+        if (hex(await childSubtle.digest.call(crypto.subtle, 'SHA-256', abc)) !==
+            'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad')
+          throw Error('Cross-realm legitimate receiver was rejected');
+        document.createCompiledTemplate('digest-result', 1);
+      })().catch(error => document.createCompiledTemplate(
+        'digest-result', `${error.name}: ${error.message}`));
+    )JS", "webcrypto-digest-frame-result"), runtime.last_error().c_str());
+    for (unsigned index = 0; index < 2000 && result.empty(); ++index) {
+        require(runtime.pump_task(), runtime.last_error().c_str());
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    require(result == "1", result.empty() ? "Iframe digest promise did not settle" : result.c_str());
+}
+
+void test_web_crypto_digest_shutdown_is_bounded() {
+    const auto started = std::chrono::steady_clock::now();
+    {
+        webscene_native::native_document document;
+        webscene_native::v8_dom_runtime runtime(document,
+            []{return webscene_native::v8_dom_runtime::viewport_metrics{640,480,1,0};});
+        require(runtime.initialize(), "Web Crypto shutdown runtime failed");
+        require(runtime.execute(R"JS(
+          for (let index = 0; index < 4; ++index)
+            crypto.subtle.digest('SHA-256', new Uint8Array(16 * 1024 * 1024));
+        )JS", "webcrypto-digest-shutdown"), runtime.last_error().c_str());
+    }
+    require(std::chrono::steady_clock::now() - started < std::chrono::seconds(3),
+        "Digest cancellation blocked realm shutdown");
 }
 
 void test_compiled_template_shared_document() {
@@ -183,8 +322,8 @@ void test_blob_worker_source_lifetime() {
               throw Error('worker random identity changed');
             if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(crypto.randomUUID()))
               throw Error('worker UUID unavailable');
-            if (typeof crypto.subtle !== 'undefined')
-              throw Error('worker exposed incomplete SubtleCrypto');
+            if (Object.prototype.toString.call(crypto.subtle) !== '[object SubtleCrypto]')
+              throw Error('worker digest surface is unavailable');
             postMessage(event.data + 1);
           };`], {type:'text/javascript'}));
         const blobWorker = new Worker(workerURL);
@@ -643,6 +782,11 @@ int main() {
                 test_web_crypto_secure_random_realms();
                 return 0;
             }
+            if (selected == "webcrypto-digest") {
+                test_web_crypto_digest_realms_and_errors();
+                test_web_crypto_digest_shutdown_is_bounded();
+                return 0;
+            }
             if (selected == "worker-messageport") {
                 test_blob_worker_source_lifetime();
                 test_worker_message_port_contracts();
@@ -650,6 +794,8 @@ int main() {
             }
         }
         test_web_crypto_secure_random_realms();
+        test_web_crypto_digest_realms_and_errors();
+        test_web_crypto_digest_shutdown_is_bounded();
         test_blob_worker_source_lifetime();
         test_worker_message_port_contracts();
         test_compiled_template_shared_document();

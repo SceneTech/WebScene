@@ -24,7 +24,8 @@ exposes bytes to a provider callback. Digest input is copied before asynchronous
 work and uses the same zeroizing storage. Provider contexts are freed on every
 success, error, and cancellation path.
 
-Digest work is chunked so a stop request is observed between provider updates.
-The JavaScript digest layer must bound and copy input into zeroizing storage,
-bound concurrent requests, and settle its promises on the runtime owner thread.
-Background provider work must never enter V8.
+Digest work is chunked so a realm shutdown stop request is observed between
+provider updates. The JavaScript layer bounds each input at 16 MiB, aggregate
+pending input at 64 MiB, and concurrency at 32 requests. It copies input into
+zeroizing storage during the call and settles promises on the runtime owner
+thread. Background provider work never enters V8.

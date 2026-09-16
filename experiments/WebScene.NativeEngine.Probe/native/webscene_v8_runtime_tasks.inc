@@ -596,6 +596,9 @@
         if (has_ready_fetch_task()) {
             return drain_fetch_task();
         }
+        if (has_ready_digest_task()) {
+            return drain_digest_task();
+        }
         if (!pending_dialog_close_events.empty()) {
             return drain_dialog_close_event_task();
         }

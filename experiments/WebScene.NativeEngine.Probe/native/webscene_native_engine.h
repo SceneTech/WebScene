@@ -1297,6 +1297,16 @@ WEBSCENE_API uint8_t webscene_engine_set_window_focused_v1(
  * initiated transitions use the typed request/completion path. */
 WEBSCENE_API uint8_t webscene_engine_set_window_fullscreen_v1(
     webscene_engine* engine, uint8_t fullscreen);
+/* Synchronously asks the active top-level realm whether a native window close
+ * may proceed. A veto leaves the document active. An allow decision dispatches
+ * pagehide once before returning and is coalesced until the next navigation. */
+enum {
+    WEBSCENE_WINDOW_CLOSE_ERROR_V1 = 0,
+    WEBSCENE_WINDOW_CLOSE_ALLOW_V1 = 1,
+    WEBSCENE_WINDOW_CLOSE_VETO_V1 = 2
+};
+WEBSCENE_API uint32_t webscene_engine_request_window_close_v1(
+    webscene_engine* engine);
 /*
  * Updates the host's effective color preference. The worker re-evaluates CSS
  * media rules and subsequent Window.matchMedia snapshots against this value.

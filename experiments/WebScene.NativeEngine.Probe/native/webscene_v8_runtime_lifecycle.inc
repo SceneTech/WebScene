@@ -195,6 +195,7 @@
         frame_document_template.Reset();
         frame_window_template.Reset();
         html_collection_template.Reset();
+        dom_token_list_template.Reset();
         document_template.Reset();
         element_template.Reset();
 #if defined(WEBSCENE_NATIVE_ENGINE_GENERATED_DOM_BINDINGS)

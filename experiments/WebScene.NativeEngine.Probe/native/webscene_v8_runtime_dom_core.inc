@@ -1612,42 +1612,13 @@
         }
         if (known != class_list_wrappers.end()) class_list_wrappers.erase(known);
         auto local_context = isolate->GetCurrentContext();
-        auto data = v8::External::New(
+        auto constructor = ensure_dom_token_list_template()
+            ->GetFunction(local_context).ToLocalChecked();
+        v8::Local<v8::Value> arguments[] = {v8::External::New(
             isolate,
             &node,
-            v8::kExternalPointerTypeTagDefault);
-        auto object = v8::Object::New(isolate);
-        object->Set(
-            local_context,
-            js_string(isolate, "add"),
-            v8::Function::New(local_context, class_list_add, data).ToLocalChecked()).Check();
-        object->Set(
-            local_context,
-            js_string(isolate, "remove"),
-            v8::Function::New(local_context, class_list_remove, data).ToLocalChecked()).Check();
-        object->Set(
-            local_context,
-            js_string(isolate, "contains"),
-            v8::Function::New(local_context, class_list_contains, data).ToLocalChecked()).Check();
-        object->Set(
-            local_context,
-            js_string(isolate, "toggle"),
-            v8::Function::New(local_context, class_list_toggle, data).ToLocalChecked()).Check();
-        auto value_getter = v8::Function::New(
-            local_context,
-            class_list_value_getter_bridge,
-            data).ToLocalChecked();
-        auto value_setter = v8::Function::New(
-            local_context,
-            class_list_value_setter_bridge,
-            data).ToLocalChecked();
-        v8::PropertyDescriptor value_descriptor(value_getter, value_setter);
-        value_descriptor.set_enumerable(true);
-        value_descriptor.set_configurable(true);
-        object->DefineProperty(
-            local_context,
-            js_string(isolate, "value"),
-            value_descriptor).Check();
+            v8::kExternalPointerTypeTagDefault)};
+        auto object = constructor->NewInstance(local_context, 1, arguments).ToLocalChecked();
         auto& wrapper = class_list_wrappers[key];
         wrapper.Reset(isolate, object);
         if (!is_connected(node)) wrapper.SetWeak();

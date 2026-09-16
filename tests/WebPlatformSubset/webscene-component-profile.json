@@ -676,6 +676,13 @@
       "reason": "Required after the unchanged product-neutral reduction passes direct Chrome and native, and the native same-object fix makes all 31 cases of Bootstrap 5.3.8's unmodified Toast suite pass without a framework-specific branch. The contract proves Element.classList identity, live class reflection, method shadowing, and identity across detach/reconnect; invalid-token exceptions and the wider DOMTokenList surface remain outside this bounded claim. Evidence: artifacts/wpt-dom-token-list-same-object-chrome-v1-20260723, artifacts/wpt-dom-token-list-same-object-adapters-v1-20260723, and artifacts/ecosystem-bootstrap-toast-native-same-object-v1-20260723."
     },
     {
+      "path": "contracts/dom-token-list-collection.html",
+      "type": "contract",
+      "capabilities": ["dom-token-list-indexed-collection", "dom-token-list-iteration", "dom-token-list-replace", "dom-token-list-invalid-token-errors", "dom-token-list-live-tree-mutation"],
+      "evidence": ["code-oss-tree-twistie-item", "native-dom-token-list-read-mutation-performance"],
+      "reason": "Required product-neutral coverage for the complete collection surface exercised by Code OSS trees: live length/item/indexed access, ordered iteration, forEach, replace, atomic invalid-token errors, detach/reconnect liveness, and the exact tree-twistie class assignment reduction."
+    },
+    {
       "path": "contracts/dom-node-interface-constants.html",
       "type": "contract",
       "capabilities": ["node-interface-constants", "element-node-type", "text-node-type", "document-node-type"],

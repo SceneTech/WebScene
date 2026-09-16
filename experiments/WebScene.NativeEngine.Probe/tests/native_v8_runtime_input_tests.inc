@@ -542,6 +542,252 @@ void test_dom_punctuation_keyboard_event_identity(webscene_engine* engine)
               << performance_elapsed << "s\n";
 }
 
+void test_native_shortcut_activation_focus_retarget_and_publication(
+    webscene_engine* engine)
+{
+    resize(engine, 420, 180, 9850U);
+    execute_and_wait(engine, R"JS(
+      (() => {
+        document.body.innerHTML = `
+          <style>
+            html, body { margin: 0; width: 100%; height: 100%; background: #101010; }
+            .source-input {
+              position: absolute; left: 10px; top: 10px;
+              width: 180px; height: 32px; background: #202020;
+            }
+            .command-palette {
+              display: none; position: absolute; left: 10px; top: 60px;
+              width: 240px; height: 36px; background: #123456;
+            }
+          </style>
+          <textarea id="source" class="source-input"></textarea>
+          <input id="palette" class="command-palette">`;
+        const source = document.getElementById('source');
+        const palette = document.getElementById('palette');
+        globalThis.__shortcutEvents = [];
+        globalThis.__shortcutCallbacks = 0;
+        globalThis.__shortcutActivations = 0;
+        globalThis.__shortcutClosures = 0;
+        globalThis.__pointerActivations = [];
+        const record = scope => event => {
+          ++__shortcutCallbacks;
+          if (__shortcutEvents.length >= 32) return;
+          __shortcutEvents.push({
+            scope,
+            type: event.type,
+            key: event.key,
+            code: event.code,
+            keyCode: event.keyCode,
+            which: event.which,
+            metaKey: event.metaKey,
+            shiftKey: event.shiftKey,
+            targetTag: event.target.tagName,
+            targetClass: event.target.className
+          });
+        };
+        for (const type of ['keydown', 'keyup']) {
+          source.addEventListener(type, record('source'));
+          palette.addEventListener(type, record('palette'));
+          document.addEventListener(type, record('document'));
+          window.addEventListener(type, record('window'));
+        }
+        for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) {
+          source.addEventListener(type, event => {
+            if (__pointerActivations.length >= 5) return;
+            __pointerActivations.push({
+              type: event.type,
+              targetTag: event.target.tagName,
+              targetClass: event.target.className
+            });
+          });
+        }
+        window.addEventListener('keydown', event => {
+          if (event.metaKey && event.shiftKey && event.code === 'KeyP') {
+            event.preventDefault();
+            palette.style.display = 'block';
+            palette.focus();
+            ++__shortcutActivations;
+          } else if (event.key === 'Escape' && document.activeElement === palette) {
+            event.preventDefault();
+            palette.style.display = 'none';
+            source.focus();
+            ++__shortcutClosures;
+          }
+        });
+      })()
+    )JS", "native-shortcut-activation-setup.js");
+
+    const auto pointer_consumed_before = consumed_input_count(engine);
+    pointer_move(engine, 40, 25, 9851U);
+    pointer_button(engine, WEBSCENE_INPUT_POINTER_DOWN, 40, 25, 9852U, true);
+    pointer_button(engine, WEBSCENE_INPUT_POINTER_UP, 40, 25, 9853U, false);
+    wait_for_consumed_inputs(
+        engine,
+        pointer_consumed_before + 3U,
+        "shortcut source pointer activation was not consumed");
+    const auto pointer_result = evaluate(
+        engine,
+        R"JS(({
+          active: document.activeElement?.id,
+          events: __pointerActivations
+        }))JS",
+        "native-shortcut-pointer-result.js");
+    require(
+        pointer_result == R"JSON({"active":"source","events":[{"type":"pointerdown","targetTag":"TEXTAREA","targetClass":"source-input"},{"type":"mousedown","targetTag":"TEXTAREA","targetClass":"source-input"},{"type":"pointerup","targetTag":"TEXTAREA","targetClass":"source-input"},{"type":"mouseup","targetTag":"TEXTAREA","targetClass":"source-input"},{"type":"click","targetTag":"TEXTAREA","targetClass":"source-input"}]})JSON",
+        "shortcut source pointer activation diverged: " + pointer_result);
+
+    webscene_engine_metrics before{};
+    webscene_engine_get_metrics(engine, &before);
+    const auto shortcut_consumed_before = consumed_input_count(engine);
+    constexpr auto meta = WEBSCENE_INPUT_MODIFIER_META;
+    constexpr auto shift = WEBSCENE_INPUT_MODIFIER_SHIFT;
+    uint64_t sequence = 9854U;
+    keyboard_input(engine, WEBSCENE_INPUT_KEY_DOWN, 91U, sequence++, meta);
+    keyboard_input(engine, WEBSCENE_INPUT_KEY_DOWN, 16U, sequence++, meta | shift);
+    keyboard_input(engine, WEBSCENE_INPUT_KEY_DOWN, 'P', sequence++, meta | shift);
+    keyboard_input(engine, WEBSCENE_INPUT_KEY_UP, 'P', sequence++, meta | shift);
+    keyboard_input(engine, WEBSCENE_INPUT_KEY_UP, 16U, sequence++, meta);
+    keyboard_input(engine, WEBSCENE_INPUT_KEY_UP, 91U, sequence++);
+    wait_for_consumed_inputs(
+        engine,
+        shortcut_consumed_before + 6U,
+        "Meta+Shift+P shortcut sequence was not consumed");
+
+    const auto shortcut_result = evaluate(
+        engine,
+        R"JS((() => {
+          const matches = (type, key, code, keyCode, metaKey, shiftKey,
+                           targetTag, targetClass, targetScope) => {
+            const events = __shortcutEvents
+              .filter(event => event.type === type && event.key === key);
+            const scopes = [targetScope, 'document', 'window'];
+            return events.length === scopes.length && events.every((event, index) =>
+              event.scope === scopes[index] && event.code === code &&
+              event.keyCode === keyCode && event.which === keyCode &&
+              event.metaKey === metaKey && event.shiftKey === shiftKey &&
+              event.targetTag === targetTag && event.targetClass === targetClass);
+          };
+          return {
+            active: document.activeElement?.id,
+            activations: __shortcutActivations,
+            callbacks: __shortcutCallbacks,
+            metaDown: matches('keydown', 'Meta', 'MetaLeft', 91, true, false,
+              'TEXTAREA', 'source-input', 'source'),
+            shiftDown: matches('keydown', 'Shift', 'ShiftLeft', 16, true, true,
+              'TEXTAREA', 'source-input', 'source'),
+            pDown: matches('keydown', 'P', 'KeyP', 80, true, true,
+              'TEXTAREA', 'source-input', 'source'),
+            pUp: matches('keyup', 'P', 'KeyP', 80, true, true,
+              'INPUT', 'command-palette', 'palette'),
+            shiftUp: matches('keyup', 'Shift', 'ShiftLeft', 16, true, false,
+              'INPUT', 'command-palette', 'palette'),
+            metaUp: matches('keyup', 'Meta', 'MetaLeft', 91, false, false,
+              'INPUT', 'command-palette', 'palette')
+          };
+        })())JS",
+        "native-shortcut-keyboard-result.js");
+    require(
+        shortcut_result == R"JSON({"active":"palette","activations":1,"callbacks":18,"metaDown":true,"shiftDown":true,"pDown":true,"pUp":true,"shiftUp":true,"metaUp":true})JSON",
+        "Meta+Shift+P propagation or focus retargeting diverged: "
+            + shortcut_result);
+
+    auto published_palette = false;
+    for (auto attempt = 0; attempt < 250 && !published_palette; ++attempt) {
+        const auto* scene = webscene_engine_acquire_latest_scene(engine);
+        if (scene != nullptr) {
+            for (uint32_t index = 0; index < scene->header.command_count; ++index) {
+                published_palette = published_palette
+                    || scene->commands[index].rgba == 0x123456FFU;
+            }
+            webscene_scene_acknowledge(scene);
+            webscene_scene_release(scene);
+        }
+        if (!published_palette) std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    require(
+        published_palette,
+        "shortcut activation mutated the palette without publishing its scene");
+
+    keyboard_input(engine, WEBSCENE_INPUT_KEY_DOWN, 27U, sequence++);
+    keyboard_input(engine, WEBSCENE_INPUT_KEY_UP, 27U, sequence++);
+    wait_for_consumed_inputs(
+        engine,
+        shortcut_consumed_before + 8U,
+        "shortcut close sequence was not consumed");
+    require(
+        evaluate(
+            engine,
+            R"JS(({
+              active: document.activeElement?.id,
+              display: getComputedStyle(palette).display,
+              closures: __shortcutClosures,
+              bounded: __shortcutEvents.length
+            }))JS",
+            "native-shortcut-close-result.js")
+            == R"JSON({"active":"source","display":"none","closures":1,"bounded":24})JSON",
+        "Escape did not close the shortcut overlay and restore focus");
+
+    constexpr uint64_t cycle_count = 512U;
+    const auto performance_consumed_before = consumed_input_count(engine);
+    const auto performance_started = std::chrono::steady_clock::now();
+    for (uint64_t index = 0; index < cycle_count; ++index) {
+        keyboard_input(engine, WEBSCENE_INPUT_KEY_DOWN, 91U, sequence++, meta);
+        keyboard_input(engine, WEBSCENE_INPUT_KEY_DOWN, 16U, sequence++, meta | shift);
+        keyboard_input(engine, WEBSCENE_INPUT_KEY_DOWN, 'P', sequence++, meta | shift);
+        keyboard_input(engine, WEBSCENE_INPUT_KEY_UP, 'P', sequence++, meta | shift);
+        keyboard_input(engine, WEBSCENE_INPUT_KEY_UP, 16U, sequence++, meta);
+        keyboard_input(engine, WEBSCENE_INPUT_KEY_UP, 91U, sequence++);
+        keyboard_input(engine, WEBSCENE_INPUT_KEY_DOWN, 27U, sequence++);
+        keyboard_input(engine, WEBSCENE_INPUT_KEY_UP, 27U, sequence++);
+    }
+    constexpr auto performance_event_count = cycle_count * 8U;
+    const auto performance_deadline = performance_started + std::chrono::seconds(5);
+    while (consumed_input_count(engine)
+            < performance_consumed_before + performance_event_count
+        && std::chrono::steady_clock::now() < performance_deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    const auto elapsed = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - performance_started).count();
+    require(
+        consumed_input_count(engine)
+            >= performance_consumed_before + performance_event_count,
+        "shortcut activation dispatch exceeded its five-second bound");
+    const auto performance_result = evaluate(
+        engine,
+        R"JS(({
+          active: document.activeElement?.id,
+          display: getComputedStyle(palette).display,
+          activations: __shortcutActivations,
+          closures: __shortcutClosures,
+          callbacks: __shortcutCallbacks,
+          bounded: __shortcutEvents.length
+        }))JS",
+        "native-shortcut-performance-result.js");
+    require(
+        performance_result
+            == R"JSON({"active":"source","display":"none","activations":513,"closures":513,"callbacks":12312,"bounded":32})JSON",
+        "shortcut activation performance run dropped or duplicated callbacks: "
+            + performance_result);
+    webscene_input_dispatch_metrics dispatch_metrics{
+        sizeof(webscene_input_dispatch_metrics)};
+    require(
+        webscene_engine_get_input_dispatch_metrics(engine, &dispatch_metrics) != 0
+            && dispatch_metrics.last_dispatch_sequence == sequence - 1U
+            && dispatch_metrics.maximum_dispatch_nanoseconds
+                < 250000000ULL,
+        "shortcut dispatch metrics exceeded the 250 ms per-input budget");
+    webscene_engine_metrics after{};
+    webscene_engine_get_metrics(engine, &after);
+    require(
+        after.published_scenes > before.published_scenes,
+        "shortcut activation did not advance scene publication metrics");
+    std::cout << "Native shortcut activation gate: events="
+              << performance_event_count << " elapsed=" << elapsed
+              << "s maxDispatch="
+              << dispatch_metrics.maximum_dispatch_nanoseconds << "ns\n";
+}
+
 void test_chart_printable_key_does_not_duplicate_into_newly_focused_search_input(
     webscene_engine* engine)
 {

@@ -1126,14 +1126,14 @@ void test_v8_inspector_raw_cdp_session(webscene_engine* engine)
         session_id,
         std::string{"{\"id\":650,\"method\":\"Runtime.evaluate\",\"params\":{\"contextId\":"}
             + std::to_string(frame_context_id)
-            + R"(,"expression":"parent.__websceneDetachedFrameCallbacks = 0; const record = () => ++parent.__websceneDetachedFrameCallbacks; setTimeout(record, 100); setInterval(record, 100); requestAnimationFrame(record); const originalTimeout = globalThis.setTimeout; globalThis.setTimeout = callback => originalTimeout(callback, 100); const channel = new MessageChannel(); channel.port1.onmessage = record; channel.port2.postMessage('queued'); globalThis.setTimeout = originalTimeout;","returnByValue":true}})" );
+            + R"(,"expression":"parent.__websceneDetachedFrameCallbacks = 0; parent.__websceneInspectorFrameDetached = false; const record = () => { if (parent.__websceneInspectorFrameDetached) ++parent.__websceneDetachedFrameCallbacks; }; setTimeout(record, 100); setInterval(record, 100); requestAnimationFrame(record); const originalTimeout = globalThis.setTimeout; globalThis.setTimeout = callback => originalTimeout(callback, 100); const channel = new MessageChannel(); channel.port1.onmessage = record; channel.port2.postMessage('queued'); globalThis.setTimeout = originalTimeout;","returnByValue":true}})" );
     require(
         wait_for_inspector_message(messages, R"("id":650)"),
         "Inspector could not schedule detached-frame task fixtures");
     dispatch_inspector_test_message(
         engine,
         session_id,
-        R"({"id":66,"method":"Runtime.evaluate","params":{"expression":"document.body.removeChild(globalThis.__inspectorLifecycleFrame); delete globalThis.__inspectorLifecycleFrame;","returnByValue":true}})");
+        R"({"id":66,"method":"Runtime.evaluate","params":{"expression":"globalThis.__websceneInspectorFrameDetached = true; document.body.removeChild(globalThis.__inspectorLifecycleFrame); delete globalThis.__inspectorLifecycleFrame;","returnByValue":true}})");
     require(
         wait_for_inspector_message(messages, R"("id":66)"),
         "Inspector iframe removal did not complete");

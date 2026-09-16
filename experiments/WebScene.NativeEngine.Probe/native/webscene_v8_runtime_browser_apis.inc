@@ -1513,7 +1513,8 @@
     bool dispatch_transition_events()
     {
         auto events = document.take_transition_events();
-        if (events.empty()) return true;
+        auto animation_events = document.take_animation_events();
+        if (events.empty() && animation_events.empty()) return true;
         auto isolate_locker = lock_shared_isolate();
         v8::Isolate::Scope isolate_scope(isolate);
         v8::HandleScope handle_scope(isolate);
@@ -1545,6 +1546,36 @@
             if (dispatcher.As<v8::Function>()->Call(
                     local_context, target, 1, arguments).IsEmpty()) {
                 last_error = "CSS transition-event dispatch failed: "
+                    + describe_reported_exception(try_catch, local_context);
+                ++frame_script_error_count;
+                return false;
+            }
+        }
+        for (const auto& animation : animation_events) {
+            auto* node = document.find_by_native_id(animation.node_id);
+            if (node == nullptr) continue;
+            auto target = wrap_node(*node);
+            auto event = v8::Object::New(isolate);
+            event->Set(local_context, js_string(isolate, "type"),
+                js_string(isolate, animation.type.c_str())).Check();
+            event->Set(local_context, js_string(isolate, "bubbles"),
+                v8::True(isolate)).Check();
+            event->Set(local_context, js_string(isolate, "cancelable"),
+                v8::False(isolate)).Check();
+            event->Set(local_context, js_string(isolate, "animationName"),
+                js_string(isolate, animation.animation_name.c_str())).Check();
+            event->Set(local_context, js_string(isolate, "elapsedTime"),
+                v8::Number::New(isolate, animation.elapsed_time_seconds)).Check();
+            event->Set(local_context, js_string(isolate, "pseudoElement"),
+                js_string(isolate, "")).Check();
+            v8::Local<v8::Value> dispatcher;
+            if (!target->Get(local_context, js_string(isolate, "dispatchEvent"))
+                    .ToLocal(&dispatcher)
+                || !dispatcher->IsFunction()) continue;
+            v8::Local<v8::Value> arguments[] = {event};
+            if (dispatcher.As<v8::Function>()->Call(
+                    local_context, target, 1, arguments).IsEmpty()) {
+                last_error = "CSS animation-event dispatch failed: "
                     + describe_reported_exception(try_catch, local_context);
                 ++frame_script_error_count;
                 return false;

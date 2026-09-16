@@ -961,6 +961,7 @@ void native_document::clear()
     // of retaining the previous document's high-water mark.
     node_pool_.release();
     transition_events_.clear();
+    animation_events_.clear();
     last_animation_advance_timestamp_ms_ =
         std::numeric_limits<double>::quiet_NaN();
     next_node_id_ = 1;

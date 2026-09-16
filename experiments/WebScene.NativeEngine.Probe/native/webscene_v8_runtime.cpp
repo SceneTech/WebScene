@@ -5331,7 +5331,27 @@ void v8_dom_runtime::signal_animation_frame(double timestamp_ms)
         if(canvas.context->is_configured()&&!canvas.context->has_current_texture()&&!canvas.provider->can_acquire())
             return;
     for(auto& [key,canvas]:impl_->gpu_canvases)canvas.bitmap_reset_awaiting_frame=false;
-    if(impl_->webgpu)impl_->gpu_rendering_opportunity=true;
+    if (impl_->webgpu) {
+        // Installing WebGPU does not by itself create per-frame work.  In
+        // particular, a focused native text control can request compositor
+        // opportunities for its caret while the page has no GPU canvas at
+        // all.  Treating every one of those opportunities as GPU work makes
+        // the worker publish an unchanged scene at the display refresh rate.
+        //
+        // A GPU opportunity is needed when this frame will release a RAF
+        // callback (which may acquire a current texture), or when script has
+        // already acquired a current texture outside RAF and the frame must
+        // retire it.
+        const auto has_gpu_frame_work =
+            impl_->has_waiting_animation_frame_task()
+            || std::any_of(
+                impl_->gpu_canvases.begin(),
+                impl_->gpu_canvases.end(),
+                [](const auto& entry) {
+                    return entry.second.context->has_current_texture();
+                });
+        impl_->gpu_rendering_opportunity = has_gpu_frame_work;
+    }
 #endif
     if (impl_->is_text_control(impl_->active_element)
         && impl_->active_element->mutable_form_control().input_focused) {

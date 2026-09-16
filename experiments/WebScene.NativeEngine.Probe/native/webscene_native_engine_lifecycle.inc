@@ -135,6 +135,42 @@
         return false;
 #endif
     }
+    uint32_t request_window_close() {
+#if defined(WEBSCENE_NATIVE_ENGINE_WITH_V8)
+        if (worker_.get_id() == std::this_thread::get_id()) {
+            if (runtime_ == nullptr) {
+                set_last_error("V8 runtime is unavailable for a native window close");
+                return WEBSCENE_WINDOW_CLOSE_ERROR_V1;
+            }
+            return runtime_->request_window_close();
+        }
+        auto state = std::make_shared<window_close_decision_state>();
+        {
+            std::lock_guard lock(script_mutex_);
+            const auto pending = std::count_if(
+                script_work_.begin(), script_work_.end(), [](const auto& work) {
+                    return std::holds_alternative<window_close_decision_work>(work);
+                });
+            if (pending >= 64U) {
+                set_last_error("Native window close decision queue is full");
+                return WEBSCENE_WINDOW_CLOSE_ERROR_V1;
+            }
+            script_work_.emplace_back(window_close_decision_work{state});
+        }
+        signal_worker();
+        std::unique_lock lock(state->mutex);
+        constexpr auto maximum_wait = std::chrono::seconds(5);
+        if (!state->completed.wait_for(lock, maximum_wait,
+                [&state] { return state->ready; })) {
+            set_last_error("Native window close decision timed out");
+            return WEBSCENE_WINDOW_CLOSE_ERROR_V1;
+        }
+        return state->decision;
+#else
+        set_last_error("Native engine was built without V8 support");
+        return WEBSCENE_WINDOW_CLOSE_ERROR_V1;
+#endif
+    }
     void retire_file_runtime() {
 #if defined(WEBSCENE_NATIVE_ENGINE_WITH_V8)
         std::unique_ptr<webscene_native::v8_dom_runtime> retired;

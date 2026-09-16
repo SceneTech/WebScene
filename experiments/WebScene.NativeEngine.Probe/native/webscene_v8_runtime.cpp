@@ -5075,6 +5075,16 @@ bool v8_dom_runtime::set_fullscreen(bool fullscreen)
         && impl_->promote_pending_promise_error();
 }
 
+uint32_t v8_dom_runtime::request_window_close()
+{
+    const auto decision = impl_->request_window_close();
+    if (decision != WEBSCENE_WINDOW_CLOSE_ERROR_V1
+        && !impl_->promote_pending_promise_error()) {
+        return WEBSCENE_WINDOW_CLOSE_ERROR_V1;
+    }
+    return decision;
+}
+
 void v8_dom_runtime::set_resource_root(std::string resource_root)
 {
     impl_->resource_root = std::filesystem::path(std::move(resource_root)).lexically_normal();

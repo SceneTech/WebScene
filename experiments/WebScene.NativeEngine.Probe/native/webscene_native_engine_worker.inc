@@ -1025,6 +1025,23 @@
                     changed = true;
                     continue;
                 }
+                if (auto* close = std::get_if<window_close_decision_work>(&request)) {
+                    const auto decision = runtime_ == nullptr
+                        ? WEBSCENE_WINDOW_CLOSE_ERROR_V1
+                        : runtime_->request_window_close();
+                    if (decision == WEBSCENE_WINDOW_CLOSE_ERROR_V1) {
+                        set_last_error(runtime_ == nullptr
+                            ? "V8 runtime is unavailable for a native window close"
+                            : runtime_->last_error());
+                    }
+                    {
+                        std::lock_guard lock(close->state->mutex);
+                        close->state->decision = decision;
+                        close->state->ready = true;
+                    }
+                    close->state->completed.notify_one();
+                    continue;
+                }
 #endif
                 if (auto* url = std::get_if<url_request>(&request)) {
                     if (url->initial_viewport) apply(*url->initial_viewport);

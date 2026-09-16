@@ -1517,6 +1517,13 @@ uint8_t webscene_engine_set_window_fullscreen_v1(
     return engine != nullptr && engine->set_fullscreen(fullscreen != 0) ? 1U : 0U;
 }
 
+uint32_t webscene_engine_request_window_close_v1(webscene_engine* engine)
+{
+    return engine == nullptr
+        ? WEBSCENE_WINDOW_CLOSE_ERROR_V1
+        : engine->request_window_close();
+}
+
 uint8_t webscene_engine_set_preferred_color_scheme(
     webscene_engine* engine,
     uint32_t preferred_color_scheme)

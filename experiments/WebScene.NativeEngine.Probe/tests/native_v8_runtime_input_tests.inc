@@ -2237,6 +2237,91 @@ void test_typed_window_host_request_performance(webscene_engine* engine)
               << operation_count << " elapsed=" << elapsed << "s\n";
 }
 
+void test_host_driven_window_close_lifecycle(webscene_engine* engine)
+{
+    require(
+        webscene_engine_request_window_close_v1(nullptr)
+            == WEBSCENE_WINDOW_CLOSE_ERROR_V1,
+        "a null engine did not return the native close error decision");
+    execute_and_wait(engine, R"JS(
+        globalThis.__nativeCloseLifecycle = {
+          beforeunload: 0,
+          pagehide: 0,
+          microtasks: 0,
+          veto: true,
+          pagehideCancelable: null,
+          persisted: null
+        };
+        addEventListener('beforeunload', event => {
+          ++__nativeCloseLifecycle.beforeunload;
+          Promise.resolve().then(() => ++__nativeCloseLifecycle.microtasks);
+          if (__nativeCloseLifecycle.veto) event.preventDefault();
+        });
+        addEventListener('pagehide', event => {
+          ++__nativeCloseLifecycle.pagehide;
+          __nativeCloseLifecycle.pagehideCancelable = event.cancelable;
+          __nativeCloseLifecycle.persisted = event.persisted;
+        });
+    )JS", "native-host-close-lifecycle-setup.js");
+
+    const auto veto_decision = webscene_engine_request_window_close_v1(engine);
+    const auto veto_state = evaluate(engine, "__nativeCloseLifecycle",
+        "native-host-close-veto-result.js");
+    require(
+        veto_decision == WEBSCENE_WINDOW_CLOSE_VETO_V1,
+        "cancelled beforeunload did not veto the native close: decision="
+            + std::to_string(veto_decision) + " state=" + veto_state);
+    require(
+        veto_state
+            == R"({"beforeunload":1,"pagehide":0,"microtasks":1,"veto":true,"pagehideCancelable":null,"persisted":null})",
+        "native close veto did not drain beforeunload without pagehide: "
+            + veto_state);
+
+    execute_and_wait(engine, "__nativeCloseLifecycle.veto = false",
+        "native-host-close-allow.js");
+    require(
+        webscene_engine_request_window_close_v1(engine)
+            == WEBSCENE_WINDOW_CLOSE_ALLOW_V1,
+        "uncancelled beforeunload did not allow the native close");
+    const auto allowed_state = evaluate(engine, "__nativeCloseLifecycle",
+        "native-host-close-allow-result.js");
+    require(
+        allowed_state
+            == R"({"beforeunload":2,"pagehide":1,"microtasks":2,"veto":false,"pagehideCancelable":false,"persisted":false})",
+        "allowed native close did not publish one terminal pagehide: "
+            + allowed_state);
+
+    constexpr unsigned operation_count = 10000U;
+    const auto started = std::chrono::steady_clock::now();
+    for (unsigned index = 0; index < operation_count; ++index) {
+        require(
+            webscene_engine_request_window_close_v1(engine)
+                == WEBSCENE_WINDOW_CLOSE_ALLOW_V1,
+            "a repeated approved native close changed decision");
+    }
+    const auto elapsed = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - started).count();
+    require(elapsed < 5.0,
+        "10,000 coalesced native close decisions exceeded five seconds");
+    require(
+        evaluate(engine, "__nativeCloseLifecycle",
+            "native-host-close-repeat-result.js") == allowed_state,
+        "repeated approved native closes redispatched lifecycle events");
+    std::cout << "Native close decision gate: operations="
+              << operation_count << " elapsed=" << elapsed << "s\n";
+
+    auto* error_engine = webscene_engine_create(0);
+    require(error_engine != nullptr,
+        "native close error fixture engine creation failed");
+    execute_and_wait(error_engine, "globalThis.dispatchEvent = null",
+        "native-host-close-missing-dispatcher.js");
+    require(
+        webscene_engine_request_window_close_v1(error_engine)
+            == WEBSCENE_WINDOW_CLOSE_ERROR_V1,
+        "a missing top-level dispatcher did not return a native close error");
+    webscene_engine_destroy(error_engine);
+}
+
 void test_css_linear_gradient_reaches_the_retained_scene(webscene_engine* engine)
 {
     {

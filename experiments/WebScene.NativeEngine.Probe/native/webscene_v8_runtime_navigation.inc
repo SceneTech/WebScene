@@ -118,6 +118,7 @@
         stop_workers();
         dedicated_workers.clear();
         reset_message_ports_for_navigation();
+        terminal_pagehide_dispatched = false;
         file_targets.clear();
         { std::lock_guard lock(file_requests_mutex); file_requests.clear(); }
         cancel_native_host_promises("The document navigated before the native host completed the request");

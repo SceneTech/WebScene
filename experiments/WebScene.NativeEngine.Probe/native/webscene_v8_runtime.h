@@ -349,6 +349,7 @@ public:
     bool set_visible(bool visible);
     bool set_focused(bool focused);
     bool set_fullscreen(bool fullscreen);
+    uint32_t request_window_close();
     bool dispatch_input(const webscene_input_event& event, bool defer_cursor_update = false);
     // Worker-only: call after publication layout and ResizeObserver delivery.
     void refresh_pointer_cursor_after_layout();

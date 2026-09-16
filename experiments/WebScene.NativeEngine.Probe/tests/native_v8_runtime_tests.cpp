@@ -343,6 +343,14 @@ int main()
             webscene_engine_destroy(focused_engine);
             return 0;
         }
+        if (selected == "host-driven-close-veto") {
+            auto* focused_engine = webscene_engine_create(0);
+            require(focused_engine != nullptr,
+                "host-driven close engine creation failed");
+            test_host_driven_window_close_lifecycle(focused_engine);
+            webscene_engine_destroy(focused_engine);
+            return 0;
+        }
         if (selected == "input-diagnostics-pointer-focus") {
             test_document_direction_and_visibility_are_native_properties();
             test_native_legacy_clipboard_completion_stress(nullptr);
@@ -933,6 +941,13 @@ int main()
     test_pointer_hit_targets_and_related_targets_are_elements(engine);
     test_pointer_cursor_and_external_anchor_host_handoff(engine);
     test_typed_window_host_request_performance(engine);
+    {
+        auto* close_engine = webscene_engine_create(0);
+        require(close_engine != nullptr,
+            "host-driven close engine creation failed");
+        test_host_driven_window_close_lifecycle(close_engine);
+        webscene_engine_destroy(close_engine);
+    }
     test_enter_dispatches_browser_keypress_for_interval_commit(engine);
     test_css_linear_gradient_reaches_the_retained_scene(engine);
     {

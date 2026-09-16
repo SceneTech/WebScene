@@ -1376,6 +1376,74 @@
         info.GetReturnValue().Set(result);
     }
 
+    uint32_t request_window_close()
+    {
+        auto isolate_locker = lock_shared_isolate();
+        v8::Isolate::Scope isolate_scope(isolate);
+        v8::HandleScope handle_scope(isolate);
+        auto local_context = context.Get(isolate);
+        if (local_context.IsEmpty()) {
+            last_error = "Native window close has no active top-level realm";
+            return WEBSCENE_WINDOW_CLOSE_ERROR_V1;
+        }
+        v8::Context::Scope context_scope(local_context);
+        if (terminal_pagehide_dispatched) {
+            return WEBSCENE_WINDOW_CLOSE_ALLOW_V1;
+        }
+
+        auto target = local_context->Global();
+        v8::Local<v8::Value> dispatcher;
+        if (!target->Get(local_context, js_string(isolate, "dispatchEvent"))
+                .ToLocal(&dispatcher)
+            || !dispatcher->IsFunction()) {
+            last_error = "Native window close dispatcher is unavailable";
+            return WEBSCENE_WINDOW_CLOSE_ERROR_V1;
+        }
+
+        const auto dispatch = [&](const char* type, bool cancelable,
+                                  bool include_persisted,
+                                  v8::Local<v8::Value>& result) {
+            auto event = create_event_instance(local_context);
+            event->Set(local_context, js_string(isolate, "type"),
+                js_string(isolate, type)).Check();
+            event->Set(local_context, js_string(isolate, "bubbles"),
+                v8::False(isolate)).Check();
+            event->Set(local_context, js_string(isolate, "cancelable"),
+                v8::Boolean::New(isolate, cancelable)).Check();
+            if (include_persisted) {
+                event->Set(local_context, js_string(isolate, "persisted"),
+                    v8::False(isolate)).Check();
+            }
+            v8::Local<v8::Value> arguments[] = {event};
+            return dispatcher.As<v8::Function>()->Call(
+                local_context, target, 1, arguments).ToLocal(&result);
+        };
+
+        v8::TryCatch try_catch(isolate);
+        v8::Local<v8::Value> beforeunload_result;
+        if (!dispatch("beforeunload", true, false, beforeunload_result)) {
+            last_error = "Native window beforeunload dispatch failed: "
+                + describe_reported_exception(try_catch, local_context);
+            ++frame_script_error_count;
+            return WEBSCENE_WINDOW_CLOSE_ERROR_V1;
+        }
+        perform_microtask_checkpoint();
+        if (beforeunload_result->IsFalse()) {
+            return WEBSCENE_WINDOW_CLOSE_VETO_V1;
+        }
+
+        v8::Local<v8::Value> pagehide_result;
+        if (!dispatch("pagehide", false, true, pagehide_result)) {
+            last_error = "Native window pagehide dispatch failed: "
+                + describe_reported_exception(try_catch, local_context);
+            ++frame_script_error_count;
+            return WEBSCENE_WINDOW_CLOSE_ERROR_V1;
+        }
+        perform_microtask_checkpoint();
+        terminal_pagehide_dispatched = true;
+        return WEBSCENE_WINDOW_CLOSE_ALLOW_V1;
+    }
+
     bool set_visible(bool visible)
     {
         if (document_visible == visible) return true;

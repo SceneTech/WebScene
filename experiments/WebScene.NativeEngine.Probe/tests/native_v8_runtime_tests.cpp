@@ -763,6 +763,7 @@ int main()
     test_empty_inline_element_does_not_stretch_cross_size(engine);
     test_br_keeps_inline_block_on_its_own_line(engine);
     test_hover_invalidation_updates_functional_and_sibling_subjects(engine);
+    test_hover_dependency_matching_reuses_compiled_triggers(engine);
     test_hover_moves_between_block_and_display_contents_child(engine);
     test_single_fractional_grid_track_stays_one_column(engine);
     test_tradingview_symbol_search_display_contents_rows_join_parent_grid(engine);

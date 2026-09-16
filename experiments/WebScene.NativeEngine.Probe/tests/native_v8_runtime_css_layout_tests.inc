@@ -1452,6 +1452,61 @@ void test_hover_invalidation_updates_functional_and_sibling_subjects(
             + hovered + ", unhovered=" + unhovered);
 }
 
+void test_hover_dependency_matching_reuses_compiled_triggers(
+    webscene_engine* engine)
+{
+    execute(engine, R"JS(
+        (() => {
+          const count = 4000;
+          const selectors = ['.probe { width: 40px; height: 40px; }'];
+          for (let index = 0; index < count; ++index) {
+            selectors.push(
+              `.probe.trigger-${index}[data-kind="editor"]:not(.disabled)`
+              + `:not([aria-hidden="true"]):hover .leaf-${index}`
+              + ' { color: rgb(1, 2, 3); }');
+          }
+          let content = `<span class="leaf-${count - 1}">leaf</span>`;
+          for (let depth = 0; depth < 32; ++depth) {
+            content = `<div>${content}</div>`;
+          }
+          document.body.innerHTML = `<style>${selectors.join('\n')}</style>`
+            + `<div class="probe trigger-${count - 1}" data-kind="editor">`
+            + `${content}</div>`;
+        })()
+    )JS", "native-hover-compiled-trigger-setup.js");
+    resize(engine, 320, 200, 1051U);
+    const auto pointer_x = std::stod(evaluate(
+        engine,
+        "document.querySelector('.probe').getBoundingClientRect().x + 5",
+        "native-hover-compiled-trigger-x.js"));
+    const auto pointer_y = std::stod(evaluate(
+        engine,
+        "document.querySelector('.probe').getBoundingClientRect().y + 5",
+        "native-hover-compiled-trigger-y.js"));
+    const auto before = consumed_input_count(engine);
+    const auto started = std::chrono::steady_clock::now();
+    pointer_move(engine, pointer_x, pointer_y, 1052U);
+    wait_for_consumed_inputs(
+        engine,
+        before + 1U,
+        "compiled hover dependency pointer move was not consumed");
+    const auto elapsed = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - started).count();
+    const auto color = evaluate(
+        engine,
+        "getComputedStyle(document.querySelector('.leaf-3999')).color",
+        "native-hover-compiled-trigger-result.js");
+    std::cout << "Cached hover dependency gate: 4000 triggers in "
+        << elapsed << " ms\n";
+    require(
+        color == R"JSON("rgb(1, 2, 3)")JSON",
+        "cached hover trigger did not preserve descendant invalidation: " + color);
+    require(
+        elapsed < 30.0,
+        "4,000 cached hover dependencies across a deep path exceeded the 30 ms input budget: "
+            + std::to_string(elapsed) + " ms");
+}
+
 void test_hover_moves_between_block_and_display_contents_child(webscene_engine* engine)
 {
     execute(engine, R"JS(

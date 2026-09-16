@@ -2,6 +2,7 @@
 <meta charset="utf-8">
 <title>Observed component media queries select the expected rules</title>
 <style>
+  @layer reset { * { box-sizing: border-box; } }
   #probe { --base: pass; }
   @media all { #probe { --media-all: pass; } }
   @media (min-width: 1px) { #probe { --min-width: pass; } }
@@ -60,6 +61,11 @@
   }
 
   const style = getComputedStyle(document.getElementById("probe"));
+  test("universal rules inside a cascade layer remain active", () => {
+    if (style.boxSizing !== "border-box") {
+      throw new Error("layered universal box-sizing resolved to " + style.boxSizing);
+    }
+  });
   test("media type and viewport bounds", () => {
     for (const property of [
       "--media-all", "--min-width", "--max-width", "--min-height", "--max-height"

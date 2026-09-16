@@ -584,9 +584,9 @@
     {
       "path": "contracts/html-raster-image-intrinsic-size.html",
       "type": "contract",
-      "capabilities": ["html-raster-image", "png-data-url", "natural-image-dimensions", "replaced-image-aspect-ratio", "rounded-raster-scene-publication"],
+      "capabilities": ["html-raster-image", "png-data-url", "natural-image-dimensions", "replaced-image-aspect-ratio", "percentage-border-radius", "rounded-raster-scene-publication"],
       "evidence": ["product-neutral-native-regression", "catalog-artwork"],
-      "reason": "Required product-neutral regression for decoding an encoded PNG resource, exposing natural dimensions, deriving an automatic block size from the used inline size, and publishing retained raster paint bytes."
+      "reason": "Required product-neutral regression for decoding an encoded PNG resource, exposing natural dimensions, deriving an automatic block size from the used inline size, preserving a 50% image radius, and publishing retained raster paint bytes with circular clipping metadata."
     },
     {
       "path": "contracts/submenu-pointer-lifecycle.html",

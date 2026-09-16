@@ -1192,8 +1192,11 @@ void test_hover_recascade_preserves_horizontal_catalog_row(webscene_engine* engi
               gap:12px; width:620px; overflow:hidden; }
             .card { width:140px; height:190px; background:#181818; }
             .card:hover { background:#282828; }
-            .card:hover .action { opacity:1; }
-            .action { opacity:0; width:32px; height:32px; }
+            .alternate:hover .action, .card:hover .action,
+            .alternate:focus-within .action, .card:focus-within {
+              opacity:1; transform:translateY(0); }
+            .action { opacity:0; width:32px; height:32px; transform:translateY(8px);
+              background:#1ed760; border-radius:50%; }
           </style>
           <section class="catalog">
             <article class="card"><button class="action">Play</button></article>
@@ -1233,6 +1236,30 @@ void test_hover_recascade_preserves_horizontal_catalog_row(webscene_engine* engi
     )JS", "native-catalog-hover-action.js");
     require(hover_result == R"JSON(["1",true,"ARTICLE","card"])JSON",
         "catalog hover did not apply its visual-only action state: " + hover_result);
+
+    webscene_engine_request_scene_checkpoint(engine);
+    auto painted_action = false;
+    for (auto attempt = 0; attempt < 100; ++attempt) {
+        const auto* scene = webscene_engine_acquire_latest_scene(engine);
+        if (scene != nullptr) {
+            for (uint32_t index = 0; index < scene->header.command_count; ++index) {
+                const auto& command = scene->commands[index];
+                if ((command.rgba >> 8U) == 0x1ED760U
+                    && std::abs(command.width - 32.0F) < 0.01F
+                    && std::abs(command.height - 32.0F) < 0.01F
+                    && std::abs(command.radius_top_left - 16.0F) < 0.01F) {
+                    painted_action = true;
+                    break;
+                }
+            }
+            webscene_scene_acknowledge(scene);
+            webscene_scene_release(scene);
+        }
+        if (painted_action) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    require(painted_action,
+        "catalog hover computed the action visible but did not publish its paint");
 }
 
 void test_complex_is_specificity_ignores_non_element_siblings(webscene_engine* engine)

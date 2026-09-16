@@ -7,7 +7,7 @@
     display: block;
     inline-size: 40px;
     block-size: var(--missing-image-block-size, revert-layer);
-    border-radius: 4px;
+    border-radius: 50%;
   }
 </style>
 <img id="pixel" alt="" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mOQ3RnyHwAESwIqgesNvAAAAABJRU5ErkJggg==">
@@ -24,9 +24,10 @@
   }
   function verify() {
     const rect = image.getBoundingClientRect();
+    const radius = getComputedStyle(image).borderTopLeftRadius;
     if (image.complete && image.naturalWidth === 1 && image.naturalHeight === 1
-        && rect.width === 40 && rect.height === 40) finish("PASS");
-    else finish("FAIL", `image state was complete=${image.complete}, natural=${image.naturalWidth}x${image.naturalHeight}, used=${rect.width}x${rect.height}`);
+        && rect.width === 40 && rect.height === 40 && radius === "50%") finish("PASS");
+    else finish("FAIL", `image state was complete=${image.complete}, natural=${image.naturalWidth}x${image.naturalHeight}, used=${rect.width}x${rect.height}, radius=${radius}`);
   }
   image.addEventListener("load", verify, { once: true });
   image.addEventListener("error", () => finish("FAIL", "PNG emitted an error event"), { once: true });

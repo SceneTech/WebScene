@@ -207,6 +207,14 @@ void test_worker_message_port_transfer_and_throughput() {
             if (!(port instanceof MessagePort)) throw Error('Transferred value is not a MessagePort');
             if (typeof document !== 'undefined' || typeof importScripts !== 'function')
               throw Error('Worker global shape changed');
+            const isWebWorker = typeof self === 'object' && self.constructor
+              && self.constructor.name === 'DedicatedWorkerGlobalScope';
+            if (!isWebWorker
+                || !(self instanceof DedicatedWorkerGlobalScope)
+                || !(self instanceof WorkerGlobalScope)
+                || !(self instanceof EventTarget)
+                || Object.prototype.toString.call(self) !== '[object DedicatedWorkerGlobalScope]')
+              throw Error('DedicatedWorkerGlobalScope identity changed');
             port.onmessage = message => port.postMessage(message.data + 1);
             port.start();
           }`;

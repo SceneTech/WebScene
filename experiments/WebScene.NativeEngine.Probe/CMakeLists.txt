@@ -226,6 +226,12 @@ option(WEBSCENE_NATIVE_ENGINE_BUILD_CSS_PARSER_BENCHMARK
     "Build the V8-free selected CSS syntax parser microbenchmark" OFF)
 option(WEBSCENE_NATIVE_ENGINE_BUILD_DOM_BINDING_BENCHMARK
     "Build the native V8 DOM binding lifecycle benchmark" OFF)
+option(WEBSCENE_NATIVE_ENGINE_FRAGMENT_ATTACH_CONTROL
+    "Retain per-child fragment attachment recascades for A/B measurement" OFF)
+if(WEBSCENE_NATIVE_ENGINE_FRAGMENT_ATTACH_CONTROL)
+    target_compile_definitions(webscene_native_engine PRIVATE
+        WEBSCENE_NATIVE_ENGINE_FRAGMENT_ATTACH_CONTROL=1)
+endif()
 option(WEBSCENE_NATIVE_ENGINE_SELECTOR_SIBLING_SCAN_EXPERIMENT
     "Experimentally replace positional-selector sibling vectors with direct scans" OFF)
 option(WEBSCENE_NATIVE_ENGINE_SELECTOR_SIBLING_BENCHMARK_COUNTERS
@@ -772,6 +778,8 @@ if(WEBSCENE_NATIVE_ENGINE_ENABLE_V8)
         add_test(NAME webscene_native_select_popup_context COMMAND webscene_native_engine_tests)
         add_test(NAME webscene_native_hover_dependency_cache
             COMMAND webscene_native_engine_tests)
+        add_test(NAME webscene_native_fragment_atomic_attachment
+            COMMAND webscene_native_engine_tests)
         set_tests_properties(webscene_native_idle_v8_platform PROPERTIES
             ENVIRONMENT "WEBSCENE_NATIVE_ENGINE_TEST_FILTER=idle-v8-platform")
         set_tests_properties(webscene_native_select_popup_context PROPERTIES
@@ -780,6 +788,10 @@ if(WEBSCENE_NATIVE_ENGINE_ENABLE_V8)
             ENVIRONMENT "WEBSCENE_NATIVE_ENGINE_TEST_FILTER=hover-dependency-cache"
             TIMEOUT 30
             LABELS "native;runtime;performance")
+        set_tests_properties(webscene_native_fragment_atomic_attachment PROPERTIES
+            ENVIRONMENT "WEBSCENE_NATIVE_ENGINE_TEST_FILTER=fragment-attach"
+            TIMEOUT 30
+            LABELS "native;runtime;dom;performance")
         set_tests_properties(webscene_native_engine_tests PROPERTIES
             ENVIRONMENT
                 "WEBSCENE_V8_DETAILED_MEMORY_METRICS=1;WEBSCENE_INTEROP_STRESS=1")

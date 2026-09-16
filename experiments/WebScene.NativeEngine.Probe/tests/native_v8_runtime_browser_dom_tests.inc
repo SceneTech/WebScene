@@ -1293,6 +1293,70 @@ void test_node_iterator_dompurify_and_filter_contracts(webscene_engine* engine)
         "NodeIterator DOMPurify/filter contract regressed: " + result);
 }
 
+void test_node_iterator_isolated_scaling_and_memory_gate()
+{
+    auto engine = std::unique_ptr<webscene_engine, decltype(&webscene_engine_destroy)>{
+        webscene_engine_create(0), &webscene_engine_destroy};
+    require(engine != nullptr, "NodeIterator performance engine creation failed");
+
+    const auto result = evaluate(engine.get(), R"JS(
+        (() => {
+          const run = count => {
+            document.body.innerHTML = `<div id="iterator-root">${'<i></i>'.repeat(count)}</div>`;
+            const root = document.getElementById('iterator-root');
+            let filterCalls = 0;
+            const started = performance.now();
+            const iterator = document.createNodeIterator(
+              root,
+              NodeFilter.SHOW_ELEMENT,
+              () => {
+                ++filterCalls;
+                return NodeFilter.FILTER_ACCEPT;
+              });
+            const callsAfterConstruction = filterCalls;
+            let visited = 0;
+            while (iterator.nextNode()) ++visited;
+            return {
+              count,
+              visited,
+              filterCalls,
+              callsAfterConstruction,
+              elapsed: performance.now() - started
+            };
+          };
+
+          const small = run(10000);
+          const large = run(50000);
+          return {
+            smallCounts: [small.visited, small.filterCalls, small.callsAfterConstruction],
+            largeCounts: [large.visited, large.filterCalls, large.callsAfterConstruction],
+            underFiveSeconds: large.elapsed < 5000,
+            scalesLinearly: large.elapsed <= small.elapsed * 8 + 250
+          };
+        })()
+    )JS", "native-node-iterator-isolated-performance.js");
+
+    webscene_engine_memory_metrics memory{
+        sizeof(webscene_engine_memory_metrics)};
+    require(
+        webscene_engine_get_memory_metrics(engine.get(), &memory) != 0,
+        "NodeIterator performance memory metrics were unavailable");
+    constexpr uint64_t maximum_fixture_nodes = 70'000U;
+    constexpr uint64_t maximum_fixture_heap_bytes = 128U * 1024U * 1024U;
+    const auto bounded_memory =
+        memory.native_dom_node_count <= maximum_fixture_nodes
+        && memory.native_wrapper_handle_count <= maximum_fixture_nodes
+        && memory.v8_used_heap_bytes <= maximum_fixture_heap_bytes;
+
+    engine.reset();
+    require(
+        result == R"JSON({"smallCounts":[10001,10001,0],"largeCounts":[50001,50001,0],"underFiveSeconds":true,"scalesLinearly":true})JSON",
+        "isolated NodeIterator scaling gate failed: " + result);
+    require(
+        bounded_memory,
+        "isolated NodeIterator memory gate exceeded its 70,000-node/handle or 128 MiB V8 bound");
+}
+
 void test_animation_frame_dispatch_is_attributed()
 {
     auto* engine = webscene_engine_create(0);

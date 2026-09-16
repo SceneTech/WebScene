@@ -22,6 +22,7 @@
 #include <iostream>
 #include <limits>
 #include <locale>
+#include <memory>
 #include <mutex>
 #include <sstream>
 #include <string>
@@ -220,6 +221,10 @@ int main()
             require(focused_engine != nullptr, "NodeIterator engine creation failed");
             test_node_iterator_dompurify_and_filter_contracts(focused_engine);
             webscene_engine_destroy(focused_engine);
+            return 0;
+        }
+        if (selected == "node-iterator-performance") {
+            test_node_iterator_isolated_scaling_and_memory_gate();
             return 0;
         }
         if (selected == "media-query-list") {
@@ -845,6 +850,7 @@ int main()
     test_listener_added_during_dispatch_waits_for_next_event(engine);
     test_node_filter_tree_walker_focus_navigation(engine);
     test_node_iterator_dompurify_and_filter_contracts(engine);
+    test_node_iterator_isolated_scaling_and_memory_gate();
     test_table_cell_click_copies_text_to_host();
     test_synthetic_window_resize_dispatch_uses_outer_listener_registry(engine);
     test_document_create_event_and_init_event(engine);

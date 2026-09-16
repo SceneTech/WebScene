@@ -114,6 +114,34 @@ class NativeRuntimeWorkflowPolicyTests(unittest.TestCase):
         self.assertEqual(restore_keys.count("matrix.rid != 'win-x64'"), 2)
         self.assertNotIn("\n          webscene-v8-sdk-", restore_keys)
 
+    def test_release_package_gate_covers_every_supported_rid(self) -> None:
+        package_workflow = self.workflows[
+            ROOT / ".github/workflows/native-runtime-packages.yml"
+        ]
+        native = package_workflow.split("\n  native:\n", 1)[1].split(
+            "\n  required-evidence:\n", 1
+        )[0]
+        required = package_workflow.split("\n  required-evidence:\n", 1)[1].split(
+            "\n  package-set:\n", 1
+        )[0]
+        package_set = package_workflow.split("\n  package-set:\n", 1)[1].split(
+            "\n  candidate-evidence:\n", 1
+        )[0]
+        candidate = package_workflow.split("\n  candidate-evidence:\n", 1)[1].split(
+            "\n  consumer:\n", 1
+        )[0]
+        consumer = package_workflow.split("\n  consumer:\n", 1)[1].split(
+            "\n  publish:\n", 1
+        )[0]
+
+        for rid in ("osx-arm64", "linux-x64", "win-x64"):
+            with self.subTest(rid=rid):
+                self.assertIn(f"rid: {rid}", native)
+                self.assertIn(f"--expected-rid {rid}", required)
+                self.assertIn(f"--native-rid {rid}", package_set)
+                self.assertIn(f"--expected-rid {rid}", candidate)
+                self.assertIn(f"rid: {rid}", consumer)
+
 
 if __name__ == "__main__":
     unittest.main()

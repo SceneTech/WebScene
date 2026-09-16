@@ -34,9 +34,10 @@ set_property(TARGET WebScene::WebGPU PROPERTY INTERFACE_INCLUDE_DIRECTORIES "${_
 _ws_static(_Media libwebscene_media.a)
 _ws_static(_WebSocket libixwebsocket.a)
 _ws_static(_V8 libv8_monolith.a)
+_ws_static(_Crypto libmbedcrypto.a)
 _ws_static(Runtime libwebscene_native_engine.a)
 set_property(TARGET WebScene::Runtime PROPERTY INTERFACE_LINK_LIBRARIES
- "WebScene::Core;WebScene::_Media;WebScene::_WebSocket;WebScene::_Parser;WebScene::_V8;WebScene::WebGPU;iconv;z;-framework Security;-framework CoreFoundation;-framework AVFoundation;-framework CoreMedia;-framework CoreVideo;-framework Foundation;-framework IOSurface")
+ "WebScene::Core;WebScene::_Media;WebScene::_WebSocket;WebScene::_Parser;WebScene::_V8;WebScene::_Crypto;WebScene::WebGPU;iconv;z;-framework Security;-framework CoreFoundation;-framework AVFoundation;-framework CoreMedia;-framework CoreVideo;-framework Foundation;-framework IOSurface")
 add_executable(WebScene::Compiler IMPORTED GLOBAL)
 set_property(TARGET WebScene::Compiler PROPERTY IMPORTED_LOCATION "${_ws_prefix}/bin/webscene-uic")
 set(WebScene_SDK_ROOT "${_ws_prefix}")

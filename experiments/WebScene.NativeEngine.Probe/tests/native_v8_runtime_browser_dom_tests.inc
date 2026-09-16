@@ -173,6 +173,95 @@ void test_dom_traversal_cloning_primitives(webscene_engine* engine)
         "DOM traversal/cloning primitives diverged: " + result);
 }
 
+void test_specialized_content_properties(webscene_engine* engine)
+{
+    const auto result = evaluate(engine, R"JS(
+        (() => {
+          const meta = document.createElement('meta');
+          const template = document.createElement('template');
+          const ordinary = document.createElement('div');
+          meta.content = 'theme-color';
+          template.innerHTML = '<span>template child</span>';
+          ordinary.content = 'application expando';
+
+          // Keep specialized wrapper creation bounded. Five hundred iterations
+          // exercise constructor selection, reflected meta content, template
+          // fragment ownership, and ordinary expandos. The two-second ceiling
+          // allows 4 ms per iteration, well above the normal Release cost while
+          // still catching accidental blocking or quadratic wrapper setup.
+          const started = performance.now();
+          let wrapperChecksum = 0;
+          for (let index = 0; index < 500; index++) {
+            const boundedMeta = document.createElement('meta');
+            const boundedTemplate = document.createElement('template');
+            const boundedOrdinary = document.createElement('div');
+            boundedMeta.content = `theme-${index}`;
+            boundedTemplate.innerHTML = '<span>bounded child</span>';
+            boundedOrdinary.content = index;
+            wrapperChecksum += boundedMeta.content.length
+              + boundedTemplate.content.childNodes.length
+              + boundedOrdinary.content;
+          }
+          const elapsed = performance.now() - started;
+          if (elapsed > 2000) {
+            throw new Error(`specialized content wrapper gate exceeded: ${elapsed}ms`);
+          }
+          return {
+            constructors: [
+              meta.constructor.name,
+              template.constructor.name,
+              meta instanceof HTMLMetaElement,
+              template instanceof HTMLTemplateElement
+            ],
+            meta: [meta.content, meta.getAttribute('content')],
+            template: [template.content.nodeType, template.content.firstElementChild.localName],
+            ordinary: [ordinary.content, ordinary.hasAttribute('content')],
+            ownership: [
+              Object.hasOwn(HTMLMetaElement.prototype, 'content'),
+              Object.hasOwn(HTMLTemplateElement.prototype, 'content'),
+              Object.hasOwn(HTMLElement.prototype, 'content')
+            ],
+            wrapperChecksumPositive: wrapperChecksum > 0
+          };
+        })()
+    )JS", "native-specialized-content-properties.js");
+    const auto expected = R"JSON({"constructors":["HTMLMetaElement","HTMLTemplateElement",true,true],"meta":["theme-color","theme-color"],"template":[11,"span"],"ordinary":["application expando",false],"ownership":[true,true,false],"wrapperChecksumPositive":true})JSON";
+    require(
+        result == expected,
+        "specialized meta/template content properties diverged: " + result);
+}
+
+void test_child_collection_item(webscene_engine* engine)
+{
+    const auto result = evaluate(engine, R"JS(
+        (() => {
+          const host = document.createElement('div');
+          host.append('leading text');
+          const first = document.createElement('span');
+          const second = document.createElement('button');
+          host.append(first, second);
+          return {
+            children: [
+              typeof host.children.item,
+              host.children.item(0) === first,
+              host.children.item(1) === second,
+              host.children.item(2)
+            ],
+            childNodes: [
+              typeof host.childNodes.item,
+              host.childNodes.item(0).nodeType,
+              host.childNodes.item(1) === first,
+              host.childNodes.item(9)
+            ]
+          };
+        })()
+    )JS", "native-child-collection-item.js");
+    const auto expected = R"JSON({"children":["function",true,true,null],"childNodes":["function",3,true,null]})JSON";
+    require(
+        result == expected,
+        "child collection item lookup diverged: " + result);
+}
+
 void test_textarea_child_text_value_lifecycle(webscene_engine* engine)
 {
     const auto result = evaluate(engine, R"JS(

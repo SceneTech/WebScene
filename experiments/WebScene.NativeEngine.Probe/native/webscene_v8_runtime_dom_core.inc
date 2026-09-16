@@ -1474,8 +1474,12 @@
                         ? html_form_element_template.Get(isolate)
                     : node.tag == "select"
                         ? html_select_element_template.Get(isolate)
+                    : node.tag == "meta"
+                        ? html_meta_element_template.Get(isolate)
                     : node.tag == "script"
                         ? html_script_element_template.Get(isolate)
+                    : node.tag == "template"
+                        ? html_template_element_template.Get(isolate)
                     : node.tag == "style"
                         ? html_style_element_template.Get(isolate)
                     : node.tag == "td" || node.tag == "th"

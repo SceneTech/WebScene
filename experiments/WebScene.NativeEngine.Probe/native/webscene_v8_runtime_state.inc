@@ -47,8 +47,10 @@
     v8::Global<v8::FunctionTemplate> html_dialog_element_template;
     v8::Global<v8::FunctionTemplate> html_form_element_template;
     v8::Global<v8::FunctionTemplate> html_select_element_template;
+    v8::Global<v8::FunctionTemplate> html_meta_element_template;
     v8::Global<v8::FunctionTemplate> html_script_element_template;
     v8::Global<v8::FunctionTemplate> html_slot_element_template;
+    v8::Global<v8::FunctionTemplate> html_template_element_template;
     v8::Global<v8::FunctionTemplate> html_style_element_template;
     uint32_t next_standalone_event_target_id{0x80000000U};
 #endif

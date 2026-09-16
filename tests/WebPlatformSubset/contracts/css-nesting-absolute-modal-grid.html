@@ -1,0 +1,150 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Nested CSS absolute modal, grid rows, and split body geometry</title>
+<link rel="help" href="https://drafts.csswg.org/css-nesting-1/">
+<style>
+  html, body { margin: 0; width: 100%; height: 100%; }
+  .modal-block {
+    position: fixed;
+    width: 100%;
+    height: 100%;
+    top: 0;
+    left: 0;
+    overflow: hidden;
+
+    .modal-resizable { position: absolute; }
+    .modal-shadow { width: 100%; height: 100%; overflow: hidden; }
+  }
+  .modal-part {
+    display: grid;
+    grid-template-rows: 33px 1fr;
+    grid-template-columns: 1fr;
+    box-sizing: border-box;
+    width: 100%;
+    height: 100%;
+    border: 1px solid #555;
+    overflow: hidden;
+    position: relative;
+
+    > .content { min-width: 0; min-height: 0; overflow: hidden; }
+    .modal-header {
+      grid-column: 1 / -1;
+      height: 32px;
+      .title { height: 32px; line-height: 32px; }
+    }
+  }
+  .surface {
+    height: 100%;
+    overflow: hidden;
+
+    .settings-header { box-sizing: border-box; height: 86px; }
+    .settings-body {
+      position: relative;
+      height: calc(100% - 86px);
+
+      > .split-view {
+        position: absolute;
+        top: 14px;
+        right: 24px;
+        bottom: 0;
+        left: 24px;
+        display: flex;
+
+        .toc { width: 240px; }
+        .settings-list { flex: 1 1 auto; min-width: 0; }
+      }
+    }
+  }
+</style>
+<div class="modal-block">
+  <div id="modal" class="modal-resizable">
+    <div id="shadow" class="modal-shadow">
+      <div id="part" class="modal-part">
+        <div id="modal-header" class="modal-header"><div id="title" class="title">Preferences</div></div>
+        <div id="content" class="content">
+          <div id="surface" class="surface">
+            <div id="settings-header" class="settings-header"></div>
+            <div id="settings-body" class="settings-body">
+              <div id="split" class="split-view">
+                <div id="toc" class="toc"></div>
+                <div id="settings-list" class="settings-list"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+  const state = window.__webSceneWptState = {
+    complete: false, harness: null, results: [], errors: [], diagnostics: []
+  };
+  const assert = (condition, message) => { if (!condition) throw new Error(message); };
+  const near = (actual, expected, message, tolerance = 0.02) => assert(
+    Math.abs(actual - expected) <= tolerance,
+    `${message}: expected ${expected}, got ${actual}`);
+  const test = (name, body) => {
+    try { body(); state.results.push({ name, status: "PASS", message: null, stack: null }); }
+    catch (error) { state.results.push({ name, status: "FAIL",
+      message: String(error && error.message || error),
+      stack: error && error.stack ? String(error.stack) : null }); }
+  };
+  const element = id => document.getElementById(id);
+  const rect = id => element(id).getBoundingClientRect();
+  const modal = element("modal");
+  Object.assign(modal.style, {
+    width: "1152px", height: "724px", left: "144px", top: "108px"
+  });
+
+  test("nested descendant rule positions the inline-sized modal", () => {
+    const style = getComputedStyle(modal);
+    const box = rect("modal");
+    assert(style.position === "absolute", `position became ${style.position}`);
+    near(box.x, 144, "modal x"); near(box.y, 108, "modal y");
+    near(box.width, 1152, "modal width"); near(box.height, 724, "modal height");
+  });
+  test("nested shadow sizing and child-combinator grid rule preserve the editor body", () => {
+    const shadow = rect("shadow"), header = rect("modal-header"), content = rect("content");
+    near(shadow.x, 144, "shadow x"); near(shadow.y, 108, "shadow y");
+    near(shadow.width, 1152, "shadow width"); near(shadow.height, 724, "shadow height");
+    near(header.x, 145, "header x"); near(header.y, 109, "header y");
+    near(header.width, 1150, "header width"); near(header.height, 32, "header height");
+    near(content.x, 145, "content x"); near(content.y, 142, "content y");
+    near(content.width, 1150, "content width"); near(content.height, 689, "content height");
+    assert(getComputedStyle(element("content")).getPropertyValue("min-height") === "0px",
+      "nested child combinator did not apply");
+  });
+  test("nested split body retains nonzero viewport geometry", () => {
+    const surface = rect("surface"), body = rect("settings-body"), split = rect("split");
+    const toc = rect("toc"), list = rect("settings-list");
+    near(surface.x, 145, "surface x"); near(surface.y, 142, "surface y");
+    near(surface.width, 1150, "surface width"); near(surface.height, 689, "surface height");
+    near(body.y, 228, "body y"); near(body.height, 603, "body height");
+    near(split.x, 169, "split x"); near(split.y, 242, "split y");
+    near(split.width, 1102, "split width"); near(split.height, 589, "split height");
+    near(toc.width, 240, "toc width"); near(list.width, 862, "list width");
+  });
+  test("repeated inline modal positioning stays within the bounded layout gate", () => {
+    const started = performance.now();
+    for (let index = 0; index < 500; index++) {
+      modal.style.left = `${144 + (index & 1)}px`;
+      modal.style.top = `${108 + (index & 1)}px`;
+      void modal.getBoundingClientRect().left;
+    }
+    const elapsed = performance.now() - started;
+    modal.style.left = "144px";
+    modal.style.top = "108px";
+    assert(elapsed < 2000, `500 positioned layouts exceeded 2000ms: ${elapsed}ms`);
+    state.diagnostics.push(JSON.stringify({ elapsedMilliseconds: elapsed, iterations: 500 }));
+  });
+
+  state.diagnostics.push(JSON.stringify({
+    modal: rect("modal"), content: rect("content"), split: rect("split"),
+    modalPosition: getComputedStyle(modal).position
+  }));
+  const failure = state.results.find(result => result.status !== "PASS");
+  state.harness = failure ? { status: 1, message: failure.message, stack: failure.stack }
+    : { status: 0, message: null, stack: null };
+  state.complete = true;
+</script>

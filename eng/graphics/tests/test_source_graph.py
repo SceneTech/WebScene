@@ -14,6 +14,64 @@ spec.loader.exec_module(builder)
 
 
 class SourceGraphTests(unittest.TestCase):
+    def test_missing_head_is_rejected_with_a_focused_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / 'source'
+            dependency = source / 'third_party' / 'fixture'
+            dependency.mkdir(parents=True)
+            subprocess.check_call(['git', 'init', str(dependency)],
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+            with self.assertRaisesRegex(ValueError, r'missing HEAD.*third_party.*/fixture'):
+                builder.source_graph(source)
+
+    def test_clean_unborn_dawn_dependency_is_refetched_before_validation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / 'source'
+            dependency = source / 'third_party' / 'fixture'
+            dependency.mkdir(parents=True)
+            subprocess.check_call(['git', 'init', str(dependency)],
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            tools = source / 'tools'
+            tools.mkdir()
+            (tools / 'fetch_dawn_dependencies.py').write_text(
+                """#!/usr/bin/env python3
+from pathlib import Path
+import subprocess
+
+source = Path(__file__).parents[1]
+dependency = source / 'third_party' / 'fixture'
+dependency.mkdir(parents=True)
+subprocess.check_call(['git', 'init', str(dependency)], stdout=subprocess.DEVNULL)
+(dependency / 'LICENSE').write_text('Pinned dependency\\n')
+subprocess.check_call(['git', '-C', str(dependency), 'add', '.'])
+subprocess.check_call([
+    'git', '-C', str(dependency), '-c', 'user.name=SDK Test',
+    '-c', 'user.email=sdk-test@example.invalid', 'commit', '-m', 'fixture'
+], stdout=subprocess.DEVNULL)
+""",
+                encoding='utf-8')
+
+            graph = builder.repair_dawn_dependencies(source)
+
+            revision = subprocess.check_output(
+                ['git', '-C', str(dependency), 'rev-parse', 'HEAD'], text=True).strip()
+            self.assertEqual(graph, {'third_party/fixture': revision})
+
+    def test_unborn_dependency_with_files_is_not_removed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / 'source'
+            dependency = source / 'third_party' / 'fixture'
+            dependency.mkdir(parents=True)
+            subprocess.check_call(['git', 'init', str(dependency)],
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            marker = dependency / 'keep.txt'
+            marker.write_text('do not discard\n')
+
+            with self.assertRaisesRegex(ValueError, r'non-empty invalid dependency checkout'):
+                builder.repair_dawn_dependencies(source)
+            self.assertEqual(marker.read_text(), 'do not discard\n')
+
     def test_long_dependency_paths_remain_verifiable_and_edits_are_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory) / 'source'

@@ -344,7 +344,7 @@
         const auto key = wrapper_key(node);
         const auto known = stylesheet_wrappers.find(key);
         if (known != stylesheet_wrappers.end() && !known->second.IsEmpty()) {
-            return known->second.Get(isolate);
+            return augment_style_sheet(known->second.Get(isolate));
         }
         const auto local_context = isolate->GetCurrentContext();
         auto result = v8::Object::New(isolate);
@@ -353,7 +353,30 @@
             js_string(isolate, "ownerNode"),
             wrap_node(node)).Check();
         stylesheet_wrappers.emplace(key, v8::Global<v8::Object>(isolate, result));
-        return result;
+        return augment_style_sheet(result);
+    }
+
+    v8::Local<v8::Object> augment_style_sheet(v8::Local<v8::Object> sheet)
+    {
+        const auto local_context = isolate->GetCurrentContext();
+        const auto global = local_context->Global();
+        v8::Local<v8::Value> raw_augment;
+        if (!global->Get(
+                local_context,
+                js_string(isolate, "__webSceneAugmentStyleSheet"))
+                .ToLocal(&raw_augment)
+            || !raw_augment->IsFunction()) {
+            return sheet;
+        }
+        v8::Local<v8::Value> arguments[]{sheet};
+        v8::Local<v8::Value> augmented;
+        if (!raw_augment.As<v8::Function>()
+                ->Call(local_context, global, 1, arguments)
+                .ToLocal(&augmented)
+            || !augmented->IsObject()) {
+            return sheet;
+        }
+        return augmented.As<v8::Object>();
     }
 
     static void get_style_sheet(
@@ -1926,6 +1949,8 @@
         object->Set(local_context, js_string(isolate, "self"), object).Check();
         object->Set(local_context, js_string(isolate, "parent"), local_context->Global()).Check();
         install_screen(local_context, object);
+        install_performance_clock(local_context, object);
+        install_performance_timeline_on_object(local_context, object);
         frame_windows[node.id].Reset(isolate, object);
         return object;
     }

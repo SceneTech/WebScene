@@ -1398,6 +1398,10 @@
             local_context,
             js_string(isolate, "__webSceneRecordWebApi"),
             v8::Function::New(local_context, record_web_api_use).ToLocalChecked()).Check();
+        global->Set(
+            local_context,
+            js_string(isolate, "structuredClone"),
+            v8::Function::New(local_context, structured_clone, {}, 1).ToLocalChecked()).Check();
 
         const auto& current_frame_base = current_base_address();
         const auto frame_href = !current_frame_base.empty()
@@ -1410,21 +1414,8 @@
 
         install_console(local_context, global);
 
-        auto performance = v8::Object::New(isolate);
-        performance->Set(local_context, js_string(isolate, "now"), v8::Function::New(local_context, performance_now).ToLocalChecked()).Check();
-        performance->Set(
-            local_context,
-            js_string(isolate, "getEntriesByName"),
-            v8::Function::New(local_context, performance_get_entries_by_name).ToLocalChecked()).Check();
-        performance->Set(local_context, js_string(isolate, "mark"),
-            v8::Function::New(local_context, performance_entry).ToLocalChecked()).Check();
-        performance->Set(local_context, js_string(isolate, "measure"),
-            v8::Function::New(local_context, performance_entry).ToLocalChecked()).Check();
-        performance->Set(local_context, js_string(isolate, "clearMarks"),
-            v8::Function::New(local_context, console_log).ToLocalChecked()).Check();
-        performance->Set(local_context, js_string(isolate, "clearMeasures"),
-            v8::Function::New(local_context, console_log).ToLocalChecked()).Check();
-        global->Set(local_context, js_string(isolate, "performance"), performance).Check();
+        install_performance_clock(local_context, global);
+        install_performance_timeline(local_context);
 
         // React's scheduler prefers MessageChannel over timers. Keep the ports
         // realm-local and route delivery through this frame's setTimeout so a
@@ -1912,6 +1903,7 @@
         install_custom_elements_platform(local_context);
         install_fetch_globals(local_context);
         install_intersection_observer_polyfill(local_context);
+        install_web_api_compatibility(local_context);
         static_cast<void>(frame_body);
     }
 

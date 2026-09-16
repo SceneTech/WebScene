@@ -1357,6 +1357,87 @@ void test_node_iterator_isolated_scaling_and_memory_gate()
         "isolated NodeIterator memory gate exceeded its 70,000-node/handle or 128 MiB V8 bound");
 }
 
+void test_native_performance_timeline_identity(webscene_engine* engine)
+{
+    const auto result = evaluate(engine, R"JS((() => {
+      const probe = (performance, prefix) => {
+        const mark = performance.mark;
+        const measure = performance.measure;
+        const origin = performance.timeOrigin;
+        mark(prefix + '-start', { startTime: 12 });
+        mark(prefix + '-end', { startTime: 42 });
+        const entry = measure(
+          prefix + '-span', prefix + '-start', prefix + '-end');
+        try { performance.timeOrigin = 0; } catch {}
+        return {
+          finiteOrigin: Number.isFinite(origin),
+          wallClockAligned:
+            Math.abs(Date.now() - (origin + performance.now())) < 1000,
+          readOnlyOrigin: performance.timeOrigin === origin,
+          capturedIdentity:
+            mark === performance.mark && measure === performance.measure,
+          sameTimeline:
+            performance.getEntriesByName(prefix + '-span', 'measure')[0]
+              === entry,
+          startTime: entry.startTime,
+          duration: entry.duration
+        };
+      };
+      const frame = document.createElement('iframe');
+      document.body.appendChild(frame);
+      return {
+        main: probe(performance, 'native-main'),
+        frame: probe(frame.contentWindow.performance, 'native-frame')
+      };
+    })())JS", "native-performance-timeline-identity.js");
+    require(
+        result
+            == R"JSON({"main":{"finiteOrigin":true,"wallClockAligned":true,"readOnlyOrigin":true,"capturedIdentity":true,"sameTimeline":true,"startTime":12,"duration":30},"frame":{"finiteOrigin":true,"wallClockAligned":true,"readOnlyOrigin":true,"capturedIdentity":true,"sameTimeline":true,"startTime":12,"duration":30}})JSON",
+        "main/frame Performance methods did not share one retained timeline: "
+            + result);
+}
+
+void test_native_mutable_stylesheet_cssom(webscene_engine* engine)
+{
+    const auto result = evaluate(engine, R"JS((() => {
+      const exercise = (document, view, className, display) => {
+        const style = document.createElement('style');
+        const target = document.createElement('div');
+        target.className = className;
+        document.head.appendChild(style);
+        document.body.appendChild(target);
+        const sheet = style.sheet;
+        const rules = sheet.cssRules;
+        const index = sheet.insertRule(`.${className} { display: none; }`, 0);
+        const rule = rules[0];
+        const inserted = [index, rules.length, rule.selectorText,
+          view.getComputedStyle(target).display];
+        rule.style.setProperty('display', display);
+        const mutated = [rules.length, rule.style.display,
+          view.getComputedStyle(target).display];
+        sheet.deleteRule(0);
+        const deleted = [rules.length, rule.parentStyleSheet === null,
+          view.getComputedStyle(target).display];
+        return { inserted, mutated, deleted };
+      };
+      const frame = document.createElement('iframe');
+      document.body.appendChild(frame);
+      return {
+        main: exercise(document, window, 'monaco-main', 'inline-block'),
+        frame: exercise(
+          frame.contentDocument,
+          frame.contentWindow,
+          'monaco-frame',
+          'inline-flex')
+      };
+    })())JS", "native-mutable-stylesheet-cssom.js");
+    require(
+        result
+            == R"JSON({"main":{"inserted":[0,1,".monaco-main","none"],"mutated":[1,"inline-block","inline-block"],"deleted":[0,true,"block"]},"frame":{"inserted":[0,1,".monaco-frame","none"],"mutated":[1,"inline-flex","inline-flex"],"deleted":[0,true,"block"]}})JSON",
+        "mutable stylesheet CSSOM did not recascade main/frame styles: "
+            + result);
+}
+
 void test_animation_frame_dispatch_is_attributed()
 {
     auto* engine = webscene_engine_create(0);

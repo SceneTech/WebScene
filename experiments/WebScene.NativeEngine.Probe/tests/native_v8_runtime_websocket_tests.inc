@@ -31,13 +31,13 @@ void test_native_websocket_browser_api()
         location.protocol = 'https:';
         location.host = 'websocket-origin.test';
         globalThis.__webSceneWebSocketTest = {
-          events: [], text: null, binary: null, closed: false, closeCode: 0,
+          events: [], text: null, blobBinary: null, arrayBufferBinary: null,
+          closed: false, closeCode: 0,
           closeReason: '', error: null
         };
         const socket = new WebSocket('ws://127.0.0.1:)JS")
         + std::to_string(port)
         + R"JS(/echo');
-        socket.binaryType = 'arraybuffer';
         socket.addEventListener('open', () => {
           __webSceneWebSocketTest.events.push('open');
           socket.send('native-text');
@@ -47,8 +47,21 @@ void test_native_websocket_browser_api()
           if (typeof event.data === 'string') {
             __webSceneWebSocketTest.text = event.data;
             socket.send(new Uint8Array([0, 1, 254, 255]));
+          } else if (event.data instanceof Blob) {
+            const reader = new FileReader();
+            reader.addEventListener('load', () => {
+              __webSceneWebSocketTest.blobBinary =
+                Array.from(new Uint8Array(reader.result));
+              socket.binaryType = 'arraybuffer';
+              socket.send(new Uint8Array([9, 8, 7]));
+            });
+            reader.addEventListener('error', () => {
+              __webSceneWebSocketTest.error = reader.error?.message || 'file read error';
+              socket.close(1011, 'file read failed');
+            });
+            reader.readAsArrayBuffer(event.data);
           } else {
-            __webSceneWebSocketTest.binary =
+            __webSceneWebSocketTest.arrayBufferBinary =
               Array.from(new Uint8Array(event.data));
             socket.close(1000, 'complete');
           }
@@ -75,10 +88,11 @@ void test_native_websocket_browser_api()
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
     require(
-        state.find("\"events\":[\"open\",\"message\",\"message\",\"close\"]")
+        state.find("\"events\":[\"open\",\"message\",\"message\",\"message\",\"close\"]")
                 != std::string::npos
             && state.find("\"text\":\"native-text\"") != std::string::npos
-            && state.find("\"binary\":[0,1,254,255]") != std::string::npos
+            && state.find("\"blobBinary\":[0,1,254,255]") != std::string::npos
+            && state.find("\"arrayBufferBinary\":[9,8,7]") != std::string::npos
             && state.find("\"closeCode\":1000") != std::string::npos
             && state.find("\"closeReason\":\"complete\"") != std::string::npos
             && state.find("\"error\":null") != std::string::npos,

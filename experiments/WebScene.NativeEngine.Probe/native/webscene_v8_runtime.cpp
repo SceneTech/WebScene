@@ -1297,6 +1297,8 @@ struct v8_dom_runtime::implementation final {
             WEBSCENE_REQUEST_DESTINATION_NONE,
             "GET",
             {},
+            {},
+            WEBSCENE_FETCH_CREDENTIALS_SAME_ORIGIN,
             {}};
         std::string content;
         std::string resolved;
@@ -1338,17 +1340,47 @@ struct v8_dom_runtime::implementation final {
         const auto content_type = info.Length() > 3
             ? to_utf8(info.GetIsolate(), info[3])
             : std::string{};
+        const auto credentials = info.Length() > 4
+            ? info[4]->Uint32Value(info.GetIsolate()->GetCurrentContext()).FromMaybe(
+                WEBSCENE_FETCH_CREDENTIALS_SAME_ORIGIN)
+            : WEBSCENE_FETCH_CREDENTIALS_SAME_ORIGIN;
+        const auto mode = info.Length() > 5
+            ? info[5]->Uint32Value(info.GetIsolate()->GetCurrentContext()).FromMaybe(
+                WEBSCENE_FETCH_MODE_CORS)
+            : WEBSCENE_FETCH_MODE_CORS;
+        const auto redirect = info.Length() > 6
+            ? info[6]->Uint32Value(info.GetIsolate()->GetCurrentContext()).FromMaybe(0U)
+            : 0U;
+        const auto valid_method = !method.empty() && std::all_of(
+            method.begin(), method.end(), [](unsigned char character) {
+                return std::isalnum(character) || character == '!' || character == '#'
+                    || character == '$' || character == '%' || character == '&'
+                    || character == '\'' || character == '*' || character == '+'
+                    || character == '-' || character == '.' || character == '^'
+                    || character == '_' || character == '`' || character == '|'
+                    || character == '~';
+            });
+        if (!valid_method || body.size() > 16U * 1024U * 1024U
+            || credentials > WEBSCENE_FETCH_CREDENTIALS_INCLUDE
+            || mode > WEBSCENE_FETCH_MODE_NO_CORS || redirect > 2U) {
+            info.GetIsolate()->ThrowException(v8::Exception::TypeError(
+                js_string(info.GetIsolate(), "Invalid fetch request arguments")));
+            return;
+        }
         const auto& base = self->current_base_address();
         auto resolved = resolve_resource_url(specifier, base);
         resource_request_context request_context{
             WEBSCENE_RESOURCE_INITIATOR_FETCH,
             resource_origin(base),
             base,
-            WEBSCENE_FETCH_MODE_CORS,
+            mode,
             WEBSCENE_REQUEST_DESTINATION_NONE,
             method,
             body,
-            content_type};
+            content_type,
+            credentials,
+            {}};
+        request_context.cookie = self->cookie_header_for(resolved, request_context);
         const auto local_context = info.GetIsolate()->GetCurrentContext();
         if(specifier.starts_with("blob:")) {
             auto resolver=v8::Promise::Resolver::New(local_context).ToLocalChecked();
@@ -1373,6 +1405,7 @@ struct v8_dom_runtime::implementation final {
                 specifier,
                 resolved = std::move(resolved),
                 method,
+                redirect,
                 request_context = std::move(request_context),
                 notify]() mutable {
                 async_fetch_result result;
@@ -1411,9 +1444,85 @@ struct v8_dom_runtime::implementation final {
                         }
                     }
                     result.loaded = loaded;
-                    if (loaded && method != "HEAD") {
+                    if (loaded) {
+                        self->accept_response_cookies(
+                            result.resolved_url, request_context, response);
+                        result.status = response.status;
+                        result.status_text = std::move(response.status_text);
+                        const auto requested_url = result.resolved_url;
+                        if (!response.final_url.empty()) result.resolved_url = response.final_url;
+                        result.redirected = result.resolved_url != requested_url;
+                        if (redirect == 1U && (result.redirected
+                            || (result.status >= 300U && result.status < 400U))) {
+                            result.loaded = false;
+                            result.error = "Fetch redirect rejected by redirect mode";
+                        }
+                        const auto final_origin = resource_origin(result.resolved_url);
+                        if (result.loaded && request_context.mode == WEBSCENE_FETCH_MODE_SAME_ORIGIN
+                            && final_origin != request_context.origin) {
+                            result.loaded = false;
+                            result.error = "Fetch response violates same-origin mode";
+                        }
+                        const auto cross_origin = final_origin != request_context.origin;
+                        auto cors_allowed = !cross_origin;
+                        auto cors_credentials = false;
+                        std::string exposed_headers;
+                        for (auto& header : response.headers) {
+                            if (header.first == "access-control-allow-origin"
+                                && (header.second == request_context.origin
+                                    || (header.second == "*"
+                                        && request_context.credentials
+                                            != WEBSCENE_FETCH_CREDENTIALS_INCLUDE))) {
+                                cors_allowed = true;
+                            }
+                            if (header.first == "access-control-allow-credentials"
+                                && lower_html_name(header.second) == "true") {
+                                cors_credentials = true;
+                            }
+                            if (header.first == "access-control-expose-headers") {
+                                exposed_headers = lower_html_name(header.second);
+                                std::erase_if(exposed_headers, [](unsigned char value) {
+                                    return std::isspace(value) != 0;
+                                });
+                            }
+                            if (header.first != "set-cookie" && header.first != "set-cookie2") {
+                                result.headers.push_back(std::move(header));
+                            }
+                        }
+                        if (result.loaded && response.has_http_metadata
+                            && request_context.mode == WEBSCENE_FETCH_MODE_CORS
+                            && (!cors_allowed || (cross_origin
+                                && request_context.credentials == WEBSCENE_FETCH_CREDENTIALS_INCLUDE
+                                && !cors_credentials))) {
+                            result.loaded = false;
+                            result.error = "Fetch response blocked by CORS";
+                        }
+                        if (result.loaded && cross_origin
+                            && request_context.mode == WEBSCENE_FETCH_MODE_NO_CORS) {
+                            result.status = 0U;
+                            result.status_text.clear();
+                            result.resolved_url.clear();
+                            result.headers.clear();
+                            response.content.clear();
+                            result.response_type = "opaque";
+                        } else if (result.loaded && cross_origin
+                            && request_context.mode == WEBSCENE_FETCH_MODE_CORS) {
+                            std::erase_if(result.headers, [&](const auto& header) {
+                                const auto& name = header.first;
+                                const auto safelisted = name == "cache-control"
+                                    || name == "content-language" || name == "content-length"
+                                    || name == "content-type" || name == "expires"
+                                    || name == "last-modified" || name == "pragma";
+                                const auto exposed = exposed_headers == "*"
+                                    || ("," + exposed_headers + ",").find("," + name + ",")
+                                        != std::string::npos;
+                                return !safelisted && !exposed;
+                            });
+                        }
+                    }
+                    if (result.loaded && method != "HEAD") {
                         result.body = std::move(response.content);
-                    } else if (!loaded) {
+                    } else if (!result.loaded && result.error.empty()) {
                         result.error = "Unable to fetch WebScene resource: " + specifier;
                     }
                 } catch (const std::exception& error) {
@@ -1672,9 +1781,18 @@ struct v8_dom_runtime::implementation final {
             protocols.push_back(to_utf8(isolate, value));
         }
 
+        resource_request_context request_context{
+            WEBSCENE_RESOURCE_INITIATOR_SUBRESOURCE,
+            origin,
+            self->current_base_address(),
+            WEBSCENE_FETCH_MODE_CORS,
+            WEBSCENE_REQUEST_DESTINATION_NONE,
+            "GET", {}, {}, WEBSCENE_FETCH_CREDENTIALS_INCLUDE, {}};
+        const auto cookie = self->cookie_header_for(url, request_context);
         const auto socket_id = self->websocket_transport.open(
             url,
             origin,
+            cookie,
             std::move(protocols));
         if (socket_id == 0) {
             isolate->ThrowException(v8::Exception::Error(
@@ -3967,8 +4085,8 @@ struct v8_dom_runtime::implementation final {
                 this.status = Number(options.status ?? 200);
                 this.statusText = String(options.statusText ?? 'OK');
                 this.url = String(options.url ?? '');
-                this.redirected = false;
-                this.type = 'basic';
+                this.redirected = Boolean(options.redirected);
+                this.type = String(options.type ?? 'basic');
                 this.headers = new WebSceneHeaders(options.headers);
               }
               get ok() { return this.status >= 200 && this.status < 300; }
@@ -3996,6 +4114,8 @@ struct v8_dom_runtime::implementation final {
                   status: this.status,
                   statusText: this.statusText,
                   url: this.url,
+                  redirected: this.redirected,
+                  type: this.type,
                   headers: this.headers
                 });
               }
@@ -4016,6 +4136,9 @@ struct v8_dom_runtime::implementation final {
                 this.headers = new WebSceneHeaders(
                   options.headers ?? input?.headers);
                 this.body = options.body ?? input?.body ?? null;
+                this.credentials = String(options.credentials ?? input?.credentials ?? 'same-origin');
+                this.mode = String(options.mode ?? input?.mode ?? 'cors');
+                this.redirect = String(options.redirect ?? input?.redirect ?? 'follow');
               }
             }
 
@@ -4027,6 +4150,12 @@ struct v8_dom_runtime::implementation final {
                   'Request with GET/HEAD method cannot have body'));
               }
               try {
+                    const credentials = { omit: 0, 'same-origin': 1, include: 2 }[request.credentials];
+                    const mode = { 'same-origin': 1, cors: 2, 'no-cors': 3 }[request.mode];
+                    const redirect = { follow: 0, error: 1, manual: 2 }[request.redirect];
+                    if (credentials === undefined || mode === undefined || redirect === undefined) {
+                      throw new TypeError('Invalid fetch mode, credentials, or redirect option');
+                    }
                     let body = '';
                     if (request.body instanceof FormData) {
                       const boundary = `----WebSceneFormBoundary${Math.floor(
@@ -4075,10 +4204,16 @@ struct v8_dom_runtime::implementation final {
                         request.url,
                         request.method,
                         body,
-                        request.headers.get('content-type') ?? '')
+                        request.headers.get('content-type') ?? '',
+                        credentials,
+                        mode,
+                        redirect)
                         .then(result => new WebSceneResponse(
                           result.body,
-                          { status: 200, url: result.url }));
+                          { status: result.status, statusText: result.statusText,
+                            url: result.url, redirected: result.redirected,
+                            type: result.type,
+                            headers: result.headers }));
                     }
               } catch (error) {
                 return Promise.reject(error);

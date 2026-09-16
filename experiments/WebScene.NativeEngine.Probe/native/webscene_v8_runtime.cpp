@@ -6580,12 +6580,14 @@ v8_dom_runtime::memory_metrics v8_dom_runtime::read_memory_metrics() const noexc
     }
     for (const auto& [source, selector_list] :
         impl_->compiled_css_selector_lists) {
+        if (selector_list == nullptr) continue;
         result.native_css_index_storage_bytes +=
             sizeof(decltype(impl_->compiled_css_selector_lists)::value_type)
             + 2U * sizeof(void*) + string_bytes(source)
-            + selector_list.selectors.capacity()
+            + sizeof(implementation::compiled_css_selector_list)
+            + selector_list->selectors.capacity()
                 * sizeof(implementation::compiled_css_selector);
-        for (const auto& selector : selector_list.selectors) {
+        for (const auto& selector : selector_list->selectors) {
             result.native_css_index_storage_bytes +=
                 selector.compounds.capacity() * sizeof(std::string)
                 + selector.combinators.capacity() * sizeof(char)

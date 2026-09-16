@@ -185,6 +185,10 @@ int main()
             webscene_engine_destroy(focused_engine);
             return 0;
         }
+        if (selected == "recursive-selector-cache") {
+            test_recursive_functional_selector_survives_cache_eviction();
+            return 0;
+        }
         if (selected == "all-unset") {
             auto* focused_engine=webscene_engine_create(0);
             require(focused_engine != nullptr,"reset test engine creation failed");
@@ -813,6 +817,7 @@ int main()
     test_executed_compilation_units_enrich_persistent_cache();
     test_process_wide_compilation_single_flight();
     test_canvas_text_metrics_use_host_font_axes();
+    test_recursive_functional_selector_survives_cache_eviction();
     auto* engine = webscene_engine_create(64);
     require(engine != nullptr, "engine creation failed");
 #if defined(WEBSCENE_NATIVE_ENGINE_WITH_V8_INSPECTOR)

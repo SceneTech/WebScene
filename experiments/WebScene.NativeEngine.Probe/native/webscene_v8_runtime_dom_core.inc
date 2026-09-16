@@ -2082,7 +2082,7 @@
         // Reuse the compiled-selector cache so frequently repeated querySelector,
         // matches, and closest calls do not cross the Rust FFI and allocate a full
         // Servo parse result on every invocation.
-        return !cached_css_selector_list(selector).selectors.empty();
+        return !cached_css_selector_list(selector)->selectors.empty();
 #else
         selector = trim_css_view(selector);
         if (selector.empty()) return false;
@@ -2245,8 +2245,8 @@
         bool include_root) const
     {
         std::vector<dom_node*> result;
-        const auto& compiled = cached_css_selector_list(selector);
-        collect_selector_matches(root, compiled, include_root, result, &root);
+        const auto compiled = cached_css_selector_list(selector);
+        collect_selector_matches(root, *compiled, include_root, result, &root);
         return result;
     }
 
@@ -2255,8 +2255,8 @@
         std::string_view selector,
         bool include_root) const
     {
-        const auto& compiled = cached_css_selector_list(selector);
-        return find_selector_match(root, compiled, include_root, &root);
+        const auto compiled = cached_css_selector_list(selector);
+        return find_selector_match(root, *compiled, include_root, &root);
     }
 
     v8::Local<v8::Array> selector_results(
@@ -3945,11 +3945,12 @@
             throw_selector_syntax_error(info, selector);
             return;
         }
+        const auto compiled = self->cached_css_selector_list(selector);
         info.GetReturnValue().Set(v8::Boolean::New(
             info.GetIsolate(),
             self->compiled_css_selector_list_matches(
                 *node,
-                self->cached_css_selector_list(selector),
+                *compiled,
                 node)));
     }
 
@@ -4005,11 +4006,12 @@
             throw_selector_syntax_error(info, selector);
             return;
         }
+        const auto compiled = self->cached_css_selector_list(selector);
         for (auto* candidate = node; candidate != nullptr;
             candidate = self->document.dom_parent(*candidate)) {
             if (self->compiled_css_selector_list_matches(
                     *candidate,
-                    self->cached_css_selector_list(selector))) {
+                    *compiled)) {
                 info.GetReturnValue().Set(self->wrap_node(*candidate));
                 return;
             }

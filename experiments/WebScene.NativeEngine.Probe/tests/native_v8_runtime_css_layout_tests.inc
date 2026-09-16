@@ -167,6 +167,54 @@ void test_nested_css_absolute_modal_grid_geometry(webscene_engine* engine)
             + std::to_string(elapsed));
 }
 
+void test_recursive_functional_selector_survives_cache_eviction()
+{
+    auto* engine = webscene_engine_create(64);
+    require(engine != nullptr, "selector-cache regression engine creation failed");
+    const auto result = evaluate(engine, R"JS(
+        (() => {
+          document.body.innerHTML =
+            '<div class="ancestor"><div class="root foo bar">' +
+            '<div id="selector-cache-target" class="target"></div></div></div>';
+          const target = document.getElementById('selector-cache-target');
+          for (let index = 0; index < 511; ++index) {
+            target.matches(`.selector-cache-primer-${index}`);
+          }
+          const style = document.createElement('style');
+          document.head.appendChild(style);
+          style.textContent = `
+            .root:not(.ancestor .foo:is(.bar)) .target {
+              width: 37px;
+            }
+          `;
+          return getComputedStyle(target).width !== '37px'
+            && document.querySelector('.ancestor .foo:is(.bar)') === target.parentElement;
+        })()
+    )JS", "recursive-functional-selector-cache-eviction.js");
+    require(
+        result == "true",
+        "recursive functional selector changed semantics after cache eviction: " + result);
+
+    const auto elapsed = std::stod(evaluate(engine, R"JS(
+        (() => {
+          const target = document.getElementById('selector-cache-target');
+          const started = performance.now();
+          for (let round = 0; round < 8; ++round) {
+            for (let index = 0; index < 511; ++index) {
+              target.matches(`.selector-cache-stress-${round}-${index}`);
+            }
+            target.parentElement.matches('.ancestor .foo:is(.bar)');
+          }
+          return performance.now() - started;
+        })()
+    )JS", "recursive-functional-selector-cache-performance.js"));
+    std::cout << "Recursive selector cache gate: 4096 matches in "
+        << elapsed << " ms\n";
+    require(elapsed < 2000.0,
+        "4096 selector-cache matches exceeded 2000ms: " + std::to_string(elapsed));
+    webscene_engine_destroy(engine);
+}
+
 void test_compact_go_to_fixed_grid_tracks_preserve_trailing_space(
     webscene_engine* engine)
 {

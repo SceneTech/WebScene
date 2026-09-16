@@ -66,6 +66,32 @@ void test_dimension_custom_property_recascade(webscene_engine* engine)
     require(result == "true", "dimension custom property recascade failed: " + result);
 }
 
+void test_logical_size_properties_map_to_horizontal_box_axes(webscene_engine* engine)
+{
+    resize(engine, 800, 600, 1);
+    const auto result = evaluate(engine, R"JS(
+        (() => {
+          document.body.innerHTML = `
+            <style>
+              #exact { inline-size: 120px; block-size: 70px; }
+              #minimum { inline-size: 20px; block-size: 10px;
+                min-inline-size: 90px; min-block-size: 60px; }
+              #maximum { inline-size: 180px; block-size: 140px;
+                max-inline-size: 110px; max-block-size: 80px; }
+            </style>
+            <div id="exact"></div><div id="minimum"></div><div id="maximum"></div>`;
+          const size = id => {
+            const rect = document.getElementById(id).getBoundingClientRect();
+            return [rect.width, rect.height];
+          };
+          return [size('exact'), size('minimum'), size('maximum')];
+        })()
+    )JS", "logical-size-properties.js");
+    require(
+        result == "[[120,70],[90,60],[110,80]]",
+        "logical size properties did not map to horizontal box axes: " + result);
+}
+
 
 void test_dimension_custom_property_inheritance(webscene_engine* engine)
 {

@@ -993,12 +993,26 @@
             const auto close = html.find("</script>", open_end + 1U);
             if (close == std::string::npos) break;
             const auto attributes = html.substr(open, open_end - open + 1U);
-            result.push_back(frame_script{
-                extract_html_attribute(attributes, "src"),
-                html.substr(open_end + 1U, close - open_end - 1U),
-                attributes.find("defer") != std::string::npos || extract_html_attribute(attributes, "type") == "module",
-                index++,
-                extract_html_attribute(attributes, "type") == "module"});
+            auto type = lower_html_name(extract_html_attribute(attributes, "type"));
+            const auto first = type.find_first_not_of(" \t\r\n\f");
+            const auto last = type.find_last_not_of(" \t\r\n\f");
+            type = first == std::string::npos
+                ? std::string{}
+                : type.substr(first, last - first + 1U);
+            const auto executable = type.empty() || type == "module"
+                || type == "text/javascript"
+                || type == "application/javascript"
+                || type == "application/ecmascript"
+                || type == "text/ecmascript";
+            if (executable) {
+                result.push_back(frame_script{
+                    extract_html_attribute(attributes, "src"),
+                    html.substr(open_end + 1U, close - open_end - 1U),
+                    attributes.find("defer") != std::string::npos || type == "module",
+                    index,
+                    type == "module"});
+            }
+            ++index;
             cursor = close + 9U;
         }
         return result;

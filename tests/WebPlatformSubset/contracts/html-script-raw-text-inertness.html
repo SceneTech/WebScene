@@ -8,6 +8,7 @@
 <body>
 <div id="raw-text-target"></div>
 <script id="data-block" type="application/json">{"fragment":"<style>#raw-text-target{display:none}</style>"}</script>
+<script id="executable-looking-data" type="application/json">globalThis.__inertDataBlockExecuted = true</script>
 <script>
   const styleLikeJavaScriptString = "<style>body{display:none;visibility:hidden}</style>";
   const state = window.__webSceneWptState = {
@@ -47,6 +48,13 @@
     assert(dataBlock.type === "application/json", `data script type was ${dataBlock && dataBlock.type}`);
     assert(dataBlock.textContent.includes("#raw-text-target{display:none}"),
       "data script raw text was reparsed as document markup");
+  });
+
+  test("initial non-JavaScript script data is not executed", () => {
+    const dataBlock = document.getElementById("executable-looking-data");
+    assert(dataBlock && dataBlock.type === "application/json", "executable-looking data block was removed");
+    assert(globalThis.__inertDataBlockExecuted === undefined,
+      "initial application/json script content was evaluated as JavaScript");
   });
 
   test("style-like markup in inert script data does not enter the cascade", () => {

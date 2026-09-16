@@ -47,10 +47,10 @@
     },
     {
       "family": "logical-box-properties",
-      "required": ["LTR padding-inline-start", "LTR padding-inline-end", "LTR margin-inline-start", "LTR margin-inline-end", "content and following-sibling geometry"],
+      "required": ["LTR padding-inline-start", "LTR padding-inline-end", "LTR margin-inline-start", "LTR margin-inline-end", "inline-size", "block-size", "min-inline-size", "min-block-size", "max-inline-size", "max-block-size", "content and following-sibling geometry"],
       "productEvidence": ["hosted component dialog spacing", "calendar controls", "toolbar and menu inline alignment"],
-      "coverage": ["contracts/css-logical-inline-spacing.html", "CssStylesheetCompilerTests", "native style-application mapping"],
-      "gap": "The required exact-pixel contract passes the native runner for the four observed logical inline margin and padding longhands in the certified left-to-right projection. Direction-aware RTL mapping, vertical writing modes, logical shorthands, and block-axis logical properties are not claimed by this primitive. Evidence: artifacts/web-platform-logical-inline-v1/{native,managed}/results.json."
+      "coverage": ["contracts/css-logical-inline-spacing.html", "contracts/css-logical-sizing.html", "test_logical_size_properties_map_to_horizontal_box_axes", "CssStylesheetCompilerTests", "native style-application mapping"],
+      "gap": "The required contracts cover logical inline margin/padding and preferred/minimum/maximum logical dimensions in horizontal writing mode. Direction-aware RTL mapping, vertical writing modes, logical shorthands, and direction-sensitive axis remapping remain outside this bounded claim."
     },
     {
       "family": "inline-loader-alignment",

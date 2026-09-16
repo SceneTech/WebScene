@@ -191,6 +191,37 @@ size_t load_contextual_test_resource_v3(
         destination_capacity);
 }
 
+void test_initial_non_javascript_script_is_inert()
+{
+    resource_server server{.content = {
+        {"https://script-type.test/index.html", R"HTML(
+            <!doctype html><body>
+            <script id="data" type="application/json">globalThis.__inertExecuted = true</script>
+            <script>globalThis.__executableObservedInert = globalThis.__inertExecuted === undefined</script>
+            </body>
+        )HTML"}
+    }};
+    webscene_engine_options options{};
+    options.struct_size = sizeof(options);
+    options.resource_load_callback = load_test_resource;
+    options.resource_load_user_data = &server;
+    auto* engine = webscene_engine_create_with_options(&options);
+    require(engine != nullptr, "inert initial script engine creation failed");
+    constexpr std::string_view address{"https://script-type.test/index.html"};
+    require(
+        webscene_engine_load_url(engine, address.data(), address.size()) != 0U,
+        "inert initial script navigation failed");
+    const auto result = evaluate_until_equals(
+        engine,
+        "JSON.stringify([globalThis.__executableObservedInert, document.getElementById('data')?.type, document.getElementById('data')?.textContent])",
+        "initial-inert-script-result.js",
+        R"("[true,\"application/json\",\"globalThis.__inertExecuted = true\"]")");
+    require(
+        result == R"("[true,\"application/json\",\"globalThis.__inertExecuted = true\"]")",
+        "initial non-JavaScript script executed or lost its DOM data: " + result);
+    webscene_engine_destroy(engine);
+}
+
 void test_fetch_carries_document_origin_to_resource_host()
 {
     contextual_resource_server server{

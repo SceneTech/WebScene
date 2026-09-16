@@ -8,27 +8,31 @@ template<typename Protected>
 bool apply_box_metrics(dom_node& node,const std::string& name,
     const std::string& value,Protected&& is_inline)
 {
-    if (name == "width" && !is_inline(inline_width)) {
+    if ((name == "width" || name == "inline-size") && !is_inline(inline_width)) {
         node.style.width = value == "inherit" && node.parent != nullptr
             ? node.parent->style.width
             : value == "initial" || value == "unset" || value == "revert"
                 ? css_length{}
                 : native_document::parse_length(value);
-    } else if (name == "height" && !is_inline(inline_height)) {
+    } else if ((name == "height" || name == "block-size") && !is_inline(inline_height)) {
         node.style.height = value == "inherit" && node.parent != nullptr
             ? node.parent->style.height
             : value == "initial" || value == "unset" || value == "revert"
                 ? css_length{}
                 : native_document::parse_length(value);
-    } else if (name == "min-width" && !is_inline(inline_min_width)) {
+    } else if ((name == "min-width" || name == "min-inline-size")
+        && !is_inline(inline_min_width)) {
         node.style.min_width = native_document::parse_length(value);
-    } else if (name == "min-height" && !is_inline(inline_min_height)) {
+    } else if ((name == "min-height" || name == "min-block-size")
+        && !is_inline(inline_min_height)) {
         node.style.min_height = native_document::parse_length(value);
-    } else if (name == "max-width" && !is_inline(inline_max_width)) {
+    } else if ((name == "max-width" || name == "max-inline-size")
+        && !is_inline(inline_max_width)) {
         node.style.max_width = value == "none" || value == "fit-content"
             || value == "max-content" || value == "min-content"
             ? css_length{} : native_document::parse_length(value);
-    } else if (name == "max-height" && !is_inline(inline_max_height)) {
+    } else if ((name == "max-height" || name == "max-block-size")
+        && !is_inline(inline_max_height)) {
         node.style.max_height = value == "none" || value == "fit-content"
             || value == "max-content" || value == "min-content"
             ? css_length{} : native_document::parse_length(value);

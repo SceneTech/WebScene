@@ -567,6 +567,13 @@
       "reason": "Required after the unchanged product-neutral reftest passes exact pixels in the native runner. All four observed logical inline longhands must match their physical left/right equivalents, including content placement and following-sibling geometry. Evidence: artifacts/web-platform-logical-inline-v1/{native,managed}/results.json."
     },
     {
+      "path": "contracts/css-logical-sizing.html",
+      "type": "contract",
+      "capabilities": ["logical-sizing", "inline-size", "block-size", "logical-min-size", "logical-max-size", "horizontal-writing-mode-axis-mapping"],
+      "evidence": ["product-neutral-native-regression", "responsive-card-sizing"],
+      "reason": "Required product-neutral regression for horizontal writing mode. Logical preferred, minimum, and maximum sizes must constrain the same used dimensions as their physical width and height counterparts."
+    },
+    {
       "path": "contracts/svg-currentcolor-menu-chevron.html",
       "type": "reftest",
       "reference": "contracts/svg-currentcolor-menu-chevron-ref.html",
@@ -853,9 +860,9 @@
     {
       "path": "contracts/html-script-raw-text-inertness.html",
       "type": "contract",
-      "capabilities": ["script-raw-text-tokenization", "style-markup-in-script-inertness", "non-javascript-script-data-block", "document-style-extraction"],
+      "capabilities": ["script-raw-text-tokenization", "style-markup-in-script-inertness", "non-javascript-script-data-block", "initial-non-javascript-script-inertness", "document-style-extraction"],
       "evidence": ["jquery-4.0.0-css-upstream-source", "jquery-toggle-and-visible-loader-reduction", "direct-chrome-neutral-contract", "managed-and-native-neutral-contract"],
-      "reason": "Required after Chrome and native pass all 3/3 product-neutral SCRIPT raw-text assertions. Executable and non-JavaScript SCRIPT contents remain raw text, style-like source cannot enter the document cascade, and inert data blocks remain in the DOM without execution. The shared loader fix closes upstream jQuery toggle and visibility failures without consumer-specific behavior. Evidence: artifacts/web-platform-script-raw-text-chrome-v1-20260723/results.json, artifacts/web-platform-script-raw-text-managed-v2-20260723/results.json, and artifacts/web-platform-script-raw-text-native-v3-20260723/results.json."
+      "reason": "Required product-neutral SCRIPT raw-text contract. Executable and non-JavaScript SCRIPT contents remain raw text, style-like source cannot enter the document cascade, and initial inert data blocks remain in the DOM without execution."
     },
     {
       "path": "contracts/dom-selector-syntax-errors.html",

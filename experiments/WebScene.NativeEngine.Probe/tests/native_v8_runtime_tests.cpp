@@ -606,6 +606,7 @@ int main()
     test_four_navigation_workers_enter_startup_concurrently();
     test_parallel_resource_prefetch();
     test_fetch_carries_document_origin_to_resource_host();
+    test_initial_non_javascript_script_is_inert();
     test_slow_fetch_does_not_block_loading_state_publication();
     test_tradingview_datafeed_iframe_symbol_search_round_trip();
     test_tradingview_save_acknowledgement_uses_multipart_post();
@@ -678,6 +679,7 @@ int main()
         "throw new Error('IntersectionObserver bootstrap missing')",
         "intersection-observer-bootstrap.js");
     test_dimension_custom_property_recascade(engine);
+    test_logical_size_properties_map_to_horizontal_box_axes(engine);
     test_dimension_custom_property_inheritance(engine);
     test_geometry_variable_positions(engine);
     test_modal_backdrop_scene(engine);

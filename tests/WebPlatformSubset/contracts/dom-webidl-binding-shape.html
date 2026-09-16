@@ -114,17 +114,21 @@
       "EventTarget operation missing");
     assert(Object.prototype.hasOwnProperty.call(Node.prototype, "appendChild"),
       "Node operation missing");
+    assert(Object.prototype.hasOwnProperty.call(Node.prototype, "hasChildNodes"),
+      "Node.hasChildNodes operation missing");
     assert(Object.prototype.hasOwnProperty.call(Element.prototype, "querySelector"),
       "Element operation missing");
     assert(Object.prototype.hasOwnProperty.call(HTMLElement.prototype, "click"),
       "HTMLElement operation missing");
     equal(Node.prototype.appendChild.length, 1, "appendChild length");
+    equal(Node.prototype.hasChildNodes.length, 0, "hasChildNodes length");
     equal(Element.prototype.querySelector.length, 1, "querySelector length");
   });
 
   test("operation receiver brands reject plain objects", () => {
     throwsTypeError(() => Node.prototype.appendChild.call({}, document.createElement("i")),
       "Node.appendChild brand");
+    throwsTypeError(() => Node.prototype.hasChildNodes.call({}), "Node.hasChildNodes brand");
     throwsTypeError(() => Element.prototype.querySelector.call({}, "i"),
       "Element.querySelector brand");
     throwsTypeError(() => HTMLElement.prototype.click.call({}), "HTMLElement.click brand");
@@ -172,6 +176,22 @@
     assert(parent.firstChild === child, "firstChild lost wrapper identity");
     assert(parent.querySelector("span") === child, "querySelector lost wrapper identity");
     assert(parent.removeChild(child) === child, "removeChild lost wrapper identity");
+  });
+
+  test("hasChildNodes reflects direct child mutations for nodes and fragments", () => {
+    const parent = document.createElement("div");
+    const fragment = document.createDocumentFragment();
+    const child = document.createTextNode("child");
+    assert(!parent.hasChildNodes(), "new element reported children");
+    assert(!fragment.hasChildNodes(), "new fragment reported children");
+    assert(!child.hasChildNodes(), "text leaf reported children");
+    fragment.appendChild(child);
+    assert(fragment.hasChildNodes(), "fragment append was not observed");
+    parent.appendChild(fragment);
+    assert(parent.hasChildNodes(), "fragment insertion was not observed");
+    assert(!fragment.hasChildNodes(), "inserted fragment retained children");
+    parent.removeChild(child);
+    assert(!parent.hasChildNodes(), "child removal was not observed");
   });
 
   const failure = state.results.find(result => result.status !== "PASS");

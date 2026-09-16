@@ -435,16 +435,12 @@ void append_json_value(
             output.push_back('0');
             return;
         }
-        std::array<char, 64> buffer{};
-        const auto converted = std::to_chars(
-            buffer.data(),
-            buffer.data() + buffer.size(),
-            number,
-            std::chars_format::general);
-        require(
-            converted.ec == std::errc{},
-            "binary evaluation number could not be formatted");
-        output.append(buffer.data(), converted.ptr);
+        std::ostringstream formatted;
+        formatted.imbue(std::locale::classic());
+        formatted << std::setprecision(
+            std::numeric_limits<double>::digits10) << number;
+        require(formatted.good(), "binary evaluation number could not be formatted");
+        output += formatted.str();
         return;
     }
     case WEBSCENE_INTEROP_VALUE_STRING_V3:

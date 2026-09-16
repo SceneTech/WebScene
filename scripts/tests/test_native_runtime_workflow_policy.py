@@ -63,6 +63,16 @@ class NativeRuntimeWorkflowPolicyTests(unittest.TestCase):
         )
         self.assertIn(f"- '{policy}'", package_workflow)
 
+    def test_candidate_gaps_are_advisory_without_masking_job_failures(self) -> None:
+        package_workflow = self.workflows[
+            ROOT / ".github/workflows/native-runtime-packages.yml"
+        ]
+        candidate = package_workflow.split("\n  candidate-evidence:\n", 1)[1].split(
+            "\n  consumer:\n", 1
+        )[0]
+        self.assertNotIn("\n    continue-on-error: true", candidate)
+        self.assertIn("--advisory-test-failures", candidate)
+
 
 if __name__ == "__main__":
     unittest.main()

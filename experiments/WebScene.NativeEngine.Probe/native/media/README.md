@@ -22,8 +22,9 @@ Production Avalonia 11 remains supported; Frameforge can opt into Avalonia 12.
   A small native DOM media registry discovers markup/source changes at task
   boundaries, including parser-created nodes. It does not depend on the
   currently unsupported MutationObserver and does not traverse the full DOM.
-  The registry shares lazy auxiliary document storage with modal registration;
-  Linux sizeof(native_document) remains 368 bytes (384-byte budget).
+  The registry shares lazy auxiliary document storage with modal registration.
+  The finite-animation event queue follows the same pay-for-use policy; Linux
+  `sizeof(native_document)` is 376 bytes (384-byte budget).
 - A persistent `media_session` worker owns the source and decoder. Load generations
   cancel stale work. Rapid seek requests coalesce; completed current-generation
   frames can still present while a newer request waits, avoiding starvation.

@@ -36,7 +36,8 @@ public static class CssMutationInvalidationPlanner
         "display", "position", "top", "right", "bottom", "left", "inset", "width", "height",
         "min-width", "min-height", "max-width", "max-height", "margin", "padding", "overflow",
         "box-sizing", "flex", "flex-basis", "flex-direction", "flex-flow", "flex-grow", "flex-shrink", "flex-wrap", "grid",
-        "grid-template-columns", "grid-template-rows", "grid-column", "grid-column-start", "grid-column-end",
+        "grid-template-columns", "grid-template-rows", "grid-template-areas", "grid-area", "grid-row",
+        "grid-row-start", "grid-row-end", "grid-column", "grid-column-start", "grid-column-end",
         "align-content", "align-items", "align-self", "justify-content",
         "gap", "list-style", "list-style-position", "list-style-type", "order", "row-gap", "column-gap", "z-index", "white-space"
     };

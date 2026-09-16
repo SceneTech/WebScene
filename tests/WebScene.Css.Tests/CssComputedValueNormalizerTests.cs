@@ -47,6 +47,7 @@ public sealed class CssComputedValueNormalizerTests
 
     [Theory]
     [InlineData("2", "2", "auto", "auto", "auto")]
+    [InlineData("header", "header", "header", "header", "header")]
     [InlineData("2 / 3", "2", "3", "auto", "auto")]
     [InlineData("2 / 3 / 4 / 5", "2", "3", "4", "5")]
     public void ExpandsGridAreaPlacementComponents(

@@ -513,6 +513,13 @@
       "reason": "Required product-neutral reduction of a shared native jQuery CSS Grid placement failure. It covers the bounded integer/auto slice of grid-area, grid-row, grid-column, and their four placement longhands, including stylesheet cascade, longhand precedence, CSSOM removal, and synchronous computed serialization. Chrome and native pass 6/6 assertions. Upstream authority: css/css-grid/parsing/grid-area-computed.html and grid-area-valid.html. Evidence: artifacts/web-platform-grid-placement-{chrome,managed,native}-v1-20260723/results.json."
     },
     {
+      "path": "contracts/css-grid-template-areas.html",
+      "type": "contract",
+      "capabilities": ["grid-template-areas", "named-grid-area-placement", "sparse-grid-areas", "template-area-validation", "template-area-mutation-invalidation"],
+      "evidence": ["code-oss-welcome-five-column-layout", "webscene-issue-98"],
+      "reason": "Product-neutral reduction of the named-area composition used by Code OSS Welcome. It covers normalized CSSOM serialization, sparse rectangular areas across fractional and minmax tracks, atomic rejection of nonrectangular or unequal rows, synchronous mutation/removal layout, and a bounded 500-mutation gate."
+    },
+    {
       "path": "css/CSS2/generated-content/before-content-display-002.xht",
       "type": "reftest",
       "reference": "css/CSS2/generated-content/after-content-display-002-ref.xht",

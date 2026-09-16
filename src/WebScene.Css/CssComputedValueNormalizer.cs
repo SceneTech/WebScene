@@ -44,22 +44,34 @@ internal static class CssComputedValueNormalizer
         if (normalizedName == "grid-area")
         {
             rowStart = components[0];
-            columnStart = components.Count > 1 ? components[1] : "auto";
-            rowEnd = components.Count > 2 ? components[2] : "auto";
-            columnEnd = components.Count > 3 ? components[3] : "auto";
+            var omitted = IsGridCustomIdentifier(rowStart) ? rowStart : "auto";
+            columnStart = components.Count > 1 ? components[1] : omitted;
+            rowEnd = components.Count > 2 ? components[2] : omitted;
+            columnEnd = components.Count > 3 ? components[3] : omitted;
             return true;
         }
 
         if (normalizedName == "grid-row")
         {
             rowStart = components[0];
-            rowEnd = components.Count > 1 ? components[1] : "auto";
+            rowEnd = components.Count > 1 ? components[1]
+                : IsGridCustomIdentifier(rowStart) ? rowStart : "auto";
             return true;
         }
 
         columnStart = components[0];
-        columnEnd = components.Count > 1 ? components[1] : "auto";
+        columnEnd = components.Count > 1 ? components[1]
+            : IsGridCustomIdentifier(columnStart) ? columnStart : "auto";
         return true;
+    }
+
+    private static bool IsGridCustomIdentifier(string value)
+    {
+        var token = value.Trim();
+        if (token.Length == 0 || token is "auto" or "span" or "inherit" or "initial"
+            or "unset" or "revert" or "revert-layer") return false;
+        return !double.TryParse(token, NumberStyles.Number, CultureInfo.InvariantCulture, out _)
+            && !token.StartsWith("span ", StringComparison.OrdinalIgnoreCase);
     }
 
     internal static void ExpandShorthands(CssPropertyValueStore values)

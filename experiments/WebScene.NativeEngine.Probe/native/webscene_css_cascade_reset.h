@@ -129,6 +129,9 @@ inline void reset_cascaded_style(dom_node& node,
             node.style.align_self = align_mode::stretch;
             node.style.align_self_specified = false;
         }
+        if ((node.style.inline_property_mask & inline_align_content) == 0U) {
+            node.style.align_content_stretches = true;
+        }
         if ((node.style.inline_property_mask & inline_justify_content) == 0U) {
             node.style.justify_content = justify_mode::start;
         }

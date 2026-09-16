@@ -86,6 +86,9 @@ inline void apply_all_unset(dom_node& node)
         reset.align_self = previous.align_self;
         reset.align_self_specified = previous.align_self_specified;
     }
+    if (is_inline(inline_align_content)) {
+        reset.align_content_stretches = previous.align_content_stretches;
+    }
     if (is_inline(inline_justify_content)) {
         reset.justify_content = previous.justify_content;
     }

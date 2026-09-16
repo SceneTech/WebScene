@@ -536,7 +536,6 @@ jobs:
     name: Verify cross-RID candidate evidence
     needs: [metadata, native]
     if: always() && needs.metadata.result == 'success'
-    continue-on-error: true
     runs-on: [self-hosted, Linux, X64]
     steps:
     - uses: actions/checkout@v4
@@ -553,6 +552,7 @@ jobs:
           --input-root artifacts/candidate-compatibility \
           --profile tests/WebPlatformSubset/webscene-component-profile.json \
           --selection candidate \
+          --advisory-test-failures \
           --expected-rid osx-arm64 \
           --expected-rid linux-x64 \
           --output artifacts/candidate-compatibility/cross-rid-summary.json

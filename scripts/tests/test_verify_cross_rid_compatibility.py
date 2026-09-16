@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import pathlib
 import subprocess
 import sys
@@ -82,6 +83,48 @@ class CrossRidCompatibilityVerifierTests(unittest.TestCase):
             self.assertTrue(report["passed"])
             self.assertEqual("required", report["selection"])
 
+    def test_advisory_candidate_accepts_only_test_failures_and_writes_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = pathlib.Path(temporary_directory)
+            profile = self.write_profile(root)
+            profile_sha256 = self.normalized_sha256(profile)
+            input_root = root / "evidence"
+            self.write_result(input_root, RIDS[0], profile_sha256, passed=False)
+            summary = root / "github-summary.md"
+
+            completed, report = self.run_verifier(
+                root,
+                profile,
+                input_root,
+                (RIDS[0],),
+                advisory_test_failures=True,
+                environment={"GITHUB_STEP_SUMMARY": str(summary)},
+            )
+
+            self.assertEqual(0, completed.returncode, completed.stderr)
+            self.assertFalse(report["passed"])
+            self.assertIn("::warning title=Candidate compatibility gaps::", completed.stdout)
+            self.assertIn("non-passing documents", summary.read_text(encoding="utf-8"))
+
+    def test_advisory_candidate_still_rejects_invalid_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = pathlib.Path(temporary_directory)
+            profile = self.write_profile(root)
+            input_root = root / "evidence"
+            self.write_result(input_root, RIDS[0], "0" * 64, passed=False)
+
+            completed, report = self.run_verifier(
+                root,
+                profile,
+                input_root,
+                (RIDS[0],),
+                advisory_test_failures=True,
+            )
+
+            self.assertEqual(1, completed.returncode)
+            self.assertFalse(report["passed"])
+            self.assertNotIn("::warning title=Candidate compatibility gaps::", completed.stdout)
+
     @staticmethod
     def write_profile(root: pathlib.Path, *, crlf: bool = False) -> pathlib.Path:
         profile = root / "profile.json"
@@ -117,6 +160,7 @@ class CrossRidCompatibilityVerifierTests(unittest.TestCase):
         profile_sha256: str,
         *,
         selection: str = "candidate",
+        passed: bool = True,
     ) -> None:
         artifact_directory = input_root / f"compatibility-{selection}-{rid}-1.0.0"
         artifact_directory.mkdir(parents=True)
@@ -131,20 +175,25 @@ class CrossRidCompatibilityVerifierTests(unittest.TestCase):
             "selection": selection,
             "summary": {
                 "tests": 1,
-                "passed": 1,
-                "failed": 0,
+                "passed": int(passed),
+                "failed": int(not passed),
                 "timedOut": 0,
                 "harnessErrors": 0,
-                "subtests": 0,
-                "subtestsPassed": 0,
-                "subtestsFailed": 0,
+                "subtests": 1,
+                "subtestsPassed": int(passed),
+                "subtestsFailed": int(not passed),
             },
             "results": [
                 {
                     "path": "contracts/example.html",
                     "type": "testharness",
-                    "status": "PASS",
-                    "subtests": [],
+                    "status": "PASS" if passed else "FAIL",
+                    "subtests": [
+                        {
+                            "name": "example subtest",
+                            "status": "PASS" if passed else "FAIL",
+                        }
+                    ],
                 }
             ],
         }
@@ -161,6 +210,8 @@ class CrossRidCompatibilityVerifierTests(unittest.TestCase):
         rids: tuple[str, ...],
         *,
         selection: str = "candidate",
+        advisory_test_failures: bool = False,
+        environment: dict[str, str] | None = None,
     ) -> tuple[subprocess.CompletedProcess[str], dict[str, object]]:
         output = root / "summary.json"
         command = [
@@ -176,7 +227,15 @@ class CrossRidCompatibilityVerifierTests(unittest.TestCase):
         for rid in rids:
             command.extend(("--expected-rid", rid))
         command.extend(("--output", str(output)))
-        completed = subprocess.run(command, capture_output=True, text=True, check=False)
+        if advisory_test_failures:
+            command.append("--advisory-test-failures")
+        completed = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=False,
+            env=dict(os.environ, **(environment or {})),
+        )
         return completed, json.loads(output.read_text(encoding="utf-8"))
 
 

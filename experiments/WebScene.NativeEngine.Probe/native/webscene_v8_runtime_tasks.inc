@@ -599,6 +599,9 @@
         if (has_ready_digest_task()) {
             return drain_digest_task();
         }
+        if (has_ready_cipher_task()) {
+            return drain_cipher_task();
+        }
         if (!pending_dialog_close_events.empty()) {
             return drain_dialog_close_event_task();
         }

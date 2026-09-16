@@ -6,6 +6,7 @@
 #include <utility>
 
 #include <mbedtls/platform_util.h>
+#include <mbedtls/gcm.h>
 #include <mbedtls/sha1.h>
 #include <mbedtls/sha256.h>
 
@@ -78,6 +79,88 @@ crypto_provider_status sha256_digest(
 
 } // namespace
 
+void crypto_zeroize(std::span<std::uint8_t> bytes) noexcept
+{
+    if (!bytes.empty()) mbedtls_platform_zeroize(bytes.data(), bytes.size());
+}
+
+crypto_provider_status crypto_aes_gcm_encrypt(
+    std::span<const std::uint8_t> key,
+    std::span<const std::uint8_t> iv,
+    std::span<const std::uint8_t> additional_data,
+    std::span<const std::uint8_t> plaintext,
+    std::size_t tag_bytes,
+    secure_bytes& output,
+    std::stop_token stop) noexcept
+{
+    if ((key.size() != 16U && key.size() != 24U && key.size() != 32U)
+        || iv.empty() || tag_bytes < 4U || tag_bytes > 16U
+        || plaintext.size() > std::numeric_limits<std::size_t>::max() - tag_bytes) {
+        return crypto_provider_status::provider_failure;
+    }
+    if (stop.stop_requested()) return crypto_provider_status::cancelled;
+    mbedtls_gcm_context context;
+    mbedtls_gcm_init(&context);
+    if (mbedtls_gcm_setkey(
+            &context, MBEDTLS_CIPHER_ID_AES, key.data(), key.size() * 8U) != 0) {
+        mbedtls_gcm_free(&context);
+        return crypto_provider_status::provider_failure;
+    }
+    secure_bytes result(plaintext.size() + tag_bytes);
+    auto bytes = result.mutable_view();
+    const auto status = mbedtls_gcm_crypt_and_tag(
+        &context,
+        MBEDTLS_GCM_ENCRYPT,
+        plaintext.size(),
+        iv.data(), iv.size(),
+        additional_data.data(), additional_data.size(),
+        plaintext.data(), bytes.data(),
+        tag_bytes, bytes.data() + plaintext.size());
+    mbedtls_gcm_free(&context);
+    if (status != 0) return crypto_provider_status::provider_failure;
+    if (stop.stop_requested()) return crypto_provider_status::cancelled;
+    output = std::move(result);
+    return crypto_provider_status::success;
+}
+
+crypto_provider_status crypto_aes_gcm_decrypt(
+    std::span<const std::uint8_t> key,
+    std::span<const std::uint8_t> iv,
+    std::span<const std::uint8_t> additional_data,
+    std::span<const std::uint8_t> ciphertext_and_tag,
+    std::size_t tag_bytes,
+    secure_bytes& output,
+    std::stop_token stop) noexcept
+{
+    if ((key.size() != 16U && key.size() != 24U && key.size() != 32U)
+        || iv.empty() || tag_bytes < 4U || tag_bytes > 16U
+        || ciphertext_and_tag.size() < tag_bytes) {
+        return crypto_provider_status::provider_failure;
+    }
+    if (stop.stop_requested()) return crypto_provider_status::cancelled;
+    mbedtls_gcm_context context;
+    mbedtls_gcm_init(&context);
+    if (mbedtls_gcm_setkey(
+            &context, MBEDTLS_CIPHER_ID_AES, key.data(), key.size() * 8U) != 0) {
+        mbedtls_gcm_free(&context);
+        return crypto_provider_status::provider_failure;
+    }
+    const auto ciphertext_size = ciphertext_and_tag.size() - tag_bytes;
+    secure_bytes result(ciphertext_size);
+    const auto status = mbedtls_gcm_auth_decrypt(
+        &context,
+        ciphertext_size,
+        iv.data(), iv.size(),
+        additional_data.data(), additional_data.size(),
+        ciphertext_and_tag.data() + ciphertext_size, tag_bytes,
+        ciphertext_and_tag.data(), result.mutable_view().data());
+    mbedtls_gcm_free(&context);
+    if (status != 0) return crypto_provider_status::provider_failure;
+    if (stop.stop_requested()) return crypto_provider_status::cancelled;
+    output = std::move(result);
+    return crypto_provider_status::success;
+}
+
 crypto_provider_status crypto_digest(
     crypto_digest_algorithm algorithm,
     std::span<const std::uint8_t> input,
@@ -95,6 +178,11 @@ crypto_provider_status crypto_digest(
 
 secure_bytes::secure_bytes(std::span<const std::uint8_t> value)
     : bytes_(value.begin(), value.end())
+{
+}
+
+secure_bytes::secure_bytes(std::size_t size)
+    : bytes_(size)
 {
 }
 
@@ -123,6 +211,16 @@ std::span<const std::uint8_t> secure_bytes::view() const noexcept
     return bytes_;
 }
 
+std::span<std::uint8_t> secure_bytes::mutable_view() noexcept
+{
+    return bytes_;
+}
+
+std::size_t secure_bytes::size() const noexcept
+{
+    return bytes_.size();
+}
+
 bool secure_bytes::empty() const noexcept
 {
     return bytes_.empty();
@@ -131,7 +229,7 @@ bool secure_bytes::empty() const noexcept
 void secure_bytes::clear() noexcept
 {
     if (!bytes_.empty()) {
-        mbedtls_platform_zeroize(bytes_.data(), bytes_.size());
+        crypto_zeroize(bytes_);
         std::vector<std::uint8_t>{}.swap(bytes_);
     }
 }
@@ -165,6 +263,15 @@ bool crypto_key_store::use(
     }
     operation(found->second.metadata, found->second.material.view());
     return true;
+}
+
+std::optional<crypto_key_metadata> crypto_key_store::describe(
+    handle key,
+    std::uintptr_t realm) const
+{
+    const auto found = records_.find(key);
+    if (found == records_.end() || found->second.realm != realm) return std::nullopt;
+    return found->second.metadata;
 }
 
 bool crypto_key_store::destroy(handle key, std::uintptr_t realm) noexcept

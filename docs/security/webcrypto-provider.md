@@ -5,11 +5,12 @@ source archive is fixed by SHA-256 in the native runtime CMake graph. Runtime
 code has no platform-provider or software fallback, so every supported RID
 executes the same provider implementation.
 
-The initial accepted surface is SHA-1 and SHA-256 digest. SHA-1 is available
-only because the Web Crypto API requires it for compatibility; callers must not
-use it for new collision-resistant designs. AES and HMAC remain unavailable
-until their own API, vector, key-usage, cancellation, and packaged-runtime
-acceptance layers land.
+The accepted surface includes SHA-1 and SHA-256 digest plus AES-GCM 128, 192,
+and 256-bit secret keys, raw/JWK import and export, and authenticated encrypt
+and decrypt. SHA-1 is available only because the Web Crypto API requires it for
+compatibility; callers must not use it for new collision-resistant designs.
+AES-CBC and HMAC remain unavailable until their focused API and vector layers
+land.
 
 Mbed TLS is Apache-2.0 licensed. Its license is included in every native runtime
 package. The 3.6 branch is upstream's long-term-support line, but this pin does
@@ -29,3 +30,10 @@ provider updates. The JavaScript layer bounds each input at 16 MiB, aggregate
 pending input at 64 MiB, and concurrency at 32 requests. It copies input into
 zeroizing storage during the call and settles promises on the runtime owner
 thread. Background provider work never enters V8.
+
+AES-GCM validates key usages and realm ownership before copying key bytes into
+zeroizing asynchronous task storage. Authentication failure exposes no
+plaintext. Data and additional authenticated data are each bounded at 16 MiB;
+aggregate queued cipher storage is bounded at 64 MiB and 32 operations. Realm
+shutdown requests cancellation, joins provider work, and zeroizes all retained
+keys and task inputs.

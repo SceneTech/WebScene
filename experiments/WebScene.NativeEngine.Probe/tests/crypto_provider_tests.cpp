@@ -28,6 +28,46 @@ std::string hex(std::span<const std::uint8_t> bytes)
     return result;
 }
 
+void test_nist_aes_gcm_vector_and_authentication()
+{
+    const std::array<std::uint8_t, 16U> key{};
+    const std::array<std::uint8_t, 12U> iv{};
+    const std::array<std::uint8_t, 16U> plaintext{};
+    webscene_native::secure_bytes encrypted;
+    require(webscene_native::crypto_aes_gcm_encrypt(
+        key, iv, {}, plaintext, 16U, encrypted)
+            == webscene_native::crypto_provider_status::success,
+        "Mbed TLS rejected the NIST AES-GCM vector");
+    require(hex(encrypted.view()) ==
+        "0388dace60b6a392f328c2b971b2fe78ab6e47d42cec13bdf53a67b21257bddf",
+        "NIST AES-GCM ciphertext or tag changed");
+    webscene_native::secure_bytes decrypted;
+    require(webscene_native::crypto_aes_gcm_decrypt(
+        key, iv, {}, encrypted.view(), 16U, decrypted)
+            == webscene_native::crypto_provider_status::success,
+        "Mbed TLS could not decrypt the NIST AES-GCM vector");
+    require(decrypted.view().size() == plaintext.size()
+        && std::equal(decrypted.view().begin(), decrypted.view().end(), plaintext.begin()),
+        "AES-GCM plaintext changed after authenticated round trip");
+
+    auto tampered = std::vector<std::uint8_t>(
+        encrypted.view().begin(), encrypted.view().end());
+    tampered.back() ^= 1U;
+    webscene_native::secure_bytes rejected;
+    require(webscene_native::crypto_aes_gcm_decrypt(
+        key, iv, {}, tampered, 16U, rejected)
+            == webscene_native::crypto_provider_status::provider_failure,
+        "AES-GCM accepted a modified authentication tag");
+    require(rejected.empty(), "AES-GCM exposed plaintext after authentication failure");
+
+    std::stop_source cancelled;
+    cancelled.request_stop();
+    require(webscene_native::crypto_aes_gcm_encrypt(
+        key, iv, {}, plaintext, 16U, rejected, cancelled.get_token())
+            == webscene_native::crypto_provider_status::cancelled,
+        "AES-GCM ignored cancellation before provider entry");
+}
+
 void test_published_digest_vectors()
 {
     constexpr std::array<std::uint8_t, 3U> abc{'a', 'b', 'c'};
@@ -79,7 +119,7 @@ void test_opaque_key_lifecycle()
     webscene_native::crypto_key_store keys;
     constexpr std::array<std::uint8_t, 4U> secret{0xde, 0xad, 0xbe, 0xef};
     const auto key = keys.create(
-        41U, {"HMAC", {"sign", "verify"}, false}, secret);
+        41U, {"HMAC", {"sign", "verify"}, "SHA-256", 32U, false}, secret);
     require(key != 0U && keys.size() == 1U, "Opaque key was not retained");
     bool visited = false;
     require(keys.use(key, 41U, "sign", [&](const auto& metadata, auto material) {
@@ -126,6 +166,7 @@ int main()
 {
     try {
         test_published_digest_vectors();
+        test_nist_aes_gcm_vector_and_authentication();
         test_cancellation_and_output_contract();
         test_opaque_key_lifecycle();
         test_bounded_throughput();

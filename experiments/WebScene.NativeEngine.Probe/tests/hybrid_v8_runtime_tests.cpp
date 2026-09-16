@@ -240,6 +240,127 @@ void test_web_crypto_digest_shutdown_is_bounded() {
         "Digest cancellation blocked realm shutdown");
 }
 
+void test_web_crypto_aes_gcm_vectors_realms_and_bounds() {
+    webscene_native::native_document document;
+    webscene_native::v8_dom_runtime runtime(document,
+        []{return webscene_native::v8_dom_runtime::viewport_metrics{640,480,1,0};});
+    std::string result;
+    runtime.register_compiled_template("aes-result", [&](auto& dom, const std::string& value) -> auto& {
+        result = value;
+        return dom.create_element("span");
+    });
+    require(runtime.initialize(), "Web Crypto AES-GCM runtime failed");
+    require(runtime.execute(R"JS(
+      (async () => {
+        const bytes = hex => Uint8Array.from(hex.match(/../g), byte => parseInt(byte, 16));
+        const hex = value => Array.from(new Uint8Array(value), byte =>
+          byte.toString(16).padStart(2, '0')).join('');
+        for (const [name, length] of [['generateKey',3],['importKey',5],['exportKey',2],['encrypt',3],['decrypt',3]]) {
+          if (crypto.subtle[name].name !== name || crypto.subtle[name].length !== length)
+            throw Error(`${name} Web IDL shape changed`);
+        }
+        const raw = new Uint8Array(16);
+        const iv = new Uint8Array(12);
+        const plain = new Uint8Array(16);
+        const key = await crypto.subtle.importKey('raw', raw, 'AES-GCM', true, ['encrypt','decrypt']);
+        if (!(key instanceof CryptoKey) || key.type !== 'secret' || !key.extractable
+            || key.algorithm.name !== 'AES-GCM' || key.algorithm.length !== 128
+            || key.usages.join(',') !== 'encrypt,decrypt')
+          throw Error('AES-GCM CryptoKey metadata changed');
+        const encrypted = await crypto.subtle.encrypt({name:'AES-GCM',iv}, key, plain);
+        if (hex(encrypted) !== '0388dace60b6a392f328c2b971b2fe78ab6e47d42cec13bdf53a67b21257bddf')
+          throw Error('NIST AES-GCM vector changed');
+        if (hex(await crypto.subtle.decrypt({name:'aes-gcm',iv}, key, encrypted)) !== '00000000000000000000000000000000')
+          throw Error('AES-GCM round trip changed');
+        const exported = new Uint8Array(await crypto.subtle.exportKey('raw', key));
+        if (hex(exported) !== '00000000000000000000000000000000') throw Error('raw export changed');
+        const jwk = await crypto.subtle.exportKey('jwk', key);
+        if (jwk.kty !== 'oct' || jwk.alg !== 'A128GCM' || jwk.k !== 'AAAAAAAAAAAAAAAAAAAAAA')
+          throw Error('JWK export changed');
+        const jwkKey = await crypto.subtle.importKey('jwk', jwk, 'AES-GCM', true, ['decrypt']);
+        if (hex(await crypto.subtle.decrypt({name:'AES-GCM',iv}, jwkKey, encrypted)) !== hex(plain))
+          throw Error('JWK import changed');
+        const copiedPlain = bytes('00112233445566778899aabbccddeeff');
+        const copyPending = crypto.subtle.encrypt({name:'AES-GCM',iv}, key, copiedPlain);
+        copiedPlain.fill(0xff); iv.fill(0xff); raw.fill(0xff);
+        const copiedCipher = await copyPending;
+        const repeatedCipher = await crypto.subtle.encrypt(
+          {name:'AES-GCM',iv:new Uint8Array(12)}, key,
+          bytes('00112233445566778899aabbccddeeff'));
+        if (hex(copiedCipher) !== hex(repeatedCipher))
+          throw Error('AES-GCM did not copy arguments at call time');
+        const privateKey = await crypto.subtle.generateKey({name:'AES-GCM',length:256}, false, ['encrypt']);
+        let exportError = '';
+        try { await crypto.subtle.exportKey('raw', privateKey); } catch (error) { exportError = error.name; }
+        if (exportError !== 'InvalidAccessError') throw Error(`nonextractable export: ${exportError}`);
+        let usageError = '';
+        try { await crypto.subtle.decrypt({name:'AES-GCM',iv:new Uint8Array(12)}, privateKey, encrypted); }
+        catch (error) { usageError = error.name; }
+        if (usageError !== 'InvalidAccessError') throw Error(`usage rejection: ${usageError}`);
+        const tampered = new Uint8Array(encrypted); tampered[tampered.length - 1] ^= 1;
+        let authError = '';
+        try { await crypto.subtle.decrypt({name:'AES-GCM',iv:new Uint8Array(12)}, key, tampered); }
+        catch (error) { authError = error.name; }
+        if (authError !== 'OperationError') throw Error(`authentication rejection: ${authError}`);
+        for (const [algorithm, data, expected] of [
+          [{name:'AES-GCM',iv:new Uint8Array()}, plain, 'OperationError'],
+          [{name:'AES-GCM',iv:new Uint8Array(12),tagLength:48}, plain, 'OperationError'],
+          [{name:'AES-GCM',iv:new Uint8Array(12)}, {}, 'TypeError'],
+          [{name:'AES-GCM',iv:new Uint8Array(12)}, new Uint8Array(16*1024*1024+1), 'OperationError']
+        ]) {
+          let name = '';
+          try { await crypto.subtle.encrypt(algorithm, key, data); } catch (error) { name = error.name; }
+          if (name !== expected) throw Error(`AES-GCM error mismatch: ${name} != ${expected}`);
+        }
+        const frame = document.createElement('iframe'); document.body.appendChild(frame);
+        const child = frame.contentDocument; child.open(); child.write('<script>globalThis.ready=true;<\\/script>'); child.close();
+        await new Promise(resolve => setTimeout(resolve));
+        const foreign = await frame.contentWindow.crypto.subtle.importKey(
+          'raw', new Uint8Array(16), 'AES-GCM', false, ['encrypt']);
+        let realmError = '';
+        try { await crypto.subtle.encrypt({name:'AES-GCM',iv:new Uint8Array(12)}, foreign, plain); }
+        catch (error) { realmError = error.name; }
+        if (realmError !== 'InvalidAccessError') throw Error(`foreign realm key: ${realmError}`);
+        const throughputKey = await crypto.subtle.generateKey({name:'AES-GCM',length:128}, false, ['encrypt']);
+        const payload = new Uint8Array(256 * 1024);
+        const started = performance.now();
+        for (let index = 0; index < 16; ++index)
+          await crypto.subtle.encrypt({name:'AES-GCM',iv:new Uint8Array(12)}, throughputKey, payload);
+        if (performance.now() - started >= 8000) throw Error('4 MiB AES-GCM throughput exceeded bound');
+        document.createCompiledTemplate('aes-result', 1);
+      })().catch(error => document.createCompiledTemplate('aes-result', `${error.name}: ${error.message}`));
+    )JS", "webcrypto-aes-gcm"), runtime.last_error().c_str());
+    for (unsigned index = 0; index < 12000 && result.empty(); ++index) {
+        require(runtime.pump_task(), runtime.last_error().c_str());
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    require(result == "1", result.empty() ? "AES-GCM promise did not settle" : result.c_str());
+}
+
+void test_web_crypto_aes_gcm_shutdown_is_bounded() {
+    const auto started = std::chrono::steady_clock::now();
+    {
+        webscene_native::native_document document;
+        webscene_native::v8_dom_runtime runtime(document,
+            []{return webscene_native::v8_dom_runtime::viewport_metrics{640,480,1,0};});
+        require(runtime.initialize(), "AES-GCM shutdown runtime failed");
+        require(runtime.execute(R"JS(
+          (async () => {
+            const key = await crypto.subtle.generateKey({name:'AES-GCM',length:256}, false, ['encrypt']);
+            for (let index = 0; index < 3; ++index)
+              crypto.subtle.encrypt({name:'AES-GCM',iv:new Uint8Array(12)}, key,
+                new Uint8Array(16 * 1024 * 1024)).catch(() => {});
+          })();
+        )JS", "webcrypto-aes-gcm-shutdown"), runtime.last_error().c_str());
+        for (unsigned index = 0; index < 100; ++index) {
+            require(runtime.pump_task(), runtime.last_error().c_str());
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    }
+    require(std::chrono::steady_clock::now() - started < std::chrono::seconds(4),
+        "AES-GCM cancellation blocked realm shutdown");
+}
+
 void test_compiled_template_shared_document() {
     webscene_native::native_document document;
     webscene_native::v8_dom_runtime runtime(document,
@@ -787,6 +908,11 @@ int main() {
                 test_web_crypto_digest_shutdown_is_bounded();
                 return 0;
             }
+            if (selected == "webcrypto-aes-gcm") {
+                test_web_crypto_aes_gcm_vectors_realms_and_bounds();
+                test_web_crypto_aes_gcm_shutdown_is_bounded();
+                return 0;
+            }
             if (selected == "worker-messageport") {
                 test_blob_worker_source_lifetime();
                 test_worker_message_port_contracts();
@@ -796,6 +922,8 @@ int main() {
         test_web_crypto_secure_random_realms();
         test_web_crypto_digest_realms_and_errors();
         test_web_crypto_digest_shutdown_is_bounded();
+        test_web_crypto_aes_gcm_vectors_realms_and_bounds();
+        test_web_crypto_aes_gcm_shutdown_is_bounded();
         test_blob_worker_source_lifetime();
         test_worker_message_port_contracts();
         test_compiled_template_shared_document();

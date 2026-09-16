@@ -494,6 +494,27 @@
         std::size_t input_size{};
     };
 
+    struct async_cipher_result final {
+        secure_bytes bytes;
+        crypto_provider_status status{crypto_provider_status::provider_failure};
+    };
+
+    struct pending_cipher_task final {
+        v8::Global<v8::Context> context;
+        v8::Global<v8::Promise::Resolver> resolver;
+        std::future<async_cipher_result> future;
+        std::stop_source stop;
+        std::size_t input_size{};
+    };
+
+    struct crypto_key_binding final {
+        implementation* owner{};
+        crypto_key_store::handle key{};
+        std::uintptr_t realm{};
+        v8::Global<v8::Object> wrapper;
+        bool released{false};
+    };
+
     struct prepared_frame final {
         std::string source;
         std::string html;

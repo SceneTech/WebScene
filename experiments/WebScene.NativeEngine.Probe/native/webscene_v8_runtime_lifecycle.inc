@@ -50,6 +50,7 @@
     ~implementation()
     {
         for (auto& digest : pending_digests) digest.stop.request_stop();
+        for (auto& cipher : pending_ciphers) cipher.stop.request_stop();
         stop_message_ports();
         stop_workers();
 #if defined(WEBSCENE_NATIVE_ENGINE_ENABLE_MEDIA)
@@ -124,6 +125,13 @@
             } catch (...) {
             }
         }
+        for (auto& cipher : pending_ciphers) {
+            if (!cipher.future.valid()) continue;
+            try {
+                static_cast<void>(cipher.future.get());
+            } catch (...) {
+            }
+        }
         // Stop and join every network worker before releasing persistent V8
         // handles or disposing the isolate. Socket callbacks never touch V8,
         // but they may still be appending to the native delivery queue.
@@ -166,6 +174,12 @@
         pending_fetches.clear();
         pending_digests.clear();
         pending_digest_bytes = 0U;
+        pending_ciphers.clear();
+        pending_cipher_bytes = 0U;
+        for (auto& binding : crypto_key_bindings) {
+            if (binding) binding->wrapper.Reset();
+        }
+        crypto_key_bindings.clear();
         crypto_keys.clear();
         interop_handles.clear();
         pending_promise_rejections.clear();

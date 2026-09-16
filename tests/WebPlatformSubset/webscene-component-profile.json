@@ -9,6 +9,13 @@
   },
   "required": [
     {
+      "path": "contracts/webcrypto-aes-gcm.html",
+      "type": "contract",
+      "capabilities": ["subtlecrypto-aes-gcm", "cryptokey-realm-isolation", "crypto-cipher-bounds"],
+      "evidence": ["wpt-WebCryptoAPI-aes-gcm-2c705104", "nist-aes-gcm-zero-vector"],
+      "reason": "VS Code extension and authentication paths require authenticated encryption. This slice uses the pinned provider with opaque realm-owned keys and bounded asynchronous work."
+    },
+    {
       "path": "contracts/webcrypto-digest.html",
       "type": "contract",
       "capabilities": ["subtlecrypto-digest-sha1", "subtlecrypto-digest-sha256", "crypto-realm-parity", "crypto-digest-bounds"],

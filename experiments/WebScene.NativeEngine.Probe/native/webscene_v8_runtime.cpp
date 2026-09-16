@@ -767,7 +767,7 @@ struct v8_dom_runtime::implementation final {
             "borderTopLeftRadius", "borderTopRightRadius", "borderBottomRightRadius",
             "borderBottomLeftRadius", "borderCollapse", "borderSpacing", "clear",
             "columnCount", "columns", "emptyCells", "fillOpacity", "float",
-            "gridArea", "gridColumn", "gridColumnEnd", "gridColumnStart",
+            "gridTemplateAreas", "gridArea", "gridColumn", "gridColumnEnd", "gridColumnStart",
             "gridRow", "gridRowEnd", "gridRowStart", "order", "orphans",
             "outlineColor", "outlineWidth", "outlineStyle",
             "overflow", "overflowX", "overflowY", "color",

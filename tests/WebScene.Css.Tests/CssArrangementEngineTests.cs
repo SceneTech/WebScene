@@ -379,6 +379,31 @@ public sealed class CssArrangementEngineTests
         Assert.Equal(new WebSceneRect(162, 0, 100, 28), snapshot[3].BorderBox);
     }
 
+    [Fact]
+    public void FixedPixelGridPlacesNamedAreasAcrossSparseTracks()
+    {
+        var root = new CssLayoutNode(1, new CssLayoutStyle
+        {
+            Display = CssLayoutDisplay.Grid,
+            GridTemplateColumns = "20px 40px 30px",
+            GridTemplateRows = "10px 20px 15px",
+            GridTemplateAreas = "\"header header .\" \"left . right\" \"footer footer footer\"",
+            ColumnGap = CssLayoutLength.Pixels(2),
+            RowGap = CssLayoutLength.Pixels(2)
+        });
+        root.Add(new CssLayoutNode(2, new CssLayoutStyle { GridArea = "header" }));
+        root.Add(new CssLayoutNode(3, new CssLayoutStyle { GridArea = "left" }));
+        root.Add(new CssLayoutNode(4, new CssLayoutStyle { GridArea = "right" }));
+        root.Add(new CssLayoutNode(5, new CssLayoutStyle { GridArea = "footer" }));
+
+        var snapshot = new CssArrangementEngine().Arrange(root, new WebSceneSize(94, 49));
+
+        Assert.Equal(new WebSceneRect(0, 0, 62, 10), snapshot[2].BorderBox);
+        Assert.Equal(new WebSceneRect(0, 12, 20, 20), snapshot[3].BorderBox);
+        Assert.Equal(new WebSceneRect(64, 12, 30, 20), snapshot[4].BorderBox);
+        Assert.Equal(new WebSceneRect(0, 34, 94, 15), snapshot[5].BorderBox);
+    }
+
     [Theory]
     [InlineData(CssLayoutJustifyContent.FlexEnd, 60)]
     [InlineData(CssLayoutJustifyContent.Center, 30)]

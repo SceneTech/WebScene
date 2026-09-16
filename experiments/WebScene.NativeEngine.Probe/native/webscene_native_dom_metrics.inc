@@ -214,10 +214,12 @@ native_document::allocation_metrics native_document::read_allocation_metrics() c
     result.grid_data_count = grid_allocations.size();
     for (const auto* grid : grid_allocations) {
         result.grid_storage_bytes +=
-            sizeof(node_style::grid_data) + 3U * sizeof(void*)
+            sizeof(node_style::grid_data) + 4U * sizeof(void*)
             + grid->template_columns.capacity() * sizeof(node_style::grid_data::track)
             + grid->template_rows.capacity() * sizeof(node_style::grid_data::track)
             + grid->auto_columns.capacity() * sizeof(node_style::grid_data::track)
+            + grid->template_areas.capacity() * sizeof(node_style::grid_data::named_area)
+            + grid->template_areas_value.capacity() + 1U
             + grid->area_value.capacity() + 1U
             + grid->row_value.capacity() + 1U
             + grid->row_start_value.capacity() + 1U
@@ -225,6 +227,9 @@ native_document::allocation_metrics native_document::read_allocation_metrics() c
             + grid->column_value.capacity() + 1U
             + grid->column_start_value.capacity() + 1U
             + grid->column_end_value.capacity() + 1U;
+        for (const auto& area : grid->template_areas) {
+            result.grid_storage_bytes += area.name.capacity() + 1U;
+        }
     }
     result.textual_style_data_count = textual_allocations.size();
     for (const auto* textual : textual_allocations) {

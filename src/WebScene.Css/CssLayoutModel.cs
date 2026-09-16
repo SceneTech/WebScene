@@ -253,6 +253,10 @@ public sealed record CssLayoutStyle
 
     public string GridTemplateRows { get; init; } = string.Empty;
 
+    public string GridTemplateAreas { get; init; } = string.Empty;
+
+    public string GridArea { get; init; } = string.Empty;
+
     public string GridColumn { get; init; } = string.Empty;
 
     public double FlexGrow { get; init; }

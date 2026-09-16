@@ -279,6 +279,9 @@ void test_native_gpu_scene_leases()
         require(engine.runtime_->initialize());
         require(engine.runtime_->install_webgpu(std::make_shared<publication_wake>(),true,
             webscene::graphics::webgpu_canvas_interop::none));
+        require(engine.runtime_->execute(
+            "requestAnimationFrame(()=>{});",
+            "gpu-scene-publication-opportunity"));
         engine.runtime_->signal_animation_frame(16);
         require(engine.runtime_->has_open_gpu_output());
         b->ready=true;

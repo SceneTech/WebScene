@@ -1269,6 +1269,12 @@ if(BUILD_TESTING AND WEBSCENE_NATIVE_ENGINE_ENABLE_GRAPHICS AND WEBSCENE_NATIVE_
     add_dependencies(webscene_graphics_v8_runtime_tests webscene_native_engine)
     add_test(NAME webscene_graphics_v8_runtime_tests COMMAND webscene_graphics_v8_runtime_tests)
     set_tests_properties(webscene_graphics_v8_runtime_tests PROPERTIES TIMEOUT 30 LABELS "graphics;runtime;hardware")
+    add_test(NAME webscene_graphics_idle_caret_opportunity
+        COMMAND webscene_graphics_v8_runtime_tests)
+    set_tests_properties(webscene_graphics_idle_caret_opportunity PROPERTIES
+        ENVIRONMENT "WEBSCENE_GRAPHICS_TEST_FILTER=idle-webgpu-caret-opportunity"
+        TIMEOUT 30
+        LABELS "graphics;runtime")
 endif()
 
 if(BUILD_TESTING AND APPLE AND WEBSCENE_NATIVE_ENGINE_ENABLE_GRAPHICS)

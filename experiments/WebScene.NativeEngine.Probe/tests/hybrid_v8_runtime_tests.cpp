@@ -361,6 +361,62 @@ void test_web_crypto_aes_gcm_shutdown_is_bounded() {
         "AES-GCM cancellation blocked realm shutdown");
 }
 
+void test_web_crypto_aes_cbc_decrypt_vectors_and_errors() {
+    webscene_native::native_document document;
+    webscene_native::v8_dom_runtime runtime(document,
+        []{return webscene_native::v8_dom_runtime::viewport_metrics{640,480,1,0};});
+    std::string result;
+    runtime.register_compiled_template("cbc-result", [&](auto& dom, const std::string& value) -> auto& {
+        result = value; return dom.create_element("span");
+    });
+    require(runtime.initialize(), "Web Crypto AES-CBC runtime failed");
+    require(runtime.execute(R"JS(
+      (async () => {
+        const bytes = hex => Uint8Array.from(hex.match(/../g), byte => parseInt(byte,16));
+        const hex = value => Array.from(new Uint8Array(value), byte => byte.toString(16).padStart(2,'0')).join('');
+        const keyBytes = bytes('2b7e151628aed2a6abf7158809cf4f3c');
+        const iv = bytes('000102030405060708090a0b0c0d0e0f');
+        const ciphertext = bytes('7649abac8119b246cee98e9b12e9197d8964e0b149c10b7b682e6e39aaeb731c');
+        const key = await crypto.subtle.importKey('raw', keyBytes, 'aes-cbc', true, ['decrypt']);
+        if (key.algorithm.name !== 'AES-CBC' || key.algorithm.length !== 128
+            || key.usages.join(',') !== 'decrypt') throw Error('AES-CBC key metadata changed');
+        if (hex(await crypto.subtle.decrypt({name:'AES-CBC',iv}, key, ciphertext)) !==
+            '6bc1bee22e409f96e93d7e117393172a') throw Error('NIST AES-CBC vector changed');
+        const jwk = await crypto.subtle.exportKey('jwk', key);
+        if (jwk.alg !== 'A128CBC' || jwk.k !== 'K34VFiiu0qar9xWICc9PPA') throw Error('AES-CBC JWK changed');
+        const jwkKey = await crypto.subtle.importKey('jwk', jwk, 'AES-CBC', false, ['decrypt']);
+        if (hex(await crypto.subtle.decrypt({name:'AES-CBC',iv}, jwkKey, ciphertext)) !==
+            '6bc1bee22e409f96e93d7e117393172a') throw Error('AES-CBC JWK import changed');
+        const copied = new Uint8Array(ciphertext);
+        const pending = crypto.subtle.decrypt({name:'AES-CBC',iv}, key, copied);
+        copied.fill(0); iv.fill(0); keyBytes.fill(0);
+        if (hex(await pending) !== '6bc1bee22e409f96e93d7e117393172a')
+          throw Error('AES-CBC did not copy arguments at call time');
+        for (const [algorithm,data,expected] of [
+          [{name:'AES-CBC',iv:new Uint8Array(15)},ciphertext,'OperationError'],
+          [{name:'AES-CBC',iv:new Uint8Array(16)},new Uint8Array(15),'OperationError'],
+          [{name:'AES-CBC',iv:new Uint8Array(16)},{},'TypeError']
+        ]) {
+          let name=''; try { await crypto.subtle.decrypt(algorithm,key,data); } catch(error) { name=error.name; }
+          if (name!==expected) throw Error(`AES-CBC error mismatch: ${name} != ${expected}`);
+        }
+        const tampered = new Uint8Array(ciphertext); tampered[tampered.length-1] ^= 1;
+        let padding=''; try { await crypto.subtle.decrypt({name:'AES-CBC',iv:new Uint8Array(16)},key,tampered); }
+        catch(error) { padding=error.name; }
+        if (padding!=='OperationError') throw Error(`AES-CBC padding rejection: ${padding}`);
+        let usage=''; try { await crypto.subtle.importKey('raw',new Uint8Array(16),'AES-CBC',false,['encrypt']); }
+        catch(error) { usage=error.name; }
+        if (usage!=='SyntaxError') throw Error(`AES-CBC usage rejection: ${usage}`);
+        document.createCompiledTemplate('cbc-result',1);
+      })().catch(error=>document.createCompiledTemplate('cbc-result',`${error.name}: ${error.message}`));
+    )JS", "webcrypto-aes-cbc"), runtime.last_error().c_str());
+    for (unsigned index=0; index<5000 && result.empty(); ++index) {
+        require(runtime.pump_task(), runtime.last_error().c_str());
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    require(result=="1", result.empty()?"AES-CBC promise did not settle":result.c_str());
+}
+
 void test_compiled_template_shared_document() {
     webscene_native::native_document document;
     webscene_native::v8_dom_runtime runtime(document,
@@ -913,6 +969,10 @@ int main() {
                 test_web_crypto_aes_gcm_shutdown_is_bounded();
                 return 0;
             }
+            if (selected == "webcrypto-aes-cbc") {
+                test_web_crypto_aes_cbc_decrypt_vectors_and_errors();
+                return 0;
+            }
             if (selected == "worker-messageport") {
                 test_blob_worker_source_lifetime();
                 test_worker_message_port_contracts();
@@ -924,6 +984,7 @@ int main() {
         test_web_crypto_digest_shutdown_is_bounded();
         test_web_crypto_aes_gcm_vectors_realms_and_bounds();
         test_web_crypto_aes_gcm_shutdown_is_bounded();
+        test_web_crypto_aes_cbc_decrypt_vectors_and_errors();
         test_blob_worker_source_lifetime();
         test_worker_message_port_contracts();
         test_compiled_template_shared_document();

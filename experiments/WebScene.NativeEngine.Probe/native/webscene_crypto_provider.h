@@ -59,6 +59,13 @@ void crypto_zeroize(std::span<std::uint8_t> bytes) noexcept;
     secure_bytes& output,
     std::stop_token stop = {}) noexcept;
 
+[[nodiscard]] crypto_provider_status crypto_aes_cbc_decrypt(
+    std::span<const std::uint8_t> key,
+    std::span<const std::uint8_t> iv,
+    std::span<const std::uint8_t> ciphertext,
+    secure_bytes& output,
+    std::stop_token stop = {}) noexcept;
+
 class secure_bytes final {
 public:
     secure_bytes() = default;

@@ -68,6 +68,35 @@ void test_nist_aes_gcm_vector_and_authentication()
         "AES-GCM ignored cancellation before provider entry");
 }
 
+void test_nist_aes_cbc_decrypt_and_padding()
+{
+    const std::array<std::uint8_t, 16U> key{
+        0x2b,0x7e,0x15,0x16,0x28,0xae,0xd2,0xa6,0xab,0xf7,0x15,0x88,0x09,0xcf,0x4f,0x3c};
+    const std::array<std::uint8_t, 16U> iv{
+        0x00,0x01,0x02,0x03,0x04,0x05,0x06,0x07,0x08,0x09,0x0a,0x0b,0x0c,0x0d,0x0e,0x0f};
+    const std::array<std::uint8_t, 32U> ciphertext{
+        0x76,0x49,0xab,0xac,0x81,0x19,0xb2,0x46,0xce,0xe9,0x8e,0x9b,0x12,0xe9,0x19,0x7d,
+        0x89,0x64,0xe0,0xb1,0x49,0xc1,0x0b,0x7b,0x68,0x2e,0x6e,0x39,0xaa,0xeb,0x73,0x1c};
+    webscene_native::secure_bytes plaintext;
+    require(webscene_native::crypto_aes_cbc_decrypt(key, iv, ciphertext, plaintext)
+            == webscene_native::crypto_provider_status::success,
+        "Mbed TLS rejected the NIST AES-CBC vector with Web Crypto padding");
+    require(hex(plaintext.view()) == "6bc1bee22e409f96e93d7e117393172a",
+        "AES-CBC plaintext changed");
+    auto tampered = ciphertext;
+    tampered.back() ^= 1U;
+    webscene_native::secure_bytes rejected;
+    require(webscene_native::crypto_aes_cbc_decrypt(key, iv, tampered, rejected)
+            == webscene_native::crypto_provider_status::provider_failure,
+        "AES-CBC accepted invalid PKCS#7 padding");
+    require(rejected.empty(), "AES-CBC exposed plaintext after a padding failure");
+    std::stop_source cancelled; cancelled.request_stop();
+    require(webscene_native::crypto_aes_cbc_decrypt(
+        key, iv, ciphertext, rejected, cancelled.get_token())
+            == webscene_native::crypto_provider_status::cancelled,
+        "AES-CBC ignored cancellation before provider entry");
+}
+
 void test_published_digest_vectors()
 {
     constexpr std::array<std::uint8_t, 3U> abc{'a', 'b', 'c'};
@@ -167,6 +196,7 @@ int main()
     try {
         test_published_digest_vectors();
         test_nist_aes_gcm_vector_and_authentication();
+        test_nist_aes_cbc_decrypt_and_padding();
         test_cancellation_and_output_contract();
         test_opaque_key_lifecycle();
         test_bounded_throughput();

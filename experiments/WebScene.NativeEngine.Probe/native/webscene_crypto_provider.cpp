@@ -6,6 +6,7 @@
 #include <utility>
 
 #include <mbedtls/platform_util.h>
+#include <mbedtls/aes.h>
 #include <mbedtls/gcm.h>
 #include <mbedtls/sha1.h>
 #include <mbedtls/sha256.h>
@@ -158,6 +159,51 @@ crypto_provider_status crypto_aes_gcm_decrypt(
     if (status != 0) return crypto_provider_status::provider_failure;
     if (stop.stop_requested()) return crypto_provider_status::cancelled;
     output = std::move(result);
+    return crypto_provider_status::success;
+}
+
+crypto_provider_status crypto_aes_cbc_decrypt(
+    std::span<const std::uint8_t> key,
+    std::span<const std::uint8_t> iv,
+    std::span<const std::uint8_t> ciphertext,
+    secure_bytes& output,
+    std::stop_token stop) noexcept
+{
+    if ((key.size() != 16U && key.size() != 24U && key.size() != 32U)
+        || iv.size() != 16U || ciphertext.empty() || ciphertext.size() % 16U != 0U) {
+        return crypto_provider_status::provider_failure;
+    }
+    if (stop.stop_requested()) return crypto_provider_status::cancelled;
+    mbedtls_aes_context context;
+    mbedtls_aes_init(&context);
+    if (mbedtls_aes_setkey_dec(&context, key.data(), key.size() * 8U) != 0) {
+        mbedtls_aes_free(&context);
+        return crypto_provider_status::provider_failure;
+    }
+    secure_bytes result(ciphertext.size());
+    std::array<std::uint8_t, 16U> iv_copy{};
+    std::copy(iv.begin(), iv.end(), iv_copy.begin());
+    const auto status = mbedtls_aes_crypt_cbc(
+        &context, MBEDTLS_AES_DECRYPT, ciphertext.size(), iv_copy.data(),
+        ciphertext.data(), result.mutable_view().data());
+    crypto_zeroize(iv_copy);
+    mbedtls_aes_free(&context);
+    if (status != 0) return crypto_provider_status::provider_failure;
+    if (stop.stop_requested()) return crypto_provider_status::cancelled;
+
+    const auto bytes = result.mutable_view();
+    const auto padding = bytes.back();
+    unsigned mismatch = padding == 0U || padding > 16U ? 1U : 0U;
+    for (std::size_t offset = 0U; offset < 16U; ++offset) {
+        const auto mask = static_cast<std::uint8_t>(
+            offset < padding ? 0xffU : 0U);
+        mismatch |= static_cast<unsigned>(
+            (bytes[bytes.size() - 1U - offset] ^ padding) & mask);
+    }
+    if (mismatch != 0U) return crypto_provider_status::provider_failure;
+    secure_bytes unpadded(bytes.first(bytes.size() - padding));
+    result.clear();
+    output = std::move(unpadded);
     return crypto_provider_status::success;
 }
 

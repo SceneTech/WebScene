@@ -9,8 +9,9 @@ The accepted surface includes SHA-1 and SHA-256 digest plus AES-GCM 128, 192,
 and 256-bit secret keys, raw/JWK import and export, and authenticated encrypt
 and decrypt. SHA-1 is available only because the Web Crypto API requires it for
 compatibility; callers must not use it for new collision-resistant designs.
-AES-CBC and HMAC remain unavailable until their focused API and vector layers
-land.
+AES-CBC decrypt is available for 128, 192, and 256-bit imported raw or JWK keys
+and performs Web Crypto PKCS#7 validation inside the provider boundary. HMAC
+remains unavailable until its focused API and vector layer lands.
 
 Mbed TLS is Apache-2.0 licensed. Its license is included in every native runtime
 package. The 3.6 branch is upstream's long-term-support line, but this pin does

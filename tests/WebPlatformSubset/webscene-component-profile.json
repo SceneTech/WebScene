@@ -9,6 +9,13 @@
   },
   "required": [
     {
+      "path": "contracts/webcrypto-aes-cbc-decrypt.html",
+      "type": "contract",
+      "capabilities": ["subtlecrypto-aes-cbc-decrypt", "crypto-cipher-bounds"],
+      "evidence": ["wpt-WebCryptoAPI-aes-cbc-2c705104", "nist-sp800-38a-cbc-vector"],
+      "reason": "VS Code's browser signing service decrypts packaged WASM with AES-CBC. The accepted slice is decrypt-only with imported opaque keys and strict PKCS#7 validation."
+    },
+    {
       "path": "contracts/webcrypto-aes-gcm.html",
       "type": "contract",
       "capabilities": ["subtlecrypto-aes-gcm", "cryptokey-realm-isolation", "crypto-cipher-bounds"],

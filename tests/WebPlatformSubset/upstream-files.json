@@ -106,6 +106,9 @@
     "shadow-dom/Element-interface-shadowRoot-attribute.html": "d4e740808bfd51ae76593b05159943595baa127f7fa205054736c2e8aeef151a",
     "shadow-dom/HTMLSlotElement-interface.html": "5e15195914e8800dcc6fa6de88aaa184316c42d85fa31eea0190a3eeabb00d60",
     "shadow-dom/ShadowRoot-interface.html": "2332d49d844c3ac679ba3c4748bfee5d2a508d04763b9813e15666b05a323cf4",
-    "uievents/order-of-events/focus-events/focus-automated-blink-webkit.html": "8630aec2d53c1b890c205f40e49059b010fae1d729f0b721239f391395b169c1"
+    "uievents/order-of-events/focus-events/focus-automated-blink-webkit.html": "8630aec2d53c1b890c205f40e49059b010fae1d729f0b721239f391395b169c1",
+    "webmessaging/Channel_postMessage_clone_port_error.any.js": "48957061b1b6810b1c229c92e66b5dcdd829a8904c14b4460abb406dd75360de",
+    "webmessaging/message-channels/basics.any.js": "d5d60f5efbc3eb9a026ba44763fb19c2564f6a02a717ff28982e22d52143c69e",
+    "webmessaging/message-channels/close.any.js": "1ebab07ef56a6fd88b61b4a3af9c4c77d604a2ed950b5bd53d6334c5461895d9"
   }
 }

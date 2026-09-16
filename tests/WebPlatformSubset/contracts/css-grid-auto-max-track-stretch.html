@@ -1,0 +1,22 @@
+<!doctype html><meta charset="utf-8">
+<title>CSS Grid auto maximum tracks stretch remaining block space</title>
+<link rel="help" href="https://drafts.csswg.org/css-grid-2/#algo-stretch">
+<style>
+html,body{margin:0}#grid{display:grid;width:700px;height:400px;grid-template-columns:700px;grid-template-rows:25% minmax(min-content,auto) min-content;grid-template-areas:"header" "middle" "footer"}.nonstretch{align-content:flex-start}#header{grid-area:header;height:40px}#middle{grid-area:middle;height:200px}#footer{grid-area:footer;height:18px}#shared{display:grid;width:100px;height:100px;row-gap:5px;grid-template-rows:minmax(0,auto) auto 20px}#shared>div{height:10px}#bounded{display:grid;width:100px;height:400px;grid-template-rows:100px max-content}#bounded>div{height:18px}
+</style>
+<div id="grid"><div id="header"></div><div id="middle"></div><div id="footer"></div></div>
+<div id="shared"><div id="shared-a"></div><div id="shared-b"></div><div id="shared-fixed"></div></div>
+<div id="bounded"><div></div><div id="bounded-footer"></div></div>
+<script>
+const state=window.__webSceneWptState={complete:false,harness:null,results:[],errors:[],diagnostics:[]};
+function assert(c,m){if(!c)throw new Error(m)}function near(a,e,m){assert(Math.abs(a-e)<=.02,`${m}: expected ${e}, got ${a}`)}function test(n,b){try{b();state.results.push({name:n,status:"PASS",message:null,stack:null})}catch(e){state.results.push({name:n,status:"FAIL",message:String(e&&e.message||e),stack:e&&e.stack?String(e.stack):null})}}const rect=id=>document.getElementById(id).getBoundingClientRect(),grid=document.getElementById("grid");
+test("minmax(min-content, auto) receives remaining normal-stretch space",()=>{near(rect("header").y,0,"header y");near(rect("middle").y,100,"middle y");near(rect("footer").y,382,"footer y")});
+test("remaining space is shared by multiple auto maximum tracks with gaps",()=>{const y=rect("shared").y;near(rect("shared-a").y-y,0,"first row y");near(rect("shared-b").y-y,40,"second row y");near(rect("shared-fixed").y-y,80,"fixed row y")});
+test("max-content tracks do not receive auto-maximum stretch space",()=>near(rect("bounded-footer").y-rect("bounded").y,100,"max-content row y"));
+test("non-stretch align-content preserves intrinsic track positions",()=>{grid.style.alignContent="flex-start";near(rect("footer").y,300,"flex-start footer y")});
+test("removing align-content restores default stretch synchronously",()=>{grid.style.removeProperty("align-content");near(rect("footer").y,382,"restored footer y")});
+test("height mutation redistributes remaining space synchronously",()=>{grid.style.height="500px";near(rect("footer").y,482,"500px footer y");grid.style.height="400px";near(rect("footer").y,382,"400px footer y")});
+test("inline stretch overrides and removal restores stylesheet align-content",()=>{grid.className="nonstretch";near(rect("footer").y,300,"stylesheet footer y");grid.style.alignContent="stretch";near(rect("footer").y,382,"inline footer y");grid.style.removeProperty("align-content");near(rect("footer").y,300,"restored stylesheet footer y");grid.className="";near(rect("footer").y,382,"restored default footer y")});
+test("500 height and publication mutations remain within the bounded gate",()=>{const s=performance.now();let c=0;for(let i=0;i<500;i++){grid.style.height=i%2?"400px":"500px";c+=rect("footer").y}const e=performance.now()-s;grid.style.height="400px";assert(c>0,"geometry reads were not published");assert(e<2000,`500 mutations exceeded 2000ms: ${e}ms`)});
+const failure=state.results.find(r=>r.status!=="PASS");state.harness=failure?{status:1,message:failure.message,stack:failure.stack}:{status:0,message:null,stack:null};state.complete=true;
+</script>

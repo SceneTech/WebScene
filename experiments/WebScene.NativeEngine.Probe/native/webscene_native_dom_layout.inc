@@ -2382,7 +2382,8 @@ void native_document::layout_children(dom_node& parent)
         }
         const auto single_auto_row = row_count == 1U
             && (parent_grid.template_rows.empty()
-                || parent_grid.template_rows[0].kind == grid_track::sizing::automatic);
+                || (parent_grid.template_rows[0].kind == grid_track::sizing::automatic
+                    && parent_grid.template_rows[0].maximum_is_auto));
         if (single_auto_row && parent.used_height_is_definite) {
             // An auto track's max-content growth limit is not its minimum.
             // Scrollable items and explicit min-height can allow the row to
@@ -2395,18 +2396,18 @@ void native_document::layout_children(dom_node& parent)
             row_heights.begin(), row_heights.end(), total_row_gap);
         if (fractional_row_weight > 0) {
             distribute_fractions(row_heights,parent_grid.template_rows,content.height,total_row_gap);
-        } else if (single_auto_row
+        } else if (parent.used_height_is_definite
+            && parent.style.align_content_stretches
             && committed_height < content.height) {
-            // The common one-row implicit grid case stretches its auto row to
-            // the definite container height. Keep this compatibility path
-            // scoped until multi-row align-content distribution is modeled;
-            // distributing every multi-row auto grid here can rewrite an
-            // application's primary layout when it has other alignment rules.
+            // `align-content: normal` behaves as stretch for grid containers.
+            // Distribute remaining block space only to tracks whose maximum
+            // sizing function is auto. In particular, minmax(min-content,
+            // auto) grows while fixed, percentage, max-content, and flexible
+            // tracks keep their resolved sizes.
             std::vector<size_t> stretchable_rows;
             for (size_t row = 0; row < row_count; ++row) {
                 if (row >= parent_grid.template_rows.size()
-                    || parent_grid.template_rows[row].kind
-                        == grid_track::sizing::automatic) {
+                    || parent_grid.template_rows[row].maximum_is_auto) {
                     stretchable_rows.push_back(row);
                 }
             }

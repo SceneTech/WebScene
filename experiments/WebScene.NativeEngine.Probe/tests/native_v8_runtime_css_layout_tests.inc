@@ -236,6 +236,63 @@ void test_named_grid_template_areas_layout_cssom_and_mutation(webscene_engine* e
             + result);
 }
 
+void test_grid_auto_maximum_tracks_stretch_remaining_space(webscene_engine* engine)
+{
+    resize(engine, 700, 400, 202U);
+    const auto result = evaluate(engine, R"JS(
+        (() => {
+          document.body.innerHTML = `
+            <style>
+              html,body { margin:0; }
+              #grid {
+                display:grid;width:700px;height:400px;
+                grid-template-columns:700px;
+                grid-template-rows:25% minmax(min-content,auto) min-content;
+                grid-template-areas:"header" "middle" "footer";
+              }
+              .nonstretch { align-content:flex-start; }
+              #header { grid-area:header;height:40px; }
+              #middle { grid-area:middle;height:200px; }
+              #footer { grid-area:footer;height:18px; }
+            </style>
+            <div id="grid"><div id="header"></div><div id="middle"></div><div id="footer"></div></div>`;
+          const rect = id => {
+            const value = document.getElementById(id).getBoundingClientRect();
+            return [value.x,value.y,value.width,value.height].map(number =>
+              Math.round(number * 1000) / 1000);
+          };
+          const grid = document.getElementById('grid');
+          const stretched = rect('footer');
+          grid.style.alignContent = 'flex-start';
+          const flexStart = rect('footer');
+          grid.style.removeProperty('align-content');
+          const restored = rect('footer');
+          grid.className = 'nonstretch';
+          const stylesheet = rect('footer');
+          grid.style.alignContent = 'stretch';
+          const inlineOverride = rect('footer');
+          grid.style.removeProperty('align-content');
+          const cascadeRestored = rect('footer');
+          grid.className = '';
+
+          const started = performance.now();
+          let publicationChecksum = 0;
+          for (let index = 0; index < 500; index++) {
+            grid.style.height = index % 2 ? '400px' : '500px';
+            publicationChecksum += rect('footer')[1];
+          }
+          const elapsed = performance.now() - started;
+          if (elapsed > 2000) throw new Error(`auto-max publication gate exceeded: ${elapsed}ms`);
+          grid.style.height = '400px';
+          return {stretched,flexStart,restored,stylesheet,inlineOverride,cascadeRestored,
+            final:rect('footer'),publicationChecksumPositive:publicationChecksum>0};
+        })()
+    )JS", "native-grid-auto-max-stretch.js");
+    require(
+        result == R"JSON({"stretched":[0,382,700,18],"flexStart":[0,300,700,18],"restored":[0,382,700,18],"stylesheet":[0,300,700,18],"inlineOverride":[0,382,700,18],"cascadeRestored":[0,300,700,18],"final":[0,382,700,18],"publicationChecksumPositive":true})JSON",
+        "auto-maximum grid row stretch or mutation diverged: " + result);
+}
+
 void test_media_query_list_tracks_outer_and_frame_viewport_breakpoints(
     webscene_engine* engine)
 {

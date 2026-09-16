@@ -55,6 +55,7 @@ inline bool grid_layout_equal(
                 if (!layout_length_equal(left_track.minimum, right_track.minimum)
                     || !layout_length_equal(left_track.maximum, right_track.maximum)
                     || left_track.fraction != right_track.fraction
+                    || left_track.maximum_is_auto != right_track.maximum_is_auto
                     || left_track.kind != right_track.kind) {
                     return false;
                 }
@@ -132,6 +133,7 @@ inline bool computed_layout_style_equal(
             && left.direction == right.direction
             && left.align_items == right.align_items
             && left.align_self == right.align_self
+            && left.align_content_stretches == right.align_content_stretches
             && left.justify_content == right.justify_content
             && left.overflow_x == right.overflow_x
             && left.overflow_y == right.overflow_y

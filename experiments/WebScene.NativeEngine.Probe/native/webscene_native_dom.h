@@ -307,6 +307,7 @@ struct node_style final {
             css_length maximum{};
             float fraction{0};
             sizing kind{sizing::automatic};
+            bool maximum_is_auto{false};
         };
 
         struct named_area final {
@@ -732,6 +733,7 @@ struct node_style final {
     align_mode align_items{align_mode::stretch};
     align_mode align_self{align_mode::stretch};
     justify_mode justify_content{justify_mode::start};
+    bool align_content_stretches : 1 {true};
     overflow_mode overflow_x{overflow_mode::visible};
     overflow_mode overflow_y{overflow_mode::visible};
     bool outline_current_color : 1 {false};

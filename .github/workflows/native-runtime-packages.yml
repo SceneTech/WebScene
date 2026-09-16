@@ -184,6 +184,12 @@ jobs:
       uses: actions/setup-dotnet@v5
       with:
         global-json-file: global.json
+    - name: Expose the self-hosted Rust toolchain
+      if: matrix.rid == 'osx-arm64'
+      shell: bash
+      run: |
+        echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+        "$HOME/.cargo/bin/cargo" --version
     - name: Build Ubuntu 22.04 Linux runtime image
       if: matrix.rid == 'linux-x64'
       shell: bash

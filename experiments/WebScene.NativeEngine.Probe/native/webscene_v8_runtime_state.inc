@@ -11,7 +11,15 @@
     static constexpr size_t maximum_pending_digest_bytes = 64U * 1024U * 1024U;
     std::vector<pending_digest_task> pending_digests;
     size_t pending_digest_bytes{};
+    static constexpr size_t maximum_pending_ciphers = 32U;
+    static constexpr size_t maximum_cipher_input_bytes = 16U * 1024U * 1024U;
+    static constexpr size_t maximum_pending_cipher_bytes = 64U * 1024U * 1024U;
+    std::vector<pending_cipher_task> pending_ciphers;
+    size_t pending_cipher_bytes{};
+    static constexpr size_t maximum_crypto_keys = 256U;
     crypto_key_store crypto_keys;
+    std::vector<std::unique_ptr<crypto_key_binding>> crypto_key_bindings;
+    std::uintptr_t next_crypto_realm{1U};
     static constexpr size_t maximum_resource_prefetches = 16U;
     std::mutex resource_prefetch_mutex;
     std::unordered_map<std::string, std::shared_future<prefetched_resource>>

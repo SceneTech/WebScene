@@ -253,6 +253,10 @@ with `scripts/compare-native-resize-cadence.py`. The comparator uses paired boot
 improvement and the practical-vsync gate. It also rejects pairs that mix certification
 and production runtimes.
 
+The Spotify catalog resize investigation, selector/media invalidation design, trace
+switches, and focused regression coverage are recorded in
+[`docs/validation/spotify-resize-invalidation.md`](../docs/validation/spotify-resize-invalidation.md).
+
 ```bash
 python3 scripts/compare-native-resize-cadence.py \
   --control-dir artifacts/resize-control \

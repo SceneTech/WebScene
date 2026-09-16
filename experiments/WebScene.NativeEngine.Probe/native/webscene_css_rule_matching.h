@@ -12,7 +12,8 @@ struct rule_matches {
 template<typename MatchSelector,typename MatchRule>
 rule_matches match_candidates(native_document& document,const dom_node& node,
     std::span<const css_rule> rules,std::span<const size_t> candidates,
-    MatchSelector&& match_selector,MatchRule&& match_rule)
+    MatchSelector&& match_selector,MatchRule&& match_rule,
+    bool active_media_only = true)
 {
         const auto* node_shadow_root = document.containing_shadow_root(node);
         const auto rule_is_in_scope = [&](const css_rule& rule) {
@@ -28,7 +29,7 @@ rule_matches match_candidates(native_document& document,const dom_node& node,
         rule_matches result;
         for (const auto index : candidates) {
             const auto& rule = rules[index];
-            if (!rule.media_matches) continue;
+            if (active_media_only && !rule.media_matches) continue;
             if (!rule_is_in_scope(rule)) continue;
             std::string pseudo_origin;
             const auto pseudo_kind = split_pseudo_element_selector(rule.selector(), pseudo_origin);

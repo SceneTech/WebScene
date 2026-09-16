@@ -980,13 +980,10 @@
             if (css_context.IsEmpty()) return;
             activate_css_cascade(css_context);
             v8::Context::Scope css_context_scope(css_context);
-            if (!refresh_css_media_matches()) return;
-#if defined(WEBSCENE_NATIVE_ENGINE_MEDIA_REFRESH_ROOT_ONLY_EXPERIMENT)
-            rebuild_root_variables();
-#else
+            std::vector<size_t> changed_rules;
+            if (!refresh_css_media_matches(&changed_rules)) return;
             rebuild_css_rule_indexes_and_root_variables();
-#endif
-            apply_css_rules_subtree(active_root());
+            recascade_media_query_changes(active_root(), changed_rules);
         };
         refresh_context_styles(context.Get(isolate));
         for (auto& [id, persistent_context] : actual_frame_contexts) {

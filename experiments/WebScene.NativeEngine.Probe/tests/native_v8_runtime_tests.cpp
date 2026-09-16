@@ -175,6 +175,14 @@ int main()
         if (selected == "table-cell-copy") { test_table_cell_click_copies_text_to_host(); return 0; }
         if (selected == "resource-failure-diagnostics") { test_resource_failure_diagnostics(); return 0; }
         if (selected == "media-query-reentrant") { test_media_query_callback_can_create_more_queries(); return 0; }
+        if (selected == "media-query-targeted-recascade") {
+            test_media_query_resize_recascades_only_affected_subtrees();
+            return 0;
+        }
+        if (selected == "attribute-invalidation-scope") {
+            test_attribute_invalidation_scopes_subject_and_descendant_rules();
+            return 0;
+        }
         if (selected == "runtime-diagnostics") {
             test_runtime_diagnostics();
             test_runtime_diagnostics_frame_and_failure();
@@ -672,6 +680,8 @@ int main()
     test_resource_failure_diagnostics();
     test_runtime_diagnostics_frame_and_failure();
     test_media_query_callback_can_create_more_queries();
+    test_media_query_resize_recascades_only_affected_subtrees();
+    test_attribute_invalidation_scopes_subject_and_descendant_rules();
     test_concurrent_input_producers_remain_consumable();
     test_dom_implementation_create_html_document();
     test_mixed_continuous_input_backlog_is_coalesced();

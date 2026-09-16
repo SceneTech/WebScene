@@ -11,6 +11,19 @@ static size_t native_table_span(std::string_view text, size_t maximum = 1000, bo
 
 void native_document::layout(float viewport_width, float viewport_height)
 {
+    const auto trace_layout = std::getenv("WEBSCENE_TRACE_LAYOUT_PHASES") != nullptr;
+    const auto layout_started = trace_layout
+        ? std::chrono::steady_clock::now()
+        : std::chrono::steady_clock::time_point{};
+    auto phase_started = layout_started;
+    const auto trace_phase = [&](std::string_view phase) {
+        if (!trace_layout) return;
+        const auto now = std::chrono::steady_clock::now();
+        std::cerr << "WebScene layout phase: name=" << phase << ", ms="
+            << std::chrono::duration<double, std::milli>(now - phase_started).count()
+            << '\n';
+        phase_started = now;
+    };
     if (layout_scratch_ == nullptr) {
         layout_scratch_ = std::make_unique<layout_scratch_storage>();
     }
@@ -88,6 +101,7 @@ void native_document::layout(float viewport_width, float viewport_height)
             clear_projection_layout(clear_projection_layout, *state.root);
         }
     }
+    trace_phase("prepare");
     viewport_width_ = std::max(1.0F, viewport_width);
     viewport_height_ = std::max(1.0F, viewport_height);
     body_->layout = {
@@ -108,6 +122,7 @@ void native_document::layout(float viewport_width, float viewport_height)
         }
     }
     layout_children(*body_);
+    trace_phase("tree");
     // Sticky offsets are visual adjustments to completed normal-flow geometry.
     // Applying them during row layout uses unfinished table/group dimensions
     // and can alter the virtualizer's scroll extent. Resolve outer sticky boxes
@@ -195,7 +210,9 @@ void native_document::layout(float viewport_width, float viewport_height)
         for (auto* child : composed_children(node)) self(self,*child);
     };
     apply_sticky(apply_sticky,*body_);
+    trace_phase("sticky");
     update_paint_z_index(*this, *body_);
+    trace_phase("paint-order");
     auto retained_canvas_seen = false;
     auto retained_canvases_remaining = count_retained_canvases(*this, *body_);
     update_retained_canvas_paint_phase(
@@ -203,6 +220,7 @@ void native_document::layout(float viewport_width, float viewport_height)
         *body_,
         retained_canvas_seen,
         retained_canvases_remaining);
+    trace_phase("canvas-retention");
     // The pool normally retains only the high-water scratch blocks needed by
     // repeated layout. Bound pathological one-off documents so a transient
     // giant flex tree cannot become permanent per-context memory.
@@ -217,6 +235,11 @@ void native_document::layout(float viewport_width, float viewport_height)
     globally_dirty_ = false;
     active_animation_demand_cache_valid_ = false;
     out_of_flow_geometry_dirty_roots_.clear();
+    if (trace_layout) {
+        std::cerr << "WebScene layout total: ms="
+            << std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - layout_started).count() << '\n';
+    }
 }
 
 static bool parse_intrinsic_view_box(
@@ -3305,6 +3328,17 @@ void native_document::layout_children(dom_node& parent)
                                 0.0F,
                                 available_line_cross_size - margin_top - margin_bottom),
                             intrinsic_height);
+            // An inline replaced image with an authored width and automatic
+            // height uses its natural aspect ratio. The block-flow path below
+            // already performs this substitution; keep the atomic inline path
+            // equivalent so a decoded image cannot remain at its unscaled
+            // natural height after its inline width is resolved.
+            if (child->tag == "img" && !definite_authored_height
+                && child->replaced_image().natural_width > 0
+                && child->replaced_image().natural_height > 0) {
+                height = width * child->replaced_image().natural_height
+                    / child->replaced_image().natural_width;
+            }
             height = constrain_size(*child, false, height, content.height);
             assigned_height_is_definite = definite_authored_height
                 || (flex_container

@@ -1,0 +1,41 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Viewport media changes recascade matched subtrees</title>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<script src="/resources/testdriver.js"></script>
+<script src="/resources/testdriver-actions.js"></script>
+<script src="/resources/testdriver-vendor.js"></script>
+<style>
+  .media-shell { --leaf-width:17px; padding-left:3px; }
+  .media-leaf { width:var(--leaf-width); height:11px; }
+  .unaffected-sibling { width:23px; height:5px; }
+  @media (max-width:600px) {
+    .media-shell { --leaf-width:41px; padding-left:13px; }
+    .media-leaf { height:29px; }
+  }
+</style>
+<section id="viewport-target" class="media-shell"><div class="media-leaf"></div></section>
+<aside class="unaffected-sibling"></aside>
+<script>
+  promise_test(async () => {
+    const shell = document.querySelector(".media-shell");
+    const leaf = document.querySelector(".media-leaf");
+    const sibling = document.querySelector(".unaffected-sibling");
+    const snapshot = () => [
+      getComputedStyle(shell).paddingLeft,
+      getComputedStyle(leaf).width,
+      getComputedStyle(leaf).height,
+      getComputedStyle(sibling).width
+    ];
+
+    assert_array_equals(snapshot(), ["3px", "17px", "11px", "23px"],
+      "wide base styles are active");
+    await test_driver.set_viewport(shell, 480, 400);
+    assert_array_equals(snapshot(), ["13px", "41px", "29px", "23px"],
+      "activation updates the matched ancestor, inherited variable consumer, and leaf");
+    await test_driver.set_viewport(shell, 800, 600);
+    assert_array_equals(snapshot(), ["3px", "17px", "11px", "23px"],
+      "deactivation restores base styles without disturbing the unrelated sibling");
+  }, "media-query activation and deactivation recascade matched subtrees");
+</script>

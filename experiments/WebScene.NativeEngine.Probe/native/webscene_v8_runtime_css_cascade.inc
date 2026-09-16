@@ -944,6 +944,618 @@
         }
     }
 
+    // A viewport change does not alter selector state. Re-evaluate only the
+    // rules whose media-query truth changed, then run the complete cascade on
+    // their matched subtrees. Replaying from each matched root preserves
+    // inheritance, custom properties, pseudo-elements and explicit `inherit`
+    // without matching every unrelated Spotify rule against every DOM node.
+    void recascade_media_query_changes(
+        dom_node& root,
+        std::span<const size_t> changed_rules)
+    {
+        webscene_frame_trace::scope invalidation_trace(
+            frame_trace, "media-invalidation-start", "media-invalidation-end", 0);
+        if (changed_rules.empty()) return;
+        std::vector<dom_node*> roots;
+        const auto has_selected_ancestor = [&](const dom_node& node) {
+            for (auto* ancestor = node.parent; ancestor != nullptr;
+                 ancestor = ancestor->parent) {
+                if (std::find(roots.begin(), roots.end(), ancestor) != roots.end()) {
+                    return true;
+                }
+            }
+            return false;
+        };
+        const auto visit = [&](const auto& self, dom_node& node) -> void {
+            if (node.kind == dom_node_kind::element) {
+                const auto matching = css::match_candidates(
+                    document,
+                    node,
+                    css_rules,
+                    changed_rules,
+                    [this](const dom_node& subject, const css_rule&,
+                           const std::string& selector) {
+                        return css_selector_matches(subject, selector);
+                    },
+                    [this](const dom_node& subject, const css_rule& rule) {
+                        return css_rule_matches(subject, rule);
+                    },
+                    false);
+                if ((!matching.ordinary.empty() || !matching.pseudo.empty())
+                    && !has_selected_ancestor(node)) {
+                    roots.push_back(&node);
+                    return;
+                }
+            }
+            for (auto* child : node.children) {
+                if (child == nullptr) continue;
+                if (child != active_css_cascade_root
+                    && inactive_css_cascades.contains(child)) {
+                    continue;
+                }
+                self(self, *child);
+            }
+            const auto* shadow = document.shadow_dom(node);
+            if (shadow != nullptr && shadow->root != nullptr) {
+                self(self, *shadow->root);
+            }
+        };
+        visit(visit, root);
+        for (auto* matched_root : roots) {
+            apply_css_rules_subtree(*matched_root);
+        }
+    }
+
+    static bool property_change_propagates_to_descendants(
+        std::string_view property)
+    {
+        constexpr std::array inherited_properties{
+            std::string_view{"all"}, std::string_view{"color"},
+            std::string_view{"cursor"}, std::string_view{"direction"},
+            std::string_view{"font"}, std::string_view{"font-family"},
+            std::string_view{"font-size"}, std::string_view{"font-style"},
+            std::string_view{"font-weight"}, std::string_view{"letter-spacing"},
+            std::string_view{"line-height"}, std::string_view{"list-style"},
+            std::string_view{"list-style-position"},
+            std::string_view{"list-style-type"}, std::string_view{"text-align"},
+            std::string_view{"text-transform"}, std::string_view{"visibility"},
+            std::string_view{"white-space"}, std::string_view{"word-spacing"},
+            std::string_view{"-webkit-font-smoothing"}};
+        return std::find(
+            inherited_properties.begin(),
+            inherited_properties.end(),
+            property) != inherited_properties.end();
+    }
+
+    static bool rule_change_propagates_to_descendants(const css_rule& rule)
+    {
+        return std::any_of(
+            rule.declarations().begin(),
+            rule.declarations().end(),
+            [](const css_declaration& declaration) {
+                return !declaration.name.starts_with("--")
+                    && property_change_propagates_to_descendants(
+                        declaration.name);
+            });
+    }
+
+    static bool selector_text_references_attribute(
+        std::string_view selector,
+        std::string_view name)
+    {
+        for (size_t open = 0;
+             (open = selector.find('[', open)) != std::string_view::npos;) {
+            auto cursor = open + 1U;
+            while (cursor < selector.size()
+                && std::isspace(static_cast<unsigned char>(selector[cursor]))) ++cursor;
+            const auto start = cursor;
+            while (cursor < selector.size()
+                && (std::isalnum(static_cast<unsigned char>(selector[cursor]))
+                    || selector[cursor] == '-' || selector[cursor] == '_')) ++cursor;
+            if (selector.substr(start, cursor - start) == name) return true;
+            open = cursor;
+        }
+        return false;
+    }
+
+    static bool selector_text_references_class(
+        std::string_view selector,
+        std::string_view class_name)
+    {
+        auto bracket_depth = 0;
+        char quote = 0;
+        for (size_t position = 0; position < selector.size(); ++position) {
+            const auto character = selector[position];
+            if (quote != 0) {
+                if (character == quote
+                    && (position == 0U || selector[position - 1U] != '\\')) quote = 0;
+                continue;
+            }
+            if (character == '\'' || character == '"') { quote = character; continue; }
+            if (character == '[') { ++bracket_depth; continue; }
+            if (character == ']') { --bracket_depth; continue; }
+            if (character != '.' || bracket_depth != 0) continue;
+            auto end = position + 1U;
+            while (end < selector.size()
+                && (std::isalnum(static_cast<unsigned char>(selector[end]))
+                    || selector[end] == '-' || selector[end] == '_')) ++end;
+            if (selector.substr(position + 1U, end - position - 1U)
+                == class_name) return true;
+            position = end == 0U ? position : end - 1U;
+        }
+        return false;
+    }
+
+    template<typename CompoundReferences, typename UsePreviousState,
+        typename RestoreCurrentState>
+    void recascade_selector_transition(
+        dom_node& subject,
+        std::span<const size_t> changed_rules,
+        CompoundReferences&& compound_references,
+        UsePreviousState&& use_previous_state,
+        RestoreCurrentState&& restore_current_state)
+    {
+        const auto trace_transition =
+            std::getenv("WEBSCENE_TRACE_RECASCADE_ROOTS") != nullptr;
+        const auto transition_started = trace_transition
+            ? std::chrono::steady_clock::now()
+            : std::chrono::steady_clock::time_point{};
+        struct request final { dom_node* root; bool subtree; };
+        std::vector<request> requests;
+        const auto add_request = [&](dom_node* root, bool subtree) {
+            if (root == nullptr) return;
+            for (auto& existing : requests) {
+                if (existing.root != root) continue;
+                existing.subtree = existing.subtree || subtree;
+                return;
+            }
+            if (std::any_of(requests.begin(), requests.end(),
+                    [this, root](const request& existing) {
+                        return existing.subtree
+                            && subtree_contains(*existing.root, root);
+                    })) return;
+            if (subtree) {
+                std::erase_if(requests, [this, root](const request& existing) {
+                    return subtree_contains(*root, existing.root);
+                });
+            }
+            requests.push_back({root, subtree});
+        };
+        auto* previous_cascade_root = const_cast<dom_node*>(active_css_cascade_root);
+        auto* context_root = css_cascade_root_for_node(subject);
+        if (context_root != nullptr) activate_css_cascade(context_root);
+        const auto visit_candidates = [&](dom_node& root,
+                                          std::string affected_compound,
+                                          compiled_css_compound compiled_compound,
+                                          bool subtree) {
+            std::string pseudo_origin;
+            if (split_pseudo_element_selector(
+                    affected_compound, pseudo_origin) != 0
+                && !pseudo_origin.empty()) {
+                affected_compound = std::move(pseudo_origin);
+                compiled_compound = compile_css_compound_selector(affected_compound);
+            }
+            const auto visit = [&](const auto& self, dom_node& node) -> void {
+                if (node.kind == dom_node_kind::element
+                    && css_compound_selector_matches(node, compiled_compound)) {
+                    add_request(&node, subtree);
+                }
+                for (auto* child : node.children) {
+                    if (child == nullptr) continue;
+                    if (child != active_css_cascade_root
+                        && inactive_css_cascades.contains(child)) continue;
+                    self(self, *child);
+                }
+                const auto* shadow = document.shadow_dom(node);
+                if (shadow != nullptr && shadow->root != nullptr) {
+                    self(self, *shadow->root);
+                }
+            };
+            visit(visit, root);
+        };
+        const auto visit_related_candidates = [&](
+            dom_node& trigger,
+            const compiled_css_selector& selector,
+            size_t trigger_component,
+            bool subtree) {
+            std::vector<dom_node*> frontier{&trigger};
+            for (auto component = trigger_component;
+                 component + 1U < selector.compounds.size(); ++component) {
+                std::vector<dom_node*> next;
+                auto affected_compound = selector.compounds[component + 1U];
+                auto compiled_affected =
+                    selector.compiled_compounds[component + 1U];
+                std::string pseudo_origin;
+                if (split_pseudo_element_selector(
+                        affected_compound, pseudo_origin) != 0
+                    && !pseudo_origin.empty()) {
+                    affected_compound = std::move(pseudo_origin);
+                    compiled_affected =
+                        compile_css_compound_selector(affected_compound);
+                }
+                const auto append_if_matching = [&](dom_node* candidate) {
+                    if (candidate == nullptr
+                        || candidate->kind != dom_node_kind::element
+                        || !css_compound_selector_matches(
+                            *candidate, compiled_affected)) return;
+                    if (std::find(next.begin(), next.end(), candidate) == next.end()) {
+                        next.push_back(candidate);
+                    }
+                };
+                for (auto* origin : frontier) {
+                    if (origin == nullptr) continue;
+                    const auto combinator = selector.combinators[component];
+                    if (combinator == '>') {
+                        for (auto* child : origin->children) append_if_matching(child);
+                        continue;
+                    }
+                    if (combinator == '+' || combinator == '~') {
+                        if (origin->parent == nullptr) continue;
+                        const auto& siblings = origin->parent->children;
+                        const auto found = std::find(
+                            siblings.begin(), siblings.end(), origin);
+                        if (found == siblings.end()) continue;
+                        for (auto current = std::next(found);
+                             current != siblings.end(); ++current) {
+                            if (*current == nullptr
+                                || (*current)->kind != dom_node_kind::element) continue;
+                            append_if_matching(*current);
+                            if (combinator == '+') break;
+                        }
+                        continue;
+                    }
+                    const auto visit_descendants = [&](const auto& self,
+                                                       dom_node& root) -> void {
+                        for (auto* child : root.children) {
+                            if (child == nullptr) continue;
+                            if (child != active_css_cascade_root
+                                && inactive_css_cascades.contains(child)) continue;
+                            append_if_matching(child);
+                            self(self, *child);
+                        }
+                        const auto* shadow = document.shadow_dom(root);
+                        if (shadow != nullptr && shadow->root != nullptr) {
+                            append_if_matching(shadow->root);
+                            self(self, *shadow->root);
+                        }
+                    };
+                    visit_descendants(visit_descendants, *origin);
+                }
+                frontier = std::move(next);
+                if (frontier.empty()) break;
+            }
+            for (auto* candidate : frontier) add_request(candidate, subtree);
+        };
+        const auto add_custom_property_consumers = [&](
+            dom_node& root,
+            const css_rule& changed_rule) {
+            std::vector<std::string> pending;
+            for (const auto& declaration : changed_rule.declarations()) {
+                if (declaration.name.starts_with("--")) {
+                    pending.push_back(declaration.name);
+                }
+            }
+            std::unordered_set<std::string> visited;
+            for (size_t cursor = 0; cursor < pending.size(); ++cursor) {
+                const auto variable = pending[cursor];
+                if (!visited.insert(variable).second) continue;
+                const auto found = css_rules_by_variable_reference.find(variable);
+                if (found != css_rules_by_variable_reference.end()) {
+                    for (const auto consumer_index : found->second) {
+                        if (consumer_index >= css_rules.size()) continue;
+                        const auto& consumer = css_rules[consumer_index];
+                        if (!consumer.media_matches
+                            || consumer.compiled_selector().compounds.empty()) continue;
+                        visit_candidates(
+                            root,
+                            consumer.compiled_selector().compounds.back(),
+                            consumer.compiled_selector().compiled_compounds.back(),
+                            rule_change_propagates_to_descendants(consumer));
+                        for (const auto& declaration : consumer.declarations()) {
+                            if (declaration.name.starts_with("--")
+                                && css_variable_references(
+                                    declaration.value).contains(variable)) {
+                                pending.push_back(declaration.name);
+                            }
+                        }
+                    }
+                }
+                const auto visit_inline = [&](const auto& self, dom_node& node) -> void {
+                    for (const auto& [property, value] :
+                         node.authored_style().declarations) {
+                        if (!css_variable_references(value).contains(variable)) continue;
+                        if (property.starts_with("--")) pending.push_back(property);
+                        else add_request(
+                            &node,
+                            property_change_propagates_to_descendants(property));
+                    }
+                    for (auto* child : node.children) {
+                        if (child != nullptr) self(self, *child);
+                    }
+                };
+                visit_inline(visit_inline, root);
+            }
+        };
+        struct trigger_transition final
+        {
+            const compiled_css_compound* selector{nullptr};
+            std::optional<compiled_css_compound> pseudo_origin;
+            bool current{false};
+            bool previous{false};
+        };
+        std::unordered_map<const compiled_css_compound*, trigger_transition>
+            trigger_transitions;
+        trigger_transitions.reserve(changed_rules.size());
+        for (const auto index : changed_rules) {
+            if (index >= css_rules.size()) continue;
+            const auto& rule = css_rules[index];
+            const auto& compiled = rule.payload->compiled_pseudo_origin.compounds.empty()
+                ? rule.compiled_selector()
+                : rule.payload->compiled_pseudo_origin;
+            if (rule.selector().find(":has(") != std::string::npos
+                || compiled.compounds.empty()
+                || compiled.compiled_compounds.size() != compiled.compounds.size()) continue;
+            for (size_t component = 0;
+                 component < compiled.compounds.size(); ++component) {
+                const auto* selector = &compiled.compiled_compounds[component];
+                if (!compound_references(*selector)
+                    || trigger_transitions.contains(selector)) continue;
+                trigger_transition transition;
+                transition.selector = selector;
+                std::string pseudo_origin;
+                if (split_pseudo_element_selector(
+                        compiled.compounds[component], pseudo_origin) != 0
+                    && !pseudo_origin.empty()) {
+                    transition.pseudo_origin =
+                        compile_css_compound_selector(pseudo_origin);
+                }
+                const auto& matcher = transition.pseudo_origin.has_value()
+                    ? *transition.pseudo_origin
+                    : *transition.selector;
+                transition.current =
+                    css_compound_selector_matches(subject, matcher);
+                trigger_transitions.emplace(selector, std::move(transition));
+            }
+        }
+        if (!trigger_transitions.empty()) {
+            use_previous_state();
+            for (auto& [selector, transition] : trigger_transitions) {
+                static_cast<void>(selector);
+                const auto& matcher = transition.pseudo_origin.has_value()
+                    ? *transition.pseudo_origin
+                    : *transition.selector;
+                transition.previous =
+                    css_compound_selector_matches(subject, matcher);
+            }
+            restore_current_state();
+        }
+        std::vector<size_t> fallback_rules;
+        for (const auto index : changed_rules) {
+            if (index >= css_rules.size()) continue;
+            const auto& rule = css_rules[index];
+            const auto& compiled = rule.payload->compiled_pseudo_origin.compounds.empty()
+                ? rule.compiled_selector()
+                : rule.payload->compiled_pseudo_origin;
+            if (rule.selector().find(":has(") != std::string::npos
+                || compiled.compounds.empty()
+                || compiled.compiled_compounds.size() != compiled.compounds.size()) {
+                fallback_rules.push_back(index);
+                continue;
+            }
+            auto found_trigger = false;
+            for (size_t component = 0;
+                 component < compiled.compounds.size(); ++component) {
+                if (!compound_references(compiled.compiled_compounds[component])) continue;
+                found_trigger = true;
+                const auto transition = trigger_transitions.find(
+                    &compiled.compiled_compounds[component]);
+                if (transition == trigger_transitions.end()
+                    || transition->second.current == transition->second.previous) continue;
+                const auto propagates = rule_change_propagates_to_descendants(rule);
+                if (component + 1U == compiled.compounds.size()) {
+                    add_request(&subject, propagates);
+                    add_custom_property_consumers(subject, rule);
+                    continue;
+                }
+                visit_related_candidates(
+                    subject, compiled, component, propagates);
+            }
+            if (!found_trigger) fallback_rules.push_back(index);
+        }
+        const auto collect_fallback = [&] {
+            if (fallback_rules.empty()) return;
+            const auto visit = [&](const auto& self, dom_node& node) -> void {
+                if (node.kind == dom_node_kind::element) {
+                    const auto matching = css::match_candidates(
+                        document,
+                        node,
+                        css_rules,
+                        fallback_rules,
+                        [this](const dom_node& candidate, const css_rule&,
+                               const std::string& selector) {
+                            return css_selector_matches(candidate, selector);
+                        },
+                        [this](const dom_node& candidate, const css_rule& rule) {
+                            return css_rule_matches(candidate, rule);
+                        });
+                    auto subtree = false;
+                    for (const auto* rule : matching.ordinary) {
+                        subtree = subtree
+                            || rule_change_propagates_to_descendants(*rule);
+                    }
+                    if (!matching.ordinary.empty() || !matching.pseudo.empty()) {
+                        add_request(&node, subtree);
+                    }
+                }
+                for (auto* child : node.children) {
+                    if (child == nullptr) continue;
+                    if (child != active_css_cascade_root
+                        && inactive_css_cascades.contains(child)) continue;
+                    self(self, *child);
+                }
+                const auto* shadow = document.shadow_dom(node);
+                if (shadow != nullptr && shadow->root != nullptr) {
+                    self(self, *shadow->root);
+                }
+            };
+            if (context_root != nullptr) visit(visit, *context_root);
+        };
+        if (!fallback_rules.empty()) {
+            collect_fallback();
+            use_previous_state();
+            collect_fallback();
+            restore_current_state();
+        }
+        add_request(&subject, false);
+        const auto application_started = trace_transition
+            ? std::chrono::steady_clock::now()
+            : std::chrono::steady_clock::time_point{};
+        for (const auto& current : requests) {
+            if (current.subtree) apply_css_rules_subtree(*current.root);
+            else apply_css_rules(*current.root);
+        }
+        if (previous_cascade_root != nullptr
+            && previous_cascade_root != context_root) {
+            activate_css_cascade(previous_cascade_root);
+        }
+        if (trace_transition) {
+            const auto planned = std::chrono::duration<double, std::milli>(
+                application_started - transition_started).count();
+            const auto applied = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - application_started).count();
+            const auto subtree_requests = std::count_if(
+                requests.begin(), requests.end(), [](const request& current) {
+                    return current.subtree;
+                });
+            std::cerr << "WebScene selector transition: plan-ms=" << planned
+                << ", apply-ms=" << applied << ", rules=" << changed_rules.size()
+                << ", triggers=" << trigger_transitions.size()
+                << ", fallback=" << fallback_rules.size()
+                << ", requests=" << requests.size()
+                << ", subtrees=" << subtree_requests << '\n';
+        }
+    }
+
+    void recascade_attribute_selector_transition(
+        dom_node& subject,
+        std::string_view name,
+        const std::optional<std::string>& previous_value,
+        const std::string& current_value)
+    {
+        webscene_frame_trace::scope invalidation_trace(
+            frame_trace,
+            "attribute-invalidation-start",
+            "attribute-invalidation-end",
+            0);
+        const auto indexed = css_invalidation_rules_by_attribute.find(std::string(name));
+        const std::span<const size_t> changed_rules =
+            indexed == css_invalidation_rules_by_attribute.end()
+            ? std::span<const size_t>{}
+            : std::span<const size_t>{indexed->second};
+        const auto trace_invalidation =
+            std::getenv("WEBSCENE_TRACE_RECASCADE_ROOTS") != nullptr;
+        const auto invalidation_started = trace_invalidation
+            ? std::chrono::steady_clock::now()
+            : std::chrono::steady_clock::time_point{};
+        recascade_selector_transition(
+            subject,
+            changed_rules,
+            [&](const compiled_css_compound& compound) {
+                return std::any_of(
+                    compound.attributes.begin(),
+                    compound.attributes.end(),
+                    [&](const std::string& attribute) {
+                        auto cursor = size_t{0};
+                        while (cursor < attribute.size()
+                            && std::isspace(
+                                static_cast<unsigned char>(attribute[cursor]))) ++cursor;
+                        const auto start = cursor;
+                        while (cursor < attribute.size()
+                            && (std::isalnum(static_cast<unsigned char>(attribute[cursor]))
+                                || attribute[cursor] == '-'
+                                || attribute[cursor] == '_')) ++cursor;
+                        return std::string_view(attribute).substr(
+                            start, cursor - start) == name;
+                    }) || std::any_of(
+                    compound.pseudos.begin(), compound.pseudos.end(),
+                    [&](const compiled_css_pseudo& pseudo) {
+                        return selector_text_references_attribute(
+                            pseudo.argument, name);
+                    });
+            },
+            [&] {
+                if (previous_value.has_value()) {
+                    subject.attributes[std::string(name)] = *previous_value;
+                } else {
+                    subject.attributes.erase(std::string(name));
+                }
+            },
+            [&] { subject.attributes[std::string(name)] = current_value; });
+        if (trace_invalidation) {
+            const auto elapsed = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - invalidation_started).count();
+            std::cerr << "WebScene attribute invalidation: ms=" << elapsed
+                << ", attribute=" << name << ", rules=" << changed_rules.size()
+                << ", node=" << subject.id << ", tag=" << subject.tag << '\n';
+        }
+    }
+
+    void recascade_class_selector_transition(
+        dom_node& subject,
+        const std::optional<std::string>& previous_value,
+        const std::string& current_value)
+    {
+        webscene_frame_trace::scope invalidation_trace(
+            frame_trace, "class-invalidation-start", "class-invalidation-end", 0);
+        std::unordered_set<std::string> changed_classes;
+        const auto append = [&](std::string_view classes) {
+            std::istringstream stream{std::string(classes)};
+            for (std::string token; stream >> token;) changed_classes.insert(std::move(token));
+        };
+        append(previous_value.value_or(std::string{}));
+        append(current_value);
+        std::vector<size_t> changed_rules;
+        for (const auto& class_name : changed_classes) {
+            const auto indexed = css_invalidation_rules_by_class.find(class_name);
+            if (indexed == css_invalidation_rules_by_class.end()) continue;
+            changed_rules.insert(
+                changed_rules.end(), indexed->second.begin(), indexed->second.end());
+        }
+        std::sort(changed_rules.begin(), changed_rules.end());
+        changed_rules.erase(
+            std::unique(changed_rules.begin(), changed_rules.end()), changed_rules.end());
+        recascade_selector_transition(
+            subject,
+            changed_rules,
+            [&](const compiled_css_compound& compound) {
+                return std::any_of(
+                    compound.identities.begin(),
+                    compound.identities.end(),
+                    [&](const auto& identity) {
+                        return identity.first == '.'
+                            && changed_classes.contains(identity.second);
+                    }) || std::any_of(
+                    compound.pseudos.begin(), compound.pseudos.end(),
+                    [&](const compiled_css_pseudo& pseudo) {
+                        return std::any_of(
+                            changed_classes.begin(), changed_classes.end(),
+                            [&](const std::string& class_name) {
+                                return selector_text_references_class(
+                                    pseudo.argument, class_name);
+                            });
+                    });
+            },
+            [&] {
+                subject.class_name = previous_value.value_or(std::string{});
+                if (previous_value.has_value()) subject.attributes["class"] = *previous_value;
+                else subject.attributes.erase("class");
+            },
+            [&] {
+                subject.class_name = current_value;
+                subject.attributes["class"] = current_value;
+            });
+    }
+
     bool is_connected(const dom_node& node)
     {
         for (auto* current = &node; current != nullptr; current = current->parent) {
@@ -966,6 +1578,11 @@
         std::string_view reason = {})
     {
         webscene_frame_trace::scope cascade_trace(frame_trace, "recascade-start", "recascade-end", 0);
+        const auto trace_recascade_root =
+            std::getenv("WEBSCENE_TRACE_RECASCADE_ROOTS") != nullptr;
+        const auto trace_recascade_started = trace_recascade_root
+            ? std::chrono::steady_clock::now()
+            : std::chrono::steady_clock::time_point{};
         if (!is_connected(node)) return;
         auto* previous_cascade_root = const_cast<dom_node*>(active_css_cascade_root);
         auto* node_cascade_root = css_cascade_root_for_node(node);
@@ -999,6 +1616,16 @@
         static_cast<void>(reason);
 #endif
         apply_css_rules_subtree(node);
+        if (trace_recascade_root) {
+            const auto elapsed = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - trace_recascade_started).count();
+            if (elapsed >= 5.0) {
+                std::cerr << "WebScene recascade root: ms=" << elapsed
+                    << ", node=" << node.id << ", tag=" << node.tag
+                    << ", id=" << node.id_attribute << ", reason=" << reason
+                    << ", class=" << node.class_name.substr(0, 180) << '\n';
+            }
+        }
 #if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
         if (trace) {
             const auto elapsed = std::chrono::duration<double, std::milli>(
@@ -1163,6 +1790,19 @@
         recascade_connected_subtree_now(node, reason);
     }
 
+    void recascade_connected_node_now(dom_node& node)
+    {
+        if (!is_connected(node)) return;
+        auto* previous_cascade_root = const_cast<dom_node*>(active_css_cascade_root);
+        auto* node_cascade_root = css_cascade_root_for_node(node);
+        if (node_cascade_root != nullptr) activate_css_cascade(node_cascade_root);
+        apply_css_rules(node);
+        if (previous_cascade_root != nullptr
+            && previous_cascade_root != node_cascade_root) {
+            activate_css_cascade(previous_cascade_root);
+        }
+    }
+
     void recascade_connected_node(dom_node& node)
     {
         if (!is_connected(node)) return;
@@ -1176,14 +1816,7 @@
         binding_callback_timer timer(
             nullptr,
             profile_named("style-recascade/node-immediate"));
-        auto* previous_cascade_root = const_cast<dom_node*>(active_css_cascade_root);
-        auto* node_cascade_root = css_cascade_root_for_node(node);
-        if (node_cascade_root != nullptr) activate_css_cascade(node_cascade_root);
-        apply_css_rules(node);
-        if (previous_cascade_root != nullptr
-            && previous_cascade_root != node_cascade_root) {
-            activate_css_cascade(previous_cascade_root);
-        }
+        recascade_connected_node_now(node);
     }
 
     void recascade_hover_transition(
@@ -1363,6 +1996,8 @@
         css_rules_by_tag.clear();
         css_rules_by_attribute.clear();
         css_rules_by_variable_reference.clear();
+        css_invalidation_rules_by_attribute.clear();
+        css_invalidation_rules_by_class.clear();
         css_focus_rules.clear();
         unindexed_css_rules.clear();
         css_attribute_dependencies.clear();

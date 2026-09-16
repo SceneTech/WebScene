@@ -221,6 +221,11 @@
     css_index_string_map<std::vector<size_t>> css_rules_by_tag;
     css_index_string_map<std::vector<size_t>> css_rules_by_attribute;
     css_index_string_map<std::vector<size_t>> css_rules_by_variable_reference;
+    // Subject-key indexes above accelerate matching one element. These feature
+    // indexes include every selector compound so mutations can find affected
+    // rules without rescanning the complete stylesheet.
+    css_index_string_map<std::vector<size_t>> css_invalidation_rules_by_attribute;
+    css_index_string_map<std::vector<size_t>> css_invalidation_rules_by_class;
     std::vector<size_t> css_focus_rules;
     std::vector<size_t> unindexed_css_rules;
     css_index_string_set css_attribute_dependencies;

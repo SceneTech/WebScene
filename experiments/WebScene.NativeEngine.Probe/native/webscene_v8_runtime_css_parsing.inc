@@ -448,15 +448,25 @@
             css_rules_by_variable_reference[std::move(reference)].push_back(index);
         }
         index_hover_selector_dependencies(rule);
+        const auto index_invalidation_rule = [&](auto& feature_index,
+                                                  std::string_view feature) {
+            auto& rules = feature_index[std::string(feature)];
+            if (rules.empty() || rules.back() != index) rules.push_back(index);
+        };
         if (selector.find(":disabled") != std::string::npos
             || selector.find(":enabled") != std::string::npos) {
             css_attribute_dependencies.emplace("disabled");
+            index_invalidation_rule(css_invalidation_rules_by_attribute, "disabled");
         }
         if (selector.find(":checked") != std::string::npos) {
             css_attribute_dependencies.emplace("checked");
             css_attribute_dependencies.emplace("selected");
             css_attribute_dependencies.emplace("type");
+            index_invalidation_rule(css_invalidation_rules_by_attribute, "checked");
+            index_invalidation_rule(css_invalidation_rules_by_attribute, "selected");
+            index_invalidation_rule(css_invalidation_rules_by_attribute, "type");
         }
+        std::unordered_set<std::string> rule_attributes;
         for (size_t open = 0; (open = selector.find('[', open)) != std::string::npos;) {
             auto cursor = open + 1U;
             while (cursor < selector.size()
@@ -466,9 +476,44 @@
                 && (std::isalnum(static_cast<unsigned char>(selector[cursor]))
                     || selector[cursor] == '-' || selector[cursor] == '_')) ++cursor;
             if (cursor > start) {
-                css_attribute_dependencies.emplace(selector.substr(start, cursor - start));
+                auto name = selector.substr(start, cursor - start);
+                css_attribute_dependencies.emplace(name);
+                rule_attributes.emplace(std::move(name));
             }
             open = cursor;
+        }
+        for (auto& name : rule_attributes) {
+            index_invalidation_rule(css_invalidation_rules_by_attribute, name);
+        }
+        std::unordered_set<std::string> rule_classes;
+        auto bracket_depth = 0;
+        char quote = 0;
+        for (size_t position = 0; position < selector.size(); ++position) {
+            const auto character = selector[position];
+            if (quote != 0) {
+                if (character == quote
+                    && (position == 0U || selector[position - 1U] != '\\')) quote = 0;
+                continue;
+            }
+            if (character == '\'' || character == '"') {
+                quote = character;
+                continue;
+            }
+            if (character == '[') { ++bracket_depth; continue; }
+            if (character == ']') { --bracket_depth; continue; }
+            if (character != '.' || bracket_depth != 0) continue;
+            auto end = position + 1U;
+            while (end < selector.size()
+                && (std::isalnum(static_cast<unsigned char>(selector[end]))
+                    || selector[end] == '-' || selector[end] == '_')) ++end;
+            if (end > position + 1U) {
+                rule_classes.emplace(
+                    selector.substr(position + 1U, end - position - 1U));
+            }
+            position = end == 0U ? position : end - 1U;
+        }
+        for (auto& name : rule_classes) {
+            index_invalidation_rule(css_invalidation_rules_by_class, name);
         }
         css::index_selector(index, selector, css_rules_by_id, css_rules_by_class,
             css_rules_by_tag, css_rules_by_attribute, css_focus_rules,
@@ -957,12 +1002,16 @@
     void sort_css_candidates(std::vector<size_t>& candidates) const
     { css::sort_candidates(css_rules,candidates); }
 
-    bool refresh_css_media_matches()
+    bool refresh_css_media_matches(std::vector<size_t>* changed_rules = nullptr)
     {
         auto changed = false;
-        for (auto& rule : css_rules) {
+        for (size_t index = 0; index < css_rules.size(); ++index) {
+            auto& rule = css_rules[index];
             const auto matches = css_rule_media_matches(rule);
-            changed = changed || matches != rule.media_matches;
+            if (matches != rule.media_matches) {
+                changed = true;
+                if (changed_rules != nullptr) changed_rules->push_back(index);
+            }
             rule.media_matches = matches;
         }
         return changed;
@@ -978,14 +1027,11 @@
             if (local_context.IsEmpty()) return;
             activate_css_cascade(local_context);
             v8::Context::Scope context_scope(local_context);
-            if (!refresh_css_media_matches()) return;
+            std::vector<size_t> changed_rules;
+            if (!refresh_css_media_matches(&changed_rules)) return;
             changed = true;
-#if defined(WEBSCENE_NATIVE_ENGINE_MEDIA_REFRESH_ROOT_ONLY_EXPERIMENT)
-            rebuild_root_variables();
-#else
             rebuild_css_rule_indexes_and_root_variables();
-#endif
-            apply_css_rules_subtree(active_root());
+            recascade_media_query_changes(active_root(), changed_rules);
         };
         refresh_context(context.Get(isolate));
         for (auto& [id, persistent_context] : actual_frame_contexts) {

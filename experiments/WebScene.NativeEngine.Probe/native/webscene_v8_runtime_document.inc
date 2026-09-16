@@ -774,9 +774,27 @@
         }
         if (self->attribute_requires_recascade(name)) {
             if (name == "class") {
-                self->recascade_dynamic_state_subject(*node, "setAttribute-class");
+                self->recascade_class_selector_transition(
+                    *node, old_value, value);
             } else {
-                self->recascade_connected_subtree(*node, "style.setProperty-clear");
+                const auto trace_reason =
+                    std::getenv("WEBSCENE_TRACE_RECASCADE_ROOTS") != nullptr
+                    ? std::string{"setAttribute:"} + name
+                    : std::string{"setAttribute"};
+                // Attribute selectors in the rightmost compound affect only
+                // the mutated subject. Keep a subtree recascade for selectors
+                // which use this attribute on an ancestor/sibling, and for
+                // attributes whose semantics can inherit independently of a
+                // selector. OverlayScrollbars updates its viewport data
+                // attribute on every resize; treating that subject-only state
+                // as a whole content-tree invalidation dominated the frame.
+                if (name == "style" || name == "id" || name == "dir"
+                    || name == "lang") {
+                    self->recascade_connected_subtree(*node, trace_reason);
+                } else {
+                    self->recascade_attribute_selector_transition(
+                        *node, name, old_value, value);
+                }
             }
         } else {
             self->document.mark_dirty();

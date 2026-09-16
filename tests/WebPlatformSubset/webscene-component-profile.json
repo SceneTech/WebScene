@@ -116,6 +116,20 @@
       "reason": "Browser-authorized reduction of TradingView's device breakpoint manager: retained MediaQueryList objects must update their matches snapshots, notify modern and legacy listeners exactly once when a host resize crosses a breakpoint, remain silent within a breakpoint, and stop notifying removed listeners."
     },
     {
+      "path": "contracts/media-query-targeted-subtree-recascade.html",
+      "type": "testharness",
+      "capabilities": ["viewport-media-style-activation", "viewport-media-style-deactivation", "inherited-custom-property-recascade", "unaffected-sibling-stability"],
+      "evidence": ["spotify-live-resize-media-recascade-profile"],
+      "reason": "Product-neutral regression for targeted viewport-media invalidation. Breakpoint entry and exit must update a matched ancestor, inherited custom-property consumers, and directly matched descendants while preserving unrelated sibling styles."
+    },
+    {
+      "path": "contracts/css-attribute-invalidation-scope.html",
+      "type": "testharness",
+      "capabilities": ["rightmost-attribute-subject-invalidation", "ancestor-attribute-descendant-invalidation", "attribute-removal-recascade"],
+      "evidence": ["spotify-overlayscrollbars-resize-invalidation-profile"],
+      "reason": "Product-neutral regression for selector-aware attribute invalidation. A rightmost attribute selector updates only its subject, while an attribute in an ancestor compound still invalidates affected descendants on addition and removal."
+    },
+    {
       "path": "contracts/responsive-toolbar-breakpoint-navigation.html",
       "type": "testharness",
       "capabilities": ["live-toolbar-breakpoint-state", "compact-overflow-navigation", "wide-compact-wide-resize"],

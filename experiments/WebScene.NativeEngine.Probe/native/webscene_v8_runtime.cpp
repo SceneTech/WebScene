@@ -5997,6 +5997,8 @@ v8_dom_runtime::memory_metrics v8_dom_runtime::read_memory_metrics() const noexc
         + indexed_rule_storage(impl_->css_rules_by_tag)
         + indexed_rule_storage(impl_->css_rules_by_attribute)
         + indexed_rule_storage(impl_->css_rules_by_variable_reference)
+        + indexed_rule_storage(impl_->css_invalidation_rules_by_attribute)
+        + indexed_rule_storage(impl_->css_invalidation_rules_by_class)
         + impl_->css_focus_rules.capacity() * sizeof(size_t)
         + impl_->unindexed_css_rules.capacity() * sizeof(size_t)
         + impl_->hover_selector_dependencies.capacity()

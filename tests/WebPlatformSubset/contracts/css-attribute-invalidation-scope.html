@@ -1,0 +1,78 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Attribute invalidation distinguishes subject and descendant selectors</title>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<style>
+  section { padding-left:3px; }
+  [data-viewport-state="compact"] { padding-left:41px; }
+  [data-container-state="compact"] .attribute-child { height:29px; }
+  [data-container-state="compact"] > .direct-child { width:31px; }
+  [data-sibling-state="compact"] + .adjacent-target { width:23px; }
+  [data-sibling-state="compact"] ~ .general-target { width:27px; }
+  .pseudo-not-subject { width:11px; }
+  .pseudo-not-subject:not([data-suppressed]) { width:43px; }
+  [data-variable-state="compact"] { --consumer-height:37px; }
+  .attribute-child { height:11px; }
+  .variable-consumer { height:var(--consumer-height, 13px); }
+</style>
+<section id="attribute-subject"><div></div></section>
+<section id="attribute-container"><div class="attribute-child direct-child"></div></section>
+<section><div id="sibling-trigger"></div><div class="adjacent-target"></div><div class="general-target"></div></section>
+<div id="pseudo-not-subject" class="pseudo-not-subject"></div>
+<section id="variable-container"><div class="variable-consumer"></div></section>
+<script>
+  test(() => {
+    const subject = document.getElementById("attribute-subject");
+    subject.setAttribute("data-viewport-state", "compact");
+    assert_equals(getComputedStyle(subject).paddingLeft, "41px",
+      "a rightmost attribute selector updates its subject");
+  }, "rightmost attribute selector invalidates its subject");
+
+  test(() => {
+    const container = document.getElementById("attribute-container");
+    const child = container.firstElementChild;
+    container.setAttribute("data-container-state", "compact");
+    assert_equals(getComputedStyle(child).height, "29px",
+      "an ancestor attribute selector updates its descendant");
+    container.removeAttribute("data-container-state");
+    assert_equals(getComputedStyle(child).height, "11px",
+      "removing the ancestor attribute restores descendant style");
+  }, "ancestor attribute selector invalidates affected descendants");
+
+  test(() => {
+    const container = document.getElementById("attribute-container");
+    const child = container.firstElementChild;
+    container.setAttribute("data-container-state", "compact");
+    assert_equals(getComputedStyle(child).width, "31px",
+      "a child combinator follows only direct children");
+  }, "attribute invalidation follows child combinators");
+
+  test(() => {
+    const trigger = document.getElementById("sibling-trigger");
+    trigger.setAttribute("data-sibling-state", "compact");
+    assert_equals(getComputedStyle(document.querySelector(".adjacent-target")).width, "23px",
+      "an adjacent sibling is invalidated");
+    assert_equals(getComputedStyle(document.querySelector(".general-target")).width, "27px",
+      "a following sibling is invalidated");
+  }, "attribute invalidation follows sibling combinators");
+
+  test(() => {
+    const subject = document.getElementById("pseudo-not-subject");
+    assert_equals(getComputedStyle(subject).width, "43px");
+    subject.setAttribute("data-suppressed", "");
+    assert_equals(getComputedStyle(subject).width, "11px",
+      "an attribute nested in :not() invalidates its subject");
+    subject.removeAttribute("data-suppressed");
+    assert_equals(getComputedStyle(subject).width, "43px",
+      "removing a nested pseudo-class attribute restores style");
+  }, "attribute invalidation tracks selector features nested in pseudo classes");
+
+  test(() => {
+    const container = document.getElementById("variable-container");
+    const consumer = container.firstElementChild;
+    container.setAttribute("data-variable-state", "compact");
+    assert_equals(getComputedStyle(consumer).height, "37px",
+      "an inherited custom property reaches a consumer whose selector does not mention the attribute");
+  }, "attribute invalidation follows inherited custom-property consumers");
+</script>

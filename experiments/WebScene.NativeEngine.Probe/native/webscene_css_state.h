@@ -153,6 +153,8 @@ using css_index_string_set = std::unordered_set<std::string>;
         css_index_string_map<std::vector<size_t>> rules_by_tag;
         css_index_string_map<std::vector<size_t>> rules_by_attribute;
         css_index_string_map<std::vector<size_t>> rules_by_variable_reference;
+        css_index_string_map<std::vector<size_t>> invalidation_rules_by_attribute;
+        css_index_string_map<std::vector<size_t>> invalidation_rules_by_class;
         std::vector<size_t> focus_rules;
         std::vector<size_t> unindexed_rules;
         css_index_string_set attribute_dependencies;

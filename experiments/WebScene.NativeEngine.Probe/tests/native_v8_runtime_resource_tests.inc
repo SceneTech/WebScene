@@ -253,9 +253,9 @@ void test_initial_document_images_are_loaded()
         "const rect = image.getBoundingClientRect(); return [image.complete, "
         "image.naturalWidth, image.naturalHeight, rect.width, rect.height]; })())",
         "initial-image-state.js",
-        R"([true,1,1,40,40])");
+        R"("[true,1,1,40,40]")");
     require(
-        state == R"([true,1,1,40,40])",
+        state == R"("[true,1,1,40,40]")",
         "an image authored in the navigation response was not loaded: " + state);
     webscene_engine_destroy(engine);
 }

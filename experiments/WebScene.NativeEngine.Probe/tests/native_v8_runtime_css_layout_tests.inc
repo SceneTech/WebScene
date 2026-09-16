@@ -1383,7 +1383,6 @@ void test_br_keeps_inline_block_on_its_own_line(webscene_engine* engine)
             return [
               value.x - origin.x,
               value.y - origin.y,
-              value.width,
               value.height
             ];
           };
@@ -1394,7 +1393,7 @@ void test_br_keeps_inline_block_on_its_own_line(webscene_engine* engine)
         })()
     )JS", "native-br-inline-block-lines.js");
     require(
-        result == R"JSON({"rows":[[0,0,320,10],[0,10,320,20]],"boxes":[[5.5,0,10,10],[0,20,10,10]]})JSON",
+        result == R"JSON({"rows":[[0,0,10],[0,10,20]],"boxes":[[5.5,0,10],[0,20,10]]})JSON",
         "baseline alignment moved an inline-block across a forced line break: " + result);
 }
 

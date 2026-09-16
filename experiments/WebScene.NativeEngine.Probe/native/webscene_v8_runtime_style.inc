@@ -542,8 +542,11 @@
             self->mark_cssom_layout_dirty(
                 *node, canonical_css_property_name(name));
             sync_style_attribute(*node);
-            self->recascade_connected_subtree(
-                *node, "style.setProperty-clear");
+            const auto trace_reason =
+                std::getenv("WEBSCENE_TRACE_RECASCADE_ROOTS") != nullptr
+                ? std::string{"style.setProperty-clear:"} + name
+                : std::string{"style.setProperty-clear"};
+            self->recascade_connected_subtree(*node, trace_reason);
             self->notify_custom_element_attribute(
                 *node, "style", old_value, node->attributes.at("style"));
             return;
@@ -569,7 +572,18 @@
         }
         authored.declarations[canonical_name] = specified_value;
         authored.important_declarations.erase(canonical_name);
-        if (apply_grid_placement_declaration(node->style, name, value)) {
+        if (value.find("var(") != std::string::npos && property_mask != 0U) {
+            // A CSSOM write is observable immediately. Resolve variable-backed
+            // declarations through the same computed-value path used during a
+            // cascade instead of feeding raw var() tokens to numeric parsers.
+            // Temporarily remove this declaration's own inline guard while
+            // retaining every other inline/important property.
+            const auto retained_inline_mask = node->style.inline_property_mask;
+            node->style.inline_property_mask &= ~property_mask;
+            self->apply_css_declaration(
+                *node, {canonical_name, specified_value, false}, true);
+            node->style.inline_property_mask = retained_inline_mask | property_mask;
+        } else if (apply_grid_placement_declaration(node->style, name, value)) {
             // Placement CSSOM is stored as computed tokens; layout consumes the
             // existing numeric grid-column projection when applicable.
             node->style.inline_property_mask |= inline_grid;
@@ -582,17 +596,19 @@
             node->style.inline_property_mask |= inline_padding;
         } else if (apply_border_declaration(node->style, name, value)) {
             node->style.inline_property_mask |= inline_border;
-        } else if (name == "width") {
+        } else if (name == "width" || name == "inline-size") {
             node->style.width = value == "inherit" && node->parent != nullptr
                 ? node->parent->style.width
                 : value == "initial" || value == "unset" || value == "revert"
+                    || value == "revert-layer"
                     ? css_length{}
                     : native_document::parse_length(value);
             node->style.inline_property_mask |= inline_width;
-        } else if (name == "height") {
+        } else if (name == "height" || name == "block-size") {
             node->style.height = value == "inherit" && node->parent != nullptr
                 ? node->parent->style.height
                 : value == "initial" || value == "unset" || value == "revert"
+                    || value == "revert-layer"
                     ? css_length{}
                     : native_document::parse_length(value);
             node->style.inline_property_mask |= inline_height;
@@ -608,16 +624,16 @@
         } else if (name == "maxHeight") {
             node->style.max_height = value == "none" ? css_length{} : native_document::parse_length(value);
             node->style.inline_property_mask |= inline_max_height;
-        } else if (name == "min-width") {
+        } else if (name == "min-width" || name == "min-inline-size") {
             node->style.min_width = native_document::parse_length(value);
             node->style.inline_property_mask |= inline_min_width;
-        } else if (name == "min-height") {
+        } else if (name == "min-height" || name == "min-block-size") {
             node->style.min_height = native_document::parse_length(value);
             node->style.inline_property_mask |= inline_min_height;
-        } else if (name == "max-width") {
+        } else if (name == "max-width" || name == "max-inline-size") {
             node->style.max_width = value == "none" ? css_length{} : native_document::parse_length(value);
             node->style.inline_property_mask |= inline_max_width;
-        } else if (name == "max-height") {
+        } else if (name == "max-height" || name == "max-block-size") {
             node->style.max_height = value == "none" ? css_length{} : native_document::parse_length(value);
             node->style.inline_property_mask |= inline_max_height;
         } else if (name == "position") {

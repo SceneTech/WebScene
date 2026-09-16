@@ -38,6 +38,7 @@ jobs:
       with:
         python-version: '3.12'
     - name: Expose the self-hosted Rust toolchain
+      if: runner.os == 'macOS'
       shell: bash
       run: |
         echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"

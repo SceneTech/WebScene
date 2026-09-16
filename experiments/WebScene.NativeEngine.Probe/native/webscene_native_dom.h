@@ -2066,7 +2066,10 @@ private:
     mutable bool active_animation_demand_cache_{false};
     mutable bool active_animation_demand_cache_valid_{false};
     std::vector<transition_event_record> transition_events_;
-    std::vector<animation_event_record> animation_events_;
+    // Finite keyframe completion is uncommon, so keep its queue lazy. A
+    // vector here would add its full implementation-specific footprint to
+    // every document, including documents that never run an animation.
+    std::unique_ptr<std::vector<animation_event_record>> animation_events_;
     webscene_text_measure_callback text_measure_callback_{nullptr};
     void* text_measure_user_data_{nullptr};
     mutable std::unordered_map<

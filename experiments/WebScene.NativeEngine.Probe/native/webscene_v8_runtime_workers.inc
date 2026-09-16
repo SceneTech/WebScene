@@ -35,6 +35,56 @@
     static constexpr size_t maximum_worker_errors = 16U;
     static constexpr size_t maximum_worker_error_length = 4096U;
 
+    void install_dedicated_worker_global_scope(v8::Local<v8::Context> realm) {
+        constexpr std::string_view source = R"JS(
+          (() => {
+            function WorkerGlobalScope() {
+              throw new TypeError('Illegal constructor');
+            }
+            function DedicatedWorkerGlobalScope() {
+              throw new TypeError('Illegal constructor');
+            }
+            Object.setPrototypeOf(
+              WorkerGlobalScope.prototype,
+              EventTarget.prototype);
+            Object.setPrototypeOf(WorkerGlobalScope, EventTarget);
+            Object.setPrototypeOf(
+              DedicatedWorkerGlobalScope.prototype,
+              WorkerGlobalScope.prototype);
+            Object.setPrototypeOf(
+              DedicatedWorkerGlobalScope,
+              WorkerGlobalScope);
+            Object.defineProperty(
+              WorkerGlobalScope.prototype,
+              Symbol.toStringTag,
+              {value:'WorkerGlobalScope', configurable:true});
+            Object.defineProperty(
+              DedicatedWorkerGlobalScope.prototype,
+              Symbol.toStringTag,
+              {value:'DedicatedWorkerGlobalScope', configurable:true});
+            Object.defineProperties(globalThis, {
+              WorkerGlobalScope: {
+                value: WorkerGlobalScope,
+                writable: true,
+                configurable: true
+              },
+              DedicatedWorkerGlobalScope: {
+                value: DedicatedWorkerGlobalScope,
+                writable: true,
+                configurable: true
+              }
+            });
+            Object.setPrototypeOf(
+              globalThis,
+              DedicatedWorkerGlobalScope.prototype);
+          })();
+        )JS";
+        auto script = v8::Script::Compile(
+            realm,
+            js_dom_string(isolate, std::string(source))).ToLocalChecked();
+        script->Run(realm).ToLocalChecked();
+    }
+
     void install_worker_constructor(v8::Local<v8::Context> local_context) {
         auto worker_constructor = v8::Function::New(
             local_context,
@@ -342,6 +392,7 @@
                     global->Set(realm,js_string(child->isolate,"name"),js_dom_string(child->isolate,worker_name)).Check();
                     global->Delete(realm,js_string(child->isolate,"document")).FromMaybe(false);
                     global->Delete(realm,js_string(child->isolate,"window")).FromMaybe(false);
+                    child->install_dedicated_worker_global_scope(realm);
                     std::string source,resolved,error;
                     if (embedded_source) { source = *embedded_source; resolved = url; }
                     if(!embedded_source && !child->load_text_resource(url,{},WEBSCENE_RESOURCE_SCRIPT,source,resolved))report("Unable to load worker: "+url);

@@ -1283,22 +1283,64 @@
             bool current{false};
             bool previous{false};
         };
+        const auto references_inside_has = [&](
+            const compiled_css_compound& compound) {
+            for (const auto& pseudo : compound.pseudos) {
+                if (pseudo.name != "has") continue;
+                compiled_css_compound relational;
+                relational.valid = true;
+                relational.pseudos.push_back(pseudo);
+                if (compound_references(relational)) return true;
+            }
+            return false;
+        };
+        const auto references_outside_has = [&](
+            const compiled_css_compound& compound) {
+            auto direct = compound;
+            std::erase_if(direct.pseudos, [](const compiled_css_pseudo& pseudo) {
+                return pseudo.name == "has";
+            });
+            return compound_references(direct);
+        };
         std::unordered_map<const compiled_css_compound*, trigger_transition>
             trigger_transitions;
+        struct relational_transition final
+        {
+            const compiled_css_compound* selector{nullptr};
+            std::vector<dom_node*> anchors;
+            std::vector<bool> current;
+            std::vector<bool> previous;
+        };
+        std::unordered_map<const compiled_css_compound*, relational_transition>
+            relational_transitions;
         trigger_transitions.reserve(changed_rules.size());
+        relational_transitions.reserve(changed_rules.size());
         for (const auto index : changed_rules) {
             if (index >= css_rules.size()) continue;
             const auto& rule = css_rules[index];
             const auto& compiled = rule.payload->compiled_pseudo_origin.compounds.empty()
                 ? rule.compiled_selector()
                 : rule.payload->compiled_pseudo_origin;
-            if (rule.selector().find(":has(") != std::string::npos
-                || compiled.compounds.empty()
+            if (compiled.compounds.empty()
                 || compiled.compiled_compounds.size() != compiled.compounds.size()) continue;
             for (size_t component = 0;
                  component < compiled.compounds.size(); ++component) {
                 const auto* selector = &compiled.compiled_compounds[component];
-                if (!compound_references(*selector)
+                if (references_inside_has(*selector)
+                    && !relational_transitions.contains(selector)) {
+                    relational_transition transition;
+                    transition.selector = selector;
+                    for (auto* anchor = subject.parent;
+                         anchor != nullptr; anchor = anchor->parent) {
+                        if (anchor->kind != dom_node_kind::element) continue;
+                        transition.anchors.push_back(anchor);
+                        transition.current.push_back(
+                            css_compound_selector_matches(*anchor, *selector));
+                    }
+                    transition.previous.resize(transition.anchors.size());
+                    relational_transitions.emplace(selector, std::move(transition));
+                }
+                if (!references_outside_has(*selector)
                     || trigger_transitions.contains(selector)) continue;
                 trigger_transition transition;
                 transition.selector = selector;
@@ -1317,7 +1359,7 @@
                 trigger_transitions.emplace(selector, std::move(transition));
             }
         }
-        if (!trigger_transitions.empty()) {
+        if (!trigger_transitions.empty() || !relational_transitions.empty()) {
             use_previous_state();
             for (auto& [selector, transition] : trigger_transitions) {
                 static_cast<void>(selector);
@@ -1326,6 +1368,13 @@
                     : *transition.selector;
                 transition.previous =
                     css_compound_selector_matches(subject, matcher);
+            }
+            for (auto& [selector, transition] : relational_transitions) {
+                static_cast<void>(selector);
+                for (size_t index = 0; index < transition.anchors.size(); ++index) {
+                    transition.previous[index] = css_compound_selector_matches(
+                        *transition.anchors[index], *transition.selector);
+                }
             }
             restore_current_state();
         }
@@ -1336,8 +1385,7 @@
             const auto& compiled = rule.payload->compiled_pseudo_origin.compounds.empty()
                 ? rule.compiled_selector()
                 : rule.payload->compiled_pseudo_origin;
-            if (rule.selector().find(":has(") != std::string::npos
-                || compiled.compounds.empty()
+            if (compiled.compounds.empty()
                 || compiled.compiled_compounds.size() != compiled.compounds.size()) {
                 fallback_rules.push_back(index);
                 continue;
@@ -1345,20 +1393,40 @@
             auto found_trigger = false;
             for (size_t component = 0;
                  component < compiled.compounds.size(); ++component) {
-                if (!compound_references(compiled.compiled_compounds[component])) continue;
-                found_trigger = true;
-                const auto transition = trigger_transitions.find(
-                    &compiled.compiled_compounds[component]);
-                if (transition == trigger_transitions.end()
-                    || transition->second.current == transition->second.previous) continue;
                 const auto propagates = rule_change_propagates_to_descendants(rule);
-                if (component + 1U == compiled.compounds.size()) {
-                    add_request(&subject, propagates);
-                    add_custom_property_consumers(subject, rule);
-                    continue;
+                const auto* component_selector =
+                    &compiled.compiled_compounds[component];
+                if (references_outside_has(*component_selector)) {
+                    found_trigger = true;
+                    const auto transition = trigger_transitions.find(component_selector);
+                    if (transition != trigger_transitions.end()
+                        && transition->second.current != transition->second.previous) {
+                        if (component + 1U == compiled.compounds.size()) {
+                            add_request(&subject, propagates);
+                            add_custom_property_consumers(subject, rule);
+                        } else {
+                            visit_related_candidates(
+                                subject, compiled, component, propagates);
+                        }
+                    }
                 }
-                visit_related_candidates(
-                    subject, compiled, component, propagates);
+                if (!references_inside_has(*component_selector)) continue;
+                found_trigger = true;
+                const auto transition = relational_transitions.find(component_selector);
+                if (transition == relational_transitions.end()) continue;
+                for (size_t anchor_index = 0;
+                     anchor_index < transition->second.anchors.size(); ++anchor_index) {
+                    if (transition->second.current[anchor_index]
+                        == transition->second.previous[anchor_index]) continue;
+                    auto& anchor = *transition->second.anchors[anchor_index];
+                    if (component + 1U == compiled.compounds.size()) {
+                        add_request(&anchor, propagates);
+                        add_custom_property_consumers(anchor, rule);
+                    } else {
+                        visit_related_candidates(
+                            anchor, compiled, component, propagates);
+                    }
+                }
             }
             if (!found_trigger) fallback_rules.push_back(index);
         }
@@ -1411,8 +1479,16 @@
             ? std::chrono::steady_clock::now()
             : std::chrono::steady_clock::time_point{};
         for (const auto& current : requests) {
-            if (current.subtree) apply_css_rules_subtree(*current.root);
-            else apply_css_rules(*current.root);
+            if (style_recascade_batch_depth != 0U) {
+                schedule_style_recascade(
+                    *current.root,
+                    current.subtree,
+                    "selector-transition");
+            } else if (current.subtree) {
+                apply_css_rules_subtree(*current.root);
+            } else {
+                apply_css_rules(*current.root);
+            }
         }
         if (previous_cascade_root != nullptr
             && previous_cascade_root != context_root) {
@@ -1430,6 +1506,7 @@
             std::cerr << "WebScene selector transition: plan-ms=" << planned
                 << ", apply-ms=" << applied << ", rules=" << changed_rules.size()
                 << ", triggers=" << trigger_transitions.size()
+                << ", relational=" << relational_transitions.size()
                 << ", fallback=" << fallback_rules.size()
                 << ", requests=" << requests.size()
                 << ", subtrees=" << subtree_requests << '\n';
@@ -1440,8 +1517,32 @@
         dom_node& subject,
         std::string_view name,
         const std::optional<std::string>& previous_value,
-        const std::string& current_value)
+        const std::optional<std::string>& current_value)
     {
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+        if (style_recascade_batch_depth != 0U
+            && !flushing_attribute_selector_transitions) {
+            ++attribute_transition_schedule_requests;
+        }
+#endif
+        if (style_recascade_batch_depth != 0U
+            && !flushing_attribute_selector_transitions) {
+            for (auto& pending : pending_attribute_selector_transitions) {
+                if (pending.subject != &subject || pending.name != name) continue;
+                pending.current_value = current_value;
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+                ++attribute_transition_coalesced_requests;
+#endif
+                return;
+            }
+            pending_attribute_selector_transitions.push_back(
+                pending_attribute_selector_transition{
+                    &subject,
+                    std::string(name),
+                    previous_value,
+                    current_value});
+            return;
+        }
         webscene_frame_trace::scope invalidation_trace(
             frame_trace,
             "attribute-invalidation-start",
@@ -1490,7 +1591,13 @@
                     subject.attributes.erase(std::string(name));
                 }
             },
-            [&] { subject.attributes[std::string(name)] = current_value; });
+            [&] {
+                if (current_value.has_value()) {
+                    subject.attributes[std::string(name)] = *current_value;
+                } else {
+                    subject.attributes.erase(std::string(name));
+                }
+            });
         if (trace_invalidation) {
             const auto elapsed = std::chrono::duration<double, std::milli>(
                 std::chrono::steady_clock::now() - invalidation_started).count();
@@ -1558,17 +1665,22 @@
 
     bool is_connected(const dom_node& node)
     {
+        auto* root = &node;
         for (auto* current = &node; current != nullptr; current = current->parent) {
             if (current == &document.body()) return true;
-            if (current->parent == nullptr
-                && detached_document_roots.contains(current->id)) return true;
-            for (const auto& [frame_id, provisional_body] : provisional_frame_bodies) {
-                if (current != provisional_body) continue;
-                const auto* frame = document.find_by_native_id(frame_id);
-                for (auto* owner = frame; owner != nullptr; owner = owner->parent) {
-                    if (owner == &document.body()) return true;
-                }
+            root = current;
+        }
+        if (detached_document_roots.contains(root->id)) return true;
+        // A provisional browsing-context body can only be the root of this
+        // parent chain. Compare that root once instead of scanning every frame
+        // body again for every ancestor queried by geometry-heavy libraries.
+        for (const auto& [frame_id, provisional_body] : provisional_frame_bodies) {
+            if (root != provisional_body) continue;
+            const auto* frame = document.find_by_native_id(frame_id);
+            for (auto* owner = frame; owner != nullptr; owner = owner->parent) {
+                if (owner == &document.body()) return true;
             }
+            return false;
         }
         return false;
     }
@@ -1739,6 +1851,29 @@
 
     void flush_pending_style_recascades()
     {
+        if (!pending_attribute_selector_transitions.empty()) {
+            auto transitions = std::move(pending_attribute_selector_transitions);
+            pending_attribute_selector_transitions.clear();
+            // Plan the net first-to-final selector transition once per
+            // node/attribute pair. Keep a temporary batch depth so those plans
+            // still merge their recascade roots before any CSS is applied.
+            ++style_recascade_batch_depth;
+            flushing_attribute_selector_transitions = true;
+            for (const auto& transition : transitions) {
+                if (transition.subject == nullptr
+                    || !is_connected(*transition.subject)
+                    || transition.previous_value == transition.current_value) {
+                    continue;
+                }
+                recascade_attribute_selector_transition(
+                    *transition.subject,
+                    transition.name,
+                    transition.previous_value,
+                    transition.current_value);
+            }
+            flushing_attribute_selector_transitions = false;
+            --style_recascade_batch_depth;
+        }
         if (pending_style_recascades.empty()) return;
         auto pending = std::move(pending_style_recascades);
         pending_style_recascades.clear();
@@ -1759,7 +1894,11 @@
 #if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
                 ++style_recascade_flush_node_roots;
 #endif
-                recascade_connected_node(*recascade.root);
+                // A flush is a synchronous CSSOM/layout barrier even when it
+                // occurs inside a wider task batch. Apply the queued node now;
+                // routing it back through the batching wrapper merely requeues
+                // it and exposes stale computed style until the task returns.
+                recascade_connected_node_now(*recascade.root);
             }
         }
     }

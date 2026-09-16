@@ -865,8 +865,12 @@
         if (self->attribute_requires_recascade(name)) {
             if (name == "class") {
                 self->recascade_dynamic_state_subject(*node, "removeAttribute-class");
+            } else if (name == "style" || name == "id" || name == "dir"
+                || name == "lang") {
+                self->recascade_connected_subtree(*node, "removeAttribute");
             } else {
-                self->recascade_connected_subtree(*node);
+                self->recascade_attribute_selector_transition(
+                    *node, name, old_value, std::nullopt);
             }
         } else {
             self->document.mark_dirty();
@@ -936,8 +940,12 @@
         if (self->attribute_requires_recascade(name)) {
             if (name == "class") {
                 self->recascade_dynamic_state_subject(*node, "removeAttributeNS-class");
+            } else if (name == "style" || name == "id" || name == "dir"
+                || name == "lang") {
+                self->recascade_connected_subtree(*node, "removeAttributeNS");
             } else {
-                self->recascade_connected_subtree(*node);
+                self->recascade_attribute_selector_transition(
+                    *node, name, old_value, std::nullopt);
             }
         } else {
             self->document.mark_dirty();
@@ -954,6 +962,9 @@
         const auto raw_name = to_utf8(info.GetIsolate(), info[0]);
         const auto name = normalized_dom_attribute_name(*node, raw_name);
         const bool present = node->attributes.contains(name);
+        const auto old_value = present
+            ? std::optional<std::string>(node->attributes.at(name))
+            : std::nullopt;
         const bool force_present = info.Length() < 2 || info[1]->IsUndefined()
             ? !present
             : info[1]->BooleanValue(info.GetIsolate());
@@ -969,7 +980,6 @@
             self->notify_custom_element_attribute(
                 *node, name, std::nullopt, std::string{});
         } else {
-            const auto old_value = std::optional<std::string>(node->attributes.at(name));
             node->attributes.erase(name);
             if (name == "width" || name == "height") reset_canvas_backing_store(*self, *node);
             if (name == "id") node->id_attribute.clear();
@@ -980,8 +990,17 @@
         if (self->attribute_requires_recascade(name)) {
             if (name == "class") {
                 self->recascade_dynamic_state_subject(*node, "toggleAttribute-class");
+            } else if (name == "style" || name == "id" || name == "dir"
+                || name == "lang") {
+                self->recascade_connected_subtree(*node, "toggleAttribute");
             } else {
-                self->recascade_connected_subtree(*node);
+                self->recascade_attribute_selector_transition(
+                    *node,
+                    name,
+                    old_value,
+                    force_present
+                        ? std::optional<std::string>(std::string{})
+                        : std::nullopt);
             }
         } else {
             self->document.mark_dirty();

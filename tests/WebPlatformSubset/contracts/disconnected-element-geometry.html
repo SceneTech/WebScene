@@ -33,7 +33,52 @@
     `rect=${JSON.stringify(rect)}`
   );
 
-  state.diagnostics = [JSON.stringify({ rects: rects.length, rect })];
+  const root = document.createElement("section");
+  let deepest = root;
+  for (let depth = 0; depth < 32; ++depth) {
+    const child = document.createElement("div");
+    deepest.appendChild(child);
+    deepest = child;
+  }
+  deepest.style.cssText = "display:block;width:41px;height:31px";
+  document.body.appendChild(root);
+  const connectedRect = deepest.getBoundingClientRect();
+  record(
+    "deep connected element geometry survives a single root walk",
+    deepest.isConnected === true
+      && connectedRect.width === 41
+      && connectedRect.height === 31,
+    `connected=${deepest.isConnected}, rect=${JSON.stringify(connectedRect)}`
+  );
+
+  root.remove();
+  const removedRect = deepest.getBoundingClientRect();
+  record(
+    "deep element geometry becomes empty after its root is detached",
+    deepest.isConnected === false
+      && deepest.getClientRects().length === 0
+      && removedRect.width === 0
+      && removedRect.height === 0,
+    `connected=${deepest.isConnected}, rect=${JSON.stringify(removedRect)}`
+  );
+
+  document.body.appendChild(root);
+  const reconnectedRect = deepest.getBoundingClientRect();
+  record(
+    "deep element geometry is restored when its root is reattached",
+    deepest.isConnected === true
+      && reconnectedRect.width === 41
+      && reconnectedRect.height === 31,
+    `connected=${deepest.isConnected}, rect=${JSON.stringify(reconnectedRect)}`
+  );
+
+  state.diagnostics = [JSON.stringify({
+    rects: rects.length,
+    rect,
+    connectedRect,
+    removedRect,
+    reconnectedRect
+  })];
   const failure = state.results.find(result => result.status !== "PASS");
   state.harness = failure
     ? { status: 1, message: failure.message, stack: failure.stack }

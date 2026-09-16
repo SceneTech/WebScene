@@ -1267,6 +1267,119 @@ void test_window_post_message_coalesces_style_recascade(webscene_engine* engine)
     )JS", "native-window-post-message-style-cleanup.js");
 }
 
+void test_resize_event_coalesces_attribute_selector_recascades(
+    webscene_engine* engine)
+{
+    resize(engine, 800, 500, 40U);
+    wait_for_consumed_inputs(
+        engine, 1U, "attribute batching fixture viewport was not consumed");
+    const auto setup = evaluate(engine, R"JS(
+        (() => {
+          const style = document.createElement('style');
+          style.textContent = `
+            #resize-attribute-root[data-resize-state="compact"] > span { width:41px; }
+            #resize-attribute-root[data-resize-state="wide"] > span { width:19px; }
+            #resize-has-root { height:13px; }
+            #resize-has-root:has([data-image-status="loaded"]) { height:47px; }
+          `;
+          document.head.appendChild(style);
+          const root = document.createElement('div');
+          root.id = 'resize-attribute-root';
+          root.innerHTML = '<span></span>';
+          document.body.appendChild(root);
+          const hasRoot = document.createElement('div');
+          hasRoot.id = 'resize-has-root';
+          hasRoot.innerHTML = '<img>';
+          document.body.appendChild(hasRoot);
+          addEventListener('resize', () => {
+            for (let index = 0; index < 100; ++index) {
+              root.setAttribute(
+                'data-resize-state', index % 2 ? 'compact' : 'wide');
+            }
+            const synchronousWidth = getComputedStyle(root.firstElementChild).width;
+            for (let index = 0; index < 100; ++index) {
+              root.setAttribute(
+                'data-resize-state', index % 2 ? 'wide' : 'compact');
+            }
+            for (let index = 0; index < 100; ++index) {
+              hasRoot.firstElementChild.setAttribute(
+                'data-image-status', index % 2 ? 'loaded' : 'pending');
+            }
+            globalThis.__resizeAttributeBatchResult = { synchronousWidth };
+          }, { once: true });
+          globalThis.__resizeAttributeBatchRoot = root;
+          globalThis.__resizeHasBatchRoot = hasRoot;
+          return true;
+        })()
+    )JS", "native-resize-attribute-batching-setup.js");
+    require(setup == "true", "attribute batching fixture setup did not complete");
+
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+    const auto transition_requests_before = runtime_counter_diagnostic(
+        engine, "attribute-transition-schedule-requests");
+    const auto transition_coalesced_before = runtime_counter_diagnostic(
+        engine, "attribute-transition-coalesced-requests");
+    const auto recascade_requests_before = runtime_counter_diagnostic(
+        engine, "style-recascade-schedule-requests");
+    const auto recascade_coalesced_before = runtime_counter_diagnostic(
+        engine, "style-recascade-coalesced-requests");
+    const auto roots_before = runtime_counter_diagnostic(
+        engine, "style-recascade-flush-roots");
+#endif
+
+    webscene_engine_metrics before{};
+    webscene_engine_get_metrics(engine, &before);
+    resize(engine, 960, 540, 41U);
+    wait_for_consumed_inputs(
+        engine,
+        before.consumed_inputs + 1U,
+        "attribute-heavy resize event was not consumed");
+    const auto result = evaluate(engine, R"JS(
+        ({
+          synchronousWidth: __resizeAttributeBatchResult.synchronousWidth,
+          finalWidth: getComputedStyle(
+            __resizeAttributeBatchRoot.firstElementChild).width,
+          finalState: __resizeAttributeBatchRoot.getAttribute('data-resize-state'),
+          hasHeight: getComputedStyle(__resizeHasBatchRoot).height
+        })
+    )JS", "native-resize-attribute-batching-result.js");
+    require(
+        result == R"JSON({"synchronousWidth":"41px","finalWidth":"19px","finalState":"wide","hasHeight":"47px"})JSON",
+        "resize attribute batching changed synchronous CSS semantics: " + result);
+
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+    const auto transition_request_delta = runtime_counter_diagnostic(
+        engine, "attribute-transition-schedule-requests")
+        - transition_requests_before;
+    const auto transition_coalesced_delta = runtime_counter_diagnostic(
+        engine, "attribute-transition-coalesced-requests")
+        - transition_coalesced_before;
+    const auto recascade_request_delta = runtime_counter_diagnostic(
+        engine, "style-recascade-schedule-requests") - recascade_requests_before;
+    const auto recascade_coalesced_delta = runtime_counter_diagnostic(
+        engine, "style-recascade-coalesced-requests") - recascade_coalesced_before;
+    const auto root_delta = runtime_counter_diagnostic(
+        engine, "style-recascade-flush-roots") - roots_before;
+    require(
+        transition_request_delta >= 200U
+            && transition_coalesced_delta >= 198U,
+        "attribute selector transitions were not coalesced at resize checkpoints");
+    require(
+        recascade_request_delta <= 8U
+            && recascade_coalesced_delta <= recascade_request_delta
+            && root_delta <= 6U,
+        "coalesced attribute transitions scheduled redundant recascade roots");
+#endif
+
+    execute(engine, R"JS(
+        __resizeAttributeBatchRoot.remove();
+        __resizeHasBatchRoot.remove();
+        delete globalThis.__resizeAttributeBatchRoot;
+        delete globalThis.__resizeHasBatchRoot;
+        delete globalThis.__resizeAttributeBatchResult;
+    )JS", "native-resize-attribute-batching-cleanup.js");
+}
+
 void test_cross_frame_post_message_and_window_frames(webscene_engine* engine)
 {
     execute(engine, R"JS(

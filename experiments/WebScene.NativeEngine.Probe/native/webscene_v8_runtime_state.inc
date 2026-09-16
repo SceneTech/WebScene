@@ -386,6 +386,12 @@
         std::string reason;
         std::string custom_property;
     };
+    struct pending_attribute_selector_transition final {
+        dom_node* subject{nullptr};
+        std::string name;
+        std::optional<std::string> previous_value;
+        std::optional<std::string> current_value;
+    };
     bool batch_style_recascades{true};
     bool batch_connected_resource_style_recascades{true};
     bool prefetch_iframe_documents{true};
@@ -395,7 +401,12 @@
     bool filter_stylesheet_candidates{true};
     uint32_t style_recascade_batch_depth{0};
     std::vector<pending_style_recascade> pending_style_recascades;
+    std::vector<pending_attribute_selector_transition>
+        pending_attribute_selector_transitions;
+    bool flushing_attribute_selector_transitions{false};
 #if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+    uint64_t attribute_transition_schedule_requests{0U};
+    uint64_t attribute_transition_coalesced_requests{0U};
     uint64_t style_recascade_schedule_requests{0U};
     uint64_t style_recascade_coalesced_requests{0U};
     uint64_t style_recascade_flush_batches{0U};

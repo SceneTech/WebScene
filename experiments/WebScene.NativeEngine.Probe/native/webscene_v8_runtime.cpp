@@ -5402,6 +5402,10 @@ std::string v8_dom_runtime::event_diagnostics() const
         << impl_->detached_dom_release_max_roots_per_slice;
     result << ", detached-dom-idle-gc-notifications="
         << impl_->detached_dom_idle_gc_notifications;
+    result << ", attribute-transition-schedule-requests="
+        << impl_->attribute_transition_schedule_requests;
+    result << ", attribute-transition-coalesced-requests="
+        << impl_->attribute_transition_coalesced_requests;
     result << ", style-recascade-schedule-requests="
         << impl_->style_recascade_schedule_requests;
     result << ", style-recascade-coalesced-requests="

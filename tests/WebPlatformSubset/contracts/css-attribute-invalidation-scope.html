@@ -15,12 +15,21 @@
   [data-variable-state="compact"] { --consumer-height:37px; }
   .attribute-child { height:11px; }
   .variable-consumer { height:var(--consumer-height, 13px); }
+  .has-card { width:13px; }
+  .has-card:has([data-image-status="loaded"]) { width:47px; }
+  .has-stage .has-target { height:17px; width:19px; }
+  .has-stage:has([data-preview-ready]) .has-target { width:59px; }
+  .has-stage:has([data-preview-ready]) [aria-hidden="true"] { height:53px; }
 </style>
 <section id="attribute-subject"><div></div></section>
 <section id="attribute-container"><div class="attribute-child direct-child"></div></section>
 <section><div id="sibling-trigger"></div><div class="adjacent-target"></div><div class="general-target"></div></section>
 <div id="pseudo-not-subject" class="pseudo-not-subject"></div>
 <section id="variable-container"><div class="variable-consumer"></div></section>
+<section id="has-card" class="has-card"><img id="has-image"></section>
+<section id="has-stage" class="has-stage">
+  <span id="has-ready"></span><span id="has-target" class="has-target"></span>
+</section>
 <script>
   test(() => {
     const subject = document.getElementById("attribute-subject");
@@ -75,4 +84,54 @@
     assert_equals(getComputedStyle(consumer).height, "37px",
       "an inherited custom property reaches a consumer whose selector does not mention the attribute");
   }, "attribute invalidation follows inherited custom-property consumers");
+
+  test(() => {
+    const container = document.getElementById("attribute-container");
+    const child = container.firstElementChild;
+    for (let index = 0; index < 100; ++index) {
+      container.setAttribute(
+        "data-container-state", index % 2 ? "compact" : "wide");
+    }
+    assert_equals(getComputedStyle(child).height, "29px",
+      "a synchronous style read observes the last state before its checkpoint");
+    for (let index = 0; index < 100; ++index) {
+      container.setAttribute(
+        "data-container-state", index % 2 ? "wide" : "compact");
+    }
+    assert_equals(getComputedStyle(child).height, "11px",
+      "the following checkpoint observes the final attribute state");
+  }, "repeated attribute transitions preserve rendering-checkpoint semantics");
+
+  test(() => {
+    const card = document.getElementById("has-card");
+    const image = document.getElementById("has-image");
+    assert_false(card.matches(':has([data-image-status="loaded"])'));
+    image.setAttribute("data-image-status", "loaded");
+    assert_true(card.matches(':has([data-image-status="loaded"])'));
+    assert_equals(getComputedStyle(card).width, "47px",
+      "a descendant attribute invalidates an ancestor selected by :has()");
+    image.removeAttribute("data-image-status");
+    assert_equals(getComputedStyle(card).width, "13px");
+    image.setAttribute("data-image-status", "loaded");
+    assert_equals(getComputedStyle(card).width, "47px");
+  }, ":has() attribute invalidation targets affected ancestors");
+
+  test(() => {
+    const ready = document.getElementById("has-ready");
+    const target = document.getElementById("has-target");
+    ready.setAttribute("data-preview-ready", "");
+    assert_equals(getComputedStyle(target).width, "59px",
+      "a changed :has() result invalidates selector subjects after it");
+    ready.removeAttribute("data-preview-ready");
+    assert_equals(getComputedStyle(target).width, "19px");
+    ready.setAttribute("data-preview-ready", "");
+    assert_equals(getComputedStyle(target).width, "59px");
+    target.setAttribute("aria-hidden", "true");
+    assert_equals(getComputedStyle(target).height, "53px",
+      "an attribute outside :has() invalidates its subject directly");
+    target.removeAttribute("aria-hidden");
+    assert_equals(getComputedStyle(target).height, "17px");
+    ready.removeAttribute("data-preview-ready");
+    assert_equals(getComputedStyle(target).width, "19px");
+  }, ":has() invalidation follows relational and direct attribute dependencies");
 </script>

@@ -397,6 +397,14 @@ int main()
             webscene_engine_destroy(focused_engine);
             return 0;
         }
+        if (selected == "resize-attribute-style-batching") {
+            auto* focused_engine = webscene_engine_create(0);
+            require(focused_engine != nullptr, "focused engine creation failed");
+            test_resize_event_coalesces_attribute_selector_recascades(
+                focused_engine);
+            webscene_engine_destroy(focused_engine);
+            return 0;
+        }
         if (selected == "dimension-variable-compatibility") {
             const std::array tests{
                 test_dimension_custom_property_recascade,
@@ -949,6 +957,7 @@ int main()
     test_session_storage_in_outer_and_frame_contexts(engine);
     test_window_post_message_is_queued(engine);
     test_window_post_message_coalesces_style_recascade(engine);
+    test_resize_event_coalesces_attribute_selector_recascades(engine);
     test_cross_frame_post_message_and_window_frames(engine);
     test_frame_resize_preserves_outer_percentage_height(engine);
     test_inner_window_load_acknowledgement(engine);

@@ -740,6 +740,10 @@
         }
         result << '}';
         last_resize_cpu_profile = std::move(result).str();
+        if (profile_resize_cpu) {
+            std::cerr << "WebScene resize CPU profile: "
+                << last_resize_cpu_profile << '\n';
+        }
     }
 #endif
 
@@ -908,6 +912,12 @@
         v8::Isolate::Scope isolate_scope(isolate);
         v8::HandleScope handle_scope(isolate);
         activate_css_cascade(context.Get(isolate));
+        // A resize event, its frame listeners and their microtasks are one
+        // rendering task. Attribute-heavy libraries such as OverlayScrollbars
+        // may update the same selector-bearing nodes repeatedly while measuring
+        // the new viewport. Accumulate those invalidations until the synchronous
+        // layout barrier instead of recascading intermediate states.
+        style_recascade_batch_scope style_batch(*this);
         {
             auto local_context = context.Get(isolate);
             v8::Context::Scope context_scope(local_context);
@@ -1111,6 +1121,7 @@
             std::chrono::duration_cast<std::chrono::nanoseconds>(
                 frame_listeners_finished - outer_listeners_finished).count());
 #endif
+        style_batch.finish();
         if (shared_isolate != nullptr) {
             isolate->Exit();
             try {

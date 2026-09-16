@@ -35,13 +35,22 @@ void test_media_query_resize_recascades_only_affected_subtrees()
             .media-shell { --leaf-width:17px; padding-left:3px; }
             .media-leaf { width:var(--leaf-width); height:11px; }
             .unaffected-sibling { width:23px; height:5px; }
+            .media-direct-shell { padding-left:2px; }
+            .media-direct-leaf { height:7px; }
+            .media-inherit-shell { width:17px; }
+            .media-inherit-leaf { width:inherit; }
             @media (max-width:600px) {
               .media-shell { --leaf-width:41px; padding-left:13px; }
               .media-leaf { height:29px; }
+              .media-direct-shell { padding-left:19px; }
+              .media-direct-leaf { height:31px; }
+              .media-inherit-shell { width:43px; }
             }
           </style>
           <section class="media-shell"><div class="media-leaf"></div></section>
-          <aside class="unaffected-sibling"></aside>`;
+          <aside class="unaffected-sibling"></aside>
+          <section class="media-direct-shell"><div class="media-direct-leaf"></div></section>
+          <section class="media-inherit-shell"><div class="media-inherit-leaf"></div></section>`;
         globalThis.__mediaShell = document.querySelector('.media-shell');
         globalThis.__mediaLeaf = document.querySelector('.media-leaf');
         globalThis.__mediaUnaffected = document.querySelector('.unaffected-sibling');
@@ -51,23 +60,26 @@ void test_media_query_resize_recascades_only_affected_subtrees()
           getComputedStyle(__mediaShell).paddingLeft,
           getComputedStyle(__mediaLeaf).width,
           getComputedStyle(__mediaLeaf).height,
-          getComputedStyle(__mediaUnaffected).width
+          getComputedStyle(__mediaUnaffected).width,
+          getComputedStyle(document.querySelector('.media-direct-shell')).paddingLeft,
+          getComputedStyle(document.querySelector('.media-direct-leaf')).height,
+          getComputedStyle(document.querySelector('.media-inherit-leaf')).width
         ])())JS", "targeted-media-recascade-snapshot.js");
     };
     const auto wide = snapshot();
-    require(wide == R"(["3px","17px","11px","23px"])",
+    require(wide == R"(["3px","17px","11px","23px","2px","7px","17px"])",
         "wide targeted-media cascade was incorrect: " + wide);
 
     resize(engine, 480, 600, 2);
     wait_for_consumed_inputs(engine, 2, "compact targeted-media viewport not applied");
     const auto compact = snapshot();
-    require(compact == R"(["13px","41px","29px","23px"])",
+    require(compact == R"(["13px","41px","29px","23px","19px","31px","43px"])",
         "media activation did not recascade matched descendants: " + compact);
 
     resize(engine, 800, 600, 3);
     wait_for_consumed_inputs(engine, 3, "restored targeted-media viewport not applied");
     const auto restored = snapshot();
-    require(restored == R"(["3px","17px","11px","23px"])",
+    require(restored == R"(["3px","17px","11px","23px","2px","7px","17px"])",
         "media deactivation did not restore matched subtree styles: " + restored);
     webscene_engine_destroy(engine);
 }

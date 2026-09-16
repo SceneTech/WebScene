@@ -18,6 +18,17 @@ ROOT = Path(__file__).resolve().parents[2]
 LOCK_PATH = Path(__file__).with_name("dependencies.lock.json")
 LOCK = json.loads(LOCK_PATH.read_text())
 WINDOWS_RUNTIME_PIN_PATH = Path(__file__).with_name("windows-runtime.json")
+WINDOWS_DEVELOPER_ENVIRONMENT_KEYS = {
+    "COMMANDPROMPTTYPE", "DEVENVDIR", "EXTENSIONSDKDIR", "EXTERNAL_INCLUDE",
+    "FRAMEWORK40VERSION", "FRAMEWORKDIR", "FRAMEWORKDIR64", "FRAMEWORKVERSION",
+    "FRAMEWORKVERSION64", "IFCPATH", "INCLUDE", "LIB", "LIBPATH", "NETFXSDKDIR",
+    "PLATFORM", "UCRTVERSION", "UNIVERSALCRTSDKDIR", "VCIDEINSTALLDIR",
+    "VCINSTALLDIR", "VCTOOLSINSTALLDIR", "VCTOOLSREDISTDIR", "VCTOOLSVERSION",
+    "VISUALSTUDIOVERSION", "VS170COMNTOOLS", "VSINSTALLDIR", "VSSDK150INSTALL",
+    "VSSDKINSTALL", "WINDOWSLIBPATH", "WINDOWSSDK_EXECUTABLEPATH_X64",
+    "WINDOWSSDK_EXECUTABLEPATH_X86", "WINDOWSSDKBINPATH", "WINDOWSSDKDIR",
+    "WINDOWSSDKLIBVERSION", "WINDOWSSDKVERBINPATH", "WINDOWSSDKVERSION",
+}
 
 
 def sha(path):
@@ -289,6 +300,25 @@ def patched_angle_windows_sdk(source, x86_environment_version, source_version):
             path.write_bytes(data)
 
 
+def clean_angle_windows_environment(environment):
+    """Return a clean environment for Chromium's own vcvarsall calls."""
+    cleaned = dict(environment)
+    by_upper = {key.upper(): key for key in cleaned}
+    initialized = any(key.startswith(("VSCMD_", "__VSCMD_")) for key in by_upper)
+    if initialized:
+        preinit_key = by_upper.get("__VSCMD_PREINIT_PATH")
+        if not preinit_key or not cleaned[preinit_key]:
+            raise ValueError(
+                "Initialized Visual Studio environment has no __VSCMD_PREINIT_PATH")
+        cleaned[by_upper.get("PATH", "PATH")] = cleaned[preinit_key]
+    for key in list(cleaned):
+        upper = key.upper()
+        if (upper in WINDOWS_DEVELOPER_ENVIRONMENT_KEYS
+                or upper.startswith(("VSCMD_", "__VSCMD_"))):
+            del cleaned[key]
+    return cleaned
+
+
 def angle(args):
     depot = args.sources / "depot_tools"
     checkout("depot-tools", depot)
@@ -299,6 +329,11 @@ def angle(args):
                  "managed": False, "custom_deps": {}, "custom_vars": LOCK["angleCustomVars"]}]
     (workspace / ".gclient").write_text("solutions = " + repr(solution) + "\n")
     env = dict(os.environ, DEPOT_TOOLS_UPDATE="0", DEPOT_TOOLS_WIN_TOOLCHAIN="0")
+    if os.name == "nt":
+        # The package workflow builds Dawn and ANGLE in one job. Dawn's compiler
+        # initialization must not leak into Chromium, which runs vcvarsall for
+        # both x86 and x64 and rejects a repeatedly initialized environment.
+        env = clean_angle_windows_environment(env)
     # Apply LF policy to gclient's transitive Git checkouts without changing user configuration.
     env.update(angle_git_environment())
     env["PATH"] = str(depot) + os.pathsep + env["PATH"]

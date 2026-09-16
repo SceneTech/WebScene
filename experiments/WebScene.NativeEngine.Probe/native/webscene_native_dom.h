@@ -1165,6 +1165,7 @@ struct dom_node final {
         std::string rotation_keyframe_animation_signature;
         double rotation_keyframe_animation_started_ms{0};
         bool rotation_keyframe_animation_active{false};
+        bool keyframe_animation_end_event_sent{false};
         uint32_t painted_foreground_rgba{0};
         uint32_t color_animation_from_rgba{0};
         uint32_t color_animation_target_rgba{0};
@@ -1572,6 +1573,13 @@ public:
         float elapsed_time_seconds{0};
     };
 
+    struct animation_event_record final {
+        uint32_t node_id{0};
+        std::string type;
+        std::string animation_name;
+        float elapsed_time_seconds{0};
+    };
+
     explicit native_document(
         webscene_text_measure_callback text_measure_callback = nullptr,
         void* text_measure_user_data = nullptr);
@@ -1673,6 +1681,7 @@ public:
     bool advance_animations() noexcept;
     bool has_active_animations() const noexcept;
     std::vector<transition_event_record> take_transition_events();
+    std::vector<animation_event_record> take_animation_events();
     float measure_inline_content_width(const dom_node& node) const;
     size_t text_caret_offset_at_x(const dom_node& node, float x) const;
     webscene_text_metrics measure_text(
@@ -2057,6 +2066,7 @@ private:
     mutable bool active_animation_demand_cache_{false};
     mutable bool active_animation_demand_cache_valid_{false};
     std::vector<transition_event_record> transition_events_;
+    std::vector<animation_event_record> animation_events_;
     webscene_text_measure_callback text_measure_callback_{nullptr};
     void* text_measure_user_data_{nullptr};
     mutable std::unordered_map<

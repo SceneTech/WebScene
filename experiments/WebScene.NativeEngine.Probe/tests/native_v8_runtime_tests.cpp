@@ -603,6 +603,13 @@ int main()
             webscene_engine_destroy(focused_engine);
             return 0;
         }
+        if (selected == "finite-keyframe-animation-end") {
+            auto* focused_engine = webscene_engine_create(64);
+            require(focused_engine != nullptr, "keyframe test engine creation failed");
+            test_finite_rotation_keyframe_dispatches_animation_end(focused_engine);
+            webscene_engine_destroy(focused_engine);
+            return 0;
+        }
         if (selected == "logical-inset-transition") {
             auto* focused_engine = webscene_engine_create(0);
             require(focused_engine != nullptr, "focused engine creation failed");
@@ -959,6 +966,7 @@ int main()
     test_opacity_keyframes_use_host_clock_with_staggered_infinite_delays(engine);
     test_rotation_keyframes_use_host_clock_and_wrap_continuously(engine);
     test_clipped_offscreen_keyframes_do_not_keep_host_frame_clock_alive(engine);
+    test_finite_rotation_keyframe_dispatches_animation_end(engine);
     test_logical_inset_transition_smooths_throttled_pointer_updates(engine);
     webscene_engine_destroy(engine);
     test_binary_interop_result_outlives_engine();

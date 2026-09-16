@@ -508,6 +508,80 @@ void test_clipped_offscreen_keyframes_do_not_keep_host_frame_clock_alive(
         "search spinner retained host-frame demand after leaving the clip viewport");
 }
 
+void test_finite_rotation_keyframe_dispatches_animation_end(
+    webscene_engine* engine)
+{
+    resize(engine, 320, 180, 7041U);
+    animation_frame_and_wait(engine, 2575.0, 7042U);
+    execute_and_wait(engine, R"JS(
+        (() => {
+          document.body.innerHTML = `
+            <style>
+              @keyframes wiggle {
+                0% { transform: rotate(0); }
+                50% { transform: rotate(.04turn); }
+                100% { transform: rotate(0); }
+              }
+              #status-icon.wiggle {
+                width: 16px;
+                height: 16px;
+                animation-duration: .8s;
+                animation-iteration-count: 1;
+                animation-name: wiggle;
+              }
+            </style>
+            <span id="status-icon" class="codicon wiggle"></span>`;
+          const icon = document.getElementById('status-icon');
+          globalThis.animationEndCount = 0;
+          globalThis.animationEndName = '';
+          globalThis.animationEndElapsed = -1;
+          icon.addEventListener('animationend', event => {
+            ++globalThis.animationEndCount;
+            globalThis.animationEndName = event.animationName;
+            globalThis.animationEndElapsed = event.elapsedTime;
+            icon.classList.remove('wiggle');
+          });
+          void icon.offsetHeight;
+        })()
+    )JS", "finite-rotation-animation-end-setup.js");
+    wait_for_animation_frame_demand(
+        engine,
+        true,
+        "finite rotation keyframe did not request a host frame");
+
+    animation_frame_and_wait(engine, 2975.0, 7043U);
+    execute_and_wait(engine, R"JS(
+        (() => {
+          const icon = document.getElementById('status-icon');
+          icon.classList.add('unrelated-recascade');
+          void icon.offsetHeight;
+        })()
+    )JS", "finite-rotation-animation-end-recascade.js");
+    require(
+        evaluate(engine, "animationEndCount", "finite-animation-premature-end.js") == "0",
+        "finite keyframe dispatched animationend before its active duration");
+    wait_for_animation_frame_demand(
+        engine,
+        true,
+        "same-signature recascade restarted or stopped the finite keyframe");
+
+    animation_frame_and_wait(engine, 3375.0, 7044U);
+    wait_for_animation_frame_demand(
+        engine,
+        false,
+        "completed finite keyframe retained host-frame demand");
+    const auto result = evaluate(engine, R"JS(
+        animationEndCount === 1
+          && animationEndName === 'wiggle'
+          && Math.abs(animationEndElapsed - .8) < .0001
+          && !document.getElementById('status-icon').classList.contains('wiggle')
+    )JS", "finite-rotation-animation-end-result.js");
+    require(
+        result == "true",
+        "finite keyframe animationend did not expose browser-compatible event data: "
+            + result);
+}
+
 void test_cssom_paint_invalidation_does_not_force_layout(
     webscene_engine* engine)
 {

@@ -16,11 +16,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os:
-        - [self-hosted, Linux, X64]
-        - [self-hosted, macOS, ARM64]
-    name: Build and test ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
+        include:
+        - name: Linux X64
+          runner: [self-hosted, Linux, X64]
+        - name: macOS ARM64
+          runner: [self-hosted, macOS, ARM64]
+    name: Build and test ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
     steps:
     - uses: actions/checkout@v4
     - name: Setup .NET
@@ -35,6 +37,11 @@ jobs:
       uses: actions/setup-python@v5
       with:
         python-version: '3.12'
+    - name: Expose the self-hosted Rust toolchain
+      shell: bash
+      run: |
+        echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+        "$HOME/.cargo/bin/cargo" --version
     - name: Install Linux text-rendering fonts
       if: runner.os == 'Linux'
       shell: bash

@@ -1262,6 +1262,32 @@ void test_hover_recascade_preserves_horizontal_catalog_row(webscene_engine* engi
         "catalog hover computed the action visible but did not publish its paint");
 }
 
+void test_universal_box_sizing_inherits_from_document_element(webscene_engine* engine)
+{
+    execute(engine, R"JS(
+        document.body.innerHTML = `<style>
+          @layer reset {
+            html { box-sizing:border-box; }
+            *, ::before, ::after { box-sizing:inherit; }
+          }
+          #card { width:100px; padding:12px; }
+          #card::before { content:""; display:block; width:10px; padding:2px; }
+        </style><div id="card"><span id="child"></span></div>`;
+    )JS", "native-inherited-box-sizing-setup.js");
+    const auto result = evaluate(engine, R"JS(
+        ([
+          getComputedStyle(document.documentElement).boxSizing,
+          getComputedStyle(document.body).boxSizing,
+          getComputedStyle(document.getElementById('card')).boxSizing,
+          getComputedStyle(document.getElementById('child')).boxSizing,
+          document.getElementById('card').getBoundingClientRect().width,
+          getComputedStyle(document.getElementById('card'), '::before').boxSizing
+        ])
+    )JS", "native-inherited-box-sizing-result.js");
+    require(result == R"JSON(["border-box","border-box","border-box","border-box",100,"border-box"])JSON",
+        "explicit box-sizing inheritance did not preserve the document reset: " + result);
+}
+
 void test_complex_is_specificity_ignores_non_element_siblings(webscene_engine* engine)
 {
     const auto result = evaluate(engine, R"JS(

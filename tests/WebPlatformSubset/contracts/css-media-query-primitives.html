@@ -60,12 +60,12 @@
   }
 
   const layeredReset = document.createElement("style");
-  layeredReset.textContent = "@layer reset { * { box-sizing: border-box; } }";
+  layeredReset.textContent = "@layer reset { html { box-sizing: border-box; } * { box-sizing: inherit; } }";
   document.head.appendChild(layeredReset);
   const style = getComputedStyle(document.getElementById("probe"));
   test("dynamically inserted universal rules inside a cascade layer recascade existing elements", () => {
     if (style.boxSizing !== "border-box") {
-      throw new Error("dynamic layered universal box-sizing resolved to " + style.boxSizing);
+      throw new Error("dynamic layered inherited box-sizing resolved to " + style.boxSizing);
     }
   });
   test("dynamically inserted layered universal rules apply to later elements", () => {

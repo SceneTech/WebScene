@@ -458,7 +458,9 @@ bool apply_flex_value(dom_node& node,const std::string& name,const std::string& 
                 }
             }
         } else if (name == "box-sizing" && !is_inline(inline_box_sizing)) {
-            node.style.border_box = value == "border-box";
+            node.style.border_box = value == "inherit" && node.parent != nullptr
+                ? node.parent->style.border_box
+                : value == "border-box";
         } else { return false; }
         return true;
 }

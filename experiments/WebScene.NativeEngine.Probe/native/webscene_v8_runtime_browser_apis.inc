@@ -1429,6 +1429,10 @@
         info.GetReturnValue().Set(v8::Array::New(info.GetIsolate()));
     }
 
+    static void no_op(const v8::FunctionCallbackInfo<v8::Value>&)
+    {
+    }
+
     static void text_encoder_encode(const v8::FunctionCallbackInfo<v8::Value>& info)
     {
         const auto value = info.Length() > 0 ? to_utf8(info.GetIsolate(), info[0]) : std::string{};
@@ -1871,6 +1875,46 @@
         return encoded;
     }
 
+    static void window_btoa(const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        const auto input = info.Length() ? to_utf8(info.GetIsolate(), info[0]) : std::string{};
+        const auto encoded = base64_encode_bytes(
+            reinterpret_cast<const uint8_t*>(input.data()), input.size());
+        info.GetReturnValue().Set(js_dom_string(info.GetIsolate(), encoded));
+    }
+
+    static void window_atob(const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto isolate = info.GetIsolate();
+        auto input = info.Length() ? to_utf8(isolate, info[0]) : std::string{};
+        input.erase(std::remove_if(input.begin(), input.end(), [](unsigned char c) {
+            return std::isspace(c) != 0;
+        }), input.end());
+        static constexpr std::string_view alphabet =
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        std::vector<uint8_t> decoded;
+        uint32_t accumulator = 0;
+        int bits = 0;
+        for (const auto character : input) {
+            if (character == '=') break;
+            const auto position = alphabet.find(character);
+            if (position == std::string_view::npos) {
+                isolate->ThrowException(v8::Exception::TypeError(
+                    js_string(isolate, "Invalid base64 data")));
+                return;
+            }
+            accumulator = (accumulator << 6U) | static_cast<uint32_t>(position);
+            bits += 6;
+            if (bits >= 8) {
+                bits -= 8;
+                decoded.push_back(static_cast<uint8_t>((accumulator >> bits) & 0xFFU));
+            }
+        }
+        info.GetReturnValue().Set(v8::String::NewFromOneByte(
+            isolate, decoded.data(), v8::NewStringType::kNormal,
+            static_cast<int>(decoded.size())).ToLocalChecked());
+    }
+
     static void write_clipboard(const v8::FunctionCallbackInfo<v8::Value>& info)
     {
         auto* self = current(info.GetIsolate());
@@ -2265,7 +2309,9 @@
             if (record.message.size() > runtime_diagnostics::maximum_text) { record.truncated = true; break; }
         }
         record.truncated |= info.Length() > 32;
-        if (level_index == 5) self->diagnostic_stack(record, v8::StackTrace::CurrentStackTrace(isolate, 32));
+        if (level_index == 2 || level_index == 5) {
+            self->diagnostic_stack(record, v8::StackTrace::CurrentStackTrace(isolate, 32));
+        }
 #if defined(WEBSCENE_NATIVE_ENGINE_WITH_V8_INSPECTOR)
         if (report_to_inspector) {
             self->report_inspector_console_message(

@@ -1347,7 +1347,7 @@
     {
       "path": "contracts/css-grid-form-layout.html",
       "type": "contract",
-      "capabilities": ["grid-fractional-tracks", "grid-auto-tracks", "grid-minmax-tracks", "grid-gaps", "grid-explicit-placement", "grid-row-span"],
+      "capabilities": ["grid-fractional-tracks", "grid-auto-tracks", "grid-minmax-tracks", "grid-gaps", "grid-explicit-placement", "grid-row-span", "grid-template-shorthand", "named-grid-areas"],
       "evidence": ["reported-7guis-temperature-and-crud-grid-reduction"],
       "reason": "Product-neutral reductions of the form layouts that were changed to flex during the 7GUIs port: equal fractional columns around an automatic separator, minmax fractional CRUD columns, source-order auto placement, and ordinary explicit row/column placement."
     },
@@ -1529,6 +1529,13 @@
       "capabilities": ["keyframes-opacity", "animation-shorthand", "animation-longhands", "animation-delay", "infinite-iteration", "staggered-animation", "host-frame-clock"],
       "evidence": ["automatically-discovered-three-dot-loader-animation"],
       "reason": "Product-neutral reduction of a three-dot composition: opacity @keyframes, a one-second infinite cycle, and three staggered delays. Native publishes at least sixty frames with bounded cadence and distinct opacity values. Keep candidate until the bounded CSS Animations slice is stable on every released native RID. Evidence: artifacts/web-platform-subset-opacity-keyframes-final-20260722/results.json."
+    },
+    {
+      "path": "contracts/css-animation-fill-mode-forwards.html",
+      "type": "contract",
+      "capabilities": ["keyframes-opacity", "animation-fill-mode", "forwards-fill", "finite-animation"],
+      "evidence": ["spotify-lazy-artwork-fade-retention-regression"],
+      "reason": "Product-neutral reduction of lazy-loaded artwork that fades from opacity zero and relies on animation-fill-mode: forwards. The final keyframe must remain painted after a finite animation completes instead of reverting to the authored hidden opacity."
     },
     {
       "path": "contracts/css-rotation-keyframes-cadence.html",

@@ -709,6 +709,7 @@ int main()
     test_bounded_css_named_color_palette();
     test_visibility_inherits_for_computed_style_and_focus(engine);
     test_hover_specificity_preserves_visible_theme_icon(engine);
+    test_hover_recascade_preserves_horizontal_catalog_row(engine);
     test_complex_is_specificity_ignores_non_element_siblings(engine);
     test_inline_relative_line_height_uses_cascaded_font_size(engine);
     test_empty_inline_element_does_not_stretch_cross_size(engine);

@@ -156,6 +156,7 @@ struct node_style final {
         std::string animation_delay_value{"0s"};
         std::string animation_timing_function_value{"ease"};
         std::string animation_iteration_count_value{"1"};
+        std::string animation_fill_mode_value{"none"};
         std::string opacity_keyframe_animation_signature;
         std::vector<opacity_keyframe> opacity_keyframes;
         std::string rotation_keyframe_animation_signature;
@@ -163,6 +164,7 @@ struct node_style final {
         float opacity_keyframe_duration_ms{0};
         float opacity_keyframe_delay_ms{0};
         float opacity_keyframe_iterations{1};
+        bool opacity_keyframe_fill_forwards{false};
         float opacity_keyframe_x1{0.25F};
         float opacity_keyframe_y1{0.1F};
         float opacity_keyframe_x2{0.25F};
@@ -294,6 +296,12 @@ struct node_style final {
     }
 
     struct grid_data final {
+        struct named_area final {
+            size_t row{0};
+            size_t column{0};
+            size_t row_span{1};
+            size_t column_span{1};
+        };
         struct track final {
             enum class sizing : uint8_t {
                 fixed,
@@ -312,12 +320,14 @@ struct node_style final {
         std::vector<track> template_columns;
         std::vector<track> template_rows;
         std::vector<track> auto_columns;
+        std::unordered_map<std::string, named_area> named_areas;
         bool subgrid_columns{false};
         bool two_columns{false};
         bool auto_flow_column{false};
         bool fractional_rows{false};
         bool span_all{false};
         bool compiled_full_columns{false};
+        bool auto_repeat_columns{false};
         int32_t column_start{0};
         std::string area_value{"auto"};
         std::string row_value{"auto"};

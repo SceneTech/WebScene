@@ -1183,6 +1183,39 @@ void test_hover_specificity_preserves_visible_theme_icon(webscene_engine* engine
         "a later low-specificity rule hid or recolored the hovered child: " + result);
 }
 
+void test_hover_recascade_preserves_horizontal_catalog_row(webscene_engine* engine)
+{
+    execute(engine, R"JS(
+        document.body.innerHTML = `
+          <style>
+            .catalog { display:flex; flex-direction:row; gap:12px; width:620px; overflow:hidden; }
+            .card { flex:0 0 140px; width:140px; height:190px; background:#181818; }
+            .card:hover { background:#282828; }
+            .card:hover .action { opacity:1; }
+            .action { opacity:0; width:32px; height:32px; }
+          </style>
+          <section class="catalog">
+            <article class="card"><button class="action">Play</button></article>
+            <article class="card"></article><article class="card"></article>
+            <article class="card"></article>
+          </section>`;
+    )JS", "native-catalog-hover-layout-setup.js");
+    resize(engine, 800, 500, 109U);
+    const auto before = evaluate(engine,
+        "JSON.stringify(Array.from(document.querySelectorAll('.card'), n => { const r=n.getBoundingClientRect(); return [r.x,r.y,r.width,r.height]; }))",
+        "native-catalog-hover-layout-before.js");
+    pointer_move(engine, 20, 20, 110U);
+    const auto after = evaluate(engine,
+        "JSON.stringify(Array.from(document.querySelectorAll('.card'), n => { const r=n.getBoundingClientRect(); return [r.x,r.y,r.width,r.height]; }))",
+        "native-catalog-hover-layout-after.js");
+    require(before == after,
+        "hover recascade changed a horizontal catalog row into a different layout: before="
+            + before + " after=" + after);
+    require(evaluate(engine, "getComputedStyle(document.querySelector('.action')).opacity",
+        "native-catalog-hover-action.js") == "1",
+        "catalog hover did not apply its visual-only action state");
+}
+
 void test_complex_is_specificity_ignores_non_element_siblings(webscene_engine* engine)
 {
     const auto result = evaluate(engine, R"JS(

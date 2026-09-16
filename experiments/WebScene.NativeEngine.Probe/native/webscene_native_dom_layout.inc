@@ -1819,8 +1819,7 @@ void native_document::layout_children(dom_node& parent)
         }
     }
     const auto& parent_grid = parent.style.grid();
-    const auto implicit_column_grid = parent_grid.auto_flow_column
-        && !parent_grid.auto_columns.empty();
+    const auto implicit_column_grid = parent_grid.auto_flow_column;
     if (is_grid_container(parent.style.display)
         && (parent_grid.two_columns || implicit_column_grid
             || !parent_grid.template_columns.empty() || !parent_grid.template_rows.empty())) {
@@ -1885,6 +1884,20 @@ void native_document::layout_children(dom_node& parent)
             && parent.has_grid_layout()
             && !parent.grid_layout().column_widths.empty();
         auto effective_columns = parent_grid.template_columns;
+        const auto column_gap = inherited_subgrid_columns
+            ? parent.grid_layout().column_gap
+            : resolve_length(parent, parent.style.column_gap, content.width, 0);
+        if (parent_grid.auto_repeat_columns && effective_columns.size() == 1U) {
+            const auto& repeated = effective_columns.front();
+            const auto minimum = repeated.kind == grid_track::sizing::minmax
+                ? resolve_length(parent, repeated.minimum, content.width, 0)
+                : resolve_length(parent, repeated.maximum, content.width, 0);
+            if (minimum > 0 && content.width > minimum) {
+                const auto count = std::max<size_t>(1U, static_cast<size_t>(
+                    std::floor((content.width + column_gap) / (minimum + column_gap))));
+                effective_columns.assign(count, repeated);
+            }
+        }
         if (effective_columns.empty() && implicit_column_grid) {
             const auto implicit_count = std::max<size_t>(
                 1U,
@@ -1899,8 +1912,9 @@ void native_document::layout_children(dom_node& parent)
                     }));
             effective_columns.reserve(implicit_count);
             for (size_t index = 0; index < implicit_count; ++index) {
-                effective_columns.push_back(
-                    parent_grid.auto_columns[index % parent_grid.auto_columns.size()]);
+                effective_columns.push_back(parent_grid.auto_columns.empty()
+                    ? grid_track{}
+                    : parent_grid.auto_columns[index % parent_grid.auto_columns.size()]);
             }
         }
         const auto column_count = inherited_subgrid_columns
@@ -1983,13 +1997,16 @@ void native_document::layout_children(dom_node& parent)
                 continue;
             }
             const auto& placement = child->style.grid();
+            const auto named_area = parent_grid.named_areas.find(placement.area_value);
+            const auto has_named_area = named_area != parent_grid.named_areas.end();
             auto column_span = std::min(
                 column_count,
-                placement.compiled_full_columns ? column_count : parse_span(
+                has_named_area ? named_area->second.column_span
+                : placement.compiled_full_columns ? column_count : parse_span(
                     placement.column_start_value,
                     placement.column_end_value,
                     column_count));
-            auto row_span = parse_span(
+            auto row_span = has_named_area ? named_area->second.row_span : parse_span(
                 placement.row_start_value,
                 placement.row_end_value,
                 std::max<size_t>(parent_grid.template_rows.size(), 1U));
@@ -1998,9 +2015,11 @@ void native_document::layout_children(dom_node& parent)
             const auto authored_column_end = placement.compiled_full_columns
                 ? std::optional<int32_t>{-1} : parse_line(placement.column_end_value);
             const auto authored_row = parse_line(placement.row_start_value);
-            auto row = authored_row.has_value() && *authored_row > 0
+            auto row = has_named_area ? named_area->second.row
+                : authored_row.has_value() && *authored_row > 0
                 ? static_cast<size_t>(*authored_row - 1) : auto_row;
-            auto column = authored_column_start.has_value()
+            auto column = has_named_area ? named_area->second.column
+                : authored_column_start.has_value()
                     && *authored_column_start > 0
                 ? static_cast<size_t>(*authored_column_start - 1)
                 : auto_column;
@@ -2030,15 +2049,17 @@ void native_document::layout_children(dom_node& parent)
                 column = column_count - column_span;
             }
             while (!fits(row, column, row_span, column_span)) {
-                if (!authored_column_start.has_value()
+                if (!has_named_area && !authored_column_start.has_value()
                     && !authored_column_end.has_value()) {
                     ++column;
                     if (column + column_span > column_count) {
                         column = 0;
                         ++row;
                     }
-                } else {
+                } else if (!has_named_area) {
                     ++row;
+                } else {
+                    break;
                 }
             }
             ensure_rows(row + row_span);
@@ -2058,9 +2079,6 @@ void native_document::layout_children(dom_node& parent)
             }
         }
 
-        const auto column_gap = inherited_subgrid_columns
-            ? parent.grid_layout().column_gap
-            : resolve_length(parent, parent.style.column_gap, content.width, 0);
         const auto row_gap = resolve_length(
             parent, parent.style.row_gap, content.height, 0);
         std::vector<float> column_widths = inherited_subgrid_columns
@@ -2311,6 +2329,12 @@ void native_document::layout_children(dom_node& parent)
         const auto committed_height = std::accumulate(
             row_heights.begin(), row_heights.end(), total_row_gap);
         if (fractional_row_weight > 0) {
+            for (size_t row = 0; row < row_heights.size()
+                && row < parent_grid.template_rows.size(); ++row) {
+                if (parent_grid.template_rows[row].fraction > 0) {
+                    row_heights[row] = row_minimums[row];
+                }
+            }
             distribute_fractions(row_heights,parent_grid.template_rows,content.height,total_row_gap);
         } else if (single_auto_row
             && committed_height < content.height) {
@@ -4320,8 +4344,7 @@ float native_document::compute_intrinsic_size(
     }
 
     const auto& node_grid = node.style.grid();
-    const auto intrinsic_implicit_column_grid = node_grid.auto_flow_column
-        && !node_grid.auto_columns.empty();
+    const auto intrinsic_implicit_column_grid = node_grid.auto_flow_column;
     if (is_grid_container(node.style.display)
         && (node_grid.two_columns || intrinsic_implicit_column_grid)) {
 #if defined(WEBSCENE_NATIVE_ENGINE_INTRINSIC_SIZE_BRANCH_BENCHMARK)
@@ -4343,8 +4366,9 @@ float native_document::compute_intrinsic_size(
                     }));
             effective_columns.reserve(implicit_count);
             for (size_t index = 0; index < implicit_count; ++index) {
-                effective_columns.push_back(
-                    grid.auto_columns[index % grid.auto_columns.size()]);
+                effective_columns.push_back(grid.auto_columns.empty()
+                    ? node_style::grid_data::track{}
+                    : grid.auto_columns[index % grid.auto_columns.size()]);
             }
         }
         const auto column_count = std::max<size_t>(

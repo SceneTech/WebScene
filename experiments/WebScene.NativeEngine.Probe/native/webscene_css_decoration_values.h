@@ -171,6 +171,9 @@ bool apply_decoration_value(dom_node& node,const std::string& name,const std::st
         } else if (name == "animation-iteration-count") {
             node.style.mutable_animations().animation_iteration_count_value = value;
             return true;
+        } else if (name == "animation-fill-mode") {
+            node.style.mutable_animations().animation_fill_mode_value = value;
+            return true;
         } else if (property_mask(name) == inline_border
             && is_inline(inline_border)) {
             return true;

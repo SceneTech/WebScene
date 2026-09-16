@@ -3059,6 +3059,10 @@ struct v8_dom_runtime::implementation final {
             js_string(isolate, "supports"),
             v8::Function::New(local_context, css_supports).ToLocalChecked()).Check();
         global->Set(local_context, js_string(isolate, "CSS"), css).Check();
+        global->Set(local_context, js_string(isolate, "atob"),
+            v8::Function::New(local_context, window_atob).ToLocalChecked()).Check();
+        global->Set(local_context, js_string(isolate, "btoa"),
+            v8::Function::New(local_context, window_btoa).ToLocalChecked()).Check();
         auto mutation_observer_template = v8::FunctionTemplate::New(
             isolate,
             observer_constructor,
@@ -3227,6 +3231,10 @@ struct v8_dom_runtime::implementation final {
             v8::Function::New(local_context, console_log).ToLocalChecked()).Check();
         performance->Set(local_context, js_string(isolate, "clearMeasures"),
             v8::Function::New(local_context, console_log).ToLocalChecked()).Check();
+        performance->Set(local_context, js_string(isolate, "getEntriesByType"),
+            v8::Function::New(local_context, empty_array).ToLocalChecked()).Check();
+        performance->Set(local_context, js_string(isolate, "getEntriesByName"),
+            v8::Function::New(local_context, empty_array).ToLocalChecked()).Check();
         global->Set(local_context, js_string(isolate, "performance"), performance).Check();
         global->Set(
             local_context,
@@ -3251,6 +3259,11 @@ struct v8_dom_runtime::implementation final {
             local_context,
             js_string(isolate, "DOMMatrixReadOnly"),
             matrix_template->GetFunction(local_context).ToLocalChecked()).Check();
+        auto rect_template = v8::FunctionTemplate::New(isolate, dom_rect_constructor);
+        rect_template->SetClassName(js_string(isolate, "DOMRect"));
+        auto rect_constructor = rect_template->GetFunction(local_context).ToLocalChecked();
+        global->Set(local_context, js_string(isolate, "DOMRect"), rect_constructor).Check();
+        global->Set(local_context, js_string(isolate, "DOMRectReadOnly"), rect_constructor).Check();
 
         auto location = v8::Object::New(isolate);
         location->Set(
@@ -3266,6 +3279,17 @@ struct v8_dom_runtime::implementation final {
             js_string(isolate, "toString"),
             v8::Function::New(local_context, location_to_string).ToLocalChecked()).Check();
         global->Set(local_context, js_string(isolate, "location"), location).Check();
+        auto history = v8::Object::New(isolate);
+        history->Set(local_context, js_string(isolate, "length"),
+            v8::Integer::New(isolate, 1)).Check();
+        history->Set(local_context, js_string(isolate, "state"), v8::Null(isolate)).Check();
+        history->Set(local_context, js_string(isolate, "scrollRestoration"),
+            js_string(isolate, "auto")).Check();
+        for (const auto* name : {"back", "forward", "go", "pushState", "replaceState"}) {
+            history->Set(local_context, js_string(isolate, name),
+                v8::Function::New(local_context, no_op).ToLocalChecked()).Check();
+        }
+        global->Set(local_context, js_string(isolate, "history"), history).Check();
 
         install_navigator(isolate, local_context, global);
 
@@ -3842,13 +3866,36 @@ struct v8_dom_runtime::implementation final {
                 this._method = 'GET';
                 this._url = '';
                 this._mimeType = '';
+                this._headers = {};
+                this._listeners = new Map();
+              }
+              addEventListener(type, listener) {
+                if (typeof listener !== 'function') return;
+                const listeners = this._listeners.get(type) ?? [];
+                if (!listeners.includes(listener)) listeners.push(listener);
+                this._listeners.set(type, listeners);
+              }
+              removeEventListener(type, listener) {
+                const listeners = this._listeners.get(type);
+                if (!listeners) return;
+                const index = listeners.indexOf(listener);
+                if (index >= 0) listeners.splice(index, 1);
+              }
+              _dispatch(type) {
+                const event = new Event(type);
+                Object.defineProperty(event, 'target', { value: this });
+                this[`on${type}`]?.call(this, event);
+                for (const listener of (this._listeners.get(type) ?? []).slice()) {
+                  listener.call(this, event);
+                }
               }
               open(method, url) {
                 this._method = String(method).toUpperCase();
                 this._url = String(url);
                 this.readyState = 1;
-                this.onreadystatechange?.(new Event('readystatechange'));
+                this._dispatch('readystatechange');
               }
+              setRequestHeader(name, value) { this._headers[String(name)] = String(value); }
               overrideMimeType(value) {
                 this._mimeType = String(value);
               }
@@ -3872,13 +3919,13 @@ struct v8_dom_runtime::implementation final {
                     this.status = 200;
                     this.statusText = 'OK';
                     this.readyState = 4;
-                    this.onreadystatechange?.(new Event('readystatechange'));
-                    this.onload?.(new Event('load'));
+                    this._dispatch('readystatechange');
+                    this._dispatch('load');
                   } catch (error) {
                     this.status = 0;
                     this.readyState = 4;
-                    this.onreadystatechange?.(new Event('readystatechange'));
-                    this.onerror?.(new Event('error'));
+                    this._dispatch('readystatechange');
+                    this._dispatch('error');
                   }
                 });
               }

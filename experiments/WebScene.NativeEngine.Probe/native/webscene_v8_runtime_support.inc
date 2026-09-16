@@ -903,8 +903,13 @@ void install_navigator(
     constexpr auto user_agent_platform = "X11; Linux x86_64";
     constexpr auto client_platform = "Linux";
 #endif
+    // Present the browser-compatible desktop token shape expected by sites
+    // that choose materially different applications from the HTTP/JS UA.
+    // Some desktop endpoints return degraded or empty responses to unknown
+    // product tokens, so engine identity stays in diagnostics rather than UA.
     const auto user_agent = std::string("Mozilla/5.0 (") + user_agent_platform
-        + ") AppleWebKit/537.36 (KHTML, like Gecko) WebScene.Native/V8";
+        + ") AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 "
+          "Safari/537.36";
     auto navigator = v8::Object::New(isolate);
     navigator->Set(
         context,

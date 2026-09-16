@@ -532,6 +532,29 @@
         info.GetReturnValue().Set(result);
     }
 
+    static void dom_rect_constructor(const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto isolate = info.GetIsolate();
+        auto context = isolate->GetCurrentContext();
+        auto result = info.IsConstructCall() ? info.This() : v8::Object::New(isolate);
+        const auto number = [&](int index) {
+            return index < info.Length() && info[index]->IsNumber()
+                ? info[index]->NumberValue(context).FromMaybe(0.0)
+                : 0.0;
+        };
+        const auto x = number(0), y = number(1), width = number(2), height = number(3);
+        const auto set = [&](const char* name, double value) {
+            result->Set(context, js_string(isolate, name),
+                v8::Number::New(isolate, value)).Check();
+        };
+        set("x", x); set("y", y); set("width", width); set("height", height);
+        set("left", std::min(x, x + width));
+        set("right", std::max(x, x + width));
+        set("top", std::min(y, y + height));
+        set("bottom", std::max(y, y + height));
+        info.GetReturnValue().Set(result);
+    }
+
     static layout_rect transformed_client_bounds(
         const native_document& document,
         const dom_node& node)

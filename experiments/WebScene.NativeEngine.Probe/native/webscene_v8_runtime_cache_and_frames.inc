@@ -1358,6 +1358,10 @@
             local_context,
             js_string(isolate, "getSelection"),
             v8::Function::New(local_context, get_selection).ToLocalChecked()).Check();
+        global->Set(local_context, js_string(isolate, "atob"),
+            v8::Function::New(local_context, window_atob).ToLocalChecked()).Check();
+        global->Set(local_context, js_string(isolate, "btoa"),
+            v8::Function::New(local_context, window_btoa).ToLocalChecked()).Check();
         auto text_encoder_template = v8::FunctionTemplate::New(isolate);
         text_encoder_template->PrototypeTemplate()->Set(
             js_string(isolate, "encode"),
@@ -1381,6 +1385,11 @@
         auto matrix_template = v8::FunctionTemplate::New(isolate, dom_matrix_constructor);
         global->Set(local_context, js_string(isolate, "DOMMatrix"), matrix_template->GetFunction(local_context).ToLocalChecked()).Check();
         global->Set(local_context, js_string(isolate, "DOMMatrixReadOnly"), matrix_template->GetFunction(local_context).ToLocalChecked()).Check();
+        auto rect_template = v8::FunctionTemplate::New(isolate, dom_rect_constructor);
+        rect_template->SetClassName(js_string(isolate, "DOMRect"));
+        auto rect_constructor = rect_template->GetFunction(local_context).ToLocalChecked();
+        global->Set(local_context, js_string(isolate, "DOMRect"), rect_constructor).Check();
+        global->Set(local_context, js_string(isolate, "DOMRectReadOnly"), rect_constructor).Check();
         global->Set(local_context, js_string(isolate, "Image"),
             v8::FunctionTemplate::New(isolate, image_constructor)
                 ->GetFunction(local_context).ToLocalChecked()).Check();
@@ -1424,6 +1433,10 @@
             v8::Function::New(local_context, console_log).ToLocalChecked()).Check();
         performance->Set(local_context, js_string(isolate, "clearMeasures"),
             v8::Function::New(local_context, console_log).ToLocalChecked()).Check();
+        performance->Set(local_context, js_string(isolate, "getEntriesByType"),
+            v8::Function::New(local_context, empty_array).ToLocalChecked()).Check();
+        performance->Set(local_context, js_string(isolate, "getEntriesByName"),
+            v8::Function::New(local_context, empty_array).ToLocalChecked()).Check();
         global->Set(local_context, js_string(isolate, "performance"), performance).Check();
 
         // React's scheduler prefers MessageChannel over timers. Keep the ports

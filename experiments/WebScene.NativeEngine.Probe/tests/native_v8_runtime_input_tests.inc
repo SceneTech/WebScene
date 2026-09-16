@@ -1057,7 +1057,9 @@ void test_navigator_platform_and_wheel_modifiers(webscene_engine* engine)
     require(
         navigator_result.find(R"("platform":"MacIntel")") != std::string::npos
             && navigator_result.find(R"("clientPlatform":"macOS")") != std::string::npos
-            && navigator_result.find("Macintosh") != std::string::npos,
+            && navigator_result.find("Macintosh") != std::string::npos
+            && navigator_result.find("Chrome/140.0.0.0") != std::string::npos
+            && navigator_result.find("Safari/537.36") != std::string::npos,
         "native navigator did not expose macOS platform identity: " + navigator_result);
 #elif defined(_WIN32)
     require(

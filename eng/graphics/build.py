@@ -110,13 +110,51 @@ def source_graph(source, env=None):
     for current, directories, files in os.walk(source):
         if ".git" in directories or ".git" in files:
             directory = Path(current)
+            revision = subprocess.run(
+                ["git", "-C", str(directory), "rev-parse", "--verify", "HEAD"],
+                env=env, capture_output=True, text=True)
+            if revision.returncode != 0 or not revision.stdout.strip():
+                raise ValueError(f"Invalid transitive dependency checkout (missing HEAD): {directory}")
             changes = capture(["git", "-C", directory, "diff", "HEAD", "--stat"], env=env)
             if changes:
                 raise ValueError(f"Modified transitive dependency: {directory}\n{changes}")
-            source_graph[directory.relative_to(source).as_posix()] = capture(
-                ["git", "-C", directory, "rev-parse", "HEAD"], env=env)
+            source_graph[directory.relative_to(source).as_posix()] = revision.stdout.strip()
         directories[:] = [d for d in directories if d not in {".git", "out", "node_modules", "__pycache__"}]
     return source_graph
+
+
+def repair_dawn_dependencies(source, env=None):
+    """Refetch clean unborn repositories left by Dawn's unchecked shallow fetch."""
+    invalid = []
+    for current, directories, files in os.walk(source):
+        if ".git" in directories or ".git" in files:
+            directory = Path(current)
+            revision = subprocess.run(
+                ["git", "-C", str(directory), "rev-parse", "--verify", "HEAD"],
+                env=env, capture_output=True, text=True)
+            if revision.returncode != 0 or not revision.stdout.strip():
+                invalid.append(directory)
+        directories[:] = [d for d in directories if d not in {".git", "out", "node_modules", "__pycache__"}]
+
+    for directory in invalid:
+        if directory == source or not (directory / ".git").is_dir():
+            raise ValueError(f"Refusing to replace invalid dependency checkout: {directory}")
+        status = subprocess.run(
+            ["git", "-C", str(directory), "status", "--porcelain", "--untracked-files=all"],
+            env=env, capture_output=True, text=True)
+        if status.returncode != 0 or status.stdout.strip():
+            raise ValueError(f"Refusing to replace non-empty invalid dependency checkout: {directory}")
+        print(f"Removing incomplete Dawn dependency checkout: {directory}", flush=True)
+        shutil.rmtree(directory)
+
+    if invalid:
+        fetcher = source / "tools/fetch_dawn_dependencies.py"
+        if not fetcher.is_file():
+            raise ValueError(f"Dawn dependency fetcher is missing: {fetcher}")
+        run([sys.executable, fetcher, "--directory", source], env=env)
+
+    # Validate both repaired and initially healthy checkouts before compilation.
+    return source_graph(source, env=env)
 
 
 def seal(component, source, sdk, rid, settings, tools, env=None):
@@ -152,6 +190,7 @@ def dawn(args):
     run(["cmake", "-S", source, "-B", output, "-G", "Ninja",
          f"-DCMAKE_INSTALL_PREFIX={sdk}", f"-DCMAKE_PROJECT_Dawn_INCLUDE={symbol_policy}",
          "-DCMAKE_SHARED_LINKER_FLAGS="] + [f"-D{k}={v}" for k, v in settings.items()])
+    repair_dawn_dependencies(source)
     run(["cmake", "--build", output, "--parallel", args.jobs])
     # Old installed headers/libraries must not survive a dependency roll.
     if sdk.exists():

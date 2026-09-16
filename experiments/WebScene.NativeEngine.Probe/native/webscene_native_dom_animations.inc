@@ -774,7 +774,11 @@ bool native_document::advance_animations() noexcept
             if (first != std::string::npos) {
                 animation_name = animation_name.substr(first, last - first + 1U);
             }
-            animation_events_.push_back({
+            if (!animation_events_) {
+                animation_events_ =
+                    std::make_unique<std::vector<animation_event_record>>();
+            }
+            animation_events_->push_back({
                 node.id,
                 "animationend",
                 std::move(animation_name),
@@ -829,7 +833,8 @@ native_document::take_transition_events()
 std::vector<native_document::animation_event_record>
 native_document::take_animation_events()
 {
-    auto events = std::move(animation_events_);
-    animation_events_.clear();
+    if (!animation_events_) return {};
+    auto events = std::move(*animation_events_);
+    animation_events_.reset();
     return events;
 }

@@ -73,6 +73,75 @@ class NativeRuntimeWorkflowPolicyTests(unittest.TestCase):
         self.assertNotIn("\n    continue-on-error: true", candidate)
         self.assertIn("--advisory-test-failures", candidate)
 
+    def test_v8_windows_environment_boundary_is_wired_into_build_and_ci(self) -> None:
+        package_workflow = self.workflows[
+            ROOT / ".github/workflows/native-runtime-packages.yml"
+        ]
+        runtime_build = (
+            ROOT / "scripts/build-native-engine-runtime.ps1"
+        ).read_text(encoding="utf-8")
+        test_path = "scripts/tests/test_v8_windows_environment.ps1"
+
+        self.assertIn(f"- '{test_path}'", package_workflow)
+        self.assertIn(f"./{test_path}", package_workflow)
+        test_step = package_workflow.split(
+            "- name: Test V8 Windows child environment", 1
+        )[1].split("- name:", 1)[0]
+        self.assertIn("if: matrix.rid == 'win-x64'", test_step)
+        self.assertIn("shell: pwsh", test_step)
+        self.assertIn("Invoke-WebSceneV8ChildPowerShell", runtime_build)
+        self.assertIn("-V8ChildBuild", runtime_build)
+        self.assertGreaterEqual(
+            package_workflow.count(
+                "hashFiles(matrix.v8_cache_script, matrix.v8_cache_patch, "
+                "'scripts/V8WindowsEnvironment.psm1')"
+            ),
+            2,
+        )
+        self.assertIn(
+            "The exact Windows V8 cache identity was not restored; "
+            "forcing a clean child build.",
+            package_workflow,
+        )
+        self.assertIn("Verify fresh Windows V8 child build", package_workflow)
+        self.assertIn(
+            "Fresh Windows V8 checkout, GN generation, and Ninja output verified.",
+            package_workflow,
+        )
+        restore_keys = package_workflow.split("        restore-keys: |\n", 1)[1].split(
+            "    - id: restored-v8-sdk", 1
+        )[0]
+        self.assertEqual(restore_keys.count("matrix.rid != 'win-x64'"), 2)
+        self.assertNotIn("\n          webscene-v8-sdk-", restore_keys)
+
+    def test_release_package_gate_covers_every_supported_rid(self) -> None:
+        package_workflow = self.workflows[
+            ROOT / ".github/workflows/native-runtime-packages.yml"
+        ]
+        native = package_workflow.split("\n  native:\n", 1)[1].split(
+            "\n  required-evidence:\n", 1
+        )[0]
+        required = package_workflow.split("\n  required-evidence:\n", 1)[1].split(
+            "\n  package-set:\n", 1
+        )[0]
+        package_set = package_workflow.split("\n  package-set:\n", 1)[1].split(
+            "\n  candidate-evidence:\n", 1
+        )[0]
+        candidate = package_workflow.split("\n  candidate-evidence:\n", 1)[1].split(
+            "\n  consumer:\n", 1
+        )[0]
+        consumer = package_workflow.split("\n  consumer:\n", 1)[1].split(
+            "\n  publish:\n", 1
+        )[0]
+
+        for rid in ("osx-arm64", "linux-x64", "win-x64"):
+            with self.subTest(rid=rid):
+                self.assertIn(f"rid: {rid}", native)
+                self.assertIn(f"--expected-rid {rid}", required)
+                self.assertIn(f"--native-rid {rid}", package_set)
+                self.assertIn(f"--expected-rid {rid}", candidate)
+                self.assertIn(f"rid: {rid}", consumer)
+
 
 if __name__ == "__main__":
     unittest.main()

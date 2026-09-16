@@ -305,6 +305,10 @@ struct v8_dom_runtime::implementation final {
     {
         prune_persistent_compilation_cache();
         initialize_v8_process();
+        {
+            std::lock_guard lock(message_port_wake->mutex);
+            message_port_wake->notify = runtime_work_available;
+        }
         if (!force_dedicated_isolate && std::getenv("WEBSCENE_V8_SHARED_ISOLATE") != nullptr) {
             try {
                 shared_isolate = acquire_shared_isolate();
@@ -3752,6 +3756,7 @@ struct v8_dom_runtime::implementation final {
         install_clipboard_api(local_context);
         install_websocket_globals(local_context);
         install_editor_web_platform_globals(local_context);
+        install_message_channel(local_context);
         install_tree_walker_platform(local_context);
         install_custom_elements_platform(local_context);
         local_context->Global()->Set(local_context,js_string(isolate,"__webSceneRevokeObjectUrl"),v8::Function::New(local_context,revoke_object_url).ToLocalChecked()).Check();
@@ -5137,6 +5142,7 @@ bool v8_dom_runtime::has_pending_tasks() const noexcept
         || impl_->websocket_transport.has_pending_events()
         || !impl_->pending_window_messages.empty()
         || impl_->has_worker_messages()
+        || impl_->has_message_port_messages()
         || impl_->has_ready_fetch_task()
         || !impl_->pending_dialog_close_events.empty()
         || !impl_->pending_programmatic_scroll_events.empty()

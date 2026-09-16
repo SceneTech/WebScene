@@ -332,6 +332,10 @@ cmake_args=(
   -DWEBSCENE_V8_ROOT="$v8_root"
   -DWEBSCENE_V8_OUTPUT_ROOT="$v8_output_root"
 )
+macos_deployment_target=12.0
+if [[ "$expected_kernel" == Darwin ]]; then
+  cmake_args+=(-DCMAKE_OSX_DEPLOYMENT_TARGET="$macos_deployment_target")
+fi
 if [[ "$thin_lto" == true ]]; then
   v8_llvm_bin="$v8_root/third_party/llvm-build/Release+Asserts/bin"
   for llvm_tool in clang clang++ llvm-ar lld; do
@@ -364,9 +368,6 @@ if [[ "$thin_lto" == true ]]; then
     -DCMAKE_SHARED_LINKER_FLAGS=-fuse-ld=lld
     -DCMAKE_MODULE_LINKER_FLAGS=-fuse-ld=lld
   )
-  if [[ "$expected_kernel" == Darwin ]]; then
-    cmake_args+=(-DCMAKE_OSX_DEPLOYMENT_TARGET=12.0)
-  fi
 elif [[ "$expected_kernel" == Linux ]]; then
   # V8's Linux archive must be linked with LLD. The compiler is selectable so
   # the Ubuntu 22.04 compatibility image can use GCC 11's complete C++20
@@ -397,6 +398,16 @@ native_path="$build_dir/$native_name"
 if [[ ! -f "$native_path" ]]; then
   echo "Native engine build did not produce '$native_path'." >&2
   exit 1
+fi
+if [[ "$expected_kernel" == Darwin ]]; then
+  actual_macos_deployment_target="$(
+    xcrun vtool -show-build "$native_path" |
+      awk '$1 == "minos" { print $2; exit }'
+  )"
+  if [[ "$actual_macos_deployment_target" != "$macos_deployment_target" ]]; then
+    echo "Native engine deployment target is '$actual_macos_deployment_target'; expected '$macos_deployment_target'." >&2
+    exit 1
+  fi
 fi
 if [[ "$expected_kernel" == Darwin && "$cmake_build_type" == RelWithDebInfo ]]; then
   native_dsym_path="$native_path.dSYM"

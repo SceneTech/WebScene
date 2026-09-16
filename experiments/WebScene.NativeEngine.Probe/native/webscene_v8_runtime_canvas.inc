@@ -2389,14 +2389,11 @@
                     }
                     break;
                 }
-                float parsed_size = 0.0F;
                 const auto number = shorthand.substr(number_start, index - number_start);
-                const auto parse_result = std::from_chars(
-                    number.data(),
-                    number.data() + number.size(),
-                    parsed_size);
-                if (parse_result.ec == std::errc{}
-                    && parse_result.ptr == number.data() + number.size()
+                const std::string number_text{number};
+                char* parsed_end = nullptr;
+                const auto parsed_size = std::strtof(number_text.c_str(), &parsed_end);
+                if (parsed_end == number_text.c_str() + number_text.size()
                     && std::isfinite(parsed_size)
                     && parsed_size > 0.0F) {
                     result.size = parsed_size;

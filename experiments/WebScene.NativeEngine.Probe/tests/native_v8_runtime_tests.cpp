@@ -18,9 +18,12 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <limits>
+#include <locale>
 #include <mutex>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <thread>

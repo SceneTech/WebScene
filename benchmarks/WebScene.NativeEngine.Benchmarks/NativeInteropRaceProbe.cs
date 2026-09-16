@@ -60,18 +60,15 @@ internal static class NativeInteropRaceProbe
                     throw new InvalidOperationException(
                         "The native interop work metrics ABI is unavailable.");
                 }
-                if (!NativeWebSceneApi.TryExecuteScript(
+                await ExecuteScriptAndWaitAsync(
                         engine,
                         """
                         globalThis.__webSceneInteropDelayed = () =>
                           new Promise(resolve =>
                             setTimeout(() => resolve(42), 10));
                         """,
-                        "native-interop-race.js"))
-                {
-                    throw new InvalidOperationException(
-                        "The native interop race fixture could not be installed.");
-                }
+                        "native-interop-race.js")
+                    .ConfigureAwait(false);
             }
 
             for (var batch = 0; batch < batches; batch++)
@@ -120,11 +117,18 @@ internal static class NativeInteropRaceProbe
                 }
 
                 // Disposal cancels managed waiters, but JavaScript promises
-                // and their timers still settle inside each realm. Allow that
-                // standards-required work to drain before the next batch.
-                await Task.Delay(20).ConfigureAwait(false);
+                // and their timers still settle inside each realm. Wait for a
+                // script queued behind those invocations to execute before the
+                // next batch; a fixed delay can let work accumulate until the
+                // bounded native interop queue rejects otherwise valid calls
+                // on a contended CI host.
                 foreach (var engine in engines)
                 {
+                    await ExecuteScriptAndWaitAsync(
+                            engine,
+                            "true",
+                            "native-interop-race-barrier.js")
+                        .ConfigureAwait(false);
                     var cleanupDeadline =
                         DateTime.UtcNow + TimeSpan.FromSeconds(5);
                     while (NativeWebSceneApi.GetInteropPoolMetrics(engine)
@@ -132,15 +136,6 @@ internal static class NativeInteropRaceProbe
                            && DateTime.UtcNow < cleanupDeadline)
                     {
                         await Task.Delay(1).ConfigureAwait(false);
-                    }
-                    if (!NativeWebSceneApi.TryExecuteScript(
-                            engine,
-                            "true",
-                            "native-interop-race-barrier.js"))
-                    {
-                        throw new InvalidOperationException(
-                            "The native interop race barrier failed: "
-                            + NativeWebSceneApi.GetLastError(engine));
                     }
                 }
             }
@@ -246,6 +241,38 @@ internal static class NativeInteropRaceProbe
         }
         while (DateTime.UtcNow < deadline);
         return metrics;
+    }
+
+    private static async Task ExecuteScriptAndWaitAsync(
+        IntPtr engine,
+        string source,
+        string documentName)
+    {
+        NativeWebSceneApi.EngineGetMetrics(engine, out var before);
+        if (!NativeWebSceneApi.TryExecuteScript(
+                engine,
+                source,
+                documentName))
+        {
+            throw new InvalidOperationException(
+                "The native interop race script was rejected: "
+                + NativeWebSceneApi.GetLastError(engine));
+        }
+
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        do
+        {
+            NativeWebSceneApi.EngineGetMetrics(engine, out var current);
+            if (current.ExecutedScripts > before.ExecutedScripts)
+            {
+                return;
+            }
+            await Task.Delay(1).ConfigureAwait(false);
+        }
+        while (DateTime.UtcNow < deadline);
+
+        throw new TimeoutException(
+            $"The native interop race script '{documentName}' was not executed within five seconds.");
     }
 
     private readonly struct DelayedCodec

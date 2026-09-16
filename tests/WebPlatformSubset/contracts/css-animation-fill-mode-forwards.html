@@ -24,11 +24,8 @@
       : { status: 0, message: null, stack: null };
     state.complete = true;
   };
-  const start = performance.now();
-  const sample = timestamp => {
-    if (timestamp - start < 250) { requestAnimationFrame(sample); return; }
+  setTimeout(() => {
     const opacity = Number(getComputedStyle(document.getElementById("artwork")).opacity);
     finish(opacity > .99 ? null : new Error("final opacity reverted to " + opacity));
-  };
-  requestAnimationFrame(sample);
+  }, 250);
 </script>

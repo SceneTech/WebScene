@@ -1188,8 +1188,9 @@ void test_hover_recascade_preserves_horizontal_catalog_row(webscene_engine* engi
     execute(engine, R"JS(
         document.body.innerHTML = `
           <style>
-            .catalog { display:flex; flex-direction:row; gap:12px; width:620px; overflow:hidden; }
-            .card { flex:0 0 140px; width:140px; height:190px; background:#181818; }
+            .catalog { display:grid; grid-auto-flow:column; grid-template-rows:repeat(1,auto);
+              gap:12px; width:620px; overflow:hidden; }
+            .card { width:140px; height:190px; background:#181818; }
             .card:hover { background:#282828; }
             .card:hover .action { opacity:1; }
             .action { opacity:0; width:32px; height:32px; }
@@ -1204,16 +1205,34 @@ void test_hover_recascade_preserves_horizontal_catalog_row(webscene_engine* engi
     const auto before = evaluate(engine,
         "JSON.stringify(Array.from(document.querySelectorAll('.card'), n => { const r=n.getBoundingClientRect(); return [r.x,r.y,r.width,r.height]; }))",
         "native-catalog-hover-layout-before.js");
-    pointer_move(engine, 20, 20, 110U);
+    const auto pointer_x = std::stod(evaluate(
+        engine,
+        "document.querySelector('.card').getBoundingClientRect().x + 100",
+        "native-catalog-hover-x.js"));
+    const auto pointer_y = std::stod(evaluate(
+        engine,
+        "document.querySelector('.card').getBoundingClientRect().y + 100",
+        "native-catalog-hover-y.js"));
+    pointer_move(engine, pointer_x, pointer_y, 110U);
+    wait_for_consumed_inputs(engine, 2U, "catalog hover pointer move was not consumed");
     const auto after = evaluate(engine,
         "JSON.stringify(Array.from(document.querySelectorAll('.card'), n => { const r=n.getBoundingClientRect(); return [r.x,r.y,r.width,r.height]; }))",
         "native-catalog-hover-layout-after.js");
     require(before == after,
-        "hover recascade changed a horizontal catalog row into a different layout: before="
+        "hover recascade changed a grid-auto-flow catalog row into a different layout: before="
             + before + " after=" + after);
-    require(evaluate(engine, "getComputedStyle(document.querySelector('.action')).opacity",
-        "native-catalog-hover-action.js") == "1",
-        "catalog hover did not apply its visual-only action state");
+    const auto hover_result = evaluate(engine, R"JS(
+        (() => {
+          const action = document.querySelector('.action');
+          const card = document.querySelector('.card');
+          const hit = document.elementFromPoint(card.getBoundingClientRect().x + 100,
+            card.getBoundingClientRect().y + 100);
+          return [getComputedStyle(action).opacity, card.matches(':hover'),
+            hit && hit.tagName, hit && hit.className];
+        })()
+    )JS", "native-catalog-hover-action.js");
+    require(hover_result == R"JSON(["1",true,"ARTICLE","card"])JSON",
+        "catalog hover did not apply its visual-only action state: " + hover_result);
 }
 
 void test_complex_is_specificity_ignores_non_element_siblings(webscene_engine* engine)

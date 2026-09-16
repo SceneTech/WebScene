@@ -12,7 +12,7 @@ if(WEBSCENE_TEST_WEBGPU)
   set_tests_properties(offscreen_gpu PROPERTIES TIMEOUT 90)
 endif()
 add_executable(compiled_native compiled_native.cpp)
-webscene_compile_html(compiled_native Main.html MODULE linux.contract.ui CSS_BACKEND shared)
+webscene_compile_html(compiled_native Main.html MODULE webscene.contract.ui CSS_BACKEND shared)
 target_link_libraries(compiled_native PRIVATE WebScene::NativeWeb WebScene::SharedCSS)
 add_test(NAME compiled_native COMMAND compiled_native)
 

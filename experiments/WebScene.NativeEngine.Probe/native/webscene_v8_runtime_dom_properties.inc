@@ -1208,8 +1208,7 @@
             0.0F,
             maximum);
         if (std::abs(next - node->scroll_left) <= 0.01F) return;
-        node->scroll_left = next;
-        self->document.mark_dirty();
+        self->document.set_scroll_offset(*node, next, node->scroll_top);
         self->enqueue_programmatic_scroll_event(*node);
     }
 
@@ -1234,8 +1233,7 @@
             0.0F,
             maximum);
         if (std::abs(next - node->scroll_top) <= 0.01F) return;
-        node->scroll_top = next;
-        self->document.mark_dirty();
+        self->document.set_scroll_offset(*node, node->scroll_left, next);
         self->enqueue_programmatic_scroll_event(*node);
     }
 
@@ -1278,9 +1276,7 @@
         const auto next_left=static_cast<float>(std::clamp(left,0.0,static_cast<double>(maximum_left)));
         const auto next_top=static_cast<float>(std::clamp(top,0.0,static_cast<double>(maximum_top)));
         if (next_left == node->scroll_left && next_top == node->scroll_top) return;
-        node->scroll_left=next_left;
-        node->scroll_top=next_top;
-        self->document.mark_dirty();
+        self->document.set_scroll_offset(*node, next_left, next_top);
         self->enqueue_programmatic_scroll_event(*node);
     }
 

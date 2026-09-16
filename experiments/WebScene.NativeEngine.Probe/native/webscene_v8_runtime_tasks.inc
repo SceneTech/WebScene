@@ -3250,9 +3250,7 @@
                     && std::abs(next_y - scroll_target->scroll_top) <= 0.01F) {
                     continue;
                 }
-                scroll_target->scroll_left = next_x;
-                scroll_target->scroll_top = next_y;
-                document.mark_dirty();
+                document.set_scroll_offset(*scroll_target, next_x, next_y);
                 if (!dispatch_input_event_type(input, "scroll", *scroll_target)) {
                     last_error = "Native scroll dispatch failed: "
                         + describe_reported_exception(try_catch, local_context);

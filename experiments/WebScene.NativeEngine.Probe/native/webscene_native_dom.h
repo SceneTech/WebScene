@@ -1663,6 +1663,7 @@ public:
     bool has_canvas_references(uint32_t node_id) const;
     bool dirty() const noexcept;
     void mark_dirty() noexcept;
+    void set_scroll_offset(dom_node& node, float left, float top) noexcept;
     void mark_out_of_flow_geometry_dirty(dom_node& node) noexcept;
     bool can_reuse_client_geometry(const dom_node& node) const noexcept;
     void signal_animation_frame(double timestamp_ms) noexcept;

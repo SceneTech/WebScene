@@ -1254,16 +1254,56 @@
                 case hover_invalidation_scope::subject:
                     add_request(changed_node, false);
                     break;
-                case hover_invalidation_scope::subtree:
-                    add_request(changed_node, true);
+                case hover_invalidation_scope::subtree: {
+                    const auto add_affected = [&](dom_node& candidate) {
+                        if (css_compound_selector_matches(
+                                candidate,
+                                dependency.affected_compound)) {
+                            add_request(
+                                &candidate,
+                                dependency.propagate_to_descendants);
+                        }
+                    };
+                    if (dependency.propagate_to_descendants
+                        && dependency.affected_compound == "*"
+                        && !dependency.affected_direct_children) {
+                        add_request(changed_node, true);
+                        break;
+                    }
+                    if (dependency.affected_direct_children) {
+                        for (auto* child : changed_node->children) {
+                            if (child != nullptr) add_affected(*child);
+                        }
+                    } else {
+                        visit_subtree(*changed_node, [&](dom_node& candidate) {
+                            if (&candidate != changed_node) add_affected(candidate);
+                        });
+                    }
                     break;
-                case hover_invalidation_scope::siblings:
-                    add_request(
-                        changed_node->parent == nullptr
-                            ? changed_node
-                            : changed_node->parent,
-                        true);
+                }
+                case hover_invalidation_scope::siblings: {
+                    if (changed_node->parent == nullptr
+                        || (dependency.propagate_to_descendants
+                            && dependency.affected_compound == "*")) {
+                        add_request(
+                            changed_node->parent == nullptr
+                                ? changed_node
+                                : changed_node->parent,
+                            true);
+                        break;
+                    }
+                    for (auto* sibling : changed_node->parent->children) {
+                        if (sibling != nullptr && sibling != changed_node
+                            && css_compound_selector_matches(
+                                *sibling,
+                                dependency.affected_compound)) {
+                            add_request(
+                                sibling,
+                                dependency.propagate_to_descendants);
+                        }
+                    }
                     break;
+                }
                 }
             }
         }

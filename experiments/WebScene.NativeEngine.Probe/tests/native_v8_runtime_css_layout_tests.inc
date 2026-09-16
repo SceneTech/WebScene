@@ -1435,6 +1435,41 @@ void test_hover_invalidation_updates_functional_and_sibling_subjects(
         hovered == R"("40px")" && unhovered == R"("20px")",
         "functional or sibling hover invalidation regressed: hovered="
             + hovered + ", unhovered=" + unhovered);
+
+    execute(engine, R"JS(
+        document.body.innerHTML = `
+          <style>
+            .menu { width: 80px; height: 80px; }
+            .menu > .item { width: 60px; height: 60px; }
+            .menu > :not(:hover, :focus) > * { opacity: .25; }
+            .menu > :hover > * { opacity: 1; }
+          </style>
+          <div class="menu"><div class="item"><span class="label">Open</span></div></div>`;
+    )JS", "native-hover-direct-child-invalidation-setup.js");
+    resize(engine, 320, 200, 106U);
+    const auto item_x = std::stod(evaluate(
+        engine,
+        "document.querySelector('.item').getBoundingClientRect().x + 40",
+        "native-hover-direct-child-invalidation-x.js"));
+    const auto item_y = std::stod(evaluate(
+        engine,
+        "document.querySelector('.item').getBoundingClientRect().y + 40",
+        "native-hover-direct-child-invalidation-y.js"));
+    pointer_move(engine, item_x, item_y, 107U);
+    const auto direct_child_hovered = evaluate(
+        engine,
+        "getComputedStyle(document.querySelector('.label')).opacity",
+        "native-hover-direct-child-invalidation-hovered.js");
+    pointer_move(engine, 250, 150, 108U);
+    const auto direct_child_unhovered = evaluate(
+        engine,
+        "getComputedStyle(document.querySelector('.label')).opacity",
+        "native-hover-direct-child-invalidation-unhovered.js");
+    require(
+        direct_child_hovered == R"("1")"
+            && direct_child_unhovered == R"("0.25")",
+        "functional direct-child hover invalidation regressed: hovered="
+            + direct_child_hovered + ", unhovered=" + direct_child_unhovered);
 }
 
 void test_hover_moves_between_block_and_display_contents_child(webscene_engine* engine)
@@ -1458,7 +1493,7 @@ void test_hover_moves_between_block_and_display_contents_child(webscene_engine* 
           hovered2.addEventListener('mouseover', event => __hoverEvents.push(event.target.id));
         })()
     )JS", "native-display-contents-hover-setup.js");
-    resize(engine, 320, 200, 106U);
+    resize(engine, 320, 200, 109U);
     const auto first_x = std::stod(evaluate(
         engine,
         "hovered.getBoundingClientRect().x + 5",
@@ -1475,14 +1510,14 @@ void test_hover_moves_between_block_and_display_contents_child(webscene_engine* 
         engine,
         "hovered2.getBoundingClientRect().y + 5",
         "native-display-contents-hover-second-y.js"));
-    pointer_move(engine, first_x, first_y, 107U);
+    pointer_move(engine, first_x, first_y, 110U);
     require(
         evaluate(
             engine,
             "__hoverEvents.length",
             "native-display-contents-hover-first-result.js") == "1",
         "the first hover move was not dispatched before entering display:contents");
-    pointer_move(engine, second_x, second_y, 108U);
+    pointer_move(engine, second_x, second_y, 111U);
     const auto result = evaluate(engine, R"JS(
         ({
           events: __hoverEvents,

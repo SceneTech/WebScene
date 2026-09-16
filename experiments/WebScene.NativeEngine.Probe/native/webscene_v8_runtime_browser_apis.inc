@@ -2202,9 +2202,7 @@
             && std::abs(next_top - root.scroll_top) <= 0.01F) {
             return;
         }
-        root.scroll_left = next_left;
-        root.scroll_top = next_top;
-        self->document.mark_dirty();
+        self->document.set_scroll_offset(root, next_left, next_top);
         self->enqueue_programmatic_scroll_event(root);
     }
 

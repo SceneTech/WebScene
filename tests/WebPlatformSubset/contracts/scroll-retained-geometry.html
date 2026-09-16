@@ -1,0 +1,35 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Scroll offsets update visual geometry without moving viewport-fixed content</title>
+<link rel="help" href="https://drafts.csswg.org/cssom-view/#dom-element-scrolltop">
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<style>
+  html, body { margin: 0; }
+  #scroller { position: absolute; top: 20px; width: 120px; height: 80px; overflow: auto; }
+  #content { height: 240px; }
+  #fixed { position: fixed; top: 7px; left: 9px; width: 10px; height: 10px; }
+</style>
+<div id="scroller"><div id="content"><div id="fixed"></div></div></div>
+<script>
+test(() => {
+  const contentTop = content.getBoundingClientRect().top;
+  const contentOffset = content.offsetTop;
+  const fixedTop = fixed.getBoundingClientRect().top;
+  scroller.scrollTop = 40;
+  assert_equals(scroller.scrollTop, 40);
+  assert_equals(content.getBoundingClientRect().top, contentTop - 40);
+  assert_equals(content.offsetTop, contentOffset,
+    "scrolling must not change layout-relative offset geometry");
+  assert_equals(fixed.getBoundingClientRect().top, fixedTop,
+    "a fixed descendant belongs to the viewport rather than the scroll contents");
+}, "A scroll offset translates client geometry but preserves layout and fixed geometry");
+
+test(() => {
+  scroller.scrollTop = 70;
+  assert_equals(content.getBoundingClientRect().top, -50);
+  scroller.scrollTop = 0;
+  assert_equals(content.getBoundingClientRect().top, 20,
+    "repeated offset changes must not accumulate translation error");
+}, "Repeated retained scroll translations are reversible");
+</script>

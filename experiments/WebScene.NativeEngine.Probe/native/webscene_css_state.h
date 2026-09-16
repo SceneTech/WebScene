@@ -131,7 +131,13 @@ using css_index_string_set = std::unordered_set<std::string>;
     struct hover_selector_dependency final
     {
         std::string trigger_compound;
+        // Rightmost selector compound whose computed style can change. Keeping
+        // this filter lets hover invalidation visit a large trigger subtree
+        // without recascading every unrelated descendant.
+        std::string affected_compound;
         hover_invalidation_scope scope{hover_invalidation_scope::subject};
+        bool affected_direct_children{false};
+        bool propagate_to_descendants{false};
     };
 
     // A browser document owns an independent cascade. Keeping this movable

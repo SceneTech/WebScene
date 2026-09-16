@@ -272,29 +272,131 @@
             if (trigger.empty()) trigger = "*";
 
             auto scope = hover_invalidation_scope::subject;
+            auto selector_arm_end = selector.size();
+            bracket_depth = 0;
+            parenthesis_depth = 0;
+            quote = 0;
             for (auto position = compound_end; position < selector.size(); ++position) {
                 const auto character = selector[position];
-                if (character == '+' || character == '~') {
-                    scope = hover_invalidation_scope::siblings;
+                if (quote != 0) {
+                    if (character == quote
+                        && (position == 0U || selector[position - 1U] != '\\')) {
+                        quote = 0;
+                    }
+                    continue;
+                }
+                if (character == '\\') {
+                    position = skip_css_escape_sequence(selector, position) - 1U;
+                    continue;
+                }
+                if (character == '\'' || character == '"') {
+                    quote = character;
+                    continue;
+                }
+                if (character == '[') ++bracket_depth;
+                else if (character == ']') --bracket_depth;
+                else if (character == '(') ++parenthesis_depth;
+                else if (character == ')') --parenthesis_depth;
+                else if (character == ',' && bracket_depth == 0
+                    && parenthesis_depth == 0) {
+                    selector_arm_end = position;
                     break;
                 }
-                if (character == '>'
+                if (bracket_depth != 0 || parenthesis_depth != 0) continue;
+                if (character == '+' || character == '~') {
+                    scope = hover_invalidation_scope::siblings;
+                } else if (character == '>'
                     || std::isspace(static_cast<unsigned char>(character))) {
-                    scope = hover_invalidation_scope::subtree;
+                    if (scope != hover_invalidation_scope::siblings) {
+                        scope = hover_invalidation_scope::subtree;
+                    }
                 }
             }
+
+            auto affected_begin = compound_begin;
+            auto affected_end = compound_end;
+            auto affected_direct_children = false;
+            if (scope != hover_invalidation_scope::subject) {
+                bracket_depth = 0;
+                parenthesis_depth = 0;
+                quote = 0;
+                affected_begin = compound_end;
+                for (auto position = compound_end; position < selector_arm_end; ++position) {
+                    const auto character = selector[position];
+                    if (quote != 0) {
+                        if (character == quote
+                            && (position == 0U || selector[position - 1U] != '\\')) {
+                            quote = 0;
+                        }
+                        continue;
+                    }
+                    if (character == '\\') {
+                        position = skip_css_escape_sequence(selector, position) - 1U;
+                        continue;
+                    }
+                    if (character == '\'' || character == '"') {
+                        quote = character;
+                        continue;
+                    }
+                    if (character == '[') ++bracket_depth;
+                    else if (character == ']') --bracket_depth;
+                    else if (character == '(') ++parenthesis_depth;
+                    else if (character == ')') --parenthesis_depth;
+                    else if (bracket_depth == 0 && parenthesis_depth == 0
+                        && (std::isspace(static_cast<unsigned char>(character))
+                            || character == '>' || character == '+'
+                            || character == '~')) {
+                        affected_begin = position + 1U;
+                    }
+                }
+                while (affected_begin < selector_arm_end
+                    && std::isspace(
+                        static_cast<unsigned char>(selector[affected_begin]))) {
+                    ++affected_begin;
+                }
+                auto combinator = affected_begin;
+                while (combinator > compound_end
+                    && std::isspace(static_cast<unsigned char>(
+                        selector[combinator - 1U]))) {
+                    --combinator;
+                }
+                affected_direct_children = combinator > compound_end
+                    && selector[combinator - 1U] == '>';
+                affected_end = selector_arm_end;
+                while (affected_end > affected_begin
+                    && std::isspace(
+                        static_cast<unsigned char>(selector[affected_end - 1U]))) {
+                    --affected_end;
+                }
+            }
+            auto affected = selector.substr(
+                affected_begin,
+                affected_end - affected_begin);
+            strip_hover_state_from_trigger(affected);
+            if (const auto pseudo_element = affected.find("::");
+                pseudo_element != std::string::npos) {
+                affected.resize(pseudo_element);
+            }
+            if (affected.ends_with(":before")) affected.resize(affected.size() - 7U);
+            else if (affected.ends_with(":after")) affected.resize(affected.size() - 6U);
+            if (affected.empty()) affected = "*";
+            const auto propagate_to_descendants = std::any_of(
+                rule.declarations().begin(),
+                rule.declarations().end(),
+                [](const css_declaration& declaration) {
+                    return declaration.name.starts_with("--");
+                });
             if (scope == hover_invalidation_scope::subject
-                && std::any_of(
-                    rule.declarations().begin(),
-                    rule.declarations().end(),
-                    [](const css_declaration& declaration) {
-                        return declaration.name.starts_with("--");
-                    })) {
+                && propagate_to_descendants) {
                 scope = hover_invalidation_scope::subtree;
+                affected = "*";
             }
             hover_selector_dependencies.push_back({
                 std::move(trigger),
-                scope});
+                std::move(affected),
+                scope,
+                affected_direct_children,
+                propagate_to_descendants});
             search = token_end;
         }
     }

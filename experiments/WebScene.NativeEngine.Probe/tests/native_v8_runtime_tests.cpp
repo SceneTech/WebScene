@@ -220,6 +220,23 @@ int main()
             webscene_engine_destroy(focused_engine);
             return 0;
         }
+        if (selected == "scroll-offset-fast-path") {
+            auto* focused_engine = webscene_engine_create(0);
+            require(focused_engine != nullptr, "focused engine creation failed");
+            for (auto attempt = 0; attempt < 100; ++attempt) {
+                const auto* scene = webscene_engine_acquire_latest_scene(focused_engine);
+                if (scene != nullptr) {
+                    webscene_scene_acknowledge(scene);
+                    webscene_scene_release(scene);
+                    break;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            }
+            test_scroll_offset_changes_translate_retained_geometry_without_layout(
+                focused_engine);
+            webscene_engine_destroy(focused_engine);
+            return 0;
+        }
         if (selected == "go-to-overflow") {
             auto* focused_engine = webscene_engine_create(0);
             require(focused_engine != nullptr, "focused engine creation failed");
@@ -577,6 +594,16 @@ int main()
             webscene_engine_destroy(focused_engine);
             return 0;
         }
+        if (selected == "hover-invalidation") {
+            auto* focused_engine = webscene_engine_create(0);
+            require(focused_engine != nullptr, "focused engine creation failed");
+            test_hover_invalidation_updates_functional_and_sibling_subjects(
+                focused_engine);
+            test_hover_moves_between_block_and_display_contents_child(
+                focused_engine);
+            webscene_engine_destroy(focused_engine);
+            return 0;
+        }
         if (selected == "inherited-box-sizing") {
             auto* focused_engine = webscene_engine_create(0);
             require(focused_engine != nullptr, "focused engine creation failed");
@@ -794,6 +821,7 @@ int main()
     test_segmented_rounded_borders_share_an_unclipped_join(engine);
     test_flex_gap_and_variable_text_metrics(engine);
     test_native_overflow_scrolling_and_nowrap(engine);
+    test_scroll_offset_changes_translate_retained_geometry_without_layout(engine);
     test_authored_scrollbar_style_and_thumb_drag(engine);
     test_absolute_virtualized_rows_follow_ancestor_scroll_container(engine);
     test_rounded_overflow_visual_fixture_geometry(engine);

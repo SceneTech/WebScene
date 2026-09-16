@@ -1063,6 +1063,13 @@
       "reason": "Required after corrected unchanged bytes pass Chrome and the native runner. The browser-authorized contract requires a finite scroll range, queued scroll events at changed boundaries, saturation at both ends, no duplicate event at an unchanged boundary, overflow hit-test clipping, row-flex extent invariance across repeated boundary scrolling, synchronous extent/offset re-clamping after content shrink and re-expansion, and preservation of that geometry when the author hides the scrollbar with ::-webkit-scrollbar { display:none }. Chrome rejected the earlier candidate because a layout-taking scrollbar induced a horizontal scrollbar, an absolutely positioned tail legitimately preserved overflow after the nominal parent height shrank, and scroll events were asserted synchronously. The corrected contract removes those false assumptions. Managed raster authority and native scene tests require a proportional default overlay thumb that moves with the bounded offset, then require the host thumb to disappear without changing scroll position or extent when the pseudo-element display winner is none. Evidence: artifacts/web-platform-overflow-scroll-chrome-v1-20260723/results.json (rejected formulation), artifacts/web-platform-overflow-scroll-chrome-v2-20260723/results.json, artifacts/web-platform-overflow-scroll-managed-fixed-v2-20260723/results.json, artifacts/web-platform-overflow-scroll-native-current-v2-20260723/results.json, OverflowViewportClipsHitTestingAndReclampsAfterExtentMutation, test_native_overflow_scrolling_and_nowrap, and test_row_flex_vertical_scroll_extent_remains_bounded."
     },
     {
+      "path": "contracts/scroll-retained-geometry.html",
+      "type": "testharness",
+      "capabilities": ["scroll-client-geometry-translation", "scroll-invariant-offset-geometry", "fixed-descendant-scroll-independence", "reversible-scroll-offsets"],
+      "evidence": ["catalog-main-content-wheel-performance", "chromium-scroll-property-tree-parity", "native-no-layout-scroll-regression"],
+      "reason": "Product-neutral regression for the retained scroll-offset fast path. Programmatic scrolling must move descendant client geometry immediately without changing layout-relative offsets, fixed descendants must remain viewport anchored, and repeated offsets must not accumulate translation error. The focused native regression additionally requires zero new layout passes for the same wheel and scrollTop changes."
+    },
+    {
       "path": "contracts/css-visibility-inheritance-interaction.html",
       "type": "contract",
       "capabilities": ["stylesheet-visibility-inheritance", "computed-visibility-override-restoration", "hidden-layout-retention", "hidden-focus-rejection", "hidden-hit-test-rejection"],

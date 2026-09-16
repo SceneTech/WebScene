@@ -1074,6 +1074,7 @@ struct dom_node final {
         std::string view_box;
         float natural_width{0};
         float natural_height{0};
+        bool encoded_raster{false};
         bool complete{false};
     };
 

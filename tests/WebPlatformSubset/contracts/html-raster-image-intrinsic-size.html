@@ -1,0 +1,29 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Raster images expose intrinsic size and preserve aspect ratio</title>
+<style>
+  html, body { margin: 0; }
+  #pixel { display: block; width: 40px; border-radius: 4px; }
+</style>
+<img id="pixel" alt="" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZQmcAAAAASUVORK5CYII=">
+<script>
+  const state = window.__webSceneWptState = {
+    complete: false, harness: null, results: [], errors: [], diagnostics: []
+  };
+  const image = document.getElementById("pixel");
+  function finish(status, message = null) {
+    if (state.complete) return;
+    state.results.push({ name: "PNG intrinsic and used dimensions", status, message, stack: null });
+    state.harness = { status: status === "PASS" ? 0 : 1, message, stack: null };
+    state.complete = true;
+  }
+  function verify() {
+    const rect = image.getBoundingClientRect();
+    if (image.complete && image.naturalWidth === 1 && image.naturalHeight === 1
+        && rect.width === 40 && rect.height === 40) finish("PASS");
+    else finish("FAIL", `image state was complete=${image.complete}, natural=${image.naturalWidth}x${image.naturalHeight}, used=${rect.width}x${rect.height}`);
+  }
+  image.addEventListener("load", verify, { once: true });
+  image.addEventListener("error", () => finish("FAIL", "PNG emitted an error event"), { once: true });
+  if (image.complete) verify();
+</script>

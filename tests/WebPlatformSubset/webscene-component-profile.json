@@ -582,6 +582,13 @@
       "reason": "Required after the exact product-neutral reftest passes the native runner. It covers literal and CSS-authored fill/stroke, author override of black presentation attributes, inherited HTML color, currentColor resolution, and native SVG rasterization. Evidence: artifacts/web-platform-svg-chevron-v3/{native,managed}/results.json."
     },
     {
+      "path": "contracts/html-raster-image-intrinsic-size.html",
+      "type": "contract",
+      "capabilities": ["html-raster-image", "png-data-url", "natural-image-dimensions", "replaced-image-aspect-ratio", "rounded-raster-scene-publication"],
+      "evidence": ["product-neutral-native-regression", "catalog-artwork"],
+      "reason": "Required product-neutral regression for decoding an encoded PNG resource, exposing natural dimensions, deriving an automatic block size from the used inline size, and publishing retained raster paint bytes."
+    },
+    {
       "path": "contracts/submenu-pointer-lifecycle.html",
       "type": "testharness",
       "capabilities": ["pointer-boundary-order", "hover-opened-submenu", "fixed-descendant-hit-testing", "subtree-related-target", "native-child-activation"],

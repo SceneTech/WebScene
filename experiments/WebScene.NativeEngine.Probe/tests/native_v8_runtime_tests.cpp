@@ -850,7 +850,7 @@ int main()
     test_element_opacity_emits_isolated_group(engine);
     test_svg_background_image_reaches_scene_with_position_and_size(engine);
     test_tradingview_repeating_svg_checker_background_reaches_scene(engine);
-    test_svg_img_element_loads_and_reaches_scene(engine);
+    test_image_elements_load_and_reach_scene(engine);
     test_virtual_html_root_inherits_font_metrics(engine);
     test_font_shorthand_inherit_resets_control_metrics(engine);
     test_webkit_font_smoothing_inherits_into_text_scene(engine);

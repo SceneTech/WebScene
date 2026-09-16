@@ -196,6 +196,13 @@
       "gap": "Native passes the URL-backed SVG primitive and the exact-pixel generated color-plane reftest. Stylesheet-relative URLs resolve against the stylesheet address, SVGs with an explicit viewBox or positive numeric dimensions supply an intrinsic viewport, and single linear gradients paint on ordinary and generated boxes. Multiple background layers, repeating gradient tiles, binary image resource envelopes, background-origin/clip/attachment, radial/conic gradients, and SVGs with neither viewBox nor numeric intrinsic dimensions remain outside the bounded claim."
     },
     {
+      "family": "html-raster-images",
+      "required": ["PNG", "JPEG", "GIF", "WebP dimension parsing", "base64 data image URLs", "naturalWidth and naturalHeight", "automatic replaced-image aspect ratio", "retained encoded raster scene publication", "rounded image clipping"],
+      "productEvidence": ["catalog artwork", "album and artist cards"],
+      "coverage": ["contracts/html-raster-image-intrinsic-size.html", "test_image_elements_load_and_reach_scene", "appscene_compositor_opacity encoded-raster regression"],
+      "gap": "The native pipeline preserves encoded raster bytes for the platform Skia decoder and parses intrinsic dimensions for PNG, JPEG, GIF, and WebP. Responsive object-fit/object-position modes, animated image playback, srcset/sizes selection, picture/source negotiation, decoding hints, and CSS raster background images remain outside this bounded claim."
+    },
+    {
       "family": "svg-presentation-paint",
       "required": ["presentation attributes below author rules in the cascade", "inherited fill and stroke properties", "currentColor resolution against the painted element", "scene invalidation after inherited color and class changes"],
       "productEvidence": ["Volume three-dot submenu chevrons", "axis-scale Labels and Lines submenu chevrons", "sidebar and toolbar currentColor icons"],

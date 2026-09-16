@@ -744,7 +744,7 @@ void test_tradingview_repeating_svg_checker_background_reaches_scene(
             + observed_resource);
 }
 
-void test_svg_img_element_loads_and_reaches_scene(webscene_engine* engine)
+void test_image_elements_load_and_reach_scene(webscene_engine* engine)
 {
     const auto resource_directory = std::filesystem::temp_directory_path()
         / ("webscene-img-svg-"
@@ -755,6 +755,20 @@ void test_svg_img_element_loads_and_reaches_scene(webscene_engine* engine)
     {
         std::ofstream svg(svg_path, std::ios::binary);
         svg << R"(<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 12"><rect width="24" height="12" fill="#2962ff"/></svg>)";
+    }
+    const auto raster_path = resource_directory / "pixel.png";
+    constexpr std::array<unsigned char,68> raster_png{{
+        0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,0x00,0x00,0x00,0x0d,
+        0x49,0x48,0x44,0x52,0x00,0x00,0x00,0x01,0x00,0x00,0x00,0x01,
+        0x08,0x04,0x00,0x00,0x00,0xb5,0x1c,0x0c,0x02,0x00,0x00,0x00,
+        0x0b,0x49,0x44,0x41,0x54,0x78,0xda,0x63,0xfc,0xff,0x1f,0x00,
+        0x02,0xeb,0x01,0xf5,0x8f,0x59,0x42,0x67,0x00,0x00,0x00,0x00,
+        0x49,0x45,0x4e,0x44,0xae,0x42,0x60,0x82}};
+    {
+        std::ofstream raster(raster_path, std::ios::binary);
+        raster.write(
+            reinterpret_cast<const char*>(raster_png.data()),
+            static_cast<std::streamsize>(raster_png.size()));
     }
     const auto root = resource_directory.string();
     require(
@@ -857,6 +871,32 @@ void test_svg_img_element_loads_and_reaches_scene(webscene_engine* engine)
     execute(engine, R"JS(
         (() => {
           const image = document.createElement('img');
+          image.id = 'native-raster-image';
+          image.style.width = '40px';
+          image.style.borderRadius = '4px';
+          globalThis.__nativeRasterImageLoads = 0;
+          image.addEventListener('load', () => __nativeRasterImageLoads++);
+          image.src = 'pixel.png';
+          document.body.appendChild(image);
+        })()
+    )JS", "native-raster-img-setup.js");
+    const auto raster_image_state = evaluate_until_equals(
+        engine,
+        R"JS(JSON.stringify((() => {
+          const image = document.querySelector('#native-raster-image');
+          const rect = image.getBoundingClientRect();
+          return [image.complete,image.naturalWidth,image.naturalHeight,rect.width,rect.height,__nativeRasterImageLoads];
+        })()))JS",
+        "native-raster-img-state.js",
+        R"("[true,1,1,40,40,1]")");
+    require(
+        raster_image_state == R"("[true,1,1,40,40,1]")",
+        "raster IMG did not expose intrinsic size or preserve its aspect ratio: "
+            + raster_image_state);
+
+    execute(engine, R"JS(
+        (() => {
+          const image = document.createElement('img');
           image.id = 'native-broken-image';
           globalThis.__nativeBrokenImageEvents = { errors: 0, loads: 0 };
           image.addEventListener('error', () => __nativeBrokenImageEvents.errors++);
@@ -888,6 +928,7 @@ void test_svg_img_element_loads_and_reaches_scene(webscene_engine* engine)
         const auto* scene = webscene_engine_acquire_latest_scene(engine);
         if (scene != nullptr) {
             auto matching_images = 0U;
+            auto matching_raster = false;
             for (uint32_t index = 0; index < scene->header.command_count; ++index) {
                 const auto& command = scene->commands[index];
                 if (command.kind == 6U
@@ -902,9 +943,14 @@ void test_svg_img_element_loads_and_reaches_scene(webscene_engine* engine)
                         && bytes.find("0 0 24 12") != std::string_view::npos) {
                         ++matching_images;
                     }
+                    if (bytes.starts_with("webscene-raster-v1\t")
+                        && bytes.size() == 19U + raster_png.size()
+                        && static_cast<unsigned char>(bytes[19U]) == 0x89U) {
+                        matching_raster = true;
+                    }
                 }
             }
-            found = matching_images >= 4U;
+            found = matching_images >= 4U && matching_raster;
             webscene_scene_acknowledge(scene);
             webscene_scene_release(scene);
         }

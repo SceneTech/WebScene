@@ -3120,6 +3120,13 @@ void native_document::layout_children(dom_node& parent)
                     ? std::max(0.0F, containing.height - top - bottom
                         - margin_top - margin_bottom)
                     : intrinsic_height;
+            if (child->tag == "img" && !is_specified(child->style.height)
+                && child->replaced_image().natural_width > 0
+                && child->replaced_image().natural_height > 0) {
+                assigned.height = assigned.width
+                    * child->replaced_image().natural_height
+                    / child->replaced_image().natural_width;
+            }
             // Absolutely/fixed positioned boxes still participate in the CSS
             // min/max size constraints. Dialogs commonly combine
             // `width: 100%` with `max-width` and then position the capped box.
@@ -3378,6 +3385,16 @@ void native_document::layout_children(dom_node& parent)
                         intrinsic_width)
                     : std::max(0.0F, content.width - margin_left - margin_right);
             width = constrain_size(*child, true, width, content.width);
+            if (child->tag == "img" && !is_specified(child->style.height)
+                && child->replaced_image().natural_width > 0
+                && child->replaced_image().natural_height > 0) {
+                height = constrain_size(
+                    *child,
+                    false,
+                    width * child->replaced_image().natural_height
+                        / child->replaced_image().natural_width,
+                    content.height);
+            }
             const auto horizontal_margin_is_auto = child->style.margin_left_auto
                 || child->style.margin_right_auto;
             if (horizontal_margin_is_auto) {
@@ -4249,6 +4266,12 @@ float native_document::compute_intrinsic_size(
         // Portaled time controls rely on this before a max-width cap is
         // applied to the wrapper and used to size its portaled listbox.
         return constrain(columns * measure_text_width("0", node) + padding);
+    }
+    if (node.tag == "img" && node.replaced_image().complete) {
+        const auto& image = node.replaced_image();
+        const auto intrinsic = horizontal
+            ? image.natural_width : image.natural_height;
+        if (intrinsic > 0) return constrain(intrinsic + padding);
     }
     if (node.tag == "svg" || node.tag == "img" || node.tag == "canvas" || node.tag == "video") {
 #if defined(WEBSCENE_NATIVE_ENGINE_INTRINSIC_SIZE_BRANCH_BENCHMARK)

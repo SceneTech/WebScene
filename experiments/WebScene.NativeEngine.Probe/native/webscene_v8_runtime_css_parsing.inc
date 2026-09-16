@@ -292,8 +292,10 @@
                     })) {
                 scope = hover_invalidation_scope::subtree;
             }
+            auto compiled_trigger = compile_css_compound_selector(trigger);
             hover_selector_dependencies.push_back({
                 std::move(trigger),
+                std::move(compiled_trigger),
                 scope});
             search = token_end;
         }

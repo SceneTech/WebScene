@@ -604,6 +604,7 @@ int main()
     test_zero_command_engine_starts_with_clean_scene();
     test_document_start_ordering_storage_and_fail_closed_errors();
     test_four_navigation_workers_enter_startup_concurrently();
+    test_initial_document_images_are_loaded();
     test_parallel_resource_prefetch();
     test_fetch_carries_document_origin_to_resource_host();
     test_initial_non_javascript_script_is_inert();

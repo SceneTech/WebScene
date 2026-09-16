@@ -3,7 +3,12 @@
 <title>Raster images expose intrinsic size and preserve aspect ratio</title>
 <style>
   html, body { margin: 0; }
-  #pixel { display: block; width: 40px; border-radius: 4px; }
+  #pixel {
+    display: block;
+    inline-size: 40px;
+    block-size: var(--missing-image-block-size, revert-layer);
+    border-radius: 4px;
+  }
 </style>
 <img id="pixel" alt="" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mOQ3RnyHwAESwIqgesNvAAAAABJRU5ErkJggg==">
 <script>

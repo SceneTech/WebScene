@@ -872,7 +872,9 @@ void test_image_elements_load_and_reach_scene(webscene_engine* engine)
         (() => {
           const image = document.createElement('img');
           image.id = 'native-raster-image';
-          image.style.width = '40px';
+          image.style.setProperty('inline-size', '40px');
+          image.style.setProperty(
+            'block-size', 'var(--missing-image-block-size, revert-layer)');
           image.style.borderRadius = '4px';
           globalThis.__nativeRasterImageLoads = 0;
           image.addEventListener('load', () => __nativeRasterImageLoads++);

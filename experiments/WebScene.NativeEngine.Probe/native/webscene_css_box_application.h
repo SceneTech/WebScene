@@ -12,29 +12,39 @@ bool apply_box_metrics(dom_node& node,const std::string& name,
         node.style.width = value == "inherit" && node.parent != nullptr
             ? node.parent->style.width
             : value == "initial" || value == "unset" || value == "revert"
+                || value == "revert-layer"
                 ? css_length{}
                 : native_document::parse_length(value);
     } else if ((name == "height" || name == "block-size") && !is_inline(inline_height)) {
         node.style.height = value == "inherit" && node.parent != nullptr
             ? node.parent->style.height
             : value == "initial" || value == "unset" || value == "revert"
+                || value == "revert-layer"
                 ? css_length{}
                 : native_document::parse_length(value);
     } else if ((name == "min-width" || name == "min-inline-size")
         && !is_inline(inline_min_width)) {
-        node.style.min_width = native_document::parse_length(value);
+        node.style.min_width = value == "initial" || value == "unset"
+                || value == "revert" || value == "revert-layer"
+            ? css_length{} : native_document::parse_length(value);
     } else if ((name == "min-height" || name == "min-block-size")
         && !is_inline(inline_min_height)) {
-        node.style.min_height = native_document::parse_length(value);
+        node.style.min_height = value == "initial" || value == "unset"
+                || value == "revert" || value == "revert-layer"
+            ? css_length{} : native_document::parse_length(value);
     } else if ((name == "max-width" || name == "max-inline-size")
         && !is_inline(inline_max_width)) {
         node.style.max_width = value == "none" || value == "fit-content"
             || value == "max-content" || value == "min-content"
+            || value == "initial" || value == "unset" || value == "revert"
+            || value == "revert-layer"
             ? css_length{} : native_document::parse_length(value);
     } else if ((name == "max-height" || name == "max-block-size")
         && !is_inline(inline_max_height)) {
         node.style.max_height = value == "none" || value == "fit-content"
             || value == "max-content" || value == "min-content"
+            || value == "initial" || value == "unset" || value == "revert"
+            || value == "revert-layer"
             ? css_length{} : native_document::parse_length(value);
     } else if ((name == "left" || name == "inset-inline-start") && !is_inline(inline_left)) {
         node.style.left = parse_inset_length(value);

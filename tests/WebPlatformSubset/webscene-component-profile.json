@@ -9,6 +9,13 @@
   },
   "required": [
     {
+      "path": "contracts/webcrypto-secure-random.html",
+      "type": "contract",
+      "capabilities": ["crypto-get-random-values", "crypto-random-uuid", "crypto-realm-parity", "crypto-random-quota"],
+      "evidence": ["vscode-oss-1.137-browser-workbench", "vscode-oss-1.137-worker-extension-host"],
+      "reason": "VS Code uses secure random bytes and UUIDs in its browser workbench and extension-host realms. SubtleCrypto remains absent until it has a vetted provider."
+    },
+    {
       "path": "contracts/dialog-opening-lifecycle.html",
       "type": "testharness",
       "capabilities": ["dialog-opening", "dialog-modal-focus", "dialog-beforetoggle"],

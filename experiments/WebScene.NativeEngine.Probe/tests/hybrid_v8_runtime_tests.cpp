@@ -7,6 +7,100 @@
 #include <string_view>
 #include <thread>
 void require(bool value, const char* message) { if (!value) throw std::runtime_error(message); }
+
+void test_web_crypto_secure_random_realms() {
+    webscene_native::native_document document;
+    webscene_native::v8_dom_runtime runtime(document,
+        []{return webscene_native::v8_dom_runtime::viewport_metrics{640,480,1,0};});
+    require(runtime.initialize(), "Web Crypto runtime failed");
+    require(runtime.execute(R"JS(
+        if (typeof crypto !== 'object' || Object.prototype.toString.call(crypto) !== '[object Crypto]')
+          throw Error('Crypto global shape changed');
+        if (typeof crypto.subtle !== 'undefined')
+          throw Error('Incomplete SubtleCrypto was exposed');
+        if (crypto.getRandomValues.name !== 'getRandomValues'
+            || crypto.getRandomValues.length !== 1
+            || crypto.randomUUID.name !== 'randomUUID'
+            || crypto.randomUUID.length !== 0)
+          throw Error('Crypto Web IDL method shape changed');
+        const integerArrays = [
+          new Int8Array(33), new Uint8Array(33), new Uint8ClampedArray(33),
+          new Int16Array(33), new Uint16Array(33),
+          new Int32Array(33), new Uint32Array(33),
+          new BigInt64Array(33), new BigUint64Array(33)
+        ];
+        for (const array of integerArrays) {
+          if (crypto.getRandomValues(array) !== array)
+            throw Error('getRandomValues did not return its argument');
+        }
+        if (!integerArrays.slice(3, 7).some(array =>
+            Array.from(new Uint8Array(array.buffer)).some(byte => byte !== 0)))
+          throw Error('integer arrays were not filled as raw bytes');
+        const empty = new Uint8Array(0);
+        if (crypto.getRandomValues(empty) !== empty)
+          throw Error('empty integer view was rejected');
+        const offsetBacking = new Uint8Array(32);
+        offsetBacking.fill(0x5a);
+        crypto.getRandomValues(offsetBacking.subarray(8, 24));
+        if (!offsetBacking.slice(0, 8).every(byte => byte === 0x5a)
+            || !offsetBacking.slice(24).every(byte => byte === 0x5a)
+            || offsetBacking.slice(8, 24).every(byte => byte === 0x5a))
+          throw Error('getRandomValues did not respect view bounds');
+        for (const invalid of [new Float32Array(1), new Float64Array(1), new DataView(new ArrayBuffer(1)), {}]) {
+          let rejected = false;
+          try { crypto.getRandomValues(invalid); } catch (error) { rejected = error instanceof TypeError; }
+          if (!rejected) throw Error('non-integer view was accepted');
+        }
+        const oversized = new Uint8Array(65537);
+        oversized.fill(0x5a);
+        let quotaRejected = false;
+        try { crypto.getRandomValues(oversized); }
+        catch (error) {
+          quotaRejected = error instanceof DOMException
+            && error.name === 'QuotaExceededError';
+        }
+        if (!quotaRejected || oversized.some(byte => byte !== 0x5a))
+          throw Error('quota rejection mutated or accepted the destination');
+        crypto.getRandomValues(new Uint8Array(65536));
+        const uuid = crypto.randomUUID();
+        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(uuid))
+          throw Error('randomUUID did not produce an RFC 4122 v4 UUID');
+        if (crypto.randomUUID() === uuid) throw Error('randomUUID repeated a value');
+        let illegalInvocation = false;
+        try { const unbound = crypto.getRandomValues; unbound(new Uint8Array(1)); }
+        catch (error) { illegalInvocation = error instanceof TypeError; }
+        if (!illegalInvocation) throw Error('unbound Crypto method was accepted');
+        let uuidIllegalInvocation = false;
+        try { const unbound = crypto.randomUUID; unbound(); }
+        catch (error) { uuidIllegalInvocation = error instanceof TypeError; }
+        if (!uuidIllegalInvocation) throw Error('unbound randomUUID was accepted');
+
+        const frame = document.createElement('iframe');
+        document.body.appendChild(frame);
+        const child = frame.contentDocument;
+        child.open();
+        child.write(`<script>
+          const bytes = new Uint32Array(8);
+          if (crypto.getRandomValues(bytes) !== bytes) throw Error('iframe random identity changed');
+          if (!/^[0-9a-f-]{36}$/.test(crypto.randomUUID())) throw Error('iframe UUID unavailable');
+          if (typeof crypto.subtle !== 'undefined') throw Error('iframe exposed incomplete SubtleCrypto');
+          globalThis.cryptoRealmPassed = true;
+        <\/script>`);
+        child.close();
+    )JS", "webcrypto-secure-random-realms"), runtime.last_error().c_str());
+    for (unsigned index = 0; index < 200; ++index) {
+        require(runtime.pump_task(), runtime.last_error().c_str());
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    require(runtime.execute(R"JS(
+        if (!frame.contentWindow.cryptoRealmPassed) throw Error('iframe Crypto realm failed');
+        const childCrypto = frame.contentWindow.crypto;
+        const childBytes = new Uint32Array(8);
+        if (childCrypto.getRandomValues(childBytes) !== childBytes)
+          throw Error('iframe Crypto object was not retained');
+    )JS", "webcrypto-secure-random-iframe-result"), runtime.last_error().c_str());
+}
+
 void test_compiled_template_shared_document() {
     webscene_native::native_document document;
     webscene_native::v8_dom_runtime runtime(document,
@@ -82,7 +176,17 @@ void test_blob_worker_source_lifetime() {
     });
     require(runtime.initialize(), "Blob worker runtime failed");
     require(runtime.execute(R"JS(
-        const workerURL = URL.createObjectURL(new Blob(['onmessage=e=>postMessage(e.data+1)'], {type:'text/javascript'}));
+        const workerURL = URL.createObjectURL(new Blob([`
+          onmessage = event => {
+            const bytes = new Uint32Array(8);
+            if (crypto.getRandomValues(bytes) !== bytes)
+              throw Error('worker random identity changed');
+            if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(crypto.randomUUID()))
+              throw Error('worker UUID unavailable');
+            if (typeof crypto.subtle !== 'undefined')
+              throw Error('worker exposed incomplete SubtleCrypto');
+            postMessage(event.data + 1);
+          };`], {type:'text/javascript'}));
         const blobWorker = new Worker(workerURL);
         blobWorker.onmessage = e => document.createCompiledTemplate('worker-result',e.data);
         URL.revokeObjectURL(workerURL);
@@ -533,11 +637,19 @@ int main() {
     try {
         if (const auto* filter = std::getenv(
                 "WEBSCENE_HYBRID_V8_RUNTIME_TEST_FILTER");
-            filter != nullptr && std::string_view(filter) == "worker-messageport") {
-            test_blob_worker_source_lifetime();
-            test_worker_message_port_contracts();
-            return 0;
+            filter != nullptr) {
+            const auto selected = std::string_view(filter);
+            if (selected == "webcrypto-secure-random") {
+                test_web_crypto_secure_random_realms();
+                return 0;
+            }
+            if (selected == "worker-messageport") {
+                test_blob_worker_source_lifetime();
+                test_worker_message_port_contracts();
+                return 0;
+            }
         }
+        test_web_crypto_secure_random_realms();
         test_blob_worker_source_lifetime();
         test_worker_message_port_contracts();
         test_compiled_template_shared_document();

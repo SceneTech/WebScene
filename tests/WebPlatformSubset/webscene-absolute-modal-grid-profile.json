@@ -1,0 +1,28 @@
+{
+  "profile": "webscene-absolute-modal-grid-1",
+  "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+  "runtime": "v8",
+  "viewport": {
+    "width": 1440,
+    "height": 940,
+    "deviceScaleFactor": 1
+  },
+  "required": [],
+  "candidate": [
+    {
+      "path": "contracts/css-nesting-absolute-modal-grid.html",
+      "type": "contract",
+      "capabilities": [
+        "css-nesting",
+        "absolute-inline-insets",
+        "grid-fractional-row",
+        "nested-child-combinator",
+        "absolute-split-body"
+      ],
+      "evidence": ["webscene-issue-112"],
+      "reason": "Product-neutral reduction of a centered absolute modal whose sizing and insets are authored through CSSOM while nested stylesheet rules supply positioning, shadow sizing, grid content constraints, and split-body geometry. It records exact 1440x940 geometry and a bounded 500-layout mutation gate."
+    }
+  ],
+  "harnessBlocked": [],
+  "excluded": []
+}

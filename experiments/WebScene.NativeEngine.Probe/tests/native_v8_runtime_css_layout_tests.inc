@@ -87,6 +87,86 @@ void test_responsive_positioned_sizing(webscene_engine* engine)
     }
 }
 
+void test_nested_css_absolute_modal_grid_geometry(webscene_engine* engine)
+{
+    resize(engine, 1440, 940, 1U);
+    const auto geometry = evaluate(engine, R"JS(
+        (() => {
+          document.body.innerHTML = `
+            <style>
+              html,body{margin:0;width:100%;height:100%}
+              .modal-block{position:fixed;width:100%;height:100%;top:0;left:0;overflow:hidden;
+                .modal-resizable{position:absolute}
+                .modal-shadow{width:100%;height:100%;overflow:hidden}
+              }
+              .modal-part{display:grid;grid-template-rows:33px 1fr;grid-template-columns:1fr;
+                box-sizing:border-box;width:100%;height:100%;border:1px solid #555;overflow:hidden;position:relative;
+                > .content{min-width:0;min-height:0;overflow:hidden}
+                .modal-header{grid-column:1 / -1;height:32px;
+                  .title{height:32px;line-height:32px}
+                }
+              }
+              .surface{height:100%;overflow:hidden;
+                .settings-header{box-sizing:border-box;height:86px}
+                .settings-body{position:relative;height:calc(100% - 86px);
+                  > .split-view{position:absolute;top:14px;right:24px;bottom:0;left:24px;display:flex;
+                    .toc{width:240px}
+                    .settings-list{flex:1 1 auto;min-width:0}
+                  }
+                }
+              }
+            </style>
+            <div class="modal-block"><div id="nested-modal" class="modal-resizable">
+              <div id="nested-shadow" class="modal-shadow"><div class="modal-part">
+                <div id="nested-header" class="modal-header"><div id="nested-title" class="title">Preferences</div></div>
+                <div id="nested-content" class="content"><div id="nested-surface" class="surface">
+                  <div class="settings-header"></div><div id="nested-body" class="settings-body">
+                    <div id="nested-split" class="split-view"><div id="nested-toc" class="toc"></div><div id="nested-list" class="settings-list"></div></div>
+                  </div>
+                </div></div>
+              </div></div>
+            </div></div>`;
+          const modal = document.getElementById('nested-modal');
+          Object.assign(modal.style, {width:'1152px',height:'724px',left:'144px',top:'108px'});
+          const box = id => {
+            const value = document.getElementById(id).getBoundingClientRect();
+            return [value.x,value.y,value.width,value.height];
+          };
+          globalThis.__nestedModal = modal;
+          return {
+            position:getComputedStyle(modal).position,
+            modal:box('nested-modal'),shadow:box('nested-shadow'),
+            header:box('nested-header'),title:box('nested-title'),
+            content:box('nested-content'),surface:box('nested-surface'),
+            body:box('nested-body'),split:box('nested-split'),
+            toc:box('nested-toc'),list:box('nested-list')
+          };
+        })()
+    )JS", "nested-css-absolute-modal-grid.js");
+    require(
+        geometry == R"JSON({"position":"absolute","modal":[144,108,1152,724],"shadow":[144,108,1152,724],"header":[145,109,1150,32],"title":[145,109,1150,32],"content":[145,142,1150,689],"surface":[145,142,1150,689],"body":[145,228,1150,603],"split":[169,242,1102,589],"toc":[169,242,240,589],"list":[409,242,862,589]})JSON",
+        "nested CSS modal/grid/split geometry regressed: " + geometry);
+
+    const auto elapsed = std::stod(evaluate(engine, R"JS(
+        (() => {
+          const started=performance.now();
+          for(let index=0;index<500;index++){
+            __nestedModal.style.left=`${144+(index&1)}px`;
+            __nestedModal.style.top=`${108+(index&1)}px`;
+            void __nestedModal.getBoundingClientRect().left;
+          }
+          __nestedModal.style.left='144px';
+          __nestedModal.style.top='108px';
+          return performance.now()-started;
+        })()
+    )JS", "nested-css-absolute-modal-grid-performance.js"));
+    std::cout << "Nested CSS modal layout gate: 500 positioned layouts in "
+        << elapsed << " ms\n";
+    require(elapsed < 2000.0,
+        "500 nested modal positioned layouts exceeded 2000ms: "
+            + std::to_string(elapsed));
+}
+
 void test_compact_go_to_fixed_grid_tracks_preserve_trailing_space(
     webscene_engine* engine)
 {

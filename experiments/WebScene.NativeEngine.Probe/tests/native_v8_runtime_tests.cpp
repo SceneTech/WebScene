@@ -353,6 +353,13 @@ int main()
             webscene_engine_destroy(focused_engine);
             return 0;
         }
+        if (selected == "nested-css-modal-grid") {
+            auto* focused_engine = webscene_engine_create(0);
+            require(focused_engine != nullptr, "focused nested CSS engine creation failed");
+            test_nested_css_absolute_modal_grid_geometry(focused_engine);
+            webscene_engine_destroy(focused_engine);
+            return 0;
+        }
         if (selected == "scrollbar-style-drag") {
             auto* focused_engine = webscene_engine_create(64);
             require(focused_engine != nullptr, "focused engine creation failed");
@@ -723,6 +730,12 @@ int main()
     test_generated_binary_cross_context_promise();
     test_shared_isolate_reuses_destroyed_context_slot();
     test_flex_baseline_uses_host_font_metrics();
+    {
+        auto* focused_engine = webscene_engine_create(0);
+        require(focused_engine != nullptr, "nested CSS regression engine creation failed");
+        test_nested_css_absolute_modal_grid_geometry(focused_engine);
+        webscene_engine_destroy(focused_engine);
+    }
     test_flex_baseline_moves_descendant_pseudo_paint_boxes();
     test_merged_inline_fragment_uses_contextual_host_advance();
     test_flattened_inline_fragment_honors_text_alignment();

@@ -158,6 +158,31 @@ void direct_streaming_sink()
     require(parsed.metrics.parser_retained_bytes == 0U, "direct parser stream retains no Rust output");
 }
 
+void nested_style_rule_stream()
+{
+    const auto parsed = parse_css_syntax_stylesheet(R"CSS(
+        .modal, .panel {
+            position: fixed;
+            .resizable { position: absolute; }
+            &.wide { width: 80%; }
+            > .content { min-width: 0; }
+        }
+    )CSS");
+    require(static_cast<bool>(parsed), parsed.error);
+    require(parsed.metrics.parse_error_count == 0U,
+        "valid nested style rules have no syntax errors");
+    require(parsed.rules.size() == 4U,
+        "nested style rules are retained in the rule tree");
+    require(parsed.rules[1].parent_index == 0U
+        && parsed.rules[2].parent_index == 0U
+        && parsed.rules[3].parent_index == 0U,
+        "nested style rules point to their style-rule parent");
+    require(parsed.rules[0].declaration_count == 1U,
+        "the parent declaration is retained beside nested rules");
+    require(parsed.declarations.size() == 4U,
+        "nested declarations are emitted exactly once");
+}
+
 } // namespace
 
 int main()
@@ -166,6 +191,7 @@ int main()
     stylesheet_structure();
     invalid_utf8_is_rejected();
     direct_streaming_sink();
+    nested_style_rule_stream();
     std::cout << "CSS parser tests passed\n";
     return 0;
 }

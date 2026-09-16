@@ -28,6 +28,7 @@ on:
     - 'scripts/build-native-engine-runtime.ps1'
     - 'scripts/pack-packages.sh'
     - 'scripts/verify-cross-rid-compatibility.py'
+    - 'scripts/tests/test_native_runtime_workflow_policy.py'
     - 'scripts/tests/test_verify_cross_rid_compatibility.py'
     - 'scripts/verify-release-packages.py'
     - 'src/WebScene.Backend.Abstractions/**'
@@ -58,10 +59,14 @@ jobs:
     - name: Test cross-RID evidence verifier
       run: |
         python3 -m unittest \
+          scripts/tests/test_native_runtime_workflow_policy.py \
           scripts/tests/test_verify_cross_rid_compatibility.py
     - name: Setup .NET
       uses: actions/setup-dotnet@v5
+      env:
+        DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
       with:
+        dotnet-version: 8.0.x
         global-json-file: global.json
     - id: version
       name: Resolve and validate package version
@@ -128,7 +133,10 @@ jobs:
         fetch-depth: 0
     - name: Setup .NET
       uses: actions/setup-dotnet@v5
+      env:
+        DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
       with:
+        dotnet-version: 8.0.x
         global-json-file: global.json
     - name: Pack and verify .NET packages
       shell: bash
@@ -182,7 +190,10 @@ jobs:
         fetch-depth: 0
     - name: Setup .NET
       uses: actions/setup-dotnet@v5
+      env:
+        DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
       with:
+        dotnet-version: 8.0.x
         global-json-file: global.json
     - name: Expose the self-hosted Rust toolchain
       if: matrix.rid == 'osx-arm64'
@@ -575,7 +586,10 @@ jobs:
     - uses: actions/checkout@v4
     - name: Setup .NET
       uses: actions/setup-dotnet@v5
+      env:
+        DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
       with:
+        dotnet-version: 8.0.x
         global-json-file: global.json
     - name: Download verified package set
       uses: actions/download-artifact@v4
@@ -630,7 +644,10 @@ jobs:
         path: artifacts/nuget-packages
     - name: Setup .NET
       uses: actions/setup-dotnet@v5
+      env:
+        DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
       with:
+        dotnet-version: 8.0.x
         global-json-file: global.json
     - id: trusted-publishing
       name: Exchange GitHub identity for a temporary NuGet API key

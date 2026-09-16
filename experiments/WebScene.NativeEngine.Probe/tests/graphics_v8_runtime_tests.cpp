@@ -348,6 +348,18 @@ void test_runtime_webgpu_installation() {
 #endif
     require(runtime.install_webgpu(wake,true,runtime_interop),"Secure WebGPU installation failed");
     require(runtime.execute(R"JS(
+        globalThis.idleCaretInput=document.createElement('input');
+        document.body.appendChild(idleCaretInput);
+        idleCaretInput.focus();
+    )JS","idle-caret-with-webgpu"),"Idle caret setup failed");
+    require((runtime.host_animation_frame_demand()&4U)!=0,
+        "Focused input did not request a caret opportunity");
+    runtime.signal_animation_frame(100.0);
+    require(!runtime.has_pending_animation_frame_task(),
+        "WebGPU installation turned an idle caret opportunity into GPU frame work");
+    require(runtime.execute("idleCaretInput.remove();delete globalThis.idleCaretInput;",
+        "idle-caret-with-webgpu-cleanup"),"Idle caret cleanup failed");
+    require(runtime.execute(R"JS(
         if(navigator.gpu!==navigator.gpu)throw new Error('GPU identity');
         navigator.gpu.requestAdapter().then(adapter=>{
             if(!adapter)throw new Error('adapter unavailable');

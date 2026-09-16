@@ -769,9 +769,16 @@
     {
       "path": "contracts/dom-treewalker-nodefilter-focus-navigation.html",
       "type": "contract",
-      "capabilities": ["nodefilter-constants", "document-create-tree-walker", "treewalker-filter-semantics", "focus-navigation-tree-traversal"],
-      "evidence": ["browser-authorized-order-menu-focus-management", "native-treewalker-regression", "actual-tradingview-order-menu-proof"],
-      "reason": "Product-neutral reduction of the focus-navigation primitive used by the TradingView order-menu portal. It verifies SHOW_ELEMENT filtering, FILTER_ACCEPT/SKIP/REJECT subtree semantics, currentNode/root identity and boundaries, document-order traversal, sibling navigation across skipped wrappers, and the lastChild/previousNode pattern used to locate focusable descendants."
+      "capabilities": ["nodefilter-constants", "document-create-tree-walker", "document-create-node-iterator", "treewalker-filter-semantics", "node-iterator-dompurify-traversal", "node-iterator-lazy-filtering", "focus-navigation-tree-traversal"],
+      "evidence": ["browser-authorized-order-menu-focus-management", "native-treewalker-regression", "native-node-iterator-regression", "actual-tradingview-order-menu-proof"],
+      "reason": "Product-neutral reduction of the focus-navigation primitive used by the TradingView order-menu portal and the DOMPurify traversal used by Code OSS chat rendering. It verifies TreeWalker navigation, root-inclusive NodeIterator forward/reverse traversal, lazy filter exceptions, and recursive-filter InvalidStateError behavior."
+    },
+    {
+      "path": "dom/traversal/NodeIterator-removal-during-filtering.html",
+      "type": "testharness",
+      "capabilities": ["node-iterator-lazy-filtering", "node-iterator-filter-removal-retargeting", "node-iterator-reference-state"],
+      "evidence": ["unchanged-pinned-node-iterator-wpt", "native-node-iterator-regression"],
+      "reason": "Unchanged hash-pinned WPT coverage for filtering at traversal time, referenceNode visibility during callbacks, and safe retargeting when filters remove the current candidate or its ancestor."
     },
     {
       "path": "contracts/dom-scope-descendant-selector.html",

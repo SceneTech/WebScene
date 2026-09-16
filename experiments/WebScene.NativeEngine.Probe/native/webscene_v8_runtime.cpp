@@ -2508,6 +2508,125 @@ struct v8_dom_runtime::implementation final {
                 return next;
               }
             }
+            )JS",
+            R"JS(
+            class WebSceneNodeIterator {
+              constructor(root, whatToShow = nodeFilterConstants.SHOW_ALL, filter = null) {
+                if (!root || typeof root.nodeType !== 'number') {
+                  throw new TypeError('NodeIterator root must be a Node');
+                }
+                if (filter != null && typeof filter !== 'function'
+                    && typeof filter.acceptNode !== 'function') {
+                  throw new TypeError('NodeIterator filter must be callable');
+                }
+                Object.defineProperties(this, {
+                  root: { value: root, enumerable: true },
+                  whatToShow: {
+                    value: Number(whatToShow) >>> 0, enumerable: true
+                  },
+                  filter: { value: filter ?? null, enumerable: true }
+                });
+                this._nodes = [];
+                this._referenceIndex = 0;
+                this._referenceNode = root;
+                this._pointerBeforeReferenceNode = true;
+                this._filterActive = false;
+
+                // Retain a bounded structural snapshot, but never run author
+                // code here. Filtering belongs to traversal so exceptions and
+                // recursive-filter errors occur at the specified call site.
+                const visit = node => {
+                  this._nodes.push(node);
+                  for (let child = node.firstChild; child; child = child.nextSibling) {
+                    visit(child);
+                  }
+                };
+                visit(root);
+              }
+              get referenceNode() { return this._referenceNode; }
+              get pointerBeforeReferenceNode() {
+                return this._pointerBeforeReferenceNode;
+              }
+              _isWithinRoot(node) {
+                for (let current = node; current; current = current.parentNode) {
+                  if (current === this.root) return true;
+                }
+                return false;
+              }
+              _repairRemovedReference() {
+                if (this._isWithinRoot(this._referenceNode)) return;
+                for (let index = this._referenceIndex - 1; index >= 0; --index) {
+                  const candidate = this._nodes[index];
+                  if (!this._isWithinRoot(candidate)) continue;
+                  this._referenceIndex = index;
+                  this._referenceNode = candidate;
+                  this._pointerBeforeReferenceNode = false;
+                  return;
+                }
+                this._referenceIndex = 0;
+                this._referenceNode = this.root;
+                this._pointerBeforeReferenceNode = true;
+              }
+              _acceptNode(node) {
+                const mask = node.nodeType > 0 && node.nodeType <= 32
+                  ? (1 << (node.nodeType - 1)) >>> 0
+                  : 0;
+                if ((this.whatToShow & mask) === 0) return false;
+                if (this.filter == null) return true;
+                const callback = typeof this.filter === 'function'
+                  ? this.filter
+                  : this.filter.acceptNode;
+                return Number(callback.call(this.filter, node))
+                  === nodeFilterConstants.FILTER_ACCEPT;
+              }
+              _traverse(forward) {
+                if (this._filterActive) {
+                  throw new DOMException(
+                    'NodeIterator filter is already active', 'InvalidStateError');
+                }
+                this._repairRemovedReference();
+                let index = this._referenceIndex;
+                let before = this._pointerBeforeReferenceNode;
+                this._filterActive = true;
+                try {
+                  while (true) {
+                    if (forward) {
+                      if (before) before = false;
+                      else ++index;
+                      if (index >= this._nodes.length) return null;
+                    } else {
+                      if (before) --index;
+                      else before = true;
+                      if (index < 0) return null;
+                    }
+                    const candidate = this._nodes[index];
+                    if (!this._isWithinRoot(candidate)
+                        || !this._acceptNode(candidate)) {
+                      continue;
+                    }
+                    // Removing the candidate from inside its own filter still
+                    // returns that candidate. The pre-removal position remains
+                    // on an attached node so later traversal cannot re-enter a
+                    // detached subtree.
+                    if (this._isWithinRoot(candidate)) {
+                      this._referenceIndex = index;
+                      this._referenceNode = candidate;
+                      this._pointerBeforeReferenceNode = before;
+                    }
+                    return candidate;
+                  }
+                } finally {
+                  this._filterActive = false;
+                  this._repairRemovedReference();
+                }
+              }
+              nextNode() { return this._traverse(true); }
+              previousNode() { return this._traverse(false); }
+              detach() {}
+            }
+            Object.defineProperty(WebSceneNodeIterator.prototype, Symbol.toStringTag, {
+              value: 'NodeIterator', configurable: true
+            });
 
             const installTreeWalkerPlatform = () => {
               const createTreeWalker = function(
@@ -2520,6 +2639,15 @@ struct v8_dom_runtime::implementation final {
                 ?? Object.getPrototypeOf(document);
               Object.defineProperty(documentPrototype, 'createTreeWalker', {
                 value: createTreeWalker, writable: true, configurable: true
+              });
+              const createNodeIterator = function(
+                  root,
+                  whatToShow = nodeFilterConstants.SHOW_ALL,
+                  filter = null) {
+                return new WebSceneNodeIterator(root, whatToShow, filter);
+              };
+              Object.defineProperty(documentPrototype, 'createNodeIterator', {
+                value: createNodeIterator, writable: true, configurable: true
               });
             };
             )JS",
@@ -2863,6 +2991,9 @@ struct v8_dom_runtime::implementation final {
               },
               TreeWalker: {
                 value: WebSceneTreeWalker, writable: true, configurable: true
+              },
+              NodeIterator: {
+                value: WebSceneNodeIterator, writable: true, configurable: true
               }
             });
           })();

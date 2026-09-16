@@ -1164,6 +1164,199 @@ void test_node_filter_tree_walker_focus_navigation(webscene_engine* engine)
         "NodeFilter/TreeWalker focus navigation regressed: " + result);
 }
 
+void test_node_iterator_dompurify_and_filter_contracts(webscene_engine* engine)
+{
+    const auto result = evaluate(engine, R"JS(
+        (() => {
+          document.body.innerHTML = '<main id="root">before<!--comment--><section><span>inside</span></section>after</main>';
+          const root = document.getElementById('root');
+          const mask = NodeFilter.SHOW_ELEMENT
+            | NodeFilter.SHOW_TEXT
+            | NodeFilter.SHOW_COMMENT;
+          let filterCalls = 0;
+          const iterator = document.createNodeIterator(root, mask, {
+            acceptNode(node) {
+              ++filterCalls;
+              return node.nodeType === Node.ELEMENT_NODE
+                  && node.localName === 'section'
+                ? NodeFilter.FILTER_REJECT
+                : NodeFilter.FILTER_ACCEPT;
+            }
+          });
+          const callsAfterConstruction = filterCalls;
+          const forward = [];
+          for (let node = iterator.nextNode(); node; node = iterator.nextNode()) {
+            forward.push(node.nodeType === Node.ELEMENT_NODE
+              ? node.localName
+              : node.nodeType === Node.COMMENT_NODE
+                ? `#comment:${node.data}`
+                : `#text:${node.data}`);
+          }
+          const forwardCalls = filterCalls;
+          const endState = [
+            iterator.referenceNode.nodeName,
+            iterator.pointerBeforeReferenceNode
+          ];
+          const backwards = [
+            iterator.previousNode()?.nodeName ?? null,
+            iterator.previousNode()?.nodeName ?? null,
+            iterator.nextNode()?.nodeName ?? null
+          ];
+
+          const thrown = { marker: 'filter failure' };
+          const throwing = document.createNodeIterator(
+            root, NodeFilter.SHOW_ELEMENT, () => { throw thrown; });
+          let constructorDeferredException = true;
+          let propagatedExactException = false;
+          try { throwing.nextNode(); } catch (error) {
+            propagatedExactException = error === thrown;
+          }
+
+          let recursive;
+          let depth = 0;
+          recursive = document.createNodeIterator(
+            root,
+            NodeFilter.SHOW_ELEMENT,
+            node => {
+              if (recursive.referenceNode !== root && depth === 0) {
+                ++depth;
+                recursive.nextNode();
+              }
+              return NodeFilter.FILTER_ACCEPT;
+            });
+          recursive.nextNode();
+          recursive.nextNode();
+          let recursiveNext = null;
+          try { recursive.nextNode(); } catch (error) {
+            recursiveNext = error.name;
+          }
+          --depth;
+          let recursivePrevious = null;
+          try { recursive.previousNode(); } catch (error) {
+            recursivePrevious = error.name;
+          }
+
+          const functionFilter = document.createNodeIterator(
+            root,
+            NodeFilter.SHOW_ELEMENT,
+            node => node.localName === 'span'
+              ? NodeFilter.FILTER_ACCEPT
+              : NodeFilter.FILTER_SKIP);
+          const functionFiltered = [];
+          for (let node = functionFilter.nextNode(); node;
+               node = functionFilter.nextNode()) {
+            functionFiltered.push(node.localName);
+          }
+
+          const fragment = document.createDocumentFragment();
+          const detached = document.createElement('strong');
+          fragment.appendChild(detached);
+          const detachedIterator = document.createNodeIterator(
+            fragment, NodeFilter.SHOW_ALL);
+
+          let invalidRoot = false;
+          let invalidFilter = false;
+          try { document.createNodeIterator(null); } catch (error) {
+            invalidRoot = error instanceof TypeError;
+          }
+          try { document.createNodeIterator(root, mask, {}); } catch (error) {
+            invalidFilter = error instanceof TypeError;
+          }
+
+          return {
+            instance: iterator instanceof NodeIterator,
+            brand: iterator.toString(),
+            root: iterator.root === root,
+            whatToShow: iterator.whatToShow,
+            callsAfterConstruction,
+            forwardCalls,
+            forward,
+            endState,
+            backwards,
+            constructorDeferredException,
+            propagatedExactException,
+            recursiveNext,
+            recursivePrevious,
+            functionFiltered,
+            detached: [
+              detachedIterator.nextNode() === fragment,
+              detachedIterator.nextNode() === detached,
+              detachedIterator.nextNode()
+            ],
+            invalidRoot,
+            invalidFilter
+          };
+        })()
+    )JS", "native-node-iterator-dompurify.js");
+    require(
+        result == R"JSON({"instance":true,"brand":"[object NodeIterator]","root":true,"whatToShow":133,"callsAfterConstruction":0,"forwardCalls":7,"forward":["main","#text:before","#comment:comment","span","#text:inside","#text:after"],"endState":["#text",false],"backwards":["#text","#text","#text"],"constructorDeferredException":true,"propagatedExactException":true,"recursiveNext":"InvalidStateError","recursivePrevious":"InvalidStateError","functionFiltered":["span"],"detached":[true,true,null],"invalidRoot":true,"invalidFilter":true})JSON",
+        "NodeIterator DOMPurify/filter contract regressed: " + result);
+}
+
+void test_node_iterator_isolated_scaling_and_memory_gate()
+{
+    auto engine = std::unique_ptr<webscene_engine, decltype(&webscene_engine_destroy)>{
+        webscene_engine_create(0), &webscene_engine_destroy};
+    require(engine != nullptr, "NodeIterator performance engine creation failed");
+
+    const auto result = evaluate(engine.get(), R"JS(
+        (() => {
+          const run = count => {
+            document.body.innerHTML = `<div id="iterator-root">${'<i></i>'.repeat(count)}</div>`;
+            const root = document.getElementById('iterator-root');
+            let filterCalls = 0;
+            const started = performance.now();
+            const iterator = document.createNodeIterator(
+              root,
+              NodeFilter.SHOW_ELEMENT,
+              () => {
+                ++filterCalls;
+                return NodeFilter.FILTER_ACCEPT;
+              });
+            const callsAfterConstruction = filterCalls;
+            let visited = 0;
+            while (iterator.nextNode()) ++visited;
+            return {
+              count,
+              visited,
+              filterCalls,
+              callsAfterConstruction,
+              elapsed: performance.now() - started
+            };
+          };
+
+          const small = run(10000);
+          const large = run(50000);
+          return {
+            smallCounts: [small.visited, small.filterCalls, small.callsAfterConstruction],
+            largeCounts: [large.visited, large.filterCalls, large.callsAfterConstruction],
+            underFiveSeconds: large.elapsed < 5000,
+            scalesLinearly: large.elapsed <= small.elapsed * 8 + 250
+          };
+        })()
+    )JS", "native-node-iterator-isolated-performance.js");
+
+    webscene_engine_memory_metrics memory{
+        sizeof(webscene_engine_memory_metrics)};
+    require(
+        webscene_engine_get_memory_metrics(engine.get(), &memory) != 0,
+        "NodeIterator performance memory metrics were unavailable");
+    constexpr uint64_t maximum_fixture_nodes = 70'000U;
+    constexpr uint64_t maximum_fixture_heap_bytes = 128U * 1024U * 1024U;
+    const auto bounded_memory =
+        memory.native_dom_node_count <= maximum_fixture_nodes
+        && memory.native_wrapper_handle_count <= maximum_fixture_nodes
+        && memory.v8_used_heap_bytes <= maximum_fixture_heap_bytes;
+
+    engine.reset();
+    require(
+        result == R"JSON({"smallCounts":[10001,10001,0],"largeCounts":[50001,50001,0],"underFiveSeconds":true,"scalesLinearly":true})JSON",
+        "isolated NodeIterator scaling gate failed: " + result);
+    require(
+        bounded_memory,
+        "isolated NodeIterator memory gate exceeded its 70,000-node/handle or 128 MiB V8 bound");
+}
+
 void test_animation_frame_dispatch_is_attributed()
 {
     auto* engine = webscene_engine_create(0);

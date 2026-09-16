@@ -770,10 +770,16 @@ if(WEBSCENE_NATIVE_ENGINE_ENABLE_V8)
         add_test(NAME webscene_native_engine_tests COMMAND webscene_native_engine_tests)
         add_test(NAME webscene_native_idle_v8_platform COMMAND webscene_native_engine_tests)
         add_test(NAME webscene_native_select_popup_context COMMAND webscene_native_engine_tests)
+        add_test(NAME webscene_native_hover_dependency_cache
+            COMMAND webscene_native_engine_tests)
         set_tests_properties(webscene_native_idle_v8_platform PROPERTIES
             ENVIRONMENT "WEBSCENE_NATIVE_ENGINE_TEST_FILTER=idle-v8-platform")
         set_tests_properties(webscene_native_select_popup_context PROPERTIES
             ENVIRONMENT "WEBSCENE_NATIVE_ENGINE_TEST_FILTER=select-popup-context")
+        set_tests_properties(webscene_native_hover_dependency_cache PROPERTIES
+            ENVIRONMENT "WEBSCENE_NATIVE_ENGINE_TEST_FILTER=hover-dependency-cache"
+            TIMEOUT 30
+            LABELS "native;runtime;performance")
         set_tests_properties(webscene_native_engine_tests PROPERTIES
             ENVIRONMENT
                 "WEBSCENE_V8_DETAILED_MEMORY_METRICS=1;WEBSCENE_INTEROP_STRESS=1")

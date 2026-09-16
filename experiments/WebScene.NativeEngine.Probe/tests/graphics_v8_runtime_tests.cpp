@@ -22,8 +22,11 @@
 #include "graphics/v8_webgpu_mapped_ranges.h"
 #include "graphics/v8_webgpu_map_request.h"
 #include "graphics/image_lease_abi.h"
+#include <chrono>
+#include <cstdlib>
 #include <v8.h>
 #include <iostream>
+#include <string_view>
 using namespace webscene::graphics;
 void require(bool value,const char* message) { if (!value) throw std::runtime_error(message); }
 #include "graphics_v8_webgpu_options.h"
@@ -333,6 +336,46 @@ void test_native_modal_ordering() {
     require(document.active_modal_dialog(document.body())==nullptr,"Navigation retained modal ordering");
 }
 
+void test_idle_webgpu_caret_opportunities(
+    webscene_native::v8_dom_runtime& runtime)
+{
+    require(runtime.execute(R"JS(
+        globalThis.idleCaretInput=document.createElement('input');
+        document.body.appendChild(idleCaretInput);
+        idleCaretInput.focus();
+    )JS","idle-caret-with-webgpu"),"Idle caret setup failed");
+    require((runtime.host_animation_frame_demand()&4U)!=0,
+        "Focused input did not request a caret opportunity");
+    constexpr auto idle_opportunity_count = 10000U;
+    const auto idle_started = std::chrono::steady_clock::now();
+    for (auto opportunity = 0U; opportunity < idle_opportunity_count; ++opportunity) {
+        runtime.signal_animation_frame(100.0 + opportunity * (1000.0 / 120.0));
+        require(!runtime.has_pending_animation_frame_task(),
+            "WebGPU installation turned an idle caret opportunity into GPU frame work");
+    }
+    const auto idle_elapsed = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - idle_started).count();
+    require(idle_elapsed < 2.0,
+        "10,000 idle caret opportunities exceeded two seconds");
+    std::cout << "Idle WebGPU caret gate: opportunities="
+              << idle_opportunity_count << " elapsed=" << idle_elapsed << "s\n";
+    require(runtime.execute("idleCaretInput.remove();delete globalThis.idleCaretInput;",
+        "idle-caret-with-webgpu-cleanup"),"Idle caret cleanup failed");
+}
+
+void test_idle_webgpu_caret_opportunity_without_hardware()
+{
+    webscene_native::native_document document;
+    webscene_native::v8_dom_runtime runtime(document,[]{
+        return webscene_native::v8_dom_runtime::viewport_metrics{64,64,1,0};
+    });
+    require(runtime.initialize(),"Idle WebGPU caret runtime failed");
+    auto wake=std::make_shared<engine_wake>();
+    require(runtime.install_webgpu(wake,true,webgpu_canvas_interop::none),
+        "Idle WebGPU caret installation failed");
+    test_idle_webgpu_caret_opportunities(runtime);
+}
+
 void test_runtime_webgpu_installation() {
     webscene_native::native_document document;
     webscene_native::v8_dom_runtime runtime(document,[]{return webscene_native::v8_dom_runtime::viewport_metrics{64,64,1,0};},
@@ -347,18 +390,7 @@ void test_runtime_webgpu_installation() {
     constexpr auto runtime_interop=webgpu_canvas_interop::none;
 #endif
     require(runtime.install_webgpu(wake,true,runtime_interop),"Secure WebGPU installation failed");
-    require(runtime.execute(R"JS(
-        globalThis.idleCaretInput=document.createElement('input');
-        document.body.appendChild(idleCaretInput);
-        idleCaretInput.focus();
-    )JS","idle-caret-with-webgpu"),"Idle caret setup failed");
-    require((runtime.host_animation_frame_demand()&4U)!=0,
-        "Focused input did not request a caret opportunity");
-    runtime.signal_animation_frame(100.0);
-    require(!runtime.has_pending_animation_frame_task(),
-        "WebGPU installation turned an idle caret opportunity into GPU frame work");
-    require(runtime.execute("idleCaretInput.remove();delete globalThis.idleCaretInput;",
-        "idle-caret-with-webgpu-cleanup"),"Idle caret cleanup failed");
+    test_idle_webgpu_caret_opportunities(runtime);
     require(runtime.execute(R"JS(
         if(navigator.gpu!==navigator.gpu)throw new Error('GPU identity');
         navigator.gpu.requestAdapter().then(adapter=>{
@@ -941,6 +973,12 @@ int main() {
     std::exception_ptr failure;
     std::thread worker([&] {
         try {
+            if (const auto* filter = std::getenv("WEBSCENE_GRAPHICS_TEST_FILTER");
+                filter != nullptr
+                && std::string_view(filter) == "idle-webgpu-caret-opportunity") {
+                test_idle_webgpu_caret_opportunity_without_hardware();
+                return;
+            }
             test_secure_context_reporting();
             test_modules_and_clone();
             test_dedicated_module_worker();

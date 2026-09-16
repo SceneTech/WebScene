@@ -562,6 +562,9 @@
         // compilation and optimization work. An embedder must service that
         // queue; otherwise hot application code remains on its initial tier.
         pump_v8_platform_tasks();
+        if (indexeddb_work_ready.load(std::memory_order_acquire)) {
+            return drain_indexeddb_completion();
+        }
 #if defined(WEBSCENE_NATIVE_ENGINE_ENABLE_GRAPHICS)
         if (graphics && !graphics_delivering && graphics->has_ready_work()) {
             struct delivery_guard {

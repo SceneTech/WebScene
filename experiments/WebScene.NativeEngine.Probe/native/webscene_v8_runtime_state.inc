@@ -86,6 +86,16 @@
         pending_interop_promises;
     std::unordered_map<uint64_t, pending_callback_promise>
         pending_callback_promises;
+    std::string storage_directory;
+    std::string storage_partition_key;
+    uint64_t storage_quota_bytes{0};
+    std::unique_ptr<indexeddb_storage> indexeddb;
+    std::mutex indexeddb_completion_mutex;
+    std::deque<indexeddb_completion> indexeddb_completions;
+    std::unordered_map<uint64_t, pending_indexeddb_promise>
+        pending_indexeddb_promises;
+    std::atomic<bool> indexeddb_work_ready{false};
+    uint64_t next_indexeddb_operation_id{1U};
     std::unordered_map<uint64_t, v8::Global<v8::Object>> node_wrappers;
     uint32_t next_attr_id{1U};
     std::unordered_map<uint32_t, std::unique_ptr<attr_state>> attr_states;

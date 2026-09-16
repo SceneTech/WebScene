@@ -14,6 +14,7 @@ public static class WebSceneComponentCapabilities
     public const string Keyboard = "input.keyboard";
     public const string Focus = "input.focus";
     public const string Clipboard = "clipboard";
+    public const string IndexedDb = "storage.indexeddb";
     public const string Commands = "host.commands";
     public const string Settings = "host.settings";
     public const string Notifications = "host.notifications";
@@ -31,6 +32,7 @@ public static class WebSceneComponentCapabilities
         Keyboard,
         Focus,
         Clipboard,
+        IndexedDb,
         Commands,
         Settings,
         Notifications,

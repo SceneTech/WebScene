@@ -651,6 +651,11 @@ internal struct EngineOptions
     public IntPtr WebGpuPolicyUserData;
     public IntPtr ResourceLoadCallbackV4;
     public IntPtr ResourceLoadV4UserData;
+    public IntPtr StorageDirectory;
+    public nuint StorageDirectoryLength;
+    public IntPtr StoragePartitionKey;
+    public nuint StoragePartitionKeyLength;
+    public ulong StorageQuotaBytes;
 }
 
 [StructLayout(LayoutKind.Sequential)]

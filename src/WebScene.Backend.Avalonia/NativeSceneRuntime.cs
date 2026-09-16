@@ -341,13 +341,22 @@ public static unsafe partial class NativeWebSceneApi
         Action? hostRequestAvailable = null,
         Action? interopCallbackAvailable = null,
         Action? animationFrameRequested = null,
-        Func<string, bool>? admitWebGpuDocument = null)
+        Func<string, bool>? admitWebGpuDocument = null,
+        string? persistentStorageDirectory = null,
+        string? persistentStoragePartitionKey = null,
+        ulong persistentStorageQuotaBytes = 0)
     {
         ArgumentNullException.ThrowIfNull(resourceLoader);
         ArgumentNullException.ThrowIfNull(scenePublished);
         var directoryBytes = string.IsNullOrWhiteSpace(compilationCacheDirectory)
             ? []
             : Encoding.UTF8.GetBytes(compilationCacheDirectory);
+        var storageDirectoryBytes = string.IsNullOrWhiteSpace(persistentStorageDirectory)
+            ? []
+            : Encoding.UTF8.GetBytes(persistentStorageDirectory);
+        var storagePartitionBytes = string.IsNullOrWhiteSpace(persistentStoragePartitionKey)
+            ? []
+            : Encoding.UTF8.GetBytes(persistentStoragePartitionKey);
         var bridgeHandle = GCHandle.Alloc(
             new ResourceBridge(
                 resourceLoader,
@@ -359,6 +368,8 @@ public static unsafe partial class NativeWebSceneApi
         try
         {
             fixed (byte* directory = directoryBytes)
+            fixed (byte* storageDirectory = storageDirectoryBytes)
+            fixed (byte* storagePartition = storagePartitionBytes)
             {
                 var options = new EngineOptions
                 {
@@ -399,7 +410,14 @@ public static unsafe partial class NativeWebSceneApi
                     WebGpuPolicyCallback = admitWebGpuDocument is null ? IntPtr.Zero : WebGpuPolicyAddress,
                     WebGpuPolicyUserData = admitWebGpuDocument is null ? IntPtr.Zero : GCHandle.ToIntPtr(bridgeHandle),
                     ResourceLoadCallbackV4 = ResourceLoadV4Address,
-                    ResourceLoadV4UserData = GCHandle.ToIntPtr(bridgeHandle)
+                    ResourceLoadV4UserData = GCHandle.ToIntPtr(bridgeHandle),
+                    StorageDirectory = storageDirectoryBytes.Length == 0
+                        ? IntPtr.Zero : (IntPtr)storageDirectory,
+                    StorageDirectoryLength = (nuint)storageDirectoryBytes.Length,
+                    StoragePartitionKey = storagePartitionBytes.Length == 0
+                        ? IntPtr.Zero : (IntPtr)storagePartition,
+                    StoragePartitionKeyLength = (nuint)storagePartitionBytes.Length,
+                    StorageQuotaBytes = persistentStorageQuotaBytes
                 };
                 var engine = EngineCreateWithOptions(in options);
                 if (engine == IntPtr.Zero) return IntPtr.Zero;

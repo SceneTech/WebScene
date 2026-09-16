@@ -278,7 +278,10 @@ public:
         std::function<void()> interop_callback_available = {},
         interop_callback_sink_v3 interop_callback_sink = {},
         std::function<void()> runtime_work_available = {},
-        class runtime_diagnostics* diagnostics = nullptr);
+        class runtime_diagnostics* diagnostics = nullptr,
+        std::string storage_directory = {},
+        std::string storage_partition_key = {},
+        uint64_t storage_quota_bytes = 0);
     ~v8_dom_runtime();
 
     v8_dom_runtime(const v8_dom_runtime&) = delete;

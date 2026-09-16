@@ -1,0 +1,154 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>IndexedDB Code OSS storage contract</title>
+<script>
+  const state = window.__webSceneWptState = {
+    complete: false, harness: null, results: [], errors: [], diagnostics: []
+  };
+  function record(name, condition, detail = "Contract failed") {
+    state.results.push({
+      name, status: condition ? "PASS" : "FAIL",
+      message: condition ? null : detail, stack: null
+    });
+  }
+  const requestPromise = request => new Promise((resolve, reject) => {
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+  const transactionPromise = transaction => new Promise((resolve, reject) => {
+    transaction.oncomplete = resolve;
+    transaction.onerror = transaction.onabort = () => reject(transaction.error);
+  });
+  const open = (version, upgrade) => new Promise((resolve, reject) => {
+    const request = indexedDB.open("webscene-wpt-code-oss", version);
+    request.onupgradeneeded = event => upgrade?.(request.result, event);
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+  const remove = () => requestPromise(indexedDB.deleteDatabase("webscene-wpt-code-oss"));
+
+  (async () => {
+    await remove();
+    let upgrade = "";
+    const database = await open(1, (db, event) => {
+      upgrade = `${event.oldVersion}->${event.newVersion}`;
+      db.createObjectStore("ItemTable");
+    });
+    record("open dispatches a version-zero upgrade", upgrade === "0->1", upgrade);
+    record("created object store is observable", database.objectStoreNames.contains("ItemTable"));
+
+    const write = database.transaction("ItemTable", "readwrite");
+    const source = {
+      value: 1,
+      bytes: new Uint8Array([3, 5, 8]),
+      date: new Date(456),
+      map: new Map([["theme", "dark"]])
+    };
+    write.objectStore("ItemTable").put(source, "alpha");
+    source.value = 99;
+    source.bytes[1] = 99;
+    source.map.set("theme", "mutated");
+    write.objectStore("ItemTable").put({ value: 2 }, "beta");
+    await transactionPromise(write);
+
+    const aborted = database.transaction("ItemTable", "readwrite");
+    aborted.objectStore("ItemTable").put({ value: 99 }, "alpha");
+    const abortedDone = new Promise(resolve => {
+      aborted.onerror = event => event.preventDefault();
+      aborted.onabort = resolve;
+    });
+    aborted.abort();
+    await abortedDone;
+    const rollbackRead = database.transaction("ItemTable", "readonly");
+    const rolledBack = await requestPromise(rollbackRead.objectStore("ItemTable").get("alpha"));
+    await transactionPromise(rollbackRead);
+    record("aborted transaction rolls back writes", rolledBack.value === 1);
+    record("put snapshots structured values before the caller mutates them",
+      rolledBack.value === 1 && rolledBack.bytes[1] === 5);
+    record("Date and Map structured values round trip",
+      rolledBack.date instanceof Date && rolledBack.date.getTime() === 456 &&
+      rolledBack.map instanceof Map && rolledBack.map.get("theme") === "dark");
+    rolledBack.bytes[1] = 42;
+    rolledBack.map.set("theme", "read-mutation");
+
+    const cursorRead = database.transaction("ItemTable", "readonly");
+    const keys = [];
+    await new Promise((resolve, reject) => {
+      const request = cursorRead.objectStore("ItemTable").openCursor();
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => {
+        if (!request.result) { resolve(); return; }
+        keys.push(request.result.key);
+        request.result.continue();
+      };
+    });
+    record("cursor advances in deterministic key order", keys.join(",") === "alpha,beta", keys.join(","));
+
+    let versionchange = "";
+    database.onversionchange = event => {
+      versionchange = `${event.oldVersion}->${event.newVersion}`;
+      database.close();
+    };
+    const upgraded = await open(2, db => db.createObjectStore("SecondTable"));
+    record("upgrade notifies and closes the old connection", versionchange === "1->2", versionchange);
+    record("upgrade commits the new version and store",
+      upgraded.version === 2 && upgraded.objectStoreNames.contains("SecondTable"));
+
+    const duplicate = upgraded.transaction("ItemTable", "readwrite");
+    const duplicateRequest = duplicate.objectStore("ItemTable").add("duplicate", "alpha");
+    let constraint = "";
+    duplicateRequest.onerror = event => {
+      constraint = duplicateRequest.error?.name || "";
+      event.preventDefault();
+    };
+    await transactionPromise(duplicate);
+    record("preventDefault on a request error keeps its transaction active",
+      constraint === "ConstraintError", constraint);
+    upgraded.close();
+
+    const first = await open();
+    const persistedRead = first.transaction("ItemTable", "readonly");
+    const persisted = await requestPromise(persistedRead.objectStore("ItemTable").get("alpha"));
+    await transactionPromise(persistedRead);
+    record("close and reopen reloads the durable snapshot",
+      persisted.value === 1 && persisted.bytes[1] === 5 &&
+      persisted.date instanceof Date && persisted.date.getTime() === 456 &&
+      persisted.map instanceof Map && persisted.map.get("theme") === "dark");
+
+    const second = await open();
+    const firstWrite = first.transaction("ItemTable", "readwrite");
+    const secondWrite = second.transaction("ItemTable", "readwrite");
+    firstWrite.objectStore("ItemTable").put("first", "conflict-a");
+    secondWrite.objectStore("ItemTable").put("second", "conflict-b");
+    await Promise.all([transactionPromise(firstWrite), transactionPromise(secondWrite)]);
+    first.close();
+    second.close();
+    const conflictReadDatabase = await open();
+    const conflictRead = conflictReadDatabase.transaction("ItemTable", "readonly");
+    const conflictStore = conflictRead.objectStore("ItemTable");
+    const conflictA = await requestPromise(conflictStore.get("conflict-a"));
+    const conflictB = await requestPromise(conflictStore.get("conflict-b"));
+    await transactionPromise(conflictRead);
+    record("concurrent connection commits preserve both revision winners",
+      conflictA === "first" && conflictB === "second");
+
+    const quotaWrite = conflictReadDatabase.transaction("ItemTable", "readwrite");
+    quotaWrite.objectStore("ItemTable").put("x".repeat(5 * 1024 * 1024), "too-large");
+    let quotaName = "committed";
+    try { await transactionPromise(quotaWrite); }
+    catch (error) { quotaName = error?.name || ""; }
+    record("partition quota aborts an oversized durable transaction",
+      quotaName === "QuotaExceededError", quotaName);
+    conflictReadDatabase.close();
+    await remove();
+  })().catch(error => {
+    state.errors.push(`${error?.name || "Error"}: ${error?.message || error}`);
+    record("IndexedDB workload completed", false, state.errors[0]);
+  }).finally(() => {
+    const failure = state.results.find(result => result.status !== "PASS");
+    state.harness = failure
+      ? { status: 1, message: failure.message, stack: failure.stack }
+      : { status: 0, message: null, stack: null };
+    state.complete = true;
+  });
+</script>

@@ -240,7 +240,7 @@
     static constexpr size_t maximum_compiled_css_selector_lists = 512U;
     mutable std::unordered_map<
         std::string,
-        compiled_css_selector_list,
+        std::shared_ptr<const compiled_css_selector_list>,
         transparent_string_hash,
         transparent_string_equal>
         compiled_css_selector_lists;

@@ -1559,6 +1559,13 @@
       "reason": "Product-neutral reduction of a 900ms infinite rotate(1turn) composition. Native publishes at least fifty host-clock frames, forty distinct angles, a real cycle wrap, no gap above 25ms, and no angular step above 15 degrees. Keep candidate until the CSS Animations slice is stable on every released native RID. Evidence: artifacts/web-platform-subset-keyframes-final-20260722/results.json."
     },
     {
+      "path": "contracts/css-animation-end-class-removal.html",
+      "type": "contract",
+      "capabilities": ["finite-keyframe-animation", "animationend-event", "animation-event-data", "listener-class-removal", "recascade-stability", "host-frame-clock"],
+      "evidence": ["code-oss-language-status-wiggle-reduction", "native-finite-keyframe-animation-end-regression"],
+      "reason": "Product-neutral reduction of a finite status animation whose animationend listener removes the triggering class. It requires one browser-shaped terminal event after an unrelated mid-animation recascade and proves listener cleanup completes without restarting the animation. Native host-demand release is additionally asserted by the deterministic ABI regression."
+    },
+    {
       "path": "contracts/observed-document-scroll-lifecycle-primitives.html",
       "type": "testharness",
       "capabilities": ["dom-content-loaded-event", "window-load-event", "document-ready-state-order", "programmatic-element-scroll", "scroll-event-target"],

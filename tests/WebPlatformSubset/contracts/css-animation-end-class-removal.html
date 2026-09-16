@@ -1,0 +1,82 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Finite keyframes dispatch animationend before listener cleanup</title>
+<style>
+  @keyframes status-wiggle {
+    0%, 100% { transform: rotate(0); }
+    50% { transform: rotate(.04turn); }
+  }
+  #status.wiggle {
+    width: 16px;
+    height: 16px;
+    animation: status-wiggle 800ms linear 1;
+  }
+</style>
+<body><span id="status" class="wiggle"></span>
+<script>
+  const state = window.__webSceneWptState = {
+    complete: false, harness: null, results: [], errors: [], diagnostics: []
+  };
+  const finish = (error, diagnostics = []) => {
+    if (state.complete) return;
+    state.diagnostics = diagnostics;
+    state.results.push({
+      name: "finite rotation keyframes dispatch one animationend and permit class cleanup",
+      status: error ? "FAIL" : "PASS",
+      message: error ? String(error && error.message || error) : null,
+      stack: error && error.stack ? String(error.stack) : null
+    });
+    state.harness = error
+      ? { status: 1, message: state.results[0].message, stack: state.results[0].stack }
+      : { status: 0, message: null, stack: null };
+    state.complete = true;
+  };
+
+  try {
+    const status = document.getElementById("status");
+    const events = [];
+    status.addEventListener("animationend", event => {
+      events.push({
+        animationName: event.animationName,
+        elapsedTime: event.elapsedTime,
+        pseudoElement: event.pseudoElement,
+        bubbles: event.bubbles,
+        cancelable: event.cancelable
+      });
+      status.classList.remove("wiggle");
+    });
+    let recascaded = false;
+    requestAnimationFrame(start => {
+      const sample = timestamp => {
+        try {
+          const elapsed = timestamp - start;
+          if (!recascaded && elapsed >= 300) {
+            recascaded = true;
+            status.classList.add("unrelated-recascade");
+            void status.offsetHeight;
+          }
+          if (events.length === 0 && elapsed < 1600) {
+            requestAnimationFrame(sample);
+            return;
+          }
+          if (events.length !== 1) {
+            throw new Error("animationend count differs: " + events.length);
+          }
+          const event = events[0];
+          if (event.animationName !== "status-wiggle"
+              || Math.abs(event.elapsedTime - .8) >= .0001
+              || event.pseudoElement !== ""
+              || event.bubbles !== true
+              || event.cancelable !== false) {
+            throw new Error("animationend data differs: " + JSON.stringify(event));
+          }
+          if (status.classList.contains("wiggle")) {
+            throw new Error("animationend listener did not remove the triggering class");
+          }
+          finish(null, [JSON.stringify({ elapsed, events, className: status.className })]);
+        } catch (error) { finish(error, [JSON.stringify(events)]); }
+      };
+      requestAnimationFrame(sample);
+    });
+  } catch (error) { finish(error); }
+</script>

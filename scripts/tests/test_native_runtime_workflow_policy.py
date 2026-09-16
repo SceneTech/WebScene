@@ -73,6 +73,47 @@ class NativeRuntimeWorkflowPolicyTests(unittest.TestCase):
         self.assertNotIn("\n    continue-on-error: true", candidate)
         self.assertIn("--advisory-test-failures", candidate)
 
+    def test_v8_windows_environment_boundary_is_wired_into_build_and_ci(self) -> None:
+        package_workflow = self.workflows[
+            ROOT / ".github/workflows/native-runtime-packages.yml"
+        ]
+        runtime_build = (
+            ROOT / "scripts/build-native-engine-runtime.ps1"
+        ).read_text(encoding="utf-8")
+        test_path = "scripts/tests/test_v8_windows_environment.ps1"
+
+        self.assertIn(f"- '{test_path}'", package_workflow)
+        self.assertIn(f"./{test_path}", package_workflow)
+        test_step = package_workflow.split(
+            "- name: Test V8 Windows child environment", 1
+        )[1].split("- name:", 1)[0]
+        self.assertIn("if: matrix.rid == 'win-x64'", test_step)
+        self.assertIn("shell: pwsh", test_step)
+        self.assertIn("Invoke-WebSceneV8ChildPowerShell", runtime_build)
+        self.assertIn("-V8ChildBuild", runtime_build)
+        self.assertGreaterEqual(
+            package_workflow.count(
+                "hashFiles(matrix.v8_cache_script, matrix.v8_cache_patch, "
+                "'scripts/V8WindowsEnvironment.psm1')"
+            ),
+            2,
+        )
+        self.assertIn(
+            "The exact Windows V8 cache identity was not restored; "
+            "forcing a clean child build.",
+            package_workflow,
+        )
+        self.assertIn("Verify fresh Windows V8 child build", package_workflow)
+        self.assertIn(
+            "Fresh Windows V8 checkout, GN generation, and Ninja output verified.",
+            package_workflow,
+        )
+        restore_keys = package_workflow.split("        restore-keys: |\n", 1)[1].split(
+            "    - id: restored-v8-sdk", 1
+        )[0]
+        self.assertEqual(restore_keys.count("matrix.rid != 'win-x64'"), 2)
+        self.assertNotIn("\n          webscene-v8-sdk-", restore_keys)
+
 
 if __name__ == "__main__":
     unittest.main()

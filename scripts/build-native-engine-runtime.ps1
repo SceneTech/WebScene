@@ -24,7 +24,8 @@ param(
     [string] $V8Snapshot = "bootstrap",
     [switch] $UpstreamV8,
     [switch] $ThinLto,
-    [switch] $PartitionAlloc
+    [switch] $PartitionAlloc,
+    [switch] $V8ChildBuild
 )
 
 $ErrorActionPreference = "Stop"
@@ -70,85 +71,110 @@ if ([string]::IsNullOrWhiteSpace($V8Root)) {
     if ([string]::IsNullOrWhiteSpace($V8Workspace)) {
         $V8Workspace = Join-Path $repoRoot "artifacts/native-engine-v8/$Rid"
     }
-    $depotTools = Join-Path $V8Workspace "depot_tools"
     $V8Root = Join-Path $V8Workspace "v8"
-    New-Item -ItemType Directory -Force -Path $V8Workspace | Out-Null
-    # depot_tools may run without a persistent global Git configuration on
-    # hosted Windows runners. Force LF checkouts for the pinned V8 sources so
-    # the pinned native V8 patches apply identically on every platform.
-    $env:GIT_CONFIG_COUNT = "2"
-    $env:GIT_CONFIG_KEY_0 = "core.autocrlf"
-    $env:GIT_CONFIG_VALUE_0 = "false"
-    $env:GIT_CONFIG_KEY_1 = "core.eol"
-    $env:GIT_CONFIG_VALUE_1 = "lf"
-    if (-not (Test-Path (Join-Path $depotTools ".git"))) {
-        & git clone --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git $depotTools
-        if ($LASTEXITCODE -ne 0) { throw "Failed to clone depot_tools." }
+    $v8PreparedByChild = $false
+    if ($IsWindows -and -not $V8ChildBuild) {
+        Import-Module (Join-Path $PSScriptRoot "V8WindowsEnvironment.psm1") -Force
+        $childArguments = @(
+            "-Rid", $Rid,
+            "-PackageVersion", $PackageVersion,
+            "-V8Workspace", $V8Workspace,
+            "-V8Revision", $v8Revision,
+            "-V8ChildBuild"
+        )
+        if ($UpstreamV8) { $childArguments += "-UpstreamV8" }
+        if ($ThinLto) { $childArguments += "-ThinLto" }
+        if ($PartitionAlloc) { $childArguments += "-PartitionAlloc" }
+        Invoke-WebSceneV8ChildPowerShell `
+            -ScriptPath $PSCommandPath `
+            -ArgumentList $childArguments
+        $v8PreparedByChild = $true
     }
-    $env:Path = "$depotTools;$env:Path"
-    $depotToolsGit = Join-Path $depotTools "git.bat"
-    if (-not (Test-Path $depotToolsGit)) {
-        & (Join-Path $depotTools "bootstrap/win_tools.bat")
-        if ($LASTEXITCODE -ne 0) { throw "Failed to bootstrap depot_tools for Windows." }
-    }
-    $env:DEPOT_TOOLS_UPDATE = "0"
-    $env:DEPOT_TOOLS_WIN_TOOLCHAIN = "0"
 
-    if (-not (Test-Path (Join-Path $V8Workspace ".gclient"))) {
+    if (-not $v8PreparedByChild) {
+        $depotTools = Join-Path $V8Workspace "depot_tools"
+        New-Item -ItemType Directory -Force -Path $V8Workspace | Out-Null
+        # depot_tools may run without a persistent global Git configuration on
+        # hosted Windows runners. Force LF checkouts for the pinned V8 sources so
+        # the pinned native V8 patches apply identically on every platform.
+        $env:GIT_CONFIG_COUNT = "2"
+        $env:GIT_CONFIG_KEY_0 = "core.autocrlf"
+        $env:GIT_CONFIG_VALUE_0 = "false"
+        $env:GIT_CONFIG_KEY_1 = "core.eol"
+        $env:GIT_CONFIG_VALUE_1 = "lf"
+        if (-not (Test-Path (Join-Path $depotTools ".git"))) {
+            & git clone --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git $depotTools
+            if ($LASTEXITCODE -ne 0) { throw "Failed to clone depot_tools." }
+        }
+        $env:Path = "$depotTools;$env:Path"
+        $depotToolsGit = Join-Path $depotTools "git.bat"
+        if (-not (Test-Path $depotToolsGit)) {
+            & (Join-Path $depotTools "bootstrap/win_tools.bat")
+            if ($LASTEXITCODE -ne 0) { throw "Failed to bootstrap depot_tools for Windows." }
+        }
+        $env:DEPOT_TOOLS_UPDATE = "0"
+        $env:DEPOT_TOOLS_WIN_TOOLCHAIN = "0"
+
+        if (-not (Test-Path (Join-Path $V8Workspace ".gclient"))) {
+            Push-Location $V8Workspace
+            try { & gclient.bat config https://chromium.googlesource.com/v8/v8 }
+            finally { Pop-Location }
+            if ($LASTEXITCODE -ne 0) { throw "Failed to configure the V8 checkout." }
+        }
         Push-Location $V8Workspace
-        try { & gclient.bat config https://chromium.googlesource.com/v8/v8 }
+        try { & gclient.bat sync --no-history -r $v8Revision }
         finally { Pop-Location }
-        if ($LASTEXITCODE -ne 0) { throw "Failed to configure the V8 checkout." }
-    }
-    Push-Location $V8Workspace
-    try { & gclient.bat sync --no-history -r $v8Revision }
-    finally { Pop-Location }
-    if ($LASTEXITCODE -ne 0) { throw "Failed to synchronize V8 $v8Revision." }
+        if ($LASTEXITCODE -ne 0) { throw "Failed to synchronize V8 $v8Revision." }
 
-    function Apply-PatchOnce([string] $Checkout, [string] $PatchPath) {
-        & git -C $Checkout apply --check --ignore-space-change $PatchPath
-        if ($LASTEXITCODE -eq 0) {
-            & git -C $Checkout apply --ignore-space-change $PatchPath
-            if ($LASTEXITCODE -ne 0) { throw "Failed to apply V8 patch '$PatchPath'." }
-            return
+        function Apply-PatchOnce([string] $Checkout, [string] $PatchPath) {
+            & git -C $Checkout apply --check --ignore-space-change $PatchPath
+            if ($LASTEXITCODE -eq 0) {
+                & git -C $Checkout apply --ignore-space-change $PatchPath
+                if ($LASTEXITCODE -ne 0) { throw "Failed to apply V8 patch '$PatchPath'." }
+                return
+            }
+            & git -C $Checkout apply --reverse --check --ignore-space-change $PatchPath
+            if ($LASTEXITCODE -ne 0) {
+                throw "Cannot apply or recognize V8 patch '$PatchPath' in '$Checkout'."
+            }
         }
-        & git -C $Checkout apply --reverse --check --ignore-space-change $PatchPath
-        if ($LASTEXITCODE -ne 0) {
-            throw "Cannot apply or recognize V8 patch '$PatchPath' in '$Checkout'."
+        # WebScene owns the JavaScript console bindings. The inspector bridge keeps
+        # the original V8 values so CDP clients receive object ids and previews.
+        Apply-PatchOnce $V8Root (Join-Path $repoRoot "third-party/v8-patches/V8InspectorConsolePatch.txt")
+        if (-not $UpstreamV8 -and $v8Revision -ne "15.3.10") {
+            Apply-PatchOnce $V8Root (Join-Path $repoRoot "third-party/v8-patches/V8Patch.txt")
+            Apply-PatchOnce $V8Root (Join-Path $repoRoot "packaging/WebScene.NativeEngine.Runtime/patches/V8ToolchainPatch.txt")
         }
-    }
-    # WebScene owns the JavaScript console bindings. The inspector bridge keeps
-    # the original V8 values so CDP clients receive object ids and previews.
-    Apply-PatchOnce $V8Root (Join-Path $repoRoot "third-party/v8-patches/V8InspectorConsolePatch.txt")
-    if (-not $UpstreamV8 -and $v8Revision -ne "15.3.10") {
-        Apply-PatchOnce $V8Root (Join-Path $repoRoot "third-party/v8-patches/V8Patch.txt")
-        Apply-PatchOnce $V8Root (Join-Path $repoRoot "packaging/WebScene.NativeEngine.Runtime/patches/V8ToolchainPatch.txt")
-    }
-    if ($ThinLto) {
-        Apply-PatchOnce $V8Root (Join-Path $repoRoot "packaging/WebScene.NativeEngine.Runtime/patches/V8ThinLtoPatch.txt")
-    }
-    if ($v8Revision -eq "15.3.10") {
-        # V8 15.3 needs two clang-cl/MSVC compatibility fixes: model the
-        # ExtendedMap ABI padding in Torque and use V8's FunctionRef directly
-        # in the backing-store allocation retry path.
-        Apply-PatchOnce $V8Root (Join-Path $repoRoot "packaging/WebScene.NativeEngine.Runtime/patches/V8WindowsCompatibilityPatch.txt")
-    }
-    if (-not $UpstreamV8 -and $v8Revision -ne "15.3.10") {
-        Apply-PatchOnce (Join-Path $V8Root "build") (Join-Path $repoRoot "third-party/v8-patches/BuildPatch.txt")
-        Apply-PatchOnce (Join-Path $V8Root "third_party/icu") (Join-Path $repoRoot "third-party/v8-patches/ICUPatch.txt")
+        if ($ThinLto) {
+            Apply-PatchOnce $V8Root (Join-Path $repoRoot "packaging/WebScene.NativeEngine.Runtime/patches/V8ThinLtoPatch.txt")
+        }
+        if ($v8Revision -eq "15.3.10") {
+            # V8 15.3 needs two clang-cl/MSVC compatibility fixes: model the
+            # ExtendedMap ABI padding in Torque and use V8's FunctionRef directly
+            # in the backing-store allocation retry path.
+            Apply-PatchOnce $V8Root (Join-Path $repoRoot "packaging/WebScene.NativeEngine.Runtime/patches/V8WindowsCompatibilityPatch.txt")
+        }
+        if (-not $UpstreamV8 -and $v8Revision -ne "15.3.10") {
+            Apply-PatchOnce (Join-Path $V8Root "build") (Join-Path $repoRoot "third-party/v8-patches/BuildPatch.txt")
+            Apply-PatchOnce (Join-Path $V8Root "third_party/icu") (Join-Path $repoRoot "third-party/v8-patches/ICUPatch.txt")
+        }
+
+        # Backslash-escaped quotes survive PowerShell's native argument marshalling
+        # and reach GN as string delimiters.
+        $gnArgs = 'chrome_pgo_phase=0 fatal_linker_warnings=false is_cfi=false is_component_build=false is_debug=false symbol_level=0 target_cpu=\"{0}\" treat_warnings_as_errors=false use_clang_modules=false use_custom_libcxx=false use_thin_lto={1} v8_embedder_string=\"-WebScene\" v8_enable_fuzztest=false v8_enable_partition_alloc={2} v8_enable_pointer_compression=true v8_enable_pointer_compression_shared_cage=true v8_enable_sandbox=false v8_enable_static_roots=false v8_enable_31bit_smis_on_64bit_arch=false v8_enable_temporal_support=false v8_monolithic=true v8_use_external_startup_data=false v8_target_cpu=\"{0}\"' -f $cpu, $thinLtoValue, $partitionAllocValue
+        Push-Location $V8Root
+        try {
+            & gn.bat gen "out/$cpu/$v8Configuration" "--args=$gnArgs"
+            if ($LASTEXITCODE -ne 0) { throw "Failed to generate the V8 build." }
+            & ninja.exe -C "out/$cpu/$v8Configuration" "obj/v8_monolith.lib"
+            if ($LASTEXITCODE -ne 0) { throw "Failed to build the V8 monolith." }
+        }
+        finally { Pop-Location }
     }
 
-    # Backslash-escaped quotes survive PowerShell's native argument marshalling
-    # and reach GN as string delimiters.
-    $gnArgs = 'chrome_pgo_phase=0 fatal_linker_warnings=false is_cfi=false is_component_build=false is_debug=false symbol_level=0 target_cpu=\"{0}\" treat_warnings_as_errors=false use_clang_modules=false use_custom_libcxx=false use_thin_lto={1} v8_embedder_string=\"-WebScene\" v8_enable_fuzztest=false v8_enable_partition_alloc={2} v8_enable_pointer_compression=true v8_enable_pointer_compression_shared_cage=true v8_enable_sandbox=false v8_enable_static_roots=false v8_enable_31bit_smis_on_64bit_arch=false v8_enable_temporal_support=false v8_monolithic=true v8_use_external_startup_data=false v8_target_cpu=\"{0}\"' -f $cpu, $thinLtoValue, $partitionAllocValue
-    Push-Location $V8Root
-    try {
-        & gn.bat gen "out/$cpu/$v8Configuration" "--args=$gnArgs"
-        if ($LASTEXITCODE -ne 0) { throw "Failed to generate the V8 build." }
-        & ninja.exe -C "out/$cpu/$v8Configuration" "obj/v8_monolith.lib"
-        if ($LASTEXITCODE -ne 0) { throw "Failed to build the V8 monolith." }
+    if ($V8ChildBuild) {
+        return
     }
-    finally { Pop-Location }
 }
 
 $v8OutputRoot = Join-Path $V8Root "out/$cpu/$v8Configuration"

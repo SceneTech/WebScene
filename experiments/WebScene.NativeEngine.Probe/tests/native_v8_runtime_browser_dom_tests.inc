@@ -3180,6 +3180,127 @@ void test_native_clipboard_shortcut_events(webscene_engine*)
     webscene_engine_destroy(engine);
 }
 
+void test_native_legacy_clipboard_completion_stress(webscene_engine*)
+{
+    auto* engine = webscene_engine_create(0);
+    require(engine != nullptr,
+        "legacy clipboard completion stress engine creation failed");
+    execute_and_wait(engine, R"JS(
+        document.body.innerHTML = '<textarea id="legacy-copy-stress"></textarea>';
+        const editor = document.getElementById('legacy-copy-stress');
+        globalThis.__legacyCopyStressEvents = 0;
+        globalThis.__legacyCopyStressResults = [];
+        editor.addEventListener('keydown', event => {
+          if (event.metaKey && event.key.toLowerCase() === 'c') {
+            event.preventDefault();
+            __legacyCopyStressResults.push(document.execCommand('copy'));
+          }
+        });
+        editor.addEventListener('copy', event => {
+          event.clipboardData.setData('text/plain', 'legacy stress');
+          event.preventDefault();
+          ++__legacyCopyStressEvents;
+        });
+        editor.focus();
+    )JS", "native-legacy-clipboard-stress-setup.js");
+
+    constexpr unsigned operation_count = 10000U;
+    constexpr unsigned batch_size = 16U;
+    constexpr auto modifier = WEBSCENE_INPUT_MODIFIER_META;
+    uint64_t sequence = 20000U;
+    const auto started = std::chrono::steady_clock::now();
+    for (unsigned offset = 0; offset < operation_count; offset += batch_size) {
+        for (unsigned index = 0; index < batch_size; ++index) {
+            keyboard_input(
+                engine, WEBSCENE_INPUT_KEY_DOWN, 'C', sequence++, modifier);
+        }
+        webscene_engine_metrics metrics{};
+        webscene_engine_get_metrics(engine, &metrics);
+        wait_for_consumed_inputs(
+            engine, metrics.enqueued_inputs,
+            "legacy clipboard stress input was not consumed");
+        for (unsigned index = 0; index < batch_size; ++index) {
+            const auto request = take_typed_host_request(engine);
+            require(
+                request.kind == WEBSCENE_HOST_REQUEST_CLIPBOARD_WRITE_V1
+                    && request.flags
+                        == WEBSCENE_HOST_REQUEST_CLIPBOARD_REPLACE_V1
+                    && request.content_type == "text/plain"
+                    && std::string(request.bytes.begin(), request.bytes.end())
+                        == "legacy stress",
+                "legacy clipboard stress request changed");
+            require(webscene_engine_complete_host_request_v1(
+                        engine, request.id, 0U, "text/plain",
+                        nullptr, 0U, nullptr) != 0,
+                "legacy clipboard stress completion was rejected");
+        }
+        const auto expected = offset + batch_size;
+        require(evaluate(
+                    engine,
+                    "__legacyCopyStressEvents === " + std::to_string(expected)
+                        + " && __legacyCopyStressResults.length === "
+                        + std::to_string(expected)
+                        + " && __legacyCopyStressResults.every(Boolean)",
+                    "native-legacy-clipboard-stress-barrier.js") == "true",
+            "legacy clipboard stress did not drain completions in order");
+    }
+    require(!take_typed_host_request(engine),
+        "legacy clipboard stress retained a host request");
+    const auto elapsed = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - started).count();
+    require(elapsed < 15.0,
+        "10,000 legacy clipboard completions exceeded fifteen seconds");
+    std::cout << "Legacy clipboard completion gate: operations="
+              << operation_count << " pendingHighWater=" << batch_size
+              << " elapsed=" << elapsed << "s\n";
+    // Reproduce the packaged close boundary: the worker destroys all resolved
+    // promise/microtask state immediately after the last public-ABI barrier.
+    webscene_engine_destroy(engine);
+}
+
+void test_native_pending_legacy_clipboard_shutdown(webscene_engine*)
+{
+    auto* engine = webscene_engine_create(0);
+    require(engine != nullptr,
+        "pending legacy clipboard shutdown engine creation failed");
+    execute_and_wait(engine, R"JS(
+        document.body.innerHTML = '<textarea id="pending-copy"></textarea>';
+        const editor = document.getElementById('pending-copy');
+        editor.addEventListener('keydown', event => {
+          if (event.metaKey && event.key.toLowerCase() === 'c') {
+            event.preventDefault();
+            document.execCommand('copy');
+          }
+        });
+        editor.addEventListener('copy', event => {
+          event.clipboardData.setData('text/plain', 'pending close');
+          event.preventDefault();
+        });
+        editor.focus();
+    )JS", "native-pending-legacy-clipboard-shutdown-setup.js");
+
+    keyboard_input(
+        engine, WEBSCENE_INPUT_KEY_DOWN, 'C', 31001U,
+        WEBSCENE_INPUT_MODIFIER_META);
+    webscene_engine_metrics metrics{};
+    webscene_engine_get_metrics(engine, &metrics);
+    wait_for_consumed_inputs(
+        engine, metrics.enqueued_inputs,
+        "pending legacy clipboard shutdown input was not consumed");
+    const auto request = take_typed_host_request(engine);
+    require(
+        request.kind == WEBSCENE_HOST_REQUEST_CLIPBOARD_WRITE_V1
+            && request.content_type == "text/plain"
+            && std::string(request.bytes.begin(), request.bytes.end())
+                == "pending close",
+        "pending legacy clipboard shutdown did not retain its host promise");
+
+    // A native window may close before the operating-system host completes a
+    // request. Destruction must release the pending persistent resolver while
+    // its V8 isolate is still alive.
+    webscene_engine_destroy(engine);
+}
+
 void test_clipboard_maximum_payload_gate(webscene_engine* engine)
 {
     constexpr size_t maximum_bytes = 16U * 1024U * 1024U;

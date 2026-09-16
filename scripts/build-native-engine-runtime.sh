@@ -383,6 +383,12 @@ elif [[ "$expected_kernel" == Linux ]]; then
     -DCMAKE_SHARED_LINKER_FLAGS=-fuse-ld=lld
   )
 fi
+if [[ "$expected_kernel" == Darwin && "$cmake_build_type" == Release ]]; then
+  # Keep line tables only until dsymutil has emitted the exact shipped
+  # binary's external symbols. strip removes them from the runtime before
+  # packaging, so diagnostics do not increase the installed footprint.
+  cmake_args+=("-DCMAKE_CXX_FLAGS_RELEASE=-O3 -DNDEBUG -gline-tables-only")
+fi
 cmake "${cmake_args[@]}"
 cmake --build "$build_dir" --config "$cmake_build_type" --parallel
 cmake -E copy_if_different "$icu_data" "$build_dir/icudtl.dat"
@@ -408,14 +414,15 @@ if [[ "$expected_kernel" == Darwin ]]; then
     echo "Native engine deployment target is '$actual_macos_deployment_target'; expected '$macos_deployment_target'." >&2
     exit 1
   fi
-fi
-if [[ "$expected_kernel" == Darwin && "$cmake_build_type" == RelWithDebInfo ]]; then
   native_dsym_path="$native_path.dSYM"
   cmake -E remove_directory "$native_dsym_path"
   dsymutil "$native_path" -o "$native_dsym_path"
   if [[ ! -d "$native_dsym_path" ]]; then
     echo "Native engine build did not produce '$native_dsym_path'." >&2
     exit 1
+  fi
+  if [[ "$cmake_build_type" == Release ]]; then
+    strip -S "$native_path"
   fi
 fi
 snapshot_path="$build_dir/webscene_bootstrap_snapshot.bin"

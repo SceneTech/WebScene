@@ -318,10 +318,15 @@ internal sealed class AvaloniaViewport : IWebSceneViewport, IDisposable
 /// </summary>
 public sealed class AvaloniaResourceLoader : IWebSceneResourceLoader
 {
+    private const int MaximumRedirectCount = 20;
+    private const int MaximumRedirectCookieCount = 32;
+    private const int MaximumRedirectCookieBytes = 16 * 1024;
+
     // Cookie ownership belongs to the engine-scoped browser jar. A process-wide
     // HttpClient cookie container would leak authentication across engines.
     private static readonly HttpClient s_httpClient = new(new HttpClientHandler
     {
+        AllowAutoRedirect = false,
         UseCookies = false
     });
     private readonly List<string> _resourceSearchDirectories = new();
@@ -403,46 +408,8 @@ public sealed class AvaloniaResourceLoader : IWebSceneResourceLoader
             }
             else
             {
-                using var message = new HttpRequestMessage(method, resolved);
-                message.Version = HttpVersion.Version20;
-                message.VersionPolicy = HttpVersionPolicy.RequestVersionOrLower;
-                if (request.Body is not null && method != HttpMethod.Get && method != HttpMethod.Head)
-                {
-                    message.Content = new ByteArrayContent(Encoding.UTF8.GetBytes(request.Body));
-                    if (!string.IsNullOrWhiteSpace(request.ContentType))
-                    {
-                        message.Content.Headers.TryAddWithoutValidation(
-                            "Content-Type",
-                            request.ContentType);
-                    }
-                }
-                if (!string.IsNullOrWhiteSpace(request.Context.Origin))
-                {
-                    message.Headers.TryAddWithoutValidation("Origin", request.Context.Origin);
-                }
-                if (!string.IsNullOrWhiteSpace(request.Cookie))
-                {
-                    message.Headers.TryAddWithoutValidation("Cookie", request.Cookie);
-                }
-                if (Uri.TryCreate(request.Context.Referrer, UriKind.Absolute, out var referrer))
-                {
-                    message.Headers.Referrer = referrer;
-                }
-                if (isSafeRead
-                    && !string.IsNullOrWhiteSpace(request.IfNoneMatch)
-                    && EntityTagHeaderValue.TryParse(request.IfNoneMatch, out var entityTag))
-                {
-                    message.Headers.IfNoneMatch.Add(entityTag);
-                }
-                if (isSafeRead && request.IfModifiedSince is { } modifiedSince)
-                {
-                    message.Headers.IfModifiedSince = modifiedSince;
-                }
-                using var response = s_httpClient.SendAsync(
-                        message,
-                        HttpCompletionOption.ResponseHeadersRead)
-                    .GetAwaiter()
-                    .GetResult();
+                var exchange = SendFollowingRedirects(request, resolved, method);
+                using var response = exchange.Response;
                 var responseEntityTag = response.Headers.ETag?.ToString() ?? request.IfNoneMatch;
                 var responseLastModified = response.Content.Headers.LastModified
                                            ?? request.IfModifiedSince;
@@ -488,10 +455,19 @@ public sealed class AvaloniaResourceLoader : IWebSceneResourceLoader
                     StatusText = response.ReasonPhrase ?? string.Empty,
                     FinalAddress = response.RequestMessage?.RequestUri?.ToString()
                         ?? resolved.ToString(),
-                    Headers = response.Headers
-                        .Concat(response.Content.Headers)
-                        .SelectMany(header => header.Value.Select(value =>
-                            new KeyValuePair<string, string>(header.Key, value)))
+                    Headers = exchange.RedirectCookies
+                        .Where(cookie => response.RequestMessage?.RequestUri is { } finalAddress
+                            && string.Equals(
+                                cookie.Source.Host,
+                                finalAddress.Host,
+                                StringComparison.OrdinalIgnoreCase))
+                        .Select(cookie => new KeyValuePair<string, string>(
+                            "Set-Cookie",
+                            NormalizeRedirectCookie(cookie.Source, cookie.Value)))
+                        .Concat(response.Headers
+                            .Concat(response.Content.Headers)
+                            .SelectMany(header => header.Value.Select(value =>
+                                new KeyValuePair<string, string>(header.Key, value))))
                         .ToArray()
                 };
             }
@@ -505,6 +481,246 @@ public sealed class AvaloniaResourceLoader : IWebSceneResourceLoader
 
         throw new NotSupportedException($"Unsupported resource scheme '{resolved.Scheme}'.");
     }
+
+    private static RedirectExchange SendFollowingRedirects(
+        in WebSceneResourceRequest request,
+        Uri initialAddress,
+        HttpMethod initialMethod)
+    {
+        var cookies = new CookieContainer(
+            capacity: 256,
+            perDomainCapacity: 64,
+            maxCookieSize: 4096);
+        var requestOrigin = Uri.TryCreate(
+            request.Context.Origin,
+            UriKind.Absolute,
+            out var parsedOrigin)
+            ? parsedOrigin
+            : initialAddress;
+        if (CanUseCookies(request.Credentials, requestOrigin, initialAddress))
+        {
+            SeedRequestCookies(cookies, initialAddress, request.Cookie);
+        }
+
+        var redirectCookies = new List<RedirectCookie>();
+        var redirectCookieBytes = 0;
+        var address = initialAddress;
+        var method = initialMethod;
+        for (var redirectCount = 0; ; redirectCount++)
+        {
+            using var message = CreateHttpRequest(request, address, method);
+            if (CanUseCookies(request.Credentials, requestOrigin, address))
+            {
+                var cookie = cookies.GetCookieHeader(address);
+                if (!string.IsNullOrEmpty(cookie))
+                {
+                    message.Headers.TryAddWithoutValidation("Cookie", cookie);
+                }
+            }
+
+            var response = s_httpClient.SendAsync(
+                    message,
+                    HttpCompletionOption.ResponseHeadersRead)
+                .GetAwaiter()
+                .GetResult();
+            if (!TryGetRedirectAddress(response, address, out var nextAddress))
+            {
+                return new RedirectExchange(response, redirectCookies);
+            }
+            if (redirectCount >= MaximumRedirectCount)
+            {
+                response.Dispose();
+                throw new HttpRequestException(
+                    $"WebScene resource redirect limit ({MaximumRedirectCount}) was exceeded.");
+            }
+            if (nextAddress.Scheme is not ("http" or "https"))
+            {
+                response.Dispose();
+                throw new HttpRequestException(
+                    $"WebScene resource redirect used unsupported scheme '{nextAddress.Scheme}'.");
+            }
+
+            if (CanUseCookies(request.Credentials, requestOrigin, address)
+                && response.Headers.TryGetValues("Set-Cookie", out var values))
+            {
+                foreach (var value in values)
+                {
+                    var valueBytes = Encoding.UTF8.GetByteCount(value);
+                    if (redirectCookies.Count >= MaximumRedirectCookieCount
+                        || valueBytes > MaximumRedirectCookieBytes - redirectCookieBytes
+                        || !TryStoreRedirectCookie(cookies, address, value))
+                    {
+                        continue;
+                    }
+                    redirectCookies.Add(new RedirectCookie(address, value));
+                    redirectCookieBytes += valueBytes;
+                }
+            }
+
+            method = RedirectMethod(response.StatusCode, method);
+            response.Dispose();
+            address = nextAddress;
+        }
+    }
+
+    private static HttpRequestMessage CreateHttpRequest(
+        in WebSceneResourceRequest request,
+        Uri address,
+        HttpMethod method)
+    {
+        var message = new HttpRequestMessage(method, address)
+        {
+            Version = HttpVersion.Version20,
+            VersionPolicy = HttpVersionPolicy.RequestVersionOrLower
+        };
+        var isSafeRead = method == HttpMethod.Get || method == HttpMethod.Head;
+        if (request.Body is not null && !isSafeRead)
+        {
+            message.Content = new ByteArrayContent(Encoding.UTF8.GetBytes(request.Body));
+            if (!string.IsNullOrWhiteSpace(request.ContentType))
+            {
+                message.Content.Headers.TryAddWithoutValidation(
+                    "Content-Type",
+                    request.ContentType);
+            }
+        }
+        if (!string.IsNullOrWhiteSpace(request.Context.Origin))
+        {
+            message.Headers.TryAddWithoutValidation("Origin", request.Context.Origin);
+        }
+        if (Uri.TryCreate(request.Context.Referrer, UriKind.Absolute, out var referrer))
+        {
+            message.Headers.Referrer = referrer;
+        }
+        if (isSafeRead
+            && !string.IsNullOrWhiteSpace(request.IfNoneMatch)
+            && EntityTagHeaderValue.TryParse(request.IfNoneMatch, out var entityTag))
+        {
+            message.Headers.IfNoneMatch.Add(entityTag);
+        }
+        if (isSafeRead && request.IfModifiedSince is { } modifiedSince)
+        {
+            message.Headers.IfModifiedSince = modifiedSince;
+        }
+        return message;
+    }
+
+    private static bool TryGetRedirectAddress(
+        HttpResponseMessage response,
+        Uri currentAddress,
+        out Uri nextAddress)
+    {
+        nextAddress = currentAddress;
+        if (response.StatusCode is not (HttpStatusCode.MovedPermanently
+            or HttpStatusCode.Found
+            or HttpStatusCode.SeeOther
+            or HttpStatusCode.TemporaryRedirect
+            or HttpStatusCode.PermanentRedirect)
+            || response.Headers.Location is not { } location)
+        {
+            return false;
+        }
+        nextAddress = location.IsAbsoluteUri ? location : new Uri(currentAddress, location);
+        return true;
+    }
+
+    private static HttpMethod RedirectMethod(HttpStatusCode status, HttpMethod method)
+        => status == HttpStatusCode.SeeOther && method != HttpMethod.Head
+            || status is HttpStatusCode.MovedPermanently or HttpStatusCode.Found
+                && method == HttpMethod.Post
+            ? HttpMethod.Get
+            : method;
+
+    private static bool CanUseCookies(
+        WebSceneFetchCredentials credentials,
+        Uri requestOrigin,
+        Uri address)
+        => credentials == WebSceneFetchCredentials.Include
+            || credentials == WebSceneFetchCredentials.SameOrigin
+                && Uri.Compare(
+                    requestOrigin,
+                    address,
+                    UriComponents.SchemeAndServer,
+                    UriFormat.SafeUnescaped,
+                    StringComparison.OrdinalIgnoreCase) == 0;
+
+    private static void SeedRequestCookies(
+        CookieContainer cookies,
+        Uri address,
+        string? header)
+    {
+        if (string.IsNullOrWhiteSpace(header)) return;
+        foreach (var pair in header.Split(';', StringSplitOptions.TrimEntries))
+        {
+            if (pair.IndexOf('=') <= 0) continue;
+            try
+            {
+                cookies.SetCookies(address, pair);
+            }
+            catch (CookieException)
+            {
+                // Native cookie selection already rejects malformed stored values.
+            }
+        }
+    }
+
+    private static bool TryStoreRedirectCookie(
+        CookieContainer cookies,
+        Uri source,
+        string value)
+    {
+        var attributes = value.Split(';', StringSplitOptions.TrimEntries);
+        var separator = attributes[0].IndexOf('=');
+        if (separator <= 0) return false;
+        var name = attributes[0][..separator];
+        var secure = attributes.Skip(1).Any(attribute =>
+            attribute.Equals("Secure", StringComparison.OrdinalIgnoreCase));
+        var hasDomain = attributes.Skip(1).Any(attribute =>
+            attribute.StartsWith("Domain=", StringComparison.OrdinalIgnoreCase));
+        var path = attributes.Skip(1).FirstOrDefault(attribute =>
+            attribute.StartsWith("Path=", StringComparison.OrdinalIgnoreCase));
+        var sameSiteNone = attributes.Skip(1).Any(attribute =>
+            attribute.Equals("SameSite=None", StringComparison.OrdinalIgnoreCase));
+        if (secure && source.Scheme != Uri.UriSchemeHttps
+            || sameSiteNone && !secure
+            || name.StartsWith("__Secure-", StringComparison.Ordinal) && !secure
+            || name.StartsWith("__Host-", StringComparison.Ordinal)
+                && (!secure || hasDomain || !string.Equals(
+                    path,
+                    "Path=/",
+                    StringComparison.OrdinalIgnoreCase)))
+        {
+            return false;
+        }
+        try
+        {
+            cookies.SetCookies(source, value);
+            return true;
+        }
+        catch (CookieException)
+        {
+            return false;
+        }
+    }
+
+    private static string NormalizeRedirectCookie(Uri source, string value)
+    {
+        if (value.Split(';', StringSplitOptions.TrimEntries).Skip(1).Any(attribute =>
+                attribute.StartsWith("Path=", StringComparison.OrdinalIgnoreCase)))
+        {
+            return value;
+        }
+        var path = source.AbsolutePath;
+        var finalSlash = path.LastIndexOf('/');
+        var defaultPath = finalSlash <= 0 ? "/" : path[..finalSlash];
+        return $"{value}; Path={defaultPath}";
+    }
+
+    private sealed record RedirectCookie(Uri Source, string Value);
+
+    private sealed record RedirectExchange(
+        HttpResponseMessage Response,
+        IReadOnlyList<RedirectCookie> RedirectCookies);
 
     internal bool TryLoadUtf8(
         in WebSceneResourceRequest request,

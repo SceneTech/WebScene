@@ -148,6 +148,157 @@ public sealed class AvaloniaResourceLoaderTests
     }
 
     [Fact]
+    public async Task RedirectChainPropagatesAndBoundsIntermediateCookies()
+    {
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var endpoint = (IPEndPoint)listener.LocalEndpoint;
+        var observed = new List<(string RequestLine, Dictionary<string, string> Headers)>();
+        var server = Task.Run(async () =>
+        {
+            var first = await ReadRequestAsync(listener);
+            observed.Add((first.RequestLine, first.Headers));
+            var cookieHeaders = string.Join(
+                string.Empty,
+                Enumerable.Range(0, 40).Select(index =>
+                    $"Set-Cookie: bounded_{index}=value; Path=/\r\n"));
+            await WriteResponseAsync(
+                first.Stream,
+                "HTTP/1.1 302 Found\r\n"
+                + "Location: /bootstrap/workbench\r\n"
+                + "Set-Cookie: vscode-tkn=redirect-secret; HttpOnly; SameSite=Lax\r\n"
+                + cookieHeaders
+                + "Content-Length: 0\r\nConnection: close\r\n\r\n");
+            first.Dispose();
+
+            var second = await ReadRequestAsync(listener);
+            observed.Add((second.RequestLine, second.Headers));
+            await WriteResponseAsync(
+                second.Stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n"
+                + "Content-Length: 9\r\nConnection: close\r\n\r\nworkbench");
+            second.Dispose();
+        });
+
+        var origin = $"http://127.0.0.1:{endpoint.Port}";
+        var resource = new AvaloniaResourceLoader().LoadText(
+            new WebSceneResourceRequest(
+                $"{origin}/bootstrap/start",
+                null,
+                WebSceneResourceKind.Markup)
+            {
+                Context = new WebSceneRequestContext(
+                    WebSceneResourceInitiator.Navigation,
+                    origin,
+                    null,
+                    WebSceneFetchMode.None,
+                    WebSceneRequestDestination.Document),
+                Credentials = WebSceneFetchCredentials.Include,
+                Cookie = "existing=seed"
+            });
+        await server.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal("workbench", resource.Content);
+        Assert.Equal($"{origin}/bootstrap/workbench", resource.FinalAddress);
+        Assert.Contains("existing=seed", observed[0].Headers["Cookie"], StringComparison.Ordinal);
+        Assert.Contains("existing=seed", observed[1].Headers["Cookie"], StringComparison.Ordinal);
+        Assert.Contains("vscode-tkn=redirect-secret", observed[1].Headers["Cookie"], StringComparison.Ordinal);
+        var returnedCookies = resource.Headers
+            .Where(header => header.Key.Equals("Set-Cookie", StringComparison.OrdinalIgnoreCase))
+            .Select(header => header.Value)
+            .ToArray();
+        Assert.Equal(32, returnedCookies.Length);
+        Assert.Contains(
+            returnedCookies,
+            value => value == "vscode-tkn=redirect-secret; HttpOnly; SameSite=Lax; Path=/bootstrap");
+        Assert.DoesNotContain(returnedCookies, value => value.StartsWith("bounded_31=", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task SameOriginRedirectDoesNotDiscloseCookiesAcrossPorts()
+    {
+        using var sourceListener = new TcpListener(IPAddress.Loopback, 0);
+        using var targetListener = new TcpListener(IPAddress.Loopback, 0);
+        sourceListener.Start();
+        targetListener.Start();
+        var sourceEndpoint = (IPEndPoint)sourceListener.LocalEndpoint;
+        var targetEndpoint = (IPEndPoint)targetListener.LocalEndpoint;
+        var targetHeaders = new TaskCompletionSource<Dictionary<string, string>>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var sourceServer = Task.Run(async () =>
+        {
+            using var request = await ReadRequestAsync(sourceListener);
+            await WriteResponseAsync(
+                request.Stream,
+                "HTTP/1.1 302 Found\r\n"
+                + $"Location: http://127.0.0.1:{targetEndpoint.Port}/final\r\n"
+                + "Set-Cookie: redirect-secret=hidden; Path=/; HttpOnly\r\n"
+                + "Content-Length: 0\r\nConnection: close\r\n\r\n");
+        });
+        var targetServer = Task.Run(async () =>
+        {
+            using var request = await ReadRequestAsync(targetListener);
+            targetHeaders.SetResult(request.Headers);
+            await WriteResponseAsync(
+                request.Stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n"
+                + "Connection: close\r\n\r\nok");
+        });
+
+        var origin = $"http://127.0.0.1:{sourceEndpoint.Port}";
+        var resource = new AvaloniaResourceLoader().LoadText(
+            new WebSceneResourceRequest(
+                $"{origin}/start",
+                null,
+                WebSceneResourceKind.Markup)
+            {
+                Context = new WebSceneRequestContext(
+                    WebSceneResourceInitiator.Fetch,
+                    origin,
+                    origin + "/document",
+                    WebSceneFetchMode.Cors,
+                    WebSceneRequestDestination.None),
+                Credentials = WebSceneFetchCredentials.SameOrigin,
+                Cookie = "origin-secret=hidden"
+            });
+        var headers = await targetHeaders.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await Task.WhenAll(sourceServer, targetServer).WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal("ok", resource.Content);
+        Assert.False(headers.ContainsKey("Cookie"));
+    }
+
+    [Fact]
+    public async Task RedirectChainStopsAtTheBoundedHopLimit()
+    {
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var endpoint = (IPEndPoint)listener.LocalEndpoint;
+        var server = Task.Run(async () =>
+        {
+            for (var index = 0; index <= 20; index++)
+            {
+                using var request = await ReadRequestAsync(listener);
+                await WriteResponseAsync(
+                    request.Stream,
+                    "HTTP/1.1 302 Found\r\n"
+                    + $"Location: /hop/{index + 1}\r\n"
+                    + "Content-Length: 0\r\nConnection: close\r\n\r\n");
+            }
+        });
+
+        var error = Assert.Throws<HttpRequestException>(() =>
+            new AvaloniaResourceLoader().LoadText(
+                new WebSceneResourceRequest(
+                    $"http://127.0.0.1:{endpoint.Port}/hop/0",
+                    null,
+                    WebSceneResourceKind.Markup)));
+        await server.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Contains("redirect limit (20)", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task HttpCaptureReplaysTextAndBinaryWithoutOriginFallback()
     {
         var fixtureDirectory = Path.Combine(AppContext.BaseDirectory, "Fixtures");
@@ -364,5 +515,57 @@ public sealed class AvaloniaResourceLoaderTests
             new WebSceneResourceRequest("missing-resource.js", null, WebSceneResourceKind.Script)));
         Assert.Throws<NotSupportedException>(() => loader.LoadText(
             new WebSceneResourceRequest("ftp://webscene.invalid/file.js", null, WebSceneResourceKind.Script)));
+    }
+
+    private static async Task<ReceivedRequest> ReadRequestAsync(TcpListener listener)
+    {
+        var client = await listener.AcceptTcpClientAsync();
+        var stream = client.GetStream();
+        var reader = new StreamReader(
+            stream,
+            Encoding.ASCII,
+            detectEncodingFromByteOrderMarks: false,
+            leaveOpen: true);
+        var requestLine = await reader.ReadLineAsync() ?? string.Empty;
+        var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        while (await reader.ReadLineAsync() is { Length: > 0 } line)
+        {
+            var separator = line.IndexOf(':');
+            if (separator > 0)
+            {
+                headers[line[..separator]] = line[(separator + 1)..].Trim();
+            }
+        }
+        return new ReceivedRequest(client, stream, reader, requestLine, headers);
+    }
+
+    private static Task WriteResponseAsync(NetworkStream stream, string response)
+        => stream.WriteAsync(Encoding.ASCII.GetBytes(response)).AsTask();
+
+    private sealed class ReceivedRequest(
+        TcpClient client,
+        NetworkStream stream,
+        StreamReader reader,
+        string requestLine,
+        Dictionary<string, string> headers) : IDisposable
+    {
+        public NetworkStream Stream { get; } = stream;
+        public string RequestLine { get; } = requestLine;
+        public Dictionary<string, string> Headers { get; } = headers;
+
+        public void Dispose()
+        {
+            reader.Dispose();
+            Stream.Dispose();
+            client.Dispose();
+        }
+
+        public void Deconstruct(
+            out string requestLine,
+            out Dictionary<string, string> headers)
+        {
+            requestLine = RequestLine;
+            headers = Headers;
+        }
     }
 }

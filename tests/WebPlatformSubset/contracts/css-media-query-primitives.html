@@ -2,7 +2,6 @@
 <meta charset="utf-8">
 <title>Observed component media queries select the expected rules</title>
 <style>
-  @layer reset { * { box-sizing: border-box; } }
   #probe { --base: pass; }
   @media all { #probe { --media-all: pass; } }
   @media (min-width: 1px) { #probe { --min-width: pass; } }
@@ -60,10 +59,20 @@
     }
   }
 
+  const layeredReset = document.createElement("style");
+  layeredReset.textContent = "@layer reset { * { box-sizing: border-box; } }";
+  document.head.appendChild(layeredReset);
   const style = getComputedStyle(document.getElementById("probe"));
-  test("universal rules inside a cascade layer remain active", () => {
+  test("dynamically inserted universal rules inside a cascade layer recascade existing elements", () => {
     if (style.boxSizing !== "border-box") {
-      throw new Error("layered universal box-sizing resolved to " + style.boxSizing);
+      throw new Error("dynamic layered universal box-sizing resolved to " + style.boxSizing);
+    }
+  });
+  test("dynamically inserted layered universal rules apply to later elements", () => {
+    const later = document.createElement("div");
+    document.body.appendChild(later);
+    if (getComputedStyle(later).boxSizing !== "border-box") {
+      throw new Error("later element ignored the dynamic layered universal rule");
     }
   });
   test("media type and viewport bounds", () => {

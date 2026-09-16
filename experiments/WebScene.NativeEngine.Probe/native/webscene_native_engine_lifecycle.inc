@@ -49,13 +49,17 @@
         , animation_frame_requested_callback_(animation_frame_requested_callback)
         , animation_frame_requested_user_data_(animation_frame_requested_user_data)
         , document_(text_measure_callback, text_measure_user_data)
-        , worker_([this](std::stop_token token) { run(token); })
     {
         if (!compilation_cache_directory_.empty()) {
             webscene_css_set_compilation_cache_directory_v1(
                 compilation_cache_directory_.data(),
                 compilation_cache_directory_.size());
         }
+        // Start the worker only after all constructor setup is complete. It can
+        // parse stylesheets immediately, so starting it in the initializer list
+        // races process-wide CSS cache configuration.
+        worker_start_ready_.store(true, std::memory_order_release);
+        worker_ = std::jthread([this](std::stop_token token) { run(token); });
     }
 
     ~webscene_engine()

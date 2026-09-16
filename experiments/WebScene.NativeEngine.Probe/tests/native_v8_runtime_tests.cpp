@@ -73,6 +73,7 @@ uint8_t measure_baseline_fixture_text(
 // feature; shared fixtures remain visible without additional test-only APIs.
 #include "native_v8_runtime_document_tests.inc"
 #include "native_v8_runtime_test_support.inc"
+#include "native_v8_runtime_lifecycle_tests.inc"
 #if defined(WEBSCENE_NATIVE_ENGINE_WITH_V8_INSPECTOR)
 #include "native_v8_runtime_inspector_tests.inc"
 #endif
@@ -145,6 +146,10 @@ int main()
 #endif
         if (selected == "dom-token-list") {
             test_dom_token_list_collection_performance_gate();
+            return 0;
+        }
+        if (selected == "worker-configuration-order") {
+            test_worker_starts_after_engine_configuration();
             return 0;
         }
         if(selected=="modal-backdrop") {
@@ -736,6 +741,7 @@ int main()
     test_dynamic_frame_resources_use_each_document_base_url();
     test_iframe_preparation_discovers_subresources_during_outer_script();
     test_deferred_frame_script_observes_window_dom_content_loaded();
+    test_worker_starts_after_engine_configuration();
     test_cooperative_iframe_hydration_yields_and_isolates_cascade();
     test_loaded_iframe_replaces_provisional_layout_root();
     test_youtube_embed_fallback();

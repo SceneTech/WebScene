@@ -119,6 +119,13 @@ public readonly record struct WebSceneRequestContext(
     WebSceneFetchMode Mode,
     WebSceneRequestDestination Destination);
 
+public enum WebSceneFetchCredentials
+{
+    Omit,
+    SameOrigin,
+    Include
+}
+
 public readonly record struct WebSceneResourceRequest(
     string Specifier,
     string? BaseAddress,
@@ -142,6 +149,12 @@ public readonly record struct WebSceneResourceRequest(
     /// boundary when the authored body is a <c>FormData</c> object.
     /// </summary>
     public string? ContentType { get; init; }
+
+    public WebSceneFetchCredentials Credentials { get; init; } =
+        WebSceneFetchCredentials.SameOrigin;
+
+    /// <summary>Cookie header value selected by the native cookie jar.</summary>
+    public string? Cookie { get; init; }
 
     public string? IfNoneMatch { get; init; }
 
@@ -176,6 +189,15 @@ public readonly record struct WebSceneTextResource(
     public bool IsCacheable { get; init; } = true;
 
     public bool NotModified { get; init; }
+
+    public int Status { get; init; } = 200;
+
+    public string StatusText { get; init; } = "OK";
+
+    public string? FinalAddress { get; init; }
+
+    public IReadOnlyList<KeyValuePair<string, string>> Headers { get; init; } =
+        Array.Empty<KeyValuePair<string, string>>();
 }
 
 public interface IWebSceneResourceLoader

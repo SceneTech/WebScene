@@ -237,6 +237,11 @@ public:
         int64_t fresh_until_unix_seconds{0};
         bool cacheable{true};
         bool not_modified{false};
+        uint32_t status{200U};
+        std::string status_text{"OK"};
+        std::string final_url;
+        std::vector<std::pair<std::string, std::string>> headers;
+        bool has_http_metadata{false};
     };
 
     struct resource_request_context final {
@@ -248,6 +253,8 @@ public:
         std::string method{"GET"};
         std::string body;
         std::string content_type;
+        uint32_t credentials{WEBSCENE_FETCH_CREDENTIALS_SAME_ORIGIN};
+        std::string cookie;
     };
 
     using resource_loader = std::function<bool(

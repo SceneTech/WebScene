@@ -90,6 +90,7 @@ native_websocket_transport::~native_websocket_transport()
 uint64_t native_websocket_transport::open(
     std::string url,
     std::string origin,
+    std::string cookie,
     std::vector<std::string> protocols)
 {
     auto shared_state = state_;
@@ -107,9 +108,10 @@ uint64_t native_websocket_transport::open(
     record->socket->setUrl(url);
     record->socket->disableAutomaticReconnection();
     record->socket->setHandshakeTimeout(30);
-    if (!origin.empty()) {
-        record->socket->setExtraHeaders({{"Origin", std::move(origin)}});
-    }
+    ix::WebSocketHttpHeaders headers;
+    if (!origin.empty()) headers.emplace("Origin", std::move(origin));
+    if (!cookie.empty()) headers.emplace("Cookie", std::move(cookie));
+    if (!headers.empty()) record->socket->setExtraHeaders(std::move(headers));
     for (auto& protocol : protocols) {
         record->socket->addSubProtocol(protocol);
     }

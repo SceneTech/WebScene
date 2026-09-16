@@ -94,7 +94,11 @@
         document_named_form_indexes;
     uint64_t element_id_index_generation{
         std::numeric_limits<uint64_t>::max()};
-    std::vector<std::pair<std::string, std::string>> document_cookies;
+    static constexpr size_t maximum_cookie_count = 256U;
+    static constexpr size_t maximum_cookie_bytes = 4096U;
+    std::mutex cookie_mutex;
+    std::vector<stored_cookie> document_cookies;
+    uint64_t next_cookie_creation_order{1U};
     std::unordered_map<uint64_t, v8::Global<v8::Object>> canvas_contexts;
     std::unordered_map<uint64_t, std::unique_ptr<canvas_state>> canvas_states;
     std::unordered_map<uint32_t, v8::Global<v8::Object>> frame_documents;

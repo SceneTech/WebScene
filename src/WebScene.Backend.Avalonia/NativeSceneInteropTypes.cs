@@ -649,6 +649,8 @@ internal struct EngineOptions
     public IntPtr StylesheetConsumedUserData;
     public IntPtr WebGpuPolicyCallback;
     public IntPtr WebGpuPolicyUserData;
+    public IntPtr ResourceLoadCallbackV4;
+    public IntPtr ResourceLoadV4UserData;
 }
 
 [StructLayout(LayoutKind.Sequential)]
@@ -681,6 +683,51 @@ internal struct NativeResourceRequestContextV3
     public nuint BodyLength;
     public IntPtr ContentType;
     public nuint ContentTypeLength;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+internal struct NativeResourceRequestContextV4
+{
+    public uint StructSize;
+    public uint Initiator;
+    public IntPtr Origin;
+    public nuint OriginLength;
+    public IntPtr Referrer;
+    public nuint ReferrerLength;
+    public uint Mode;
+    public uint Destination;
+    public IntPtr Method;
+    public nuint MethodLength;
+    public IntPtr Body;
+    public nuint BodyLength;
+    public IntPtr ContentType;
+    public nuint ContentTypeLength;
+    public uint Credentials;
+    public IntPtr Cookie;
+    public nuint CookieLength;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+internal struct NativeResourceHeaderV4
+{
+    public uint StructSize;
+    public IntPtr Name;
+    public nuint NameLength;
+    public IntPtr Value;
+    public nuint ValueLength;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+internal struct NativeResourceResponseV4
+{
+    public uint StructSize;
+    public uint Status;
+    public IntPtr StatusText;
+    public nuint StatusTextLength;
+    public IntPtr FinalUrl;
+    public nuint FinalUrlLength;
+    public IntPtr Headers;
+    public nuint HeaderCount;
 }
 
 [Flags]

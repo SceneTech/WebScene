@@ -6,6 +6,7 @@ void test_native_websocket_browser_api()
 
     std::mutex server_state_mutex;
     std::string observed_origin;
+    std::string observed_cookie;
     ix::WebSocketServer server(port, "127.0.0.1");
     server.setOnClientMessageCallback(
         [&](std::shared_ptr<ix::ConnectionState>,
@@ -17,6 +18,10 @@ void test_native_websocket_browser_api()
                 if (origin != message->openInfo.headers.end()) {
                     observed_origin = origin->second;
                 }
+                const auto cookie = message->openInfo.headers.find("Cookie");
+                if (cookie != message->openInfo.headers.end()) {
+                    observed_cookie = cookie->second;
+                }
             } else if (message->type == ix::WebSocketMessageType::Message) {
                 socket.send(message->str, message->binary);
             }
@@ -25,11 +30,23 @@ void test_native_websocket_browser_api()
     require(listening.first, "local WebSocket server could not listen");
     server.start();
 
-    auto* engine = webscene_engine_create(0);
+    const auto document_address = std::string("http://127.0.0.1:")
+        + std::to_string(port) + "/index.html";
+    resource_server resources{.content = {{document_address, "<!doctype html>"}}};
+    webscene_engine_options options{};
+    options.struct_size = sizeof(options);
+    options.resource_load_callback = load_test_resource;
+    options.resource_load_user_data = &resources;
+    auto* engine = webscene_engine_create_with_options(&options);
     require(engine != nullptr, "WebSocket test engine creation failed");
+    require(webscene_engine_load_url(
+        engine, document_address.data(), document_address.size()) != 0U,
+        "WebSocket cookie document navigation failed");
+    execute(
+        engine,
+        "document.cookie='ws_auth=loopback; Path=/; SameSite=Lax'",
+        "native-websocket-cookie-bootstrap.js");
     const auto source = std::string(R"JS(
-        location.protocol = 'https:';
-        location.host = 'websocket-origin.test';
         globalThis.__webSceneWebSocketTest = {
           events: [], text: null, blobBinary: null, arrayBufferBinary: null,
           closed: false, closeCode: 0,
@@ -100,8 +117,11 @@ void test_native_websocket_browser_api()
     {
         std::lock_guard lock(server_state_mutex);
         require(
-            observed_origin == "https://websocket-origin.test",
+            observed_origin == "http://127.0.0.1:" + std::to_string(port),
             "browser WebSocket API did not forward the document origin");
+        require(
+            observed_cookie.find("ws_auth=loopback") != std::string::npos,
+            "browser WebSocket API did not forward eligible cookie state");
     }
 
     webscene_engine_destroy(engine);

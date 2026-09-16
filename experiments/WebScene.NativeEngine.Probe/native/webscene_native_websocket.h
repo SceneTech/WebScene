@@ -42,6 +42,7 @@ public:
     uint64_t open(
         std::string url,
         std::string origin,
+        std::string cookie,
         std::vector<std::string> protocols);
     bool send(uint64_t socket_id, const uint8_t* data, size_t size, bool binary);
     bool close(uint64_t socket_id, uint16_t code, std::string_view reason);

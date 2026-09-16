@@ -260,6 +260,7 @@ public static unsafe partial class NativeWebSceneApi
     private static readonly IntPtr ResourceLoadV2Address =
         Marshal.GetFunctionPointerForDelegate(ResourceLoadV2);
     private static readonly ResourceLoadCallbackV3 ResourceLoadV3 = LoadResourceV3;
+    private static readonly ResourceLoadCallbackV4 ResourceLoadV4 = LoadResourceV4;
     private static readonly WebGpuPolicyCallback WebGpuPolicy = EvaluateWebGpuPolicy;
     private static readonly IntPtr WebGpuPolicyAddress = Marshal.GetFunctionPointerForDelegate(WebGpuPolicy);
     private static readonly StylesheetConsumedCallback StylesheetConsumed = NotifyStylesheetConsumed;
@@ -267,6 +268,8 @@ public static unsafe partial class NativeWebSceneApi
         Marshal.GetFunctionPointerForDelegate(StylesheetConsumed);
     private static readonly IntPtr ResourceLoadV3Address =
         Marshal.GetFunctionPointerForDelegate(ResourceLoadV3);
+    private static readonly IntPtr ResourceLoadV4Address =
+        Marshal.GetFunctionPointerForDelegate(ResourceLoadV4);
     private static readonly ScenePublishedCallback ScenePublished = NotifyScenePublished;
     private static readonly IntPtr ScenePublishedAddress =
         Marshal.GetFunctionPointerForDelegate(ScenePublished);
@@ -394,7 +397,9 @@ public static unsafe partial class NativeWebSceneApi
                     StylesheetConsumedCallback = StylesheetConsumedAddress,
                     StylesheetConsumedUserData = GCHandle.ToIntPtr(bridgeHandle),
                     WebGpuPolicyCallback = admitWebGpuDocument is null ? IntPtr.Zero : WebGpuPolicyAddress,
-                    WebGpuPolicyUserData = admitWebGpuDocument is null ? IntPtr.Zero : GCHandle.ToIntPtr(bridgeHandle)
+                    WebGpuPolicyUserData = admitWebGpuDocument is null ? IntPtr.Zero : GCHandle.ToIntPtr(bridgeHandle),
+                    ResourceLoadCallbackV4 = ResourceLoadV4Address,
+                    ResourceLoadV4UserData = GCHandle.ToIntPtr(bridgeHandle)
                 };
                 var engine = EngineCreateWithOptions(in options);
                 if (engine == IntPtr.Zero) return IntPtr.Zero;
@@ -613,6 +618,20 @@ public static unsafe partial class NativeWebSceneApi
         nuint entityTagLength,
         long lastModifiedUnixSeconds,
         in NativeResourceRequestContextV3 requestContext,
+        IntPtr destination,
+        nuint destinationCapacity);
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate nuint ResourceLoadCallbackV4(
+        IntPtr userData,
+        uint kind,
+        IntPtr url,
+        nuint urlLength,
+        IntPtr entityTag,
+        nuint entityTagLength,
+        long lastModifiedUnixSeconds,
+        in NativeResourceRequestContextV4 requestContext,
+        ref NativeResourceResponseV4 response,
         IntPtr destination,
         nuint destinationCapacity);
 
@@ -983,6 +1002,59 @@ public static unsafe partial class NativeWebSceneApi
                 : Marshal.PtrToStringUTF8(value, checked((int)length));
     }
 
+    private static nuint LoadResourceV4(
+        IntPtr userData,
+        uint kind,
+        IntPtr url,
+        nuint urlLength,
+        IntPtr entityTag,
+        nuint entityTagLength,
+        long lastModifiedUnixSeconds,
+        in NativeResourceRequestContextV4 requestContext,
+        ref NativeResourceResponseV4 response,
+        IntPtr destination,
+        nuint destinationCapacity)
+    {
+        try
+        {
+            var bridge = (ResourceBridge?)GCHandle.FromIntPtr(userData).Target;
+            var address = Marshal.PtrToStringUTF8(url, checked((int)urlLength));
+            if (bridge is null || string.IsNullOrWhiteSpace(address)) return 0;
+            var validator = entityTagLength == 0
+                ? null
+                : Marshal.PtrToStringUTF8(entityTag, checked((int)entityTagLength));
+            var context = new WebSceneRequestContext(
+                (WebSceneResourceInitiator)requestContext.Initiator,
+                ReadUtf8(requestContext.Origin, requestContext.OriginLength),
+                ReadUtf8(requestContext.Referrer, requestContext.ReferrerLength),
+                (WebSceneFetchMode)requestContext.Mode,
+                (WebSceneRequestDestination)requestContext.Destination);
+            var required = bridge.Copy(
+                kind,
+                address,
+                validator,
+                lastModifiedUnixSeconds,
+                context,
+                ReadUtf8(requestContext.Method, requestContext.MethodLength),
+                ReadUtf8(requestContext.Body, requestContext.BodyLength),
+                ReadUtf8(requestContext.ContentType, requestContext.ContentTypeLength),
+                destination,
+                destinationCapacity,
+                (WebSceneFetchCredentials)requestContext.Credentials,
+                ReadUtf8(requestContext.Cookie, requestContext.CookieLength));
+            bridge.PopulateResponseV4(address, ref response);
+            return required;
+        }
+        catch (Exception error)
+        {
+            Console.Error.WriteLine($"[WebScene native resource loader v4] {error}");
+            return 0;
+        }
+
+        static string? ReadUtf8(IntPtr value, nuint length)
+            => length == 0 ? null : Marshal.PtrToStringUTF8(value, checked((int)length));
+    }
+
     internal sealed class ResourceBridge(
         IWebSceneResourceLoader loader,
         Action<NativeScenePublished> scenePublished,
@@ -997,6 +1069,10 @@ public static unsafe partial class NativeWebSceneApi
         private const int EnvelopeHeaderSize = 2 + sizeof(uint) + sizeof(long) + sizeof(long);
         [ThreadStatic]
         private static PendingResourceCopy? _pendingCopy;
+        [ThreadStatic]
+        private static WebSceneTextResource? _lastResponse;
+        [ThreadStatic]
+        private static NativeResponseAllocation? _nativeResponseAllocation;
 #if !WEBSCENE_UNO
         private readonly ConcurrentDictionary<string, byte> _registeredFontSources =
             new(StringComparer.Ordinal);
@@ -1071,7 +1147,9 @@ public static unsafe partial class NativeWebSceneApi
             string? body,
             string? contentType,
             IntPtr destination,
-            nuint capacity)
+            nuint capacity,
+            WebSceneFetchCredentials credentials = WebSceneFetchCredentials.SameOrigin,
+            string? cookie = null)
         {
             var pending = _pendingCopy;
             if (pending is not null
@@ -1115,6 +1193,8 @@ public static unsafe partial class NativeWebSceneApi
                 Method = method,
                 Body = body,
                 ContentType = contentType,
+                Credentials = credentials,
+                Cookie = cookie,
                 IfNoneMatch = entityTag,
                 IfModifiedSince = lastModifiedUnixSeconds > 0
                     ? DateTimeOffset.FromUnixTimeSeconds(lastModifiedUnixSeconds)
@@ -1134,11 +1214,13 @@ public static unsafe partial class NativeWebSceneApi
 #endif
                 {
                     var resource = loader.LoadText(request);
+                    _lastResponse = resource;
                     prepared = PrepareResource(resource, entityTag);
                 }
             }
             catch (Exception error)
             {
+                _lastResponse = null;
                 // Preserve transport metadata across the ABI, not exception text which
                 // frequently contains credentials, query parameters or request bodies.
                 var category = error switch
@@ -1179,6 +1261,86 @@ public static unsafe partial class NativeWebSceneApi
                 prepared,
                 request.IfModifiedSince,
                 destination);
+        }
+
+        public void PopulateResponseV4(
+            string requestAddress,
+            ref NativeResourceResponseV4 response)
+        {
+            _nativeResponseAllocation?.Dispose();
+            var allocation = new NativeResponseAllocation();
+            _nativeResponseAllocation = allocation;
+            var resource = _lastResponse;
+            response.Status = checked((uint)Math.Clamp(resource?.Status ?? 200, 100, 599));
+            response.StatusText = allocation.Copy(resource?.StatusText ?? "OK", out var statusLength);
+            response.StatusTextLength = statusLength;
+            response.FinalUrl = allocation.Copy(
+                resource?.FinalAddress ?? requestAddress, out var finalUrlLength);
+            response.FinalUrlLength = finalUrlLength;
+            var headers = resource?.Headers?.Take(64).ToArray()
+                ?? Array.Empty<KeyValuePair<string, string>>();
+            response.HeaderCount = checked((nuint)headers.Length);
+            if (headers.Length == 0)
+            {
+                response.Headers = IntPtr.Zero;
+                return;
+            }
+            var headerSize = Marshal.SizeOf<NativeResourceHeaderV4>();
+            response.Headers = allocation.Allocate(checked(headerSize * headers.Length));
+            for (var index = 0; index < headers.Length; ++index)
+            {
+                var header = new NativeResourceHeaderV4
+                {
+                    StructSize = checked((uint)headerSize),
+                    Name = allocation.Copy(headers[index].Key, out var nameLength),
+                    NameLength = nameLength,
+                    Value = allocation.Copy(headers[index].Value, out var valueLength),
+                    ValueLength = valueLength
+                };
+                Marshal.StructureToPtr(
+                    header,
+                    IntPtr.Add(response.Headers, checked(index * headerSize)),
+                    false);
+            }
+        }
+
+        private sealed class NativeResponseAllocation : IDisposable
+        {
+            private readonly List<IntPtr> _allocations = [];
+            private bool _disposed;
+
+            ~NativeResponseAllocation() => Dispose(false);
+
+            public IntPtr Allocate(int length)
+            {
+                var pointer = Marshal.AllocHGlobal(Math.Max(length, 1));
+                _allocations.Add(pointer);
+                return pointer;
+            }
+
+            public IntPtr Copy(string value, out nuint length)
+            {
+                var bytes = Encoding.UTF8.GetBytes(value);
+                length = checked((nuint)bytes.Length);
+                var pointer = Allocate(bytes.Length);
+                if (bytes.Length != 0) Marshal.Copy(bytes, 0, pointer, bytes.Length);
+                return pointer;
+            }
+
+            public void Dispose()
+            {
+                Dispose(true);
+                GC.SuppressFinalize(this);
+            }
+
+            private void Dispose(bool disposing)
+            {
+                _ = disposing;
+                if (_disposed) return;
+                _disposed = true;
+                foreach (var pointer in _allocations) Marshal.FreeHGlobal(pointer);
+                _allocations.Clear();
+            }
         }
 
         private static PreparedResource PrepareResource(

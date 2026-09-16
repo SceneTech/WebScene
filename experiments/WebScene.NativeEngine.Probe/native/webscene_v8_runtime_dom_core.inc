@@ -2833,8 +2833,8 @@
         self->record_feature(
             "dom",
             "Document.cookie",
-            "partially-supported",
-            "same-engine script-readable name/value jar; no HTTP cookie ingress, domain/path scoping, expiry, SameSite, Secure, or HttpOnly enforcement",
+            "supported",
+            "bounded URL-scoped cookie jar with HTTP ingress and script visibility enforcement",
             "dom-binding");
         auto* root = static_cast<dom_node*>(info.Holder()->GetAlignedPointerFromInternalField(
             0,
@@ -2843,11 +2843,15 @@
             info.GetReturnValue().Set(js_string(info.GetIsolate(), ""));
             return;
         }
-        std::string value;
-        for (const auto& [name, cookie_value] : self->document_cookies) {
-            if (!value.empty()) value += "; ";
-            value += name + "=" + cookie_value;
-        }
+        const auto& address = self->current_base_address();
+        resource_request_context context{
+            WEBSCENE_RESOURCE_INITIATOR_SUBRESOURCE,
+            resource_origin(address),
+            address,
+            WEBSCENE_FETCH_MODE_SAME_ORIGIN,
+            WEBSCENE_REQUEST_DESTINATION_NONE,
+            "GET", {}, {}, WEBSCENE_FETCH_CREDENTIALS_INCLUDE, {}};
+        auto value = self->cookie_header_for(address, context, true);
         info.GetReturnValue().Set(js_string(info.GetIsolate(), value.c_str()));
     }
 
@@ -2861,29 +2865,10 @@
             0,
             v8::kEmbedderDataTypeTagDefault));
         if (root != nullptr && self->detached_document_roots.contains(root->id)) return;
-        auto assignment = to_utf8(info.GetIsolate(), raw_value);
-        const auto attributes = assignment.find(';');
-        if (attributes != std::string::npos) assignment.resize(attributes);
-        const auto equals = assignment.find('=');
-        if (equals == std::string::npos) return;
-        const auto trim = [](std::string value) {
-            const auto first = value.find_first_not_of(" \t\r\n");
-            if (first == std::string::npos) return std::string{};
-            const auto last = value.find_last_not_of(" \t\r\n");
-            return value.substr(first, last - first + 1U);
-        };
-        auto name = trim(assignment.substr(0U, equals));
-        auto value = trim(assignment.substr(equals + 1U));
-        if (name.empty()) return;
-        const auto known = std::find_if(
-            self->document_cookies.begin(),
-            self->document_cookies.end(),
-            [&name](const auto& entry) { return entry.first == name; });
-        if (known == self->document_cookies.end()) {
-            self->document_cookies.emplace_back(std::move(name), std::move(value));
-        } else {
-            known->second = std::move(value);
-        }
+        self->store_cookie(
+            self->current_base_address(),
+            to_utf8(info.GetIsolate(), raw_value),
+            false);
     }
 
     static void create_html_document(const v8::FunctionCallbackInfo<v8::Value>& info)

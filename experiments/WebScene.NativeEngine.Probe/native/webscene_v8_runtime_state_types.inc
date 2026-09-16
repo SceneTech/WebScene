@@ -450,8 +450,28 @@
     struct async_fetch_result final {
         std::string body;
         std::string resolved_url;
+        std::string status_text;
+        std::string response_type{"basic"};
+        std::vector<std::pair<std::string, std::string>> headers;
         std::string error;
+        uint32_t status{200U};
+        bool redirected{false};
         bool loaded{false};
+    };
+
+    enum class cookie_same_site : uint8_t { lax, strict, none };
+    struct stored_cookie final {
+        std::string name;
+        std::string value;
+        std::string domain;
+        std::string path;
+        std::chrono::system_clock::time_point expires{};
+        uint64_t creation_order{0U};
+        bool persistent{false};
+        bool host_only{true};
+        bool secure{false};
+        bool http_only{false};
+        cookie_same_site same_site{cookie_same_site::lax};
     };
 
     struct pending_fetch_task final {

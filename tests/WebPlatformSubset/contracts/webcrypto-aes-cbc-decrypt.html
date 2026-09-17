@@ -1,0 +1,24 @@
+<!doctype html><meta charset="utf-8"><title>Web Crypto AES-CBC decrypt contract</title>
+<!-- Pinned WPT sources: WebCryptoAPI/encrypt_decrypt/aes_cbc_vectors.https.any.js and
+import_export/aes_cbc.https.any.js at 2c705104a295c48053eeddf7fe0170d790a4e853. -->
+<script>
+window.__webSceneWptState={complete:false,harness:null,results:[],errors:[],diagnostics:[]};
+const record=(name,condition,message='Contract failed')=>__webSceneWptState.results.push({name,status:condition?'PASS':'FAIL',message:condition?null:message,stack:null});
+const bytes=hex=>Uint8Array.from(hex.match(/../g),byte=>parseInt(byte,16));
+const hex=value=>Array.from(new Uint8Array(value),byte=>byte.toString(16).padStart(2,'0')).join('');
+const finish=()=>{const s=__webSceneWptState;s.harness={status:s.results.some(r=>r.status!=='PASS')?1:0,message:null,stack:null};s.complete=true;};
+(async()=>{
+ const raw=bytes('2b7e151628aed2a6abf7158809cf4f3c'),iv=bytes('000102030405060708090a0b0c0d0e0f');
+ const ciphertext=bytes('7649abac8119b246cee98e9b12e9197d8964e0b149c10b7b682e6e39aaeb731c');
+ const key=await crypto.subtle.importKey('raw',raw,'AES-CBC',true,['decrypt']);
+ record('AES-CBC CryptoKey metadata',key.algorithm.name==='AES-CBC'&&key.algorithm.length===128&&key.usages.join(',')==='decrypt');
+ record('NIST AES-CBC vector with Web Crypto padding',hex(await crypto.subtle.decrypt({name:'AES-CBC',iv},key,ciphertext))==='6bc1bee22e409f96e93d7e117393172a');
+ const jwk=await crypto.subtle.exportKey('jwk',key);
+ record('AES-CBC JWK metadata',jwk.alg==='A128CBC'&&jwk.k==='K34VFiiu0qar9xWICc9PPA');
+ const bad=new Uint8Array(ciphertext);bad[bad.length-1]^=1;let padding='';
+ try{await crypto.subtle.decrypt({name:'AES-CBC',iv},key,bad);}catch(error){padding=error.name;}
+ record('AES-CBC rejects invalid padding',padding==='OperationError',`Received ${padding}`);
+ let usage='';try{await crypto.subtle.importKey('raw',raw,'AES-CBC',false,['encrypt']);}catch(error){usage=error.name;}
+ record('AES-CBC accepts only decrypt usage',usage==='SyntaxError',`Received ${usage}`);
+})().catch(error=>{__webSceneWptState.errors.push(String(error));record('AES-CBC contract completed',false,String(error));}).finally(finish);
+</script>

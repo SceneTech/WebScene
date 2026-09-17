@@ -34,6 +34,246 @@
     }
 #endif
 
+    void switch_outer_storage_origin(const std::string& next_origin)
+    {
+        if (next_origin == outer_storage_origin) return;
+        if (!outer_storage_origin.empty()) {
+            outer_session_storage_by_origin.insert_or_assign(
+                outer_storage_origin, std::move(outer_session_storage));
+            outer_local_storage_by_origin.insert_or_assign(
+                outer_storage_origin, std::move(outer_local_storage));
+        }
+        outer_session_storage = {};
+        outer_local_storage = {};
+        if (!next_origin.empty()) {
+            if (auto known = outer_session_storage_by_origin.find(next_origin);
+                known != outer_session_storage_by_origin.end()) {
+                outer_session_storage = std::move(known->second);
+                outer_session_storage_by_origin.erase(known);
+            }
+            if (auto known = outer_local_storage_by_origin.find(next_origin);
+                known != outer_local_storage_by_origin.end()) {
+                outer_local_storage = std::move(known->second);
+                outer_local_storage_by_origin.erase(known);
+            }
+        }
+        outer_storage_origin = next_origin;
+    }
+
+    void retire_document_realm(v8::Local<v8::Context> previous_context)
+    {
+        std::vector<v8::Local<v8::Context>> retired_contexts{previous_context};
+        retired_contexts.reserve(actual_frame_contexts.size() + 1U);
+        for (auto& [id, frame] : actual_frame_contexts) {
+            static_cast<void>(id);
+            if (!frame.IsEmpty()) retired_contexts.push_back(frame.Get(isolate));
+        }
+
+        // Run disconnected reactions before retirement. A callback is allowed
+        // to create fresh timers, transports, workers, promises, and object
+        // URLs; collecting and stopping subsystems must therefore happen only
+        // after the old tree has finished disconnecting.
+        detach_all_children(document.body());
+
+        // Stop context-bound work before dropping persistent handles. Native
+        // completions may still arrive, but their missing IDs/bindings make
+        // those deliveries no-ops in the replacement realm.
+        for (auto& [id, frame] : actual_frame_contexts) {
+            static_cast<void>(id);
+            if (frame.IsEmpty()) continue;
+            const auto local_frame = frame.Get(isolate);
+            if (std::find(retired_contexts.begin(), retired_contexts.end(), local_frame)
+                == retired_contexts.end()) {
+                retired_contexts.push_back(local_frame);
+            }
+        }
+        const auto is_retired_context = [&](v8::Local<v8::Context> candidate) {
+            return std::any_of(
+                retired_contexts.begin(), retired_contexts.end(),
+                [&](const auto& retired) { return candidate == retired; });
+        };
+        for (const auto& retired : retired_contexts) {
+            cancel_detached_frame_context_tasks(retired);
+        }
+#if defined(WEBSCENE_NATIVE_ENGINE_ENABLE_GRAPHICS)
+        retire_document_graphics();
+#endif
+        stop_workers();
+        dedicated_workers.clear();
+        reset_message_ports_for_navigation();
+        terminal_pagehide_dispatched = false;
+        file_targets.clear();
+        { std::lock_guard lock(file_requests_mutex); file_requests.clear(); }
+        cancel_native_host_promises(
+            "The document navigated before the native host completed the request");
+        fullscreen_element = nullptr;
+        document_fullscreen = false;
+        { std::lock_guard lock(host_request_mutex); host_requests.clear(); }
+        { std::lock_guard lock(host_request_mutex); typed_host_requests.clear(); }
+        object_url_file_data.clear();
+        release_owned_binary_object_urls();
+        object_urls.clear();
+        object_url_download_payloads.clear();
+        object_url_canvas_node_ids.clear();
+#if defined(WEBSCENE_NATIVE_ENGINE_ENABLE_MEDIA)
+        clear_media_bindings();
+#endif
+        module_map.clear();
+
+        for (auto& fetch : pending_fetches) {
+            if (!is_retired_context(fetch.context.Get(isolate))) continue;
+            fetch.context.Reset();
+            fetch.resolver.Reset();
+        }
+        std::unordered_set<uint64_t> retired_indexeddb_operations;
+        std::erase_if(pending_indexeddb_promises, [&](const auto& entry) {
+            if (!is_retired_context(entry.second.context.Get(isolate))) return false;
+            retired_indexeddb_operations.insert(entry.first);
+            return true;
+        });
+        if (!retired_indexeddb_operations.empty()) {
+            std::lock_guard lock(indexeddb_completion_mutex);
+            std::erase_if(indexeddb_completions, [&](const auto& completion) {
+                return retired_indexeddb_operations.contains(completion.id);
+            });
+            indexeddb_work_ready.store(
+                !indexeddb_completions.empty(), std::memory_order_release);
+        }
+
+        // A blocked iframe resource must not block top-level navigation while
+        // the isolate is locked. Invalidate this document's generation and
+        // retain futures until they become ready (or final runtime teardown).
+        {
+            std::lock_guard lock(document_generation_mutex);
+            document_generation.fetch_add(1U, std::memory_order_acq_rel);
+        }
+        std::erase_if(retired_frame_preparations, [](const auto& future) {
+            return !future.valid()
+                || future.wait_for(std::chrono::seconds(0))
+                    == std::future_status::ready;
+        });
+        for (auto& [id, preparation] : pending_frame_preparations) {
+            static_cast<void>(id);
+            if (preparation.future.valid())
+                retired_frame_preparations.push_back(
+                    std::move(preparation.future));
+        }
+        pending_frame_preparations.clear();
+        pending_frame_hydrations.clear();
+        frame_hydration_states.clear();
+        connected_resources.clear();
+
+        resize_listeners.clear();
+        media_query_lists.clear();
+        timers.clear();
+        active_timer_id = 0U;
+        active_timer_cancelled = false;
+        pending_window_messages.clear();
+        pending_window_message_bytes = 0U;
+        pending_dialog_close_events.clear();
+        pending_programmatic_scroll_events.clear();
+        pending_promise_rejections.clear();
+        pending_interop_promises.clear();
+        pending_callback_promises.clear();
+        interop_handles.clear();
+        resize_observers.clear();
+        resize_observers_pending = false;
+        frame_load_listeners.clear();
+        frame_event_listeners.clear();
+#if defined(WEBSCENE_NATIVE_ENGINE_WITH_V8_INSPECTOR)
+        for (auto& [id, frame] : actual_frame_contexts) {
+            static_cast<void>(id);
+            if (!frame.IsEmpty()) destroy_inspector_context(frame.Get(isolate));
+        }
+#endif
+        frame_documents.clear();
+        frame_windows.clear();
+        frame_window_scroll_offsets.clear();
+        actual_frame_windows.clear();
+        actual_frame_contexts.clear();
+        actual_frame_documents.clear();
+        frame_base_addresses.clear();
+        provisional_frame_bodies.clear();
+        frame_session_storage.clear();
+        canvas_contexts.clear();
+        canvas_states.clear();
+
+        pointer_capture_target = nullptr;
+        pointer_down_target = nullptr;
+        scrollbar_drag_target = nullptr;
+        scrollbar_drag_vertical = false;
+        scrollbar_drag_pointer_origin = 0;
+        scrollbar_drag_scroll_origin = 0;
+        scrollbar_drag_maximum = 0;
+        scrollbar_drag_thumb_travel = 0;
+        hover_target = nullptr;
+        current_related_target = nullptr;
+        current_cursor_kind_value = WEBSCENE_CURSOR_DEFAULT;
+        pointer_cursor_update_pending = false;
+        pointer_down_x = 0;
+        pointer_down_y = 0;
+        last_pointer_x = 0;
+        last_pointer_y = 0;
+        current_movement_x = 0;
+        current_movement_y = 0;
+        has_pointer_position = false;
+        current_input_sequence = 0;
+        pending_text_input_target_id = 0U;
+        pending_text_input_from_keydown = false;
+        dispatching_user_input = false;
+        executing_legacy_clipboard_command = false;
+        active_element = nullptr;
+        focus_visible = false;
+        last_user_activation = {};
+        last_animation_frame_timestamp_ms = 0;
+        caret_blink_epoch_ms = 0;
+        frame_last_error_value.clear();
+
+        pending_style_recascades.clear();
+        style_recascade_batch_depth = 0U;
+        active_stylesheet_owner_id = 0U;
+        active_stylesheet_shadow_scope_root_id = 0U;
+        active_css_cascade_root = nullptr;
+        inactive_css_cascades.clear();
+
+        computed_style_wrappers.clear();
+        class_list_wrappers.clear();
+        style_wrappers.clear();
+        stylesheet_wrappers.clear();
+        detached_documents.clear();
+        detached_document_roots.clear();
+        node_wrappers.clear();
+        attr_wrappers.clear();
+        attached_attributes.clear();
+        attr_states.clear();
+        element_id_indexes.clear();
+        element_named_indexes.clear();
+        document_named_form_indexes.clear();
+
+        // Retire the disconnected native tree now that no old wrapper can
+        // keep it alive. This also prevents a later idle collection from
+        // interpreting old node IDs as replacement-document nodes.
+        std::vector<dom_node*> retired_roots;
+        retired_roots.reserve(detached_dom_roots.size());
+        for (const auto id : detached_dom_roots) {
+            if (auto* root = document.find_by_native_id(id); root != nullptr)
+                retired_roots.push_back(root);
+        }
+        release_detached_subtrees(retired_roots);
+        detached_dom_roots.clear();
+        detached_dom_gc_scan_roots.clear();
+        detached_dom_gc_scan_index = 0U;
+        detached_nodes_since_gc = 0U;
+        detached_dom_gc_requested = false;
+        detached_dom_gc_deferred_once = false;
+        detached_dom_gc_cycle_retained_roots = 0U;
+        detached_dom_gc_retry_count = 0U;
+
+        dom_implementation_object.Reset();
+        document_object.Reset();
+        frame_context.Reset();
+    }
+
     bool execute(const std::string& source, const std::string& document_name)
     {
         auto isolate_locker = lock_shared_isolate();
@@ -109,23 +349,21 @@
         auto isolate_locker = lock_shared_isolate();
         v8::Isolate::Scope isolate_scope(isolate);
         v8::HandleScope handle_scope(isolate);
-        auto local_context = context.Get(isolate);
+        const auto previous_context = context.Get(isolate);
+        // A navigation creates a fresh Window realm. Reusing the old V8
+        // Context leaves top-level lexical declarations and Window listeners
+        // alive, so a normal reload can fail while redeclaring a page `const`.
+        // Preserve browsing-session state (cookies and both Storage backing
+        // maps), while releasing every handle owned by the retired realm.
+        {
+            v8::Context::Scope context_scope(previous_context);
+            retire_document_realm(previous_context);
+        }
+        context.Reset();
+        switch_outer_storage_origin(resource_origin(resolved_url));
+
+        auto local_context = create_main_context();
         v8::Context::Scope context_scope(local_context);
-#if defined(WEBSCENE_NATIVE_ENGINE_ENABLE_GRAPHICS)
-        retire_document_graphics();
-#endif
-        stop_workers();
-        file_targets.clear();
-        { std::lock_guard lock(file_requests_mutex); file_requests.clear(); }
-        object_url_file_data.clear();
-        object_url_binary.clear();
-        object_urls.clear();
-        object_url_download_payloads.clear();
-        object_url_canvas_node_ids.clear();
-#if defined(WEBSCENE_NATIVE_ENGINE_ENABLE_MEDIA)
-        clear_media_bindings();
-#endif
-        module_map.clear();
         set_context_location(local_context, local_context->Global(), resolved_url);
 #if defined(WEBSCENE_NATIVE_ENGINE_ENABLE_GRAPHICS)
         if(webgpu_document_policy)webgpu_document_policy(resolved_url);

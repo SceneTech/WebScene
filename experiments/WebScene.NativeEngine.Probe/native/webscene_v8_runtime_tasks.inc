@@ -349,11 +349,13 @@
         if (pending_window_messages.empty()) return true;
         auto task = std::move(pending_window_messages.front());
         pending_window_messages.pop_front();
+        const auto packet_bytes = clone_packet_size(task.packet);
+        pending_window_message_bytes = packet_bytes > pending_window_message_bytes
+            ? 0U : pending_window_message_bytes - packet_bytes;
 
         auto target_context = task.target_context.Get(isolate);
         auto source_context = task.source_context.Get(isolate);
-        auto data = task.data.Get(isolate);
-        if (target_context.IsEmpty() || source_context.IsEmpty() || data.IsEmpty()) {
+        if (target_context.IsEmpty() || source_context.IsEmpty()) {
             return true;
         }
 
@@ -384,15 +386,26 @@
             return true;
         }
 
+        std::vector<v8::Local<v8::Object>> transferred_ports;
+        v8::Local<v8::Value> data;
+        v8::TryCatch decode_error(isolate);
+        const auto decoded = deserialize_clone(
+            isolate,
+            target_context,
+            task.packet,
+            &transferred_ports).ToLocal(&data);
+        if (!decoded) decode_error.Reset();
         auto event = v8::Object::New(isolate);
         event->Set(
             target_context,
             js_string(isolate, "type"),
-            js_string(isolate, "message")).Check();
-        event->Set(
-            target_context,
-            js_string(isolate, "data"),
-            data).Check();
+            js_string(isolate, decoded ? "message" : "messageerror")).Check();
+        if (decoded) {
+            event->Set(
+                target_context,
+                js_string(isolate, "data"),
+                data).Check();
+        }
         event->Set(
             target_context,
             js_string(isolate, "origin"),
@@ -405,10 +418,13 @@
             target_context,
             js_string(isolate, "lastEventId"),
             js_string(isolate, "")).Check();
-        event->Set(
-            target_context,
-            js_string(isolate, "ports"),
-            v8::Array::New(isolate)).Check();
+        auto ports = v8::Array::New(
+            isolate,
+            static_cast<int>(transferred_ports.size()));
+        for (uint32_t index = 0; index < transferred_ports.size(); ++index) {
+            ports->Set(target_context, index, transferred_ports[index]).Check();
+        }
+        event->Set(target_context, js_string(isolate, "ports"), ports).Check();
         event->Set(
             target_context,
             js_string(isolate, "bubbles"),
@@ -546,6 +562,9 @@
         // compilation and optimization work. An embedder must service that
         // queue; otherwise hot application code remains on its initial tier.
         pump_v8_platform_tasks();
+        if (indexeddb_work_ready.load(std::memory_order_acquire)) {
+            return drain_indexeddb_completion();
+        }
 #if defined(WEBSCENE_NATIVE_ENGINE_ENABLE_GRAPHICS)
         if (graphics && !graphics_delivering && graphics->has_ready_work()) {
             struct delivery_guard {
@@ -570,6 +589,7 @@
         if(drain_media())return true;
 #endif
         if (has_worker_messages()) return drain_worker_message();
+        if (has_message_port_messages()) return drain_message_port_message();
         if (websocket_transport.has_pending_events()) {
             return drain_websocket_event();
         }
@@ -578,6 +598,12 @@
         }
         if (has_ready_fetch_task()) {
             return drain_fetch_task();
+        }
+        if (has_ready_digest_task()) {
+            return drain_digest_task();
+        }
+        if (has_ready_cipher_task()) {
+            return drain_cipher_task();
         }
         if (!pending_dialog_close_events.empty()) {
             return drain_dialog_close_event_task();
@@ -1401,6 +1427,9 @@
         case 8: return "Backspace";
         case 9: return "Tab";
         case 13: return "Enter";
+        case 16: return "Shift";
+        case 17: return "Control";
+        case 18: return "Alt";
         case 27: return "Escape";
         case 32: return " ";
         case 33: return "PageUp";
@@ -1412,6 +1441,18 @@
         case 39: return "ArrowRight";
         case 40: return "ArrowDown";
         case 46: return "Delete";
+        case 91: return "Meta";
+        case 186: return ";";
+        case 187: return "=";
+        case 188: return ",";
+        case 189: return "-";
+        case 190: return ".";
+        case 191: return "/";
+        case 192: return "`";
+        case 219: return "[";
+        case 220: return "\\";
+        case 221: return "]";
+        case 222: return "'";
         default:
             if ((key_code >= '0' && key_code <= '9')
                 || (key_code >= 'A' && key_code <= 'Z')) {
@@ -1428,6 +1469,24 @@
         }
         if (key_code >= '0' && key_code <= '9') {
             return "Digit" + std::string(1, static_cast<char>(key_code));
+        }
+        switch (key_code) {
+        case 16: return "ShiftLeft";
+        case 17: return "ControlLeft";
+        case 18: return "AltLeft";
+        case 91: return "MetaLeft";
+        case 186: return "Semicolon";
+        case 187: return "Equal";
+        case 188: return "Comma";
+        case 189: return "Minus";
+        case 190: return "Period";
+        case 191: return "Slash";
+        case 192: return "Backquote";
+        case 219: return "BracketLeft";
+        case 220: return "Backslash";
+        case 221: return "BracketRight";
+        case 222: return "Quote";
+        default: break;
         }
         return keyboard_key_name(key_code);
     }
@@ -2272,6 +2331,29 @@
         webscene_native::forms::ensure_text_value(node);
     }
 
+    bool dispatch_clipboard_shortcut(dom_node& target, const char* type)
+    {
+        auto local_context = context_for_node(target);
+        auto global = local_context->Global();
+        v8::Local<v8::Value> helper;
+        if (!global->Get(
+                local_context,
+                js_string(isolate, "__webSceneClipboardShortcut")).ToLocal(&helper)
+            || !helper->IsFunction()) {
+            return false;
+        }
+        v8::Local<v8::Value> arguments[] = {
+            js_string(isolate, type),
+            wrap_node(target)};
+        v8::Local<v8::Value> result;
+        if (!helper.As<v8::Function>()->Call(
+                local_context, global, 2, arguments).ToLocal(&result)) {
+            return false;
+        }
+        perform_microtask_checkpoint();
+        return result->BooleanValue(isolate);
+    }
+
     static size_t previous_utf8_boundary(const std::string& value, size_t index)
     {
         return webscene_native::forms::previous_utf8_boundary(value,index);
@@ -2438,6 +2520,17 @@
                 }
             }
             return true;
+        }
+        const auto clipboard_modifier = (input.flags
+            & (WEBSCENE_INPUT_MODIFIER_CONTROL | WEBSCENE_INPUT_MODIFIER_META)) != 0U
+            && (input.flags & WEBSCENE_INPUT_MODIFIER_ALT) == 0U;
+        if (!prevented && clipboard_modifier) {
+            if (key_code == 'C' || key_code == 'c')
+                return dispatch_clipboard_shortcut(*target, "copy");
+            if (key_code == 'X' || key_code == 'x')
+                return dispatch_clipboard_shortcut(*target, "cut");
+            if (key_code == 'V' || key_code == 'v')
+                return dispatch_clipboard_shortcut(*target, "paste");
         }
         if (prevented || !is_text_control(target)) return true;
         ensure_form_value(*target);
@@ -2802,7 +2895,18 @@
 
     bool dispatch_input(const webscene_input_event& input, bool defer_cursor_update = false)
     {
+        struct user_input_dispatch_scope {
+            bool& active;
+            bool previous;
+            explicit user_input_dispatch_scope(bool& value)
+                : active(value), previous(value) { active = true; }
+            ~user_input_dispatch_scope() { active = previous; }
+        } dispatch_scope{dispatching_user_input};
         current_input_sequence = input.sequence;
+        if (input.kind == WEBSCENE_INPUT_POINTER_DOWN
+            || input.kind == WEBSCENE_INPUT_KEY_DOWN) {
+            last_user_activation = std::chrono::steady_clock::now();
+        }
         auto isolate_locker = lock_shared_isolate();
         v8::Isolate::Scope isolate_scope(isolate);
         v8::HandleScope handle_scope(isolate);

@@ -1,5 +1,5 @@
 """Exercise SDK metadata capture without building the upstream compiler tree."""
-from contextlib import ExitStack
+from contextlib import ExitStack, nullcontext
 import importlib.util
 import os
 from pathlib import Path
@@ -17,6 +17,40 @@ spec.loader.exec_module(builder)
 
 
 class AngleEnvironmentTests(unittest.TestCase):
+    def test_windows_toolchain_cleanup_is_bounded_to_child_environment(self):
+        outer = {
+            "PATH": "developer-tools;system-tools",
+            "__VSCMD_PREINIT_PATH": "system-tools",
+            "VSCMD_ARG_HOST_ARCH": "x64",
+            "VSCMD_ARG_TGT_ARCH": "x64",
+            "VSCMD_VER": "17.14",
+            "VSINSTALLDIR": r"C:\VisualStudio",
+            "INCLUDE": "duplicated-includes",
+            "LIB": "duplicated-libraries",
+            "WindowsSDKVersion": "10.0.28000.0",
+            "RUNNER_TEMP": r"C:\runner-temp",
+            "WEBSCENE_KEEP": "preserved",
+        }
+        original = dict(outer)
+
+        child = builder.clean_angle_windows_environment(outer)
+
+        self.assertEqual(outer, original)
+        self.assertEqual(child["PATH"], "system-tools")
+        self.assertEqual(child["RUNNER_TEMP"], r"C:\runner-temp")
+        self.assertEqual(child["WEBSCENE_KEEP"], "preserved")
+        for key in child:
+            upper = key.upper()
+            self.assertNotIn(upper, builder.WINDOWS_DEVELOPER_ENVIRONMENT_KEYS)
+            self.assertFalse(upper.startswith(("VSCMD_", "__VSCMD_")))
+
+    def test_initialized_windows_environment_requires_original_path(self):
+        with self.assertRaisesRegex(ValueError, "__VSCMD_PREINIT_PATH"):
+            builder.clean_angle_windows_environment({
+                "PATH": "developer-tools",
+                "VSCMD_VER": "17.14",
+            })
+
     def test_capture_passes_explicit_environment_to_child_process(self):
         env = dict(os.environ, WEBSCENE_SDK_TEST_VALUE="local-toolchain")
         result = builder.capture([sys.executable, "-c",
@@ -40,6 +74,12 @@ class AngleEnvironmentTests(unittest.TestCase):
             for name in ("copytree", "copy2", "rmtree"):
                 stack.enter_context(patch.object(builder.shutil, name))
             stack.enter_context(patch.object(builder, "sha", return_value="test-hash"))
+            stack.enter_context(patch.object(
+                builder, "resolve_windows_build_sdk",
+                return_value=("10.0.target.0", "10.0.x86.0", "10.0.source.0")))
+            stack.enter_context(patch.object(
+                builder, "patched_angle_windows_sdk",
+                return_value=nullcontext()))
             run = stack.enter_context(patch.object(builder, "run"))
             capture = stack.enter_context(patch.object(builder, "capture", return_value="metadata"))
             # Exercise the one-token Windows bootstrap command on every host,
@@ -63,4 +103,11 @@ class AngleEnvironmentTests(unittest.TestCase):
                                 if "llvm-build" in str(call.args[0][0])]
             self.assertEqual(len(compiler_queries), 1)
             self.assertEqual(compiler_queries[0].args[0][0].name, "clang-cl.exe")
+            seal = builder.seal
+            self.assertEqual(
+                seal.call_args.args[5]["windowsSdkVersion"],
+                "10.0.target.0")
+            self.assertEqual(
+                seal.call_args.args[5]["windowsX86EnvironmentSdkVersion"],
+                "10.0.x86.0")
             self.assertEqual(os.environ["DEPOT_TOOLS_WIN_TOOLCHAIN"], "1")

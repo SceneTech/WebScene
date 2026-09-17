@@ -5,6 +5,15 @@ include(CTest)
 include(FetchContent)
 
 if(BUILD_TESTING)
+    add_executable(webscene_indexeddb_storage_tests
+        tests/indexeddb_storage_tests.cpp
+        native/webscene_indexeddb_storage.cpp)
+    target_compile_features(webscene_indexeddb_storage_tests PRIVATE cxx_std_20)
+    target_include_directories(webscene_indexeddb_storage_tests PRIVATE native)
+    add_test(NAME webscene_indexeddb_storage_tests
+        COMMAND webscene_indexeddb_storage_tests)
+    set_tests_properties(webscene_indexeddb_storage_tests PROPERTIES
+        LABELS "storage;durability;performance" TIMEOUT 20)
     add_executable(webscene_graphics_scene_abi_layout_tests tests/graphics_scene_abi_layout_tests.c)
     target_compile_features(webscene_graphics_scene_abi_layout_tests PRIVATE c_std_11)
     target_include_directories(webscene_graphics_scene_abi_layout_tests PRIVATE native)
@@ -14,6 +23,7 @@ if(BUILD_TESTING)
     target_include_directories(webscene_graphics_canvas_backing_tests PRIVATE native)
     add_test(NAME webscene_graphics_canvas_backing_tests COMMAND webscene_graphics_canvas_backing_tests)
     find_package(Threads REQUIRED)
+    target_link_libraries(webscene_indexeddb_storage_tests PRIVATE Threads::Threads)
     add_executable(webscene_graphics_image_lease_tests tests/graphics_image_lease_tests.cpp)
     target_compile_features(webscene_graphics_image_lease_tests PRIVATE cxx_std_20)
     target_include_directories(webscene_graphics_image_lease_tests PRIVATE native)
@@ -77,7 +87,10 @@ if(WEBSCENE_NATIVE_ENGINE_STATIC)
 else()
     set(webscene_runtime_kind SHARED)
 endif()
-add_library(webscene_native_engine ${webscene_runtime_kind} native/webscene_native_engine.cpp)
+add_library(webscene_native_engine ${webscene_runtime_kind}
+    native/webscene_native_engine.cpp
+    native/webscene_secure_random.cpp
+    native/webscene_indexeddb_storage.cpp)
 if(TARGET webscene_core)
     target_link_libraries(webscene_native_engine PRIVATE webscene_core)
 else()
@@ -88,6 +101,24 @@ endif()
 target_compile_features(webscene_native_engine PRIVATE cxx_std_20)
 target_compile_definitions(webscene_native_engine PRIVATE WEBSCENE_NATIVE_ENGINE_BUILD)
 target_include_directories(webscene_native_engine PUBLIC native)
+
+if(WIN32)
+    target_link_libraries(webscene_native_engine PRIVATE bcrypt)
+endif()
+
+if(BUILD_TESTING)
+    add_executable(webscene_secure_random_tests
+        tests/secure_random_tests.cpp
+        native/webscene_secure_random.cpp)
+    target_compile_features(webscene_secure_random_tests PRIVATE cxx_std_20)
+    target_include_directories(webscene_secure_random_tests PRIVATE native)
+    if(WIN32)
+        target_link_libraries(webscene_secure_random_tests PRIVATE bcrypt)
+    endif()
+    add_test(NAME webscene_secure_random_tests COMMAND webscene_secure_random_tests)
+    set_tests_properties(webscene_secure_random_tests PROPERTIES
+        LABELS "webcrypto;security;performance" TIMEOUT 10)
+endif()
 
 option(WEBSCENE_NATIVE_ENGINE_ENABLE_MEDIA "Build native HTML media and Web Audio services" ON)
 if(WEBSCENE_NATIVE_ENGINE_ENABLE_MEDIA)
@@ -206,6 +237,12 @@ option(WEBSCENE_NATIVE_ENGINE_BUILD_CSS_PARSER_BENCHMARK
     "Build the V8-free selected CSS syntax parser microbenchmark" OFF)
 option(WEBSCENE_NATIVE_ENGINE_BUILD_DOM_BINDING_BENCHMARK
     "Build the native V8 DOM binding lifecycle benchmark" OFF)
+option(WEBSCENE_NATIVE_ENGINE_FRAGMENT_ATTACH_CONTROL
+    "Retain per-child fragment attachment recascades for A/B measurement" OFF)
+if(WEBSCENE_NATIVE_ENGINE_FRAGMENT_ATTACH_CONTROL)
+    target_compile_definitions(webscene_native_engine PRIVATE
+        WEBSCENE_NATIVE_ENGINE_FRAGMENT_ATTACH_CONTROL=1)
+endif()
 option(WEBSCENE_NATIVE_ENGINE_SELECTOR_SIBLING_SCAN_EXPERIMENT
     "Experimentally replace positional-selector sibling vectors with direct scans" OFF)
 option(WEBSCENE_NATIVE_ENGINE_SELECTOR_SIBLING_BENCHMARK_COUNTERS
@@ -523,6 +560,20 @@ if(WEBSCENE_NATIVE_ENGINE_ENABLE_V8)
         include("${CMAKE_CURRENT_LIST_DIR}/cmake/VerifyV8Inspector.cmake")
     endif()
 
+    # Web Crypto and Windows WebSocket TLS share one audited cross-platform
+    # provider. Pin both source and digest; Web Crypto has no platform or
+    # software fallback.
+    set(ENABLE_PROGRAMS OFF CACHE BOOL "" FORCE)
+    set(ENABLE_TESTING OFF CACHE BOOL "" FORCE)
+    set(MBEDTLS_FATAL_WARNINGS OFF CACHE BOOL "" FORCE)
+    FetchContent_Declare(
+        webscene_mbedtls
+        URL https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-3.6.4/mbedtls-3.6.4.tar.bz2
+        URL_HASH SHA256=ec35b18a6c593cf98c3e30db8b98ff93e8940a8c4e690e66b41dfc011d678110)
+    FetchContent_MakeAvailable(webscene_mbedtls)
+    target_sources(webscene_native_engine PRIVATE native/webscene_crypto_provider.cpp)
+    target_link_libraries(webscene_native_engine PRIVATE mbedcrypto)
+
     # WebSocket I/O is a native implementation detail. IXWebSocket supplies a
     # portable RFC 6455 client while the WebScene adapter below owns all V8
     # lifetime/threading semantics. Pin both source and digest so release
@@ -532,14 +583,6 @@ if(WEBSCENE_NATIVE_ENGINE_ENABLE_V8)
     if(WIN32)
         # Windows release runners do not carry a stable OpenSSL SDK. Build the
         # pinned Mbed TLS release and give IXWebSocket its normal CMake targets.
-        set(ENABLE_PROGRAMS OFF CACHE BOOL "" FORCE)
-        set(ENABLE_TESTING OFF CACHE BOOL "" FORCE)
-        set(MBEDTLS_FATAL_WARNINGS OFF CACHE BOOL "" FORCE)
-        FetchContent_Declare(
-            webscene_mbedtls
-            URL https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-3.6.4/mbedtls-3.6.4.tar.bz2
-            URL_HASH SHA256=ec35b18a6c593cf98c3e30db8b98ff93e8940a8c4e690e66b41dfc011d678110)
-        FetchContent_MakeAvailable(webscene_mbedtls)
         set(USE_MBED_TLS ON CACHE BOOL "" FORCE)
         set(USE_ZLIB OFF CACHE BOOL "" FORCE)
         set(MBEDTLS_FOUND TRUE)
@@ -558,6 +601,18 @@ if(WEBSCENE_NATIVE_ENGINE_ENABLE_V8)
         URL https://github.com/machinezone/IXWebSocket/archive/refs/tags/v12.0.1.tar.gz
         URL_HASH SHA256=d23bdc91dbfe2b9ae13c322d539392d7a6b8b506560f41c90e227fa0f86a2405)
     FetchContent_MakeAvailable(webscene_ixwebsocket)
+
+    if(BUILD_TESTING)
+        add_executable(webscene_crypto_provider_tests
+            tests/crypto_provider_tests.cpp
+            native/webscene_crypto_provider.cpp)
+        target_compile_features(webscene_crypto_provider_tests PRIVATE cxx_std_20)
+        target_include_directories(webscene_crypto_provider_tests PRIVATE native)
+        target_link_libraries(webscene_crypto_provider_tests PRIVATE mbedcrypto)
+        add_test(NAME webscene_crypto_provider_tests COMMAND webscene_crypto_provider_tests)
+        set_tests_properties(webscene_crypto_provider_tests PROPERTIES
+            LABELS "webcrypto;security;performance" TIMEOUT 10)
+    endif()
 
     target_sources(webscene_native_engine PRIVATE
         native/webscene_v8_runtime.cpp
@@ -731,8 +786,54 @@ if(WEBSCENE_NATIVE_ENGINE_ENABLE_V8)
             ixwebsocket)
         add_test(NAME webscene_native_engine_tests COMMAND webscene_native_engine_tests)
         add_test(NAME webscene_native_idle_v8_platform COMMAND webscene_native_engine_tests)
+        add_test(NAME webscene_native_dom_punctuation_keyboard COMMAND webscene_native_engine_tests)
+        add_test(NAME webscene_native_shortcut_activation COMMAND webscene_native_engine_tests)
+        add_test(NAME webscene_native_select_popup_context COMMAND webscene_native_engine_tests)
+        add_test(NAME webscene_native_html_select_add COMMAND webscene_native_engine_tests)
+        add_test(NAME webscene_native_hover_dependency_cache
+            COMMAND webscene_native_engine_tests)
+        add_test(NAME webscene_native_fragment_atomic_attachment
+            COMMAND webscene_native_engine_tests)
+        add_test(NAME webscene_native_recursive_selector_cache
+            COMMAND webscene_native_engine_tests)
+        add_test(NAME webscene_native_indexeddb_contract COMMAND webscene_native_engine_tests)
+        add_test(NAME webscene_native_navigation_realm COMMAND webscene_native_engine_tests)
+        add_test(NAME webscene_native_host_close_decision COMMAND webscene_native_engine_tests)
         set_tests_properties(webscene_native_idle_v8_platform PROPERTIES
             ENVIRONMENT "WEBSCENE_NATIVE_ENGINE_TEST_FILTER=idle-v8-platform")
+        set_tests_properties(webscene_native_dom_punctuation_keyboard PROPERTIES
+            ENVIRONMENT "WEBSCENE_NATIVE_ENGINE_TEST_FILTER=dom-punctuation-keyboard")
+        set_tests_properties(webscene_native_shortcut_activation PROPERTIES
+            ENVIRONMENT "WEBSCENE_NATIVE_ENGINE_TEST_FILTER=shortcut-activation"
+            TIMEOUT 30
+            LABELS "native;runtime;input;performance")
+        set_tests_properties(webscene_native_select_popup_context PROPERTIES
+            ENVIRONMENT "WEBSCENE_NATIVE_ENGINE_TEST_FILTER=select-popup-context")
+        set_tests_properties(webscene_native_html_select_add PROPERTIES
+            ENVIRONMENT "WEBSCENE_NATIVE_ENGINE_TEST_FILTER=html-select-add"
+            TIMEOUT 30
+            LABELS "native;runtime;dom;performance")
+        set_tests_properties(webscene_native_hover_dependency_cache PROPERTIES
+            ENVIRONMENT "WEBSCENE_NATIVE_ENGINE_TEST_FILTER=hover-dependency-cache"
+            TIMEOUT 30
+            LABELS "native;runtime;performance")
+        set_tests_properties(webscene_native_fragment_atomic_attachment PROPERTIES
+            ENVIRONMENT "WEBSCENE_NATIVE_ENGINE_TEST_FILTER=fragment-attach"
+            TIMEOUT 30
+            LABELS "native;runtime;dom;performance")
+        set_tests_properties(webscene_native_recursive_selector_cache PROPERTIES
+            ENVIRONMENT "WEBSCENE_NATIVE_ENGINE_TEST_FILTER=recursive-selector-cache"
+            TIMEOUT 30
+            LABELS "native;runtime;performance")
+        set_tests_properties(webscene_native_indexeddb_contract PROPERTIES
+            ENVIRONMENT "WEBSCENE_NATIVE_ENGINE_TEST_FILTER=indexeddb"
+            LABELS "storage;indexeddb;durability" TIMEOUT 60)
+        set_tests_properties(webscene_native_navigation_realm PROPERTIES
+            ENVIRONMENT "WEBSCENE_NATIVE_ENGINE_TEST_FILTER=navigation-realm"
+            LABELS "native;runtime;navigation;lifecycle" TIMEOUT 30)
+        set_tests_properties(webscene_native_host_close_decision PROPERTIES
+            ENVIRONMENT "WEBSCENE_NATIVE_ENGINE_TEST_FILTER=host-driven-close-veto"
+            LABELS "native;runtime;lifecycle;performance" TIMEOUT 30)
         set_tests_properties(webscene_native_engine_tests PROPERTIES
             ENVIRONMENT
                 "WEBSCENE_V8_DETAILED_MEMORY_METRICS=1;WEBSCENE_INTEROP_STRESS=1")
@@ -1220,6 +1321,27 @@ if(BUILD_TESTING AND WEBSCENE_NATIVE_ENGINE_ENABLE_V8)
     add_dependencies(webscene_hybrid_v8_runtime_tests webscene_native_engine)
     add_test(NAME webscene_hybrid_v8_runtime_tests COMMAND webscene_hybrid_v8_runtime_tests)
     set_tests_properties(webscene_hybrid_v8_runtime_tests PROPERTIES TIMEOUT 30 LABELS "hybrid;runtime")
+    add_test(
+        NAME webscene_worker_object_url_tests
+        COMMAND webscene_hybrid_v8_runtime_tests)
+    set_tests_properties(
+        webscene_worker_object_url_tests
+        PROPERTIES
+            ENVIRONMENT "WEBSCENE_HYBRID_V8_RUNTIME_TEST_FILTER=worker-messageport"
+            TIMEOUT 30
+            LABELS "hybrid;runtime;worker;security;performance")
+    foreach(webcrypto_filter IN ITEMS aes-gcm aes-cbc hmac)
+        string(REPLACE "-" "_" webcrypto_test_suffix "${webcrypto_filter}")
+        add_test(
+            NAME "webscene_webcrypto_${webcrypto_test_suffix}_tests"
+            COMMAND webscene_hybrid_v8_runtime_tests)
+        set_tests_properties(
+            "webscene_webcrypto_${webcrypto_test_suffix}_tests"
+            PROPERTIES
+                ENVIRONMENT "WEBSCENE_HYBRID_V8_RUNTIME_TEST_FILTER=webcrypto-${webcrypto_filter}"
+                TIMEOUT 30
+                LABELS "hybrid;runtime;webcrypto")
+    endforeach()
 endif()
 
 if(BUILD_TESTING AND WEBSCENE_NATIVE_ENGINE_ENABLE_GRAPHICS AND WEBSCENE_NATIVE_ENGINE_ENABLE_V8)
@@ -1246,6 +1368,12 @@ if(BUILD_TESTING AND WEBSCENE_NATIVE_ENGINE_ENABLE_GRAPHICS AND WEBSCENE_NATIVE_
     add_dependencies(webscene_graphics_v8_runtime_tests webscene_native_engine)
     add_test(NAME webscene_graphics_v8_runtime_tests COMMAND webscene_graphics_v8_runtime_tests)
     set_tests_properties(webscene_graphics_v8_runtime_tests PROPERTIES TIMEOUT 30 LABELS "graphics;runtime;hardware")
+    add_test(NAME webscene_graphics_idle_caret_opportunity
+        COMMAND webscene_graphics_v8_runtime_tests)
+    set_tests_properties(webscene_graphics_idle_caret_opportunity PROPERTIES
+        ENVIRONMENT "WEBSCENE_GRAPHICS_TEST_FILTER=idle-webgpu-caret-opportunity"
+        TIMEOUT 30
+        LABELS "graphics;runtime")
 endif()
 
 if(BUILD_TESTING AND APPLE AND WEBSCENE_NATIVE_ENGINE_ENABLE_GRAPHICS)

@@ -35,7 +35,8 @@ public static partial class WebSceneCompatibilityChecker
     private static readonly Rule[] s_rules =
     [
         Unsupported(@"\bnavigator\s*\.\s*serviceWorker\b", "WEBSCENE1001", "Service workers are not supported."),
-        Unsupported(@"\bindexedDB\b", "WEBSCENE1002", "IndexedDB is not supported."),
+        Requires(@"\bindexedDB\b", "WEBSCENE1002", WebSceneComponentCapabilities.IndexedDb,
+            "Persistent IndexedDB access must be declared."),
         Unsupported(@"\b(?:Worker|SharedWorker|Worklet)\s*\(", "WEBSCENE1003", "Web workers and worklets are not supported."),
         Unsupported(@"\b(?:RTCPeerConnection|MediaRecorder|AudioContext|webkitAudioContext)\b", "WEBSCENE1004", "WebRTC, recording, and Web Audio are not supported."),
         Unsupported(@"\bnavigator\s*\.\s*(?:mediaDevices|geolocation)\b", "WEBSCENE1005", "Media devices and geolocation are not supported."),

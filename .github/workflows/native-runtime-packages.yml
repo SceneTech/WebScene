@@ -26,9 +26,14 @@ on:
     - 'scripts/build-native-engine-runtime.sh'
     - 'scripts/build-native-engine-runtime-linux-container.sh'
     - 'scripts/build-native-engine-runtime.ps1'
+    - 'scripts/V8WindowsEnvironment.psm1'
     - 'scripts/pack-packages.sh'
+    - 'scripts/prepare_dotnet_install.py'
     - 'scripts/verify-cross-rid-compatibility.py'
+    - 'scripts/tests/test_native_runtime_workflow_policy.py'
+    - 'scripts/tests/test_prepare_dotnet_install.py'
     - 'scripts/tests/test_verify_cross_rid_compatibility.py'
+    - 'scripts/tests/test_v8_windows_environment.ps1'
     - 'scripts/verify-release-packages.py'
     - 'src/WebScene.Backend.Abstractions/**'
     - 'src/WebScene.Backend.Avalonia/**'
@@ -58,10 +63,20 @@ jobs:
     - name: Test cross-RID evidence verifier
       run: |
         python3 -m unittest \
+          scripts/tests/test_native_runtime_workflow_policy.py \
+          scripts/tests/test_prepare_dotnet_install.py \
           scripts/tests/test_verify_cross_rid_compatibility.py
+    - name: Repair incomplete .NET install
+      shell: bash
+      env:
+        DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
+      run: python3 scripts/prepare_dotnet_install.py "$DOTNET_INSTALL_DIR"
     - name: Setup .NET
       uses: actions/setup-dotnet@v5
+      env:
+        DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
       with:
+        dotnet-version: 8.0.x
         global-json-file: global.json
     - id: version
       name: Resolve and validate package version
@@ -126,9 +141,17 @@ jobs:
     - uses: actions/checkout@v4
       with:
         fetch-depth: 0
+    - name: Repair incomplete .NET install
+      shell: bash
+      env:
+        DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
+      run: python3 scripts/prepare_dotnet_install.py "$DOTNET_INSTALL_DIR"
     - name: Setup .NET
       uses: actions/setup-dotnet@v5
+      env:
+        DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
       with:
+        dotnet-version: 8.0.x
         global-json-file: global.json
     - name: Pack and verify .NET packages
       shell: bash
@@ -175,15 +198,44 @@ jobs:
           v8_cache_generation: v12-v8-15.3.10-pa-no-process-shim-ubuntu22-gcc12-lld-no-crel-shared-inspector
           v8_cache_script: scripts/build-native-engine-runtime.sh
           v8_cache_patch: packaging/WebScene.NativeEngine.Runtime/patches/V8BuildNoCrelPatch.txt
+        - os: windows-2022
+          rid: win-x64
+          cpu: x64
+          monolith: v8_monolith.lib
+          script: windows
+          v8_revision: 15.3.10
+          partition_alloc: true
+          v8_configuration: ReleasePartitionAlloc
+          v8_cache_generation: v9-v8-15.3.10-pa-windows-compat-inspector
+          v8_cache_script: scripts/build-native-engine-runtime.ps1
+          v8_cache_patch: packaging/WebScene.NativeEngine.Runtime/patches/V8WindowsCompatibilityPatch.txt
     runs-on: ${{ matrix.os }}
     steps:
     - uses: actions/checkout@v4
       with:
         fetch-depth: 0
+    - name: Repair incomplete .NET install
+      shell: bash
+      env:
+        DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
+      run: python3 scripts/prepare_dotnet_install.py "$DOTNET_INSTALL_DIR"
     - name: Setup .NET
       uses: actions/setup-dotnet@v5
+      env:
+        DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
       with:
+        dotnet-version: 8.0.x
         global-json-file: global.json
+    - name: Test V8 Windows child environment
+      if: matrix.rid == 'win-x64'
+      shell: pwsh
+      run: ./scripts/tests/test_v8_windows_environment.ps1
+    - name: Expose the self-hosted Rust toolchain
+      if: matrix.rid == 'osx-arm64'
+      shell: bash
+      run: |
+        echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+        "$HOME/.cargo/bin/cargo" --version
     - name: Build Ubuntu 22.04 Linux runtime image
       if: matrix.rid == 'linux-x64'
       shell: bash
@@ -211,10 +263,10 @@ jobs:
           artifacts/native-engine-v8/${{ matrix.rid }}/v8/LICENSE
           artifacts/native-engine-v8/${{ matrix.rid }}/v8/third_party/icu/LICENSE
           artifacts/native-engine-v8/${{ matrix.rid }}/v8/third_party/partition_alloc/src
-        key: webscene-v8-sdk-${{ matrix.v8_cache_generation }}-${{ matrix.rid }}-${{ hashFiles('third-party/v8-patches/**') }}-${{ steps.v8-cache-key.outputs.image-version }}-${{ hashFiles(matrix.v8_cache_script, matrix.v8_cache_patch) }}
+        key: webscene-v8-sdk-${{ matrix.v8_cache_generation }}-${{ matrix.rid }}-${{ hashFiles('third-party/v8-patches/**') }}-${{ steps.v8-cache-key.outputs.image-version }}-${{ hashFiles(matrix.v8_cache_script, matrix.v8_cache_patch, 'scripts/V8WindowsEnvironment.psm1') }}
         restore-keys: |
-          webscene-v8-sdk-${{ matrix.v8_cache_generation }}-${{ matrix.rid }}-${{ hashFiles('third-party/v8-patches/**') }}-
-          webscene-v8-sdk-${{ matrix.v8_cache_generation }}-${{ matrix.rid }}-
+          ${{ matrix.rid != 'win-x64' && format('webscene-v8-sdk-{0}-{1}-{2}-', matrix.v8_cache_generation, matrix.rid, hashFiles('third-party/v8-patches/**')) || '' }}
+          ${{ matrix.rid != 'win-x64' && format('webscene-v8-sdk-{0}-{1}-', matrix.v8_cache_generation, matrix.rid) || '' }}
     - id: restored-v8-sdk
       name: Validate restored V8 SDK compatibility
       shell: bash
@@ -222,6 +274,15 @@ jobs:
         root="artifacts/native-engine-v8/${{ matrix.rid }}/v8"
         args="$root/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/args.gn"
         monolith="$root/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/obj/${{ matrix.monolith }}"
+        if [[ '${{ matrix.rid }}' == 'win-x64' \
+          && '${{ steps.v8-cache.outputs.cache-hit }}' != 'true' ]]; then
+          echo "The exact Windows V8 cache identity was not restored; forcing a clean child build."
+          rm -rf "$root"
+          echo "ready=false" >> "$GITHUB_OUTPUT"
+          echo "cold-build=true" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        echo "cold-build=false" >> "$GITHUB_OUTPUT"
         partition_alloc_is_compatible() {
           [[ '${{ matrix.partition_alloc }}' != 'true' ]] \
             || { [[ -d "$root/third_party/partition_alloc/src" ]] \
@@ -290,6 +351,15 @@ jobs:
           --upstream-v8 \
           --partition-alloc \
           --output "$GITHUB_WORKSPACE/artifacts/nuget-packages"
+    - name: Upload exact macOS native symbols
+      if: matrix.rid == 'osx-arm64'
+      uses: actions/upload-artifact@v4
+      with:
+        name: native-symbols-${{ matrix.rid }}-${{ needs.metadata.outputs.package-version }}
+        path: artifacts/native-engine-runtime-build/**/*.dSYM/**
+        if-no-files-found: error
+        compression-level: 9
+        retention-days: 3
     - name: Build, pack, and test Linux runtime
       if: matrix.rid == 'linux-x64'
       shell: bash
@@ -340,6 +410,28 @@ jobs:
           -UpstreamV8 `
           -PartitionAlloc `
           -Output "$env:GITHUB_WORKSPACE/artifacts/nuget-packages"
+    - name: Verify fresh Windows V8 child build
+      if: matrix.rid == 'win-x64' && steps.v8-cache.outputs.cache-hit != 'true'
+      shell: pwsh
+      run: |
+        if ('${{ steps.restored-v8-sdk.outputs.ready }}' -ne 'false' `
+          -or '${{ steps.restored-v8-sdk.outputs.cold-build }}' -ne 'true') {
+          throw "Windows V8 qualification did not record a cold build."
+        }
+        $root = "$env:GITHUB_WORKSPACE/artifacts/native-engine-v8/${{ matrix.rid }}"
+        $required = @(
+          "$root/depot_tools/.git",
+          "$root/v8/.git",
+          "$root/v8/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/args.gn",
+          "$root/v8/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/obj/${{ matrix.monolith }}",
+          "$root/v8/out/${{ matrix.cpu }}/${{ matrix.v8_configuration }}/icudtl.dat"
+        )
+        foreach ($path in $required) {
+          if (-not (Test-Path $path)) {
+            throw "Fresh Windows V8 child output is missing: $path"
+          }
+        }
+        Write-Host "Fresh Windows V8 checkout, GN generation, and Ninja output verified."
     - name: Run candidate compatibility discovery
       continue-on-error: true
       shell: bash
@@ -418,7 +510,7 @@ jobs:
           artifacts/native-engine-v8/${{ matrix.rid }}/v8/LICENSE
           artifacts/native-engine-v8/${{ matrix.rid }}/v8/third_party/icu/LICENSE
           artifacts/native-engine-v8/${{ matrix.rid }}/v8/third_party/partition_alloc/src
-        key: webscene-v8-sdk-${{ matrix.v8_cache_generation }}-${{ matrix.rid }}-${{ hashFiles('third-party/v8-patches/**') }}-${{ steps.v8-cache-key.outputs.image-version }}-${{ hashFiles(matrix.v8_cache_script, matrix.v8_cache_patch) }}
+        key: webscene-v8-sdk-${{ matrix.v8_cache_generation }}-${{ matrix.rid }}-${{ hashFiles('third-party/v8-patches/**') }}-${{ steps.v8-cache-key.outputs.image-version }}-${{ hashFiles(matrix.v8_cache_script, matrix.v8_cache_patch, 'scripts/V8WindowsEnvironment.psm1') }}
     - name: Upload required compatibility evidence
       if: success()
       uses: actions/upload-artifact@v4
@@ -466,6 +558,7 @@ jobs:
           --selection required \
           --expected-rid osx-arm64 \
           --expected-rid linux-x64 \
+          --expected-rid win-x64 \
           --output artifacts/required-compatibility/cross-rid-summary.json
     - name: Upload cross-RID required summary
       uses: actions/upload-artifact@v4
@@ -499,6 +592,7 @@ jobs:
           --version '${{ needs.metadata.outputs.package-version }}' \
           --native-rid osx-arm64 \
           --native-rid linux-x64 \
+          --native-rid win-x64 \
           --output artifacts/nuget-packages/release-packages.json
         shasum -a 256 \
           artifacts/nuget-packages/*.nupkg \
@@ -518,8 +612,7 @@ jobs:
   candidate-evidence:
     name: Verify cross-RID candidate evidence
     needs: [metadata, native]
-    if: always() && needs.metadata.result == 'success'
-    continue-on-error: true
+    if: always() && needs.metadata.result == 'success' && needs.native.result != 'cancelled'
     runs-on: [self-hosted, Linux, X64]
     steps:
     - uses: actions/checkout@v4
@@ -536,8 +629,10 @@ jobs:
           --input-root artifacts/candidate-compatibility \
           --profile tests/WebPlatformSubset/webscene-component-profile.json \
           --selection candidate \
+          --advisory-test-failures \
           --expected-rid osx-arm64 \
           --expected-rid linux-x64 \
+          --expected-rid win-x64 \
           --output artifacts/candidate-compatibility/cross-rid-summary.json
     - name: Upload cross-RID candidate summary
       if: always()
@@ -558,6 +653,8 @@ jobs:
           rid: osx-arm64
         - os: [self-hosted, Linux, X64]
           rid: linux-x64
+        - os: windows-2022
+          rid: win-x64
     runs-on: ${{ matrix.os }}
     env:
       # PR builds intentionally reuse package versions. Keep their extracted
@@ -567,9 +664,17 @@ jobs:
       NUGET_PACKAGES: ${{ github.workspace }}/artifacts/nuget-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.rid }}
     steps:
     - uses: actions/checkout@v4
+    - name: Repair incomplete .NET install
+      shell: bash
+      env:
+        DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
+      run: python3 scripts/prepare_dotnet_install.py "$DOTNET_INSTALL_DIR"
     - name: Setup .NET
       uses: actions/setup-dotnet@v5
+      env:
+        DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
       with:
+        dotnet-version: 8.0.x
         global-json-file: global.json
     - name: Download verified package set
       uses: actions/download-artifact@v4
@@ -622,9 +727,17 @@ jobs:
       with:
         name: release-${{ needs.metadata.outputs.package-version }}
         path: artifacts/nuget-packages
+    - name: Repair incomplete .NET install
+      shell: bash
+      env:
+        DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
+      run: python3 scripts/prepare_dotnet_install.py "$DOTNET_INSTALL_DIR"
     - name: Setup .NET
       uses: actions/setup-dotnet@v5
+      env:
+        DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
       with:
+        dotnet-version: 8.0.x
         global-json-file: global.json
     - id: trusted-publishing
       name: Exchange GitHub identity for a temporary NuGet API key

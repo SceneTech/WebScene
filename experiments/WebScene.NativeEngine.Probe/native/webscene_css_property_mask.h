@@ -66,6 +66,7 @@ enum inline_style_property : uint64_t {
     inline_scrollbar_width = 1ULL << 58U,
     inline_scrollbar_color = 1ULL << 59U,
     inline_svg_stroke_width = 1ULL << 60U,
+    inline_align_content = 1ULL << 61U,
     inline_transition = inline_transition_property | inline_transition_duration
         | inline_transition_delay | inline_transition_timing
 };
@@ -106,6 +107,7 @@ inline uint64_t property_mask(std::string_view name)
         if (name == "flex-basis") return inline_flex_basis;
         if (name == "flex-wrap" || name == "flexWrap") return inline_flex_wrap;
         if (name == "grid-template" || name == "grid-template-columns" || name == "grid-template-rows"
+            || name == "grid-template-areas"
             || name == "grid-area" || name == "grid-row"
             || name == "grid-row-start" || name == "grid-row-end"
             || name == "grid-column" || name == "grid-column-start"
@@ -151,6 +153,7 @@ inline uint64_t property_mask(std::string_view name)
         }
         if (name == "align-items") return inline_align_items;
         if (name == "align-self") return inline_align_self;
+        if (name == "align-content" || name == "alignContent") return inline_align_content;
         if (name == "justify-content") return inline_justify_content;
         if (name == "gap" || name == "row-gap" || name == "column-gap"
             || name == "rowGap" || name == "columnGap") return inline_gap;

@@ -71,6 +71,7 @@ inline std::vector<node_style::grid_data::track> parse_simple_grid_tracks(
         if (token == "auto" || token == "max-content") {
             grid_track track;
             track.kind = grid_track::sizing::automatic;
+            track.maximum_is_auto = token == "auto";
             return track;
         }
         if (token == "min-content") {
@@ -106,6 +107,7 @@ inline std::vector<node_style::grid_data::track> parse_simple_grid_tracks(
                 track.minimum = native_document::parse_length(std::string(minimum));
             }
             track.fraction = parse_fraction(maximum);
+            track.maximum_is_auto = maximum == "auto";
             if (track.fraction <= 0 && maximum != "auto"
                 && maximum != "min-content" && maximum != "max-content") {
                 track.maximum = native_document::parse_length(std::string(maximum));
@@ -150,6 +152,130 @@ inline std::vector<node_style::grid_data::track> parse_simple_grid_tracks(
     return tracks;
 }
 
+struct parsed_grid_template_areas final {
+    std::vector<node_style::grid_data::named_area> areas;
+    size_t row_count{0};
+    size_t column_count{0};
+    std::string serialized{"none"};
+};
+
+inline std::optional<parsed_grid_template_areas> parse_grid_template_areas(
+    std::string_view value)
+{
+    const auto trim = [](std::string_view input) {
+        const auto first = input.find_first_not_of(" \t\r\n\f");
+        if (first == std::string_view::npos) return std::string_view{};
+        return input.substr(first, input.find_last_not_of(" \t\r\n\f") - first + 1U);
+    };
+    value = trim(value);
+    if (value == "none") return parsed_grid_template_areas{};
+    if (value.empty()) return std::nullopt;
+
+    std::vector<std::vector<std::string>> rows;
+    std::string serialized;
+    size_t cursor = 0;
+    while (cursor < value.size()) {
+        while (cursor < value.size()
+            && std::isspace(static_cast<unsigned char>(value[cursor]))) ++cursor;
+        if (cursor == value.size()) break;
+        const auto quote = value[cursor];
+        if (quote != '\'' && quote != '"') return std::nullopt;
+        ++cursor;
+        std::string row_text;
+        auto closed = false;
+        while (cursor < value.size()) {
+            const auto character = value[cursor++];
+            if (character == quote) {
+                closed = true;
+                break;
+            }
+            if (character == '\\') {
+                if (cursor == value.size()) return std::nullopt;
+                row_text.push_back(value[cursor++]);
+                continue;
+            }
+            if (character == '\n' || character == '\r' || character == '\f') {
+                return std::nullopt;
+            }
+            row_text.push_back(character);
+        }
+        if (!closed) return std::nullopt;
+
+        std::vector<std::string> cells;
+        std::istringstream tokens(row_text);
+        std::string token;
+        while (tokens >> token) {
+            const auto empty_cell = std::all_of(
+                token.begin(), token.end(), [](char character) { return character == '.'; });
+            if (empty_cell) token = ".";
+            else {
+                const auto first = static_cast<unsigned char>(token.front());
+                if (!(std::isalpha(first) || first == '_' || first == '-')) return std::nullopt;
+                if (!std::all_of(token.begin() + 1, token.end(), [](unsigned char character) {
+                    return std::isalnum(character) || character == '_' || character == '-';
+                })) return std::nullopt;
+                if (token == "auto" || token == "span" || token == "initial"
+                    || token == "inherit" || token == "unset" || token == "revert"
+                    || token == "revert-layer" || token == "default") return std::nullopt;
+            }
+            cells.push_back(std::move(token));
+        }
+        if (cells.empty()) return std::nullopt;
+        if (!rows.empty() && cells.size() != rows.front().size()) return std::nullopt;
+        if (!serialized.empty()) serialized.push_back(' ');
+        serialized.push_back('"');
+        for (size_t index = 0; index < cells.size(); ++index) {
+            if (index != 0) serialized.push_back(' ');
+            serialized += cells[index];
+        }
+        serialized.push_back('"');
+        rows.push_back(std::move(cells));
+    }
+    if (rows.empty()) return std::nullopt;
+
+    parsed_grid_template_areas result;
+    result.row_count = rows.size();
+    result.column_count = rows.front().size();
+    result.serialized = std::move(serialized);
+    for (size_t row = 0; row < rows.size(); ++row) {
+        for (size_t column = 0; column < rows[row].size(); ++column) {
+            const auto& name = rows[row][column];
+            if (name == ".") continue;
+            auto found = std::find_if(result.areas.begin(), result.areas.end(),
+                [&](const auto& area) { return area.name == name; });
+            if (found == result.areas.end()) {
+                result.areas.push_back({name, row, row + 1U, column, column + 1U});
+            } else {
+                found->row_start = std::min(found->row_start, row);
+                found->row_end = std::max(found->row_end, row + 1U);
+                found->column_start = std::min(found->column_start, column);
+                found->column_end = std::max(found->column_end, column + 1U);
+            }
+        }
+    }
+    for (const auto& area : result.areas) {
+        for (size_t row = area.row_start; row < area.row_end; ++row) {
+            for (size_t column = area.column_start; column < area.column_end; ++column) {
+                if (rows[row][column] != area.name) return std::nullopt;
+            }
+        }
+    }
+    return result;
+}
+
+inline bool apply_grid_template_areas(node_style& style, const std::string& value)
+{
+    const auto parsed = parse_grid_template_areas(value);
+    if (!parsed.has_value()) return false;
+    auto& grid = style.mutable_grid();
+    grid.template_areas = parsed->areas;
+    grid.template_area_row_count = parsed->row_count;
+    grid.template_area_column_count = parsed->column_count;
+    grid.template_areas_value = parsed->serialized;
+    grid.two_columns = grid.subgrid_columns || grid.template_columns.size() > 1U
+        || parsed->column_count > 1U;
+    return true;
+}
 
 inline bool apply_grid_placement_declaration(
         node_style& style,
@@ -200,12 +326,25 @@ inline bool apply_grid_placement_declaration(
         const auto component = [&](size_t index) {
             return index < components.size() ? components[index] : std::string{"auto"};
         };
+        const auto custom_identifier = [](const std::string& token) {
+            if (token.empty() || token == "auto" || token == "span"
+                || token == "inherit" || token == "initial" || token == "unset"
+                || token == "revert" || token == "revert-layer"
+                || token.starts_with("span ")) return false;
+            int32_t integer = 0;
+            const auto parsed = std::from_chars(
+                token.data(), token.data() + token.size(), integer);
+            return parsed.ec != std::errc{} || parsed.ptr != token.data() + token.size();
+        };
         if (name == "grid-area") {
             grid.area_value = value;
             grid.row_start_value = component(0);
-            grid.column_start_value = component(1);
-            grid.row_end_value = component(2);
-            grid.column_end_value = component(3);
+            const auto omitted = components.size() == 1U
+                    && custom_identifier(grid.row_start_value)
+                ? grid.row_start_value : std::string{"auto"};
+            grid.column_start_value = components.size() > 1U ? component(1) : omitted;
+            grid.row_end_value = components.size() > 2U ? component(2) : omitted;
+            grid.column_end_value = components.size() > 3U ? component(3) : omitted;
             grid.row_value =
                 grid.row_start_value + " / " + grid.row_end_value;
             update_column_layout();
@@ -214,12 +353,16 @@ inline bool apply_grid_placement_declaration(
         if (name == "grid-row") {
             grid.row_value = value;
             grid.row_start_value = component(0);
-            grid.row_end_value = component(1);
+            grid.row_end_value = components.size() > 1U ? component(1)
+                : custom_identifier(grid.row_start_value)
+                    ? grid.row_start_value : std::string{"auto"};
             return true;
         }
 
         grid.column_start_value = component(0);
-        grid.column_end_value = component(1);
+        grid.column_end_value = components.size() > 1U ? component(1)
+            : custom_identifier(grid.column_start_value)
+                ? grid.column_start_value : std::string{"auto"};
         update_column_layout();
         // Preserve the authored one-component shorthand serialization rather
         // than inflating `2` to `2 / auto`.
@@ -232,12 +375,14 @@ bool apply_grid_value(dom_node& node,const std::string& name,const std::string& 
     Decision& decision,Protected&& is_inline)
 {
     if (name == "grid-template" && !is_inline(inline_grid)) {
-            auto& grid = node.style.mutable_grid();
-            grid.named_areas.clear();
+            // Share main's validated named-area representation with the
+            // shorthand, while retaining this branch's explicit track support.
+            auto grid = node.style.grid();
             grid.template_rows.clear();
             grid.template_columns.clear();
             std::vector<std::vector<std::string>> rows;
             std::vector<node_style::grid_data::track> row_tracks;
+            std::string area_source;
             size_t cursor = 0;
             size_t slash = std::string::npos;
             while (cursor < value.size()) {
@@ -246,6 +391,8 @@ bool apply_grid_value(dom_node& node,const std::string& name,const std::string& 
                 const auto quote = value[cursor++];
                 const auto end = value.find(quote, cursor);
                 if (end == std::string::npos) break;
+                if (!area_source.empty()) area_source.push_back(' ');
+                area_source += value.substr(cursor - 1U, end - cursor + 2U);
                 std::istringstream names{value.substr(cursor, end - cursor)};
                 std::vector<std::string> row;
                 for (std::string area; names >> area;) row.push_back(area);
@@ -275,23 +422,29 @@ bool apply_grid_value(dom_node& node,const std::string& name,const std::string& 
             grid.fractional_rows = std::any_of(
                 grid.template_rows.begin(), grid.template_rows.end(),
                 [](const auto& track) { return track.fraction > 0; });
-            for (size_t row = 0; row < rows.size(); ++row) {
-                for (size_t column = 0; column < rows[row].size(); ++column) {
-                    const auto& name = rows[row][column];
-                    if (name == ".") continue;
-                    auto [entry, inserted] = grid.named_areas.try_emplace(
-                        name, node_style::grid_data::named_area{row, column, 1U, 1U});
-                    if (!inserted) {
-                        entry->second.row_span = std::max(
-                            entry->second.row_span, row - entry->second.row + 1U);
-                        entry->second.column_span = std::max(
-                            entry->second.column_span, column - entry->second.column + 1U);
-                    }
-                }
+            const auto areas = parse_grid_template_areas(
+                area_source.empty() ? "none" : area_source);
+            if (!areas.has_value()) {
+                decision.classification = "unsupported";
+                decision.semantic_slice = "invalid grid-template area declarations are ignored";
+                return true;
             }
+            grid.template_areas = areas->areas;
+            grid.template_area_row_count = areas->row_count;
+            grid.template_area_column_count = areas->column_count;
+            grid.template_areas_value = areas->serialized;
             grid.two_columns = column_count > 1U;
+            node.style.mutable_grid() = std::move(grid);
             decision.classification = "partially-supported";
             decision.semantic_slice = "named grid-template areas with explicit column tracks";
+        } else if (name == "grid-template-areas" && !is_inline(inline_grid)) {
+            if (!apply_grid_template_areas(node.style, value)) {
+                decision.classification = "unsupported";
+                decision.semantic_slice = "invalid grid-template-areas declarations are ignored";
+                return true;
+            }
+            decision.classification = "supported";
+            decision.semantic_slice = "rectangular named grid template areas";
         } else if (name == "grid-template-columns" && !is_inline(inline_grid)) {
             auto& grid = node.style.mutable_grid();
             const auto first = value.find_first_not_of(" \t\r\n");
@@ -316,6 +469,7 @@ bool apply_grid_value(dom_node& node,const std::string& name,const std::string& 
             }
             grid.two_columns = grid.subgrid_columns
                 || grid.template_columns.size() > 1U
+                || grid.template_area_column_count > 1U
                 || (grid.template_columns.empty() && has_multiple_grid_columns(value));
             decision.classification = "partially-supported";
             decision.semantic_slice =
@@ -419,6 +573,8 @@ bool apply_flex_value(dom_node& node,const std::string& name,const std::string& 
                 : value == "flex-end" || value == "end" ? align_mode::end
                 : value == "baseline" || value == "first baseline" ? align_mode::baseline
                 : align_mode::stretch;
+        } else if (name == "align-content" && !is_inline(inline_align_content)) {
+            node.style.align_content_stretches = value == "normal" || value == "stretch";
         } else if (name == "justify-content" && !is_inline(inline_justify_content)) {
             node.style.justify_content = value == "center" ? justify_mode::center
                 : value == "flex-end" || value == "end" ? justify_mode::end

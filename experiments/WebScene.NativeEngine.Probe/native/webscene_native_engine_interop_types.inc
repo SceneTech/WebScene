@@ -338,6 +338,17 @@ struct interop_callback_cancel_work_v3 final {
     uint64_t call_id{0};
 };
 
+struct window_close_decision_state final {
+    std::mutex mutex;
+    std::condition_variable completed;
+    uint32_t decision{WEBSCENE_WINDOW_CLOSE_ERROR_V1};
+    bool ready{false};
+};
+
+struct window_close_decision_work final {
+    std::shared_ptr<window_close_decision_state> state;
+};
+
 class interop_callback_completion_pool_v3 final {
 public:
     std::unique_ptr<
@@ -413,12 +424,14 @@ using script_work_request =
     std::variant<
         script_request,
         webscene_native::native_file_completion,
+        webscene_native::native_host_completion,
         url_request,
         interop_evaluate_work_v3,
         interop_invoke_work_v3,
         interop_cancel_work_v3,
         interop_callback_completion_work_v3,
-        interop_callback_cancel_work_v3
+        interop_callback_cancel_work_v3,
+        window_close_decision_work
 #if defined(WEBSCENE_NATIVE_ENGINE_WITH_V8_INSPECTOR)
         , inspector_pump_work
 #endif

@@ -163,6 +163,262 @@
         return lower_html_name(address.substr(0U, scheme_end)) + "://" + authority;
     }
 
+    struct cookie_url_parts final {
+        std::string scheme;
+        std::string host;
+        std::string path{"/"};
+        bool valid{false};
+    };
+
+    static cookie_url_parts parse_cookie_url(std::string address)
+    {
+        cookie_url_parts result;
+        const auto scheme_end = address.find("://");
+        if (scheme_end == std::string::npos) return result;
+        result.scheme = lower_html_name(address.substr(0U, scheme_end));
+        if (result.scheme == "ws") result.scheme = "http";
+        if (result.scheme == "wss") result.scheme = "https";
+        const auto authority_start = scheme_end + 3U;
+        const auto authority_end = address.find_first_of("/?#", authority_start);
+        auto authority = address.substr(
+            authority_start,
+            authority_end == std::string::npos ? std::string::npos
+                : authority_end - authority_start);
+        if (const auto at = authority.rfind('@'); at != std::string::npos) {
+            authority.erase(0U, at + 1U);
+        }
+        if (!authority.empty() && authority.front() == '[') {
+            const auto bracket = authority.find(']');
+            if (bracket == std::string::npos) return result;
+            result.host = authority.substr(0U, bracket + 1U);
+        } else {
+            const auto colon = authority.rfind(':');
+            result.host = authority.substr(0U, colon == std::string::npos
+                ? std::string::npos : colon);
+        }
+        result.host = lower_html_name(result.host);
+        if (authority_end != std::string::npos && address[authority_end] == '/') {
+            const auto path_end = address.find_first_of("?#", authority_end);
+            result.path = address.substr(authority_end,
+                path_end == std::string::npos ? std::string::npos
+                    : path_end - authority_end);
+        }
+        result.valid = (result.scheme == "http" || result.scheme == "https")
+            && !result.host.empty();
+        return result;
+    }
+
+    static bool cookie_domain_matches(
+        const std::string& host, const std::string& domain)
+    {
+        return host == domain || (host.size() > domain.size()
+            && host.ends_with(domain)
+            && host[host.size() - domain.size() - 1U] == '.');
+    }
+
+    static std::string default_cookie_path(const std::string& path)
+    {
+        if (path.empty() || path.front() != '/') return "/";
+        const auto slash = path.rfind('/');
+        return slash == 0U ? "/" : path.substr(0U, slash);
+    }
+
+    static std::optional<std::chrono::system_clock::time_point>
+    parse_cookie_expiry(const std::string& value)
+    {
+        std::tm parsed{};
+        std::istringstream stream(value);
+        stream.imbue(std::locale::classic());
+        stream >> std::get_time(&parsed, "%a, %d %b %Y %H:%M:%S GMT");
+        if (stream.fail()) return std::nullopt;
+#if defined(_WIN32)
+        const auto seconds = _mkgmtime(&parsed);
+#else
+        const auto seconds = timegm(&parsed);
+#endif
+        if (seconds < 0) return std::nullopt;
+        return std::chrono::system_clock::from_time_t(seconds);
+    }
+
+    void store_cookie(
+        const std::string& response_url,
+        const std::string& line,
+        bool from_http)
+    {
+        if (line.empty() || line.size() > maximum_cookie_bytes) return;
+        const auto source = parse_cookie_url(response_url);
+        if (!source.valid) return;
+        const auto trim = [](std::string value) {
+            const auto first = value.find_first_not_of(" \t");
+            if (first == std::string::npos) return std::string{};
+            const auto last = value.find_last_not_of(" \t");
+            return value.substr(first, last - first + 1U);
+        };
+        const auto first_separator = line.find(';');
+        const auto pair = line.substr(0U, first_separator);
+        const auto equals = pair.find('=');
+        if (equals == std::string::npos) return;
+        stored_cookie cookie;
+        cookie.name = trim(pair.substr(0U, equals));
+        cookie.value = trim(pair.substr(equals + 1U));
+        cookie.domain = source.host;
+        cookie.path = default_cookie_path(source.path);
+        if (cookie.name.empty() || cookie.name.find_first_of("=;\r\n\0") != std::string::npos
+            || cookie.value.find_first_of(";\r\n\0") != std::string::npos) return;
+        std::optional<int64_t> maximum_age;
+        auto cursor = first_separator;
+        while (cursor != std::string::npos) {
+            const auto next = line.find(';', cursor + 1U);
+            auto attribute = trim(line.substr(cursor + 1U,
+                next == std::string::npos ? std::string::npos : next - cursor - 1U));
+            const auto attribute_equals = attribute.find('=');
+            auto name = lower_html_name(trim(attribute.substr(0U, attribute_equals)));
+            auto value = attribute_equals == std::string::npos
+                ? std::string{} : trim(attribute.substr(attribute_equals + 1U));
+            if (name == "domain" && !value.empty()) {
+                value = lower_html_name(value);
+                while (!value.empty() && value.front() == '.') value.erase(value.begin());
+                const auto numeric_host = !source.host.empty() && std::all_of(
+                    source.host.begin(), source.host.end(), [](unsigned char character) {
+                        return std::isdigit(character) || character == '.' || character == ':'
+                            || character == '[' || character == ']';
+                    });
+                if (!cookie_domain_matches(source.host, value)
+                    || (numeric_host && value != source.host)) return;
+                cookie.domain = std::move(value);
+                cookie.host_only = false;
+            } else if (name == "path" && !value.empty() && value.front() == '/') {
+                cookie.path = std::move(value);
+            } else if (name == "secure") {
+                cookie.secure = true;
+            } else if (name == "httponly" && from_http) {
+                cookie.http_only = true;
+            } else if (name == "samesite") {
+                value = lower_html_name(value);
+                if (value == "strict") cookie.same_site = cookie_same_site::strict;
+                else if (value == "none") cookie.same_site = cookie_same_site::none;
+                else cookie.same_site = cookie_same_site::lax;
+            } else if (name == "max-age") {
+                int64_t seconds = 0;
+                const auto parsed = std::from_chars(
+                    value.data(), value.data() + value.size(), seconds);
+                if (parsed.ec == std::errc{} && parsed.ptr == value.data() + value.size()) {
+                    maximum_age = seconds;
+                }
+            } else if (name == "expires") {
+                if (const auto expiry = parse_cookie_expiry(value); expiry.has_value()) {
+                    cookie.expires = *expiry;
+                    cookie.persistent = true;
+                }
+            }
+            cursor = next;
+        }
+        if (cookie.secure && source.scheme != "https") return;
+        if (cookie.same_site == cookie_same_site::none && !cookie.secure) return;
+        if (cookie.name.starts_with("__Secure-") && !cookie.secure) return;
+        if (cookie.name.starts_with("__Host-")
+            && (!cookie.secure || !cookie.host_only || cookie.path != "/")) return;
+        if (maximum_age.has_value()) {
+            cookie.persistent = true;
+            cookie.expires = maximum_age.value() <= 0
+                ? std::chrono::system_clock::time_point{}
+                : std::chrono::system_clock::now()
+                    + std::chrono::seconds(std::min<int64_t>(
+                        maximum_age.value(), 400LL * 24LL * 60LL * 60LL));
+        }
+        std::lock_guard lock(cookie_jar->mutex);
+        const auto same_cookie = [&](const stored_cookie& known) {
+            return known.name == cookie.name && known.domain == cookie.domain
+                && known.path == cookie.path;
+        };
+        auto known = std::find_if(cookie_jar->cookies.begin(), cookie_jar->cookies.end(), same_cookie);
+        if (!from_http && known != cookie_jar->cookies.end() && known->http_only) return;
+        if (cookie.persistent && cookie.expires <= std::chrono::system_clock::now()) {
+            if (known != cookie_jar->cookies.end()) cookie_jar->cookies.erase(known);
+            return;
+        }
+        if (known != cookie_jar->cookies.end()) {
+            cookie.creation_order = known->creation_order;
+            *known = std::move(cookie);
+        } else {
+            cookie.creation_order = cookie_jar->next_creation_order++;
+            if (cookie_jar->cookies.size() >= maximum_cookie_count) {
+                const auto oldest = std::min_element(
+                    cookie_jar->cookies.begin(), cookie_jar->cookies.end(),
+                    [](const auto& left, const auto& right) {
+                        return left.creation_order < right.creation_order;
+                    });
+                cookie_jar->cookies.erase(oldest);
+            }
+            cookie_jar->cookies.push_back(std::move(cookie));
+        }
+    }
+
+    std::string cookie_header_for(
+        const std::string& target_url,
+        const resource_request_context& context,
+        bool script_visible = false)
+    {
+        const auto target = parse_cookie_url(target_url);
+        if (!target.valid || context.credentials == WEBSCENE_FETCH_CREDENTIALS_OMIT) return {};
+        auto origin_url = target_url;
+        if (origin_url.starts_with("ws:")) origin_url.replace(0U, 3U, "http:");
+        else if (origin_url.starts_with("wss:")) origin_url.replace(0U, 4U, "https:");
+        const auto target_origin = resource_origin(origin_url);
+        if (context.credentials == WEBSCENE_FETCH_CREDENTIALS_SAME_ORIGIN
+            && !context.origin.empty()
+            && target_origin != context.origin) return {};
+        const auto same_site = context.origin.empty() || target_origin == context.origin;
+        const auto safe_navigation = context.initiator == WEBSCENE_RESOURCE_INITIATOR_NAVIGATION
+            && (context.method.empty() || context.method == "GET" || context.method == "HEAD");
+        std::vector<const stored_cookie*> matches;
+        const auto now = std::chrono::system_clock::now();
+        std::lock_guard lock(cookie_jar->mutex);
+        std::erase_if(cookie_jar->cookies, [now](const auto& cookie) {
+            return cookie.persistent && cookie.expires <= now;
+        });
+        for (const auto& cookie : cookie_jar->cookies) {
+            if (script_visible && cookie.http_only) continue;
+            if (cookie.secure && target.scheme != "https") continue;
+            if (cookie.host_only ? cookie.domain != target.host
+                    : !cookie_domain_matches(target.host, cookie.domain)) continue;
+            if (!target.path.starts_with(cookie.path)
+                || (target.path.size() > cookie.path.size()
+                    && !cookie.path.ends_with('/')
+                    && target.path[cookie.path.size()] != '/')) continue;
+            if (!same_site && (cookie.same_site == cookie_same_site::strict
+                || (cookie.same_site == cookie_same_site::lax && !safe_navigation))) continue;
+            matches.push_back(&cookie);
+        }
+        std::stable_sort(matches.begin(), matches.end(), [](const auto* left, const auto* right) {
+            return left->path.size() != right->path.size()
+                ? left->path.size() > right->path.size()
+                : left->creation_order < right->creation_order;
+        });
+        std::string result;
+        for (const auto* cookie : matches) {
+            if (!result.empty()) result += "; ";
+            if (result.size() + cookie->name.size() + cookie->value.size() + 1U > 16U * 1024U) break;
+            result += cookie->name + "=" + cookie->value;
+        }
+        return result;
+    }
+
+    void accept_response_cookies(
+        const std::string& request_url,
+        const resource_request_context& context,
+        const resource_response& response)
+    {
+        if (context.credentials == WEBSCENE_FETCH_CREDENTIALS_OMIT) return;
+        const auto final_url = response.final_url.empty() ? request_url : response.final_url;
+        if (context.credentials == WEBSCENE_FETCH_CREDENTIALS_SAME_ORIGIN
+            && !context.origin.empty()
+            && resource_origin(final_url) != context.origin) return;
+        for (const auto& [name, value] : response.headers) {
+            if (name == "set-cookie") store_cookie(final_url, value, true);
+        }
+    }
+
     std::shared_ptr<const resource_response> load_resource_single_flight(
         uint32_t kind,
         const std::string& resolved_name,
@@ -173,11 +429,19 @@
     {
         loaded = false;
         if (!load_resource_callback || resolved_name.empty()) return {};
+        auto effective_context = request_context;
+        if (effective_context.cookie.empty()) {
+            effective_context.cookie = cookie_header_for(resolved_name, effective_context);
+        }
 
         const auto key = compilation_cache_directory
             + '\n' + std::to_string(kind)
             + '\n' + resolved_name
-            + '\n' + request_context.origin
+            + '\n' + effective_context.origin
+            + '\n' + effective_context.cookie
+            + (effective_context.credentials == WEBSCENE_FETCH_CREDENTIALS_OMIT
+                ? std::string{} : "\nengine:" + std::to_string(
+                    reinterpret_cast<uintptr_t>(this)))
             + '\n' + entity_tag
             + '\n' + std::to_string(last_modified_unix_seconds);
         std::shared_ptr<process_resource_load_entry> entry;
@@ -223,13 +487,14 @@
             loaded = load_resource_callback(
                 kind,
                 resolved_name,
-                request_context,
+                effective_context,
                 entity_tag,
                 last_modified_unix_seconds,
                 response);
         } catch (...) {
             loaded = false;
         }
+        if (loaded) accept_response_cookies(resolved_name, effective_context, response);
         auto shared_response = loaded
             ? std::make_shared<const resource_response>(std::move(response))
             : std::shared_ptr<const resource_response>{};
@@ -317,6 +582,24 @@
                 task_context,
                 js_string(isolate, "url"),
                 js_dom_string(isolate, result.resolved_url)).Check();
+            value->Set(task_context, js_string(isolate, "status"),
+                v8::Integer::NewFromUnsigned(isolate, result.status)).Check();
+            value->Set(task_context, js_string(isolate, "statusText"),
+                js_dom_string(isolate, result.status_text)).Check();
+            value->Set(task_context, js_string(isolate, "redirected"),
+                v8::Boolean::New(isolate, result.redirected)).Check();
+            value->Set(task_context, js_string(isolate, "type"),
+                js_dom_string(isolate, result.response_type)).Check();
+            auto headers = v8::Array::New(isolate, static_cast<int>(result.headers.size()));
+            for (uint32_t index = 0; index < result.headers.size(); ++index) {
+                auto pair = v8::Array::New(isolate, 2);
+                pair->Set(task_context, 0,
+                    js_dom_string(isolate, result.headers[index].first)).Check();
+                pair->Set(task_context, 1,
+                    js_dom_string(isolate, result.headers[index].second)).Check();
+                headers->Set(task_context, index, pair).Check();
+            }
+            value->Set(task_context, js_string(isolate, "headers"), headers).Check();
             settled = resolver->Resolve(task_context, value).FromMaybe(false);
         } else {
             const auto message = result.error.empty()
@@ -355,6 +638,19 @@
             }
         };
         resolved_name = resolve_resource_url(value, base);
+        auto effective_request_context = request_context;
+        if (effective_request_context.origin.empty()) {
+            effective_request_context.initiator = kind == WEBSCENE_RESOURCE_DOCUMENT
+                && base.empty() ? WEBSCENE_RESOURCE_INITIATOR_NAVIGATION
+                : WEBSCENE_RESOURCE_INITIATOR_SUBRESOURCE;
+            effective_request_context.origin = resource_origin(
+                base.empty() ? resolved_name : base);
+            effective_request_context.referrer = base;
+            effective_request_context.method = "GET";
+            effective_request_context.credentials = WEBSCENE_FETCH_CREDENTIALS_INCLUDE;
+        }
+        effective_request_context.cookie = cookie_header_for(
+            resolved_name, effective_request_context);
         record_feature(
             "resource",
             "type:" + resource_kind_name(kind),
@@ -368,9 +664,10 @@
             {},
             "resource-loader");
         ++resource_cache_request_count;
-        const auto representation_name = request_context.origin.empty()
+        const auto representation_name = effective_request_context.origin.empty()
             ? resolved_name
-            : resolved_name + "\norigin:" + request_context.origin;
+            : resolved_name + "\norigin:" + effective_request_context.origin
+                + "\ncookie:" + effective_request_context.cookie;
         const auto cache_key = resource_key_digest(kind, representation_name);
         cached_text_resource cached;
         auto has_cached = false;
@@ -379,7 +676,8 @@
         const auto prefetch_key = resource_prefetch_key(
             kind,
             resolved_name,
-            request_context.origin);
+            effective_request_context.origin,
+            effective_request_context.cookie);
         std::shared_future<prefetched_resource> prefetch_future;
         {
             std::lock_guard lock(resource_prefetch_mutex);
@@ -434,12 +732,13 @@
                 response = load_resource_single_flight(
                     kind,
                     resolved_name,
-                    request_context,
+                    effective_request_context,
                     has_cached ? cached.entity_tag : std::string{},
                     has_cached ? cached.last_modified_unix_seconds : 0,
                     loaded);
             }
             if (loaded && response != nullptr) {
+                if (!response->final_url.empty()) resolved_name = response->final_url;
                 if (response->not_modified && has_cached) {
                     record_feature(
                         "resource", "cache:revalidated-304", "supported", {}, "resource-loader");
@@ -532,9 +831,11 @@
     static std::string resource_prefetch_key(
         uint32_t kind,
         const std::string& resolved_name,
-        const std::string& origin = {})
+        const std::string& origin = {},
+        const std::string& cookie = {})
     {
-        return std::to_string(kind) + ':' + resolved_name + "\norigin:" + origin;
+        return std::to_string(kind) + ':' + resolved_name + "\norigin:" + origin
+            + "\ncookie:" + cookie;
     }
 
     void start_resource_prefetch(
@@ -545,7 +846,19 @@
         if (!load_resource_callback) return;
         const auto resolved_name = resolve_resource_url(value, base);
         if (resolved_name.empty()) return;
-        const auto key = resource_prefetch_key(kind, resolved_name);
+        resource_request_context request_context{
+            WEBSCENE_RESOURCE_INITIATOR_SUBRESOURCE,
+            resource_origin(base),
+            base,
+            WEBSCENE_FETCH_MODE_NONE,
+            kind == WEBSCENE_RESOURCE_SCRIPT ? WEBSCENE_REQUEST_DESTINATION_SCRIPT
+                : kind == WEBSCENE_RESOURCE_STYLESHEET ? WEBSCENE_REQUEST_DESTINATION_STYLE
+                : kind == WEBSCENE_RESOURCE_IMAGE ? WEBSCENE_REQUEST_DESTINATION_IMAGE
+                : WEBSCENE_REQUEST_DESTINATION_NONE,
+            "GET", {}, {}, WEBSCENE_FETCH_CREDENTIALS_INCLUDE, {}};
+        request_context.cookie = cookie_header_for(resolved_name, request_context);
+        const auto key = resource_prefetch_key(
+            kind, resolved_name, request_context.origin, request_context.cookie);
         {
             std::lock_guard lock(resource_prefetch_mutex);
             if (prefetched_resources.size() >= maximum_resource_prefetches
@@ -582,7 +895,7 @@
             key,
             std::async(
                 std::launch::async,
-                [this, kind, resolved_name,
+                [this, kind, resolved_name, request_context = std::move(request_context),
                     entity_tag = std::move(entity_tag), last_modified,
                     cached = std::move(cached), has_cached]() mutable {
                     prefetched_resource result;
@@ -591,7 +904,7 @@
                     result.response = load_resource_single_flight(
                         kind,
                         resolved_name,
-                        {},
+                        request_context,
                         entity_tag,
                         last_modified,
                         result.loaded);

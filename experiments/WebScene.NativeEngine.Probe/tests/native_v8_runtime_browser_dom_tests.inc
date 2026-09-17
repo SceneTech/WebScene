@@ -58,6 +58,62 @@ void test_fragment_replacement_and_inline_script_lifecycle(webscene_engine* engi
         "fragment replacement or inline script lifecycle diverged: " + result);
 }
 
+void test_fragment_append_applies_structural_selectors_after_atomic_attachment(
+    webscene_engine* engine)
+{
+    const auto result = evaluate(engine, R"JS(
+        (() => {
+          document.body.innerHTML = `<style>
+            #fragment-host:empty { height: 1px; }
+            #fragment-host:has(.item) { min-height: 2px; }
+            #fragment-host > .item:first-child { width: 3px; }
+            #fragment-host > .item:nth-child(2) { width: 4px; }
+            #fragment-host > .item:last-child { width: 5px; }
+            #populated > .before + .item { margin-left: 6px; }
+            #populated > .item:nth-child(3) { padding-left: 7px; }
+            #populated > .item:last-child {
+              border-left-width: 8px; border-left-style: solid;
+            }
+          </style><section id="fragment-host"></section>
+          <section id="populated"><div class="before"></div></section>`;
+          const host = document.getElementById('fragment-host');
+          const fragment = document.createDocumentFragment();
+          for (let index = 0; index < 3; ++index) {
+            const item = document.createElement('div');
+            item.className = 'item';
+            fragment.appendChild(item);
+          }
+          const returned = host.appendChild(fragment);
+          const populated = document.getElementById('populated');
+          const siblingFragment = document.createDocumentFragment();
+          for (let index = 0; index < 3; ++index) {
+            const item = document.createElement('div');
+            item.className = 'item';
+            siblingFragment.appendChild(item);
+          }
+          populated.appendChild(siblingFragment);
+          const populatedItems = populated.querySelectorAll('.item');
+          return {
+            returnedFragment: returned === fragment,
+            fragmentEmpty: fragment.childNodes.length === 0,
+            childCount: host.children.length,
+            widths: Array.from(host.children, item =>
+              getComputedStyle(item).width),
+            minHeight: getComputedStyle(host).minHeight,
+            height: getComputedStyle(host).height,
+            siblingBoundaries: [
+              getComputedStyle(populatedItems[0]).marginLeft,
+              getComputedStyle(populatedItems[1]).paddingLeft,
+              getComputedStyle(populatedItems[2]).borderLeftWidth
+            ]
+          };
+        })()
+    )JS", "native-fragment-atomic-attachment.js");
+    require(
+        result == R"JSON({"returnedFragment":true,"fragmentEmpty":true,"childCount":3,"widths":["3px","4px","5px"],"minHeight":"2px","height":"2px","siblingBoundaries":["6px","7px","8px"]})JSON",
+        "fragment attachment structural cascade diverged: " + result);
+}
+
 void test_dom_box_dimensions_primitives(webscene_engine* engine)
 {
     const auto result = evaluate(engine, R"JS(
@@ -201,6 +257,183 @@ void test_dom_traversal_cloning_primitives(webscene_engine* engine)
     require(
         result == expected,
         "DOM traversal/cloning primitives diverged: " + result);
+}
+
+void test_specialized_content_properties(webscene_engine* engine)
+{
+    const auto result = evaluate(engine, R"JS(
+        (() => {
+          const meta = document.createElement('meta');
+          const template = document.createElement('template');
+          const ordinary = document.createElement('div');
+          meta.content = 'theme-color';
+          template.innerHTML = '<span>template child</span>';
+          ordinary.content = 'application expando';
+
+          // Keep specialized wrapper creation bounded. Five hundred iterations
+          // exercise constructor selection, reflected meta content, template
+          // fragment ownership, and ordinary expandos. The two-second ceiling
+          // allows 4 ms per iteration, well above the normal Release cost while
+          // still catching accidental blocking or quadratic wrapper setup.
+          const started = performance.now();
+          let wrapperChecksum = 0;
+          for (let index = 0; index < 500; index++) {
+            const boundedMeta = document.createElement('meta');
+            const boundedTemplate = document.createElement('template');
+            const boundedOrdinary = document.createElement('div');
+            boundedMeta.content = `theme-${index}`;
+            boundedTemplate.innerHTML = '<span>bounded child</span>';
+            boundedOrdinary.content = index;
+            wrapperChecksum += boundedMeta.content.length
+              + boundedTemplate.content.childNodes.length
+              + boundedOrdinary.content;
+          }
+          const elapsed = performance.now() - started;
+          if (elapsed > 2000) {
+            throw new Error(`specialized content wrapper gate exceeded: ${elapsed}ms`);
+          }
+          return {
+            constructors: [
+              meta.constructor.name,
+              template.constructor.name,
+              meta instanceof HTMLMetaElement,
+              template instanceof HTMLTemplateElement
+            ],
+            meta: [meta.content, meta.getAttribute('content')],
+            template: [template.content.nodeType, template.content.firstElementChild.localName],
+            ordinary: [ordinary.content, ordinary.hasAttribute('content')],
+            ownership: [
+              Object.hasOwn(HTMLMetaElement.prototype, 'content'),
+              Object.hasOwn(HTMLTemplateElement.prototype, 'content'),
+              Object.hasOwn(HTMLElement.prototype, 'content')
+            ],
+            wrapperChecksumPositive: wrapperChecksum > 0
+          };
+        })()
+    )JS", "native-specialized-content-properties.js");
+    const auto expected = R"JSON({"constructors":["HTMLMetaElement","HTMLTemplateElement",true,true],"meta":["theme-color","theme-color"],"template":[11,"span"],"ordinary":["application expando",false],"ownership":[true,true,false],"wrapperChecksumPositive":true})JSON";
+    require(
+        result == expected,
+        "specialized meta/template content properties diverged: " + result);
+}
+
+void test_html_select_add_contract(webscene_engine* engine)
+{
+    resize(engine, 600, 300, 1U);
+    const auto result = evaluate(engine, R"JS(
+        (() => {
+          const select = document.createElement('select');
+          const option = value => {
+            const result = document.createElement('option');
+            result.value = value;
+            result.text = `  ${value}\t label  `;
+            return result;
+          };
+          const first = option('first');
+          const second = option('second');
+          const third = option('third');
+          select.add(first);
+          select.add(third);
+          select.add(second, third);
+
+          const group = document.createElement('optgroup');
+          const nested = option('nested');
+          group.appendChild(nested);
+          select.add(group);
+          const indexed = option('indexed');
+          select.add(indexed, 1);
+          select.add(third, nested);
+
+          let notFound = '';
+          try { select.add(option('rejected'), option('foreign')); }
+          catch (error) { notFound = error.name; }
+          const beforeSelf = select.length;
+          const selfResult = select.add(first, first);
+
+          select.id = 'dynamic-select';
+          select.style.cssText = 'box-sizing:border-box;width:320px;height:26px;padding:2px 6px;border:1px solid #345;background:#f4f4f4;color:#123456';
+          select.selectedIndex = 2;
+          document.body.appendChild(select);
+          const rect = select.getBoundingClientRect();
+
+          // Exercise the VS Code population shape with a direct ceiling that
+          // catches blocking publication or accidental quadratic insertion.
+          const bounded = document.createElement('select');
+          const started = performance.now();
+          let checksum = 0;
+          for (let index = 0; index < 4096; ++index) {
+            const item = option(String(index));
+            bounded.add(item);
+            checksum += item.value.length;
+          }
+          const elapsed = performance.now() - started;
+          if (elapsed > 2000) {
+            throw new Error(`HTMLSelectElement.add gate exceeded: ${elapsed}ms`);
+          }
+          return {
+            type: typeof select.add,
+            option: [
+              first instanceof HTMLOptionElement,
+              first.text,
+              first.textContent,
+              Object.getPrototypeOf(first) === HTMLOptionElement.prototype
+            ],
+            order: Array.from({length: select.length}, (_, index) => select[index].value),
+            principal: [rect.width, rect.height,
+              document.elementFromPoint(rect.left + 20, rect.top + 13) === select],
+            parents: [third.parentNode === group, group.firstChild === third],
+            rejection: notFound,
+            self: [selfResult === undefined, select.length === beforeSelf],
+            bounded: [bounded.length, checksum > 0]
+          };
+        })()
+    )JS", "native-html-select-add-contract.js");
+    const auto expected = R"JSON({"type":"function","option":[true,"first label","  first\t label  ",true],"order":["first","indexed","second","third","nested"],"principal":[320,26,true],"parents":[true,true],"rejection":"NotFoundError","self":[true,true],"bounded":[4096,true]})JSON";
+    require(result == expected, "HTMLSelectElement.add contract diverged: " + result);
+
+    webscene_engine_memory_metrics memory{sizeof(webscene_engine_memory_metrics)};
+    for (auto attempt = 0; attempt < 100 && memory.v8_used_heap_bytes == 0U; ++attempt) {
+        require(webscene_engine_get_memory_metrics(engine, &memory) != 0,
+            "dynamic select memory metrics were unavailable");
+        if (memory.v8_used_heap_bytes == 0U) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+    }
+    require(memory.v8_used_heap_bytes > 0U
+            && memory.v8_used_heap_bytes <= 256U * 1024U * 1024U,
+        "dynamic select fixture exceeded the 256 MiB V8 heap ceiling: "
+            + std::to_string(memory.v8_used_heap_bytes));
+}
+
+void test_child_collection_item(webscene_engine* engine)
+{
+    const auto result = evaluate(engine, R"JS(
+        (() => {
+          const host = document.createElement('div');
+          host.append('leading text');
+          const first = document.createElement('span');
+          const second = document.createElement('button');
+          host.append(first, second);
+          return {
+            children: [
+              typeof host.children.item,
+              host.children.item(0) === first,
+              host.children.item(1) === second,
+              host.children.item(2)
+            ],
+            childNodes: [
+              typeof host.childNodes.item,
+              host.childNodes.item(0).nodeType,
+              host.childNodes.item(1) === first,
+              host.childNodes.item(9)
+            ]
+          };
+        })()
+    )JS", "native-child-collection-item.js");
+    const auto expected = R"JSON({"children":["function",true,true,null],"childNodes":["function",3,true,null]})JSON";
+    require(
+        result == expected,
+        "child collection item lookup diverged: " + result);
 }
 
 void test_textarea_child_text_value_lifecycle(webscene_engine* engine)
@@ -1105,6 +1338,443 @@ void test_node_filter_tree_walker_focus_navigation(webscene_engine* engine)
         "NodeFilter/TreeWalker focus navigation regressed: " + result);
 }
 
+void test_node_iterator_dompurify_and_filter_contracts(webscene_engine* engine)
+{
+    const auto result = evaluate(engine, R"JS(
+        (() => {
+          document.body.innerHTML = '<main id="root">before<!--comment--><section><span>inside</span></section>after</main>';
+          const root = document.getElementById('root');
+          const mask = NodeFilter.SHOW_ELEMENT
+            | NodeFilter.SHOW_TEXT
+            | NodeFilter.SHOW_COMMENT;
+          let filterCalls = 0;
+          const iterator = document.createNodeIterator(root, mask, {
+            acceptNode(node) {
+              ++filterCalls;
+              return node.nodeType === Node.ELEMENT_NODE
+                  && node.localName === 'section'
+                ? NodeFilter.FILTER_REJECT
+                : NodeFilter.FILTER_ACCEPT;
+            }
+          });
+          const callsAfterConstruction = filterCalls;
+          const forward = [];
+          for (let node = iterator.nextNode(); node; node = iterator.nextNode()) {
+            forward.push(node.nodeType === Node.ELEMENT_NODE
+              ? node.localName
+              : node.nodeType === Node.COMMENT_NODE
+                ? `#comment:${node.data}`
+                : `#text:${node.data}`);
+          }
+          const forwardCalls = filterCalls;
+          const endState = [
+            iterator.referenceNode.nodeName,
+            iterator.pointerBeforeReferenceNode
+          ];
+          const backwards = [
+            iterator.previousNode()?.nodeName ?? null,
+            iterator.previousNode()?.nodeName ?? null,
+            iterator.nextNode()?.nodeName ?? null
+          ];
+
+          const thrown = { marker: 'filter failure' };
+          const throwing = document.createNodeIterator(
+            root, NodeFilter.SHOW_ELEMENT, () => { throw thrown; });
+          let constructorDeferredException = true;
+          let propagatedExactException = false;
+          try { throwing.nextNode(); } catch (error) {
+            propagatedExactException = error === thrown;
+          }
+
+          let recursive;
+          let depth = 0;
+          recursive = document.createNodeIterator(
+            root,
+            NodeFilter.SHOW_ELEMENT,
+            node => {
+              if (recursive.referenceNode !== root && depth === 0) {
+                ++depth;
+                recursive.nextNode();
+              }
+              return NodeFilter.FILTER_ACCEPT;
+            });
+          recursive.nextNode();
+          recursive.nextNode();
+          let recursiveNext = null;
+          try { recursive.nextNode(); } catch (error) {
+            recursiveNext = error.name;
+          }
+          --depth;
+          let recursivePrevious = null;
+          try { recursive.previousNode(); } catch (error) {
+            recursivePrevious = error.name;
+          }
+
+          const functionFilter = document.createNodeIterator(
+            root,
+            NodeFilter.SHOW_ELEMENT,
+            node => node.localName === 'span'
+              ? NodeFilter.FILTER_ACCEPT
+              : NodeFilter.FILTER_SKIP);
+          const functionFiltered = [];
+          for (let node = functionFilter.nextNode(); node;
+               node = functionFilter.nextNode()) {
+            functionFiltered.push(node.localName);
+          }
+
+          const fragment = document.createDocumentFragment();
+          const detached = document.createElement('strong');
+          fragment.appendChild(detached);
+          const detachedIterator = document.createNodeIterator(
+            fragment, NodeFilter.SHOW_ALL);
+
+          let invalidRoot = false;
+          let invalidFilter = false;
+          try { document.createNodeIterator(null); } catch (error) {
+            invalidRoot = error instanceof TypeError;
+          }
+          try { document.createNodeIterator(root, mask, {}); } catch (error) {
+            invalidFilter = error instanceof TypeError;
+          }
+
+          return {
+            instance: iterator instanceof NodeIterator,
+            brand: iterator.toString(),
+            root: iterator.root === root,
+            whatToShow: iterator.whatToShow,
+            callsAfterConstruction,
+            forwardCalls,
+            forward,
+            endState,
+            backwards,
+            constructorDeferredException,
+            propagatedExactException,
+            recursiveNext,
+            recursivePrevious,
+            functionFiltered,
+            detached: [
+              detachedIterator.nextNode() === fragment,
+              detachedIterator.nextNode() === detached,
+              detachedIterator.nextNode()
+            ],
+            invalidRoot,
+            invalidFilter
+          };
+        })()
+    )JS", "native-node-iterator-dompurify.js");
+    require(
+        result == R"JSON({"instance":true,"brand":"[object NodeIterator]","root":true,"whatToShow":133,"callsAfterConstruction":0,"forwardCalls":7,"forward":["main","#text:before","#comment:comment","span","#text:inside","#text:after"],"endState":["#text",false],"backwards":["#text","#text","#text"],"constructorDeferredException":true,"propagatedExactException":true,"recursiveNext":"InvalidStateError","recursivePrevious":"InvalidStateError","functionFiltered":["span"],"detached":[true,true,null],"invalidRoot":true,"invalidFilter":true})JSON",
+        "NodeIterator DOMPurify/filter contract regressed: " + result);
+}
+
+void test_node_iterator_isolated_scaling_and_memory_gate()
+{
+    auto engine = std::unique_ptr<webscene_engine, decltype(&webscene_engine_destroy)>{
+        webscene_engine_create(0), &webscene_engine_destroy};
+    require(engine != nullptr, "NodeIterator performance engine creation failed");
+
+    const auto result = evaluate(engine.get(), R"JS(
+        (() => {
+          const run = count => {
+            document.body.innerHTML = `<div id="iterator-root">${'<i></i>'.repeat(count)}</div>`;
+            const root = document.getElementById('iterator-root');
+            let filterCalls = 0;
+            const started = performance.now();
+            const iterator = document.createNodeIterator(
+              root,
+              NodeFilter.SHOW_ELEMENT,
+              () => {
+                ++filterCalls;
+                return NodeFilter.FILTER_ACCEPT;
+              });
+            const callsAfterConstruction = filterCalls;
+            let visited = 0;
+            while (iterator.nextNode()) ++visited;
+            return {
+              count,
+              visited,
+              filterCalls,
+              callsAfterConstruction,
+              elapsed: performance.now() - started
+            };
+          };
+
+          const small = run(10000);
+          const large = run(50000);
+          return {
+            smallCounts: [small.visited, small.filterCalls, small.callsAfterConstruction],
+            largeCounts: [large.visited, large.filterCalls, large.callsAfterConstruction],
+            underFiveSeconds: large.elapsed < 5000,
+            scalesLinearly: large.elapsed <= small.elapsed * 8 + 250
+          };
+        })()
+    )JS", "native-node-iterator-isolated-performance.js");
+
+    webscene_engine_memory_metrics memory{
+        sizeof(webscene_engine_memory_metrics)};
+    require(
+        webscene_engine_get_memory_metrics(engine.get(), &memory) != 0,
+        "NodeIterator performance memory metrics were unavailable");
+    constexpr uint64_t maximum_fixture_nodes = 70'000U;
+    constexpr uint64_t maximum_fixture_heap_bytes = 128U * 1024U * 1024U;
+    const auto bounded_memory =
+        memory.native_dom_node_count <= maximum_fixture_nodes
+        && memory.native_wrapper_handle_count <= maximum_fixture_nodes
+        && memory.v8_used_heap_bytes <= maximum_fixture_heap_bytes;
+
+    engine.reset();
+    require(
+        result == R"JSON({"smallCounts":[10001,10001,0],"largeCounts":[50001,50001,0],"underFiveSeconds":true,"scalesLinearly":true})JSON",
+        "isolated NodeIterator scaling gate failed: " + result);
+    require(
+        bounded_memory,
+        "isolated NodeIterator memory gate exceeded its 70,000-node/handle or 128 MiB V8 bound");
+}
+
+void test_native_performance_timeline_identity(webscene_engine* engine)
+{
+    const auto result = evaluate(engine, R"JS((() => {
+      const probe = (performance, prefix) => {
+        const mark = performance.mark;
+        const measure = performance.measure;
+        const origin = performance.timeOrigin;
+        mark(prefix + '-start', { startTime: 12 });
+        mark(prefix + '-end', { startTime: 42 });
+        const entry = measure(
+          prefix + '-span', prefix + '-start', prefix + '-end');
+        try { performance.timeOrigin = 0; } catch {}
+        return {
+          finiteOrigin: Number.isFinite(origin),
+          wallClockAligned:
+            Math.abs(Date.now() - (origin + performance.now())) < 1000,
+          readOnlyOrigin: performance.timeOrigin === origin,
+          capturedIdentity:
+            mark === performance.mark && measure === performance.measure,
+          sameTimeline:
+            performance.getEntriesByName(prefix + '-span', 'measure')[0]
+              === entry,
+          startTime: entry.startTime,
+          duration: entry.duration
+        };
+      };
+      const frame = document.createElement('iframe');
+      document.body.appendChild(frame);
+      return {
+        main: probe(performance, 'native-main'),
+        frame: probe(frame.contentWindow.performance, 'native-frame')
+      };
+    })())JS", "native-performance-timeline-identity.js");
+    require(
+        result
+            == R"JSON({"main":{"finiteOrigin":true,"wallClockAligned":true,"readOnlyOrigin":true,"capturedIdentity":true,"sameTimeline":true,"startTime":12,"duration":30},"frame":{"finiteOrigin":true,"wallClockAligned":true,"readOnlyOrigin":true,"capturedIdentity":true,"sameTimeline":true,"startTime":12,"duration":30}})JSON",
+        "main/frame Performance methods did not share one retained timeline: "
+            + result);
+}
+
+void test_native_mutable_stylesheet_cssom(webscene_engine* engine)
+{
+    const auto result = evaluate(engine, R"JS((() => {
+      const exercise = (document, view, className, display) => {
+        const style = document.createElement('style');
+        const target = document.createElement('div');
+        target.className = className;
+        document.head.appendChild(style);
+        document.body.appendChild(target);
+        const sheet = style.sheet;
+        const rules = sheet.cssRules;
+        const index = sheet.insertRule(`.${className} { display: none; }`, 0);
+        const rule = rules[0];
+        const inserted = [index, rules.length, rule.selectorText,
+          view.getComputedStyle(target).display];
+        rule.style.setProperty('display', display);
+        const mutated = [rules.length, rule.style.display,
+          view.getComputedStyle(target).display];
+        sheet.deleteRule(0);
+        const deleted = [rules.length, rule.parentStyleSheet === null,
+          view.getComputedStyle(target).display];
+        return { inserted, mutated, deleted };
+      };
+      const frame = document.createElement('iframe');
+      document.body.appendChild(frame);
+      return {
+        main: exercise(document, window, 'monaco-main', 'inline-block'),
+        frame: exercise(
+          frame.contentDocument,
+          frame.contentWindow,
+          'monaco-frame',
+          'inline-flex')
+      };
+    })())JS", "native-mutable-stylesheet-cssom.js");
+    require(
+        result
+            == R"JSON({"main":{"inserted":[0,1,".monaco-main","none"],"mutated":[1,"inline-block","inline-block"],"deleted":[0,true,"block"]},"frame":{"inserted":[0,1,".monaco-frame","none"],"mutated":[1,"inline-flex","inline-flex"],"deleted":[0,true,"block"]}})JSON",
+        "mutable stylesheet CSSOM did not recascade main/frame styles: "
+            + result);
+}
+
+void test_node_has_child_nodes_contract_and_performance(webscene_engine* engine)
+{
+    const auto result = evaluate(engine, R"JS(
+        (() => {
+          const parent = document.createElement('div');
+          const child = document.createElement('span');
+          const text = document.createTextNode('leaf');
+          const fragment = document.createDocumentFragment();
+          const initial = [
+            parent.hasChildNodes(),
+            child.hasChildNodes(),
+            text.hasChildNodes(),
+            fragment.hasChildNodes()
+          ];
+          fragment.appendChild(child);
+          const fragmentWithChild = fragment.hasChildNodes();
+          parent.appendChild(fragment);
+          const afterAppend = [
+            parent.hasChildNodes(),
+            child.hasChildNodes(),
+            fragment.hasChildNodes()
+          ];
+          parent.removeChild(child);
+          const afterRemove = parent.hasChildNodes();
+
+          parent.innerHTML = '<i></i>'.repeat(4096);
+          const started = performance.now();
+          let truthyCalls = 0;
+          for (let index = 0; index < 4096; ++index) {
+            if (parent.hasChildNodes()) ++truthyCalls;
+          }
+          const elapsed = performance.now() - started;
+
+          let invalidReceiver = false;
+          try { Node.prototype.hasChildNodes.call({}); } catch (error) {
+            invalidReceiver = error instanceof TypeError;
+          }
+          return {
+            initial,
+            fragmentWithChild,
+            afterAppend,
+            afterRemove,
+            ownsMethod: Object.prototype.hasOwnProperty.call(
+              Node.prototype, 'hasChildNodes'),
+            length: Node.prototype.hasChildNodes.length,
+            invalidReceiver,
+            truthyCalls,
+            underFiveSeconds: elapsed < 5000
+          };
+        })()
+    )JS", "native-node-has-child-nodes.js");
+    require(
+        result == R"JSON({"initial":[false,false,false,false],"fragmentWithChild":true,"afterAppend":[true,false,false],"afterRemove":false,"ownsMethod":true,"length":0,"invalidReceiver":true,"truthyCalls":4096,"underFiveSeconds":true})JSON",
+        "Node.hasChildNodes contract or constant-time performance regressed: " + result);
+}
+
+void test_dom_token_list_collection_performance_gate()
+{
+    auto* engine = webscene_engine_create(0);
+    require(engine != nullptr, "DOMTokenList performance engine creation failed");
+
+    const auto acknowledge_latest_scene = [&](std::string_view failure) {
+        const webscene_scene_view* scene = nullptr;
+        for (auto attempt = 0; attempt < 100 && scene == nullptr; ++attempt) {
+            scene = webscene_engine_acquire_latest_scene(engine);
+            if (scene == nullptr) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            }
+        }
+        require(scene != nullptr, failure);
+        require(webscene_scene_acknowledge(scene) != 0,
+            "DOMTokenList performance scene acknowledgement failed");
+        webscene_scene_release(scene);
+    };
+
+    acknowledge_latest_scene("DOMTokenList performance fixture had no initial scene");
+    webscene_engine_metrics before_setup{};
+    webscene_engine_get_metrics(engine, &before_setup);
+    execute_and_wait(engine, R"JS(
+        document.body.innerHTML = '<div id="tokens" class="alpha beta gamma delta"></div>'
+    )JS", "native-dom-token-list-performance-setup.js");
+    for (auto attempt = 0; attempt < 100; ++attempt) {
+        webscene_engine_metrics current{};
+        webscene_engine_get_metrics(engine, &current);
+        if (current.published_scenes > before_setup.published_scenes) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    acknowledge_latest_scene("DOMTokenList performance setup scene was not published");
+
+    webscene_engine_metrics baseline{};
+    webscene_engine_get_metrics(engine, &baseline);
+    const auto read_result = evaluate(engine, R"JS(
+        (() => {
+          const tokens = document.getElementById('tokens').classList;
+          let checksum = 0;
+          const started = performance.now();
+          for (let index = 0; index < 100000; ++index) {
+            checksum += tokens.length;
+            checksum += tokens.item(index & 3).length;
+            checksum += tokens[index & 3].length;
+          }
+          return `${checksum}|${performance.now() - started}`;
+        })()
+    )JS", "native-dom-token-list-read-performance.js");
+    const auto read_payload = read_result.size() >= 2
+            && read_result.front() == '"' && read_result.back() == '"'
+        ? read_result.substr(1, read_result.size() - 2)
+        : read_result;
+    const auto read_separator = read_payload.find('|');
+    require(read_separator != std::string::npos
+            && read_payload.substr(0, read_separator) == "1350000",
+        "DOMTokenList read performance checksum regressed: " + read_result);
+    const auto read_milliseconds = std::stod(read_payload.substr(read_separator + 1));
+    require(read_milliseconds < 2000.0,
+        "100,000 DOMTokenList collection reads exceeded two seconds");
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    webscene_engine_metrics after_read{};
+    webscene_engine_get_metrics(engine, &after_read);
+    require(after_read.published_scenes == baseline.published_scenes,
+        "DOMTokenList collection reads published an unchanged scene");
+    require(after_read.layout_passes == baseline.layout_passes,
+        "DOMTokenList collection reads forced layout");
+
+    const auto mutation_result = evaluate(engine, R"JS(
+        (() => {
+          const tokens = document.getElementById('tokens').classList;
+          const started = performance.now();
+          for (let index = 0; index < 10000; ++index) {
+            if ((index & 1) === 0) tokens.replace('alpha', 'replacement');
+            else tokens.replace('replacement', 'alpha');
+          }
+          return `${tokens.value}|${performance.now() - started}`;
+        })()
+    )JS", "native-dom-token-list-mutation-performance.js");
+    const auto mutation_payload = mutation_result.size() >= 2
+            && mutation_result.front() == '"' && mutation_result.back() == '"'
+        ? mutation_result.substr(1, mutation_result.size() - 2)
+        : mutation_result;
+    const auto mutation_separator = mutation_payload.find('|');
+    require(mutation_separator != std::string::npos
+            && mutation_payload.substr(0, mutation_separator)
+                == "alpha beta gamma delta",
+        "DOMTokenList mutation performance result regressed: " + mutation_result);
+    const auto mutation_milliseconds = std::stod(
+        mutation_payload.substr(mutation_separator + 1));
+    require(mutation_milliseconds < 5000.0,
+        "10,000 DOMTokenList replacements exceeded five seconds");
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    webscene_engine_metrics after_mutation{};
+    webscene_engine_get_metrics(engine, &after_mutation);
+    require(after_mutation.published_scenes <= baseline.published_scenes + 1U,
+        "DOMTokenList mutation task published more than one coalesced scene");
+    require(after_mutation.layout_passes <= baseline.layout_passes + 1U,
+        "DOMTokenList mutation task forced repeated layout passes");
+    std::cout << "DOMTokenList gate: reads=100000 readMs=" << read_milliseconds
+              << " mutations=10000 mutationMs=" << mutation_milliseconds
+              << " publishedDelta="
+              << (after_mutation.published_scenes - baseline.published_scenes)
+              << " layoutDelta="
+              << (after_mutation.layout_passes - baseline.layout_passes) << '\n';
+    webscene_engine_destroy(engine);
+}
+
 void test_animation_frame_dispatch_is_attributed()
 {
     auto* engine = webscene_engine_create(0);
@@ -1875,6 +2545,17 @@ void wait_for_document_visibility(webscene_engine* engine, bool hidden)
     }
 }
 
+void wait_for_document_focus(webscene_engine* engine, bool focused)
+{
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    const auto expected = focused ? "true" : "false";
+    while (evaluate(engine, "document.hasFocus()", "document-focus-ready.js") != expected) {
+        require(std::chrono::steady_clock::now() < deadline,
+            "host focus did not reach the document");
+        std::this_thread::yield();
+    }
+}
+
 void test_document_direction_and_visibility_are_native_properties()
 {
     auto* engine = webscene_engine_create(0);
@@ -1907,11 +2588,14 @@ void test_document_direction_and_visibility_are_native_properties()
         engine,
         R"JS(
           globalThis.__visibilityEvents = [];
+          globalThis.__focusEvents = [];
           document.addEventListener('visibilitychange', () => {
             __visibilityEvents.push(document.visibilityState);
             Promise.resolve().then(() =>
               __visibilityEvents.push(`microtask:${document.visibilityState}`));
           });
+          addEventListener('focus', () => __focusEvents.push('focus'));
+          addEventListener('blur', () => __focusEvents.push('blur'));
         )JS",
         "native-document-visibility-events.js");
 
@@ -1948,6 +2632,34 @@ void test_document_direction_and_visibility_are_native_properties()
     require(
         visible == R"({"hidden":false,"visibilityState":"visible","events":["hidden","microtask:hidden","visible","microtask:visible"]})",
         "Document visibility did not follow the restored host state: " + visible);
+
+    require(webscene_engine_set_window_focused_v1(engine, 0U) != 0,
+        "document state engine rejected native blur");
+    wait_for_document_focus(engine, false);
+    require(webscene_engine_set_window_focused_v1(engine, 1U) != 0,
+        "document state engine rejected native focus");
+    wait_for_document_focus(engine, true);
+    require(evaluate(engine,
+                "({ focused: document.hasFocus(), events: __focusEvents })",
+                "native-document-focus-state.js")
+                == R"({"focused":true,"events":["blur","focus"]})",
+        "Document focus state/events did not follow native key-window changes");
+
+    const auto transition_started = std::chrono::steady_clock::now();
+    for (unsigned index = 0; index < 10000U; ++index) {
+        require(webscene_engine_set_window_focused_v1(
+                    engine, static_cast<uint8_t>(index & 1U)) != 0,
+            "native focus transition stress input was rejected");
+    }
+    require(webscene_engine_set_window_focused_v1(engine, 1U) != 0,
+        "final native focus state was rejected");
+    wait_for_document_focus(engine, true);
+    const auto transition_elapsed = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - transition_started).count();
+    require(transition_elapsed < 1.0,
+        "10,000 native focus transitions exceeded one second");
+    std::cout << "Native focus transition gate: operations=10000 elapsed="
+              << transition_elapsed << "s\n";
     webscene_engine_destroy(engine);
 }
 
@@ -2338,4 +3050,750 @@ void test_window_scroll_primitives(webscene_engine* engine)
     require(
         result == R"JSON({"methods":["function","function",true],"numeric":[120,140,120,140],"topOnly":[120,210],"leftOnly":[170,210],"clamped":[0,true,true],"frameMethods":["function","function"]})JSON",
         "Window scrolling primitives were inconsistent: " + result);
+}
+
+void test_clipboard_write_text_host_handoff(webscene_engine* engine)
+{
+    execute(engine, R"JS(
+        globalThis.__clipboardWriteState = 'pending';
+        navigator.clipboard.writeText('VS CODE OSS CLIPBOARD').then(
+          () => { __clipboardWriteState = 'fulfilled'; },
+          error => { __clipboardWriteState = error.name + ':' + error.message; });
+    )JS", "native-clipboard-write-text.js");
+    require(evaluate(engine, "true", "native-clipboard-write-text-barrier.js") == "true",
+        "Clipboard.writeText did not drain through the engine worker");
+    const auto request = take_typed_host_request(engine);
+    require(
+        request.kind == WEBSCENE_HOST_REQUEST_CLIPBOARD_WRITE_V1
+            && request.flags == WEBSCENE_HOST_REQUEST_CLIPBOARD_REPLACE_V1
+            && request.id != 0U
+            && request.content_type == "text/plain"
+            && std::string(request.bytes.begin(), request.bytes.end())
+                == "VS CODE OSS CLIPBOARD",
+        "Clipboard.writeText did not preserve bytes in its typed host handoff");
+    require(
+        webscene_engine_complete_host_request_v1(
+            engine, request.id, 0U, "text/plain",
+            nullptr, 0U, nullptr) != 0,
+        "Clipboard.writeText completion was rejected");
+    require(
+        evaluate(
+            engine,
+            "__clipboardWriteState",
+            "native-clipboard-write-text-result.js") == R"("fulfilled")",
+        "Clipboard.writeText promise did not fulfill after native completion");
+}
+
+void test_clipboard_read_host_completion(webscene_engine* engine)
+{
+    auto* inactive_engine = webscene_engine_create(0);
+    require(inactive_engine != nullptr,
+        "clipboard activation engine creation failed");
+    execute(inactive_engine, R"JS(
+        globalThis.__clipboardActivationState = 'pending';
+        navigator.clipboard.readText().catch(
+          error => { __clipboardActivationState = error.name; });
+    )JS", "native-clipboard-read-without-activation.js");
+    require(evaluate(inactive_engine, "__clipboardActivationState",
+                "native-clipboard-read-without-activation-result.js")
+                == R"("NotAllowedError")"
+            && !take_typed_host_request(inactive_engine),
+        "clipboard read without user activation reached the host");
+    webscene_engine_destroy(inactive_engine);
+    keyboard_input(engine, WEBSCENE_INPUT_KEY_DOWN, 'C', 9751U);
+    evaluate(engine, "true", "native-clipboard-user-activation-barrier.js");
+    execute(engine, R"JS(
+        globalThis.__clipboardReadState = 'pending';
+        navigator.clipboard.readText().then(
+          value => { __clipboardReadState = value; },
+          error => { __clipboardReadState = error.name; });
+    )JS", "native-clipboard-read-text.js");
+    require(evaluate(engine, "true", "native-clipboard-read-text-barrier.js") == "true",
+        "Clipboard.readText did not drain through the engine worker");
+    auto request = take_typed_host_request(engine);
+    require(
+        request.kind == WEBSCENE_HOST_REQUEST_CLIPBOARD_READ_V1
+            && request.id != 0U && request.content_type == "text/plain"
+            && request.bytes.empty(),
+        "Clipboard.readText did not emit the typed host request");
+    constexpr uint8_t text[] = {'n','a','t','i','v','e',' ','p','a','s','t','e'};
+    require(
+        webscene_engine_complete_host_request_v1(
+            engine, request.id, 0U, "text/plain",
+            text, sizeof(text), nullptr) != 0,
+        "Clipboard.readText completion was rejected");
+    require(
+        evaluate(
+            engine,
+            "__clipboardReadState",
+            "native-clipboard-read-text-result.js") == R"("native paste")",
+        "Clipboard.readText did not resolve with native UTF-8 text");
+    require(webscene_engine_complete_host_request_v1(
+                engine, request.id, 0U, "text/plain",
+                text, sizeof(text), nullptr) != 0,
+        "duplicate stale clipboard completion was not safely admitted");
+
+    execute(engine, R"JS(
+        globalThis.__clipboardUnsupportedState = 'pending';
+        navigator.clipboard.read().then(
+          () => { __clipboardUnsupportedState = 'fulfilled'; },
+          error => { __clipboardUnsupportedState = error.name; });
+    )JS", "native-clipboard-read-unsupported.js");
+    require(evaluate(engine, "true",
+                "native-clipboard-read-unsupported-barrier.js") == "true",
+        "unsupported Clipboard.read did not drain through the engine worker");
+    request = take_typed_host_request(engine);
+    require(request.kind == WEBSCENE_HOST_REQUEST_CLIPBOARD_READ_V1
+                && request.content_type == "*/*",
+        "Clipboard.read did not emit its wildcard typed host request");
+    constexpr uint8_t unsupported[] = {1U};
+    require(webscene_engine_complete_host_request_v1(
+                engine, request.id, 0U, "application/octet-stream",
+                unsupported, sizeof(unsupported), nullptr) != 0,
+        "unsupported clipboard host completion was rejected before delivery");
+    require(evaluate(engine,
+                "__clipboardUnsupportedState",
+                "native-clipboard-read-unsupported-result.js")
+                == R"("NotSupportedError")",
+        "Clipboard.read admitted an unsupported host MIME type");
+
+    execute(engine, R"JS(
+        globalThis.__clipboardCancelState = 'pending';
+        navigator.clipboard.readText().then(
+          () => { __clipboardCancelState = 'fulfilled'; },
+          error => { __clipboardCancelState = error.name; });
+    )JS", "native-clipboard-read-cancel.js");
+    require(evaluate(engine, "true", "native-clipboard-read-cancel-barrier.js") == "true",
+        "cancelled Clipboard.readText did not drain through the engine worker");
+    request = take_typed_host_request(engine);
+    require(
+        webscene_engine_complete_host_request_v1(
+            engine, request.id, 1U, nullptr, nullptr, 0U, nullptr) != 0,
+        "Clipboard cancellation completion was rejected");
+    require(
+        evaluate(
+            engine,
+            "__clipboardCancelState",
+            "native-clipboard-read-cancel-result.js") == R"("AbortError")",
+        "Clipboard cancellation did not reject with AbortError");
+
+    require(
+        webscene_engine_complete_host_request_v1(
+            engine, 0U, 0U, "text/plain", text, sizeof(text), nullptr) == 0,
+        "zero host request ID was accepted");
+    require(
+        webscene_engine_complete_host_request_v1(
+            engine, 1U, 3U, nullptr, nullptr, 0U, nullptr) == 0,
+        "invalid host completion status was accepted");
+
+    execute(engine, R"JS(
+        globalThis.__clipboardQuotaState = 'pending';
+        const operations = [];
+        for (let index = 0; index < 17; ++index) {
+          operations.push(navigator.clipboard.readText().catch(error => error.name));
+        }
+        Promise.all(operations).then(values => {
+          __clipboardQuotaState = values;
+        });
+    )JS", "native-clipboard-queue-saturation.js");
+    require(evaluate(engine, "true", "native-clipboard-queue-saturation-barrier.js") == "true",
+        "clipboard saturation batch did not drain through the engine worker");
+    for (unsigned index = 0; index < 16U; ++index) {
+        const auto pending = take_typed_host_request(engine);
+        require(pending.kind == WEBSCENE_HOST_REQUEST_CLIPBOARD_READ_V1,
+            "clipboard queue lost a bounded pending read");
+        require(webscene_engine_complete_host_request_v1(
+                    engine, pending.id, 1U, nullptr, nullptr, 0U, nullptr) != 0,
+            "clipboard queue cancellation was rejected");
+    }
+    require(!take_typed_host_request(engine),
+        "clipboard queue exceeded its 16-operation limit");
+    require(evaluate(engine,
+                "__clipboardQuotaState.filter(value => value === 'AbortError').length === 16"
+                " && __clipboardQuotaState.at(-1) === 'QuotaExceededError'",
+                "native-clipboard-queue-saturation-result.js") == "true",
+        "clipboard queue saturation did not reject explicitly");
+}
+
+void test_native_clipboard_shortcut_events(webscene_engine*)
+{
+    auto* engine = webscene_engine_create(0);
+    require(engine != nullptr, "native clipboard shortcut engine creation failed");
+    execute_and_wait(engine, R"JS(
+        document.body.innerHTML = '<textarea id="editor"></textarea>';
+        const editor = document.getElementById('editor');
+        globalThis.__clipboardShortcutEvents = [];
+        globalThis.__clipboardShortcutKeys = [];
+        globalThis.__clipboardExecCommandResults = [];
+        globalThis.__clipboardPasteItems = 'pending';
+        editor.addEventListener('keydown', event => {
+          __clipboardShortcutKeys.push([
+            event.key, event.metaKey, event.ctrlKey, event.defaultPrevented]);
+          const command = event.metaKey && /^[cxv]$/i.test(event.key)
+            ? ({c: 'copy', x: 'cut', v: 'paste'})[event.key.toLowerCase()]
+            : undefined;
+          if (command) {
+            event.preventDefault();
+            __clipboardExecCommandResults.push(document.execCommand(command));
+          }
+        });
+        editor.addEventListener('copy', event => {
+          event.clipboardData.setData('text/plain', 'shortcut copy');
+          event.clipboardData.setData('text/html', '<b>shortcut copy</b>');
+          event.preventDefault();
+          __clipboardShortcutEvents.push([
+            event.type, event.bubbles, event.cancelable,
+            event.clipboardData.types.join(',')]);
+        });
+        editor.addEventListener('cut', event => {
+          event.clipboardData.setData('text/plain', 'shortcut cut');
+          event.preventDefault();
+          __clipboardShortcutEvents.push([event.type]);
+        });
+        editor.addEventListener('paste', event => {
+          event.preventDefault();
+          __clipboardShortcutEvents.push([
+            event.type, event.clipboardData.getData('text/plain')]);
+          const items = Array.from(event.clipboardData.items);
+          let synchronous = true;
+          Promise.all(items.map(item => {
+            if (item.kind === 'file') {
+              const file = item.getAsFile();
+              return file.arrayBuffer().then(buffer => [
+                item.kind, item.type, file.name, file.size,
+                Array.from(new Uint8Array(buffer)).join(','), synchronous
+              ]);
+            }
+            return new Promise(resolve => {
+              item.getAsString(value => resolve([
+                item.kind, item.type, value, item.getAsFile(), synchronous]));
+            });
+          })).then(values => {
+            __clipboardPasteItems = {
+              values,
+              length: event.clipboardData.items.length,
+              first: event.clipboardData.items.item(0)?.type,
+              missing: event.clipboardData.items.item(items.length),
+              types: Array.from(event.clipboardData.types),
+              files: Array.from(event.clipboardData.files).map(file => [
+                file.name, file.type, file.size
+              ])
+            };
+          });
+          synchronous = false;
+        });
+        editor.focus();
+    )JS", "native-clipboard-shortcuts-setup.js");
+
+    require(evaluate(engine, "document.execCommand('copy')",
+                "native-clipboard-exec-command-without-input.js") == "false",
+        "legacy clipboard command ran without current native user input");
+    require(!take_typed_host_request(engine),
+        "legacy clipboard command without user input reached the host");
+
+    constexpr auto modifier = WEBSCENE_INPUT_MODIFIER_META;
+    webscene_engine_metrics metrics{};
+    keyboard_input(engine, WEBSCENE_INPUT_KEY_DOWN, 'C', 9761U, modifier);
+    webscene_engine_get_metrics(engine, &metrics);
+    wait_for_consumed_inputs(engine, metrics.enqueued_inputs,
+        "native copy shortcut was not consumed");
+    const auto copy_state = evaluate(engine,
+        "JSON.stringify({ events: __clipboardShortcutEvents,"
+        " keys: __clipboardShortcutKeys, active: document.activeElement?.id,"
+        " helper: typeof __webSceneClipboardShortcut })",
+        "native-clipboard-copy-shortcut-state.js");
+    auto request = take_typed_host_request(engine);
+    require(request.kind == WEBSCENE_HOST_REQUEST_CLIPBOARD_WRITE_V1
+                && request.flags == WEBSCENE_HOST_REQUEST_CLIPBOARD_REPLACE_V1
+                && request.content_type == "text/plain"
+                && std::string(request.bytes.begin(), request.bytes.end()) == "shortcut copy",
+        "native copy event did not hand its plain text to the host: " + copy_state);
+    require(webscene_engine_complete_host_request_v1(
+                engine, request.id, 0U, "text/plain", nullptr, 0U, nullptr) != 0,
+        "native copy plain-text completion was rejected");
+    request = take_typed_host_request(engine);
+    for (auto attempt = 0; attempt < 250 && !request; ++attempt) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        request = take_typed_host_request(engine);
+    }
+    require(request.kind == WEBSCENE_HOST_REQUEST_CLIPBOARD_WRITE_V1
+                && request.flags == 0U
+                && request.content_type == "text/html"
+                && std::string(request.bytes.begin(), request.bytes.end())
+                    == "<b>shortcut copy</b>",
+        "native copy event did not preserve its HTML representation");
+    require(webscene_engine_complete_host_request_v1(
+                engine, request.id, 0U, "text/html", nullptr, 0U, nullptr) != 0,
+        "native copy HTML completion was rejected");
+
+    keyboard_input(engine, WEBSCENE_INPUT_KEY_DOWN, 'X', 9762U, modifier);
+    webscene_engine_get_metrics(engine, &metrics);
+    wait_for_consumed_inputs(engine, metrics.enqueued_inputs,
+        "native cut shortcut was not consumed");
+    request = take_typed_host_request(engine);
+    require(request.kind == WEBSCENE_HOST_REQUEST_CLIPBOARD_WRITE_V1
+                && request.flags == WEBSCENE_HOST_REQUEST_CLIPBOARD_REPLACE_V1
+                && request.content_type == "text/plain"
+                && std::string(request.bytes.begin(), request.bytes.end()) == "shortcut cut",
+        "native cut event did not hand its plain text to the host");
+    require(webscene_engine_complete_host_request_v1(
+                engine, request.id, 0U, "text/plain", nullptr, 0U, nullptr) != 0,
+        "native cut completion was rejected");
+
+    keyboard_input(engine, WEBSCENE_INPUT_KEY_DOWN, 'V', 9763U, modifier);
+    webscene_engine_get_metrics(engine, &metrics);
+    wait_for_consumed_inputs(engine, metrics.enqueued_inputs,
+        "native paste shortcut was not consumed");
+    request = take_typed_host_request(engine);
+    require(request.kind == WEBSCENE_HOST_REQUEST_CLIPBOARD_READ_V1
+                && request.content_type == "*/*",
+        "native paste event did not request a supported item from the host");
+    constexpr uint8_t paste[] = {'s','h','o','r','t','c','u','t',' ','p','a','s','t','e'};
+    require(webscene_engine_complete_host_request_v1(
+                engine, request.id, 0U, "text/plain",
+                paste, sizeof(paste), nullptr) != 0,
+        "native paste completion was rejected");
+    for (auto attempt = 0; attempt < 250; ++attempt) {
+        if (evaluate(engine,
+                "__clipboardShortcutEvents.length === 3"
+                " && __clipboardExecCommandResults.length === 3"
+                " && __clipboardPasteItems !== 'pending'",
+                "native-clipboard-shortcut-completion.js") == "true") {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    const auto shortcut_events = evaluate(engine,
+        "__clipboardShortcutEvents",
+        "native-clipboard-shortcuts-result.js");
+    require(shortcut_events
+            == R"JSON([["copy",true,true,"text/plain,text/html"],["cut"],["paste","shortcut paste"]])JSON",
+        "native clipboard shortcuts did not dispatch browser-compatible events: "
+            + shortcut_events);
+    const auto paste_items = evaluate(engine,
+        "__clipboardPasteItems",
+        "native-clipboard-paste-items-result.js");
+    require(paste_items
+            == R"JSON({"values":[["string","text/plain","shortcut paste",null,false]],"length":1,"first":"text/plain","missing":null,"types":["text/plain"],"files":[]})JSON",
+        "native paste did not expose a Code OSS-compatible DataTransferItemList: "
+            + paste_items);
+
+    execute(engine, "__clipboardPasteItems = 'pending'",
+        "native-clipboard-image-paste-reset.js");
+    keyboard_input(engine, WEBSCENE_INPUT_KEY_DOWN, 'V', 9764U, modifier);
+    webscene_engine_get_metrics(engine, &metrics);
+    wait_for_consumed_inputs(engine, metrics.enqueued_inputs,
+        "native image paste shortcut was not consumed");
+    request = take_typed_host_request(engine);
+    require(request.kind == WEBSCENE_HOST_REQUEST_CLIPBOARD_READ_V1
+                && request.content_type == "*/*",
+        "native image paste did not request a supported item from the host");
+    constexpr uint8_t png[] = {137U, 80U, 78U, 71U, 13U, 10U, 26U, 10U};
+    require(webscene_engine_complete_host_request_v1(
+                engine, request.id, 0U, "image/png",
+                png, sizeof(png), nullptr) != 0,
+        "native image paste completion was rejected");
+    for (auto attempt = 0; attempt < 250; ++attempt) {
+        if (evaluate(engine,
+                "__clipboardShortcutEvents.length === 4"
+                " && __clipboardExecCommandResults.length === 4"
+                " && __clipboardPasteItems !== 'pending'",
+                "native-clipboard-image-completion.js") == "true") {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    const auto image_paste_items = evaluate(engine,
+        "__clipboardPasteItems",
+        "native-clipboard-image-paste-items-result.js");
+    require(image_paste_items
+            == R"JSON({"values":[["file","image/png","clipboard.png",8,"137,80,78,71,13,10,26,10",false]],"length":1,"first":"image/png","missing":null,"types":["Files"],"files":[["clipboard.png","image/png",8]]})JSON",
+        "native image paste did not expose a bounded file item to Code OSS: "
+            + image_paste_items);
+    require(evaluate(engine,
+                "__clipboardShortcutEvents.at(-1)[0] === 'paste'"
+                " && __clipboardShortcutEvents.at(-1)[1] === ''",
+                "native-clipboard-image-event-result.js") == "true",
+        "native image paste exposed non-text bytes through getData");
+    const auto exec_command_results = evaluate(engine,
+        "__clipboardExecCommandResults",
+        "native-clipboard-exec-command-results.js");
+    require(exec_command_results == "[true,true,true,true]",
+        "prevented native shortcuts did not execute document clipboard commands: "
+            + exec_command_results);
+    require(evaluate(engine, "document.execCommand('unsupported-command')",
+                "native-clipboard-unsupported-exec-command.js") == "false",
+        "unsupported legacy command claimed success");
+    require(!take_typed_host_request(engine),
+        "native clipboard shortcuts retained an unexpected host request");
+    webscene_engine_destroy(engine);
+}
+
+void test_native_image_clipboard_maximum_payload(webscene_engine*)
+{
+    auto* engine = webscene_engine_create(0);
+    require(engine != nullptr,
+        "maximum image clipboard engine creation failed");
+    execute_and_wait(engine, R"JS(
+        document.body.innerHTML = '<textarea id="image-paste"></textarea>';
+        const editor = document.getElementById('image-paste');
+        globalThis.__maximumImagePaste = 'pending';
+        editor.addEventListener('keydown', event => {
+          if (event.metaKey && event.key.toLowerCase() === 'v') {
+            event.preventDefault();
+            document.execCommand('paste');
+          }
+        });
+        editor.addEventListener('paste', event => {
+          event.preventDefault();
+          const item = event.clipboardData.items.item(0);
+          const file = item?.getAsFile();
+          if (!file) {
+            __maximumImagePaste = 'missing-file';
+            return;
+          }
+          file.arrayBuffer().then(buffer => {
+            const bytes = new Uint8Array(buffer);
+            __maximumImagePaste = {
+              kind: item.kind,
+              type: item.type,
+              name: file.name,
+              sizeExact: file.size === 16 * 1024 * 1024,
+              lengthExact: bytes.byteLength === 16 * 1024 * 1024,
+              first: bytes[0],
+              last: bytes[bytes.length - 1],
+              files: event.clipboardData.files.length,
+              types: Array.from(event.clipboardData.types)
+            };
+          });
+        });
+        editor.focus();
+    )JS", "native-maximum-image-paste-setup.js");
+
+    keyboard_input(engine, WEBSCENE_INPUT_KEY_DOWN, 'V', 9771U,
+        WEBSCENE_INPUT_MODIFIER_META);
+    webscene_engine_metrics metrics{};
+    webscene_engine_get_metrics(engine, &metrics);
+    wait_for_consumed_inputs(engine, metrics.enqueued_inputs,
+        "maximum image paste shortcut was not consumed");
+    const auto request = take_typed_host_request(engine);
+    require(request.kind == WEBSCENE_HOST_REQUEST_CLIPBOARD_READ_V1
+                && request.content_type == "*/*",
+        "maximum image paste did not request a supported host item");
+
+    constexpr size_t maximum_bytes = 16U * 1024U * 1024U;
+    std::vector<uint8_t> png(maximum_bytes, 97U);
+    png.front() = 137U;
+    png.back() = 10U;
+    require(webscene_engine_complete_host_request_v1(
+                engine, request.id, 0U, "image/png",
+                png.data(), maximum_bytes + 1U, nullptr) == 0,
+        "image clipboard completion admitted a payload above 16 MiB");
+    const auto started = std::chrono::steady_clock::now();
+    require(webscene_engine_complete_host_request_v1(
+                engine, request.id, 0U, "image/png",
+                png.data(), png.size(), nullptr) != 0,
+        "maximum image clipboard completion was rejected");
+    for (auto attempt = 0; attempt < 500; ++attempt) {
+        if (evaluate(engine,
+                "__maximumImagePaste !== 'pending'",
+                "native-maximum-image-paste-completion.js") == "true") {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    const auto result = evaluate(engine,
+        "__maximumImagePaste",
+        "native-maximum-image-paste-result.js");
+    require(result
+            == R"JSON({"kind":"file","type":"image/png","name":"clipboard.png","sizeExact":true,"lengthExact":true,"first":137,"last":10,"files":1,"types":["Files"]})JSON",
+        "maximum image paste changed bytes or transfer metadata: " + result);
+    require(!take_typed_host_request(engine),
+        "maximum image paste retained a host request");
+    const auto elapsed = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - started).count();
+    require(elapsed < 5.0,
+        "maximum image clipboard paste exceeded five seconds");
+    std::cout << "Image clipboard maximum-payload gate: bytes="
+              << maximum_bytes << " elapsed=" << elapsed << "s\n";
+    webscene_engine_destroy(engine);
+}
+
+void test_native_legacy_clipboard_completion_stress(webscene_engine*)
+{
+    auto* engine = webscene_engine_create(0);
+    require(engine != nullptr,
+        "legacy clipboard completion stress engine creation failed");
+    execute_and_wait(engine, R"JS(
+        document.body.innerHTML = '<textarea id="legacy-copy-stress"></textarea>';
+        const editor = document.getElementById('legacy-copy-stress');
+        globalThis.__legacyCopyStressEvents = 0;
+        globalThis.__legacyCopyStressResults = [];
+        editor.addEventListener('keydown', event => {
+          if (event.metaKey && event.key.toLowerCase() === 'c') {
+            event.preventDefault();
+            __legacyCopyStressResults.push(document.execCommand('copy'));
+          }
+        });
+        editor.addEventListener('copy', event => {
+          event.clipboardData.setData('text/plain', 'legacy stress');
+          event.preventDefault();
+          ++__legacyCopyStressEvents;
+        });
+        editor.focus();
+    )JS", "native-legacy-clipboard-stress-setup.js");
+
+    constexpr unsigned operation_count = 10000U;
+    constexpr unsigned batch_size = 16U;
+    constexpr auto modifier = WEBSCENE_INPUT_MODIFIER_META;
+    uint64_t sequence = 20000U;
+    const auto started = std::chrono::steady_clock::now();
+    for (unsigned offset = 0; offset < operation_count; offset += batch_size) {
+        for (unsigned index = 0; index < batch_size; ++index) {
+            keyboard_input(
+                engine, WEBSCENE_INPUT_KEY_DOWN, 'C', sequence++, modifier);
+        }
+        webscene_engine_metrics metrics{};
+        webscene_engine_get_metrics(engine, &metrics);
+        wait_for_consumed_inputs(
+            engine, metrics.enqueued_inputs,
+            "legacy clipboard stress input was not consumed");
+        for (unsigned index = 0; index < batch_size; ++index) {
+            const auto request = take_typed_host_request(engine);
+            require(
+                request.kind == WEBSCENE_HOST_REQUEST_CLIPBOARD_WRITE_V1
+                    && request.flags
+                        == WEBSCENE_HOST_REQUEST_CLIPBOARD_REPLACE_V1
+                    && request.content_type == "text/plain"
+                    && std::string(request.bytes.begin(), request.bytes.end())
+                        == "legacy stress",
+                "legacy clipboard stress request changed");
+            require(webscene_engine_complete_host_request_v1(
+                        engine, request.id, 0U, "text/plain",
+                        nullptr, 0U, nullptr) != 0,
+                "legacy clipboard stress completion was rejected");
+        }
+        const auto expected = offset + batch_size;
+        require(evaluate(
+                    engine,
+                    "__legacyCopyStressEvents === " + std::to_string(expected)
+                        + " && __legacyCopyStressResults.length === "
+                        + std::to_string(expected)
+                        + " && __legacyCopyStressResults.every(Boolean)",
+                    "native-legacy-clipboard-stress-barrier.js") == "true",
+            "legacy clipboard stress did not drain completions in order");
+    }
+    require(!take_typed_host_request(engine),
+        "legacy clipboard stress retained a host request");
+    const auto elapsed = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - started).count();
+    require(elapsed < 15.0,
+        "10,000 legacy clipboard completions exceeded fifteen seconds");
+    std::cout << "Legacy clipboard completion gate: operations="
+              << operation_count << " pendingHighWater=" << batch_size
+              << " elapsed=" << elapsed << "s\n";
+    // Reproduce the packaged close boundary: the worker destroys all resolved
+    // promise/microtask state immediately after the last public-ABI barrier.
+    webscene_engine_destroy(engine);
+}
+
+void test_native_pending_legacy_clipboard_shutdown(webscene_engine*)
+{
+    auto* engine = webscene_engine_create(0);
+    require(engine != nullptr,
+        "pending legacy clipboard shutdown engine creation failed");
+    execute_and_wait(engine, R"JS(
+        document.body.innerHTML = '<textarea id="pending-copy"></textarea>';
+        const editor = document.getElementById('pending-copy');
+        editor.addEventListener('keydown', event => {
+          if (event.metaKey && event.key.toLowerCase() === 'c') {
+            event.preventDefault();
+            document.execCommand('copy');
+          }
+        });
+        editor.addEventListener('copy', event => {
+          event.clipboardData.setData('text/plain', 'pending close');
+          event.preventDefault();
+        });
+        editor.focus();
+    )JS", "native-pending-legacy-clipboard-shutdown-setup.js");
+
+    keyboard_input(
+        engine, WEBSCENE_INPUT_KEY_DOWN, 'C', 31001U,
+        WEBSCENE_INPUT_MODIFIER_META);
+    webscene_engine_metrics metrics{};
+    webscene_engine_get_metrics(engine, &metrics);
+    wait_for_consumed_inputs(
+        engine, metrics.enqueued_inputs,
+        "pending legacy clipboard shutdown input was not consumed");
+    const auto request = take_typed_host_request(engine);
+    require(
+        request.kind == WEBSCENE_HOST_REQUEST_CLIPBOARD_WRITE_V1
+            && request.content_type == "text/plain"
+            && std::string(request.bytes.begin(), request.bytes.end())
+                == "pending close",
+        "pending legacy clipboard shutdown did not retain its host promise");
+
+    // A native window may close before the operating-system host completes a
+    // request. Destruction must release the pending persistent resolver while
+    // its V8 isolate is still alive.
+    webscene_engine_destroy(engine);
+}
+
+void test_clipboard_maximum_payload_gate(webscene_engine* engine)
+{
+    constexpr size_t maximum_bytes = 16U * 1024U * 1024U;
+    const auto started = std::chrono::steady_clock::now();
+    execute(engine, R"JS(
+        globalThis.__maximumClipboardState = 'pending';
+        const bytes = new Uint8Array(16 * 1024 * 1024);
+        bytes.fill(97);
+        navigator.clipboard.write([
+          new ClipboardItem({ 'text/plain': new Blob([bytes], { type: 'text/plain' }) })
+        ]).then(
+          () => { __maximumClipboardState = 'fulfilled'; },
+          error => { __maximumClipboardState = error.name; });
+    )JS", "native-clipboard-maximum-payload.js");
+    require(evaluate(engine, "true", "native-clipboard-maximum-payload-barrier.js") == "true",
+        "maximum clipboard payload did not drain through the engine worker");
+    const auto request = take_typed_host_request(engine);
+    require(request.kind == WEBSCENE_HOST_REQUEST_CLIPBOARD_WRITE_V1
+                && request.content_type == "text/plain"
+                && request.bytes.size() == maximum_bytes
+                && request.bytes.front() == 'a'
+                && request.bytes.back() == 'a',
+        "maximum clipboard payload changed in the typed host ABI");
+    require(webscene_engine_complete_host_request_v1(
+                engine, request.id, 0U, "text/plain",
+                nullptr, 0U, nullptr) != 0,
+        "maximum clipboard payload completion was rejected");
+    require(evaluate(engine, "__maximumClipboardState",
+                "native-clipboard-maximum-payload-result.js")
+                == R"("fulfilled")",
+        "maximum clipboard payload promise did not settle");
+    const auto elapsed = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - started).count();
+    require(elapsed < 5.0,
+        "maximum clipboard payload round trip exceeded five seconds");
+    std::cout << "Typed clipboard maximum-payload gate: bytes="
+              << maximum_bytes << " elapsed=" << elapsed << "s\n";
+}
+
+void test_clipboard_small_round_trip_performance(webscene_engine* engine)
+{
+    constexpr unsigned operation_count = 10000U;
+    constexpr unsigned batch_size = 16U;
+    execute(engine, "globalThis.__clipboardPerformanceCompleted = 0",
+        "native-clipboard-performance-setup.js");
+    const auto started = std::chrono::steady_clock::now();
+    for (unsigned offset = 0; offset < operation_count; offset += batch_size) {
+        require(evaluate(engine, R"JS(
+            for (let index = 0; index < 16; ++index) {
+              navigator.clipboard.writeText('x').then(() => {
+                ++globalThis.__clipboardPerformanceCompleted;
+              });
+            }
+            true
+        )JS", "native-clipboard-performance-batch.js") == "true",
+            "typed clipboard performance batch did not drain through the engine worker");
+        for (unsigned index = 0; index < batch_size; ++index) {
+            const auto request = take_typed_host_request(engine);
+            require(request.kind == WEBSCENE_HOST_REQUEST_CLIPBOARD_WRITE_V1
+                    && request.id != 0U
+                    && request.content_type == "text/plain"
+                    && request.bytes == std::vector<uint8_t>{'x'},
+                "typed clipboard request changed under round-trip load");
+            require(webscene_engine_complete_host_request_v1(
+                        engine, request.id, 0U, "text/plain",
+                        nullptr, 0U, nullptr) != 0,
+                "typed clipboard completion was rejected under load");
+        }
+    }
+    require(evaluate(engine,
+                "__clipboardPerformanceCompleted === 10000",
+                "native-clipboard-performance-result.js") == "true",
+        "typed clipboard promises did not all settle under load");
+    require(!take_typed_host_request(engine),
+        "typed clipboard round-trip retained a host request");
+    const auto elapsed = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - started).count();
+    require(elapsed < 10.0,
+        "10,000 typed clipboard round trips exceeded ten seconds");
+    std::cout << "Typed clipboard round-trip gate: operations="
+              << operation_count << " pendingHighWater=" << batch_size
+              << " payloadBytes=1 elapsed=" << elapsed << "s\n";
+}
+
+void test_fullscreen_host_completion(webscene_engine* engine)
+{
+    execute(engine, R"JS(
+        document.body.innerHTML = '<main id="surface">fullscreen</main>';
+        globalThis.__fullscreenEvents = [];
+        globalThis.__fullscreenState = 'pending';
+        document.addEventListener('fullscreenchange', () => {
+          __fullscreenEvents.push(document.fullscreenElement?.id || null);
+        });
+        document.getElementById('surface').requestFullscreen().then(
+          () => { __fullscreenState = document.fullscreenElement?.id || 'missing'; },
+          error => { __fullscreenState = error.name; });
+    )JS", "native-fullscreen-enter.js");
+    require(evaluate(engine, "true", "native-fullscreen-enter-barrier.js") == "true",
+        "fullscreen enter did not drain through the engine worker");
+    auto request = take_typed_host_request(engine);
+    require(
+        request.kind == WEBSCENE_HOST_REQUEST_FULLSCREEN_ENTER_V1
+            && request.id != 0U && request.target_node_id != 0U,
+        "Element.requestFullscreen did not emit a typed host request");
+    require(webscene_engine_complete_host_request_v1(
+                engine, request.id, 0U, nullptr,
+                nullptr, 0U, nullptr) != 0,
+        "fullscreen enter completion was rejected");
+    require(evaluate(
+                engine,
+                "JSON.stringify([__fullscreenState,__fullscreenEvents])",
+                "native-fullscreen-enter-result.js")
+            == R"("[\"surface\",[\"surface\"]]")",
+        "fullscreen enter state/event did not reach the document");
+
+    execute(engine, R"JS(
+        globalThis.__fullscreenExitState = 'pending';
+        document.exitFullscreen().then(
+          () => { __fullscreenExitState = document.fullscreenElement === null; },
+          error => { __fullscreenExitState = error.name; });
+    )JS", "native-fullscreen-exit.js");
+    require(evaluate(engine, "true", "native-fullscreen-exit-barrier.js") == "true",
+        "fullscreen exit did not drain through the engine worker");
+    request = take_typed_host_request(engine);
+    require(request.kind == WEBSCENE_HOST_REQUEST_FULLSCREEN_EXIT_V1
+                && request.id != 0U,
+        "Document.exitFullscreen did not emit a typed host request");
+    require(webscene_engine_complete_host_request_v1(
+                engine, request.id, 0U, nullptr,
+                nullptr, 0U, nullptr) != 0,
+        "fullscreen exit completion was rejected");
+    require(evaluate(
+                engine,
+                "JSON.stringify([__fullscreenExitState,__fullscreenEvents])",
+                "native-fullscreen-exit-result.js")
+            == R"("[true,[\"surface\",null]]")",
+        "fullscreen exit state/event did not reach the document");
+
+    require(evaluate(engine, "(__fullscreenEvents = [], true)",
+                "native-fullscreen-reset-events.js") == "true",
+        "fullscreen event reset did not drain through the engine worker");
+    require(webscene_engine_set_window_fullscreen_v1(engine, 1U) != 0,
+        "native fullscreen entry was rejected");
+    require(evaluate_until_equals(engine,
+                "document.fullscreenElement === document.body",
+                "native-fullscreen-state-entered.js", "true") == "true",
+        "native-initiated fullscreen state did not reach the document");
+    require(webscene_engine_set_window_fullscreen_v1(engine, 0U) != 0,
+        "native fullscreen exit was rejected");
+    require(evaluate_until_equals(engine,
+                "document.fullscreenElement === null",
+                "native-fullscreen-state-exited.js", "true") == "true",
+        "native-initiated fullscreen exit did not reach the document");
+    require(evaluate(engine, "__fullscreenEvents.length",
+                "native-fullscreen-event-count.js") == "2",
+        "native-initiated fullscreen did not dispatch enter and exit events");
 }

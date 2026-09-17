@@ -130,9 +130,12 @@ async function launchContractServer() {
         response.end("Not found");
         return;
       }
-      const contentType = path.extname(resolved).toLowerCase() === ".html"
+      const extension = path.extname(resolved).toLowerCase();
+      const contentType = extension === ".html"
         ? "text/html; charset=utf-8"
-        : "application/octet-stream";
+        : extension === ".js" || extension === ".mjs"
+          ? "text/javascript; charset=utf-8"
+          : "application/octet-stream";
       response.writeHead(200, {
         "content-type": contentType,
         "cache-control": "no-store"
@@ -208,7 +211,9 @@ async function runDocument(client, baseUrl, relativePath, timeoutSeconds, except
   }
   if (!state?.complete) {
     return { path: relativePath, status: "TIMEOUT", duration: Date.now() - started,
-      message: "Chrome contract did not complete.", subtests: [] };
+      message: exceptionState.current.join("\n") || "Chrome contract did not complete.",
+      subtests: state?.results || [],
+      diagnostics: [...(state?.diagnostics || []), ...exceptionState.current] };
   }
   const subtests = state.results || [];
   const expectedRuntimeExceptions = Array.isArray(state.expectedRuntimeExceptions)

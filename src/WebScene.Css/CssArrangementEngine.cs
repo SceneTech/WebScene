@@ -1214,8 +1214,10 @@ public sealed class CssArrangementEngine
     {
         if (TryParseFixedPixelTracks(style.GridTemplateColumns, out var fixedTracks))
         {
-            _ = TryParseFixedPixelTracks(style.GridTemplateRows, out var fixedRowTracks);
-            ArrangeFixedPixelGrid(children, style, content, boxes, fixedTracks, fixedRowTracks);
+            var parsedRows = CssGridTrackList.TryParseRows(
+                style.GridTemplateRows, content.Height, out var rowTracks);
+            ArrangeFixedPixelGrid(children, style, content, boxes, fixedTracks, rowTracks,
+                parsedRows || string.IsNullOrWhiteSpace(style.GridTemplateRows));
             return;
         }
 
@@ -1250,20 +1252,33 @@ public sealed class CssArrangementEngine
         WebSceneRect content,
         Dictionary<long, CssLayoutBox> boxes,
         IReadOnlyList<double> tracks,
-        IReadOnlyList<double> fixedRowTracks)
+        IReadOnlyList<CssGridTrack> rowTracks,
+        bool rowTemplateSupportsDistribution)
     {
-        var placements = new List<(CssLayoutNode Node, int Row, int Column, bool Full, ResolvedMetrics Metrics)>();
+        _ = CssGridTemplateAreas.TryParse(style.GridTemplateAreas, out var namedAreas);
+        var placements = new List<(CssLayoutNode Node, int Row, int Column, int RowSpan, int ColumnSpan, ResolvedMetrics Metrics)>();
         var row = 0;
         var column = 0;
         foreach (var child in children)
         {
+            var named = default(CssGridNamedArea);
+            if (namedAreas is not null
+                && namedAreas.TryGetArea(child.Style.GridArea, out named)
+                && named.Column < tracks.Count)
+            {
+                placements.Add((child, named.Row, named.Column, named.RowSpan,
+                    Math.Min(named.ColumnSpan, tracks.Count - named.Column),
+                    ResolveMetrics(child, content.Size)));
+                continue;
+            }
             var full = tracks.Count == 2 && SpansBothColumns(child.Style.GridColumn);
             if (full && column != 0)
             {
                 row++;
                 column = 0;
             }
-            placements.Add((child, row, column, full, ResolveMetrics(child, content.Size)));
+            placements.Add((child, row, column, 1, full ? tracks.Count : 1,
+                ResolveMetrics(child, content.Size)));
             if (full)
             {
                 row++;
@@ -1276,15 +1291,16 @@ public sealed class CssArrangementEngine
             }
         }
 
-        var usedRowCount = placements.Count == 0 ? 0 : placements.Max(item => item.Row) + 1;
-        var rowHeights = new double[Math.Max(fixedRowTracks.Count, usedRowCount)];
-        for (var index = 0; index < fixedRowTracks.Count; index++)
+        var usedRowCount = placements.Count == 0 ? 0 : placements.Max(item => item.Row + item.RowSpan);
+        var rowHeights = new double[Math.Max(rowTracks.Count, usedRowCount)];
+        for (var index = 0; index < rowTracks.Count; index++)
         {
-            rowHeights[index] = fixedRowTracks[index];
+            rowHeights[index] = rowTracks[index].BaseSize;
         }
         foreach (var item in placements)
         {
-            if (item.Row >= fixedRowTracks.Count)
+            if (item.RowSpan == 1 && (item.Row >= rowTracks.Count
+                || rowTracks[item.Row].AcceptsIntrinsicContribution))
             {
                 rowHeights[item.Row] = Math.Max(
                     rowHeights[item.Row],
@@ -1293,6 +1309,13 @@ public sealed class CssArrangementEngine
         }
         var columnGap = Math.Max(0, style.ColumnGap.Resolve(content.Width) ?? 0);
         var rowGap = Math.Max(0, style.RowGap.Resolve(content.Height) ?? 0);
+        CssGridTrackList.DistributeRemainingSpace(
+            rowHeights,
+            rowTracks,
+            content.Height,
+            rowGap * Math.Max(0, rowHeights.Length - 1),
+            rowTemplateSupportsDistribution
+                && style.AlignContent == CssLayoutAlignContent.Stretch);
         var columnOffsets = new double[tracks.Count];
         for (var index = 1; index < columnOffsets.Length; index++)
         {
@@ -1305,14 +1328,15 @@ public sealed class CssArrangementEngine
         }
         foreach (var item in placements)
         {
-            var trackWidth = item.Full
-                ? tracks.Sum() + columnGap * Math.Max(0, tracks.Count - 1)
-                : tracks[item.Column];
-            var x = content.X + (item.Full ? 0 : columnOffsets[item.Column]) + item.Metrics.Margin.Left;
+            var trackWidth = tracks.Skip(item.Column).Take(item.ColumnSpan).Sum()
+                + columnGap * Math.Max(0, item.ColumnSpan - 1);
+            var trackHeight = rowHeights.Skip(item.Row).Take(item.RowSpan).Sum()
+                + rowGap * Math.Max(0, item.RowSpan - 1);
+            var x = content.X + columnOffsets[item.Column] + item.Metrics.Margin.Left;
             var y = content.Y + rowOffsets[item.Row] + item.Metrics.Margin.Top;
             var width = item.Metrics.OuterWidth ?? Math.Max(0, trackWidth - item.Metrics.Margin.Horizontal);
             var height = item.Metrics.OuterHeight
-                         ?? Math.Max(0, rowHeights[item.Row] - item.Metrics.Margin.Vertical);
+                         ?? Math.Max(0, trackHeight - item.Metrics.Margin.Vertical);
             ApplyRelativeOffset(
                 item.Node.Style,
                 content,

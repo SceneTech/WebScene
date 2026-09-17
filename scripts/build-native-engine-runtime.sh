@@ -332,6 +332,10 @@ cmake_args=(
   -DWEBSCENE_V8_ROOT="$v8_root"
   -DWEBSCENE_V8_OUTPUT_ROOT="$v8_output_root"
 )
+macos_deployment_target=12.0
+if [[ "$expected_kernel" == Darwin ]]; then
+  cmake_args+=(-DCMAKE_OSX_DEPLOYMENT_TARGET="$macos_deployment_target")
+fi
 if [[ "$thin_lto" == true ]]; then
   v8_llvm_bin="$v8_root/third_party/llvm-build/Release+Asserts/bin"
   for llvm_tool in clang clang++ llvm-ar lld; do
@@ -364,9 +368,6 @@ if [[ "$thin_lto" == true ]]; then
     -DCMAKE_SHARED_LINKER_FLAGS=-fuse-ld=lld
     -DCMAKE_MODULE_LINKER_FLAGS=-fuse-ld=lld
   )
-  if [[ "$expected_kernel" == Darwin ]]; then
-    cmake_args+=(-DCMAKE_OSX_DEPLOYMENT_TARGET=12.0)
-  fi
 elif [[ "$expected_kernel" == Linux ]]; then
   # V8's Linux archive must be linked with LLD. The compiler is selectable so
   # the Ubuntu 22.04 compatibility image can use GCC 11's complete C++20
@@ -381,6 +382,12 @@ elif [[ "$expected_kernel" == Linux ]]; then
     -DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=lld
     -DCMAKE_SHARED_LINKER_FLAGS=-fuse-ld=lld
   )
+fi
+if [[ "$expected_kernel" == Darwin && "$cmake_build_type" == Release ]]; then
+  # Keep line tables only until dsymutil has emitted the exact shipped
+  # binary's external symbols. strip removes them from the runtime before
+  # packaging, so diagnostics do not increase the installed footprint.
+  cmake_args+=("-DCMAKE_CXX_FLAGS_RELEASE=-O3 -DNDEBUG -gline-tables-only")
 fi
 cmake "${cmake_args[@]}"
 cmake --build "$build_dir" --config "$cmake_build_type" --parallel
@@ -398,13 +405,24 @@ if [[ ! -f "$native_path" ]]; then
   echo "Native engine build did not produce '$native_path'." >&2
   exit 1
 fi
-if [[ "$expected_kernel" == Darwin && "$cmake_build_type" == RelWithDebInfo ]]; then
+if [[ "$expected_kernel" == Darwin ]]; then
+  actual_macos_deployment_target="$(
+    xcrun vtool -show-build "$native_path" |
+      awk '$1 == "minos" { print $2; exit }'
+  )"
+  if [[ "$actual_macos_deployment_target" != "$macos_deployment_target" ]]; then
+    echo "Native engine deployment target is '$actual_macos_deployment_target'; expected '$macos_deployment_target'." >&2
+    exit 1
+  fi
   native_dsym_path="$native_path.dSYM"
   cmake -E remove_directory "$native_dsym_path"
   dsymutil "$native_path" -o "$native_dsym_path"
   if [[ ! -d "$native_dsym_path" ]]; then
     echo "Native engine build did not produce '$native_dsym_path'." >&2
     exit 1
+  fi
+  if [[ "$cmake_build_type" == Release ]]; then
+    strip -S "$native_path"
   fi
 fi
 snapshot_path="$build_dir/webscene_bootstrap_snapshot.bin"
@@ -422,6 +440,11 @@ fi
 ixwebsocket_license="$build_dir/_deps/webscene_ixwebsocket-src/LICENSE.txt"
 if [[ ! -f "$ixwebsocket_license" ]]; then
   echo "IXWebSocket license was not found at '$ixwebsocket_license'." >&2
+  exit 1
+fi
+mbedtls_license="$build_dir/_deps/webscene_mbedtls-src/LICENSE"
+if [[ ! -f "$mbedtls_license" ]]; then
+  echo "Mbed TLS license was not found at '$mbedtls_license'." >&2
   exit 1
 fi
 if [[ "$expected_kernel" == Linux ]] \
@@ -444,6 +467,7 @@ pack_args=(
   "-p:WebSceneNativeEngineV8LicensePath=$v8_license"
   "-p:WebSceneNativeEngineIcuLicensePath=$icu_license"
   "-p:WebSceneNativeEngineIXWebSocketLicensePath=$ixwebsocket_license"
+  "-p:WebSceneNativeEngineMbedTlsLicensePath=$mbedtls_license"
   "-p:WebSceneNativeEngineV8PointerCompression=true"
   "-p:WebSceneNativeEngineV8SharedCage=true"
   "-p:WebSceneNativeEngineV8OptimizeForSizeDefault=true"

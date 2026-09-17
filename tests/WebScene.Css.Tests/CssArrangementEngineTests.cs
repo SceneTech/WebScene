@@ -379,6 +379,139 @@ public sealed class CssArrangementEngineTests
         Assert.Equal(new WebSceneRect(162, 0, 100, 28), snapshot[3].BorderBox);
     }
 
+    [Fact]
+    public void FixedPixelGridPlacesNamedAreasAcrossSparseTracks()
+    {
+        var root = new CssLayoutNode(1, new CssLayoutStyle
+        {
+            Display = CssLayoutDisplay.Grid,
+            GridTemplateColumns = "20px 40px 30px",
+            GridTemplateRows = "10px 20px 15px",
+            GridTemplateAreas = "\"header header .\" \"left . right\" \"footer footer footer\"",
+            ColumnGap = CssLayoutLength.Pixels(2),
+            RowGap = CssLayoutLength.Pixels(2)
+        });
+        root.Add(new CssLayoutNode(2, new CssLayoutStyle { GridArea = "header" }));
+        root.Add(new CssLayoutNode(3, new CssLayoutStyle { GridArea = "left" }));
+        root.Add(new CssLayoutNode(4, new CssLayoutStyle { GridArea = "right" }));
+        root.Add(new CssLayoutNode(5, new CssLayoutStyle { GridArea = "footer" }));
+
+        var snapshot = new CssArrangementEngine().Arrange(root, new WebSceneSize(94, 49));
+
+        Assert.Equal(new WebSceneRect(0, 0, 62, 10), snapshot[2].BorderBox);
+        Assert.Equal(new WebSceneRect(0, 12, 20, 20), snapshot[3].BorderBox);
+        Assert.Equal(new WebSceneRect(64, 12, 30, 20), snapshot[4].BorderBox);
+        Assert.Equal(new WebSceneRect(0, 34, 94, 15), snapshot[5].BorderBox);
+    }
+
+    [Fact]
+    public void GridStretchesMinmaxAutoMaximumAcrossRemainingBlockSpace()
+    {
+        var root = new CssLayoutNode(1, new CssLayoutStyle
+        {
+            Display = CssLayoutDisplay.Grid,
+            GridTemplateColumns = "700px",
+            GridTemplateRows = "25% minmax(min-content, auto) min-content",
+            GridTemplateAreas = "\"header\" \"middle\" \"footer\""
+        });
+        root.Add(new CssLayoutNode(2, new CssLayoutStyle
+            { GridArea = "header", Height = CssLayoutLength.Pixels(40) }));
+        root.Add(new CssLayoutNode(3, new CssLayoutStyle
+            { GridArea = "middle", Height = CssLayoutLength.Pixels(200) }));
+        root.Add(new CssLayoutNode(4, new CssLayoutStyle
+            { GridArea = "footer", Height = CssLayoutLength.Pixels(18) }));
+
+        var snapshot = new CssArrangementEngine().Arrange(root, new WebSceneSize(700, 400));
+
+        Assert.Equal(new WebSceneRect(0, 0, 700, 40), snapshot[2].BorderBox);
+        Assert.Equal(new WebSceneRect(0, 100, 700, 200), snapshot[3].BorderBox);
+        Assert.Equal(new WebSceneRect(0, 382, 700, 18), snapshot[4].BorderBox);
+    }
+
+    [Fact]
+    public void GridDoesNotStretchAutoMaximumForFlexStartAlignContent()
+    {
+        var root = new CssLayoutNode(1, new CssLayoutStyle
+        {
+            Display = CssLayoutDisplay.Grid,
+            AlignContent = CssLayoutAlignContent.FlexStart,
+            GridTemplateColumns = "700px",
+            GridTemplateRows = "25% minmax(min-content, auto) min-content",
+            GridTemplateAreas = "\"header\" \"middle\" \"footer\""
+        });
+        root.Add(new CssLayoutNode(2, new CssLayoutStyle
+            { GridArea = "header", Height = CssLayoutLength.Pixels(40) }));
+        root.Add(new CssLayoutNode(3, new CssLayoutStyle
+            { GridArea = "middle", Height = CssLayoutLength.Pixels(200) }));
+        root.Add(new CssLayoutNode(4, new CssLayoutStyle
+            { GridArea = "footer", Height = CssLayoutLength.Pixels(18) }));
+
+        var snapshot = new CssArrangementEngine().Arrange(root, new WebSceneSize(700, 400));
+
+        Assert.Equal(300, snapshot[4].BorderBox.Y);
+    }
+
+    [Fact]
+    public void GridSharesRemainingSpaceAcrossAutoMaximumRowsWithGaps()
+    {
+        var root = new CssLayoutNode(1, new CssLayoutStyle
+        {
+            Display = CssLayoutDisplay.Grid,
+            GridTemplateColumns = "100px",
+            GridTemplateRows = "minmax(0, auto) auto 20px",
+            RowGap = CssLayoutLength.Pixels(5)
+        });
+        root.Add(new CssLayoutNode(2) { IntrinsicSize = new WebSceneSize(10, 10) });
+        root.Add(new CssLayoutNode(3) { IntrinsicSize = new WebSceneSize(10, 10) });
+        root.Add(new CssLayoutNode(4) { IntrinsicSize = new WebSceneSize(10, 10) });
+
+        var snapshot = new CssArrangementEngine().Arrange(root, new WebSceneSize(100, 100));
+
+        Assert.Equal(new WebSceneRect(0, 0, 100, 35), snapshot[2].BorderBox);
+        Assert.Equal(new WebSceneRect(0, 40, 100, 35), snapshot[3].BorderBox);
+        Assert.Equal(new WebSceneRect(0, 80, 100, 20), snapshot[4].BorderBox);
+    }
+
+    [Fact]
+    public void GridAllocatesRemainingSpaceToFractionalRowsBeforeAutoMaximumStretch()
+    {
+        var root = new CssLayoutNode(1, new CssLayoutStyle
+        {
+            Display = CssLayoutDisplay.Grid,
+            GridTemplateColumns = "100px",
+            GridTemplateRows = "100px 1fr auto"
+        });
+        root.Add(new CssLayoutNode(2) { IntrinsicSize = new WebSceneSize(10, 40) });
+        root.Add(new CssLayoutNode(3) { IntrinsicSize = new WebSceneSize(10, 200) });
+        root.Add(new CssLayoutNode(4) { IntrinsicSize = new WebSceneSize(10, 18) });
+
+        var snapshot = new CssArrangementEngine().Arrange(root, new WebSceneSize(100, 400));
+
+        Assert.Equal(new WebSceneRect(0, 0, 100, 100), snapshot[2].BorderBox);
+        Assert.Equal(new WebSceneRect(0, 100, 100, 282), snapshot[3].BorderBox);
+        Assert.Equal(new WebSceneRect(0, 382, 100, 18), snapshot[4].BorderBox);
+    }
+
+    [Fact]
+    public void UnsupportedRowTemplateIsNotReclassifiedAsImplicitAutoRows()
+    {
+        var root = new CssLayoutNode(1, new CssLayoutStyle
+        {
+            Display = CssLayoutDisplay.Grid,
+            GridTemplateColumns = "100px",
+            GridTemplateRows = "repeat(3, 1fr)"
+        });
+        root.Add(new CssLayoutNode(2) { IntrinsicSize = new WebSceneSize(10, 10) });
+        root.Add(new CssLayoutNode(3) { IntrinsicSize = new WebSceneSize(10, 10) });
+        root.Add(new CssLayoutNode(4) { IntrinsicSize = new WebSceneSize(10, 10) });
+
+        var snapshot = new CssArrangementEngine().Arrange(root, new WebSceneSize(100, 300));
+
+        Assert.Equal(0, snapshot[2].BorderBox.Y);
+        Assert.Equal(10, snapshot[3].BorderBox.Y);
+        Assert.Equal(20, snapshot[4].BorderBox.Y);
+    }
+
     [Theory]
     [InlineData(CssLayoutJustifyContent.FlexEnd, 60)]
     [InlineData(CssLayoutJustifyContent.Center, 30)]

@@ -86,6 +86,9 @@ inline void apply_all_unset(dom_node& node)
         reset.align_self = previous.align_self;
         reset.align_self_specified = previous.align_self_specified;
     }
+    if (is_inline(inline_align_content)) {
+        reset.align_content_stretches = previous.align_content_stretches;
+    }
     if (is_inline(inline_justify_content)) {
         reset.justify_content = previous.justify_content;
     }
@@ -219,7 +222,7 @@ inline void apply_all_unset(dom_node& node)
         reset.z_index_auto = previous.z_index_auto;
     }
     if (has_inline({"flex-basis", "flex"})) reset.flex_basis = previous.flex_basis;
-    if (has_inline({"grid-template-columns", "grid-template-rows",
+    if (has_inline({"grid-template-columns", "grid-template-rows", "grid-template-areas",
             "grid-auto-columns", "grid-auto-flow",
             "grid-area", "grid-row", "grid-row-start", "grid-row-end",
             "grid-column", "grid-column-start", "grid-column-end"})) {

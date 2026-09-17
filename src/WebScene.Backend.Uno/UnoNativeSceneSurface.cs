@@ -787,6 +787,10 @@ public sealed partial class UnoNativeWebSceneView : ContentControl, IAsyncDispos
             {
                 Directory.CreateDirectory(options.CompilationCacheDirectory);
             }
+            if (!string.IsNullOrWhiteSpace(options.PersistentStorageDirectory))
+            {
+                Directory.CreateDirectory(options.PersistentStorageDirectory);
+            }
 
             var timeoutValue = documentBarrierTimeout ?? TimeSpan.FromSeconds(30);
             if (timeoutValue != Timeout.InfiniteTimeSpan && timeoutValue <= TimeSpan.Zero)
@@ -799,7 +803,10 @@ public sealed partial class UnoNativeWebSceneView : ContentControl, IAsyncDispos
                 options.CompilationCacheDirectory,
                 options.ResourceLoader ?? new UnoResourceLoader(),
                 _surface.OnNativeScenePublished,
-                interopCallbackAvailable: callbackSignal.Notify);
+                interopCallbackAvailable: callbackSignal.Notify,
+                persistentStorageDirectory: options.PersistentStorageDirectory,
+                persistentStoragePartitionKey: options.PersistentStoragePartitionKey,
+                persistentStorageQuotaBytes: options.PersistentStorageQuotaBytes);
             if (engine == IntPtr.Zero)
             {
                 throw new InvalidOperationException(

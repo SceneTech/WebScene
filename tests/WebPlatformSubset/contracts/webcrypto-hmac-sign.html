@@ -1,0 +1,23 @@
+<!doctype html><meta charset="utf-8"><title>Web Crypto HMAC sign contract</title>
+<!-- Pinned WPT sources: WebCryptoAPI/sign_verify/hmac_vectors.https.any.js and
+import_export/hmac.https.any.js at 2c705104a295c48053eeddf7fe0170d790a4e853. -->
+<script>
+window.__webSceneWptState={complete:false,harness:null,results:[],errors:[],diagnostics:[]};
+const record=(name,condition,message='Contract failed')=>__webSceneWptState.results.push({name,status:condition?'PASS':'FAIL',message:condition?null:message,stack:null});
+const hex=value=>Array.from(new Uint8Array(value),byte=>byte.toString(16).padStart(2,'0')).join('');
+const finish=()=>{const s=__webSceneWptState;s.harness={status:s.results.some(r=>r.status!=='PASS')?1:0,message:null,stack:null};s.complete=true;};
+(async()=>{
+ const raw=new Uint8Array(20);raw.fill(0x0b);const data=new TextEncoder().encode('Hi There');
+ const key=await crypto.subtle.importKey('raw',raw,{name:'HMAC',hash:'SHA-256'},true,['sign']);
+ record('HMAC CryptoKey metadata',key.algorithm.name==='HMAC'&&key.algorithm.hash.name==='SHA-256'&&key.algorithm.length===160&&key.usages.join(',')==='sign');
+ record('RFC 4231 HMAC-SHA-256 vector',hex(await crypto.subtle.sign('HMAC',key,data))==='b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7');
+ const jwk=await crypto.subtle.exportKey('jwk',key);
+ record('HMAC JWK metadata',jwk.kty==='oct'&&jwk.alg==='HS256'&&jwk.k==='CwsLCwsLCwsLCwsLCwsLCwsLCws');
+ const copied=new Uint8Array(1024);copied.fill(0x5a);const pending=crypto.subtle.sign('HMAC',key,copied);copied.fill(0);
+ record('HMAC copies input during the call',hex(await pending)===hex(await crypto.subtle.sign('HMAC',key,new Uint8Array(1024).fill(0x5a))));
+ let empty='';try{await crypto.subtle.importKey('raw',new Uint8Array(),{name:'HMAC',hash:'SHA-256'},false,['sign']);}catch(error){empty=error.name;}
+ record('HMAC rejects an empty key',empty==='DataError',`Received ${empty}`);
+ const started=performance.now();for(let i=0;i<16;++i)await crypto.subtle.sign('HMAC',key,new Uint8Array(256*1024));
+ record('bounded HMAC throughput completes',performance.now()-started<8000);
+})().catch(error=>{__webSceneWptState.errors.push(String(error));record('HMAC contract completed',false,String(error));}).finally(finish);
+</script>

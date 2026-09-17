@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import pathlib
 import re
 import sys
@@ -14,6 +15,8 @@ from typing import Any
 
 RESULT_SCHEMA = "webscene-wpt-subset-result-v3"
 REPORT_SCHEMA = "webscene-cross-rid-compatibility-evidence-v2"
+TEST_FAILURE_PREFIXES = ("non-passing documents:",)
+TEST_FAILURE_SUFFIX = " non-passing subtests; first:"
 
 
 def read_json(path: pathlib.Path) -> Any:
@@ -35,6 +38,44 @@ def duplicate_values(values: list[str]) -> list[str]:
             duplicates.add(value)
         seen.add(value)
     return sorted(duplicates)
+
+
+def contains_only_test_failures(report: dict[str, Any]) -> bool:
+    """Allow advisory test gaps without masking malformed or missing evidence."""
+    if report["issues"]:
+        return False
+    saw_failure = False
+    for rid_report in report["rids"]:
+        if rid_report["passed"]:
+            continue
+        issues = rid_report.get("issues", [])
+        if not issues:
+            return False
+        for issue in issues:
+            if not (
+                issue.startswith(TEST_FAILURE_PREFIXES)
+                or TEST_FAILURE_SUFFIX in issue
+            ):
+                return False
+        saw_failure = True
+    return saw_failure
+
+
+def report_advisory_test_failures(report: dict[str, Any]) -> None:
+    details = [
+        f"{item['rid']}: {issue}"
+        for item in report["rids"]
+        for issue in item.get("issues", [])
+    ]
+    message = f"Candidate compatibility reported {len(details)} advisory test gap(s)."
+    print(f"::warning title=Candidate compatibility gaps::{message}")
+    summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary_path:
+        with pathlib.Path(summary_path).open("a", encoding="utf-8") as summary:
+            summary.write("## Candidate compatibility (advisory)\n\n")
+            summary.write(message + "\n\n")
+            for detail in details:
+                summary.write(f"- {detail}\n")
 
 
 def summarize_result(
@@ -177,9 +218,16 @@ def main() -> int:
     parser.add_argument(
         "--selection", choices=("required", "candidate"), default="candidate"
     )
+    parser.add_argument(
+        "--advisory-test-failures",
+        action="store_true",
+        help="Return success only when candidate evidence is valid and solely contains test failures.",
+    )
     parser.add_argument("--expected-rid", action="append", required=True)
     parser.add_argument("--output", required=True, type=pathlib.Path)
     args = parser.parse_args()
+    if args.advisory_test_failures and args.selection != "candidate":
+        parser.error("--advisory-test-failures is only valid for candidate evidence")
 
     profile = read_json(args.profile)
     profile_name = profile.get("profile")
@@ -295,6 +343,9 @@ def main() -> int:
                     f"cross-RID compatibility: {rid_report['rid']}: {issue}",
                     file=sys.stderr,
                 )
+        if args.advisory_test_failures and contains_only_test_failures(report):
+            report_advisory_test_failures(report)
+            return 0
         return 1
     print(
         f"Cross-RID compatibility passed for {len(expected_rids)} RIDs, "

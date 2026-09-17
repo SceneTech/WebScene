@@ -78,7 +78,7 @@ The default compiler mode is native. Do not select `MODE hybrid`, add a compiled
 
 ### Use shared CSS by default
 
-Explicitly select `CSS_BACKEND shared` and link `WebScene::SharedCSS` as shown above. This is the recommended application setting even though the compiler helper currently defaults to `typed` when the option is omitted. The shared backend prepares authored stylesheets at build time and installs WebScene's native shared CSS resolver at runtime. It links CSS parser support and permits dynamic CSS strings. It does not require V8, JavaScript, the Runtime component, or reparsing the original stylesheet at startup.
+Explicitly select `CSS_BACKEND shared` and link `WebScene::SharedCSS` as shown above. This is the recommended application setting even though the compiler helper currently defaults to `typed` when the option is omitted. The shared backend prepares authored stylesheets at build time and installs WebScene's native shared CSS resolver at runtime. It links the CSS/selector-only parser archive and permits dynamic CSS strings. That archive is built separately from the full HTML tree parser and is gated against `html5ever` and runtime HTML symbols. It does not require V8, JavaScript, the Runtime component, or reparsing the original stylesheet at startup.
 
 Native code can update classes, values and CSS styles, including `document.attribute(node, "style", css_text)` where appropriate. Prefer reusable style rules for stable presentation. Dynamic CSS is compatible with this model; dynamic HTML insertion is not. Compile repeated UI structures as templates and instantiate them through native APIs.
 

@@ -5,9 +5,8 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   return()
 endif()
 enable_language(OBJCXX)
-if(NOT APPLE OR NOT CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
- message(FATAL_ERROR "The SDK preview qualifies macOS ARM64")
-endif()
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/WebSceneMacOSProfile.cmake")
+webscene_require_macos_profile()
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(BUILD_TESTING OFF CACHE BOOL "SDK tests consume the installed package separately" FORCE)
@@ -39,12 +38,15 @@ include(GNUInstallDirs)
 install(TARGETS webscene_core webscene_native_web webscene_native_web_shared_css
   webscene_native_engine webscene_media ixwebsocket ARCHIVE DESTINATION lib)
 install(TARGETS webscene-uic RUNTIME DESTINATION bin)
+install(FILES "${CMAKE_BINARY_DIR}/native-web/parser-components.json" DESTINATION share/webscene/dependencies)
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 execute_process(COMMAND "${Python3_EXECUTABLE}" "${WEBSCENE_ROOT}/eng/sdk/header-closure.py" "${WEBSCENE_ROOT}"
   OUTPUT_FILE "${CMAKE_BINARY_DIR}/sdk-headers.cmake" COMMAND_ERROR_IS_FATAL ANY)
 include("${CMAKE_BINARY_DIR}/sdk-headers.cmake")
-install(FILES "${CMAKE_BINARY_DIR}/native-web/parser/release/libwebscene_html_parser.a"
+install(FILES "${CMAKE_BINARY_DIR}/native-web/parser-full/release/libwebscene_html_parser.a"
   "${WEBSCENE_V8_OUTPUT_ROOT}/obj/libv8_monolith.a" DESTINATION lib)
+install(FILES "${CMAKE_BINARY_DIR}/native-web/parser-css/release/libwebscene_html_parser.a"
+  DESTINATION lib RENAME libwebscene_css_selector_parser.a)
 install(DIRECTORY "${WEBSCENE_GRAPHICS_SDK_ROOT}/dawn/include/" DESTINATION include)
 install(FILES "${WEBSCENE_GRAPHICS_SDK_ROOT}/dawn/lib/libwebgpu_dawn.dylib" DESTINATION lib)
 install(FILES "${WEBSCENE_V8_OUTPUT_ROOT}/icudtl.dat"
@@ -56,6 +58,7 @@ install(FILES "${CMAKE_BINARY_DIR}/webscene-miniaudio-LICENSE" DESTINATION share
 install(FILES "${CMAKE_BINARY_DIR}/_deps/webscene_ixwebsocket-src/LICENSE.txt"
  DESTINATION share/licenses/WebScene RENAME IXWebSocket-LICENSE)
 install(PROGRAMS tools/package_macos.py DESTINATION share/webscene/tools)
+install(PROGRAMS tools/qualify_macos_profile.py DESTINATION share/webscene/tools)
 
 install(DIRECTORY "${WEBSCENE_GRAPHICS_SDK_ROOT}/dawn/licenses/" DESTINATION share/licenses/WebScene/Dawn)
 install(FILES "${WEBSCENE_GRAPHICS_SDK_ROOT}/dawn/webscene-graphics-package.json"

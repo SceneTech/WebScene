@@ -1,0 +1,54 @@
+<!doctype html>
+<title>Iframe Window.postMessage origin and MessagePort contract</title>
+<script>
+window.__webSceneWptState = {complete:false,harness:null,results:[],errors:[],diagnostics:[]};
+window.record = (name, condition) => __webSceneWptState.results.push({
+  name,status:condition?'PASS':'FAIL',message:condition?null:'Contract failed',stack:null
+});
+window.finish = () => {
+  const s=__webSceneWptState;
+  s.harness={status:s.results.some(r=>r.status!=='PASS')?1:0,message:null,stack:null};
+  s.complete=true;
+};
+
+addEventListener('message', event => {
+  if (event.data !== 'iframe-ready') return;
+  const frame = document.querySelector('iframe');
+  record('Iframe postMessage preserves source Window identity', event.source === frame.contentWindow);
+  record('Iframe postMessage supplies same-origin origin', event.origin === origin);
+  const channel = new MessageChannel();
+  channel.port1.onmessage = response => {
+    record('Iframe receives transferred MessagePort and returns ordered data', response.data === 42);
+    channel.port1.close();
+    finish();
+  };
+  event.source.postMessage({kind:'vscode.init',port:channel.port2}, origin, [channel.port2]);
+  channel.port1.postMessage(41);
+});
+
+try {
+  const frame = document.createElement('iframe');
+  document.body.appendChild(frame);
+  const child = frame.contentDocument;
+  child.open();
+  child.write(`<script>
+    onmessage = event => {
+      if (event.data.kind !== 'vscode.init') return;
+      const port = event.data.port;
+      if (event.origin !== origin || event.ports[0] !== port
+          || !(port instanceof MessagePort) || !(port instanceof EventTarget)) {
+        parent.postMessage('iframe-contract-failed', '*');
+        return;
+      }
+      port.onmessage = message => port.postMessage(message.data + 1);
+      port.start();
+    };
+    parent.postMessage('iframe-ready', '*');
+  <\/script>`);
+  child.close();
+} catch (error) {
+  __webSceneWptState.errors.push(String(error));
+  record('Iframe MessagePort contract completed', false);
+  finish();
+}
+</script>

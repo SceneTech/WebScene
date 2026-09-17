@@ -1,0 +1,112 @@
+<!doctype html>
+<title>Editor worker request and reply protocol</title>
+<div id="worker-status" role="status">Starting editor worker…</div>
+<script>
+window.__webSceneWptState = {complete:false,harness:null,results:[],errors:[],diagnostics:[]};
+window.record = (name, condition) => __webSceneWptState.results.push({
+  name,status:condition?'PASS':'FAIL',message:condition?null:'Contract failed',stack:null
+});
+window.finish = () => {
+  const state=__webSceneWptState;
+  state.harness={status:state.results.some(result=>result.status!=='PASS')?1:0,message:null,stack:null};
+  state.complete=true;
+};
+
+const status = document.getElementById('worker-status');
+const workerModuleUrl = new URL(
+  './resources/aureon/editor-worker-rpc.js', location.href).href;
+const source = [
+  `await import(${JSON.stringify(workerModuleUrl)});`,
+  `globalThis.postMessage({type:'vscode-worker-ready'});`
+].join('');
+const blobUrl = URL.createObjectURL(new Blob([source], {
+  type:'application/javascript'
+}));
+const worker = new Worker(blobUrl, {
+  name:'editorWorkerService', type:'module'
+});
+URL.revokeObjectURL(blobUrl);
+
+let received = 0;
+let nextRequest = 0;
+let uiTicks = 0;
+const ticker = setInterval(() => ++uiTicks, 1);
+const pending = new Map();
+const send = (method, args) => new Promise((resolve, reject) => {
+  const req = String(++nextRequest);
+  pending.set(req, {resolve, reject});
+  worker.postMessage({
+    vsWorker: 1, req, channel:'default', method, args, type:0
+  });
+});
+
+worker.onerror = event => {
+  clearInterval(ticker);
+  status.textContent = `Editor worker failed: ${event.message}`;
+  status.setAttribute('role', 'alert');
+  __webSceneWptState.errors.push(event.message);
+  record('Editor worker completes an actual request and reply', false);
+  record('Editor worker failure is visible', status.textContent.includes(event.message));
+  finish();
+};
+
+worker.onmessage = async event => {
+  ++received;
+  if (event.data?.type === 'vscode-worker-ready') {
+    try {
+      await send('$initialize', [1]);
+      const original = 'const value = 1;\n';
+      const modified = 'const value = 2;\nconsole.log(value);\n';
+      const result = await send('$computeStringDiff', [
+        original, modified, {maxComputationTimeMs:5000}, 'advanced'
+      ]);
+      const edit = result.edits[0];
+      const applied = original.slice(0, edit.start)
+        + edit.text + original.slice(edit.end);
+      record('Editor worker completes an actual request and reply',
+        applied === modified);
+      record('Editor worker uses ready, initialize, and RPC responses',
+        received >= 3);
+      record('Editor worker RPC keeps the document task queue responsive',
+        uiTicks > 0);
+
+      let failure = null;
+      try { await send('$missingMethod', []); }
+      catch (error) { failure = error; }
+      status.textContent = failure
+        ? `Editor worker failure: ${failure.message}`
+        : 'Editor worker ready';
+      if (failure) status.setAttribute('role', 'alert');
+      record('Rejected editor worker RPC has visible failure text',
+        status.getAttribute('role') === 'alert'
+          && status.textContent.includes('Missing method $missingMethod'));
+      worker.terminate();
+      clearInterval(ticker);
+      finish();
+    } catch (error) {
+      status.textContent = `Editor worker failed: ${error.message || error}`;
+      status.setAttribute('role', 'alert');
+      __webSceneWptState.errors.push(String(error));
+      record('Editor worker request and reply completes', false);
+      worker.terminate();
+      clearInterval(ticker);
+      finish();
+    }
+    return;
+  }
+
+  const reply = pending.get(event.data?.seq);
+  if (!reply) return;
+  pending.delete(event.data.seq);
+  if (event.data.err) {
+    const error = new Error(event.data.err.message);
+    error.name = event.data.err.name;
+    reply.reject(error);
+  } else {
+    reply.resolve(event.data.res);
+  }
+};
+
+// Code OSS queues one ignored message before its module-worker-ready handshake.
+worker.postMessage('-please-ignore-');
+</script>

@@ -149,6 +149,7 @@ using css_index_string_set = std::unordered_set<std::string>;
         // this filter lets hover invalidation visit a large trigger subtree
         // without recascading every unrelated descendant.
         std::string affected_compound;
+        compiled_css_compound compiled_trigger;
         hover_invalidation_scope scope{hover_invalidation_scope::subject};
         bool affected_direct_children{false};
         bool propagate_to_descendants{false};

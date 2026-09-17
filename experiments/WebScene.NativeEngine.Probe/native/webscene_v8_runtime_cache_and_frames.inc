@@ -1308,6 +1308,8 @@
         global->Set(local_context, js_string(isolate, "AbortController"), v8::FunctionTemplate::New(isolate, abort_controller_constructor)->GetFunction(local_context).ToLocalChecked()).Check();
         global->Set(local_context, js_string(isolate, "matchMedia"), v8::Function::New(local_context, match_media).ToLocalChecked()).Check();
         global->Set(local_context, js_string(isolate, "open"), v8::Function::New(local_context, window_open).ToLocalChecked()).Check();
+        global->Set(local_context, js_string(isolate, "close"), v8::Function::New(local_context, window_close).ToLocalChecked()).Check();
+        global->Set(local_context, js_string(isolate, "focus"), v8::Function::New(local_context, window_focus).ToLocalChecked()).Check();
 #if defined(WEBSCENE_NATIVE_ENGINE_GENERATED_DOM_BINDINGS)
         install_generated_dom_constructors(local_context, global);
 #else
@@ -1336,6 +1338,10 @@
             local_context,
             js_string(isolate, "HTMLCollection"),
             get_html_collection_constructor).Check();
+        global->SetLazyDataProperty(
+            local_context,
+            js_string(isolate, "DOMTokenList"),
+            get_dom_token_list_constructor).Check();
         install_document_constructor(
             local_context,
             global,
@@ -1407,6 +1413,10 @@
             local_context,
             js_string(isolate, "__webSceneRecordWebApi"),
             v8::Function::New(local_context, record_web_api_use).ToLocalChecked()).Check();
+        global->Set(
+            local_context,
+            js_string(isolate, "structuredClone"),
+            v8::Function::New(local_context, structured_clone, {}, 1).ToLocalChecked()).Check();
 
         const auto& current_frame_base = current_base_address();
         const auto frame_href = !current_frame_base.empty()
@@ -1419,25 +1429,8 @@
 
         install_console(local_context, global);
 
-        auto performance = v8::Object::New(isolate);
-        performance->Set(local_context, js_string(isolate, "now"), v8::Function::New(local_context, performance_now).ToLocalChecked()).Check();
-        performance->Set(
-            local_context,
-            js_string(isolate, "getEntriesByName"),
-            v8::Function::New(local_context, performance_get_entries_by_name).ToLocalChecked()).Check();
-        performance->Set(local_context, js_string(isolate, "mark"),
-            v8::Function::New(local_context, performance_entry).ToLocalChecked()).Check();
-        performance->Set(local_context, js_string(isolate, "measure"),
-            v8::Function::New(local_context, performance_entry).ToLocalChecked()).Check();
-        performance->Set(local_context, js_string(isolate, "clearMarks"),
-            v8::Function::New(local_context, console_log).ToLocalChecked()).Check();
-        performance->Set(local_context, js_string(isolate, "clearMeasures"),
-            v8::Function::New(local_context, console_log).ToLocalChecked()).Check();
-        performance->Set(local_context, js_string(isolate, "getEntriesByType"),
-            v8::Function::New(local_context, empty_array).ToLocalChecked()).Check();
-        performance->Set(local_context, js_string(isolate, "getEntriesByName"),
-            v8::Function::New(local_context, empty_array).ToLocalChecked()).Check();
-        global->Set(local_context, js_string(isolate, "performance"), performance).Check();
+        install_performance_clock(local_context, global);
+        install_performance_timeline(local_context);
 
         // React's scheduler prefers MessageChannel over timers. Keep the ports
         // realm-local and route delivery through this frame's setTimeout so a
@@ -1888,23 +1881,6 @@
                     }
                   },
                   configurable: true
-                },
-                crypto: {
-                  value: {
-                    getRandomValues(array) {
-                      __webSceneRecordWebApi(
-                        'Crypto.getRandomValues', 'partially-supported',
-                        'integer TypedArray filling without a cryptographic entropy guarantee');
-                      if (!ArrayBuffer.isView(array) || array instanceof DataView) {
-                        throw new TypeError('Expected an integer TypedArray');
-                      }
-                      for (let index = 0; index < array.length; index++) {
-                        array[index] = Math.floor(Math.random() * 256);
-                      }
-                      return array;
-                    }
-                  },
-                  configurable: true
                 }
               });
             })();
@@ -1918,18 +1894,28 @@
             local_context,
             js_string(isolate, message_channel_bootstrap.c_str())).ToLocalChecked();
         message_channel_script->Run(local_context).ToLocalChecked();
+        install_crypto_globals(local_context, global);
+        install_indexeddb(local_context);
         install_clipboard_api(local_context);
         install_websocket_globals(local_context);
         install_editor_web_platform_globals(local_context);
+        install_message_channel(local_context);
+        install_worker_constructor(local_context);
         install_tree_walker_platform(local_context);
         install_custom_elements_platform(local_context);
         install_fetch_globals(local_context);
         install_intersection_observer_polyfill(local_context);
+        install_web_api_compatibility(local_context);
         static_cast<void>(frame_body);
     }
 
     void start_frame_preparation(dom_node& frame, const std::string& source)
     {
+        std::erase_if(retired_frame_preparations, [](const auto& future) {
+            return !future.valid()
+                || future.wait_for(std::chrono::seconds(0))
+                    == std::future_status::ready;
+        });
         for (auto iterator = pending_frame_preparations.begin();
              iterator != pending_frame_preparations.end();) {
             auto* candidate = document.find_by_native_id(iterator->first);
@@ -1951,7 +1937,9 @@
         if (!prepare_iframe_subresources
             || !prefetch_iframe_documents
             || source.empty()
-            || pending_frame_preparations.size() >= maximum_frame_preparations
+            || pending_frame_preparations.size()
+                    + retired_frame_preparations.size()
+                >= maximum_frame_preparations
             || pending_frame_preparations.contains(frame.id)) {
             return;
         }
@@ -1967,16 +1955,19 @@
         }
         if (!document_future.valid()) return;
         const auto outer_base_address = document_base_address;
+        const auto generation = document_generation.load(std::memory_order_acquire);
 
         pending_frame_preparation preparation;
         preparation.source = source;
         preparation.future = std::async(
             std::launch::async,
-            [this, source, outer_base_address, document_future]()
+            [this, source, outer_base_address, document_future, generation]()
                 -> std::shared_ptr<const prepared_frame> {
                 const auto started = std::chrono::steady_clock::now();
                 try {
                     const auto& document = document_future.get();
+                    if (document_generation.load(std::memory_order_acquire)
+                        != generation) return {};
                     const immutable_text_source* content = nullptr;
                     if (document.from_fresh_cache && document.cached.content != nullptr) {
                         content = document.cached.content.get();
@@ -1986,7 +1977,12 @@
                         result->source = source;
                         result->html = document.response->content;
                         result->started = started;
-                        prepare_frame_resource_plan(*result, outer_base_address);
+                        {
+                            std::lock_guard lock(document_generation_mutex);
+                            if (document_generation.load(std::memory_order_acquire)
+                                != generation) return {};
+                            prepare_frame_resource_plan(*result, outer_base_address);
+                        }
                         result->completed = std::chrono::steady_clock::now();
                         return result;
                     } else if (document.has_cached && document.cached.content != nullptr) {
@@ -1997,7 +1993,12 @@
                     result->source = source;
                     result->html.assign(content->data(), content->size());
                     result->started = started;
-                    prepare_frame_resource_plan(*result, outer_base_address);
+                    {
+                        std::lock_guard lock(document_generation_mutex);
+                        if (document_generation.load(std::memory_order_acquire)
+                            != generation) return {};
+                        prepare_frame_resource_plan(*result, outer_base_address);
+                    }
                     result->completed = std::chrono::steady_clock::now();
                     return result;
                 } catch (...) {

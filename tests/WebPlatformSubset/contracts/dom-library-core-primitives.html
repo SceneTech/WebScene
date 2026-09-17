@@ -75,6 +75,42 @@ test("form and select expose interface-bounded indexed access", () => {
   assert(!("length" in div), "generic element inherited form/select length");
 });
 
+test("HTMLSelectElement.add inserts options by element and flattened index", () => {
+  const select = document.createElement("select");
+  const first = document.createElement("option");
+  const second = document.createElement("option");
+  const third = document.createElement("option");
+  first.value = "first";
+  second.value = "second";
+  third.value = "third";
+  select.add(first);
+  select.add(third);
+  select.add(second, third);
+  equal(select.length, 3, "element insertion length");
+  assert(select[0] === first && select[1] === second && select[2] === third,
+    "element insertion order");
+
+  const group = document.createElement("optgroup");
+  const nested = document.createElement("option");
+  nested.value = "nested";
+  group.appendChild(nested);
+  select.add(group);
+  const indexed = document.createElement("option");
+  indexed.value = "indexed";
+  select.add(indexed, 1);
+  equal(select[1].value, "indexed", "flattened numeric insertion");
+  select.add(third, nested);
+  assert(third.parentNode === group && group.firstChild === third,
+    "descendant reference parent insertion");
+
+  const foreign = document.createElement("option");
+  let notFound = null;
+  try { select.add(document.createElement("option"), foreign); }
+  catch (error) { notFound = error.name; }
+  equal(notFound, "NotFoundError", "foreign before element rejection");
+  equal(select.add(first, first), undefined, "self reference no-op");
+});
+
 test("Document name and stylesheet lookups preserve tree order", () => {
   const host = document.createElement("section");
   const first = document.createElement("input");

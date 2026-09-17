@@ -14,12 +14,26 @@
         auto& authored = node.mutable_authored_style();
         authored.declarations.erase(canonical_name);
         authored.important_declarations.erase(canonical_name);
-        if (apply_grid_placement_declaration(node.style, name, "auto")) {
+        if (canonical_name == "grid-template-areas") {
+            css::apply_grid_template_areas(node.style, "none");
+            constexpr std::array grid_properties{
+                "grid-template-columns", "grid-template-rows", "grid-template-areas",
+                "grid-auto-columns", "grid-auto-flow", "grid-area", "grid-row",
+                "grid-row-start", "grid-row-end", "grid-column", "grid-column-start",
+                "grid-column-end"};
+            const auto has_authored_grid = std::any_of(
+                grid_properties.begin(), grid_properties.end(),
+                [&](std::string_view property) {
+                    return authored.declarations.contains(std::string(property));
+                });
+            if (!has_authored_grid) node.style.inline_property_mask &= ~inline_grid;
+        } else if (apply_grid_placement_declaration(node.style, name, "auto")) {
             // Removing a placement declaration restores its affected
             // longhands to their computed initial value.
             constexpr std::array grid_properties{
                 "grid-template-columns",
                 "grid-template-rows",
+                "grid-template-areas",
                 "grid-auto-columns",
                 "grid-auto-flow",
                 "grid-area",
@@ -126,6 +140,9 @@
             node.style.align_self = align_mode::stretch;
             node.style.align_self_specified = false;
             node.style.inline_property_mask &= ~inline_align_self;
+        } else if (name == "alignContent" || name == "align-content") {
+            node.style.align_content_stretches = true;
+            node.style.inline_property_mask &= ~inline_align_content;
         } else if (name == "justifyContent" || name == "justify-content") {
             node.style.justify_content = justify_mode::start;
             node.style.inline_property_mask &= ~inline_justify_content;
@@ -583,6 +600,9 @@
             self->apply_css_declaration(
                 *node, {canonical_name, specified_value, false}, true);
             node->style.inline_property_mask = retained_inline_mask | property_mask;
+        } else if (canonical_name == "grid-template-areas") {
+            css::apply_grid_template_areas(node->style, value);
+            node->style.inline_property_mask |= inline_grid;
         } else if (apply_grid_placement_declaration(node->style, name, value)) {
             // Placement CSSOM is stored as computed tokens; layout consumes the
             // existing numeric grid-column projection when applicable.
@@ -707,6 +727,9 @@
                 : value == "baseline" || value == "first baseline" ? align_mode::baseline
                 : align_mode::stretch;
             node->style.inline_property_mask |= inline_align_self;
+        } else if (name == "align-content") {
+            node->style.align_content_stretches = value == "normal" || value == "stretch";
+            node->style.inline_property_mask |= inline_align_content;
         } else if (name == "justify-content") {
             node->style.justify_content = value == "center" ? justify_mode::center
                 : value == "flex-end" || value == "end" ? justify_mode::end
@@ -1097,6 +1120,8 @@
                 value = format_computed_length(node->style.flex_basis, node->layout.width);
             } else if (name == "flex-wrap") {
                 value = flex_wrap_name(node->style);
+            } else if (name == "grid-template-areas") {
+                value = node->style.grid().template_areas_value;
             } else if (name == "grid-area") {
                 value = node->style.grid().area_value;
             } else if (name == "grid-row") {
@@ -1550,6 +1575,8 @@
                 : node->style.align_self == align_mode::start ? "flex-start"
                 : node->style.align_self == align_mode::end ? "flex-end"
                 : node->style.align_self == align_mode::baseline ? "baseline" : "stretch";
+        } else if (name == "alignContent") {
+            value = node->style.align_content_stretches ? "stretch" : "flex-start";
         } else if (name == "justifyContent") {
             value = node->style.justify_content == justify_mode::center ? "center"
                 : node->style.justify_content == justify_mode::end ? "flex-end"
@@ -1637,6 +1664,8 @@
             value = format_corner_radius(
                 node->style.border_bottom_left_radius,
                 node->style.border_bottom_left_radius_y());
+        } else if (name == "gridTemplateAreas") {
+            value = node->style.grid().template_areas_value;
         } else if (name == "gridArea") {
             value = node->style.grid().area_value;
         } else if (name == "gridRow") {
@@ -1982,7 +2011,10 @@
         }
         authored.declarations[canonical_name] = specified_value;
         authored.important_declarations.erase(canonical_name);
-        if (apply_grid_placement_declaration(node->style, name, value)) {
+        if (canonical_name == "grid-template-areas") {
+            css::apply_grid_template_areas(node->style, value);
+            node->style.inline_property_mask |= inline_grid;
+        } else if (apply_grid_placement_declaration(node->style, name, value)) {
             // Placement CSSOM is stored as computed tokens; layout consumes the
             // existing numeric grid-column projection when applicable.
             node->style.inline_property_mask |= inline_grid;
@@ -2089,6 +2121,9 @@
                 : value == "baseline" || value == "first baseline" ? align_mode::baseline
                 : align_mode::stretch;
             node->style.inline_property_mask |= inline_align_self;
+        } else if (name == "alignContent") {
+            node->style.align_content_stretches = value == "normal" || value == "stretch";
+            node->style.inline_property_mask |= inline_align_content;
         } else if (name == "justifyContent") {
             node->style.justify_content = value == "center" ? justify_mode::center
                 : value == "flex-end" || value == "end" ? justify_mode::end

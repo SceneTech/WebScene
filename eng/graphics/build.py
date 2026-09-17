@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Build a pinned Dawn or ANGLE SDK; requires Git, CMake, Ninja and platform SDKs."""
 import argparse
+from contextlib import contextmanager, nullcontext
 from dawn_exports import inspect_exports
 import hashlib
 import json
@@ -16,6 +17,18 @@ import urllib.request
 ROOT = Path(__file__).resolve().parents[2]
 LOCK_PATH = Path(__file__).with_name("dependencies.lock.json")
 LOCK = json.loads(LOCK_PATH.read_text())
+WINDOWS_RUNTIME_PIN_PATH = Path(__file__).with_name("windows-runtime.json")
+WINDOWS_DEVELOPER_ENVIRONMENT_KEYS = {
+    "COMMANDPROMPTTYPE", "DEVENVDIR", "EXTENSIONSDKDIR", "EXTERNAL_INCLUDE",
+    "FRAMEWORK40VERSION", "FRAMEWORKDIR", "FRAMEWORKDIR64", "FRAMEWORKVERSION",
+    "FRAMEWORKVERSION64", "IFCPATH", "INCLUDE", "LIB", "LIBPATH", "NETFXSDKDIR",
+    "PLATFORM", "UCRTVERSION", "UNIVERSALCRTSDKDIR", "VCIDEINSTALLDIR",
+    "VCINSTALLDIR", "VCTOOLSINSTALLDIR", "VCTOOLSREDISTDIR", "VCTOOLSVERSION",
+    "VISUALSTUDIOVERSION", "VS170COMNTOOLS", "VSINSTALLDIR", "VSSDK150INSTALL",
+    "VSSDKINSTALL", "WINDOWSLIBPATH", "WINDOWSSDK_EXECUTABLEPATH_X64",
+    "WINDOWSSDK_EXECUTABLEPATH_X86", "WINDOWSSDKBINPATH", "WINDOWSSDKDIR",
+    "WINDOWSSDKLIBVERSION", "WINDOWSSDKVERBINPATH", "WINDOWSSDKVERSION",
+}
 
 
 def sha(path):
@@ -110,13 +123,51 @@ def source_graph(source, env=None):
     for current, directories, files in os.walk(source):
         if ".git" in directories or ".git" in files:
             directory = Path(current)
+            revision = subprocess.run(
+                ["git", "-C", str(directory), "rev-parse", "--verify", "HEAD"],
+                env=env, capture_output=True, text=True)
+            if revision.returncode != 0 or not revision.stdout.strip():
+                raise ValueError(f"Invalid transitive dependency checkout (missing HEAD): {directory}")
             changes = capture(["git", "-C", directory, "diff", "HEAD", "--stat"], env=env)
             if changes:
                 raise ValueError(f"Modified transitive dependency: {directory}\n{changes}")
-            source_graph[directory.relative_to(source).as_posix()] = capture(
-                ["git", "-C", directory, "rev-parse", "HEAD"], env=env)
+            source_graph[directory.relative_to(source).as_posix()] = revision.stdout.strip()
         directories[:] = [d for d in directories if d not in {".git", "out", "node_modules", "__pycache__"}]
     return source_graph
+
+
+def repair_dawn_dependencies(source, env=None):
+    """Refetch clean unborn repositories left by Dawn's unchecked shallow fetch."""
+    invalid = []
+    for current, directories, files in os.walk(source):
+        if ".git" in directories or ".git" in files:
+            directory = Path(current)
+            revision = subprocess.run(
+                ["git", "-C", str(directory), "rev-parse", "--verify", "HEAD"],
+                env=env, capture_output=True, text=True)
+            if revision.returncode != 0 or not revision.stdout.strip():
+                invalid.append(directory)
+        directories[:] = [d for d in directories if d not in {".git", "out", "node_modules", "__pycache__"}]
+
+    for directory in invalid:
+        if directory == source or not (directory / ".git").is_dir():
+            raise ValueError(f"Refusing to replace invalid dependency checkout: {directory}")
+        status = subprocess.run(
+            ["git", "-C", str(directory), "status", "--porcelain", "--untracked-files=all"],
+            env=env, capture_output=True, text=True)
+        if status.returncode != 0 or status.stdout.strip():
+            raise ValueError(f"Refusing to replace non-empty invalid dependency checkout: {directory}")
+        print(f"Removing incomplete Dawn dependency checkout: {directory}", flush=True)
+        shutil.rmtree(directory)
+
+    if invalid:
+        fetcher = source / "tools/fetch_dawn_dependencies.py"
+        if not fetcher.is_file():
+            raise ValueError(f"Dawn dependency fetcher is missing: {fetcher}")
+        run([sys.executable, fetcher, "--directory", source], env=env)
+
+    # Validate both repaired and initially healthy checkouts before compilation.
+    return source_graph(source, env=env)
 
 
 def seal(component, source, sdk, rid, settings, tools, env=None):
@@ -152,6 +203,7 @@ def dawn(args):
     run(["cmake", "-S", source, "-B", output, "-G", "Ninja",
          f"-DCMAKE_INSTALL_PREFIX={sdk}", f"-DCMAKE_PROJECT_Dawn_INCLUDE={symbol_policy}",
          "-DCMAKE_SHARED_LINKER_FLAGS="] + [f"-D{k}={v}" for k, v in settings.items()])
+    repair_dawn_dependencies(source)
     run(["cmake", "--build", output, "--parallel", args.jobs])
     # Old installed headers/libraries must not survive a dependency roll.
     if sdk.exists():
@@ -175,7 +227,7 @@ def dawn(args):
 
 
 def stage_windows_runtime(args, sdk):
-    pin_path = Path(__file__).with_name("windows-runtime.json")
+    pin_path = WINDOWS_RUNTIME_PIN_PATH
     pin = json.loads(pin_path.read_text())
     root = Path(getattr(args, "windows_sdk", None) or os.environ.get("WINDOWSSDKDIR")
                 or r"C:\Program Files (x86)\Windows Kits\10")
@@ -193,6 +245,80 @@ def stage_windows_runtime(args, sdk):
     shutil.copy2(pin_path, sdk / "build-info/windows-runtime.json")
 
 
+def windows_build_sdk_required_files(version, architecture):
+    return [
+        f"Include/{version}/um/Windows.h",
+        f"Include/{version}/shared/sdkddkver.h",
+        f"Include/{version}/ucrt/stdio.h",
+        f"Lib/{version}/um/{architecture}/kernel32.lib",
+        f"Lib/{version}/ucrt/{architecture}/ucrt.lib",
+        f"bin/{version}/{architecture}/rc.exe",
+    ]
+
+
+def resolve_windows_build_sdk(args, pin_path=WINDOWS_RUNTIME_PIN_PATH):
+    pin = json.loads(pin_path.read_text())
+    version = pin["sdkVersion"]
+    x86_environment_version = pin["x86EnvironmentSdkVersion"]
+    root = Path(getattr(args, "windows_sdk", None) or os.environ.get("WINDOWSSDKDIR")
+                or r"C:\Program Files (x86)\Windows Kits\10")
+    required = windows_build_sdk_required_files(version, "x64")
+    required += windows_build_sdk_required_files(x86_environment_version, "x86")
+    missing = [relative for relative in required if not (root / relative).is_file()]
+    if missing:
+        raise ValueError(f"Windows build SDKs are incomplete at {root}; missing: "
+                         + ", ".join(missing))
+    return version, x86_environment_version, pin["angleSourceSdkVersion"]
+
+
+@contextmanager
+def patched_angle_windows_sdk(source, x86_environment_version, source_version):
+    # GN asks setup_toolchain.py for x86 and x64 environments even though this
+    # package only builds x64. The pinned ANGLE source needs its pinned SDK for
+    # x64 compilation, while the hosted VS 2022 image can only initialize the
+    # otherwise-unused x86 environment with its installed SDK.
+    setup = source / "build/toolchain/win/setup_toolchain.py"
+    vs_toolchain = source / "build/vs_toolchain.py"
+    sdk_pin = f"SDK_VERSION = '{source_version}'".encode()
+    expected = b"  args.append(SDK_VERSION)\n"
+    replacement = (f"  args.append('{x86_environment_version}' "
+                   "if cpu == 'x86' else SDK_VERSION)\n").encode()
+    originals = {path: path.read_bytes() for path in (setup, vs_toolchain)}
+    if any(data.count(sdk_pin) != 1 for data in originals.values()):
+        raise ValueError(
+            "ANGLE Windows SDK pin changed unexpectedly; expected exactly one "
+            f"{sdk_pin.decode()!r} in each toolchain source")
+    if originals[setup].count(expected) != 1:
+        raise ValueError(
+            "ANGLE Windows SDK selection changed unexpectedly in "
+            f"{setup}; expected exactly one {expected.decode().strip()!r}")
+    try:
+        setup.write_bytes(originals[setup].replace(expected, replacement))
+        yield
+    finally:
+        for path, data in originals.items():
+            path.write_bytes(data)
+
+
+def clean_angle_windows_environment(environment):
+    """Return a clean environment for Chromium's own vcvarsall calls."""
+    cleaned = dict(environment)
+    by_upper = {key.upper(): key for key in cleaned}
+    initialized = any(key.startswith(("VSCMD_", "__VSCMD_")) for key in by_upper)
+    if initialized:
+        preinit_key = by_upper.get("__VSCMD_PREINIT_PATH")
+        if not preinit_key or not cleaned[preinit_key]:
+            raise ValueError(
+                "Initialized Visual Studio environment has no __VSCMD_PREINIT_PATH")
+        cleaned[by_upper.get("PATH", "PATH")] = cleaned[preinit_key]
+    for key in list(cleaned):
+        upper = key.upper()
+        if (upper in WINDOWS_DEVELOPER_ENVIRONMENT_KEYS
+                or upper.startswith(("VSCMD_", "__VSCMD_"))):
+            del cleaned[key]
+    return cleaned
+
+
 def angle(args):
     depot = args.sources / "depot_tools"
     checkout("depot-tools", depot)
@@ -203,6 +329,11 @@ def angle(args):
                  "managed": False, "custom_deps": {}, "custom_vars": LOCK["angleCustomVars"]}]
     (workspace / ".gclient").write_text("solutions = " + repr(solution) + "\n")
     env = dict(os.environ, DEPOT_TOOLS_UPDATE="0", DEPOT_TOOLS_WIN_TOOLCHAIN="0")
+    if os.name == "nt":
+        # The package workflow builds Dawn and ANGLE in one job. Dawn's compiler
+        # initialization must not leak into Chromium, which runs vcvarsall for
+        # both x86 and x64 and rejects a repeatedly initialized environment.
+        env = clean_angle_windows_environment(env)
     # Apply LF policy to gclient's transitive Git checkouts without changing user configuration.
     env.update(angle_git_environment())
     env["PATH"] = str(depot) + os.pathsep + env["PATH"]
@@ -228,8 +359,18 @@ def angle(args):
     (output / "args.gn").write_text("\n".join(k + " = " + json.dumps(v) for k, v in settings.items()) + "\n")
     gn_os = {"win": "win", "osx": "mac", "linux": "linux64"}[args.rid.split("-")[0]]
     gn = source / "buildtools" / gn_os / ("gn.exe" if os.name == "nt" else "gn")
-    run([gn, "gen", output, "--fail-on-unused-args"], cwd=source, env=env)
-    run(["ninja", "-C", output, "-j", args.jobs, "libEGL", "libGLESv2"], cwd=source, env=env)
+    windows_sdk_version = None
+    windows_x86_environment_sdk_version = None
+    sdk_patch = nullcontext()
+    if args.rid.startswith("win-"):
+        (windows_sdk_version, windows_x86_environment_sdk_version,
+         source_sdk_version) = resolve_windows_build_sdk(args)
+        sdk_patch = patched_angle_windows_sdk(
+            source, windows_x86_environment_sdk_version, source_sdk_version)
+    with sdk_patch:
+        run([gn, "gen", output, "--fail-on-unused-args"], cwd=source, env=env)
+        run(["ninja", "-C", output, "-j", args.jobs, "libEGL", "libGLESv2"], cwd=source, env=env)
+        resolved_args = capture([gn, "args", output, "--list", "--short"], source, env=env)
     sdk = args.sdk / args.rid / ("angle-gl" if args.angle_gl else "angle")
     if sdk.exists():
         remove_sdk(sdk)
@@ -261,13 +402,16 @@ def angle(args):
     shutil.copy2(output / "args.gn", sdk / "build-info/args.gn")
     # GN evaluates the build configuration when listing arguments too. Keep the
     # same toolchain selection as generation, particularly the local Windows SDK.
-    (sdk / "build-info/resolved-args.gn").write_text(capture([gn, "args", output, "--list", "--short"], source, env=env) + "\n")
+    (sdk / "build-info/resolved-args.gn").write_text(resolved_args + "\n")
     shutil.copy2(source / "DEPS", sdk / "build-info/DEPS")
     clang = source / "third_party/llvm-build/Release+Asserts/bin" / ("clang-cl.exe" if args.rid.startswith("win-") else "clang")
-    seal("angle", source, sdk, args.rid, settings,
-         {"gn": capture([gn, "--version"], env=env), "ninja": capture(["ninja", "--version"], env=env),
-          "clang": capture([clang, "--version"], env=env), "clangSha256": sha(clang),
-          "depotTools": LOCK["sources"]["depot-tools"]["revision"], "host": platform.platform()}, env=env)
+    tools = {"gn": capture([gn, "--version"], env=env), "ninja": capture(["ninja", "--version"], env=env),
+             "clang": capture([clang, "--version"], env=env), "clangSha256": sha(clang),
+             "depotTools": LOCK["sources"]["depot-tools"]["revision"], "host": platform.platform()}
+    if windows_sdk_version:
+        tools["windowsSdkVersion"] = windows_sdk_version
+        tools["windowsX86EnvironmentSdkVersion"] = windows_x86_environment_sdk_version
+    seal("angle", source, sdk, args.rid, settings, tools, env=env)
 
 
 def angle_git_environment():

@@ -1,0 +1,74 @@
+<!doctype html>
+<title>Worker termination and bounded messaging contract</title>
+<script>
+window.__webSceneWptState = {complete:false,harness:null,results:[],errors:[],diagnostics:[]};
+window.record = (name, condition) => __webSceneWptState.results.push({
+  name,status:condition?'PASS':'FAIL',message:condition?null:'Contract failed',stack:null
+});
+window.finish = () => {
+  const s=__webSceneWptState;
+  s.harness={status:s.results.some(r=>r.status!=='PASS')?1:0,message:null,stack:null};
+  s.complete=true;
+};
+
+try {
+  const workerUrl = URL.createObjectURL(new Blob(['while (true) {}'], {type:'text/javascript'}));
+  const worker = new Worker(workerUrl);
+  URL.revokeObjectURL(workerUrl);
+  for (let index = 0; index < 256; ++index) worker.postMessage(index);
+  let workerSaturated = false;
+  try { worker.postMessage(256); }
+  catch (error) { workerSaturated = error.name === 'QuotaExceededError'; }
+  record('Worker queue rejects backlog beyond 256 messages', workerSaturated);
+  worker.terminate();
+  worker.terminate();
+  setTimeout(() => record('Worker termination is prompt and idempotent', true), 0);
+
+  const bounded = new MessageChannel();
+  const oversized = new ArrayBuffer(16 * 1024 * 1024);
+  let byteSaturated = false;
+  try { bounded.port1.postMessage(oversized, [oversized]); }
+  catch (error) { byteSaturated = error.name === 'QuotaExceededError'; }
+  record('MessagePort byte bound rejects before detaching ownership',
+    byteSaturated && oversized.byteLength === 16 * 1024 * 1024);
+  for (let index = 0; index < 256; ++index) bounded.port1.postMessage(index);
+  let saturated = false;
+  try { bounded.port1.postMessage(256); }
+  catch (error) { saturated = error.name === 'QuotaExceededError'; }
+  record('MessagePort queue rejects backlog beyond 256 messages', saturated);
+
+  addEventListener('message', event => {
+    if (event.data !== 'messageerror-ready') return;
+    const channels = [];
+    for (let index = 0; index < 2049; ++index) {
+      try { channels.push(new MessageChannel()); }
+      catch (error) {
+        if (!(error instanceof RangeError)) throw error;
+        break;
+      }
+    }
+    if (channels.length === 0 || channels.length === 2049)
+      throw new Error('MessagePort binding capacity was not reached');
+    globalThis.__webSceneMessageErrorChannels = channels;
+    const transferred = channels[channels.length - 1].port2;
+    event.source.postMessage({transferred}, '*', [transferred]);
+  });
+  const frame = document.createElement('iframe');
+  document.body.appendChild(frame);
+  const child = frame.contentDocument;
+  child.open();
+  child.write(`<script>
+    onmessageerror = event => {
+      parent.record('Window dispatches messageerror when clone reconstruction fails',
+        event.type === 'messageerror');
+      parent.finish();
+    };
+    parent.postMessage('messageerror-ready', '*');
+  <\/script>`);
+  child.close();
+} catch (error) {
+  __webSceneWptState.errors.push(String(error));
+  record('Termination and bounded messaging contract completed', false);
+  finish();
+}
+</script>

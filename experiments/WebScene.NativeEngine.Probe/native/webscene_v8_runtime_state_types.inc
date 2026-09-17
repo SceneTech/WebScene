@@ -18,10 +18,74 @@
         double animation_timestamp_ms{-1};
     };
 
+    struct message_port_endpoint;
+
+    struct clone_packet {
+        std::vector<uint8_t> bytes;
+        std::vector<std::shared_ptr<v8::BackingStore>> transfers;
+        std::vector<std::shared_ptr<message_port_endpoint>> port_transfers;
+    };
+
+    struct binary_object_url final {
+        std::string bytes;
+        std::string origin;
+    };
+
+    struct shared_object_url_registry final {
+        std::mutex mutex;
+        size_t binary_bytes{};
+        std::unordered_map<std::string, binary_object_url> binary;
+    };
+
+    struct message_port_runtime_wake final {
+        std::mutex mutex;
+        bool stopped{false};
+        std::function<void()> notify;
+
+        void signal()
+        {
+            std::function<void()> callback;
+            {
+                std::lock_guard lock(mutex);
+                if (stopped) return;
+                callback = notify;
+            }
+            if (callback) callback();
+        }
+
+        void stop()
+        {
+            std::lock_guard lock(mutex);
+            stopped = true;
+            notify = {};
+        }
+    };
+
+    struct message_port_channel final {
+        std::mutex mutex;
+        std::array<std::deque<clone_packet>, 2U> incoming;
+        std::array<size_t, 2U> incoming_bytes{};
+        std::array<bool, 2U> closed{};
+        std::array<std::weak_ptr<message_port_runtime_wake>, 2U> wake;
+    };
+
+    struct message_port_endpoint final {
+        std::shared_ptr<message_port_channel> channel;
+        size_t side{};
+    };
+
+    struct message_port_binding final {
+        std::shared_ptr<message_port_endpoint> endpoint;
+        v8::Global<v8::Context> context;
+        v8::Global<v8::Object> wrapper;
+        bool transferred{false};
+        bool reclaimed{false};
+    };
+
     struct pending_window_message final {
         v8::Global<v8::Context> target_context;
         v8::Global<v8::Context> source_context;
-        v8::Global<v8::Value> data;
+        clone_packet packet;
         std::string target_origin;
         std::string source_origin;
     };
@@ -65,6 +129,17 @@
 
     struct pending_callback_promise final {
         v8::Global<v8::Promise::Resolver> resolver;
+    };
+
+    struct pending_indexeddb_promise final {
+        v8::Global<v8::Context> context;
+        v8::Global<v8::Promise::Resolver> resolver;
+        bool deserialize_data{false};
+    };
+
+    struct indexeddb_completion final {
+        uint64_t id{0};
+        indexeddb_storage_result result;
     };
 
     struct frame_script final {
@@ -397,14 +472,75 @@
     struct async_fetch_result final {
         std::string body;
         std::string resolved_url;
+        std::string status_text;
+        std::string response_type{"basic"};
+        std::vector<std::pair<std::string, std::string>> headers;
         std::string error;
+        uint32_t status{200U};
+        bool redirected{false};
         bool loaded{false};
+    };
+
+    enum class cookie_same_site : uint8_t { lax, strict, none };
+    struct stored_cookie final {
+        std::string name;
+        std::string value;
+        std::string domain;
+        std::string path;
+        std::chrono::system_clock::time_point expires{};
+        uint64_t creation_order{0U};
+        bool persistent{false};
+        bool host_only{true};
+        bool secure{false};
+        bool http_only{false};
+        cookie_same_site same_site{cookie_same_site::lax};
+    };
+
+    struct shared_cookie_jar final {
+        std::mutex mutex;
+        std::vector<stored_cookie> cookies;
+        uint64_t next_creation_order{1U};
     };
 
     struct pending_fetch_task final {
         v8::Global<v8::Context> context;
         v8::Global<v8::Promise::Resolver> resolver;
         std::shared_future<async_fetch_result> future;
+    };
+
+    struct async_digest_result final {
+        std::array<std::uint8_t, 32U> bytes{};
+        std::size_t size{};
+        crypto_provider_status status{crypto_provider_status::provider_failure};
+    };
+
+    struct pending_digest_task final {
+        v8::Global<v8::Context> context;
+        v8::Global<v8::Promise::Resolver> resolver;
+        std::shared_future<async_digest_result> future;
+        std::stop_source stop;
+        std::size_t input_size{};
+    };
+
+    struct async_cipher_result final {
+        secure_bytes bytes;
+        crypto_provider_status status{crypto_provider_status::provider_failure};
+    };
+
+    struct pending_cipher_task final {
+        v8::Global<v8::Context> context;
+        v8::Global<v8::Promise::Resolver> resolver;
+        std::future<async_cipher_result> future;
+        std::stop_source stop;
+        std::size_t input_size{};
+    };
+
+    struct crypto_key_binding final {
+        implementation* owner{};
+        crypto_key_store::handle key{};
+        std::uintptr_t realm{};
+        v8::Global<v8::Object> wrapper;
+        bool released{false};
     };
 
     struct prepared_frame final {

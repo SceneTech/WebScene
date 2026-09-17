@@ -344,7 +344,7 @@
         const auto key = wrapper_key(node);
         const auto known = stylesheet_wrappers.find(key);
         if (known != stylesheet_wrappers.end() && !known->second.IsEmpty()) {
-            return known->second.Get(isolate);
+            return augment_style_sheet(known->second.Get(isolate));
         }
         const auto local_context = isolate->GetCurrentContext();
         auto result = v8::Object::New(isolate);
@@ -353,7 +353,30 @@
             js_string(isolate, "ownerNode"),
             wrap_node(node)).Check();
         stylesheet_wrappers.emplace(key, v8::Global<v8::Object>(isolate, result));
-        return result;
+        return augment_style_sheet(result);
+    }
+
+    v8::Local<v8::Object> augment_style_sheet(v8::Local<v8::Object> sheet)
+    {
+        const auto local_context = isolate->GetCurrentContext();
+        const auto global = local_context->Global();
+        v8::Local<v8::Value> raw_augment;
+        if (!global->Get(
+                local_context,
+                js_string(isolate, "__webSceneAugmentStyleSheet"))
+                .ToLocal(&raw_augment)
+            || !raw_augment->IsFunction()) {
+            return sheet;
+        }
+        v8::Local<v8::Value> arguments[]{sheet};
+        v8::Local<v8::Value> augmented;
+        if (!raw_augment.As<v8::Function>()
+                ->Call(local_context, global, 1, arguments)
+                .ToLocal(&augmented)
+            || !augmented->IsObject()) {
+            return sheet;
+        }
+        return augmented.As<v8::Object>();
     }
 
     static void get_style_sheet(
@@ -756,6 +779,7 @@
     void cancel_detached_frame_context_tasks(
         v8::Local<v8::Context> local_context)
     {
+        cancel_crypto_tasks_for_context(local_context);
         uint64_t cancelled_animation_frames = 0;
         const auto cancelled_timers = std::erase_if(
             timers,
@@ -784,8 +808,18 @@
         std::erase_if(
             pending_window_messages,
             [&](const auto& task) {
-                return task.target_context.Get(isolate) == local_context;
+                if (task.target_context.Get(isolate) != local_context) return false;
+                const auto bytes = clone_packet_size(task.packet);
+                pending_window_message_bytes = bytes > pending_window_message_bytes
+                    ? 0U : pending_window_message_bytes - bytes;
+                return true;
             });
+        for (auto& binding : message_port_bindings) {
+            if (binding != nullptr
+                && binding->context.Get(isolate) == local_context) {
+                close_message_port_binding(*binding);
+            }
+        }
         std::erase_if(
             pending_dialog_close_events,
             [&](const auto& task) {
@@ -817,6 +851,7 @@
                 iterator->first,
                 1001U,
                 "Frame browsing context was discarded"));
+            websocket_transport.release(iterator->first);
             iterator = websocket_bindings.erase(iterator);
         }
     }
@@ -1481,8 +1516,14 @@
                         ? html_form_element_template.Get(isolate)
                     : node.tag == "select"
                         ? html_select_element_template.Get(isolate)
+                    : node.tag == "option"
+                        ? html_option_element_template.Get(isolate)
+                    : node.tag == "meta"
+                        ? html_meta_element_template.Get(isolate)
                     : node.tag == "script"
                         ? html_script_element_template.Get(isolate)
+                    : node.tag == "template"
+                        ? html_template_element_template.Get(isolate)
                     : node.tag == "style"
                         ? html_style_element_template.Get(isolate)
                     : node.tag == "td" || node.tag == "th"
@@ -1582,42 +1623,13 @@
         }
         if (known != class_list_wrappers.end()) class_list_wrappers.erase(known);
         auto local_context = isolate->GetCurrentContext();
-        auto data = v8::External::New(
+        auto constructor = ensure_dom_token_list_template()
+            ->GetFunction(local_context).ToLocalChecked();
+        v8::Local<v8::Value> arguments[] = {v8::External::New(
             isolate,
             &node,
-            v8::kExternalPointerTypeTagDefault);
-        auto object = v8::Object::New(isolate);
-        object->Set(
-            local_context,
-            js_string(isolate, "add"),
-            v8::Function::New(local_context, class_list_add, data).ToLocalChecked()).Check();
-        object->Set(
-            local_context,
-            js_string(isolate, "remove"),
-            v8::Function::New(local_context, class_list_remove, data).ToLocalChecked()).Check();
-        object->Set(
-            local_context,
-            js_string(isolate, "contains"),
-            v8::Function::New(local_context, class_list_contains, data).ToLocalChecked()).Check();
-        object->Set(
-            local_context,
-            js_string(isolate, "toggle"),
-            v8::Function::New(local_context, class_list_toggle, data).ToLocalChecked()).Check();
-        auto value_getter = v8::Function::New(
-            local_context,
-            class_list_value_getter_bridge,
-            data).ToLocalChecked();
-        auto value_setter = v8::Function::New(
-            local_context,
-            class_list_value_setter_bridge,
-            data).ToLocalChecked();
-        v8::PropertyDescriptor value_descriptor(value_getter, value_setter);
-        value_descriptor.set_enumerable(true);
-        value_descriptor.set_configurable(true);
-        object->DefineProperty(
-            local_context,
-            js_string(isolate, "value"),
-            value_descriptor).Check();
+            v8::kExternalPointerTypeTagDefault)};
+        auto object = constructor->NewInstance(local_context, 1, arguments).ToLocalChecked();
         auto& wrapper = class_list_wrappers[key];
         wrapper.Reset(isolate, object);
         if (!is_connected(node)) wrapper.SetWeak();
@@ -1929,6 +1941,8 @@
         object->Set(local_context, js_string(isolate, "self"), object).Check();
         object->Set(local_context, js_string(isolate, "parent"), local_context->Global()).Check();
         install_screen(local_context, object);
+        install_performance_clock(local_context, object);
+        install_performance_timeline_on_object(local_context, object);
         frame_windows[node.id].Reset(isolate, object);
         return object;
     }
@@ -2078,7 +2092,7 @@
         // Reuse the compiled-selector cache so frequently repeated querySelector,
         // matches, and closest calls do not cross the Rust FFI and allocate a full
         // Servo parse result on every invocation.
-        return !cached_css_selector_list(selector).selectors.empty();
+        return !cached_css_selector_list(selector)->selectors.empty();
 #else
         selector = trim_css_view(selector);
         if (selector.empty()) return false;
@@ -2241,8 +2255,8 @@
         bool include_root) const
     {
         std::vector<dom_node*> result;
-        const auto& compiled = cached_css_selector_list(selector);
-        collect_selector_matches(root, compiled, include_root, result, &root);
+        const auto compiled = cached_css_selector_list(selector);
+        collect_selector_matches(root, *compiled, include_root, result, &root);
         return result;
     }
 
@@ -2251,8 +2265,8 @@
         std::string_view selector,
         bool include_root) const
     {
-        const auto& compiled = cached_css_selector_list(selector);
-        return find_selector_match(root, compiled, include_root, &root);
+        const auto compiled = cached_css_selector_list(selector);
+        return find_selector_match(root, *compiled, include_root, &root);
     }
 
     v8::Local<v8::Array> selector_results(
@@ -2830,8 +2844,8 @@
         self->record_feature(
             "dom",
             "Document.cookie",
-            "partially-supported",
-            "same-engine script-readable name/value jar; no HTTP cookie ingress, domain/path scoping, expiry, SameSite, Secure, or HttpOnly enforcement",
+            "supported",
+            "bounded URL-scoped cookie jar with HTTP ingress and script visibility enforcement",
             "dom-binding");
         auto* root = static_cast<dom_node*>(info.Holder()->GetAlignedPointerFromInternalField(
             0,
@@ -2840,11 +2854,15 @@
             info.GetReturnValue().Set(js_string(info.GetIsolate(), ""));
             return;
         }
-        std::string value;
-        for (const auto& [name, cookie_value] : self->document_cookies) {
-            if (!value.empty()) value += "; ";
-            value += name + "=" + cookie_value;
-        }
+        const auto& address = self->current_base_address();
+        resource_request_context context{
+            WEBSCENE_RESOURCE_INITIATOR_SUBRESOURCE,
+            resource_origin(address),
+            address,
+            WEBSCENE_FETCH_MODE_SAME_ORIGIN,
+            WEBSCENE_REQUEST_DESTINATION_NONE,
+            "GET", {}, {}, WEBSCENE_FETCH_CREDENTIALS_INCLUDE, {}};
+        auto value = self->cookie_header_for(address, context, true);
         info.GetReturnValue().Set(js_string(info.GetIsolate(), value.c_str()));
     }
 
@@ -2858,29 +2876,10 @@
             0,
             v8::kEmbedderDataTypeTagDefault));
         if (root != nullptr && self->detached_document_roots.contains(root->id)) return;
-        auto assignment = to_utf8(info.GetIsolate(), raw_value);
-        const auto attributes = assignment.find(';');
-        if (attributes != std::string::npos) assignment.resize(attributes);
-        const auto equals = assignment.find('=');
-        if (equals == std::string::npos) return;
-        const auto trim = [](std::string value) {
-            const auto first = value.find_first_not_of(" \t\r\n");
-            if (first == std::string::npos) return std::string{};
-            const auto last = value.find_last_not_of(" \t\r\n");
-            return value.substr(first, last - first + 1U);
-        };
-        auto name = trim(assignment.substr(0U, equals));
-        auto value = trim(assignment.substr(equals + 1U));
-        if (name.empty()) return;
-        const auto known = std::find_if(
-            self->document_cookies.begin(),
-            self->document_cookies.end(),
-            [&name](const auto& entry) { return entry.first == name; });
-        if (known == self->document_cookies.end()) {
-            self->document_cookies.emplace_back(std::move(name), std::move(value));
-        } else {
-            known->second = std::move(value);
-        }
+        self->store_cookie(
+            self->current_base_address(),
+            to_utf8(info.GetIsolate(), raw_value),
+            false);
     }
 
     static void create_html_document(const v8::FunctionCallbackInfo<v8::Value>& info)
@@ -3956,11 +3955,12 @@
             throw_selector_syntax_error(info, selector);
             return;
         }
+        const auto compiled = self->cached_css_selector_list(selector);
         info.GetReturnValue().Set(v8::Boolean::New(
             info.GetIsolate(),
             self->compiled_css_selector_list_matches(
                 *node,
-                self->cached_css_selector_list(selector),
+                *compiled,
                 node)));
     }
 
@@ -4016,11 +4016,12 @@
             throw_selector_syntax_error(info, selector);
             return;
         }
+        const auto compiled = self->cached_css_selector_list(selector);
         for (auto* candidate = node; candidate != nullptr;
             candidate = self->document.dom_parent(*candidate)) {
             if (self->compiled_css_selector_list_matches(
                     *candidate,
-                    self->cached_css_selector_list(selector))) {
+                    *compiled)) {
                 info.GetReturnValue().Set(self->wrap_node(*candidate));
                 return;
             }
@@ -4241,7 +4242,94 @@
 
     static void document_has_focus(const v8::FunctionCallbackInfo<v8::Value>& info)
     {
+        const auto* self = current(info.GetIsolate());
+        info.GetReturnValue().Set(v8::Boolean::New(
+            info.GetIsolate(), self != nullptr && self->document_focused));
+    }
+
+    static void get_document_fullscreen_element(
+        v8::Local<v8::Name>,
+        const v8::PropertyCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        if (self == nullptr || self->fullscreen_element == nullptr
+            || !self->is_connected(*self->fullscreen_element)) {
+            info.GetReturnValue().Set(v8::Null(info.GetIsolate()));
+            return;
+        }
+        info.GetReturnValue().Set(self->wrap_node(*self->fullscreen_element));
+    }
+
+    static void get_document_fullscreen_enabled(
+        v8::Local<v8::Name>,
+        const v8::PropertyCallbackInfo<v8::Value>& info)
+    {
         info.GetReturnValue().Set(v8::True(info.GetIsolate()));
+    }
+
+    static void queue_fullscreen_request(
+        const v8::FunctionCallbackInfo<v8::Value>& info,
+        dom_node* target,
+        bool enter)
+    {
+        auto* self = current(info.GetIsolate());
+        auto local_context = info.GetIsolate()->GetCurrentContext();
+        auto resolver = v8::Promise::Resolver::New(local_context).ToLocalChecked();
+        info.GetReturnValue().Set(resolver->GetPromise());
+        const auto reject = [&](const char* message, const char* name) {
+            auto error = v8::Exception::Error(js_string(info.GetIsolate(), message));
+            if (error->IsObject()) {
+                error.As<v8::Object>()->Set(
+                    local_context,
+                    js_string(info.GetIsolate(), "name"),
+                    js_string(info.GetIsolate(), name)).Check();
+            }
+            resolver->Reject(local_context, error).Check();
+        };
+        if (self == nullptr || local_context != self->context.Get(info.GetIsolate())
+            || (enter && (target == nullptr || !self->is_connected(*target)))) {
+            reject("Fullscreen requires a connected element in the active top-level document",
+                "TypeError");
+            return;
+        }
+        if (!enter && self->fullscreen_element == nullptr) {
+            resolver->Resolve(local_context, v8::Undefined(info.GetIsolate())).Check();
+            return;
+        }
+        constexpr size_t maximum_pending_window_operations = 16U;
+        if (self->host_promise_targets.size() >= maximum_pending_window_operations) {
+            reject("Too many pending native window operations", "QuotaExceededError");
+            return;
+        }
+        const auto request_id = ++self->next_host_request_id;
+        auto request = std::make_unique<native_host_request>();
+        request->view.request_id = request_id;
+        request->view.kind = enter
+            ? WEBSCENE_HOST_REQUEST_FULLSCREEN_ENTER_V1
+            : WEBSCENE_HOST_REQUEST_FULLSCREEN_EXIT_V1;
+        request->view.target_node_id = enter ? target->id : 0U;
+        host_promise_target promise_target;
+        promise_target.operation = enter ? "enterFullscreen" : "exitFullscreen";
+        promise_target.target_node_id = enter ? target->id : 0U;
+        promise_target.context.Reset(info.GetIsolate(), local_context);
+        promise_target.resolver.Reset(info.GetIsolate(), resolver);
+        self->host_promise_targets.emplace(request_id, std::move(promise_target));
+        if (!self->enqueue_typed_host_request(std::move(request))) {
+            self->host_promise_targets.erase(request_id);
+            reject("The host request queue is full", "QuotaExceededError");
+        }
+    }
+
+    static void element_request_fullscreen(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        queue_fullscreen_request(info, unwrap_node(info.This()), true);
+    }
+
+    static void document_exit_fullscreen(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        queue_fullscreen_request(info, nullptr, false);
     }
 
     static void document_exec_command(const v8::FunctionCallbackInfo<v8::Value>& info)
@@ -4275,12 +4363,43 @@
                 "InvalidStateError");
             return;
         }
-        // This component runtime has no legacy editing command executor. The
-        // command algorithm returns false for unsupported/disabled commands;
-        // never claim a successful copy or dispatch an event without executing
-        // it. Clipboard helpers can then use the implemented async clipboard API.
+        v8::String::Utf8Value command_utf8(isolate, command);
+        std::string command_name = *command_utf8 == nullptr
+            ? std::string{} : std::string(*command_utf8, command_utf8.length());
+        std::transform(
+            command_name.begin(), command_name.end(), command_name.begin(),
+            [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
+        if (command_name == "copy" || command_name == "cut"
+            || command_name == "paste") {
+            if (!self->dispatching_user_input
+                || self->executing_legacy_clipboard_command) {
+                info.GetReturnValue().Set(false);
+                return;
+            }
+            auto* target = self->active_element == nullptr
+                ? &self->active_root() : self->active_element;
+            if (self->document.is_inert(*target)) {
+                info.GetReturnValue().Set(false);
+                return;
+            }
+            self->executing_legacy_clipboard_command = true;
+            const bool dispatched = self->dispatch_clipboard_shortcut(
+                *target, command_name.c_str());
+            self->executing_legacy_clipboard_command = false;
+            if (dispatched) {
+                self->record_feature(
+                    "web-api", "Document.execCommand", "supported",
+                    "copy/cut/paste dispatch browser clipboard events through the bounded native clipboard bridge",
+                    "web-api-binding");
+            }
+            info.GetReturnValue().Set(dispatched);
+            return;
+        }
+        // Other legacy editing commands still have no executor. Return false
+        // without mutating the DOM so callers can choose their supported
+        // asynchronous or application-level fallback.
         self->record_feature("web-api", "Document.execCommand", "unsupported",
-            "legacy editing commands return false; use navigator.clipboard for copying",
+            "unsupported legacy editing commands return false without mutation",
             "web-api-binding");
         info.GetReturnValue().Set(false);
     }
@@ -4298,6 +4417,19 @@
                 local_context,
                 js_string(info.GetIsolate(), "href")).ToLocal(&href)) {
             info.GetReturnValue().Set(href);
+        }
+    }
+
+    static void location_reload(const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        auto local_context = info.GetIsolate()->GetCurrentContext();
+        if (self == nullptr || local_context != self->context.Get(info.GetIsolate()))
+            return;
+        if (!self->queue_top_level_window_action(
+                local_context, WEBSCENE_HOST_REQUEST_WINDOW_RELOAD_V1)) {
+            info.GetIsolate()->ThrowException(v8::Exception::Error(
+                js_string(info.GetIsolate(), "WebScene rejected the reload request")));
         }
     }
 
@@ -4374,8 +4506,21 @@
                 fragment_child->parent = nullptr;
                 fragment_child->visible = true;
                 if (!self->document.append_child(*parent, *fragment_child)) continue;
+#if defined(WEBSCENE_NATIVE_ENGINE_FRAGMENT_ATTACH_CONTROL)
                 self->recascade_connected_subtree(*fragment_child);
                 self->recascade_connected_node(*parent);
+#endif
+            }
+#if !defined(WEBSCENE_NATIVE_ENGINE_FRAGMENT_ATTACH_CONTROL)
+            // DocumentFragment insertion is one tree mutation. Match structural
+            // selectors against the completed sibling list and recascade the
+            // affected parent subtree once. Styling every child and parent as
+            // it is transferred repeats selector matching and leaves earlier
+            // siblings with transient :last-child/:nth-child results.
+            self->recascade_connected_subtree(*parent, "appendChild.fragment");
+#endif
+            for (auto* fragment_child : children) {
+                if (fragment_child == nullptr || fragment_child->parent != parent) continue;
                 self->activate_connected_stylesheet(*fragment_child);
                 self->enqueue_connected_resources_subtree(
                     *fragment_child,
@@ -4422,6 +4567,18 @@
         self->notify_custom_elements_subtree(*child, "connected");
         synchronize_textarea_value_from_children(*parent);
         info.GetReturnValue().Set(info[0]);
+    }
+
+    static void has_child_nodes(const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        binding_callback_timer binding_timer(
+            self->profile(binding_category::dom_query),
+            self->profile_named("Node.hasChildNodes"));
+        const auto* node = unwrap_node(info.This());
+        info.GetReturnValue().Set(v8::Boolean::New(
+            info.GetIsolate(),
+            node != nullptr && !node->children.empty()));
     }
 
     static void append_nodes(const v8::FunctionCallbackInfo<v8::Value>& info)

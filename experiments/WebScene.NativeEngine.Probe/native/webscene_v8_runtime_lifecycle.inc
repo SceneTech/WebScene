@@ -8,10 +8,16 @@
         v8_dom_runtime::interop_callback_sink_v3
             interop_callback_sink_value,
         std::function<void()> runtime_work_available_value,
-        runtime_diagnostics* diagnostics_value)
+        runtime_diagnostics* diagnostics_value,
+        std::string storage_directory_value,
+        std::string storage_partition_key_value,
+        uint64_t storage_quota_bytes_value)
         : document(document_value)
         , viewport_provider(std::move(viewport_provider_value))
         , load_resource_callback(std::move(resource_loader_value))
+        , storage_directory(std::move(storage_directory_value))
+        , storage_partition_key(std::move(storage_partition_key_value))
+        , storage_quota_bytes(storage_quota_bytes_value)
         , host_request_available(std::move(host_request_available_value))
         , interop_callback_available(std::move(interop_callback_available_value))
         , interop_callback_sink(std::move(interop_callback_sink_value))
@@ -40,6 +46,13 @@
         , profile_css(std::getenv("WEBSCENE_PROBE_PROFILE_CSS") != nullptr)
 #endif
     {
+        if (!storage_directory.empty() && !storage_partition_key.empty()) {
+            indexeddb = std::make_unique<indexeddb_storage>(
+                std::filesystem::path(storage_directory),
+                storage_partition_key,
+                storage_quota_bytes);
+            if (!indexeddb->available()) indexeddb.reset();
+        }
 #if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
         if (profile_startup) {
             startup_profile_started = std::chrono::steady_clock::now();
@@ -49,12 +62,19 @@
 
     ~implementation()
     {
+        for (auto& digest : pending_digests) digest.stop.request_stop();
+        for (auto& cipher : pending_ciphers) cipher.stop.request_stop();
+        stop_message_ports();
         stop_workers();
+        // The storage worker never touches V8. Join it before persistent
+        // resolver handles and the isolate are released.
+        indexeddb.reset();
 #if defined(WEBSCENE_NATIVE_ENGINE_ENABLE_MEDIA)
         clear_media_bindings();
         media_initializer_key.Reset();
 #endif
         dedicated_workers.clear();
+        release_owned_binary_object_urls();
 #if defined(WEBSCENE_NATIVE_ENGINE_ENABLE_GRAPHICS)
         // Stop native publication before releasing the dispatcher and isolate.
         // Context disposal discards its JS promises; no late callback may enter it.
@@ -86,6 +106,12 @@
             }
         }
         pending_frame_preparations.clear();
+        for (auto& preparation : retired_frame_preparations) {
+            if (!preparation.valid()) continue;
+            try { static_cast<void>(preparation.get()); }
+            catch (...) {}
+        }
+        retired_frame_preparations.clear();
         // Resource prefetch tasks capture this runtime and may still be inside
         // the host loader when teardown begins. Join them while the loader and
         // all of its bridge state are still alive.
@@ -112,6 +138,20 @@
             if (!fetch.future.valid()) continue;
             try {
                 static_cast<void>(fetch.future.get());
+            } catch (...) {
+            }
+        }
+        for (auto& digest : pending_digests) {
+            if (!digest.future.valid()) continue;
+            try {
+                static_cast<void>(digest.future.get());
+            } catch (...) {
+            }
+        }
+        for (auto& cipher : pending_ciphers) {
+            if (!cipher.future.valid()) continue;
+            try {
+                static_cast<void>(cipher.future.get());
             } catch (...) {
             }
         }
@@ -142,11 +182,33 @@
         media_query_lists.clear();
         timers.clear();
         pending_window_messages.clear();
+        pending_window_message_bytes = 0U;
+        message_port_bindings.clear();
         pending_dialog_close_events.clear();
         pending_programmatic_scroll_events.clear();
         pending_interop_promises.clear();
         pending_callback_promises.clear();
+        {
+            std::lock_guard lock(indexeddb_completion_mutex);
+            indexeddb_completions.clear();
+        }
+        pending_indexeddb_promises.clear();
+        // Native host and file completions can still be pending when a window
+        // closes. Their persistent context/resolver handles must be released
+        // while the isolate is alive; member destruction happens after this
+        // body and therefore after isolate disposal below.
+        host_promise_targets.clear();
+        file_targets.clear();
         pending_fetches.clear();
+        pending_digests.clear();
+        pending_digest_bytes = 0U;
+        pending_ciphers.clear();
+        pending_cipher_bytes = 0U;
+        for (auto& binding : crypto_key_bindings) {
+            if (binding) binding->wrapper.Reset();
+        }
+        crypto_key_bindings.clear();
+        crypto_keys.clear();
         interop_handles.clear();
         pending_promise_rejections.clear();
 #if defined(WEBSCENE_NATIVE_ENGINE_WITH_V8_INSPECTOR)
@@ -192,6 +254,7 @@
         frame_document_template.Reset();
         frame_window_template.Reset();
         html_collection_template.Reset();
+        dom_token_list_template.Reset();
         document_template.Reset();
         element_template.Reset();
 #if defined(WEBSCENE_NATIVE_ENGINE_GENERATED_DOM_BINDINGS)
@@ -201,8 +264,11 @@
         html_dialog_element_template.Reset();
         html_form_element_template.Reset();
         html_select_element_template.Reset();
+        html_option_element_template.Reset();
+        html_meta_element_template.Reset();
         html_script_element_template.Reset();
         html_slot_element_template.Reset();
+        html_template_element_template.Reset();
         html_style_element_template.Reset();
         shadow_root_template.Reset();
         document_fragment_template.Reset();
@@ -883,7 +949,10 @@
                 inspector_state->promise_rejections.shrink_to_fit();
             }
 #endif
-            document_cookies.shrink_to_fit();
+            {
+                std::lock_guard lock(cookie_jar->mutex);
+                cookie_jar->cookies.shrink_to_fit();
+            }
             css_rules.shrink_to_fit();
             for (auto& [name, keyframes] : opacity_keyframes) {
                 static_cast<void>(name);

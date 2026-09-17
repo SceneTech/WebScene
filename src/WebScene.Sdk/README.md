@@ -15,3 +15,8 @@ See `tooling/webscene` for TypeScript declarations and bundler plugins. Avalonia
 Uno Skia desktop applications host these packages with `WebScene.Sdk.Avalonia` or
 `WebScene.Sdk.Uno` and their native `WebSceneComponentHost` controls. Application
 templates remain intentionally absent.
+
+The native macOS SDK's compiler, libc++ header, and system runtime closure is
+defined by `cmake/WebSceneMacOSProfile.cmake`. The installed relocation and
+consumer gate is documented in
+[`docs/guides/macos-sdk-runtime-profile.md`](../../docs/guides/macos-sdk-runtime-profile.md).

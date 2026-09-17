@@ -1,0 +1,127 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>CSS Grid named template areas parsing, layout, and mutation</title>
+<link rel="help" href="https://drafts.csswg.org/css-grid-2/#grid-template-areas-property">
+<style>
+  html, body { margin: 0; }
+  #grid {
+    display: grid;
+    width: 700px;
+    height: 400px;
+    grid-template-columns: 1fr 6fr 1fr 6fr 1fr;
+    grid-template-rows: 80px minmax(0, 1fr) 40px;
+    grid-template-areas:
+      ". header header header ."
+      ". left . right ."
+      ". footer footer footer .";
+  }
+  #header { grid-area: header; }
+  #header-peer { grid-area: header; }
+  #left { grid-area: left; }
+  #right { grid-area: right; }
+  #footer { grid-row: footer-start / footer-end; grid-column: footer-start / footer-end; }
+</style>
+<div id="grid"><div id="header"></div><div id="header-peer"></div><div id="left"></div>
+  <div id="right"></div><div id="footer"></div></div>
+<script>
+  const state = window.__webSceneWptState = {
+    complete: false, harness: null, results: [], errors: [], diagnostics: []
+  };
+  function assert(condition, message) { if (!condition) throw new Error(message); }
+  function equal(actual, expected, message) {
+    assert(actual === expected, `${message}: expected ${expected}, got ${actual}`);
+  }
+  function near(actual, expected, message) {
+    assert(Math.abs(actual - expected) <= 0.02,
+      `${message}: expected ${expected}, got ${actual}`);
+  }
+  function test(name, body) {
+    try { body(); state.results.push({ name, status: "PASS", message: null, stack: null }); }
+    catch (error) { state.results.push({ name, status: "FAIL",
+      message: String(error && error.message || error),
+      stack: error && error.stack ? String(error.stack) : null }); }
+  }
+  const grid = document.getElementById("grid");
+  const rect = id => document.getElementById(id).getBoundingClientRect();
+
+  test("computed grid-template-areas serializes normalized rows", () => {
+    equal(getComputedStyle(grid).gridTemplateAreas,
+      '". header header header ." ". left . right ." ". footer footer footer ."',
+      "computed template");
+  });
+  test("one named grid-area expands to its four generated line names", () => {
+    const style = getComputedStyle(document.getElementById("header"));
+    equal(style.gridRowStart, "header", "row start");
+    equal(style.gridColumnStart, "header", "column start");
+    equal(style.gridRowEnd, "header", "row end");
+    equal(style.gridColumnEnd, "header", "column end");
+  });
+  test("named areas use sparse five-column and three-row geometry", () => {
+    const header = rect("header"), left = rect("left"), right = rect("right"), footer = rect("footer");
+    near(header.x, 46.6667, "header x"); near(header.width, 606.6667, "header width");
+    near(left.x, 46.6667, "left x"); near(left.y, 80, "left y"); near(left.width, 280, "left width");
+    near(right.x, 373.3333, "right x"); near(right.height, 280, "right height");
+    near(footer.x, 46.6667, "footer x"); near(footer.y, 360, "footer y");
+  });
+  test("fully definite items may overlap in the same named area", () => {
+    const header = rect("header"), peer = rect("header-peer");
+    near(peer.x, header.x, "peer x"); near(peer.y, header.y, "peer y");
+    near(peer.width, header.width, "peer width"); near(peer.height, header.height, "peer height");
+  });
+  test("invalid nonrectangular and unequal rows are ignored atomically", () => {
+    const before = getComputedStyle(grid).gridTemplateAreas;
+    grid.style.gridTemplateAreas = '"broken broken" "broken ."';
+    equal(grid.style.gridTemplateAreas, "", "nonrectangular inline assignment");
+    equal(getComputedStyle(grid).gridTemplateAreas, before, "retained stylesheet template");
+    grid.style.gridTemplateAreas = '"broken broken" "broken"';
+    equal(grid.style.gridTemplateAreas, "", "unequal-row inline assignment");
+  });
+  test("valid template mutation moves named items and removal restores cascade", () => {
+    grid.style.gridTemplateAreas =
+      '". footer footer footer ." ". left . right ." ". header header header ."';
+    near(rect("header").y, 360, "mutated header y");
+    grid.style.removeProperty("grid-template-areas");
+    near(rect("header").y, 0, "restored header y");
+  });
+  test("500 named-area mutations remain within the bounded gate", () => {
+    const first = '". a a a ." ". b . c ." ". d d d ."';
+    const second = '". d d d ." ". b . c ." ". a a a ."';
+    const started = performance.now();
+    for (let index = 0; index < 500; index++) grid.style.gridTemplateAreas = index % 2 ? first : second;
+    const elapsed = performance.now() - started;
+    grid.style.removeProperty("grid-template-areas");
+    assert(elapsed < 2000, `500 mutations exceeded 2000ms: ${elapsed}ms`);
+  });
+
+  test("grid-template shorthand shares named-area state with longhand mutation", () => {
+    const fixture = document.createElement('div');
+    fixture.innerHTML = `<style>
+      #shorthand-grid { display:grid; width:300px;
+        grid-template: "top top" 40px "left right" 60px / 100px 200px; }
+      #shorthand-top { grid-area:top; }
+      #shorthand-right { grid-row:right-start / right-end;
+        grid-column:right-start / right-end; }
+      </style><div id="shorthand-grid"><div id="shorthand-top"></div>
+        <div id="shorthand-right"></div></div>`;
+    document.body.appendChild(fixture);
+    const container = document.getElementById('shorthand-grid');
+    const box = () => container.getBoundingClientRect();
+    const top = () => document.getElementById('shorthand-top').getBoundingClientRect();
+    const right = () => document.getElementById('shorthand-right').getBoundingClientRect();
+    near(top().width, 300, 'shorthand spanning width');
+    near(right().x - box().x, 100, 'shorthand generated column line');
+    near(right().y - box().y, 40, 'shorthand generated row line');
+    container.style.gridTemplateAreas = '"left right" "top top"';
+    near(top().y - box().y, 40, 'longhand replaces shorthand area state');
+    near(right().y - box().y, 0, 'generated lines follow longhand mutation');
+    container.style.removeProperty('grid-template-areas');
+    near(top().y - box().y, 0, 'removal restores shorthand area state');
+    near(right().y - box().y, 40, 'removal restores generated lines');
+    fixture.remove();
+  });
+
+  const failure = state.results.find(result => result.status !== "PASS");
+  state.harness = failure ? { status: 1, message: failure.message, stack: failure.stack }
+    : { status: 0, message: null, stack: null };
+  state.complete = true;
+</script>

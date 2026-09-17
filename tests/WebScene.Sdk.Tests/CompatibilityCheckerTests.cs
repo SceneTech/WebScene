@@ -37,7 +37,7 @@ public sealed class CompatibilityCheckerTests
     }
 
     [Fact]
-    public void AllowsInMemoryWebStorageButRejectsIndexedDbSpecifically()
+    public void IndexedDbRequiresItsPersistentStorageCapability()
     {
         var report = WebSceneCompatibilityChecker.Check(
             "localStorage.setItem('theme', 'dark');\n" +
@@ -48,7 +48,18 @@ public sealed class CompatibilityCheckerTests
         var diagnostic = Assert.Single(
             report.Diagnostics,
             static value => value.Code == "WEBSCENE1002");
-        Assert.Equal("IndexedDB is not supported.", diagnostic.Message);
+        Assert.Equal(WebSceneComponentCapabilities.IndexedDb, diagnostic.RequiredCapability);
+        Assert.Equal(
+            "Persistent IndexedDB access must be declared. Missing capability 'storage.indexeddb'.",
+            diagnostic.Message);
         Assert.Equal(3, diagnostic.Line);
+
+        var declared = ComponentManifestTests.CreateManifest() with
+        {
+            Capabilities = [WebSceneComponentCapabilities.Dom, WebSceneComponentCapabilities.IndexedDb]
+        };
+        Assert.DoesNotContain(
+            WebSceneCompatibilityChecker.Check("indexedDB.open('durable');", declared).Diagnostics,
+            static value => value.Code == "WEBSCENE1002");
     }
 }

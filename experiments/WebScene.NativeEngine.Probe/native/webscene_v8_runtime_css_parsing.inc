@@ -391,9 +391,11 @@
                 scope = hover_invalidation_scope::subtree;
                 affected = "*";
             }
+            auto compiled_trigger = compile_css_compound_selector(trigger);
             hover_selector_dependencies.push_back({
                 std::move(trigger),
                 std::move(affected),
+                std::move(compiled_trigger),
                 scope,
                 affected_direct_children,
                 propagate_to_descendants});
@@ -1587,7 +1589,7 @@
         return result;
     }
 
-    const compiled_css_selector_list& cached_css_selector_list(
+    std::shared_ptr<const compiled_css_selector_list> cached_css_selector_list(
         std::string_view selector) const
     {
         if (const auto known = compiled_css_selector_lists.find(selector);
@@ -1599,9 +1601,11 @@
             compiled_css_selector_lists.clear();
         }
         auto key = std::string(selector);
+        auto prepared = std::make_shared<const compiled_css_selector_list>(
+            compile_css_selector_list(key));
         return compiled_css_selector_lists.emplace(
             key,
-            compile_css_selector_list(key)).first->second;
+            std::move(prepared)).first->second;
     }
 
     static const dom_node* previous_element_sibling(const dom_node& node)
@@ -1612,9 +1616,13 @@
         std::string_view selector,
         const dom_node* scope_root = nullptr) const
     {
+        // Functional pseudo-classes recurse through this cache. Keep the
+        // selected entry alive if a nested selector reaches the cache bound
+        // and clears the map while the outer matcher is still using it.
+        const auto prepared = cached_css_selector_list(selector);
         return compiled_css_selector_list_matches(
             node,
-            cached_css_selector_list(selector),
+            *prepared,
             scope_root);
     }
 
@@ -1645,9 +1653,10 @@
         std::string_view selector,
         const dom_node* scope_root = nullptr) const
     {
+        const auto prepared = cached_css_selector_list(selector);
         return compiled_css_selector_list_matches(
             node,
-            cached_css_selector_list(selector),
+            *prepared,
             scope_root);
     }
 

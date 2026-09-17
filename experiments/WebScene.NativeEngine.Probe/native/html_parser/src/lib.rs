@@ -4,14 +4,8 @@
 // This is a clean-room html5ever TreeSink for WebScene. It intentionally
 // contains no code from browser integrations reviewed during evaluation.
 
-use html5ever::driver::parse_fragment_for_element;
-use html5ever::interface::tree_builder::{ElementFlags, NodeOrText, QuirksMode, TreeSink};
-use html5ever::tendril::{StrTendril, TendrilSink};
-use html5ever::{parse_document, Attribute, ParseOpts, QualName};
 use std::alloc::{GlobalAlloc, Layout, System};
-use std::borrow::Cow;
-use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::cell::Cell;
 use std::ffi::c_void;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
@@ -66,7 +60,6 @@ unsafe impl GlobalAlloc for MeasuringAllocator {
 static ALLOCATOR: MeasuringAllocator = MeasuringAllocator;
 
 const ABI_VERSION: u32 = 1;
-const HTML_ABI_VERSION: u32 = 2;
 const STATUS_OK: u32 = 0;
 const STATUS_INVALID_ARGUMENT: u32 = 1;
 const STATUS_CALLBACK_FAILED: u32 = 2;
@@ -87,6 +80,34 @@ impl ByteSlice {
         }
     }
 }
+
+fn read_slice(value: ByteSlice) -> Option<&'static [u8]> {
+    if value.length == 0 {
+        return Some(&[]);
+    }
+    if value.data.is_null() {
+        return None;
+    }
+    Some(unsafe { std::slice::from_raw_parts(value.data, value.length) })
+}
+
+fn reset_allocation_metrics() {
+    ALLOCATION_CURRENT.with(|value| value.set(0));
+    ALLOCATION_PEAK.with(|value| value.set(0));
+    ALLOCATION_COUNT.with(|value| value.set(0));
+}
+
+#[cfg(feature = "html")]
+mod html_syntax {
+use super::*;
+use html5ever::driver::parse_fragment_for_element;
+use html5ever::interface::tree_builder::{ElementFlags, NodeOrText, QuirksMode, TreeSink};
+use html5ever::tendril::{StrTendril, TendrilSink};
+use html5ever::{parse_document, Attribute, ParseOpts, QualName};
+use std::borrow::Cow;
+use std::cell::RefCell;
+use std::collections::HashMap;
+const HTML_ABI_VERSION: u32 = 2;
 
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
@@ -545,16 +566,6 @@ fn quirks_code(mode: QuirksMode) -> u32 {
     }
 }
 
-fn read_slice(value: ByteSlice) -> Option<&'static [u8]> {
-    if value.length == 0 {
-        return Some(&[]);
-    }
-    if value.data.is_null() {
-        return None;
-    }
-    Some(unsafe { std::slice::from_raw_parts(value.data, value.length) })
-}
-
 fn parse_options(options: &ParseOptions) -> ParseOpts {
     let mut result = ParseOpts::default();
     result.tree_builder.scripting_enabled = options.scripting_enabled != 0;
@@ -618,12 +629,6 @@ fn new_sink<'a>(options: &ParseOptions, callbacks: &'a SinkVTable) -> Sink<'a> {
         doctype_count: Cell::new(0),
         preserve_comments: options.preserve_comments != 0,
     }
-}
-
-fn reset_allocation_metrics() {
-    ALLOCATION_CURRENT.with(|value| value.set(0));
-    ALLOCATION_PEAK.with(|value| value.set(0));
-    ALLOCATION_COUNT.with(|value| value.set(0));
 }
 
 fn attach_allocation_metrics(mut result: ParseResult) -> ParseResult {
@@ -710,6 +715,8 @@ pub extern "C" fn webscene_html_parse_fragment(
         ..Default::default()
     });
     attach_allocation_metrics(result)
+}
+
 }
 
 #[cfg(feature = "cssparser")]
@@ -958,15 +965,13 @@ mod css_syntax {
             if prelude.name.eq_ignore_ascii_case("font-face")
                 || prelude.name.eq_ignore_ascii_case("page")
             {
-                let before = self.state.declaration_count.get();
-                parse_css_stream_declaration_list(
+                declarations = parse_css_stream_declaration_list(
                     input,
                     CssStreamingParser {
                         state: self.state.clone(),
                         parent_index: index,
                     },
                 );
-                declarations = (self.state.declaration_count.get() - before) as usize;
             } else if prelude.name.eq_ignore_ascii_case("media")
                 || prelude.name.eq_ignore_ascii_case("supports")
                 || prelude.name.eq_ignore_ascii_case("layer")
@@ -1014,24 +1019,21 @@ mod css_syntax {
             let index = self
                 .state
                 .begin_rule(CSS_RULE_STYLE, true, self.parent_index, "", prelude, _start.source_location());
-            let before = self.state.declaration_count.get();
-            parse_css_stream_declaration_list(
+            let declarations = parse_css_stream_declaration_list(
                 input,
                 CssStreamingParser {
                     state: self.state.clone(),
                     parent_index: index,
                 },
             );
-            self.state.end_rule(
-                index,
-                (self.state.declaration_count.get() - before) as usize,
-            );
+            self.state.end_rule(index, declarations);
             Ok(())
         }
     }
 
     struct CssStreamingDeclarationListParser {
         parser: CssStreamingParser,
+        direct_declarations: usize,
     }
 
     impl<'i> DeclarationParser<'i> for CssStreamingDeclarationListParser {
@@ -1044,7 +1046,11 @@ mod css_syntax {
             input: &mut Parser<'i, 't>,
             declaration_start: &ParserState,
         ) -> Result<Self::Declaration, ParseError<'i, Self::Error>> {
-            self.parser.parse_value(name, input, declaration_start)
+            let parsed = self.parser.parse_value(name, input, declaration_start);
+            if matches!(parsed, Ok(CssStreamingBodyItem::Declaration)) {
+                self.direct_declarations += 1;
+            }
+            parsed
         }
     }
 
@@ -1082,9 +1088,45 @@ mod css_syntax {
     }
 
     impl<'i> QualifiedRuleParser<'i> for CssStreamingDeclarationListParser {
-        type Prelude = ();
+        type Prelude = &'i str;
         type QualifiedRule = CssStreamingBodyItem;
         type Error = ();
+
+        fn parse_prelude<'t>(
+            &mut self,
+            input: &mut Parser<'i, 't>,
+        ) -> Result<Self::Prelude, ParseError<'i, Self::Error>> {
+            let prelude = consume_raw(input);
+            if prelude.is_empty() {
+                return Err(input.new_error(BasicParseErrorKind::QualifiedRuleInvalid));
+            }
+            Ok(prelude)
+        }
+
+        fn parse_block<'t>(
+            &mut self,
+            prelude: Self::Prelude,
+            start: &ParserState,
+            input: &mut Parser<'i, 't>,
+        ) -> Result<Self::QualifiedRule, ParseError<'i, Self::Error>> {
+            let index = self.parser.state.begin_rule(
+                CSS_RULE_STYLE,
+                true,
+                self.parser.parent_index,
+                "",
+                prelude,
+                start.source_location(),
+            );
+            let declarations = parse_css_stream_declaration_list(
+                input,
+                CssStreamingParser {
+                    state: self.parser.state.clone(),
+                    parent_index: index,
+                },
+            );
+            self.parser.state.end_rule(index, declarations);
+            Ok(CssStreamingBodyItem::Ignored)
+        }
     }
 
     impl RuleBodyItemParser<'_, CssStreamingBodyItem, ()> for CssStreamingDeclarationListParser {
@@ -1093,23 +1135,27 @@ mod css_syntax {
         }
 
         fn parse_qualified(&self) -> bool {
-            false
+            true
         }
     }
 
     fn parse_css_stream_declaration_list<'i>(
         input: &mut Parser<'i, '_>,
         parser: CssStreamingParser,
-    ) {
+    ) -> usize {
         let errors = parser.state.errors.clone();
         let first_error = parser.state.first_error.clone();
-        let mut body_parser = CssStreamingDeclarationListParser { parser };
+        let mut body_parser = CssStreamingDeclarationListParser {
+            parser,
+            direct_declarations: 0,
+        };
         for item in RuleBodyParser::new(input, &mut body_parser) {
             if let Err((error, _)) = item {
                 if first_error.get().is_none() { first_error.set(Some(error.location)); }
                 errors.set(errors.get() + 1);
             }
         }
+        body_parser.direct_declarations
     }
 
     fn parse_css_stream_rule_list<'i>(input: &mut Parser<'i, '_>, mut parser: CssStreamingParser) {

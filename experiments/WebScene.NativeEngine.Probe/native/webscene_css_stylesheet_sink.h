@@ -3,10 +3,13 @@
 #include "webscene_css_matching.h"
 #include "webscene_css_transitions.h"
 
+#include <iterator>
+
 namespace webscene_native::css {
 // Host supplies rule/keyframe storage, media capability inventory and diagnostics.
-// This adapter preserves the existing runtime at-rule policy; it is not a full
-// implementation of supports, layers, containers or CSS nesting.
+// This adapter preserves the existing runtime at-rule policy. CSS nesting is
+// expanded before selector compilation; supports, layers, and containers remain
+// the bounded implementations documented below.
 template<typename Host>
 class stylesheet_sink final : public css_syntax_sink {
 public:
@@ -48,7 +51,16 @@ public:
 
         if (kind == css_syntax_style_rule) {
             current.prelude = std::string(prelude);
-            current.children_active = false;
+            if (const auto* parent = nearest_style_frame(); parent != nullptr
+                && !parent->keyframes) {
+                current.prelude = combine_nested_selectors(
+                    parent->prelude, current.prelude);
+                owner_.record_feature(
+                    "css", "css-nesting", "supported",
+                    "qualified nested rules with implicit descendant, combinator, and ampersand expansion",
+                    "stylesheet-parser");
+            }
+            current.children_active = current.active;
             // Two declarations is the common generated-rule shape and
             // avoids the former IR's exact-size allocation without
             // over-reserving every small rule.
@@ -156,11 +168,33 @@ public:
                     inherited_media.push_back(ancestor.media_query);
                 }
             }
-            owner_.append_parsed_css_style_rule(
-                std::move(current.prelude),
-                std::move(current.declarations),
-                inherited_media,
-                stylesheet_address_);
+            std::vector<completed_style_rule> completed;
+            completed.reserve(1U + current.nested_rules.size());
+            if (!current.declarations.empty()) {
+                completed.push_back({
+                    std::move(current.prelude),
+                    std::move(current.declarations),
+                    std::move(inherited_media)});
+            }
+            completed.insert(
+                completed.end(),
+                std::make_move_iterator(current.nested_rules.begin()),
+                std::make_move_iterator(current.nested_rules.end()));
+            if (auto* parent = nearest_style_frame(); parent != nullptr
+                && !parent->keyframes) {
+                parent->nested_rules.insert(
+                    parent->nested_rules.end(),
+                    std::make_move_iterator(completed.begin()),
+                    std::make_move_iterator(completed.end()));
+                return true;
+            }
+            for (auto& rule : completed) {
+                owner_.append_parsed_css_style_rule(
+                    std::move(rule.selector),
+                    std::move(rule.declarations),
+                    rule.media_queries,
+                    stylesheet_address_);
+            }
         } else if (current.keyframes) {
             completed_keyframes_.emplace_back(
                 std::move(current.prelude),
@@ -177,18 +211,127 @@ public:
     }
 
 private:
+    struct completed_style_rule final {
+        std::string selector;
+        std::vector<css_declaration> declarations;
+        std::vector<std::string> media_queries;
+    };
+
     struct frame final {
         size_t rule_index{css_syntax_no_parent};
         uint32_t kind{css_syntax_style_rule};
         std::string prelude;
         std::string media_query;
         std::vector<css_declaration> declarations;
+        std::vector<completed_style_rule> nested_rules;
         css_opacity_keyframes keyframe_definition;
         size_t observed_declarations{0U};
         bool active{false};
         bool children_active{false};
         bool keyframes{false};
     };
+
+    frame* nearest_style_frame() noexcept
+    {
+        for (auto iterator = stack_.rbegin(); iterator != stack_.rend(); ++iterator) {
+            if (iterator->keyframes) return nullptr;
+            if (iterator->kind == css_syntax_style_rule) return &*iterator;
+        }
+        return nullptr;
+    }
+
+    const frame* nearest_style_frame() const noexcept
+    {
+        for (auto iterator = stack_.rbegin(); iterator != stack_.rend(); ++iterator) {
+            if (iterator->keyframes) return nullptr;
+            if (iterator->kind == css_syntax_style_rule) return &*iterator;
+        }
+        return nullptr;
+    }
+
+    static std::vector<std::string> split_selector_list(std::string_view value)
+    {
+        std::vector<std::string> result;
+        size_t start = 0U;
+        size_t parentheses = 0U;
+        size_t brackets = 0U;
+        char quote = '\0';
+        auto escaped = false;
+        for (size_t index = 0U; index <= value.size(); ++index) {
+            const auto character = index < value.size() ? value[index] : ',';
+            if (escaped) {
+                escaped = false;
+                continue;
+            }
+            if (character == '\\') {
+                escaped = true;
+                continue;
+            }
+            if (quote != '\0') {
+                if (character == quote) quote = '\0';
+                continue;
+            }
+            if (character == '\'' || character == '"') {
+                quote = character;
+                continue;
+            }
+            if (character == '(') ++parentheses;
+            else if (character == ')' && parentheses > 0U) --parentheses;
+            else if (character == '[') ++brackets;
+            else if (character == ']' && brackets > 0U) --brackets;
+            else if (character == ',' && parentheses == 0U && brackets == 0U) {
+                auto selector = trim_value(value.substr(start, index - start));
+                if (!selector.empty()) result.push_back(std::move(selector));
+                start = index + 1U;
+            }
+        }
+        return result;
+    }
+
+    static std::string replace_nesting_selector(
+        std::string child,
+        const std::string& parent)
+    {
+        size_t offset = 0U;
+        while ((offset = child.find('&', offset)) != std::string::npos) {
+            child.replace(offset, 1U, parent);
+            offset += parent.size();
+        }
+        return child;
+    }
+
+    static std::string combine_nested_selectors(
+        std::string_view parent,
+        std::string_view child)
+    {
+        const auto parents = split_selector_list(parent);
+        const auto children = split_selector_list(child);
+        if (parents.empty() || children.empty()) return {};
+        std::string parent_reference;
+        if (parents.size() == 1U) {
+            parent_reference = parents.front();
+        } else {
+            parent_reference = ":is(";
+            for (const auto& selector : parents) {
+                if (parent_reference.size() > 4U) parent_reference += ", ";
+                parent_reference += selector;
+            }
+            parent_reference += ')';
+        }
+        std::string result;
+        for (const auto& child_selector : children) {
+            if (!result.empty()) result += ", ";
+            if (child_selector.find('&') != std::string::npos) {
+                result += replace_nesting_selector(
+                    child_selector, parent_reference);
+            } else {
+                result += parent_reference;
+                result += ' ';
+                result += child_selector;
+            }
+        }
+        return result;
+    }
 
     Host& owner_;
     const std::string& stylesheet_address_;

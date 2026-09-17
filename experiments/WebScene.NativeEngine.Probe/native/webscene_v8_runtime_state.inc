@@ -6,6 +6,20 @@
     resource_loader load_resource_callback;
     static constexpr size_t maximum_pending_fetches = 64U;
     std::vector<pending_fetch_task> pending_fetches;
+    static constexpr size_t maximum_pending_digests = 32U;
+    static constexpr size_t maximum_digest_input_bytes = 16U * 1024U * 1024U;
+    static constexpr size_t maximum_pending_digest_bytes = 64U * 1024U * 1024U;
+    std::vector<pending_digest_task> pending_digests;
+    size_t pending_digest_bytes{};
+    static constexpr size_t maximum_pending_ciphers = 32U;
+    static constexpr size_t maximum_cipher_input_bytes = 16U * 1024U * 1024U;
+    static constexpr size_t maximum_pending_cipher_bytes = 64U * 1024U * 1024U;
+    std::vector<pending_cipher_task> pending_ciphers;
+    size_t pending_cipher_bytes{};
+    static constexpr size_t maximum_crypto_keys = 256U;
+    crypto_key_store crypto_keys;
+    std::vector<std::unique_ptr<crypto_key_binding>> crypto_key_bindings;
+    std::uintptr_t next_crypto_realm{1U};
     static constexpr size_t maximum_resource_prefetches = 16U;
     std::mutex resource_prefetch_mutex;
     std::unordered_map<std::string, std::shared_future<prefetched_resource>>
@@ -13,6 +27,10 @@
     static constexpr size_t maximum_frame_preparations = 16U;
     std::unordered_map<uint32_t, pending_frame_preparation>
         pending_frame_preparations;
+    std::vector<std::shared_future<std::shared_ptr<const prepared_frame>>>
+        retired_frame_preparations;
+    std::mutex document_generation_mutex;
+    std::atomic<uint64_t> document_generation{1U};
     std::shared_ptr<shared_isolate_state> shared_isolate;
     std::shared_ptr<v8::ArrayBuffer::Allocator> allocator;
     v8::Isolate* isolate{nullptr};
@@ -47,8 +65,11 @@
     v8::Global<v8::FunctionTemplate> html_dialog_element_template;
     v8::Global<v8::FunctionTemplate> html_form_element_template;
     v8::Global<v8::FunctionTemplate> html_select_element_template;
+    v8::Global<v8::FunctionTemplate> html_option_element_template;
+    v8::Global<v8::FunctionTemplate> html_meta_element_template;
     v8::Global<v8::FunctionTemplate> html_script_element_template;
     v8::Global<v8::FunctionTemplate> html_slot_element_template;
+    v8::Global<v8::FunctionTemplate> html_template_element_template;
     v8::Global<v8::FunctionTemplate> html_style_element_template;
     uint32_t next_standalone_event_target_id{0x80000000U};
 #endif
@@ -56,6 +77,7 @@
     v8::Global<v8::ObjectTemplate> frame_document_template;
     v8::Global<v8::ObjectTemplate> frame_window_template;
     v8::Global<v8::FunctionTemplate> html_collection_template;
+    v8::Global<v8::FunctionTemplate> dom_token_list_template;
     v8::Global<v8::Object> dom_implementation_object;
     v8::Global<v8::Object> document_object;
     v8::Global<v8::ObjectTemplate> document_template;
@@ -69,6 +91,16 @@
         pending_interop_promises;
     std::unordered_map<uint64_t, pending_callback_promise>
         pending_callback_promises;
+    std::string storage_directory;
+    std::string storage_partition_key;
+    uint64_t storage_quota_bytes{0};
+    std::unique_ptr<indexeddb_storage> indexeddb;
+    std::mutex indexeddb_completion_mutex;
+    std::deque<indexeddb_completion> indexeddb_completions;
+    std::unordered_map<uint64_t, pending_indexeddb_promise>
+        pending_indexeddb_promises;
+    std::atomic<bool> indexeddb_work_ready{false};
+    uint64_t next_indexeddb_operation_id{1U};
     std::unordered_map<uint64_t, v8::Global<v8::Object>> node_wrappers;
     uint32_t next_attr_id{1U};
     std::unordered_map<uint32_t, std::unique_ptr<attr_state>> attr_states;
@@ -91,7 +123,10 @@
         document_named_form_indexes;
     uint64_t element_id_index_generation{
         std::numeric_limits<uint64_t>::max()};
-    std::vector<std::pair<std::string, std::string>> document_cookies;
+    static constexpr size_t maximum_cookie_count = 256U;
+    static constexpr size_t maximum_cookie_bytes = 4096U;
+    std::shared_ptr<shared_cookie_jar> cookie_jar =
+        std::make_shared<shared_cookie_jar>();
     std::unordered_map<uint64_t, v8::Global<v8::Object>> canvas_contexts;
     std::unordered_map<uint64_t, std::unique_ptr<canvas_state>> canvas_states;
     std::unordered_map<uint32_t, v8::Global<v8::Object>> frame_documents;
@@ -104,6 +139,11 @@
     std::unordered_map<const dom_node*, std::string> frame_base_addresses;
     session_storage_state outer_session_storage;
     session_storage_state outer_local_storage;
+    std::string outer_storage_origin;
+    std::unordered_map<std::string, session_storage_state>
+        outer_session_storage_by_origin;
+    std::unordered_map<std::string, session_storage_state>
+        outer_local_storage_by_origin;
     std::unordered_map<uint32_t, std::unique_ptr<session_storage_state>> frame_session_storage;
     std::vector<document_start_script> current_document_start_scripts;
     std::unordered_map<uint32_t, v8::Global<v8::Function>> frame_load_listeners;
@@ -123,7 +163,17 @@
     std::vector<event_listener_registration> resize_listeners;
     std::vector<std::unique_ptr<media_query_list_state>> media_query_lists;
     std::vector<timer_task> timers;
+    static constexpr size_t maximum_pending_window_messages = 256U;
+    static constexpr size_t maximum_pending_window_message_bytes =
+        16U * 1024U * 1024U;
     std::deque<pending_window_message> pending_window_messages;
+    size_t pending_window_message_bytes{};
+    static constexpr size_t maximum_message_port_bindings = 4096U;
+    static constexpr size_t maximum_message_port_queue_messages = 256U;
+    static constexpr size_t maximum_message_port_queue_bytes = 16U * 1024U * 1024U;
+    std::shared_ptr<message_port_runtime_wake> message_port_wake =
+        std::make_shared<message_port_runtime_wake>();
+    std::vector<std::unique_ptr<message_port_binding>> message_port_bindings;
     std::vector<pending_dialog_close_event> pending_dialog_close_events;
     std::vector<pending_programmatic_scroll_event>
         pending_programmatic_scroll_events;
@@ -132,6 +182,14 @@
     std::vector<connected_resource_task> connected_resources;
     std::mutex host_request_mutex;
     std::deque<std::string> host_requests;
+    std::deque<std::unique_ptr<native_host_request>> typed_host_requests;
+    struct host_promise_target {
+        std::string operation;
+        uint32_t target_node_id{};
+        v8::Global<v8::Context> context;
+        v8::Global<v8::Promise::Resolver> resolver;
+    };
+    std::unordered_map<uint64_t, host_promise_target> host_promise_targets;
     std::function<void()> host_request_available;
     std::function<void()> interop_callback_available;
     v8_dom_runtime::interop_callback_sink_v3 interop_callback_sink;
@@ -140,6 +198,9 @@
     std::mutex console_message_mutex;
     std::deque<std::string> console_messages;
     uint64_t next_host_request_id{0};
+    dom_node* fullscreen_element{nullptr};
+    bool document_fullscreen{false};
+    std::chrono::steady_clock::time_point last_user_activation{};
     std::atomic<bool> file_service_enabled{false};
     std::atomic<uint32_t> native_media_policy{0};
     std::mutex file_requests_mutex;
@@ -161,18 +222,64 @@
     bool prefer_timer_task{true};
     std::atomic<bool> work_metrics_enabled{false};
     v8_dom_runtime::work_metrics work{};
-    uint32_t next_object_url_id{1};
+    static constexpr size_t maximum_shared_object_urls = 4096U;
+    static constexpr size_t maximum_shared_object_url_bytes = 256U * 1024U * 1024U;
+    static constexpr size_t maximum_shared_object_url_payload_bytes = 64U * 1024U * 1024U;
+    inline static std::atomic<uint64_t> next_object_url_id{1U};
+    std::shared_ptr<shared_object_url_registry> object_url_registry =
+        std::make_shared<shared_object_url_registry>();
+    std::unordered_set<std::string> owned_object_urls;
+    std::string inherited_worker_origin;
     std::unordered_map<std::string, std::string> object_urls;
     // Object URLs serve two browser contracts. Frame/image navigation consumes
     // the authored Blob text, while an <a download> activation needs the exact
     // byte payload and MIME type. Keep both representations under the same URL.
     std::unordered_map<std::string, std::string> object_url_download_payloads;
-    struct binary_object_url {std::string bytes,origin;};
-    std::unordered_map<std::string,binary_object_url> object_url_binary;
     // Canvas.toBlob() intentionally carries no encoded bytes. Preserve its
     // retained canvas identity across URL.createObjectURL() so an anchor
     // download can ask the desktop compositor for the exact PNG pixels.
     std::unordered_map<std::string, uint32_t> object_url_canvas_node_ids;
+
+    std::string current_security_origin() const
+    {
+        return inherited_worker_origin.empty()
+            ? resource_origin(current_base_address())
+            : inherited_worker_origin;
+    }
+
+    std::optional<binary_object_url> find_binary_object_url(
+        const std::string& url, const std::string& origin) const
+    {
+        std::lock_guard lock(object_url_registry->mutex);
+        const auto found = object_url_registry->binary.find(url);
+        if (found == object_url_registry->binary.end()
+            || found->second.origin != origin) return std::nullopt;
+        return found->second;
+    }
+
+    bool revoke_binary_object_url(const std::string& url, const std::string& origin)
+    {
+        std::lock_guard lock(object_url_registry->mutex);
+        const auto found = object_url_registry->binary.find(url);
+        if (found == object_url_registry->binary.end()
+            || found->second.origin != origin) return false;
+        object_url_registry->binary_bytes -= found->second.bytes.size();
+        object_url_registry->binary.erase(found);
+        owned_object_urls.erase(url);
+        return true;
+    }
+
+    void release_owned_binary_object_urls()
+    {
+        std::lock_guard lock(object_url_registry->mutex);
+        for (const auto& url : owned_object_urls) {
+            const auto found = object_url_registry->binary.find(url);
+            if (found == object_url_registry->binary.end()) continue;
+            object_url_registry->binary_bytes -= found->second.bytes.size();
+            object_url_registry->binary.erase(found);
+        }
+        owned_object_urls.clear();
+    }
     std::vector<dom_node*> pending_frame_hydrations;
     std::unordered_map<uint32_t, frame_hydration_state> frame_hydration_states;
     bool prefer_frame_hydration_task{true};
@@ -206,7 +313,7 @@
     static constexpr size_t maximum_compiled_css_selector_lists = 512U;
     mutable std::unordered_map<
         std::string,
-        compiled_css_selector_list,
+        std::shared_ptr<const compiled_css_selector_list>,
         transparent_string_hash,
         transparent_string_equal>
         compiled_css_selector_lists;
@@ -372,9 +479,14 @@
     uint64_t current_input_sequence{0};
     uint32_t pending_text_input_target_id{0U};
     bool pending_text_input_from_keydown{false};
+    bool dispatching_user_input{false};
+    bool executing_legacy_clipboard_command{false};
     dom_node* active_element{nullptr};
     bool focus_visible{false};
     bool document_visible{true};
+    bool document_focused{true};
+    bool terminal_pagehide_dispatched{false};
+    bool window_close_lifecycle_dispatching{false};
     double last_animation_frame_timestamp_ms{0};
     double caret_blink_epoch_ms{0};
     std::string frame_last_error_value;

@@ -1,0 +1,22 @@
+name: Installed SDK export contracts
+on:
+  pull_request:
+    paths:
+      - 'src/WebScene.Sdk/cmake/WebSceneConfig.cmake'
+      - 'eng/sdk/test-installed-runtime-crypto-link.py'
+      - '.github/workflows/sdk-export-contracts.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: sdk-export-contracts-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  runtime-crypto-link:
+    name: Runtime crypto link
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Link installed Runtime crypto closure
+        run: python3 eng/sdk/test-installed-runtime-crypto-link.py

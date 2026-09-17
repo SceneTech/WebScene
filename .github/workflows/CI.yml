@@ -25,9 +25,17 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
     - uses: actions/checkout@v4
+    - name: Repair incomplete .NET install
+      shell: bash
+      env:
+        DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
+      run: python3 scripts/prepare_dotnet_install.py "$DOTNET_INSTALL_DIR"
     - name: Setup .NET
       uses: actions/setup-dotnet@v5
+      env:
+        DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
       with:
+        dotnet-version: 8.0.x
         global-json-file: global.json
     - name: Setup Node
       uses: actions/setup-node@v4
@@ -73,6 +81,8 @@ jobs:
       run: python -m unittest discover -s eng/graphics/tests -v
     - name: Graphics reference workload and trace checks
       run: node --test tests/GraphicsCompatibility/reference-tests.mjs
+    - name: Runtime browser compatibility checks
+      run: node --test tests/RuntimeCompatibility/*.test.mjs
     - name: Build Release
       run: dotnet build WebScene.sln -c Release --no-restore
     - name: Portable Core contracts
@@ -143,8 +153,16 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
     - uses: actions/checkout@v4
+    - name: Repair incomplete .NET install
+      shell: bash
+      env:
+        DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
+      run: python3 scripts/prepare_dotnet_install.py "$DOTNET_INSTALL_DIR"
     - uses: actions/setup-dotnet@v5
+      env:
+        DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
       with:
+        dotnet-version: 8.0.x
         global-json-file: global.json
     - name: Setup Python
       uses: actions/setup-python@v5

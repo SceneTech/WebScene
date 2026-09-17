@@ -727,6 +727,68 @@ typedef size_t (*webscene_resource_load_callback_v3)(
     char* destination,
     size_t destination_capacity);
 
+typedef enum webscene_fetch_credentials {
+    WEBSCENE_FETCH_CREDENTIALS_OMIT = 0,
+    WEBSCENE_FETCH_CREDENTIALS_SAME_ORIGIN = 1,
+    WEBSCENE_FETCH_CREDENTIALS_INCLUDE = 2
+} webscene_fetch_credentials;
+
+typedef struct webscene_resource_header_v4 {
+    uint32_t struct_size;
+    const char* name;
+    size_t name_length;
+    const char* value;
+    size_t value_length;
+} webscene_resource_header_v4;
+
+/* Response metadata is borrowed only for the callback invocation. The engine
+ * copies accepted fields before returning to the host. Header count and total
+ * bytes are bounded; Set-Cookie is consumed by the cookie jar and is never
+ * exposed through the JavaScript Headers object. */
+typedef struct webscene_resource_response_v4 {
+    uint32_t struct_size;
+    uint32_t status;
+    const char* status_text;
+    size_t status_text_length;
+    const char* final_url;
+    size_t final_url_length;
+    const webscene_resource_header_v4* headers;
+    size_t header_count;
+} webscene_resource_response_v4;
+
+typedef struct webscene_resource_request_context_v4 {
+    uint32_t struct_size;
+    uint32_t initiator;
+    const char* origin;
+    size_t origin_length;
+    const char* referrer;
+    size_t referrer_length;
+    uint32_t mode;
+    uint32_t destination;
+    const char* method;
+    size_t method_length;
+    const char* body;
+    size_t body_length;
+    const char* content_type;
+    size_t content_type_length;
+    uint32_t credentials;
+    const char* cookie;
+    size_t cookie_length;
+} webscene_resource_request_context_v4;
+
+typedef size_t (*webscene_resource_load_callback_v4)(
+    void* user_data,
+    uint32_t kind,
+    const char* url,
+    size_t url_length,
+    const char* entity_tag,
+    size_t entity_tag_length,
+    int64_t last_modified_unix_seconds,
+    const webscene_resource_request_context_v4* request_context,
+    webscene_resource_response_v4* response,
+    char* destination,
+    size_t destination_capacity);
+
 /*
  * Asynchronous notification emitted after an immutable scene has been
  * published. Consumers use this edge to schedule a compositor paint; they
@@ -836,6 +898,20 @@ typedef struct webscene_engine_options {
     void* stylesheet_consumed_user_data;
     webscene_webgpu_policy_callback webgpu_policy_callback;
     void* webgpu_policy_user_data;
+    webscene_resource_load_callback_v4 resource_load_callback_v4;
+    void* resource_load_v4_user_data;
+    /*
+     * Durable browser storage is disabled unless both strings are supplied.
+     * storage_partition_key is a stable host-owned application/profile id;
+     * the runtime still partitions its files by the document's effective
+     * origin below that key. Hosts may therefore keep a random loopback port
+     * out of the profile identity without merging unrelated applications.
+     */
+    const char* storage_directory;
+    size_t storage_directory_length;
+    const char* storage_partition_key;
+    size_t storage_partition_key_length;
+    uint64_t storage_quota_bytes;
 } webscene_engine_options;
 
 enum {
@@ -1213,6 +1289,24 @@ WEBSCENE_API uint8_t webscene_engine_request_low_memory(webscene_engine* engine)
  * worker; returning visible before the deadline cancels it.
  */
 WEBSCENE_API uint8_t webscene_engine_set_visible(webscene_engine* engine, uint8_t visible);
+/* Publishes native key-window focus to document.hasFocus() and standard
+ * top-level focus/blur events. Repeated values are coalesced. */
+WEBSCENE_API uint8_t webscene_engine_set_window_focused_v1(
+    webscene_engine* engine, uint8_t focused);
+/* Synchronizes fullscreen changes initiated by native window controls. Script
+ * initiated transitions use the typed request/completion path. */
+WEBSCENE_API uint8_t webscene_engine_set_window_fullscreen_v1(
+    webscene_engine* engine, uint8_t fullscreen);
+/* Synchronously asks the active top-level realm whether a native window close
+ * may proceed. A veto leaves the document active. An allow decision dispatches
+ * pagehide once before returning and is coalesced until the next navigation. */
+enum {
+    WEBSCENE_WINDOW_CLOSE_ERROR_V1 = 0,
+    WEBSCENE_WINDOW_CLOSE_ALLOW_V1 = 1,
+    WEBSCENE_WINDOW_CLOSE_VETO_V1 = 2
+};
+WEBSCENE_API uint32_t webscene_engine_request_window_close_v1(
+    webscene_engine* engine);
 /*
  * Updates the host's effective color preference. The worker re-evaluates CSS
  * media rules and subsequent Window.matchMedia snapshots against this value.
@@ -1366,10 +1460,61 @@ WEBSCENE_API uint8_t webscene_engine_complete_file_request_v1(webscene_engine* e
     uint64_t request_id, uint32_t status, const webscene_file_data_v1* files,
     size_t file_count, const char* error_message);
 
+/* Typed native desktop request ABI. Request memory is immutable and remains
+ * valid until release. Byte payloads are capped at 16 MiB, strings are UTF-8,
+ * and at most 16 completion-bearing operations may be pending per document. */
+enum {
+    WEBSCENE_HOST_REQUEST_OPEN_EXTERNAL_URL_V1 = 1,
+    WEBSCENE_HOST_REQUEST_CLIPBOARD_READ_V1 = 2,
+    WEBSCENE_HOST_REQUEST_CLIPBOARD_WRITE_V1 = 3,
+    WEBSCENE_HOST_REQUEST_WINDOW_FOCUS_V1 = 4,
+    WEBSCENE_HOST_REQUEST_WINDOW_CLOSE_V1 = 5,
+    WEBSCENE_HOST_REQUEST_WINDOW_RELOAD_V1 = 6,
+    WEBSCENE_HOST_REQUEST_FULLSCREEN_ENTER_V1 = 7,
+    WEBSCENE_HOST_REQUEST_FULLSCREEN_EXIT_V1 = 8
+};
+enum {
+    WEBSCENE_HOST_REQUEST_CLIPBOARD_REPLACE_V1 = 1U << 0U
+};
+typedef struct webscene_host_request_v1 {
+    uint32_t struct_size, version;
+    uint64_t request_id;
+    uint32_t kind, flags;
+    uint64_t target_node_id;
+    const char* content_type;
+    const uint8_t* bytes;
+    size_t byte_count;
+    const char* url;
+} webscene_host_request_v1;
+WEBSCENE_API const webscene_host_request_v1*
+webscene_engine_take_typed_host_request_v1(webscene_engine* engine);
+WEBSCENE_API void webscene_host_request_release_v1(
+    const webscene_host_request_v1* request);
+
+/* JSON compatibility queue retained for older host integrations and unrelated
+ * application-defined messages. New desktop capabilities use the typed ABI. */
 WEBSCENE_API size_t webscene_engine_take_host_request(
     webscene_engine* engine,
     char* destination,
     size_t destination_capacity);
+/* Consumes the oldest JSON compatibility request without allocating its
+ * payload. Hosts use this after rejecting an oversized item so one malformed
+ * request cannot permanently block the FIFO. */
+WEBSCENE_API uint8_t webscene_engine_discard_host_request_v1(
+    webscene_engine* engine);
+/* Completes a request carrying a numeric requestId from take_host_request.
+ * status: 0 completed, 1 cancelled, 2 denied/failed. Inputs are copied before
+ * return. Clipboard data is limited to 16 MiB, content_type to 256 bytes and
+ * error_message to 4096 bytes. Completion is delivered on the engine worker;
+ * stale request IDs are safely ignored there. */
+WEBSCENE_API uint8_t webscene_engine_complete_host_request_v1(
+    webscene_engine* engine,
+    uint64_t request_id,
+    uint32_t status,
+    const char* content_type,
+    const uint8_t* bytes,
+    size_t byte_count,
+    const char* error_message);
 /*
  * Removes one V8 console entry. The UTF-8 payload is `<level>\n<message>`;
  * querying with a null/short destination reports the required byte count

@@ -141,43 +141,34 @@
         info.GetReturnValue().Set(v8::Number::New(info.GetIsolate(), now));
     }
 
-    static void performance_get_entries_by_name(const v8::FunctionCallbackInfo<v8::Value>& info)
+    static double performance_time_origin_milliseconds()
     {
-        current(info.GetIsolate())->record_feature(
-            "web-api",
-            "Performance.getEntriesByName",
-            "unsupported",
-            "performance entries are not retained",
-            "web-api-binding");
-        // The probe does not retain a Performance Timeline yet. Returning an
-        // empty sequence is the browser-correct result when no matching entry
-        // has been recorded and lets consumers feature-test marks safely.
-        info.GetReturnValue().Set(v8::Array::New(info.GetIsolate()));
+        const auto wall = std::chrono::duration<double, std::milli>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        const auto monotonic = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        return wall - monotonic;
     }
 
-    static void performance_entry(const v8::FunctionCallbackInfo<v8::Value>& info)
+    void install_performance_clock(
+        v8::Local<v8::Context> local_context,
+        v8::Local<v8::Object> global)
     {
-        current(info.GetIsolate())->record_feature(
-            "web-api",
-            "Performance.mark/measure",
-            "partially-supported",
-            "entry-shaped return values without Performance Timeline retention",
-            "web-api-binding");
-        auto result = v8::Object::New(info.GetIsolate());
-        auto local_context = info.GetIsolate()->GetCurrentContext();
-        result->Set(
+        auto performance = v8::Object::New(isolate);
+        performance->Set(
             local_context,
-            js_string(info.GetIsolate(), "name"),
-            info.Length() > 0 ? info[0]
-                : v8::Local<v8::Value>(js_string(info.GetIsolate(), ""))).Check();
-        result->Set(
+            js_string(isolate, "now"),
+            v8::Function::New(local_context, performance_now).ToLocalChecked()).Check();
+        performance->DefineOwnProperty(
             local_context,
-            js_string(info.GetIsolate(), "startTime"),
-            v8::Number::New(info.GetIsolate(), std::chrono::duration<double, std::milli>(
-                std::chrono::steady_clock::now().time_since_epoch()).count())).Check();
-        result->Set(local_context, js_string(info.GetIsolate(), "duration"),
-            v8::Number::New(info.GetIsolate(), 0)).Check();
-        info.GetReturnValue().Set(result);
+            js_string(isolate, "timeOrigin"),
+            v8::Number::New(isolate, performance_time_origin_milliseconds()),
+            static_cast<v8::PropertyAttribute>(
+                v8::ReadOnly | v8::DontEnum | v8::DontDelete)).Check();
+        global->Set(
+            local_context,
+            js_string(isolate, "performance"),
+            performance).Check();
     }
 
     static void image_constructor(const v8::FunctionCallbackInfo<v8::Value>& info)
@@ -230,6 +221,53 @@
         if (target_context.IsEmpty()) return;
         if (source_context.IsEmpty()) source_context = target_context;
 
+        if (self->pending_window_messages.size()
+                >= maximum_pending_window_messages
+            || self->pending_window_message_bytes
+                >= maximum_pending_window_message_bytes) {
+            throw_dom_exception(
+                info,
+                "Window message queue capacity exhausted",
+                "QuotaExceededError");
+            return;
+        }
+
+        auto target_origin = std::string("*");
+        v8::Local<v8::Value> transfer = v8::Undefined(isolate);
+        if (info.Length() > 1 && info[1]->IsObject() && !info[1]->IsArray()) {
+            v8::Local<v8::Value> target_origin_value;
+            if (!info[1].As<v8::Object>()->Get(
+                    isolate->GetCurrentContext(),
+                    js_string(isolate, "targetOrigin")).ToLocal(&target_origin_value)) {
+                return;
+            }
+            if (!target_origin_value->IsUndefined()) {
+                target_origin = to_utf8(isolate, target_origin_value);
+            }
+            if (!info[1].As<v8::Object>()->Get(
+                    isolate->GetCurrentContext(),
+                    js_string(isolate, "transfer")).ToLocal(&transfer)) {
+                return;
+            }
+        } else {
+            if (info.Length() > 1 && !info[1]->IsUndefined()) {
+                target_origin = to_utf8(isolate, info[1]);
+            }
+            if (info.Length() > 2) transfer = info[2];
+        }
+
+        clone_packet packet;
+        if (!serialize_clone(
+                info,
+                info[0],
+                transfer,
+                packet,
+                maximum_pending_window_message_bytes
+                    - self->pending_window_message_bytes)) {
+            return;
+        }
+        const auto packet_bytes = clone_packet_size(packet);
+
         const auto read_origin = [&](v8::Local<v8::Context> local_context) {
             v8::Context::Scope scope(local_context);
             v8::Local<v8::Value> location_value;
@@ -250,11 +288,10 @@
         self->pending_window_messages.push_back(pending_window_message{
             v8::Global<v8::Context>(isolate, target_context),
             v8::Global<v8::Context>(isolate, source_context),
-            v8::Global<v8::Value>(isolate, info[0]),
-            info.Length() > 1 && !info[1]->IsUndefined()
-                ? to_utf8(isolate, info[1])
-                : std::string("*"),
+            std::move(packet),
+            std::move(target_origin),
             read_origin(source_context)});
+        self->pending_window_message_bytes += packet_bytes;
     }
 
     static void get_window_frames(
@@ -306,13 +343,21 @@
     static void window_focus(const v8::FunctionCallbackInfo<v8::Value>& info)
     {
         auto* self = current(info.GetIsolate());
-        if (self != nullptr) {
-            self->record_feature(
-                "web-api",
-                "Window.focus",
-                "supported",
-                {},
-                "web-api-binding");
+        if (self == nullptr) return;
+        auto local_context = info.GetIsolate()->GetCurrentContext();
+        self->record_feature(
+            "web-api",
+            "Window.focus",
+            "supported",
+            {},
+            "web-api-binding");
+        // A child browsing context may focus its own active element but must
+        // not activate the top-level operating-system window.
+        if (local_context != self->context.Get(info.GetIsolate())) return;
+        if (!self->queue_top_level_window_action(
+                local_context, WEBSCENE_HOST_REQUEST_WINDOW_FOCUS_V1)) {
+            info.GetIsolate()->ThrowException(v8::Exception::Error(
+                js_string(info.GetIsolate(), "WebScene rejected the focus-window request")));
         }
     }
 
@@ -1331,6 +1376,84 @@
         info.GetReturnValue().Set(result);
     }
 
+    uint32_t request_window_close_in_current_realm(
+        v8::Local<v8::Context> local_context)
+    {
+        if (local_context.IsEmpty()) {
+            last_error = "Native window close has no active top-level realm";
+            return WEBSCENE_WINDOW_CLOSE_ERROR_V1;
+        }
+        if (terminal_pagehide_dispatched) {
+            return WEBSCENE_WINDOW_CLOSE_ALLOW_V1;
+        }
+
+        auto target = local_context->Global();
+        v8::Local<v8::Value> dispatcher;
+        if (!target->Get(local_context, js_string(isolate, "dispatchEvent"))
+                .ToLocal(&dispatcher)
+            || !dispatcher->IsFunction()) {
+            last_error = "Native window close dispatcher is unavailable";
+            return WEBSCENE_WINDOW_CLOSE_ERROR_V1;
+        }
+
+        const auto dispatch = [&](const char* type, bool cancelable,
+                                  bool include_persisted,
+                                  v8::Local<v8::Value>& result) {
+            v8::TryCatch try_catch(isolate);
+            auto event = create_event_instance(local_context);
+            event->Set(local_context, js_string(isolate, "type"),
+                js_string(isolate, type)).Check();
+            event->Set(local_context, js_string(isolate, "bubbles"),
+                v8::False(isolate)).Check();
+            event->Set(local_context, js_string(isolate, "cancelable"),
+                v8::Boolean::New(isolate, cancelable)).Check();
+            if (include_persisted) {
+                event->Set(local_context, js_string(isolate, "persisted"),
+                    v8::False(isolate)).Check();
+            }
+            v8::Local<v8::Value> arguments[] = {event};
+            if (dispatcher.As<v8::Function>()->Call(
+                    local_context, target, 1, arguments).ToLocal(&result)) {
+                return true;
+            }
+            last_error = std::string("Native window ") + type
+                + " dispatch failed: "
+                + describe_reported_exception(try_catch, local_context);
+            ++frame_script_error_count;
+            return false;
+        };
+
+        v8::Local<v8::Value> beforeunload_result;
+        if (!dispatch("beforeunload", true, false, beforeunload_result)) {
+            return WEBSCENE_WINDOW_CLOSE_ERROR_V1;
+        }
+        perform_microtask_checkpoint();
+        if (beforeunload_result->IsFalse()) {
+            return WEBSCENE_WINDOW_CLOSE_VETO_V1;
+        }
+
+        v8::Local<v8::Value> pagehide_result;
+        if (!dispatch("pagehide", false, true, pagehide_result)) {
+            return WEBSCENE_WINDOW_CLOSE_ERROR_V1;
+        }
+        perform_microtask_checkpoint();
+        terminal_pagehide_dispatched = true;
+        return WEBSCENE_WINDOW_CLOSE_ALLOW_V1;
+    }
+
+    uint32_t request_window_close()
+    {
+        auto isolate_locker = lock_shared_isolate();
+        v8::Isolate::Scope isolate_scope(isolate);
+        v8::HandleScope handle_scope(isolate);
+        auto local_context = context.Get(isolate);
+        if (local_context.IsEmpty()) {
+            return request_window_close_in_current_realm(local_context);
+        }
+        v8::Context::Scope context_scope(local_context);
+        return request_window_close_in_current_realm(local_context);
+    }
+
     bool set_visible(bool visible)
     {
         if (document_visible == visible) return true;
@@ -1380,10 +1503,96 @@
         return true;
     }
 
+    bool set_focused(bool focused)
+    {
+        if (document_focused == focused) return true;
+        document_focused = focused;
+        auto isolate_locker = lock_shared_isolate();
+        v8::Isolate::Scope isolate_scope(isolate);
+        v8::HandleScope handle_scope(isolate);
+        auto local_context = context.Get(isolate);
+        if (local_context.IsEmpty()) return true;
+        v8::Context::Scope context_scope(local_context);
+        auto target = local_context->Global();
+        auto event = create_event_instance(local_context);
+        event->Set(
+            local_context,
+            js_string(isolate, "type"),
+            js_string(isolate, focused ? "focus" : "blur")).Check();
+        event->Set(
+            local_context,
+            js_string(isolate, "bubbles"),
+            v8::False(isolate)).Check();
+        event->Set(
+            local_context,
+            js_string(isolate, "cancelable"),
+            v8::False(isolate)).Check();
+        v8::Local<v8::Value> dispatcher;
+        if (!target->Get(
+                local_context,
+                js_string(isolate, "dispatchEvent")).ToLocal(&dispatcher)
+            || !dispatcher->IsFunction()) {
+            last_error = "Window focus dispatcher is unavailable";
+            return false;
+        }
+        v8::TryCatch try_catch(isolate);
+        v8::Local<v8::Value> arguments[] = {event};
+        if (dispatcher.As<v8::Function>()->Call(
+                local_context, target, 1, arguments).IsEmpty()) {
+            last_error = "Window focus dispatch failed: "
+                + describe_reported_exception(try_catch, local_context);
+            ++frame_script_error_count;
+            return false;
+        }
+        perform_microtask_checkpoint();
+        return true;
+    }
+
+    bool set_fullscreen(bool fullscreen)
+    {
+        if (document_fullscreen == fullscreen) return true;
+        document_fullscreen = fullscreen;
+        auto isolate_locker = lock_shared_isolate();
+        v8::Isolate::Scope isolate_scope(isolate);
+        v8::HandleScope handle_scope(isolate);
+        auto local_context = context.Get(isolate);
+        if (local_context.IsEmpty()) return true;
+        v8::Context::Scope context_scope(local_context);
+        fullscreen_element = fullscreen ? &document.body() : nullptr;
+        auto target = document_object.Get(isolate);
+        if (target.IsEmpty()) return true;
+        auto event = create_event_instance(local_context);
+        event->Set(local_context, js_string(isolate, "type"),
+            js_string(isolate, "fullscreenchange")).Check();
+        event->Set(local_context, js_string(isolate, "bubbles"),
+            v8::True(isolate)).Check();
+        event->Set(local_context, js_string(isolate, "cancelable"),
+            v8::False(isolate)).Check();
+        v8::Local<v8::Value> dispatcher;
+        if (!target->Get(local_context, js_string(isolate, "dispatchEvent"))
+                .ToLocal(&dispatcher)
+            || !dispatcher->IsFunction()) {
+            last_error = "Document fullscreen dispatcher is unavailable";
+            return false;
+        }
+        v8::TryCatch try_catch(isolate);
+        v8::Local<v8::Value> arguments[] = {event};
+        if (dispatcher.As<v8::Function>()->Call(
+                local_context, target, 1, arguments).IsEmpty()) {
+            last_error = "Document fullscreen dispatch failed: "
+                + describe_reported_exception(try_catch, local_context);
+            ++frame_script_error_count;
+            return false;
+        }
+        perform_microtask_checkpoint();
+        return true;
+    }
+
     bool dispatch_transition_events()
     {
         auto events = document.take_transition_events();
-        if (events.empty()) return true;
+        auto animation_events = document.take_animation_events();
+        if (events.empty() && animation_events.empty()) return true;
         auto isolate_locker = lock_shared_isolate();
         v8::Isolate::Scope isolate_scope(isolate);
         v8::HandleScope handle_scope(isolate);
@@ -1415,6 +1624,36 @@
             if (dispatcher.As<v8::Function>()->Call(
                     local_context, target, 1, arguments).IsEmpty()) {
                 last_error = "CSS transition-event dispatch failed: "
+                    + describe_reported_exception(try_catch, local_context);
+                ++frame_script_error_count;
+                return false;
+            }
+        }
+        for (const auto& animation : animation_events) {
+            auto* node = document.find_by_native_id(animation.node_id);
+            if (node == nullptr) continue;
+            auto target = wrap_node(*node);
+            auto event = v8::Object::New(isolate);
+            event->Set(local_context, js_string(isolate, "type"),
+                js_string(isolate, animation.type.c_str())).Check();
+            event->Set(local_context, js_string(isolate, "bubbles"),
+                v8::True(isolate)).Check();
+            event->Set(local_context, js_string(isolate, "cancelable"),
+                v8::False(isolate)).Check();
+            event->Set(local_context, js_string(isolate, "animationName"),
+                js_string(isolate, animation.animation_name.c_str())).Check();
+            event->Set(local_context, js_string(isolate, "elapsedTime"),
+                v8::Number::New(isolate, animation.elapsed_time_seconds)).Check();
+            event->Set(local_context, js_string(isolate, "pseudoElement"),
+                js_string(isolate, "")).Check();
+            v8::Local<v8::Value> dispatcher;
+            if (!target->Get(local_context, js_string(isolate, "dispatchEvent"))
+                    .ToLocal(&dispatcher)
+                || !dispatcher->IsFunction()) continue;
+            v8::Local<v8::Value> arguments[] = {event};
+            if (dispatcher.As<v8::Function>()->Call(
+                    local_context, target, 1, arguments).IsEmpty()) {
+                last_error = "CSS animation-event dispatch failed: "
                     + describe_reported_exception(try_catch, local_context);
                 ++frame_script_error_count;
                 return false;
@@ -1917,66 +2156,146 @@
 
     static void write_clipboard(const v8::FunctionCallbackInfo<v8::Value>& info)
     {
+        constexpr size_t maximum_clipboard_bytes = 16U * 1024U * 1024U;
         auto* self = current(info.GetIsolate());
         auto local_context = info.GetIsolate()->GetCurrentContext();
+        auto resolver = v8::Promise::Resolver::New(local_context).ToLocalChecked();
+        info.GetReturnValue().Set(resolver->GetPromise());
+        const auto reject = [&](const char* message, const char* name) {
+            auto error = v8::Exception::Error(js_string(info.GetIsolate(), message));
+            if (error->IsObject()) {
+                error.As<v8::Object>()->Set(
+                    local_context,
+                    js_string(info.GetIsolate(), "name"),
+                    js_string(info.GetIsolate(), name)).Check();
+            }
+            resolver->Reject(local_context, error).Check();
+        };
         if (self == nullptr || info.Length() < 2 || !info[1]->IsObject()) {
-            info.GetReturnValue().Set(v8::False(info.GetIsolate()));
+            reject("Clipboard writes require an active document", "NotAllowedError");
             return;
         }
         const auto content_type = to_utf8(info.GetIsolate(), info[0]);
-        if (content_type.empty()) {
-            info.GetReturnValue().Set(v8::False(info.GetIsolate()));
+        if (content_type != "text/plain" && content_type != "text/html"
+            && content_type != "image/png" && content_type != "image/jpeg"
+            && content_type != "image/tiff") {
+            reject("The requested clipboard type is unsupported", "NotSupportedError");
+            return;
+        }
+        constexpr size_t maximum_pending_clipboard_operations = 16U;
+        if (self->host_promise_targets.size()
+            >= maximum_pending_clipboard_operations) {
+            reject("Too many pending clipboard operations", "QuotaExceededError");
             return;
         }
         auto payload = info[1].As<v8::Object>();
-        auto request = v8::Object::New(info.GetIsolate());
-        request->Set(
-            local_context,
-            js_string(info.GetIsolate(), "kind"),
-            js_string(info.GetIsolate(), "writeClipboard")).Check();
-        request->Set(
-            local_context,
-            js_string(info.GetIsolate(), "contentType"),
-            js_string(info.GetIsolate(), content_type.c_str())).Check();
+        const auto request_id = ++self->next_host_request_id;
+        auto request = std::make_unique<native_host_request>();
+        request->view.request_id = request_id;
+        request->view.kind = WEBSCENE_HOST_REQUEST_CLIPBOARD_WRITE_V1;
+        request->view.flags = info.Length() > 2 && info[2]->BooleanValue(info.GetIsolate())
+            ? static_cast<uint32_t>(WEBSCENE_HOST_REQUEST_CLIPBOARD_REPLACE_V1)
+            : 0U;
+        request->content_type = content_type;
 
         v8::Local<v8::Value> canvas_node_id;
         if (payload->Get(
                 local_context,
                 js_string(info.GetIsolate(), "_canvasNodeId")).ToLocal(&canvas_node_id)
             && canvas_node_id->IsUint32()) {
-            request->Set(
-                local_context,
-                js_string(info.GetIsolate(), "canvasNodeId"),
-                canvas_node_id).Check();
+            request->view.target_node_id =
+                canvas_node_id.As<v8::Uint32>()->Value();
         } else {
             v8::Local<v8::Value> bytes_value;
             if (!payload->Get(
                     local_context,
                     js_string(info.GetIsolate(), "_bytes")).ToLocal(&bytes_value)
                 || !bytes_value->IsArrayBufferView()) {
-                info.GetReturnValue().Set(v8::False(info.GetIsolate()));
+                reject("Clipboard data must expose immutable bytes", "DataError");
                 return;
             }
             auto view = bytes_value.As<v8::ArrayBufferView>();
+            if (view->ByteLength() > maximum_clipboard_bytes) {
+                reject("Clipboard data exceeds the 16 MiB limit", "QuotaExceededError");
+                return;
+            }
             auto backing = view->Buffer()->GetBackingStore();
             const auto* bytes = static_cast<const uint8_t*>(backing->Data())
                 + view->ByteOffset();
-            const auto data_url = "data:" + content_type + ";base64,"
-                + base64_encode_bytes(bytes, view->ByteLength());
-            request->Set(
-                local_context,
-                js_string(info.GetIsolate(), "url"),
-                js_string(info.GetIsolate(), data_url.c_str())).Check();
+            if (view->ByteLength() != 0U)
+                request->bytes.assign(bytes, bytes + view->ByteLength());
         }
-        info.GetReturnValue().Set(v8::Boolean::New(
-            info.GetIsolate(), self->enqueue_host_request(local_context, request)));
+        host_promise_target target;
+        target.operation = "writeClipboard";
+        target.context.Reset(info.GetIsolate(), local_context);
+        target.resolver.Reset(info.GetIsolate(), resolver);
+        self->host_promise_targets.emplace(request_id, std::move(target));
+        if (!self->enqueue_typed_host_request(std::move(request))) {
+            self->host_promise_targets.erase(request_id);
+            reject("The host request queue is full", "QuotaExceededError");
+        }
+    }
+
+    static void read_clipboard(const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        auto local_context = info.GetIsolate()->GetCurrentContext();
+        auto resolver = v8::Promise::Resolver::New(local_context).ToLocalChecked();
+        info.GetReturnValue().Set(resolver->GetPromise());
+        const auto reject = [&](const char* message, const char* name) {
+            auto error = v8::Exception::Error(js_string(info.GetIsolate(), message));
+            if (error->IsObject()) {
+                error.As<v8::Object>()->Set(
+                    local_context,
+                    js_string(info.GetIsolate(), "name"),
+                    js_string(info.GetIsolate(), name)).Check();
+            }
+            resolver->Reject(local_context, error).Check();
+        };
+        if (self == nullptr || local_context != self->context.Get(info.GetIsolate())) {
+            reject("Clipboard reads require the active top-level document", "NotAllowedError");
+            return;
+        }
+        constexpr auto user_activation_lifetime = std::chrono::seconds(5);
+        if (self->last_user_activation.time_since_epoch().count() == 0
+            || std::chrono::steady_clock::now() - self->last_user_activation
+                > user_activation_lifetime) {
+            reject("Clipboard reads require recent native user activation", "NotAllowedError");
+            return;
+        }
+        const auto content_type = info.Length() == 0
+            ? std::string{"text/plain"}
+            : to_utf8(info.GetIsolate(), info[0]);
+        if (content_type != "text/plain" && content_type != "*/*") {
+            reject("The requested clipboard type is unsupported", "NotSupportedError");
+            return;
+        }
+        constexpr size_t maximum_pending_clipboard_reads = 16U;
+        if (self->host_promise_targets.size() >= maximum_pending_clipboard_reads) {
+            reject("Too many pending clipboard reads", "QuotaExceededError");
+            return;
+        }
+        const auto request_id = ++self->next_host_request_id;
+        auto request = std::make_unique<native_host_request>();
+        request->view.request_id = request_id;
+        request->view.kind = WEBSCENE_HOST_REQUEST_CLIPBOARD_READ_V1;
+        request->content_type = content_type;
+        host_promise_target target;
+        target.operation = "readClipboard";
+        target.context.Reset(info.GetIsolate(), local_context);
+        target.resolver.Reset(info.GetIsolate(), resolver);
+        self->host_promise_targets.emplace(request_id, std::move(target));
+        if (!self->enqueue_typed_host_request(std::move(request))) {
+            self->host_promise_targets.erase(request_id);
+            reject("The host request queue is full", "QuotaExceededError");
+        }
     }
 
     static void revoke_object_url(const v8::FunctionCallbackInfo<v8::Value>& info) {
         auto* self=current(info.GetIsolate());if(!self||!info.Length())return;
-        auto url=to_utf8(info.GetIsolate(),info[0]);auto found=self->object_url_binary.find(url);
-        if(found!=self->object_url_binary.end()&&found->second.origin==resource_origin(self->current_base_address())){
-            self->object_url_file_data.erase(url);self->object_url_binary.erase(found);self->object_urls.erase(url);self->object_url_download_payloads.erase(url);self->object_url_canvas_node_ids.erase(url);
+        auto url=to_utf8(info.GetIsolate(),info[0]);
+        if(self->revoke_binary_object_url(url,self->current_security_origin())){
+            self->object_url_file_data.erase(url);self->object_urls.erase(url);self->object_url_download_payloads.erase(url);self->object_url_canvas_node_ids.erase(url);
         }
     }
     static void create_object_url(const v8::FunctionCallbackInfo<v8::Value>& info)
@@ -2034,10 +2353,33 @@
                     + ";base64," + base64_encode_bytes(bytes, view->ByteLength());
             }
         }
-        const auto url = "blob:webscene-native/" + std::to_string(self->next_object_url_id++);
+        std::string url;
+        {
+            std::lock_guard lock(self->object_url_registry->mutex);
+            if (binary_payload.size() > maximum_shared_object_url_payload_bytes
+                || self->object_url_registry->binary.size() >= maximum_shared_object_urls
+                || binary_payload.size() > maximum_shared_object_url_bytes
+                    - self->object_url_registry->binary_bytes) {
+                throw_dom_exception(
+                    info,
+                    "Object URL registry capacity exhausted",
+                    "QuotaExceededError");
+                return;
+            }
+            url = "blob:webscene-native/"
+                + std::to_string(next_object_url_id.fetch_add(
+                    1U,
+                    std::memory_order_relaxed));
+            self->object_url_registry->binary_bytes += binary_payload.size();
+            self->object_url_registry->binary.emplace(
+                url,
+                binary_object_url{
+                    std::move(binary_payload),
+                    self->current_security_origin()});
+            self->owned_object_urls.insert(url);
+        }
         if(has_file_bytes) self->object_url_file_data[url]=std::move(file_bytes);
         self->object_urls[url] = std::move(payload);
-        self->object_url_binary[url]={std::move(binary_payload),resource_origin(self->current_base_address())};
         if (!download_payload.empty()) {
             self->object_url_download_payloads[url] = std::move(download_payload);
         }

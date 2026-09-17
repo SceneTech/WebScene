@@ -384,6 +384,410 @@ void keyboard_input(
     require(webscene_engine_enqueue(engine, &input) != 0, "keyboard input was rejected");
 }
 
+void test_dom_punctuation_keyboard_event_identity(webscene_engine* engine)
+{
+    constexpr std::array<uint32_t, 11> punctuation_codes{
+        186U, 187U, 188U, 189U, 190U, 191U,
+        192U, 219U, 220U, 221U, 222U};
+    resize(engine, 360, 180, 9780U);
+    execute_and_wait(engine, R"JS(
+      (() => {
+        document.body.innerHTML = `
+          <style>
+            body { margin: 0; background: #101010; }
+            #shortcut-target { width: 100%; height: 100%; background: #202020; }
+          </style>
+          <main id="shortcut-target" tabindex="0"></main>`;
+        const shortcutTarget = document.getElementById('shortcut-target');
+        shortcutTarget.focus();
+        globalThis.__punctuationKeyboardEvents = [];
+        globalThis.__punctuationKeyboardEventCount = 0;
+        const record = event => {
+          ++__punctuationKeyboardEventCount;
+          if (__punctuationKeyboardEvents.length >= 22) return;
+          __punctuationKeyboardEvents.push({
+            type: event.type,
+            key: event.key,
+            code: event.code,
+            keyCode: event.keyCode,
+            which: event.which,
+            ctrlKey: event.ctrlKey
+          });
+        };
+        shortcutTarget.addEventListener('keydown', event => {
+          record(event);
+          if (event.ctrlKey && event.code === 'Backquote') {
+            event.preventDefault();
+            shortcutTarget.style.backgroundColor = '#123456';
+          }
+        });
+        shortcutTarget.addEventListener('keyup', record);
+      })()
+    )JS", "dom-punctuation-keyboard-setup.js");
+    const webscene_scene_view* setup_scene = nullptr;
+    for (auto attempt = 0; attempt < 250 && setup_scene == nullptr; ++attempt) {
+        setup_scene = webscene_engine_acquire_latest_scene(engine);
+        if (setup_scene == nullptr) std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    require(setup_scene != nullptr, "DOM punctuation setup scene was not published");
+    webscene_scene_acknowledge(setup_scene);
+    webscene_scene_release(setup_scene);
+
+    webscene_engine_metrics before{};
+    webscene_engine_get_metrics(engine, &before);
+    const auto consumed_before = consumed_input_count(engine);
+    uint64_t sequence = 9781U;
+    for (const auto key_code : punctuation_codes) {
+        const auto modifiers = key_code == 192U
+            ? WEBSCENE_INPUT_MODIFIER_CONTROL
+            : 0U;
+        keyboard_input(
+            engine,
+            WEBSCENE_INPUT_KEY_DOWN,
+            key_code,
+            sequence++,
+            modifiers);
+        keyboard_input(
+            engine,
+            WEBSCENE_INPUT_KEY_UP,
+            key_code,
+            sequence++,
+            modifiers);
+    }
+    wait_for_consumed_inputs(
+        engine,
+        consumed_before + punctuation_codes.size() * 2U,
+        "DOM punctuation keyboard sequence was not consumed");
+    const auto result = evaluate(
+        engine,
+        R"JS((() => {
+          const expected = [
+            [186, ';', 'Semicolon'], [187, '=', 'Equal'],
+            [188, ',', 'Comma'], [189, '-', 'Minus'],
+            [190, '.', 'Period'], [191, '/', 'Slash'],
+            [192, '`', 'Backquote'], [219, '[', 'BracketLeft'],
+            [220, '\\', 'Backslash'], [221, ']', 'BracketRight'],
+            [222, "'", 'Quote']
+          ].flatMap(([keyCode, key, code]) => [
+            { type: 'keydown', key, code, keyCode, which: keyCode,
+              ctrlKey: keyCode === 192 },
+            { type: 'keyup', key, code, keyCode, which: keyCode,
+              ctrlKey: keyCode === 192 }
+          ]);
+          return {
+            count: __punctuationKeyboardEvents.length,
+            matches: JSON.stringify(__punctuationKeyboardEvents) === JSON.stringify(expected)
+          };
+        })())JS",
+        "dom-punctuation-keyboard-result.js");
+    require(
+        result == R"JSON({"count":22,"matches":true})JSON",
+        "DOM punctuation keyboard identity diverged: " + result);
+
+    auto published_shortcut_redraw = false;
+    for (auto attempt = 0; attempt < 250 && !published_shortcut_redraw; ++attempt) {
+        webscene_engine_metrics after{};
+        webscene_engine_get_metrics(engine, &after);
+        if (after.published_scenes > before.published_scenes) {
+            const auto* scene = webscene_engine_acquire_latest_scene(engine);
+            if (scene != nullptr) {
+                for (uint32_t index = 0; index < scene->header.command_count; ++index) {
+                    published_shortcut_redraw = published_shortcut_redraw
+                        || (scene->commands[index].rgba == 0x123456FFU);
+                }
+                webscene_scene_acknowledge(scene);
+                webscene_scene_release(scene);
+            }
+        }
+        if (!published_shortcut_redraw) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+    }
+    require(
+        published_shortcut_redraw,
+        "Ctrl+Backquote DOM mutation was consumed without publishing its redraw");
+
+    constexpr uint64_t performance_event_count = 4096U;
+    const auto performance_consumed_before = consumed_input_count(engine);
+    const auto performance_started = std::chrono::steady_clock::now();
+    for (uint64_t index = 0; index < performance_event_count; ++index) {
+        keyboard_input(
+            engine,
+            (index & 1U) == 0U ? WEBSCENE_INPUT_KEY_DOWN : WEBSCENE_INPUT_KEY_UP,
+            punctuation_codes[(index / 2U) % punctuation_codes.size()],
+            sequence++);
+    }
+    const auto performance_deadline = performance_started + std::chrono::seconds(5);
+    while (consumed_input_count(engine)
+            < performance_consumed_before + performance_event_count
+        && std::chrono::steady_clock::now() < performance_deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    const auto performance_elapsed = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - performance_started).count();
+    require(
+        consumed_input_count(engine)
+            >= performance_consumed_before + performance_event_count,
+        "punctuation keyboard dispatch exceeded its five-second bound");
+    const auto count = evaluate(
+        engine,
+        "__punctuationKeyboardEventCount",
+        "dom-punctuation-keyboard-performance-result.js");
+    require(
+        count == std::to_string(
+            punctuation_codes.size() * 2U + performance_event_count),
+        "punctuation keyboard performance run dropped DOM events: " + count);
+    std::cout << "DOM punctuation keyboard gate: events="
+              << performance_event_count << " elapsed="
+              << performance_elapsed << "s\n";
+}
+
+void test_native_shortcut_activation_focus_retarget_and_publication(
+    webscene_engine* engine)
+{
+    resize(engine, 420, 180, 9850U);
+    execute_and_wait(engine, R"JS(
+      (() => {
+        document.body.innerHTML = `
+          <style>
+            html, body { margin: 0; width: 100%; height: 100%; background: #101010; }
+            .source-input {
+              position: absolute; left: 10px; top: 10px;
+              width: 180px; height: 32px; background: #202020;
+            }
+            .command-palette {
+              display: none; position: absolute; left: 10px; top: 60px;
+              width: 240px; height: 36px; background: #123456;
+            }
+          </style>
+          <textarea id="source" class="source-input"></textarea>
+          <input id="palette" class="command-palette">`;
+        const source = document.getElementById('source');
+        const palette = document.getElementById('palette');
+        globalThis.__shortcutEvents = [];
+        globalThis.__shortcutCallbacks = 0;
+        globalThis.__shortcutActivations = 0;
+        globalThis.__shortcutClosures = 0;
+        globalThis.__pointerActivations = [];
+        const record = scope => event => {
+          ++__shortcutCallbacks;
+          if (__shortcutEvents.length >= 32) return;
+          __shortcutEvents.push({
+            scope,
+            type: event.type,
+            key: event.key,
+            code: event.code,
+            keyCode: event.keyCode,
+            which: event.which,
+            metaKey: event.metaKey,
+            shiftKey: event.shiftKey,
+            targetTag: event.target.tagName,
+            targetClass: event.target.className
+          });
+        };
+        for (const type of ['keydown', 'keyup']) {
+          source.addEventListener(type, record('source'));
+          palette.addEventListener(type, record('palette'));
+          document.addEventListener(type, record('document'));
+          window.addEventListener(type, record('window'));
+        }
+        for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) {
+          source.addEventListener(type, event => {
+            if (__pointerActivations.length >= 5) return;
+            __pointerActivations.push({
+              type: event.type,
+              targetTag: event.target.tagName,
+              targetClass: event.target.className
+            });
+          });
+        }
+        window.addEventListener('keydown', event => {
+          if (event.metaKey && event.shiftKey && event.code === 'KeyP') {
+            event.preventDefault();
+            palette.style.display = 'block';
+            palette.focus();
+            ++__shortcutActivations;
+          } else if (event.key === 'Escape' && document.activeElement === palette) {
+            event.preventDefault();
+            palette.style.display = 'none';
+            source.focus();
+            ++__shortcutClosures;
+          }
+        });
+      })()
+    )JS", "native-shortcut-activation-setup.js");
+
+    const auto pointer_consumed_before = consumed_input_count(engine);
+    pointer_move(engine, 40, 25, 9851U);
+    pointer_button(engine, WEBSCENE_INPUT_POINTER_DOWN, 40, 25, 9852U, true);
+    pointer_button(engine, WEBSCENE_INPUT_POINTER_UP, 40, 25, 9853U, false);
+    wait_for_consumed_inputs(
+        engine,
+        pointer_consumed_before + 3U,
+        "shortcut source pointer activation was not consumed");
+    const auto pointer_result = evaluate(
+        engine,
+        R"JS(({
+          active: document.activeElement?.id,
+          events: __pointerActivations
+        }))JS",
+        "native-shortcut-pointer-result.js");
+    require(
+        pointer_result == R"JSON({"active":"source","events":[{"type":"pointerdown","targetTag":"TEXTAREA","targetClass":"source-input"},{"type":"mousedown","targetTag":"TEXTAREA","targetClass":"source-input"},{"type":"pointerup","targetTag":"TEXTAREA","targetClass":"source-input"},{"type":"mouseup","targetTag":"TEXTAREA","targetClass":"source-input"},{"type":"click","targetTag":"TEXTAREA","targetClass":"source-input"}]})JSON",
+        "shortcut source pointer activation diverged: " + pointer_result);
+
+    webscene_engine_metrics before{};
+    webscene_engine_get_metrics(engine, &before);
+    const auto shortcut_consumed_before = consumed_input_count(engine);
+    constexpr auto meta = WEBSCENE_INPUT_MODIFIER_META;
+    constexpr auto shift = WEBSCENE_INPUT_MODIFIER_SHIFT;
+    uint64_t sequence = 9854U;
+    keyboard_input(engine, WEBSCENE_INPUT_KEY_DOWN, 91U, sequence++, meta);
+    keyboard_input(engine, WEBSCENE_INPUT_KEY_DOWN, 16U, sequence++, meta | shift);
+    keyboard_input(engine, WEBSCENE_INPUT_KEY_DOWN, 'P', sequence++, meta | shift);
+    keyboard_input(engine, WEBSCENE_INPUT_KEY_UP, 'P', sequence++, meta | shift);
+    keyboard_input(engine, WEBSCENE_INPUT_KEY_UP, 16U, sequence++, meta);
+    keyboard_input(engine, WEBSCENE_INPUT_KEY_UP, 91U, sequence++);
+    wait_for_consumed_inputs(
+        engine,
+        shortcut_consumed_before + 6U,
+        "Meta+Shift+P shortcut sequence was not consumed");
+
+    const auto shortcut_result = evaluate(
+        engine,
+        R"JS((() => {
+          const matches = (type, key, code, keyCode, metaKey, shiftKey,
+                           targetTag, targetClass, targetScope) => {
+            const events = __shortcutEvents
+              .filter(event => event.type === type && event.key === key);
+            const scopes = [targetScope, 'document', 'window'];
+            return events.length === scopes.length && events.every((event, index) =>
+              event.scope === scopes[index] && event.code === code &&
+              event.keyCode === keyCode && event.which === keyCode &&
+              event.metaKey === metaKey && event.shiftKey === shiftKey &&
+              event.targetTag === targetTag && event.targetClass === targetClass);
+          };
+          return {
+            active: document.activeElement?.id,
+            activations: __shortcutActivations,
+            callbacks: __shortcutCallbacks,
+            metaDown: matches('keydown', 'Meta', 'MetaLeft', 91, true, false,
+              'TEXTAREA', 'source-input', 'source'),
+            shiftDown: matches('keydown', 'Shift', 'ShiftLeft', 16, true, true,
+              'TEXTAREA', 'source-input', 'source'),
+            pDown: matches('keydown', 'P', 'KeyP', 80, true, true,
+              'TEXTAREA', 'source-input', 'source'),
+            pUp: matches('keyup', 'P', 'KeyP', 80, true, true,
+              'INPUT', 'command-palette', 'palette'),
+            shiftUp: matches('keyup', 'Shift', 'ShiftLeft', 16, true, false,
+              'INPUT', 'command-palette', 'palette'),
+            metaUp: matches('keyup', 'Meta', 'MetaLeft', 91, false, false,
+              'INPUT', 'command-palette', 'palette')
+          };
+        })())JS",
+        "native-shortcut-keyboard-result.js");
+    require(
+        shortcut_result == R"JSON({"active":"palette","activations":1,"callbacks":18,"metaDown":true,"shiftDown":true,"pDown":true,"pUp":true,"shiftUp":true,"metaUp":true})JSON",
+        "Meta+Shift+P propagation or focus retargeting diverged: "
+            + shortcut_result);
+
+    auto published_palette = false;
+    for (auto attempt = 0; attempt < 250 && !published_palette; ++attempt) {
+        const auto* scene = webscene_engine_acquire_latest_scene(engine);
+        if (scene != nullptr) {
+            for (uint32_t index = 0; index < scene->header.command_count; ++index) {
+                published_palette = published_palette
+                    || scene->commands[index].rgba == 0x123456FFU;
+            }
+            webscene_scene_acknowledge(scene);
+            webscene_scene_release(scene);
+        }
+        if (!published_palette) std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    require(
+        published_palette,
+        "shortcut activation mutated the palette without publishing its scene");
+
+    keyboard_input(engine, WEBSCENE_INPUT_KEY_DOWN, 27U, sequence++);
+    keyboard_input(engine, WEBSCENE_INPUT_KEY_UP, 27U, sequence++);
+    wait_for_consumed_inputs(
+        engine,
+        shortcut_consumed_before + 8U,
+        "shortcut close sequence was not consumed");
+    require(
+        evaluate(
+            engine,
+            R"JS(({
+              active: document.activeElement?.id,
+              display: getComputedStyle(palette).display,
+              closures: __shortcutClosures,
+              bounded: __shortcutEvents.length
+            }))JS",
+            "native-shortcut-close-result.js")
+            == R"JSON({"active":"source","display":"none","closures":1,"bounded":24})JSON",
+        "Escape did not close the shortcut overlay and restore focus");
+
+    constexpr uint64_t cycle_count = 512U;
+    const auto performance_consumed_before = consumed_input_count(engine);
+    const auto performance_started = std::chrono::steady_clock::now();
+    for (uint64_t index = 0; index < cycle_count; ++index) {
+        keyboard_input(engine, WEBSCENE_INPUT_KEY_DOWN, 91U, sequence++, meta);
+        keyboard_input(engine, WEBSCENE_INPUT_KEY_DOWN, 16U, sequence++, meta | shift);
+        keyboard_input(engine, WEBSCENE_INPUT_KEY_DOWN, 'P', sequence++, meta | shift);
+        keyboard_input(engine, WEBSCENE_INPUT_KEY_UP, 'P', sequence++, meta | shift);
+        keyboard_input(engine, WEBSCENE_INPUT_KEY_UP, 16U, sequence++, meta);
+        keyboard_input(engine, WEBSCENE_INPUT_KEY_UP, 91U, sequence++);
+        keyboard_input(engine, WEBSCENE_INPUT_KEY_DOWN, 27U, sequence++);
+        keyboard_input(engine, WEBSCENE_INPUT_KEY_UP, 27U, sequence++);
+    }
+    constexpr auto performance_event_count = cycle_count * 8U;
+    const auto performance_deadline = performance_started + std::chrono::seconds(5);
+    while (consumed_input_count(engine)
+            < performance_consumed_before + performance_event_count
+        && std::chrono::steady_clock::now() < performance_deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    const auto elapsed = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - performance_started).count();
+    require(
+        consumed_input_count(engine)
+            >= performance_consumed_before + performance_event_count,
+        "shortcut activation dispatch exceeded its five-second bound");
+    const auto performance_result = evaluate(
+        engine,
+        R"JS(({
+          active: document.activeElement?.id,
+          display: getComputedStyle(palette).display,
+          activations: __shortcutActivations,
+          closures: __shortcutClosures,
+          callbacks: __shortcutCallbacks,
+          bounded: __shortcutEvents.length
+        }))JS",
+        "native-shortcut-performance-result.js");
+    require(
+        performance_result
+            == R"JSON({"active":"source","display":"none","activations":513,"closures":513,"callbacks":12312,"bounded":32})JSON",
+        "shortcut activation performance run dropped or duplicated callbacks: "
+            + performance_result);
+    webscene_input_dispatch_metrics dispatch_metrics{
+        sizeof(webscene_input_dispatch_metrics)};
+    require(
+        webscene_engine_get_input_dispatch_metrics(engine, &dispatch_metrics) != 0
+            && dispatch_metrics.last_dispatch_sequence == sequence - 1U
+            && dispatch_metrics.maximum_dispatch_nanoseconds
+                < 250000000ULL,
+        "shortcut dispatch metrics exceeded the 250 ms per-input budget");
+    webscene_engine_metrics after{};
+    webscene_engine_get_metrics(engine, &after);
+    require(
+        after.published_scenes > before.published_scenes,
+        "shortcut activation did not advance scene publication metrics");
+    std::cout << "Native shortcut activation gate: events="
+              << performance_event_count << " elapsed=" << elapsed
+              << "s maxDispatch="
+              << dispatch_metrics.maximum_dispatch_nanoseconds << "ns\n";
+}
+
 void test_chart_printable_key_does_not_duplicate_into_newly_focused_search_input(
     webscene_engine* engine)
 {
@@ -758,8 +1162,9 @@ void test_controlled_switch_native_activation_matches_browser_semantics()
         activated == R"JSON({"checked":true,"ownDescriptor":true,"setterCalls":0,"syntheticChanges":1,"tracked":"true","events":["click:true:false","synthetic-change","input","change"],"focused":true,"focusWithin":true,"translate":[3,3]})JSON",
         "native activation did not preserve React-controlled switch semantics: "
             + activated);
-    require(
-        webscene_engine_requires_animation_frame(engine) != 0,
+    wait_for_animation_frame_demand(
+        engine,
+        true,
         "controlled switch transform transition did not request a host frame");
 
     webscene_engine_request_scene_checkpoint(engine);
@@ -1498,14 +1903,11 @@ void test_pointer_cursor_and_external_anchor_host_handoff(webscene_engine* engin
     require(
         evaluate(engine, "true", "native-external-link-click-barrier.js") == "true",
         "external anchor click did not drain");
-    const auto request = take_host_request(engine);
+    const auto request = take_typed_host_request(engine);
     require(
-        request.find(R"("kind":"openExternalUrl")") != std::string::npos
-            && request.find(R"("url":"https://example.com/?source=webscene")")
-                != std::string::npos
-            && request.find(R"("disposition":"systemDefaultBrowser")")
-                != std::string::npos,
-        "external anchor activation did not emit the typed host request: " + request);
+        request.kind == WEBSCENE_HOST_REQUEST_OPEN_EXTERNAL_URL_V1
+            && request.url == "https://example.com/?source=webscene",
+        "external anchor activation did not emit the typed host request");
     require(
         evaluate(engine, "location.href", "native-location-after.js") == location_before,
         "external anchor activation replaced the trusted WebScene document");
@@ -1517,21 +1919,60 @@ void test_pointer_cursor_and_external_anchor_host_handoff(webscene_engine* engin
         "const opened = window.open(url.toString(), '_blank'); "
         "opened.opener = null; return { closed: opened.closed, location: location.href }; })()",
         "native-window-open-handoff.js");
-    const auto popup_request = take_host_request(engine);
+    const auto popup_request = take_typed_host_request(engine);
     require(
         popup.find(R"("closed":false)") != std::string::npos
             && popup.find(location_before.substr(1U, location_before.size() - 2U))
                 != std::string::npos
-            && popup_request.find(R"("kind":"openExternalUrl")") != std::string::npos
-            && popup_request.find(R"("url":"https://example.com/chart/?utm_medium=library")")
-                != std::string::npos,
-        "window.open did not use the safe external host handoff: " + popup_request);
+            && popup_request.kind == WEBSCENE_HOST_REQUEST_OPEN_EXTERNAL_URL_V1
+            && popup_request.url
+                == "https://example.com/chart/?utm_medium=library",
+        "window.open did not use the safe external host handoff");
+
+    require(
+        evaluate(engine,
+            "(() => { focus(); return [typeof focus, typeof close]; })()",
+            "native-window-actions.js") == R"(["function","function"])",
+        "top-level focus/close methods were not installed");
+    const auto focus_request = take_typed_host_request(engine);
+    require(
+        focus_request.kind == WEBSCENE_HOST_REQUEST_WINDOW_FOCUS_V1,
+        "top-level focus did not emit its typed host request");
+
+    execute(engine, R"JS(
+        addEventListener('beforeunload', event => event.preventDefault(), { once: true });
+        close();
+    )JS", "native-window-close-veto.js");
+    require(evaluate(engine, "true", "native-window-close-veto-barrier.js") == "true"
+            && !take_typed_host_request(engine),
+        "cancelled beforeunload still reached the native close host path");
+
+    require(evaluate(engine, "location.reload(); true", "native-window-reload.js")
+                == "true",
+        "Location.reload script did not drain through the engine worker");
+    const auto reload_request = take_typed_host_request(engine);
+    require(reload_request.kind == WEBSCENE_HOST_REQUEST_WINDOW_RELOAD_V1,
+        "Location.reload did not emit a typed native reload request");
+
+    const auto oversized_url = std::string("https://example.com/")
+        + std::string(8192U, 'x');
+    execute(
+        engine,
+        "try { window.open('" + oversized_url
+            + "'); globalThis.oversizedWindowAccepted = true; } "
+              "catch { globalThis.oversizedWindowAccepted = false; }",
+        "native-window-open-oversized.js");
+    require(
+        evaluate(engine, "oversizedWindowAccepted", "native-window-open-oversized-result.js")
+                == "false"
+            && !take_typed_host_request(engine),
+        "oversized external URL reached the host request queue");
 
     pointer_button(engine, WEBSCENE_INPUT_POINTER_DOWN, 20, 70, 504U, true);
     pointer_button(engine, WEBSCENE_INPUT_POINTER_UP, 20, 70, 505U, false);
     require(
         evaluate(engine, "true", "native-cancelled-link-barrier.js") == "true"
-            && take_host_request(engine).empty(),
+            && !take_typed_host_request(engine),
         "preventDefault did not suppress external navigation handoff");
 
     pointer_move(engine, 20, 110, 506U);
@@ -1715,6 +2156,21 @@ void test_pointer_cursor_and_external_anchor_host_handoff(webscene_engine* engin
             error => { globalThis.__screenshotCopyState = String(error); });
         })()
     )JS", "native-tradingview-canvas-copy.js");
+    require(evaluate(engine, "true",
+                "native-tradingview-canvas-copy-barrier.js") == "true",
+        "TradingView canvas copy did not drain through the engine worker");
+    const auto screenshot_clipboard_request = take_typed_host_request(engine);
+    require(
+        screenshot_clipboard_request.kind
+                == WEBSCENE_HOST_REQUEST_CLIPBOARD_WRITE_V1
+            && screenshot_clipboard_request.content_type == "image/png"
+            && screenshot_clipboard_request.target_node_id != 0U
+            && screenshot_clipboard_request.bytes.empty(),
+        "TradingView canvas copy did not reach the typed host clipboard request");
+    require(webscene_engine_complete_host_request_v1(
+                engine, screenshot_clipboard_request.id, 0U, "image/png",
+                nullptr, 0U, nullptr) != 0,
+        "TradingView canvas clipboard completion was rejected");
     auto screenshot_copy_state = std::string{};
     for (auto attempt = 0; attempt < 100; ++attempt) {
         screenshot_copy_state = evaluate(
@@ -1727,17 +2183,6 @@ void test_pointer_cursor_and_external_anchor_host_handoff(webscene_engine* engin
     require(
         screenshot_copy_state == R"("done")",
         "TradingView ClipboardItem promise did not resolve: " + screenshot_copy_state);
-    const auto screenshot_clipboard_request = take_host_request(engine);
-    require(
-        screenshot_clipboard_request.find(R"("kind":"writeClipboard")")
-                != std::string::npos
-            && screenshot_clipboard_request.find(R"("contentType":"image/png")")
-                != std::string::npos
-            && screenshot_clipboard_request.find(R"("canvasNodeId":)")
-                != std::string::npos,
-        "TradingView canvas copy did not reach the typed host clipboard request: "
-            + screenshot_clipboard_request);
-
     const auto screenshot_node_id = static_cast<uint32_t>(std::stoul(evaluate(
         engine,
         "globalThis.__screenshotCanvas.__websceneNativeNodeId",
@@ -1765,6 +2210,444 @@ void test_pointer_cursor_and_external_anchor_host_handoff(webscene_engine* engin
     }
     require(released,
         "the exported screenshot canvas remained in later retained scenes");
+}
+
+void test_typed_window_host_request_performance(webscene_engine* engine)
+{
+    constexpr unsigned operation_count = 10000U;
+    constexpr unsigned batch_size = 1000U;
+    const auto started = std::chrono::steady_clock::now();
+    for (unsigned offset = 0; offset < operation_count; offset += batch_size) {
+        require(evaluate(engine, R"JS(
+            for (let index = 0; index < 1000; ++index) focus();
+            true
+        )JS", "native-window-request-performance.js") == "true",
+            "typed window request batch did not drain through the engine worker");
+        for (unsigned index = 0; index < batch_size; ++index) {
+            const auto request = take_typed_host_request(engine);
+            require(request.kind == WEBSCENE_HOST_REQUEST_WINDOW_FOCUS_V1,
+                "typed window request order changed under load");
+        }
+    }
+    const auto elapsed = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - started).count();
+    require(elapsed < 5.0,
+        "10,000 typed window host requests exceeded five seconds");
+    std::cout << "Typed window host request gate: operations="
+              << operation_count << " elapsed=" << elapsed << "s\n";
+}
+
+void test_script_window_close_lifecycle(webscene_engine* engine)
+{
+    execute_and_wait(engine, R"JS(
+        globalThis.__scriptCloseLifecycle = {
+          beforeunload: 0,
+          pagehide: 0,
+          microtasks: 0,
+          veto: true,
+          pagehideCancelable: null,
+          persisted: null
+        };
+        addEventListener('beforeunload', event => {
+          ++__scriptCloseLifecycle.beforeunload;
+          Promise.resolve().then(() => ++__scriptCloseLifecycle.microtasks);
+          if (__scriptCloseLifecycle.veto) event.preventDefault();
+        });
+        addEventListener('pagehide', event => {
+          ++__scriptCloseLifecycle.pagehide;
+          __scriptCloseLifecycle.pagehideCancelable = event.cancelable;
+          __scriptCloseLifecycle.persisted = event.persisted;
+          Promise.resolve().then(() => ++__scriptCloseLifecycle.microtasks);
+        });
+    )JS", "script-close-lifecycle-setup.js");
+
+    execute_and_wait(engine, "close()", "script-close-veto.js");
+    auto state = evaluate(engine, "__scriptCloseLifecycle",
+        "script-close-veto-result.js");
+    require(
+        !take_typed_host_request(engine)
+            && state
+                == R"({"beforeunload":1,"pagehide":0,"microtasks":1,"veto":true,"pagehideCancelable":null,"persisted":null})",
+        "vetoed script close reached the host or dispatched pagehide: " + state);
+
+    execute_and_wait(engine, R"JS(
+        __scriptCloseLifecycle.veto = false;
+        close();
+    )JS", "script-close-allow.js");
+    const auto allowed_request = take_typed_host_request(engine);
+    state = evaluate(engine, "__scriptCloseLifecycle",
+        "script-close-allow-result.js");
+    require(
+        allowed_request.kind == WEBSCENE_HOST_REQUEST_WINDOW_CLOSE_V1
+            && state
+                == R"({"beforeunload":2,"pagehide":1,"microtasks":3,"veto":false,"pagehideCancelable":false,"persisted":false})",
+        "allowed script close did not publish pagehide before host handoff: "
+            + state);
+
+    execute_and_wait(engine, "close()", "script-close-repeat.js");
+    const auto repeated_request = take_typed_host_request(engine);
+    require(
+        repeated_request.kind == WEBSCENE_HOST_REQUEST_WINDOW_CLOSE_V1
+            && evaluate(engine, "__scriptCloseLifecycle",
+                "script-close-repeat-result.js") == state,
+        "repeated script close redispatched a terminal lifecycle event");
+
+    webscene_engine_memory_metrics memory_before{
+        sizeof(webscene_engine_memory_metrics)};
+    require(webscene_engine_get_memory_metrics(engine, &memory_before) != 0,
+        "script close baseline memory metrics were unavailable");
+    constexpr unsigned operation_count = 10000U;
+    constexpr unsigned batch_size = 1000U;
+    const auto started = std::chrono::steady_clock::now();
+    for (unsigned offset = 0; offset < operation_count; offset += batch_size) {
+        require(evaluate(engine, R"JS(
+            for (let index = 0; index < 1000; ++index) close();
+            true
+        )JS", "script-close-performance.js") == "true",
+            "repeated script close batch did not complete");
+        for (unsigned index = 0; index < batch_size; ++index) {
+            require(
+                take_typed_host_request(engine).kind
+                    == WEBSCENE_HOST_REQUEST_WINDOW_CLOSE_V1,
+                "repeated script close changed host request ordering");
+        }
+    }
+    const auto elapsed = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - started).count();
+    require(elapsed < 5.0,
+        "10,000 coalesced script close requests exceeded five seconds");
+    require(
+        evaluate(engine, "__scriptCloseLifecycle",
+            "script-close-performance-result.js") == state,
+        "repeated script close redispatched terminal lifecycle events under load");
+
+    require(webscene_engine_request_low_memory(engine) != 0,
+        "script close low-memory request was rejected");
+    webscene_engine_memory_metrics memory_after{
+        sizeof(webscene_engine_memory_metrics)};
+    for (auto attempt = 0; attempt < 500; ++attempt) {
+        require(webscene_engine_get_memory_metrics(engine, &memory_after) != 0,
+            "script close final memory metrics were unavailable");
+        if (memory_after.low_memory_notifications
+            > memory_before.low_memory_notifications) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    require(
+        memory_after.low_memory_notifications
+            > memory_before.low_memory_notifications,
+        "script close low-memory collection did not complete");
+    require(
+        memory_after.v8_used_heap_bytes
+            <= memory_before.v8_used_heap_bytes + 4U * 1024U * 1024U,
+        "repeated script close retained more than 4 MiB of V8 heap");
+    std::cout << "Script close gate: operations=" << operation_count
+              << " elapsed=" << elapsed << "s heapBefore="
+              << memory_before.v8_used_heap_bytes << " heapAfter="
+              << memory_after.v8_used_heap_bytes << "\n";
+
+    auto* overflow_engine = webscene_engine_create(0);
+    require(overflow_engine != nullptr,
+        "script close queue-overflow engine creation failed");
+    execute_and_wait(overflow_engine, R"JS(
+        globalThis.__overflowCloseLifecycle = { beforeunload: 0, pagehide: 0 };
+        addEventListener('beforeunload', () => ++__overflowCloseLifecycle.beforeunload);
+        addEventListener('pagehide', () => ++__overflowCloseLifecycle.pagehide);
+        for (let index = 0; index < 1024; ++index) focus();
+        try { close(); } catch (error) { globalThis.__overflowCloseError = String(error); }
+    )JS", "script-close-queue-overflow.js");
+    require(
+        evaluate(overflow_engine,
+            "[__overflowCloseLifecycle, __overflowCloseError.includes('rejected')]",
+            "script-close-queue-overflow-result.js")
+                == R"([{"beforeunload":0,"pagehide":0},true])",
+        "a rejected script-close handoff dispatched terminal lifecycle events");
+    for (auto index = 0; index < 1024; ++index) {
+        require(
+            take_typed_host_request(overflow_engine).kind
+                == WEBSCENE_HOST_REQUEST_WINDOW_FOCUS_V1,
+            "script-close queue-overflow setup changed host request ordering");
+    }
+    execute_and_wait(overflow_engine, "close()",
+        "script-close-queue-overflow-recovery.js");
+    require(
+        take_typed_host_request(overflow_engine).kind
+                == WEBSCENE_HOST_REQUEST_WINDOW_CLOSE_V1
+            && evaluate(overflow_engine, "__overflowCloseLifecycle",
+                "script-close-queue-overflow-recovery-result.js")
+                == R"({"beforeunload":1,"pagehide":1})",
+        "script close did not recover after host-request queue pressure");
+    webscene_engine_destroy(overflow_engine);
+
+    const auto verify_listener_queue_pressure = [](
+        std::string_view event_type,
+        bool legacy_requests) {
+        auto* pressure_engine = webscene_engine_create(0);
+        require(pressure_engine != nullptr,
+            "script close listener-pressure engine creation failed");
+        const auto producer = legacy_requests
+            ? "dotnetBridge.GetBars('TEST', '1', 0, 1)"
+            : "focus()";
+        const auto setup = std::string(R"JS(
+            globalThis.__listenerPressure = { accepted: 0, rejected: 0 };
+            addEventListener(')JS") + std::string(event_type) + R"JS(', () => {
+              for (let index = 0; index < 1024; ++index) {
+                try {
+                  )JS" + producer + R"JS(;
+                  ++__listenerPressure.accepted;
+                } catch {
+                  ++__listenerPressure.rejected;
+                }
+              }
+            });
+            close();
+        )JS";
+        execute_and_wait(pressure_engine, setup,
+            "script-close-listener-queue-pressure.js");
+        require(
+            evaluate(pressure_engine, "__listenerPressure",
+                "script-close-listener-queue-pressure-result.js")
+                == R"({"accepted":1023,"rejected":1})",
+            "a lifecycle listener consumed the reserved close-request slot");
+        for (auto index = 0; index < 1023; ++index) {
+            if (legacy_requests) {
+                require(
+                    take_host_request(pressure_engine).find(R"("kind":"getBars")")
+                        != std::string::npos,
+                    "listener queue pressure changed legacy request ordering");
+            } else {
+                require(
+                    take_typed_host_request(pressure_engine).kind
+                        == WEBSCENE_HOST_REQUEST_WINDOW_FOCUS_V1,
+                    "listener queue pressure changed focus request ordering");
+            }
+        }
+        require(
+            take_typed_host_request(pressure_engine).kind
+                    == WEBSCENE_HOST_REQUEST_WINDOW_CLOSE_V1
+                && !take_typed_host_request(pressure_engine),
+            "listener queue pressure displaced the terminal close request");
+        webscene_engine_destroy(pressure_engine);
+    };
+    verify_listener_queue_pressure("beforeunload", false);
+    verify_listener_queue_pressure("pagehide", false);
+    verify_listener_queue_pressure("pagehide", true);
+
+    auto* recursive_engine = webscene_engine_create(0);
+    require(recursive_engine != nullptr,
+        "recursive script close engine creation failed");
+    execute_and_wait(recursive_engine, R"JS(
+        globalThis.__recursiveClose = { beforeunload: 0, pagehide: 0 };
+        addEventListener('beforeunload', () => {
+          ++__recursiveClose.beforeunload;
+          close();
+        }, { once: true });
+        addEventListener('pagehide', () => ++__recursiveClose.pagehide);
+        close();
+    )JS", "script-close-recursive-listener.js");
+    require(
+        take_typed_host_request(recursive_engine).kind
+                == WEBSCENE_HOST_REQUEST_WINDOW_CLOSE_V1
+            && !take_typed_host_request(recursive_engine)
+            && evaluate(recursive_engine, "__recursiveClose",
+                "script-close-recursive-listener-result.js")
+                == R"({"beforeunload":1,"pagehide":1})",
+        "recursive script close duplicated lifecycle or host handoff");
+    webscene_engine_destroy(recursive_engine);
+
+    auto* error_engine = webscene_engine_create(0);
+    require(error_engine != nullptr,
+        "script close error recovery engine creation failed");
+    execute_and_wait(error_engine, R"JS(
+        const dispatch = globalThis.dispatchEvent;
+        let failPagehide = true;
+        globalThis.dispatchEvent = event => {
+          if (event.type === 'pagehide' && failPagehide) {
+            failPagehide = false;
+            throw new Error('script pagehide failure');
+          }
+          return dispatch.call(globalThis, event);
+        };
+        try { close(); } catch (error) { globalThis.__scriptCloseError = String(error); }
+    )JS", "script-close-pagehide-error.js");
+    require(
+        !take_typed_host_request(error_engine)
+            && evaluate(error_engine, "__scriptCloseError.includes('script pagehide failure')",
+                "script-close-pagehide-error-result.js") == "true",
+        "failed script pagehide reached the host or lost its error");
+    execute_and_wait(error_engine, "close()", "script-close-error-recovery.js");
+    require(
+        take_typed_host_request(error_engine).kind
+            == WEBSCENE_HOST_REQUEST_WINDOW_CLOSE_V1,
+        "script close did not recover after a pagehide listener error");
+    webscene_engine_destroy(error_engine);
+}
+
+void test_host_driven_window_close_lifecycle(webscene_engine* engine)
+{
+    require(
+        webscene_engine_request_window_close_v1(nullptr)
+            == WEBSCENE_WINDOW_CLOSE_ERROR_V1,
+        "a null engine did not return the native close error decision");
+
+    const auto rejection_path = std::filesystem::temp_directory_path() / (
+        "webscene-native-close-prior-rejection-"
+        + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count())
+        + ".html");
+    {
+        std::ofstream file(rejection_path);
+        file << R"HTML(<!doctype html><script>
+          globalThis.__webSceneComponentReady = true;
+          Promise.reject(new Error('unrelated rejection before native close'));
+        </script>)HTML";
+    }
+    auto* rejection_engine = webscene_engine_create(0);
+    require(rejection_engine != nullptr,
+        "prior promise rejection close fixture engine creation failed");
+    const auto rejection_root = rejection_path.parent_path().string();
+    webscene_engine_set_resource_root(
+        rejection_engine, rejection_root.data(), rejection_root.size());
+    const auto rejection_url = "file://" + rejection_path.string();
+    require(
+        webscene_engine_load_url(
+            rejection_engine, rejection_url.data(), rejection_url.size()) != 0U,
+        "prior promise rejection close fixture navigation failed");
+    webscene_engine_metrics rejection_metrics{};
+    for (auto attempt = 0; attempt < 250; ++attempt) {
+        webscene_engine_get_metrics(rejection_engine, &rejection_metrics);
+        if (rejection_metrics.component_ready != 0U) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    require(rejection_metrics.component_ready != 0U,
+        "prior promise rejection close fixture did not become ready");
+    require(
+        webscene_engine_request_window_close_v1(rejection_engine)
+            == WEBSCENE_WINDOW_CLOSE_ALLOW_V1,
+        "an unrelated prior promise rejection poisoned an uncancelled native close: "
+            + last_error(rejection_engine));
+    webscene_engine_destroy(rejection_engine);
+    std::filesystem::remove(rejection_path);
+
+    execute_and_wait(engine, R"JS(
+        globalThis.__nativeCloseLifecycle = {
+          beforeunload: 0,
+          pagehide: 0,
+          microtasks: 0,
+          veto: true,
+          pagehideCancelable: null,
+          persisted: null
+        };
+        addEventListener('beforeunload', event => {
+          ++__nativeCloseLifecycle.beforeunload;
+          Promise.resolve().then(() => ++__nativeCloseLifecycle.microtasks);
+          if (__nativeCloseLifecycle.veto) event.preventDefault();
+        });
+        addEventListener('pagehide', event => {
+          ++__nativeCloseLifecycle.pagehide;
+          __nativeCloseLifecycle.pagehideCancelable = event.cancelable;
+          __nativeCloseLifecycle.persisted = event.persisted;
+        });
+    )JS", "native-host-close-lifecycle-setup.js");
+
+    const auto veto_decision = webscene_engine_request_window_close_v1(engine);
+    const auto veto_state = evaluate(engine, "__nativeCloseLifecycle",
+        "native-host-close-veto-result.js");
+    require(
+        veto_decision == WEBSCENE_WINDOW_CLOSE_VETO_V1,
+        "cancelled beforeunload did not veto the native close: decision="
+            + std::to_string(veto_decision) + " state=" + veto_state);
+    require(
+        veto_state
+            == R"({"beforeunload":1,"pagehide":0,"microtasks":1,"veto":true,"pagehideCancelable":null,"persisted":null})",
+        "native close veto did not drain beforeunload without pagehide: "
+            + veto_state);
+
+    execute_and_wait(engine, "__nativeCloseLifecycle.veto = false",
+        "native-host-close-allow.js");
+    require(
+        webscene_engine_request_window_close_v1(engine)
+            == WEBSCENE_WINDOW_CLOSE_ALLOW_V1,
+        "uncancelled beforeunload did not allow the native close");
+    const auto allowed_state = evaluate(engine, "__nativeCloseLifecycle",
+        "native-host-close-allow-result.js");
+    require(
+        allowed_state
+            == R"({"beforeunload":2,"pagehide":1,"microtasks":2,"veto":false,"pagehideCancelable":false,"persisted":false})",
+        "allowed native close did not publish one terminal pagehide: "
+            + allowed_state);
+
+    constexpr unsigned operation_count = 10000U;
+    const auto started = std::chrono::steady_clock::now();
+    for (unsigned index = 0; index < operation_count; ++index) {
+        require(
+            webscene_engine_request_window_close_v1(engine)
+                == WEBSCENE_WINDOW_CLOSE_ALLOW_V1,
+            "a repeated approved native close changed decision");
+    }
+    const auto elapsed = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - started).count();
+    require(elapsed < 5.0,
+        "10,000 coalesced native close decisions exceeded five seconds");
+    require(
+        evaluate(engine, "__nativeCloseLifecycle",
+            "native-host-close-repeat-result.js") == allowed_state,
+        "repeated approved native closes redispatched lifecycle events");
+    std::cout << "Native close decision gate: operations="
+              << operation_count << " elapsed=" << elapsed << "s\n";
+
+    auto* error_engine = webscene_engine_create(0);
+    require(error_engine != nullptr,
+        "native close error fixture engine creation failed");
+    execute_and_wait(error_engine, "globalThis.dispatchEvent = null",
+        "native-host-close-missing-dispatcher.js");
+    require(
+        webscene_engine_request_window_close_v1(error_engine)
+            == WEBSCENE_WINDOW_CLOSE_ERROR_V1,
+        "a missing top-level dispatcher did not return a native close error");
+    webscene_engine_destroy(error_engine);
+
+    auto* beforeunload_error_engine = webscene_engine_create(0);
+    require(beforeunload_error_engine != nullptr,
+        "beforeunload error fixture engine creation failed");
+    execute_and_wait(beforeunload_error_engine, R"JS(
+        const dispatch = globalThis.dispatchEvent;
+        globalThis.dispatchEvent = event => {
+          if (event.type === 'beforeunload') {
+            throw new Error('synchronous beforeunload failure');
+          }
+          return dispatch.call(globalThis, event);
+        };
+    )JS", "native-host-close-beforeunload-error.js");
+    require(
+        webscene_engine_request_window_close_v1(beforeunload_error_engine)
+            == WEBSCENE_WINDOW_CLOSE_ERROR_V1,
+        "a synchronous beforeunload failure did not return a native close error");
+    require(
+        last_error(beforeunload_error_engine).find("synchronous beforeunload failure")
+            != std::string::npos,
+        "the native close error did not preserve the beforeunload failure");
+    webscene_engine_destroy(beforeunload_error_engine);
+
+    auto* pagehide_error_engine = webscene_engine_create(0);
+    require(pagehide_error_engine != nullptr,
+        "pagehide error fixture engine creation failed");
+    execute_and_wait(pagehide_error_engine, R"JS(
+        const dispatch = globalThis.dispatchEvent;
+        globalThis.dispatchEvent = event => {
+          if (event.type === 'pagehide') {
+            throw new Error('synchronous pagehide failure');
+          }
+          return dispatch.call(globalThis, event);
+        };
+    )JS", "native-host-close-pagehide-error.js");
+    require(
+        webscene_engine_request_window_close_v1(pagehide_error_engine)
+            == WEBSCENE_WINDOW_CLOSE_ERROR_V1,
+        "a synchronous pagehide failure did not return a native close error");
+    require(
+        last_error(pagehide_error_engine).find("synchronous pagehide failure")
+            != std::string::npos,
+        "the native close error did not preserve the pagehide failure");
+    webscene_engine_destroy(pagehide_error_engine);
 }
 
 void test_css_linear_gradient_reaches_the_retained_scene(webscene_engine* engine)

@@ -42,6 +42,7 @@
         }
       ],
       "methods": [
+        { "name": "hasChildNodes", "callback": "has_child_nodes", "length": 0 },
         { "name": "appendChild", "callback": "append_child", "length": 1 },
         { "name": "insertBefore", "callback": "insert_before", "length": 2 },
         { "name": "removeChild", "callback": "remove_child", "length": 1 },
@@ -214,7 +215,8 @@
         { "name": "closest", "callback": "element_closest", "length": 1 },
         { "name": "insertAdjacentElement", "callback": "insert_adjacent_element", "length": 2 },
         { "name": "insertAdjacentHTML", "callback": "insert_adjacent_html", "length": 2 },
-        { "name": "attachShadow", "callback": "attach_shadow", "length": 1 }
+        { "name": "attachShadow", "callback": "attach_shadow", "length": 1 },
+        { "name": "requestFullscreen", "callback": "element_request_fullscreen", "length": 0 }
       ],
       "constants": []
     },
@@ -239,7 +241,6 @@
         { "name": "dataset", "getter": "get_dataset" },
         { "name": "inert", "getter": "get_inert", "setter": "set_inert" },
         { "name": "innerText", "getter": "get_inner_text", "setter": "set_text_content" },
-        { "name": "content", "getter": "get_template_content" },
         { "name": "clientWidth", "getter": "get_client_width" },
         { "name": "clientHeight", "getter": "get_client_height" },
         { "name": "clientLeft", "getter": "get_client_left" },
@@ -356,6 +357,30 @@
       "attributes": [
         { "name": "length", "getter": "get_form_or_select_length" }
       ],
+      "methods": [
+        { "name": "add", "callback": "select_add", "length": 2 }
+      ],
+      "constants": []
+    },
+    {
+      "name": "HTMLOptionElement",
+      "template": "html_option_element_template",
+      "constructor": "illegal_dom_constructor",
+      "parent": "HTMLElement",
+      "attributes": [
+        { "name": "text", "getter": "get_option_text", "setter": "set_option_text" }
+      ],
+      "methods": [],
+      "constants": []
+    },
+    {
+      "name": "HTMLMetaElement",
+      "template": "html_meta_element_template",
+      "constructor": "illegal_dom_constructor",
+      "parent": "HTMLElement",
+      "attributes": [
+        { "name": "content", "getter": "get_reflected_string_attribute", "setter": "set_reflected_string_attribute" }
+      ],
       "methods": [],
       "constants": []
     },
@@ -382,6 +407,17 @@
         { "name": "assignedNodes", "callback": "slot_assigned_nodes", "length": 0 },
         { "name": "assignedElements", "callback": "slot_assigned_elements", "length": 0 }
       ],
+      "constants": []
+    },
+    {
+      "name": "HTMLTemplateElement",
+      "template": "html_template_element_template",
+      "constructor": "illegal_dom_constructor",
+      "parent": "HTMLElement",
+      "attributes": [
+        { "name": "content", "getter": "get_template_content" }
+      ],
+      "methods": [],
       "constants": []
     },
     {

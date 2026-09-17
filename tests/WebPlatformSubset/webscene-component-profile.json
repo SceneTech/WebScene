@@ -9,6 +9,41 @@
   },
   "required": [
     {
+      "path": "contracts/webcrypto-hmac-sign.html",
+      "type": "contract",
+      "capabilities": ["subtlecrypto-hmac-sign", "crypto-cipher-bounds"],
+      "evidence": ["wpt-WebCryptoAPI-hmac-2c705104", "rfc4231-hmac-sha256-vector"],
+      "reason": "The bundled Copilot extension signs messages with HMAC. This accepted slice imports opaque raw/JWK keys and signs through the pinned provider with bounded asynchronous work."
+    },
+    {
+      "path": "contracts/webcrypto-aes-cbc-decrypt.html",
+      "type": "contract",
+      "capabilities": ["subtlecrypto-aes-cbc-decrypt", "crypto-cipher-bounds"],
+      "evidence": ["wpt-WebCryptoAPI-aes-cbc-2c705104", "nist-sp800-38a-cbc-vector"],
+      "reason": "VS Code's browser signing service decrypts packaged WASM with AES-CBC. The accepted slice is decrypt-only with imported opaque keys and strict PKCS#7 validation."
+    },
+    {
+      "path": "contracts/webcrypto-aes-gcm.html",
+      "type": "contract",
+      "capabilities": ["subtlecrypto-aes-gcm", "cryptokey-realm-isolation", "crypto-cipher-bounds"],
+      "evidence": ["wpt-WebCryptoAPI-aes-gcm-2c705104", "nist-aes-gcm-zero-vector"],
+      "reason": "VS Code extension and authentication paths require authenticated encryption. This slice uses the pinned provider with opaque realm-owned keys and bounded asynchronous work."
+    },
+    {
+      "path": "contracts/webcrypto-digest.html",
+      "type": "contract",
+      "capabilities": ["subtlecrypto-digest-sha1", "subtlecrypto-digest-sha256", "crypto-realm-parity", "crypto-digest-bounds"],
+      "evidence": ["wpt-WebCryptoAPI-digest-2c705104", "vscode-oss-resource-integrity"],
+      "reason": "VS Code hashes resource and extension data in window and worker realms. This first accepted slice is limited to SHA-1 and SHA-256 digest through the pinned provider."
+    },
+    {
+      "path": "contracts/webcrypto-secure-random.html",
+      "type": "contract",
+      "capabilities": ["crypto-get-random-values", "crypto-random-uuid", "crypto-realm-parity", "crypto-random-quota"],
+      "evidence": ["vscode-oss-1.137-browser-workbench", "vscode-oss-1.137-worker-extension-host"],
+      "reason": "VS Code uses secure random bytes and UUIDs in its browser workbench and extension-host realms. The separately covered digest slice uses the pinned provider."
+    },
+    {
       "path": "contracts/dialog-opening-lifecycle.html",
       "type": "testharness",
       "capabilities": ["dialog-opening", "dialog-modal-focus", "dialog-beforetoggle"],
@@ -527,6 +562,20 @@
       "reason": "Required product-neutral reduction of a shared native jQuery CSS Grid placement failure. It covers the bounded integer/auto slice of grid-area, grid-row, grid-column, and their four placement longhands, including stylesheet cascade, longhand precedence, CSSOM removal, and synchronous computed serialization. Chrome and native pass 6/6 assertions. Upstream authority: css/css-grid/parsing/grid-area-computed.html and grid-area-valid.html. Evidence: artifacts/web-platform-grid-placement-{chrome,managed,native}-v1-20260723/results.json."
     },
     {
+      "path": "contracts/css-grid-template-areas.html",
+      "type": "contract",
+      "capabilities": ["grid-template-areas", "named-grid-area-placement", "sparse-grid-areas", "template-area-validation", "template-area-mutation-invalidation"],
+      "evidence": ["code-oss-welcome-five-column-layout", "webscene-issue-98"],
+      "reason": "Product-neutral reduction of the named-area composition used by Code OSS Welcome. It covers normalized CSSOM serialization, sparse rectangular areas across fractional and minmax tracks, atomic rejection of nonrectangular or unequal rows, synchronous mutation/removal layout, and a bounded 500-mutation gate."
+    },
+    {
+      "path": "contracts/css-grid-auto-max-track-stretch.html",
+      "type": "contract",
+      "capabilities": ["grid-auto-maximum-track-stretch", "multi-row-align-content-stretch", "grid-track-height-mutation-publication"],
+      "evidence": ["code-oss-welcome-auto-middle-row", "webscene-issue-106"],
+      "reason": "Product-neutral reduction of the auto-maximum track sizing used by Code OSS Welcome. It compares exact Chromium/native geometry for minmax(min-content, auto), multiple stretchable rows with gaps, max-content exclusion, non-stretch align-content, synchronous height mutation, and a bounded 500-mutation publication gate."
+    },
+    {
       "path": "css/CSS2/generated-content/before-content-display-002.xht",
       "type": "reftest",
       "reference": "css/CSS2/generated-content/after-content-display-002-ref.xht",
@@ -690,6 +739,13 @@
       "reason": "Required after the unchanged product-neutral reduction passes direct Chrome and native, and the native same-object fix makes all 31 cases of Bootstrap 5.3.8's unmodified Toast suite pass without a framework-specific branch. The contract proves Element.classList identity, live class reflection, method shadowing, and identity across detach/reconnect; invalid-token exceptions and the wider DOMTokenList surface remain outside this bounded claim. Evidence: artifacts/wpt-dom-token-list-same-object-chrome-v1-20260723, artifacts/wpt-dom-token-list-same-object-adapters-v1-20260723, and artifacts/ecosystem-bootstrap-toast-native-same-object-v1-20260723."
     },
     {
+      "path": "contracts/dom-token-list-collection.html",
+      "type": "contract",
+      "capabilities": ["dom-token-list-indexed-collection", "dom-token-list-iteration", "dom-token-list-replace", "dom-token-list-invalid-token-errors", "dom-token-list-live-tree-mutation"],
+      "evidence": ["code-oss-tree-twistie-item", "native-dom-token-list-read-mutation-performance"],
+      "reason": "Required product-neutral coverage for the complete collection surface exercised by Code OSS trees: live length/item/indexed access, ordered iteration, forEach, replace, atomic invalid-token errors, detach/reconnect liveness, and the exact tree-twistie class assignment reduction."
+    },
+    {
       "path": "contracts/dom-node-interface-constants.html",
       "type": "contract",
       "capabilities": ["node-interface-constants", "element-node-type", "text-node-type", "document-node-type"],
@@ -783,9 +839,16 @@
     {
       "path": "contracts/dom-treewalker-nodefilter-focus-navigation.html",
       "type": "contract",
-      "capabilities": ["nodefilter-constants", "document-create-tree-walker", "treewalker-filter-semantics", "focus-navigation-tree-traversal"],
-      "evidence": ["browser-authorized-order-menu-focus-management", "native-treewalker-regression", "actual-tradingview-order-menu-proof"],
-      "reason": "Product-neutral reduction of the focus-navigation primitive used by the TradingView order-menu portal. It verifies SHOW_ELEMENT filtering, FILTER_ACCEPT/SKIP/REJECT subtree semantics, currentNode/root identity and boundaries, document-order traversal, sibling navigation across skipped wrappers, and the lastChild/previousNode pattern used to locate focusable descendants."
+      "capabilities": ["nodefilter-constants", "document-create-tree-walker", "document-create-node-iterator", "treewalker-filter-semantics", "node-iterator-dompurify-traversal", "node-iterator-lazy-filtering", "focus-navigation-tree-traversal"],
+      "evidence": ["browser-authorized-order-menu-focus-management", "native-treewalker-regression", "native-node-iterator-regression", "actual-tradingview-order-menu-proof"],
+      "reason": "Product-neutral reduction of the focus-navigation primitive used by the TradingView order-menu portal and the DOMPurify traversal used by Code OSS chat rendering. It verifies TreeWalker navigation, root-inclusive NodeIterator forward/reverse traversal, lazy filter exceptions, and recursive-filter InvalidStateError behavior."
+    },
+    {
+      "path": "dom/traversal/NodeIterator-removal-during-filtering.html",
+      "type": "testharness",
+      "capabilities": ["node-iterator-lazy-filtering", "node-iterator-filter-removal-retargeting", "node-iterator-reference-state"],
+      "evidence": ["unchanged-pinned-node-iterator-wpt", "native-node-iterator-regression"],
+      "reason": "Unchanged hash-pinned WPT coverage for filtering at traversal time, referenceNode visibility during callbacks, and safe retargeting when filters remove the current candidate or its ancestor."
     },
     {
       "path": "contracts/dom-scope-descendant-selector.html",
@@ -814,6 +877,13 @@
       "capabilities": ["parentnode-append", "variadic-node-insertion", "append-string-to-text", "document-fragment-flattening", "node-move-order"],
       "evidence": ["ecosystem-runtime-unit-reduction"],
       "reason": "Required after direct Chrome authority and the native runner pass all 3/3 ParentNode append assertions, and the native retained-runtime unit gate independently covers variadic node/text insertion with connected stylesheet recascade. Evidence: artifacts/web-platform-parentnode-append-chrome-v1-20260723, artifacts/web-platform-parentnode-append-managed-v3-20260723, artifacts/web-platform-parentnode-append-native-v2-20260723, and the webscene_native_engine_tests runtime suite."
+    },
+    {
+      "path": "contracts/dom-fragment-atomic-attachment.html",
+      "type": "testharness",
+      "capabilities": ["append-child-document-fragment", "atomic-tree-insertion", "structural-selector-invalidation", "existing-sibling-selector-invalidation"],
+      "evidence": ["native-fragment-attach-regression", "fragment-attach-abba-benchmark"],
+      "reason": "Product-neutral regression for panel and component trees transferred through DocumentFragment. It verifies that :empty, :has(), :first-child, :nth-child(), adjacent-sibling, and :last-child selectors are matched only after the complete fragment is connected, including attachment after an existing child."
     },
     {
       "path": "contracts/dom-mouse-event-constructor.html",
@@ -1366,6 +1436,13 @@
       "reason": "Product-neutral reduction of the reported porting workaround: a default single-select is one replaced control, only its selected label is projected, option descendants do not enter page flow, and programmatic selectedIndex/value state remains live. Native pointer and keyboard tests separately cover user activation."
     },
     {
+      "path": "contracts/html-dynamic-select-layout.html",
+      "type": "contract",
+      "capabilities": ["dynamic-select-principal-box", "select-intrinsic-block-contribution", "selected-option-paint", "select-hit-testing", "following-block-flow"],
+      "evidence": ["settings-shaped-dynamic-select-layout-reduction"],
+      "reason": "A settings-shaped row attaches an empty native select, measures it, populates options through HTMLSelectElement.add(), and requires the resulting 320 by 26 control to contribute to row height, paint its selected value, retain its hit target, and preserve following-row cadence."
+    },
+    {
       "path": "contracts/html-single-select-input.html",
       "type": "testharness",
       "capabilities": ["collapsed-single-select-pointer-activation", "select-focus", "select-input-change-events"],
@@ -1470,9 +1547,9 @@
     {
       "path": "contracts/dom-webidl-binding-shape.html",
       "type": "contract",
-      "capabilities": ["webidl-interface-inheritance", "webidl-operation-brands", "webidl-descriptors", "dom-wrapper-identity"],
+      "capabilities": ["webidl-interface-inheritance", "webidl-operation-brands", "webidl-descriptors", "dom-wrapper-identity", "node-direct-child-presence"],
       "evidence": ["generated-webidl-to-v8-evaluation"],
-      "reason": "Candidate decision fixture for the generated EventTarget to HTMLElement binding slice. It measures distinct constructors and prototype inheritance, HTML/text/SVG wrapper brands, operation placement and lengths, illegal invocation, constructor behavior, attribute descriptor placement, and wrapper identity."
+      "reason": "Candidate decision fixture for the generated EventTarget to HTMLElement binding slice. It measures distinct constructors and prototype inheritance, HTML/text/SVG wrapper brands, operation placement and lengths, illegal invocation, constructor behavior, attribute descriptor placement, wrapper identity, and live constant-time Node.hasChildNodes behavior."
     },
     {
       "path": "dom/events/AddEventListenerOptions-once.any.js",
@@ -1573,6 +1650,13 @@
       "reason": "Product-neutral reduction of a 900ms infinite rotate(1turn) composition. Native publishes at least fifty host-clock frames, forty distinct angles, a real cycle wrap, no gap above 25ms, and no angular step above 15 degrees. Keep candidate until the CSS Animations slice is stable on every released native RID. Evidence: artifacts/web-platform-subset-keyframes-final-20260722/results.json."
     },
     {
+      "path": "contracts/css-animation-end-class-removal.html",
+      "type": "contract",
+      "capabilities": ["finite-keyframe-animation", "animationend-event", "animation-event-data", "listener-class-removal", "recascade-stability", "host-frame-clock"],
+      "evidence": ["code-oss-language-status-wiggle-reduction", "native-finite-keyframe-animation-end-regression"],
+      "reason": "Product-neutral reduction of a finite status animation whose animationend listener removes the triggering class. It requires one browser-shaped terminal event after an unrelated mid-animation recascade and proves listener cleanup completes without restarting the animation. Native host-demand release is additionally asserted by the deterministic ABI regression."
+    },
+    {
       "path": "contracts/observed-document-scroll-lifecycle-primitives.html",
       "type": "testharness",
       "capabilities": ["dom-content-loaded-event", "window-load-event", "document-ready-state-order", "programmatic-element-scroll", "scroll-event-target"],
@@ -1603,9 +1687,9 @@
     {
       "path": "contracts/observed-keyboard-focus-input-primitives.html",
       "type": "testharness",
-      "capabilities": ["printable-webdriver-input", "keydown-keyup-order", "beforeinput-input-order", "input-event-fields", "text-control-value-mutation", "focus-focusin-order", "blur-focusout-order", "tab-focus-transfer"],
-      "evidence": ["observed-hosted-component-native-input-feature-audit", "indicators-search-text-editing"],
-      "reason": "Product-neutral interaction reduction for keyboard, focus, and text-input lifecycles observed in complex hosted components. The adapter drives a printable ASCII key and WebDriver Tab through each engine; the assertions require event order and fields, value mutation, activeElement transfer, and both bubbling and non-bubbling focus event families. Native evidence passes 3/3 after the independent focus-visible adapter regression also passes: artifacts/observed-keyboard-focus-input-v2-native/results.json and artifacts/focus-visible-adapter-regression-v2/results.json. Managed passes 1/3 and retains explicit candidate-only gaps for beforeinput sequencing and post-Tab keyup targeting: artifacts/observed-keyboard-focus-input-v1/managed/results.json."
+      "capabilities": ["printable-webdriver-input", "punctuation-keyboard-identity", "modifier-keyboard-identity", "keydown-keyup-order", "beforeinput-input-order", "input-event-fields", "text-control-value-mutation", "focus-focusin-order", "blur-focusout-order", "tab-focus-transfer", "shortcut-focus-retargeting", "element-document-window-keyboard-propagation"],
+      "evidence": ["observed-hosted-component-native-input-feature-audit", "indicators-search-text-editing", "dom-punctuation-keyboard-native-gate", "native-shortcut-activation-gate"],
+      "reason": "Product-neutral interaction reduction for keyboard, focus, and text-input lifecycles observed in complex hosted components. The adapter drives letters, the eleven unshifted DOM punctuation keys, and WebDriver Tab through the native engine; focused native gates additionally cover modifier identity and a Meta+Shift+P-style activation across element, Document, and Window listeners with focus retargeting before keyup. The assertions require coherent key/code/keyCode identity, event order and fields, value mutation, activeElement transfer, and both bubbling and non-bubbling focus event families. Keep candidate until every released native RID passes."
     },
     {
       "path": "contracts/observed-native-input-event-primitives.html",

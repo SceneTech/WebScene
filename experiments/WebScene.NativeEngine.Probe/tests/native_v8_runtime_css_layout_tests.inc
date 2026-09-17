@@ -87,6 +87,134 @@ void test_responsive_positioned_sizing(webscene_engine* engine)
     }
 }
 
+void test_nested_css_absolute_modal_grid_geometry(webscene_engine* engine)
+{
+    resize(engine, 1440, 940, 1U);
+    const auto geometry = evaluate(engine, R"JS(
+        (() => {
+          document.body.innerHTML = `
+            <style>
+              html,body{margin:0;width:100%;height:100%}
+              .modal-block{position:fixed;width:100%;height:100%;top:0;left:0;overflow:hidden;
+                .modal-resizable{position:absolute}
+                .modal-shadow{width:100%;height:100%;overflow:hidden}
+              }
+              .modal-part{display:grid;grid-template-rows:33px 1fr;grid-template-columns:1fr;
+                box-sizing:border-box;width:100%;height:100%;border:1px solid #555;overflow:hidden;position:relative;
+                > .content{min-width:0;min-height:0;overflow:hidden}
+                .modal-header{grid-column:1 / -1;height:32px;
+                  .title{height:32px;line-height:32px}
+                }
+              }
+              .surface{height:100%;overflow:hidden;
+                .settings-header{box-sizing:border-box;height:86px}
+                .settings-body{position:relative;height:calc(100% - 86px);
+                  > .split-view{position:absolute;top:14px;right:24px;bottom:0;left:24px;display:flex;
+                    .toc{width:240px}
+                    .settings-list{flex:1 1 auto;min-width:0}
+                  }
+                }
+              }
+            </style>
+            <div class="modal-block"><div id="nested-modal" class="modal-resizable">
+              <div id="nested-shadow" class="modal-shadow"><div class="modal-part">
+                <div id="nested-header" class="modal-header"><div id="nested-title" class="title">Preferences</div></div>
+                <div id="nested-content" class="content"><div id="nested-surface" class="surface">
+                  <div class="settings-header"></div><div id="nested-body" class="settings-body">
+                    <div id="nested-split" class="split-view"><div id="nested-toc" class="toc"></div><div id="nested-list" class="settings-list"></div></div>
+                  </div>
+                </div></div>
+              </div></div>
+            </div></div>`;
+          const modal = document.getElementById('nested-modal');
+          Object.assign(modal.style, {width:'1152px',height:'724px',left:'144px',top:'108px'});
+          const box = id => {
+            const value = document.getElementById(id).getBoundingClientRect();
+            return [value.x,value.y,value.width,value.height];
+          };
+          globalThis.__nestedModal = modal;
+          return {
+            position:getComputedStyle(modal).position,
+            modal:box('nested-modal'),shadow:box('nested-shadow'),
+            header:box('nested-header'),title:box('nested-title'),
+            content:box('nested-content'),surface:box('nested-surface'),
+            body:box('nested-body'),split:box('nested-split'),
+            toc:box('nested-toc'),list:box('nested-list')
+          };
+        })()
+    )JS", "nested-css-absolute-modal-grid.js");
+    require(
+        geometry == R"JSON({"position":"absolute","modal":[144,108,1152,724],"shadow":[144,108,1152,724],"header":[145,109,1150,32],"title":[145,109,1150,32],"content":[145,142,1150,689],"surface":[145,142,1150,689],"body":[145,228,1150,603],"split":[169,242,1102,589],"toc":[169,242,240,589],"list":[409,242,862,589]})JSON",
+        "nested CSS modal/grid/split geometry regressed: " + geometry);
+
+    const auto elapsed = std::stod(evaluate(engine, R"JS(
+        (() => {
+          const started=performance.now();
+          for(let index=0;index<500;index++){
+            __nestedModal.style.left=`${144+(index&1)}px`;
+            __nestedModal.style.top=`${108+(index&1)}px`;
+            void __nestedModal.getBoundingClientRect().left;
+          }
+          __nestedModal.style.left='144px';
+          __nestedModal.style.top='108px';
+          return performance.now()-started;
+        })()
+    )JS", "nested-css-absolute-modal-grid-performance.js"));
+    std::cout << "Nested CSS modal layout gate: 500 positioned layouts in "
+        << elapsed << " ms\n";
+    require(elapsed < 2000.0,
+        "500 nested modal positioned layouts exceeded 2000ms: "
+            + std::to_string(elapsed));
+}
+
+void test_recursive_functional_selector_survives_cache_eviction()
+{
+    auto* engine = webscene_engine_create(64);
+    require(engine != nullptr, "selector-cache regression engine creation failed");
+    const auto result = evaluate(engine, R"JS(
+        (() => {
+          document.body.innerHTML =
+            '<div class="ancestor"><div class="root foo bar">' +
+            '<div id="selector-cache-target" class="target"></div></div></div>';
+          const target = document.getElementById('selector-cache-target');
+          for (let index = 0; index < 511; ++index) {
+            target.matches(`.selector-cache-primer-${index}`);
+          }
+          const style = document.createElement('style');
+          document.head.appendChild(style);
+          style.textContent = `
+            .root:not(.ancestor .foo:is(.bar)) .target {
+              width: 37px;
+            }
+          `;
+          return getComputedStyle(target).width !== '37px'
+            && document.querySelector('.ancestor .foo:is(.bar)') === target.parentElement;
+        })()
+    )JS", "recursive-functional-selector-cache-eviction.js");
+    require(
+        result == "true",
+        "recursive functional selector changed semantics after cache eviction: " + result);
+
+    const auto elapsed = std::stod(evaluate(engine, R"JS(
+        (() => {
+          const target = document.getElementById('selector-cache-target');
+          const started = performance.now();
+          for (let round = 0; round < 8; ++round) {
+            for (let index = 0; index < 511; ++index) {
+              target.matches(`.selector-cache-stress-${round}-${index}`);
+            }
+            target.parentElement.matches('.ancestor .foo:is(.bar)');
+          }
+          return performance.now() - started;
+        })()
+    )JS", "recursive-functional-selector-cache-performance.js"));
+    std::cout << "Recursive selector cache gate: 4096 matches in "
+        << elapsed << " ms\n";
+    require(elapsed < 2000.0,
+        "4096 selector-cache matches exceeded 2000ms: " + std::to_string(elapsed));
+    webscene_engine_destroy(engine);
+}
+
 void test_compact_go_to_fixed_grid_tracks_preserve_trailing_space(
     webscene_engine* engine)
 {
@@ -171,6 +299,126 @@ void test_compact_go_to_fixed_grid_tracks_preserve_trailing_space(
     require(
         compact == R"JSON({"viewport":431,"dialog":[0,0,431],"row":[0,431,431],"date":[20,150,170],"time":[182,100,282],"gap":12,"trailing":149})JSON",
         "fullscreen Go To dialog lost its fixed tracks or trailing space: " + compact);
+}
+
+void test_named_grid_template_areas_layout_cssom_and_mutation(webscene_engine* engine)
+{
+    resize(engine, 700, 400, 2U);
+    const auto result = evaluate(engine, R"JS(
+        (() => {
+          document.body.innerHTML = `
+            <style>
+              html,body { margin:0; }
+              #grid {
+                display:grid;width:700px;height:400px;
+                grid-template-columns:1fr 6fr 1fr 6fr 1fr;
+                grid-template-rows:80px minmax(0,1fr) 40px;
+                grid-template-areas:
+                  ". header header header ."
+                  ". left . right ."
+                  ". footer footer footer .";
+              }
+              #header { grid-area:header; }
+              #header-peer { grid-area:header; }
+              #left { grid-area:left; }
+              #right { grid-area:right; }
+              #footer { grid-row:footer-start / footer-end; grid-column:footer-start / footer-end; }
+            </style>
+            <div id="grid"><div id="header"></div><div id="header-peer"></div><div id="left"></div>
+              <div id="right"></div><div id="footer"></div></div>`;
+          const rect = id => {
+            const value = document.getElementById(id).getBoundingClientRect();
+            return [value.x,value.y,value.width,value.height].map(number =>
+              Math.round(number * 1000) / 1000);
+          };
+          const grid = document.getElementById('grid');
+          const computed = getComputedStyle(grid).getPropertyValue('grid-template-areas');
+          const beforeInvalid = grid.style.gridTemplateAreas;
+          grid.style.gridTemplateAreas = '"broken broken" "broken ."';
+          const invalidIgnored = grid.style.gridTemplateAreas === beforeInvalid;
+          grid.style.gridTemplateAreas =
+            '". footer footer footer ." ". left . right ." ". header header header ."';
+          const movedHeader = rect('header');
+          grid.style.removeProperty('grid-template-areas');
+          const restoredHeader = rect('header');
+
+          const first = '". a a a ." ". b . c ." ". d d d ."';
+          const second = '". d d d ." ". b . c ." ". a a a ."';
+          const started = performance.now();
+          for (let index = 0; index < 500; index++) {
+            grid.style.gridTemplateAreas = index % 2 ? first : second;
+          }
+          const elapsed = performance.now() - started;
+          if (elapsed > 2000) throw new Error(`named-area mutation gate exceeded: ${elapsed}ms`);
+          grid.style.removeProperty('grid-template-areas');
+          return {
+            computed, invalidIgnored,
+            header:rect('header'),headerPeer:rect('header-peer'),left:rect('left'),right:rect('right'),footer:rect('footer'),
+            movedHeader,restoredHeader
+          };
+        })()
+    )JS", "native-grid-template-areas.js");
+    require(
+        result == R"JSON({"computed":"\". header header header .\" \". left . right .\" \". footer footer footer .\"","invalidIgnored":true,"header":[46.667,0,606.667,80],"headerPeer":[46.667,0,606.667,80],"left":[46.667,80,280,280],"right":[373.333,80,280,280],"footer":[46.667,360,606.667,40],"movedHeader":[46.667,360,606.667,40],"restoredHeader":[46.667,0,606.667,80]})JSON",
+        "named grid template areas diverged in parsing, layout, CSSOM, or mutation: "
+            + result);
+}
+
+void test_grid_auto_maximum_tracks_stretch_remaining_space(webscene_engine* engine)
+{
+    resize(engine, 700, 400, 202U);
+    const auto result = evaluate(engine, R"JS(
+        (() => {
+          document.body.innerHTML = `
+            <style>
+              html,body { margin:0; }
+              #grid {
+                display:grid;width:700px;height:400px;
+                grid-template-columns:700px;
+                grid-template-rows:25% minmax(min-content,auto) min-content;
+                grid-template-areas:"header" "middle" "footer";
+              }
+              .nonstretch { align-content:flex-start; }
+              #header { grid-area:header;height:40px; }
+              #middle { grid-area:middle;height:200px; }
+              #footer { grid-area:footer;height:18px; }
+            </style>
+            <div id="grid"><div id="header"></div><div id="middle"></div><div id="footer"></div></div>`;
+          const rect = id => {
+            const value = document.getElementById(id).getBoundingClientRect();
+            return [value.x,value.y,value.width,value.height].map(number =>
+              Math.round(number * 1000) / 1000);
+          };
+          const grid = document.getElementById('grid');
+          const stretched = rect('footer');
+          grid.style.alignContent = 'flex-start';
+          const flexStart = rect('footer');
+          grid.style.removeProperty('align-content');
+          const restored = rect('footer');
+          grid.className = 'nonstretch';
+          const stylesheet = rect('footer');
+          grid.style.alignContent = 'stretch';
+          const inlineOverride = rect('footer');
+          grid.style.removeProperty('align-content');
+          const cascadeRestored = rect('footer');
+          grid.className = '';
+
+          const started = performance.now();
+          let publicationChecksum = 0;
+          for (let index = 0; index < 500; index++) {
+            grid.style.height = index % 2 ? '400px' : '500px';
+            publicationChecksum += rect('footer')[1];
+          }
+          const elapsed = performance.now() - started;
+          if (elapsed > 2000) throw new Error(`auto-max publication gate exceeded: ${elapsed}ms`);
+          grid.style.height = '400px';
+          return {stretched,flexStart,restored,stylesheet,inlineOverride,cascadeRestored,
+            final:rect('footer'),publicationChecksumPositive:publicationChecksum>0};
+        })()
+    )JS", "native-grid-auto-max-stretch.js");
+    require(
+        result == R"JSON({"stretched":[0,382,700,18],"flexStart":[0,300,700,18],"restored":[0,382,700,18],"stylesheet":[0,300,700,18],"inlineOverride":[0,382,700,18],"cascadeRestored":[0,300,700,18],"final":[0,382,700,18],"publicationChecksumPositive":true})JSON",
+        "auto-maximum grid row stretch or mutation diverged: " + result);
 }
 
 void test_media_query_list_tracks_outer_and_frame_viewport_breakpoints(
@@ -1469,6 +1717,103 @@ void test_hover_invalidation_updates_functional_and_sibling_subjects(
             && direct_child_unhovered == R"("0.25")",
         "functional direct-child hover invalidation regressed: hovered="
             + direct_child_hovered + ", unhovered=" + direct_child_unhovered);
+}
+
+void test_hover_dependency_matching_reuses_compiled_triggers(
+    webscene_engine* engine)
+{
+    execute(engine, R"JS(
+        (() => {
+          const count = 4000;
+          const selectors = ['.probe { width: 40px; height: 40px; }'];
+          for (let index = 0; index < count; ++index) {
+            selectors.push(
+              `.probe.trigger-${index}[data-kind="editor"]:not(.disabled)`
+              + `:not([aria-hidden="true"]):hover .leaf-${index}`
+              + ' { color: rgb(1, 2, 3); }');
+          }
+          let content = `<span class="leaf-${count - 1}">leaf</span>`;
+          for (let depth = 0; depth < 32; ++depth) {
+            content = `<div>${content}</div>`;
+          }
+          document.body.innerHTML = `<style>${selectors.join('\n')}</style>`
+            + `<div class="probe trigger-${count - 1}" data-kind="editor">`
+            + `${content}</div>`;
+        })()
+    )JS", "native-hover-compiled-trigger-setup.js");
+    resize(engine, 320, 200, 1051U);
+    const auto pointer_x = std::stod(evaluate(
+        engine,
+        "document.querySelector('.probe').getBoundingClientRect().x + 5",
+        "native-hover-compiled-trigger-x.js"));
+    const auto pointer_y = std::stod(evaluate(
+        engine,
+        "document.querySelector('.probe').getBoundingClientRect().y + 5",
+        "native-hover-compiled-trigger-y.js"));
+
+    // Acknowledge setup work so this measurement cannot succeed by observing
+    // the pre-hover scene. The accepted pointer sequence must reach an actual
+    // scene publication, which includes cascade and any required layout/tree
+    // work rather than ending at worker input consumption.
+    webscene_engine_request_scene_checkpoint(engine);
+    auto setup_published = false;
+    for (auto attempt = 0; attempt < 250 && !setup_published; ++attempt) {
+        const auto* scene = webscene_engine_acquire_latest_scene(engine);
+        if (scene != nullptr) {
+            setup_published = scene->header.consumed_input_sequence >= 1051U;
+            webscene_scene_acknowledge(scene);
+            webscene_scene_release(scene);
+        }
+        if (!setup_published) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    }
+    require(setup_published,
+        "cached hover dependency setup scene was not published");
+
+    webscene_engine_metrics before{};
+    webscene_engine_get_metrics(engine, &before);
+    const auto started = std::chrono::steady_clock::now();
+    pointer_move(engine, pointer_x, pointer_y, 1052U);
+    auto hover_published = false;
+    for (auto attempt = 0; attempt < 250 && !hover_published; ++attempt) {
+        const auto* scene = webscene_engine_acquire_latest_scene(engine);
+        if (scene != nullptr) {
+            hover_published = scene->header.consumed_input_sequence >= 1052U;
+            webscene_scene_acknowledge(scene);
+            webscene_scene_release(scene);
+        }
+        if (!hover_published) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    }
+    const auto elapsed = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - started).count();
+    webscene_engine_metrics after{};
+    webscene_engine_get_metrics(engine, &after);
+    const auto color = evaluate(
+        engine,
+        "getComputedStyle(document.querySelector('.leaf-3999')).color",
+        "native-hover-compiled-trigger-result.js");
+    std::cout << "Cached hover dependency gate: 4000 triggers input-to-publication in "
+        << elapsed << " ms, layoutDelta="
+        << (after.layout_passes - before.layout_passes)
+        << ", domNodes=" << after.dom_nodes << "\n";
+    require(hover_published,
+        "cached hover dependency pointer result was not published");
+    require(
+        color == R"JSON("rgb(1, 2, 3)")JSON",
+        "cached hover trigger did not preserve descendant invalidation: " + color);
+    require(
+        after.dom_nodes == before.dom_nodes,
+        "hover dependency matching changed the DOM tree size");
+    require(
+        after.layout_passes <= before.layout_passes + 1U,
+        "one hover transition caused redundant layout passes");
+    require(
+        elapsed < 30.0,
+        "4,000 cached hover dependencies across a deep path exceeded the 30 ms input-to-publication budget: "
+            + std::to_string(elapsed) + " ms");
 }
 
 void test_hover_moves_between_block_and_display_contents_child(webscene_engine* engine)

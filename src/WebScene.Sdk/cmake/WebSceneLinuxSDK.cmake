@@ -27,7 +27,10 @@ add_executable(WebScene::Compiler ALIAS webscene-uic)
 set_target_properties(webscene-uic PROPERTIES INSTALL_RPATH "$ORIGIN/../lib")
 install(TARGETS webscene_core webscene_native_web webscene_native_web_shared_css ARCHIVE DESTINATION lib)
 install(TARGETS webscene-uic RUNTIME DESTINATION bin)
-install(FILES "${CMAKE_CURRENT_BINARY_DIR}/native-web/parser/release/libwebscene_html_parser.a" DESTINATION lib)
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/native-web/parser-full/release/libwebscene_html_parser.a" DESTINATION lib)
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/native-web/parser-css/release/libwebscene_html_parser.a"
+  DESTINATION lib RENAME libwebscene_css_selector_parser.a)
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/native-web/parser-components.json" DESTINATION share/webscene/dependencies)
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 execute_process(COMMAND "${Python3_EXECUTABLE}" "${WEBSCENE_ROOT}/eng/sdk/header-closure.py" "${WEBSCENE_ROOT}"
   OUTPUT_FILE "${CMAKE_CURRENT_BINARY_DIR}/sdk-headers.cmake" COMMAND_ERROR_IS_FATAL ANY)

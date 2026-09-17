@@ -1,0 +1,7 @@
+<Project Sdk="AppScene" SchemaVersion="1">
+  <PropertyGroup>
+    <Name>WebScene installed native SDK fixture</Name>
+    <JavaScriptMode>Disabled</JavaScriptMode>
+    <CMakeTarget>compiled_native</CMakeTarget>
+  </PropertyGroup>
+</Project>

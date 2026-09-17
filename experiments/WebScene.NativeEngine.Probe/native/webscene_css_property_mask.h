@@ -73,6 +73,91 @@ enum inline_style_property : uint64_t {
     inline_transition = inline_transition_property | inline_transition_duration
         | inline_transition_delay | inline_transition_timing
 };
+
+struct effective_property_metadata final {
+    std::string_view name;
+    uint64_t mask;
+    std::array<std::string_view, 4> longhands;
+    uint8_t longhand_count;
+    bool apply_expansion;
+};
+
+#include "generated/webscene_css_property_metadata.inc"
+
+inline const effective_property_metadata* find_effective_property_metadata(
+    std::string_view name)
+{
+    size_t first = 0U;
+    size_t count = effective_property_metadata_catalog.size();
+    while (count != 0U) {
+        const auto step = count / 2U;
+        const auto index = first + step;
+        if (effective_property_metadata_catalog[index].name < name) {
+            first = index + 1U;
+            count -= step + 1U;
+        } else {
+            count = step;
+        }
+    }
+    if (first == effective_property_metadata_catalog.size()
+        || effective_property_metadata_catalog[first].name != name) {
+        return nullptr;
+    }
+    return &effective_property_metadata_catalog[first];
+}
+
+template<typename Apply>
+bool for_each_effective_property_component(
+    std::string_view name,
+    std::string_view value,
+    Apply&& apply)
+{
+    const auto* metadata = find_effective_property_metadata(name);
+    if (metadata == nullptr || metadata->longhand_count == 0U) {
+        apply(name, value);
+        return false;
+    }
+    if (metadata->longhand_count == 1U) {
+        apply(metadata->longhands[0], value);
+        return true;
+    }
+    std::array<std::string_view, 4> values{};
+    size_t value_count = 0U;
+    size_t start = std::string_view::npos;
+    int depth = 0;
+    for (size_t index = 0; index <= value.size(); ++index) {
+        const auto character = index < value.size() ? value[index] : ' ';
+        if (character == '(') ++depth;
+        else if (character == ')' && depth > 0) --depth;
+        if (std::isspace(static_cast<unsigned char>(character)) && depth == 0) {
+            if (start == std::string_view::npos) continue;
+            if (value_count == values.size()) {
+                apply(name, value);
+                return false;
+            }
+            values[value_count++] = value.substr(start, index - start);
+            start = std::string_view::npos;
+        } else if (start == std::string_view::npos) {
+            start = index;
+        }
+    }
+    if (value_count == 0U || value_count > metadata->longhand_count) {
+        apply(name, value);
+        return false;
+    }
+    if (metadata->longhand_count == 2U) {
+        apply(metadata->longhands[0], values[0]);
+        apply(metadata->longhands[1], value_count > 1U ? values[1] : values[0]);
+        return true;
+    }
+    apply(metadata->longhands[0], values[0]);
+    apply(metadata->longhands[1], value_count > 1U ? values[1] : values[0]);
+    apply(metadata->longhands[2], value_count > 2U ? values[2] : values[0]);
+    apply(metadata->longhands[3], value_count > 3U ? values[3]
+        : value_count > 1U ? values[1] : values[0]);
+    return true;
+}
+
 inline uint64_t property_mask(std::string_view name)
     {
         if (name == "all") return std::numeric_limits<uint64_t>::max();
@@ -85,13 +170,6 @@ inline uint64_t property_mask(std::string_view name)
         if (name == "min-height" || name == "min-block-size") return inline_min_height;
         if (name == "max-width" || name == "max-inline-size") return inline_max_width;
         if (name == "max-height" || name == "max-block-size") return inline_max_height;
-        if (name == "left" || name == "inset-inline-start") return inline_left;
-        if (name == "top" || name == "inset-block-start") return inline_top;
-        if (name == "right" || name == "inset-inline-end") return inline_right;
-        if (name == "bottom" || name == "inset-block-end") return inline_bottom;
-        if (name == "inset") {
-            return inline_left | inline_top | inline_right | inline_bottom;
-        }
         if (name == "display") return inline_display;
         if (name == "position") return inline_position;
         if (name == "contain") return inline_contain;
@@ -133,7 +211,6 @@ inline uint64_t property_mask(std::string_view name)
         if (name == "background-image" || name == "backgroundImage") {
             return inline_background_image;
         }
-        if (name == "overflow" || name == "overflow-x" || name == "overflow-y") return inline_overflow;
         if (name == "visibility") return inline_visibility;
         if (name == "pointer-events") return inline_pointer_events;
         if (name == "color") return inline_color;
@@ -156,17 +233,26 @@ inline uint64_t property_mask(std::string_view name)
         if (name == "word-spacing") return inline_word_spacing;
         if (name == "text-align") return inline_text_align;
         if (name == "white-space") return inline_white_space;
-        if (name == "padding" || name.starts_with("padding-")) return inline_padding;
-        const auto canonical_name = canonical_property_name(name);
-        if (canonical_name == "margin" || canonical_name.starts_with("margin-")) {
-            return inline_margin;
+        const auto direct_metadata = find_effective_property_metadata(name);
+        if (direct_metadata != nullptr) return direct_metadata->mask;
+        std::string canonical_storage;
+        auto canonical_name = name;
+        const auto needs_canonical_name = name == "grid-gap"
+            || name == "grid-row-gap" || name == "grid-column-gap"
+            || std::any_of(name.begin(), name.end(), [](unsigned char character) {
+                return std::isupper(character) != 0;
+            });
+        if (needs_canonical_name) {
+            canonical_storage = canonical_property_name(name);
+            canonical_name = canonical_storage;
+            const auto canonical_metadata =
+                find_effective_property_metadata(canonical_name);
+            if (canonical_metadata != nullptr) return canonical_metadata->mask;
         }
         if (name == "align-items") return inline_align_items;
         if (name == "align-self") return inline_align_self;
         if (name == "align-content" || name == "alignContent") return inline_align_content;
         if (name == "justify-content") return inline_justify_content;
-        if (name == "gap" || name == "row-gap" || name == "column-gap"
-            || name == "rowGap" || name == "columnGap") return inline_gap;
         if (name == "border-spacing" || name == "borderSpacing"
             || name == "border-collapse" || name == "borderCollapse") {
             return inline_table_border_model;
@@ -174,13 +260,9 @@ inline uint64_t property_mask(std::string_view name)
         if (name == "box-sizing") return inline_box_sizing;
         if (name == "box-shadow" || name == "boxShadow") return inline_box_shadow;
         if (canonical_name == "border"
-            || canonical_name == "border-width"
             || canonical_name == "border-style"
-            || canonical_name == "border-color"
             || (canonical_name.starts_with("border-")
-                && (canonical_name.ends_with("-width")
-                    || canonical_name.ends_with("-style")
-                    || canonical_name.ends_with("-color")))
+                && canonical_name.ends_with("-style"))
             || canonical_name == "border-top"
             || canonical_name == "border-right"
             || canonical_name == "border-bottom"

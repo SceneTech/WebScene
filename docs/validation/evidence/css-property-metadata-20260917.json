@@ -1,0 +1,30 @@
+{
+  "date": "2026-09-17",
+  "issue": 235,
+  "catalogEntries": 61,
+  "applicationExpandedShorthands": 6,
+  "contracts": {
+    "chrome": {"passed": 15, "total": 15, "version": "153.0.8010.48"},
+    "nativeCurrentParser": {"passed": 15, "total": 15},
+    "nativeLegacyParser": {"passed": 15, "total": 15},
+    "cascadeWinnerMatrix": {"passed": 17, "total": 17},
+    "adjacentCssom": {"passed": 21, "total": 21},
+    "nativeWebCtest": {"passed": 3, "total": 3},
+    "generatorUnitTests": {"passed": 3, "total": 3}
+  },
+  "lookupBenchmark": {
+    "compiler": "AppleClang 21 -O3",
+    "lookupsPerRun": 24000000,
+    "baselineMilliseconds": [507.901, 502.446, 495.039, 521.802, 495.865, 495.389, 501.778, 505.427, 506.480],
+    "candidateMilliseconds": [426.629, 423.418, 424.271, 434.849, 418.370, 430.056, 421.227, 440.586, 418.068],
+    "baselineMedianMilliseconds": 502.446,
+    "candidateMedianMilliseconds": 424.271,
+    "medianChangePercent": -15.56
+  },
+  "scaling": [
+    {"affected": 8, "unrelated": 32, "selectorCandidates": 16, "fallbackVisits": 0, "ruleChecks": 32, "cascadeApplications": 18, "cascadeCandidates": 32},
+    {"affected": 8, "unrelated": 1024, "selectorCandidates": 16, "fallbackVisits": 0, "ruleChecks": 32, "cascadeApplications": 18, "cascadeCandidates": 32},
+    {"affected": 128, "unrelated": 32, "selectorCandidates": 256, "fallbackVisits": 0, "ruleChecks": 512, "cascadeApplications": 258, "cascadeCandidates": 512},
+    {"affected": 128, "unrelated": 1024, "selectorCandidates": 256, "fallbackVisits": 0, "ruleChecks": 512, "cascadeApplications": 258, "cascadeCandidates": 512}
+  ]
+}

@@ -85,6 +85,10 @@ jobs:
       run: |
         python -m unittest scripts/test_css_capability_matrix.py -v
         python scripts/css_capability_matrix.py --check
+    - name: CSS effective-property metadata contracts
+      run: |
+        python -m unittest scripts/test_css_property_metadata.py -v
+        python tools/generate_css_property_metadata.py --check
     - name: Code OSS Web API ledger contracts
       run: |
         python -m unittest scripts/test_code_oss_web_api_ledger.py -v

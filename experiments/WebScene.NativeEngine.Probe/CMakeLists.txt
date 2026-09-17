@@ -243,6 +243,8 @@ option(WEBSCENE_NATIVE_ENGINE_BUILD_HTML_PARSER_BENCHMARK
     "Build the V8-free html5ever parser microbenchmark" OFF)
 option(WEBSCENE_NATIVE_ENGINE_BUILD_CSS_PARSER_BENCHMARK
     "Build the V8-free selected CSS syntax parser microbenchmark" OFF)
+option(WEBSCENE_NATIVE_ENGINE_BUILD_CSS_PROPERTY_METADATA_BENCHMARK
+    "Build the V8-free CSS property metadata lookup benchmark" OFF)
 option(WEBSCENE_NATIVE_ENGINE_BUILD_DOM_BINDING_BENCHMARK
     "Build the native V8 DOM binding lifecycle benchmark" OFF)
 option(WEBSCENE_NATIVE_ENGINE_FRAGMENT_ATTACH_CONTROL
@@ -943,6 +945,13 @@ if(WEBSCENE_NATIVE_ENGINE_ENABLE_V8)
     endif()
 else()
     message(STATUS "WebScene native engine: V8 intentionally disabled")
+endif()
+
+if(WEBSCENE_NATIVE_ENGINE_BUILD_CSS_PROPERTY_METADATA_BENCHMARK)
+    add_executable(webscene_css_property_metadata_benchmark
+        benchmarks/css_property_metadata_benchmark.cpp)
+    target_compile_features(webscene_css_property_metadata_benchmark PRIVATE cxx_std_20)
+    target_include_directories(webscene_css_property_metadata_benchmark PRIVATE native)
 endif()
 
 if(WEBSCENE_NATIVE_ENGINE_BUILD_LAYOUT_SCRATCH_BENCHMARK)

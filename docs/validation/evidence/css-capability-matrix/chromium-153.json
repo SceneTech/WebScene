@@ -1,0 +1,302 @@
+{
+  "schema": "webscene-wpt-contract-chrome-result-v1",
+  "engine": "chrome",
+  "identity": "Google Chrome 153.0.8010.48",
+  "viewport": {
+    "width": 800,
+    "height": 600,
+    "deviceScaleFactor": 1
+  },
+  "origin": "http://127.0.0.1:64368/",
+  "recordedAt": "2026-09-17T11:27:53.268Z",
+  "summary": {
+    "tests": 9,
+    "passed": 4,
+    "failed": 5,
+    "timedOut": 0,
+    "subtests": 32,
+    "subtestsPassed": 25,
+    "subtestsFailed": 7
+  },
+  "results": [
+    {
+      "path": "contracts/css-syntax-parser-recovery.html",
+      "status": "FAIL",
+      "duration": 29,
+      "message": "expected \"calc(1px + var(--fallback, token(a;b:c)))\" but got \"calc(1px + token(a;b:c))\"",
+      "subtests": [
+        {
+          "name": "semicolon and colon tokens inside strings do not terminate a declaration",
+          "status": "PASS",
+          "message": null,
+          "stack": null
+        },
+        {
+          "name": "semicolon and colon tokens inside functions do not terminate a declaration",
+          "status": "PASS",
+          "message": null,
+          "stack": null
+        },
+        {
+          "name": "semicolon and colon tokens inside quoted url() data do not terminate a declaration",
+          "status": "PASS",
+          "message": null,
+          "stack": null
+        },
+        {
+          "name": "nested function blocks preserve their complete component-value sequence",
+          "status": "FAIL",
+          "message": "expected \"calc(1px + var(--fallback, token(a;b:c)))\" but got \"calc(1px + token(a;b:c))\"",
+          "stack": "Error: expected \"calc(1px + var(--fallback, token(a;b:c)))\" but got \"calc(1px + token(a;b:c))\"\n    at assert_equals (http://127.0.0.1:64368/contracts/css-syntax-parser-recovery.html:40:13)\n    at http://127.0.0.1:64368/contracts/css-syntax-parser-recovery.html:64:5\n    at test (http://127.0.0.1:64368/contracts/css-syntax-parser-recovery.html:28:7)\n    at http://127.0.0.1:64368/contracts/css-syntax-parser-recovery.html:63:3"
+        },
+        {
+          "name": "comments containing delimiters remain inside a custom-property token sequence",
+          "status": "PASS",
+          "message": null,
+          "stack": null
+        },
+        {
+          "name": "ordinary property names are ASCII case-insensitive",
+          "status": "PASS",
+          "message": null,
+          "stack": null
+        },
+        {
+          "name": "whitespace between ! and important is accepted case-insensitively",
+          "status": "PASS",
+          "message": null,
+          "stack": null
+        },
+        {
+          "name": "a malformed declaration does not prevent recovery at the next semicolon",
+          "status": "PASS",
+          "message": null,
+          "stack": null
+        },
+        {
+          "name": "dynamic STYLE reparsing uses the same delimiter-aware syntax path",
+          "status": "PASS",
+          "message": null,
+          "stack": null
+        },
+        {
+          "name": "large dynamic stylesheet recovers through the final rule",
+          "status": "PASS",
+          "message": null,
+          "stack": null
+        },
+        {
+          "name": "large stylesheet parse and recascade metrics",
+          "status": "PASS",
+          "message": "{\"bulkRuleCount\":2000,\"bulkBytes\":107644,\"bulkParseAndRecascadeMilliseconds\":[1.2000000476837158,0.09999990463256836,0,0.10000002384185791,0.10000002384185791,0]}",
+          "stack": null
+        }
+      ],
+      "diagnostics": [
+        "{\"bulkRuleCount\":2000,\"bulkBytes\":107644,\"bulkParseAndRecascadeMilliseconds\":[1.2000000476837158,0.09999990463256836,0,0.10000002384185791,0.10000002384185791,0]}"
+      ]
+    },
+    {
+      "path": "upstream/css/selectors/hover-002.html",
+      "status": "FAIL",
+      "duration": 10042,
+      "message": "Uncaught ReferenceError: test_driver is not defined",
+      "subtests": [
+        {
+          "name": "Hover #hovered element should make it go green",
+          "status": "FAIL",
+          "message": "Test timed out",
+          "stack": null
+        },
+        {
+          "name": "Hover #hoveredContents child should make it go green",
+          "status": "FAIL",
+          "message": "Test timed out",
+          "stack": null
+        }
+      ],
+      "diagnostics": []
+    },
+    {
+      "path": "contracts/css-root-theme-interaction-recascade.html",
+      "status": "FAIL",
+      "duration": 38,
+      "message": "Chrome subtest failed.",
+      "subtests": [
+        {
+          "name": "Conditional root custom properties track theme and descendant state changes",
+          "status": "FAIL",
+          "message": "assert_equals: focus uses current dark variable expected \"rgb(44, 59, 77)\" but got \"rgba(0, 0, 0, 0)\"",
+          "stack": "    at Test.<anonymous> (http://127.0.0.1:64368/contracts/css-root-theme-interaction-recascade.html:41:2)\n    at Test.step (http://127.0.0.1:64368/resources/testharness.js:2869:25)\n    at test (http://127.0.0.1:64368/resources/testharness.js:633:30)\n    at http://127.0.0.1:64368/contracts/css-root-theme-interaction-recascade.html:28:1"
+        },
+        {
+          "name": "Pointer hover resolves the active root theme",
+          "status": "FAIL",
+          "message": "promise_test: Unhandled rejection with value: object \"ReferenceError: test_driver is not defined\"",
+          "stack": "Error\n    at get_stack (http://127.0.0.1:64368/resources/testharness.js:4802:21)\n    at new AssertionError (http://127.0.0.1:64368/resources/testharness.js:4795:22)\n    at assert (http://127.0.0.1:64368/resources/testharness.js:4779:19)\n    at Test.<anonymous> (http://127.0.0.1:64368/resources/testharness.js:764:29)\n    at Test.step (http://127.0.0.1:64368/resources/testharness.js:2869:25)\n    at http://127.0.0.1:64368/resources/testharness.js:2916:35"
+        }
+      ],
+      "diagnostics": []
+    },
+    {
+      "path": "contracts/cssom-style-recalculation-barrier.html",
+      "status": "PASS",
+      "duration": 10,
+      "message": null,
+      "subtests": [
+        {
+          "name": "getComputedStyle observes inline declaration removal synchronously",
+          "status": "PASS",
+          "message": null,
+          "stack": null
+        },
+        {
+          "name": "geometry observes the restored stylesheet declaration synchronously",
+          "status": "PASS",
+          "message": null,
+          "stack": null
+        },
+        {
+          "name": "inherited style resumes after inline removal in the same task",
+          "status": "PASS",
+          "message": null,
+          "stack": null
+        },
+        {
+          "name": "ancestor style-attribute selectors invalidate descendants",
+          "status": "PASS",
+          "message": null,
+          "stack": null
+        }
+      ],
+      "diagnostics": [
+        "{\"display\":\"block\",\"width\":73,\"color\":\"rgb(255, 0, 0)\"}"
+      ]
+    },
+    {
+      "path": "contracts/css-border-functional-color-width.html",
+      "status": "PASS",
+      "duration": 38,
+      "message": null,
+      "subtests": [
+        {
+          "name": "Color-mix percentage must not overwrite border width",
+          "status": "PASS",
+          "message": null,
+          "stack": null
+        }
+      ],
+      "diagnostics": []
+    },
+    {
+      "path": "contracts/css-grid-template-areas.html",
+      "status": "PASS",
+      "duration": 10,
+      "message": null,
+      "subtests": [
+        {
+          "name": "computed grid-template-areas serializes normalized rows",
+          "status": "PASS",
+          "message": null,
+          "stack": null
+        },
+        {
+          "name": "one named grid-area expands to its four generated line names",
+          "status": "PASS",
+          "message": null,
+          "stack": null
+        },
+        {
+          "name": "named areas use sparse five-column and three-row geometry",
+          "status": "PASS",
+          "message": null,
+          "stack": null
+        },
+        {
+          "name": "fully definite items may overlap in the same named area",
+          "status": "PASS",
+          "message": null,
+          "stack": null
+        },
+        {
+          "name": "invalid nonrectangular and unequal rows are ignored atomically",
+          "status": "PASS",
+          "message": null,
+          "stack": null
+        },
+        {
+          "name": "valid template mutation moves named items and removal restores cascade",
+          "status": "PASS",
+          "message": null,
+          "stack": null
+        },
+        {
+          "name": "500 named-area mutations remain within the bounded gate",
+          "status": "PASS",
+          "message": null,
+          "stack": null
+        },
+        {
+          "name": "grid-template shorthand shares named-area state with longhand mutation",
+          "status": "PASS",
+          "message": null,
+          "stack": null
+        }
+      ],
+      "diagnostics": []
+    },
+    {
+      "path": "contracts/css-background-image-primitives.html",
+      "status": "PASS",
+      "duration": 12,
+      "message": null,
+      "subtests": [
+        {
+          "name": "URL-backed SVG background longhands survive the cascade",
+          "status": "PASS",
+          "message": null,
+          "stack": null
+        },
+        {
+          "name": "background artwork does not alter the principal box geometry",
+          "status": "PASS",
+          "message": null,
+          "stack": null
+        }
+      ],
+      "diagnostics": []
+    },
+    {
+      "path": "contracts/media-query-list-dynamic-viewport.html",
+      "status": "FAIL",
+      "duration": 35,
+      "message": "Chrome subtest failed.",
+      "subtests": [
+        {
+          "name": "MediaQueryList follows viewport breakpoint crossings",
+          "status": "FAIL",
+          "message": "promise_test: Unhandled rejection with value: object \"ReferenceError: test_driver is not defined\"",
+          "stack": "Error\n    at get_stack (http://127.0.0.1:64368/resources/testharness.js:4802:21)\n    at new AssertionError (http://127.0.0.1:64368/resources/testharness.js:4795:22)\n    at assert (http://127.0.0.1:64368/resources/testharness.js:4779:19)\n    at Test.<anonymous> (http://127.0.0.1:64368/resources/testharness.js:764:29)\n    at Test.step (http://127.0.0.1:64368/resources/testharness.js:2869:25)\n    at http://127.0.0.1:64368/resources/testharness.js:2916:35"
+        }
+      ],
+      "diagnostics": []
+    },
+    {
+      "path": "contracts/css-animation-end-class-removal.html",
+      "status": "FAIL",
+      "duration": 824,
+      "message": "animationend data differs: {\"animationName\":\"status-wiggle\",\"elapsedTime\":0.8,\"pseudoElement\":\"\",\"bubbles\":true,\"cancelable\":true}",
+      "subtests": [
+        {
+          "name": "finite rotation keyframes dispatch one animationend and permit class cleanup",
+          "status": "FAIL",
+          "message": "animationend data differs: {\"animationName\":\"status-wiggle\",\"elapsedTime\":0.8,\"pseudoElement\":\"\",\"bubbles\":true,\"cancelable\":true}",
+          "stack": "Error: animationend data differs: {\"animationName\":\"status-wiggle\",\"elapsedTime\":0.8,\"pseudoElement\":\"\",\"bubbles\":true,\"cancelable\":true}\n    at sample (http://127.0.0.1:64368/contracts/css-animation-end-class-removal.html:71:19)"
+        }
+      ],
+      "diagnostics": [
+        "[{\"animationName\":\"status-wiggle\",\"elapsedTime\":0.8,\"pseudoElement\":\"\",\"bubbles\":true,\"cancelable\":true}]"
+      ]
+    }
+  ]
+}

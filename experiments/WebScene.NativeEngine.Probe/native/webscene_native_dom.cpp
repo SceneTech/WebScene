@@ -1,4 +1,5 @@
 #include "webscene_native_dom.h"
+#include "webscene_css_ascii_number.h"
 
 #include <algorithm>
 #include <array>

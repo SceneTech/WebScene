@@ -5,6 +5,14 @@ include(CTest)
 include(FetchContent)
 
 if(BUILD_TESTING)
+    add_executable(webscene_css_ascii_number_tests
+        tests/css_ascii_number_tests.cpp)
+    target_compile_features(webscene_css_ascii_number_tests PRIVATE cxx_std_20)
+    target_include_directories(webscene_css_ascii_number_tests PRIVATE native)
+    add_test(NAME webscene_css_ascii_number_tests
+        COMMAND webscene_css_ascii_number_tests)
+    set_tests_properties(webscene_css_ascii_number_tests PROPERTIES
+        LABELS "native;css;effects;portability;performance" TIMEOUT 10)
     add_executable(webscene_file_panel_v2_contract_tests
         tests/file_panel_v2_contract_tests.cpp)
     target_compile_features(webscene_file_panel_v2_contract_tests PRIVATE cxx_std_20)

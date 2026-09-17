@@ -1,0 +1,64 @@
+{
+  "schema": "webscene-css-text-topology-v1",
+  "base": "e1f634af17c496a9f28435fd14a11511303b0ffb",
+  "candidate": "The commit containing this evidence.",
+  "qualification": "DOM/CSS correctness, work counters, and local algorithmic timing only; no cross-machine presentation claim.",
+  "contracts": [
+    {
+      "name": "native-before",
+      "path": "/tmp/css-text-normalize-native-initial-20260917/results.json",
+      "sha256": "bf45d63485dc6b6c12c1c3fe97d136ec2c75955ae2e33fa1bf1f1c603b70eec9",
+      "summary": { "tests": 1, "passed": 0, "failed": 1, "subtests": 6, "subtestsPassed": 0, "subtestsFailed": 6 }
+    },
+    {
+      "name": "chrome-final",
+      "identity": "Google Chrome 153.0.8010.48",
+      "path": "/tmp/css-text-normalize-chrome-final-20260917/results.json",
+      "sha256": "336e74ce6d08118f778dedeba654b73687cf087c94623c7f3c4fe6997a9730d5",
+      "summary": { "tests": 1, "passed": 1, "failed": 0, "subtests": 6, "subtestsPassed": 6, "subtestsFailed": 0 }
+    },
+    {
+      "name": "native-final",
+      "path": "/tmp/css-text-normalize-native-final-r2-20260917/results.json",
+      "sha256": "8b6293eb787024c596d34a666f12fb1a0abd69312a225243427aa80c048497e2",
+      "summary": { "tests": 1, "passed": 1, "failed": 0, "subtests": 6, "subtestsPassed": 6, "subtestsFailed": 0 }
+    },
+    {
+      "name": "native-character-data-adjacent",
+      "path": "/tmp/css-character-data-native-adjacent-20260917/results.json",
+      "sha256": "b0cf7878330e16a0feb39fc4eac56687ee18ad71189f5763bda29bb2bce6b13f",
+      "summary": { "tests": 2, "passed": 2, "failed": 0, "subtests": 70, "subtestsPassed": 70, "subtestsFailed": 0 }
+    }
+  ],
+  "scaling": {
+    "pairsAtLargeSize": 12800,
+    "beforeMilliseconds": [308.198, 307.27],
+    "afterMilliseconds": [23.559, 28.705],
+    "unrelatedSizes": [32, 1024],
+    "cases": 4,
+    "allNineCounterDeltasZero": true,
+    "counters": [
+      "selector-invalidation-plan-lookups",
+      "selector-invalidation-candidate-visits",
+      "selector-invalidation-fallback-visits",
+      "css-compound-match-checks",
+      "css-rule-match-checks",
+      "css-cascade-applications",
+      "css-cascade-candidate-checks",
+      "css-positional-sibling-visits",
+      "detached-dom-root-containment-checks"
+    ]
+  },
+  "builds": {
+    "certificationNativeTests": "pass",
+    "productionStaticSdkRuntime": "pass",
+    "generatedBindingsCheck": "pass",
+    "detachedDomGcGroup": "pass"
+  },
+  "limits": [
+    "Range boundary adjustment not implemented",
+    "MutationObserver records for split/normalize not implemented",
+    "No physical Spotify resize acceptance",
+    "No CI monitoring"
+  ]
+}

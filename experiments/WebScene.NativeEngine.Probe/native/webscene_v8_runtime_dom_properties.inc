@@ -350,6 +350,129 @@
     static void replace_character_data(const v8::FunctionCallbackInfo<v8::Value>& info)
     { edit_character_data(info, character_data_operation::replace); }
 
+    static std::string character_data_units_to_wtf8(
+        v8::Isolate* isolate,
+        const std::vector<uint16_t>& units,
+        size_t begin,
+        size_t length)
+    {
+        const uint16_t empty = 0;
+        const auto value = v8::String::NewFromTwoByte(
+            isolate,
+            length == 0 ? &empty : units.data() + begin,
+            v8::NewStringType::kNormal,
+            static_cast<int>(length)).ToLocalChecked();
+        return to_wtf8(isolate, value);
+    }
+
+    static void split_text(const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        binding_callback_timer binding_timer(
+            self->profile(binding_category::dom_mutation),
+            self->profile_named("Text.splitText"));
+        auto* node = unwrap_node(info.This());
+        if (node == nullptr || node->kind != dom_node_kind::text || info.Length() < 1) {
+            info.GetIsolate()->ThrowException(v8::Exception::TypeError(
+                js_string(info.GetIsolate(), "splitText requires a Text receiver and offset")));
+            return;
+        }
+        uint32_t offset = 0;
+        // WebIDL converts before the algorithm reads data or parent. The
+        // conversion can run author code which mutates either one.
+        if (!info[0]->Uint32Value(info.GetIsolate()->GetCurrentContext()).To(&offset)) return;
+        const auto units = decode_wtf8_to_utf16(node->text_content);
+        if (offset > units.size()) {
+            throw_dom_exception(info, "Offset exceeds Text length", "IndexSizeError");
+            return;
+        }
+
+        auto& suffix = self->document.create_node(dom_node_kind::text, "#text");
+        suffix.xml_mode = node->xml_mode;
+        suffix.text_content = character_data_units_to_wtf8(
+            info.GetIsolate(), units, offset, units.size() - offset);
+        node->text_content = character_data_units_to_wtf8(
+            info.GetIsolate(), units, 0, offset);
+        if (node->parent != nullptr) {
+            auto* parent = node->parent;
+            const auto position = std::find(
+                parent->children.begin(), parent->children.end(), node);
+            if (position != parent->children.end()) {
+                suffix.parent = parent;
+                suffix.visible = true;
+                parent->children.insert(position + 1, &suffix);
+            }
+        }
+        // The parent concatenated text and element-child list are identical,
+        // so no selector subject can change. Layout still needs the new text
+        // node boundaries, but selector matching and cascade are deliberately
+        // omitted from this topology-only path.
+        self->document.mark_dirty();
+        info.GetReturnValue().Set(self->wrap_node(suffix));
+    }
+
+    bool normalize_text_descendants(dom_node& parent)
+    {
+        bool changed = false;
+        size_t index = 0;
+        while (index < parent.children.size()) {
+            auto* child = parent.children[index];
+            if (child == nullptr) {
+                ++index;
+                continue;
+            }
+            if (child->kind != dom_node_kind::text) {
+                changed |= normalize_text_descendants(*child);
+                ++index;
+                continue;
+            }
+            if (child->text_content.empty()) {
+                parent.children.erase(parent.children.begin()
+                    + static_cast<std::ptrdiff_t>(index));
+                child->parent = nullptr;
+                child->visible = false;
+                weaken_detached_subtree_wrappers(*child);
+                changed = true;
+                continue;
+            }
+            while (index + 1 < parent.children.size()) {
+                auto* sibling = parent.children[index + 1];
+                if (sibling == nullptr || sibling->kind != dom_node_kind::text) break;
+                child->text_content += sibling->text_content;
+                parent.children.erase(parent.children.begin()
+                    + static_cast<std::ptrdiff_t>(index + 1));
+                sibling->parent = nullptr;
+                sibling->visible = false;
+                weaken_detached_subtree_wrappers(*sibling);
+                changed = true;
+            }
+            ++index;
+        }
+        if (changed) synchronize_textarea_value_from_children(parent);
+        return changed;
+    }
+
+    static void normalize_node(const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        binding_callback_timer binding_timer(
+            self->profile(binding_category::dom_mutation),
+            self->profile_named("Node.normalize"));
+        auto* node = unwrap_node(info.This());
+        if (node == nullptr) {
+            // Attr inherits Node but has no child tree to normalize.
+            if (info.This()->IsObject() && unwrap_attr(info.This()) != nullptr) return;
+            info.GetIsolate()->ThrowException(v8::Exception::TypeError(
+                js_string(info.GetIsolate(), "normalize requires a Node receiver")));
+            return;
+        }
+        if (!self->normalize_text_descendants(*node)) return;
+        // Normalization preserves concatenated text and element-child order.
+        // It therefore cannot alter selector/cascade results, including
+        // :empty; only layout and paint observe the coalesced text nodes.
+        self->document.mark_dirty();
+    }
+
     static void set_node_text_value(
         v8::Local<v8::Value> raw_value,
         const v8::PropertyCallbackInfo<void>& info,

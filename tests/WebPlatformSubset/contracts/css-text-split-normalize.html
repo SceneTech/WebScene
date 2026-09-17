@@ -1,0 +1,119 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Text splitting and normalization preserve CSS semantics</title>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<style>
+.split-stage { display:block; width:200px; font:20px/20px monospace }
+.split-stage:empty { width:41px }
+.split-stage + .split-consumer { width:17px }
+</style>
+<body>
+<script>
+test(() => {
+  assert_equals(Text.prototype.splitText.length, 1);
+  assert_equals(Node.prototype.normalize.length, 0);
+  assert_throws_js(TypeError, () => Text.prototype.splitText.call(document.createComment('x'), 0));
+  assert_throws_js(TypeError, () => Node.prototype.normalize.call({}));
+  const attr = document.createAttribute('data-probe');
+  attr.value = 'unchanged';
+  attr.normalize();
+  assert_equals(attr.value, 'unchanged');
+}, 'splitText and normalize have the standard exposure, arity, and receiver checks');
+
+test(() => {
+  const text = new Text('A\uD83D\uDE80B\uD800');
+  const suffix = text.splitText(2);
+  assert_equals(text.data, 'A\uD83D');
+  assert_equals(suffix.data, '\uDE80B\uD800');
+  assert_equals(text.parentNode, null);
+  assert_equals(suffix.parentNode, null);
+  assert_equals(suffix.constructor, Text);
+  const empty = suffix.splitText(suffix.length);
+  assert_equals(empty.data, '');
+  assert_equals(empty.parentNode, null);
+}, 'splitText addresses UTF-16 code units and returns detached Text nodes');
+
+test(t => {
+  const stage = document.createElement('div');
+  stage.className = 'split-stage';
+  const consumer = document.createElement('div');
+  consumer.className = 'split-consumer';
+  document.body.append(stage, consumer);
+  t.add_cleanup(() => { stage.remove(); consumer.remove(); });
+  const original = document.createTextNode('alpha beta');
+  stage.appendChild(original);
+  const next = original.splitText(5);
+  assert_equals(stage.childNodes.length, 2);
+  assert_equals(stage.firstChild, original);
+  assert_equals(original.nextSibling, next);
+  assert_equals(stage.textContent, 'alpha beta');
+  assert_equals(getComputedStyle(stage).width, '200px');
+  assert_equals(getComputedStyle(consumer).width, '17px');
+  stage.normalize();
+  assert_equals(stage.childNodes.length, 1);
+  assert_equals(stage.firstChild, original);
+  assert_equals(original.data, 'alpha beta');
+  assert_equals(next.parentNode, null);
+  assert_equals(next.data, ' beta');
+  assert_equals(getComputedStyle(stage).width, '200px');
+}, 'connected split and normalize preserve text, first-node identity, layout, and CSS');
+
+test(t => {
+  const root = document.createElement('section');
+  root.innerHTML = '<div></div><p></p>';
+  document.body.appendChild(root);
+  t.add_cleanup(() => root.remove());
+  const div = root.firstChild, paragraph = root.lastChild;
+  const emptyFirst = document.createTextNode('');
+  const first = document.createTextNode('a');
+  const emptyMiddle = document.createTextNode('');
+  const second = document.createTextNode('b');
+  const comment = document.createComment('boundary');
+  const third = document.createTextNode('c');
+  div.append(emptyFirst, first, emptyMiddle, second, comment, third, document.createTextNode(''));
+  paragraph.append(document.createTextNode('x'), document.createTextNode('y'));
+  root.normalize();
+  assert_equals(JSON.stringify(Array.from(div.childNodes, n => [n.nodeType, n.data])),
+    JSON.stringify([[3, 'ab'], [8, 'boundary'], [3, 'c']]));
+  assert_equals(div.firstChild, first);
+  assert_equals(div.lastChild, third);
+  assert_equals(emptyFirst.parentNode, null);
+  assert_equals(emptyMiddle.parentNode, null);
+  assert_equals(second.parentNode, null);
+  assert_equals(paragraph.childNodes.length, 1);
+  assert_equals(paragraph.textContent, 'xy');
+}, 'normalize removes empty Text nodes and coalesces each descendant run around boundaries');
+
+test(t => {
+  const style = document.createElement('style');
+  style.textContent = '.split-style-target{height:37px}';
+  const target = document.createElement('div');
+  target.className = 'split-style-target';
+  const textarea = document.createElement('textarea');
+  textarea.append(document.createTextNode('one'), document.createTextNode(' two'));
+  document.head.appendChild(style);
+  document.body.append(target, textarea);
+  t.add_cleanup(() => { style.remove(); target.remove(); textarea.remove(); });
+  style.firstChild.splitText(20);
+  assert_equals(getComputedStyle(target).height, '37px');
+  style.normalize();
+  assert_equals(getComputedStyle(target).height, '37px');
+  assert_equals(textarea.value, 'one two');
+  textarea.normalize();
+  assert_equals(textarea.value, 'one two');
+  assert_equals(textarea.defaultValue, 'one two');
+}, 'split and normalize preserve connected stylesheet and textarea text semantics');
+
+test(() => {
+  const text = new Text('seed');
+  const order = [];
+  assert_throws_dom('IndexSizeError', () => text.splitText({
+    valueOf() { order.push('offset'); text.data = 'x'; return 2; }
+  }));
+  assert_array_equals(order, ['offset']);
+  assert_equals(text.data, 'x');
+  assert_throws_js(TypeError, () => text.splitText(Symbol()));
+  assert_equals(text.data, 'x');
+}, 'splitText converts its offset before reading data and does not partially split on errors');
+</script>

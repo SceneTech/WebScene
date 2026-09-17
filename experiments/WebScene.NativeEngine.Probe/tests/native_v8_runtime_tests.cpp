@@ -287,6 +287,7 @@ int main()
             test_compiled_subject_index_scaling();
             test_variadic_child_vector_scaling();
             test_character_data_stable_style_scaling();
+            test_text_topology_css_work_scaling();
             test_compiled_css_invalidation_scaling();
             test_compiled_css_route_scaling();
             test_compiled_css_route_scaling(true, true);
@@ -306,6 +307,10 @@ int main()
         }
         if (selected == "css-character-data-scaling") {
             test_character_data_stable_style_scaling();
+            return 0;
+        }
+        if (selected == "css-text-topology-scaling") {
+            test_text_topology_css_work_scaling();
             return 0;
         }
         if (selected == "dom-variadic-detach-scaling") {
@@ -991,6 +996,7 @@ int main()
     test_compiled_subject_index_scaling();
     test_compiled_css_invalidation_scaling();
     test_character_data_stable_style_scaling();
+    test_text_topology_css_work_scaling();
     test_variadic_child_vector_scaling();
     test_compiled_css_route_scaling();
     test_compiled_css_route_scaling(true, true);

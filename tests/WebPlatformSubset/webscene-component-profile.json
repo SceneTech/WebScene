@@ -914,6 +914,13 @@
       "reason": "Browser-referenced UTF-16 editing methods, conversion/reentrancy, empty/relational selector, stylesheet text and textarea checkpoints."
     },
     {
+      "path": "contracts/css-text-split-normalize.html",
+      "type": "testharness",
+      "capabilities": ["text-split", "node-normalize", "text-structural-checkpoints", "utf-16-offsets", "stylesheet-text", "textarea-default-value"],
+      "evidence": ["css-structural-mutation-audit"],
+      "reason": "Browser-referenced splitText/normalize semantics plus CSS, layout, stylesheet, textarea, identity and conversion checkpoints."
+    },
+    {
       "path": "contracts/css-character-data-checkpoints.html",
       "type": "testharness",
       "capabilities": ["character-data-style-checkpoints", "dom-string-conversion-order", "structural-selector-invalidation"],

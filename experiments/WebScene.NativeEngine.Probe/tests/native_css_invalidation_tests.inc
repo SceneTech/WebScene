@@ -299,6 +299,78 @@ void test_character_data_stable_style_scaling()
     }
 }
 
+void test_text_topology_css_work_scaling()
+{
+    for (const auto affected : {8, 128}) for (const auto unrelated : {32, 1024}) {
+        auto* engine = webscene_engine_create(0);
+        require(engine != nullptr, "text-topology scaling engine creation failed");
+        resize(engine, 800, 600, 1);
+        wait_for_consumed_inputs(engine, 1, "text-topology viewport not applied");
+        auto source = std::string{R"JS((() => {
+          document.body.innerHTML='<main>'+('<div class="topology-shell">seed</div><div class="topology-target"></div>').repeat(AFFECTED)+
+            '</main><aside>'+Array.from({length:UNRELATED},(_,i)=>'<div class="topology-noise-'+i+'"></div>').join('')+'</aside>';
+          const style=document.createElement('style');
+          style.textContent='.topology-target{display:block;width:11px}.topology-shell:empty + .topology-target{width:41px}'+
+            Array.from({length:UNRELATED},(_,i)=>'.topology-noise-'+i+':empty{height:1px}').join('');
+          document.head.appendChild(style);
+          const shells=Array.from(document.querySelectorAll('.topology-shell'));
+          const originals=shells.map(n=>n.firstChild);
+          const targets=Array.from(document.querySelectorAll('.topology-target'));
+          globalThis.editTextTopology=()=>{
+            for(let pass=0;pass<100;pass++) {
+              for(const original of originals) {
+                const suffix=original.splitText(2);
+                if(original.data!=='se'||suffix.data!=='ed'||original.nextSibling!==suffix)return false;
+              }
+              for(const shell of shells)shell.normalize();
+            }
+            return shells.every((shell,i)=>shell.childNodes.length===1 && shell.firstChild===originals[i] && shell.textContent==='seed') &&
+              targets.every(n=>getComputedStyle(n).width==='11px');
+          };
+          return targets.every(n=>getComputedStyle(n).width==='11px');
+        })())JS"};
+        source.replace(source.find("AFFECTED"), 8, std::to_string(affected));
+        for (size_t at = source.find("UNRELATED"); at != std::string::npos; at = source.find("UNRELATED"))
+            source.replace(at, 9, std::to_string(unrelated));
+        require(evaluate(engine, source, "text-topology-setup.js") == "true",
+            "text-topology setup mismatch");
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+        const std::array<std::string_view, 9> names{
+            "selector-invalidation-plan-lookups", "selector-invalidation-candidate-visits",
+            "selector-invalidation-fallback-visits", "css-compound-match-checks", "css-rule-match-checks",
+            "css-cascade-applications", "css-cascade-candidate-checks", "css-positional-sibling-visits",
+            "detached-dom-root-containment-checks"};
+        std::this_thread::sleep_for(std::chrono::milliseconds(260));
+        execute_and_wait_for_wrapper_retention_scene(engine,
+            "document.body.style.backgroundColor='rgb(1,2,3)'", "text-topology-before.js");
+        std::array<uint64_t, 9> before{};
+        for (size_t i = 0; i < names.size(); ++i) before[i] = runtime_counter_diagnostic(engine, names[i]);
+#endif
+        const auto started = std::chrono::steady_clock::now();
+        require(evaluate(engine, "editTextTopology()", "text-topology-edit.js") == "true",
+            "text splitting/normalization lost data, identity, order or computed style");
+        std::cout << "text-topology affected=" << affected << " unrelated=" << unrelated
+            << " split-normalize-pairs=" << 100 * affected << " edit-and-check-ms="
+            << std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - started).count();
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+        std::this_thread::sleep_for(std::chrono::milliseconds(260));
+        execute_and_wait_for_wrapper_retention_scene(engine,
+            "document.body.style.backgroundColor='rgb(3,2,1)'", "text-topology-after.js");
+        bool unchanged = true;
+        for (size_t i = 0; i < names.size(); ++i) {
+            const auto delta = runtime_counter_diagnostic(engine, names[i]) - before[i];
+            std::cout << ' ' << names[i] << '=' << delta;
+            unchanged &= delta == 0;
+        }
+        require(unchanged,
+            "text splitting/normalization performed CSS work or quadratic detached-root scans");
+#endif
+        std::cout << '\n';
+        webscene_engine_destroy(engine);
+    }
+}
+
 void test_compiled_css_route_scaling(bool structural_only = false, bool structural_noise = false)
 {
     // Two independent axes: grow the affected component and grow unrelated

@@ -1,4 +1,4 @@
-    enum class variadic_insertion { append, prepend, before, after };
+    enum class variadic_insertion { append, prepend, before, after, replace_children, replace_with };
 
     static void insert_variadic_nodes(const v8::FunctionCallbackInfo<v8::Value>& info,
         variadic_insertion placement)
@@ -7,7 +7,9 @@
         custom_element_reaction_scope reactions(*self);
         const auto* operation = placement == variadic_insertion::append ? "ParentNode.append"
             : placement == variadic_insertion::prepend ? "ParentNode.prepend"
-            : placement == variadic_insertion::before ? "ChildNode.before" : "ChildNode.after";
+            : placement == variadic_insertion::before ? "ChildNode.before"
+            : placement == variadic_insertion::after ? "ChildNode.after"
+            : placement == variadic_insertion::replace_children ? "ParentNode.replaceChildren" : "ChildNode.replaceWith";
         binding_callback_timer timer(self->profile(binding_category::dom_mutation),
             self->profile_named(operation));
         auto* receiver = unwrap_node(info.This());
@@ -28,9 +30,11 @@
             }
             arguments.push_back(node);
         }
-        const bool sibling = placement == variadic_insertion::before || placement == variadic_insertion::after;
+        const bool replace_all = placement == variadic_insertion::replace_children;
+        const bool replace_self = placement == variadic_insertion::replace_with;
+        const bool sibling = placement == variadic_insertion::before || placement == variadic_insertion::after || replace_self;
         auto* parent = sibling ? receiver->parent : receiver;
-        if (parent == nullptr || arguments.empty()) return;
+        if (parent == nullptr || (arguments.empty() && !replace_all && !replace_self)) return;
 
         // Find a sibling which will survive conversion, even if the receiver
         // itself or surrounding siblings occur in the argument list.
@@ -57,7 +61,21 @@
             if (old_parent != nullptr && previous_seen.insert(old_parent).second)
                 previous_parents.push_back(old_parent);
         };
+        const auto clear_replacement_focus = [&](dom_node& root) {
+            self->document.unregister_modal_subtree(root);
+            if (!self->subtree_contains(root, self->active_element)) return;
+            // Removal clears focus without dispatching blur/focusout (also
+            // Blink's RemoveFocusedElementOfSubtree with omitted blur events).
+            // Do this before detachment so :focus-within ancestors are updated.
+            auto* focused = self->active_element;
+            focused->mutable_form_control().input_focused = false;
+            focused->mutable_form_control().caret_visible = false;
+            self->active_element = nullptr;
+            self->recascade_focus_subject(*focused, "focus-replacement-removal");
+            self->document.mark_dirty();
+        };
         const auto detach = [&](dom_node* node) {
+            if ((replace_all || replace_self) && node->parent != nullptr) clear_replacement_focus(*node);
             auto* old_parent = node->parent;
             if (old_parent == nullptr) return;
             if (self->is_connected(*node)) self->notify_custom_elements_subtree(*node, "disconnected");
@@ -115,7 +133,7 @@
             throw_dom_exception(info, "The requested insertion violates the node hierarchy", "HierarchyRequestError");
             return;
         }
-        if (nodes.empty()) return;
+        if (nodes.empty() && !replace_all && !replace_self) return;
 
         dom_node* reference = nullptr;
         if (placement == variadic_insertion::prepend
@@ -124,7 +142,7 @@
         } else if (placement == variadic_insertion::before) {
             const auto found = std::find(parent->children.begin(), parent->children.end(), viable);
             if (found != parent->children.end() && std::next(found) != parent->children.end()) reference = *std::next(found);
-        } else if (placement == variadic_insertion::after) reference = viable;
+        } else if (placement == variadic_insertion::after || replace_self) reference = viable;
         if (nodes.size() == 1U) {
             if (reference == nodes.front()) {
                 const auto found = std::find(parent->children.begin(), parent->children.end(), reference);
@@ -132,6 +150,16 @@
                     ? *std::next(found) : nullptr;
             }
             detach(nodes.front());
+        }
+        if (replace_all) {
+            for (auto* child : parent->children) if (child != nullptr) clear_replacement_focus(*child);
+            self->detach_all_children(*parent);
+            parent->text_content.clear();
+        } else if (replace_self && receiver->parent == parent) {
+            detach(receiver);
+            self->deactivate_connected_stylesheets(*receiver);
+            receiver->visible = false;
+            self->weaken_detached_subtree_wrappers(*receiver);
         }
         const auto position = reference == nullptr ? parent->children.end()
             : std::find(parent->children.begin(), parent->children.end(), reference);

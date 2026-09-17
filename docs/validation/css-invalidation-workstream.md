@@ -68,7 +68,8 @@ used.
   Documents with no valid custom-element definition make no reaction-bridge calls;
   first definition during argument conversion lazily activates enclosing boundaries.
 - Fix `:empty` matching to ignore comments and empty text, but not whitespace text.
-- Share variadic insertion between `append`, `prepend`, `before`, and `after`:
+- Share variadic insertion/replacement between `append`, `prepend`, `before`,
+  `after`, `replaceChildren`, and `replaceWith`:
   convert non-Node arguments before reading tree state, flatten fragments, retain
   the last occurrence of duplicate nodes, and resolve viable sibling positions.
   Deliver structural reactions after both source/destination style checkpoints,
@@ -133,9 +134,9 @@ WEBSCENE_NATIVE_ENGINE_TEST_FILTER=css-invalidation-scaling \
 
 ## Component-size matrix and measured matching bottleneck
 
-The same native filter now runs 100 cases: sixteen component shapes with ordinary
-unrelated rules (64 cases), plus nine structural shapes with unrelated structural
-rules (36 cases); both use 8/128 affected targets and 32/1,024 unrelated nodes/rule
+The same native filter now runs 116 cases: eighteen component shapes with ordinary
+unrelated rules (72 cases), plus eleven structural shapes with unrelated structural
+rules (44 cases); both use 8/128 affected targets and 32/1,024 unrelated nodes/rule
 families. Each case adds then removes selector state and checks every target's
 computed width. All eight counters
 must be identical at both unrelated sizes; work must stay within a linear
@@ -311,9 +312,64 @@ DOM contracts 9/9, six custom-element contracts 118/118, seven adjacent native
 groups and parser tests also pass locally.
 The final production build passes all 100 semantic cases and the 42-check new
 contract without certification telemetry.
-Further `replaceWith`/`replaceChildren` conversion/duplicate/error checkpoints and
-character-data mutation paths remain to be audited. Broader CSSOM and layout work
+At that stage replacement-method and character-data paths remained to be audited.
+The replacement follow-up is described below. Broader CSSOM and layout work
 remain separately coordinated; no Chrome-speed or timing-improvement claim follows.
+
+### Variadic replacement checkpoints
+
+Extending the insertion contract to `replaceChildren`/`replaceWith` first produced
+**55/69 passing in WebScene vs 69/69 in Chrome**. Failures included ignored object
+conversions, mutation after a Symbol conversion error, wrong hierarchy exception
+types, lost receiver identity, duplicated fragment children, skipped self-replacement
+reactions, detached-receiver conversion, and lost lone-surrogate string data.
+
+Both methods now use the shared flat path instead of maintaining separate
+conversion/deduplication/insertion loops. Replacement with no arguments or an empty
+fragment still removes old content. Retained incoming children are extracted before
+old children are retired; source/destination styles and stylesheet removal precede
+custom-element reactions. The two native matrix shapes exercise variadic replacement
+and restoration of an entire target list or a sibling anchor, asserting exact retained
+target identities/order as well as positional/sibling styles.
+
+**Focus regression and rejected assumption:** a first shared implementation retained
+focus on an input removed/reinserted by multi-argument replacement. The final path
+clears focus and `:focus-within` while the old ancestor chain is still available.
+Chrome rejected a test expecting `blur` on removal; the retained test instead requires
+no `blur`/`focusout`, cleared focus, and correct final source/destination styles.
+[Blink's removal focus handling](https://chromium.googlesource.com/chromium/src/+/c48d8866a56122d6c5bd526e60224489193ec4e9/third_party/blink/renderer/core/dom/document.cc)
+also explicitly supports omitted blur events. This change is limited to these
+replacement operations, not a claim of a completed general focus/DOM audit.
+
+The expanded **79-check contract passes in Chrome and the certification native build**,
+including replacement/empty-fragment, stylesheet, focus and callback checkpoints.
+Existing structural checks **73/73**, adjacent DOM checks **9/9**, custom-element
+checks **118/118**, ten adjacent native groups and parser tests also pass locally.
+The initial **116-case certification matrix** passed its broad component budget,
+but its detailed counts exposed another quadratic sibling-prefix path:
+`replaceChildren` needed **175 compound checks at 8 targets and 18,055 at 128**.
+Each inserted subtree restarted its matching context, losing the sibling-prefix
+cache. A tighter replacement-specific ceiling of `32 * targets + 128` fails on
+that implementation. The follow-up shares a matching context only across the
+completed insertion's immediate subtree cascades, preserving per-subtree tracing
+and cascade activation. It is destroyed before resource activation or reactions;
+queued recascades retain their existing separate flush semantics.
+
+The tighter gate now passes in the full **116-case certification matrix**.
+Compound checks fall **175 → 119 at 8 targets** and **18,055 → 1,799 at 128**;
+rule checks, cascades, candidate counts and computed styles are unchanged.
+At 128 targets with structural noise, replacement records 275 plan lookups,
+780 candidate visits, 1,024 rule checks and 521 cascades. All eight CSS counters
+stay identical as unrelated rule families grow from 32 to 1,024, with zero
+document fallback. This is an operation-count improvement, not a repeated
+end-to-end timing measurement or a claimed Chrome-speed advantage.
+The final production build (certification telemetry disabled) also passes all
+116 semantic cases, all 279 related WPT-style checks, the ten adjacent native
+groups and parser tests.
+
+Remaining structural work includes character-data mutation paths and accounting for
+native child-vector movement separately from the CSS matching/cascade counters.
+Those counters do not prove linear total mutation CPU or end-to-end resize performance.
 
 ### Remaining acceptance work
 

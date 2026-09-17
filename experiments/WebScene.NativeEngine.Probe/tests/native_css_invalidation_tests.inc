@@ -117,7 +117,7 @@ void test_compiled_css_route_scaling(bool structural_only = false, bool structur
     // DOM/rules. Actual matching/cascade work must follow only the first axis.
     for (const auto* shape : {"descendants", "siblings", "disabled", "variables", "relational", "identity", "dataset",
             "tree-wide-position", "tree-position", "tree-siblings", "tree-relational", "tree-empty", "tree-reactions",
-            "tree-prepend", "tree-before", "tree-after"}) {
+            "tree-prepend", "tree-before", "tree-after", "tree-replace-children", "tree-replace-with"}) {
         if (structural_only && !std::string_view(shape).starts_with("tree-")) continue;
         for (const auto affected_count : {8, 128}) {
             std::vector<std::array<uint64_t, 8>> observations;
@@ -151,7 +151,8 @@ void test_compiled_css_route_scaling(bool structural_only = false, bool structur
                   } else if (shape === 'tree-position') {
                     markup = ('<div class="tree-list">' + target + '</div>').repeat(count);
                     rule = '.matrix-target:nth-child(2) {width:41px}';
-                  } else if (shape === 'tree-prepend' || shape === 'tree-before' || shape === 'tree-after') {
+                  } else if (shape === 'tree-prepend' || shape === 'tree-before' || shape === 'tree-after'
+                      || shape === 'tree-replace-children' || shape === 'tree-replace-with') {
                     markup = '<div class="tree-list"><b class="anchor"></b>' + target.repeat(count) + '</div>';
                     rule = '.marker ~ .matrix-target {width:41px}';
                   } else if (shape === 'tree-siblings' || shape === 'tree-wide-position') {
@@ -197,7 +198,8 @@ void test_compiled_css_route_scaling(bool structural_only = false, bool structur
                   globalThis.matrixMutation = enabled => {
                     reactions.length = 0;
                     if (shape.startsWith('tree-')) lists.forEach(list => {
-                      if (shape === 'tree-prepend' || shape === 'tree-before' || shape === 'tree-after') {
+                      if (shape === 'tree-prepend' || shape === 'tree-before' || shape === 'tree-after'
+                          || shape === 'tree-replace-children' || shape === 'tree-replace-with') {
                         if (enabled) {
                           const first=document.createElement('i'), second=document.createElement('i');
                           first.className=second.className='marker';
@@ -206,11 +208,21 @@ void test_compiled_css_route_scaling(bool structural_only = false, bool structur
                           const anchor=list.firstChild;
                           if(shape==='tree-prepend')list.prepend(first,text,fragment);
                           else if(shape==='tree-before')anchor.before(first,text,fragment);
+                          else if(shape==='tree-replace-children')list.replaceChildren(first,text,fragment,...targets);
+                          else if(shape==='tree-replace-with')anchor.replaceWith(first,text,fragment);
                           else anchor.after(first,text,fragment);
-                          if(list.childNodes.length!==count+4 || fragment.childNodes.length!==0 ||
+                          const replacing=shape==='tree-replace-children'||shape==='tree-replace-with';
+                          if(list.childNodes.length!==count+(replacing?3:4) || fragment.childNodes.length!==0 ||
                               first.parentNode!==list || text.parentNode!==list || second.parentNode!==list)
                             throw new Error('Variadic mutation dropped arguments or retained fragment children');
+                          if(targets.some((target,i)=>list.childNodes[i+(replacing?3:4)]!==target))
+                            throw new Error('Variadic mutation lost or reordered retained targets');
                           list.inserted=[first,text,second];
+                          list.anchor=anchor;
+                        } else if(shape==='tree-replace-children')list.replaceChildren(list.anchor,...targets);
+                        else if(shape==='tree-replace-with'){
+                          list.inserted[0].replaceWith(list.anchor);
+                          list.inserted.slice(1).forEach(node=>node.remove());
                         } else list.inserted.forEach(node=>node.remove());
                         return;
                       }
@@ -295,6 +307,9 @@ void test_compiled_css_route_scaling(bool structural_only = false, bool structur
                 if (std::string_view(shape) == "tree-wide-position")
                     require(delta[7] > 0 && delta[7] <= static_cast<uint64_t>(4 * (affected_count + 1)),
                         "positional selectors repeatedly scanned the same sibling list");
+                if (std::string_view(shape) == "tree-replace-children")
+                    require(delta[3] <= static_cast<uint64_t>(32 * affected_count + 128),
+                        "replacement restarted sibling-prefix matching for every inserted child");
                 observations.push_back(delta);
 #endif
                 std::cout << '\n';

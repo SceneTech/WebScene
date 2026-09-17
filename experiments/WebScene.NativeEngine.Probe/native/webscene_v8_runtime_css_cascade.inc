@@ -1704,6 +1704,15 @@
         std::string_view reason = {})
     {
         selector_match_batch_scope matching_scope(*this);
+        recascade_connected_subtree_with_matching_context(node, reason);
+    }
+
+    // Caller owns a matching scope over one immutable DOM/selector state.
+    // Keeping sibling subtrees in that scope avoids rebuilding prefix and
+    // positional indexes for every child of a completed insertion.
+    void recascade_connected_subtree_with_matching_context(
+        dom_node& node, std::string_view reason)
+    {
         webscene_frame_trace::scope cascade_trace(frame_trace, "recascade-start", "recascade-end", 0);
         const auto trace_recascade_root =
             std::getenv("WEBSCENE_TRACE_RECASCADE_ROOTS") != nullptr;
@@ -2077,9 +2086,16 @@
             if (previous != nullptr && seen.insert(previous).second)
                 recascade_changed_child_list(*previous);
         recascade_changed_child_list(parent);
+        selector_match_batch_scope matching_scope(*this);
         for (auto* child : inserted)
-            if (child != nullptr && child->parent == &parent)
-                recascade_connected_subtree(*child, "inserted-child");
+            if (child != nullptr && child->parent == &parent) {
+                if (style_recascade_batch_depth != 0U)
+                    recascade_connected_subtree(*child, "inserted-child");
+                else {
+                    binding_callback_timer timer(nullptr, profile_named("style-recascade/subtree-immediate"));
+                    recascade_connected_subtree_with_matching_context(*child, "inserted-child");
+                }
+            }
     }
 
     void recascade_hover_transition(

@@ -9,6 +9,8 @@
 .variadic-list > .item:last-child {height:43px}
 .variadic-scope:has(.marker) {--size:61px}
 .variadic-consumer {width:var(--size,29px)}
+.variadic-scope:focus-within > .focus-consumer {height:83px}
+.focus-consumer {height:19px}
 </style>
 <body>
 <script>
@@ -30,8 +32,10 @@ function fixture(t){
 }
 function node(id,custom=false){const n=document.createElement(custom?'variadic-checkpoint':'i');n.id=id;n.className='item';return n;}
 function invoke(method,f,...args){
-  return method==='append'||method==='prepend'?f.destination[method](...args):f.anchor[method](...args);
+  return method==='append'||method==='prepend'||method==='replaceChildren'?f.destination[method](...args):f.anchor[method](...args);
 }
+function expected(method,inserted){return method==='replaceChildren'||method==='replaceWith'?inserted:
+  method==='append'||method==='after'?['anchor',...inserted]:[...inserted,'anchor'];}
 function sequence(parent){return Array.from(parent.childNodes,n=>n.nodeType===3?n.data:n.id);}
 function verifyPositions(parent){
   const children=Array.from(parent.children);
@@ -40,13 +44,13 @@ function verifyPositions(parent){
     assert_equals(getComputedStyle(n).height,i===children.length-1?'43px':'13px');
   });
 }
-for(const method of ['append','prepend','before','after']){
+for(const method of ['append','prepend','before','after','replaceChildren','replaceWith']){
   test(t=>{
     const f=fixture(t),a=node('a'),b=node('b'),c=node('c'),fragment=document.createDocumentFragment();
     fragment.append(b,c);
     assert_equals(invoke(method,f,a,'text',fragment,7),undefined);
     const inserted=['a','text','b','c','7'];
-    assert_array_equals(sequence(f.destination),method==='append'||method==='after'?['anchor',...inserted]:[...inserted,'anchor']);
+    assert_array_equals(sequence(f.destination),expected(method,inserted));
     assert_equals(fragment.childNodes.length,0);verifyPositions(f.destination);
   },method+' inserts all arguments and fragment children with final positional styles');
 
@@ -54,15 +58,15 @@ for(const method of ['append','prepend','before','after']){
     const f=fixture(t),a=node('a'),b=node('b'),c=node('c'),d=node('d');
     f.destination.replaceChildren(a,b,c,d);f.anchor=b;
     invoke(method,f,b,d,a,b);
-    assert_array_equals(sequence(f.destination),method==='append'?['c','d','a','b']:['d','a','b','c']);
-    assert_equals(f.destination.childNodes.length,4,'duplicate arguments move one identity, not copies');
+    assert_array_equals(sequence(f.destination),method==='replaceChildren'?['d','a','b']:method==='append'?['c','d','a','b']:['d','a','b','c']);
+    assert_equals(f.destination.childNodes.length,method==='replaceChildren'?3:4,'duplicate arguments move one identity, not copies');
     verifyPositions(f.destination);
   },method+' preserves viable insertion position when arguments include self siblings and duplicates');
 
   test(t=>{
     const f=fixture(t),a=node('a'),b=node('b'),fragment=document.createDocumentFragment();fragment.append(a,b);
     invoke(method,f,fragment,a,fragment);
-    assert_array_equals(sequence(f.destination),method==='append'||method==='after'?['anchor','b','a']:['b','a','anchor']);
+    assert_array_equals(sequence(f.destination),expected(method,['b','a']));
     assert_equals(fragment.childNodes.length,0);verifyPositions(f.destination);
   },method+' flattens repeated fragments and keeps the last occurrence of an extracted child');
 
@@ -74,7 +78,7 @@ for(const method of ['append','prepend','before','after']){
       getComputedStyle(f.sourceConsumer).width,getComputedStyle(f.destinationConsumer).width,
       Array.from(f.destination.children,c=>getComputedStyle(c).width).join(',')].join('|'));
     invoke(method,f,moving,fragment);observe=null;
-    const widths='41px,11px,11px';
+    const widths=method==='replaceChildren'||method==='replaceWith'?'41px,11px':'41px,11px,11px';
     assert_array_equals(snapshots,[
       'disconnected|moving|true|29px|61px|'+widths,
       'connected|moving|true|29px|61px|'+widths,
@@ -93,12 +97,12 @@ for(const method of ['append','prepend','before','after']){
   test(t=>{
     const f=fixture(t),moving=node('moving');f.source.appendChild(moving);
     invoke(method,f,moving,{toString(){
-      if(method==='before'||method==='after')f.source.appendChild(f.anchor);
+      if(method==='before'||method==='after'||method==='replaceWith')f.source.appendChild(f.anchor);
       else f.destination.replaceChildren(f.anchor);
       return 'converted';
     }});
-    const parent=method==='before'||method==='after'?f.source:f.destination;
-    assert_array_equals(sequence(parent),method==='append'||method==='after'?['anchor','moving','converted']:['moving','converted','anchor']);
+    const parent=method==='before'||method==='after'||method==='replaceWith'?f.source:f.destination;
+    assert_array_equals(sequence(parent),expected(method,['moving','converted']));
     verifyPositions(parent);
   },method+' resolves insertion parent and siblings after reentrant string conversion');
 
@@ -133,9 +137,69 @@ for(const method of ['append','prepend','before','after']){
     assert_array_equals(snapshots,['disconnected|false|29px']);
   },method+' failed insertion still publishes conversion removals before disconnected callbacks');
 }
-for(const method of ['before','after'])test(t=>{
+for(const method of ['before','after','replaceWith'])test(t=>{
   const detached=node('detached');let converted=false;
   assert_equals(detached[method]({toString(){converted=true;return 'text';}}),undefined);
   assert_true(converted);assert_equals(detached.parentNode,null);
 },method+' still performs argument conversion for a detached receiver');
+for(const method of ['replaceChildren','replaceWith']){
+  test(t=>{
+    const f=fixture(t),moving=node('moving'),input=document.createElement('input');
+    moving.classList.add('marker');f.source.append(moving,input);input.focus();
+    f.sourceConsumer.classList.add('focus-consumer');
+    assert_equals(getComputedStyle(f.sourceConsumer).height,'83px');
+    const snapshots=[];input.addEventListener('blur',()=>snapshots.push('blur'));
+    input.addEventListener('focusout',()=>snapshots.push('focusout'));
+    invoke(method,f,moving,input,'tail');
+    assert_array_equals(snapshots,[],'removal clears focus without blur/focusout events');
+    assert_not_equals(document.activeElement,input);
+    assert_equals(getComputedStyle(f.sourceConsumer).width,'29px');
+    assert_equals(getComputedStyle(f.sourceConsumer).height,'19px');
+    assert_equals(getComputedStyle(f.destinationConsumer).width,'61px');
+  },method+' clears removed focus and source styles without blur or focusout events');
+  for(const multiple of [false,true])test(t=>{
+    const f=fixture(t),input=document.createElement('input');f.destination.replaceChildren(input);f.anchor=input;
+    input.focus();assert_equals(document.activeElement,input);
+    if(multiple)invoke(method,f,input,'tail');else invoke(method,f,input);
+    assert_equals(input.parentNode,f.destination);
+    assert_not_equals(document.activeElement,input,'replacement must not retain focus on a removed and reinserted node');
+  },method+' clears focus when retaining an incoming node ('+(multiple?'multiple':'single')+' arguments)');
+  test(t=>{
+    const f=fixture(t),old=node('old',true);old.classList.add('marker');
+    f.destination.replaceChildren(old);f.anchor=old;const snapshots=[];
+    observe=(phase,n)=>snapshots.push([phase,n.isConnected,f.destination.childNodes.length,getComputedStyle(f.destinationConsumer).width].join('|'));
+    invoke(method,f);observe=null;
+    assert_array_equals(snapshots,['disconnected|false|0|29px']);
+    assert_equals(old.parentNode,null);assert_equals(f.destination.childNodes.length,0);
+  },method+' with no arguments removes children before reaction style reads');
+  test(t=>{
+    const f=fixture(t),fragment=document.createDocumentFragment();
+    invoke(method,f,fragment);
+    assert_equals(f.destination.childNodes.length,0);assert_equals(f.anchor.parentNode,null);
+    assert_equals(fragment.childNodes.length,0);
+  },method+' with an empty fragment still removes the replaced content');
+  test(t=>{
+    const f=fixture(t),old=node('old',true),fresh=node('fresh',true);
+    const sheet=document.createElement('style');sheet.textContent='.replacement-sheet-consumer {width:83px}';
+    const wrapper=document.createElement('div');wrapper.append(sheet,old);
+    f.destinationConsumer.className='replacement-sheet-consumer';
+    f.destination.replaceChildren(wrapper);f.anchor=wrapper;
+    assert_equals(getComputedStyle(f.destinationConsumer).width,'83px');
+    const snapshots=[];observe=(phase,n)=>snapshots.push([phase,n.id,getComputedStyle(fresh).width,
+      getComputedStyle(f.destinationConsumer).width==='83px',wrapper.isConnected].join('|'));
+    invoke(method,f,fresh);observe=null;
+    assert_array_equals(snapshots,['disconnected|old|41px|false|false','connected|fresh|41px|false|false']);
+  },method+' removed stylesheet and final positional styles precede reactions');
+  test(t=>{
+    const f=fixture(t),old=node('old',true);f.destination.replaceChildren(old);f.anchor=old;
+    const snapshots=[];observe=(phase,n)=>snapshots.push([phase,n.parentNode===f.destination,getComputedStyle(n).width].join('|'));
+    invoke(method,f,old);observe=null;
+    assert_array_equals(sequence(f.destination),['old']);
+    assert_array_equals(snapshots,['disconnected|true|41px','connected|true|41px']);
+  },method+' replacing with the same node preserves removal and insertion reactions');
+  test(t=>{
+    const f=fixture(t);invoke(method,f,'\uD800');
+    assert_equals(f.destination.firstChild.data,'\uD800');
+  },method+' preserves lone surrogate DOMString data');
+}
 </script>

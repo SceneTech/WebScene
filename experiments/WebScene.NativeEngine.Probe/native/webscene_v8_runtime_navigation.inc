@@ -244,6 +244,9 @@
         sandbox_token_list_wrappers.clear();
         style_wrappers.clear();
         stylesheet_wrappers.clear();
+        pending_stylesheet_replacements.clear();
+        pending_stylesheet_replacement_bytes = 0U;
+        stylesheet_cssom_sources.clear();
         detached_documents.clear();
         detached_document_roots.clear();
         node_wrappers.clear();

@@ -1,0 +1,128 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>CSSOM rule mutation remains synchronous while native style work coalesces</title>
+<div id="target" class="theme-target theme-rule-255"></div>
+<script>
+  const state = window.__webSceneWptState = {
+    complete: false, harness: null, results: [], errors: [], diagnostics: []
+  };
+
+  function record(name, error) {
+    state.results.push({
+      name,
+      status: error ? "FAIL" : "PASS",
+      message: error ? String(error && error.message || error) : null,
+      stack: error && error.stack ? String(error.stack) : null
+    });
+  }
+
+  const style = document.createElement("style");
+  style.textContent = ".theme-seed { color: rgb(1, 2, 3); }";
+  document.head.appendChild(style);
+  const target = document.getElementById("target");
+  const sheet = style.sheet;
+  const rules = sheet.cssRules;
+  const authoredText = style.textContent;
+  let mutationRecords = 0;
+  const observer = new MutationObserver(records => { mutationRecords += records.length; });
+  observer.observe(style, { childList: true, characterData: true, subtree: true });
+
+  setTimeout(() => {
+    const durations = [];
+    let synchronousError = null;
+    try {
+      for (let cycle = 0; cycle < 20; ++cycle) {
+        const started = performance.now();
+        while (rules.length) sheet.deleteRule(0);
+        for (let index = 0; index < 256; ++index) {
+          const red = (cycle + index) & 255;
+          sheet.insertRule(
+            `.theme-rule-${index} { color: rgb(${red}, 7, 9); }`, 0);
+        }
+        const expected = `rgb(${(cycle + 255) & 255}, 7, 9)`;
+        if (style.sheet !== sheet || sheet.cssRules !== rules
+            || rules.length !== 256
+            || !rules[0].cssText.includes(".theme-rule-255")
+            || style.textContent !== authoredText
+            || getComputedStyle(target).color !== expected
+            || !target.matches(".theme-target.theme-rule-255")
+            || target.getBoundingClientRect().width < 0) {
+          throw new Error(`cycle ${cycle} exposed stale stylesheet state`);
+        }
+        durations.push(performance.now() - started);
+      }
+    } catch (error) {
+      synchronousError = error;
+    }
+    record("CSSOM and style/layout reads observe every staged write synchronously",
+      synchronousError);
+
+    const ordered = durations.slice().sort((left, right) => left - right);
+    const p95 = ordered[18] ?? Infinity;
+    const maximum = ordered[19] ?? Infinity;
+    record("twenty product-shaped mutation cycles stay within the frame budget",
+      p95 <= 16 && maximum <= 500
+        ? null
+        : new Error(`p95=${p95}ms max=${maximum}ms`));
+
+    let activationError = null;
+    try {
+      sheet.insertRule(".theme-target { display: grid; }", rules.length);
+      sheet.disabled = true;
+      if (!sheet.disabled || getComputedStyle(target).display !== "block") {
+        throw new Error("disabled stylesheet remained active");
+      }
+      sheet.disabled = false;
+      if (sheet.disabled || getComputedStyle(target).display !== "grid") {
+        throw new Error("re-enabled stylesheet remained inactive");
+      }
+      sheet.media.mediaText = "(max-width: 1px)";
+      if (sheet.media.length !== 1 || sheet.media.item(0) !== "(max-width: 1px)"
+          || getComputedStyle(target).display !== "block") {
+        throw new Error("nonmatching stylesheet media remained active");
+      }
+      sheet.media.mediaText = "(min-width: 1px)";
+      if (getComputedStyle(target).display !== "grid") {
+        throw new Error("matching stylesheet media remained inactive");
+      }
+      sheet.media.mediaText = "";
+    } catch (error) {
+      activationError = error;
+    }
+    record("stylesheet enable and media changes are observable synchronously",
+      activationError);
+
+    while (rules.length) sheet.deleteRule(0);
+    sheet.insertRule(".theme-target { display: none; }", 0);
+    const order = ["sync"];
+    queueMicrotask(() => {
+      order.push("microtask");
+      if (rules.length !== 1 || style.textContent !== authoredText) {
+        state.errors.push("microtask observed stale CSSOM or changed DOM text");
+      }
+    });
+    setTimeout(() => {
+      order.push("timer");
+      record("task checkpoint materializes final styles after all microtasks",
+        order.join(",") === "sync,microtask,timer"
+            && getComputedStyle(target).display === "none"
+          ? null
+          : new Error(`order=${order.join(",")} display=${getComputedStyle(target).display}`));
+      record("CSSOM mutations preserve style-element text topology",
+        mutationRecords === 0 && style.textContent === authoredText
+          ? null
+          : new Error(`records=${mutationRecords} text=${JSON.stringify(style.textContent)}`));
+
+      observer.disconnect();
+      state.diagnostics.push(JSON.stringify({
+        cycles: durations.length, p95, max: maximum,
+        mutationRecords, order, cssRules: rules.length
+      }));
+      const failure = state.results.find(result => result.status !== "PASS");
+      state.harness = failure || state.errors.length
+        ? { status: 1, message: failure?.message || state.errors[0], stack: failure?.stack || null }
+        : { status: 0, message: null, stack: null };
+      state.complete = true;
+    }, 0);
+  }, 0);
+</script>

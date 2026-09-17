@@ -1324,9 +1324,12 @@ void test_monaco_view_line_dom_mutations(webscene_engine* engine)
     const auto result = evaluate(engine, R"JS(
         (() => {
           document.body.innerHTML = '';
+          const editor = document.createElement('div');
+          editor.className = 'monaco-editor';
           const layer = document.createElement('div');
           layer.className = 'view-lines';
-          document.body.appendChild(layer);
+          editor.appendChild(layer);
+          document.body.appendChild(editor);
           layer.innerHTML =
             '<div class="view-line" style="top:0px;height:19px;">'
               + '<span><span class="mtk6">const</span><span class="mtk1"> answer = </span>'
@@ -1350,6 +1353,11 @@ void test_monaco_view_line_dom_mutations(webscene_engine* engine)
           replacement.innerHTML =
             '<span><span class="mtk8">// editable model</span></span>';
           layer.children[1].replaceWith(replacement);
+          const marker = 'SCENETECH_NATIVE_EDIT_OK \u202e';
+          const modelText = replacement.firstChild.firstChild.firstChild;
+          modelText.replaceData(0, modelText.length, marker);
+          modelText.splitText(marker.length - 1);
+          modelText.parentNode.normalize();
 
           return {
             initialCount: initial.length,
@@ -1361,12 +1369,17 @@ void test_monaco_view_line_dom_mutations(webscene_engine* engine)
                 === layer.firstChild,
             replacementParent: replacement.parentNode === layer,
             oldDetached: initial[1].parentNode === null,
-            tokenCount: layer.querySelectorAll('span').length
+            tokenCount: layer.querySelectorAll('span').length,
+            markerVisible: Array.from(
+              document.querySelectorAll('.monaco-editor .view-lines'))
+                .some(element => element.textContent.includes('SCENETECH_NATIVE_EDIT_OK')),
+            markerExact: replacement.textContent === marker,
+            normalizedTextNodes: replacement.firstChild.firstChild.childNodes.length
           };
         })()
     )JS", "native-monaco-view-line-dom.js");
     const auto expected =
-        R"({"initialCount":3,"backward":["function greet() {","// native WebScene","const answer = 42;"],"finalCount":4,"finalText":["const answer = 42;","// editable model","function greet() {","}"],"siblingChain":true,"replacementParent":true,"oldDetached":true,"tokenCount":12})";
+        R"({"initialCount":3,"backward":["function greet() {","// native WebScene","const answer = 42;"],"finalCount":4,"finalText":["const answer = 42;","SCENETECH_NATIVE_EDIT_OK ‮","function greet() {","}"],"siblingChain":true,"replacementParent":true,"oldDetached":true,"tokenCount":12,"markerVisible":true,"markerExact":true,"normalizedTextNodes":1})";
     require(
         result == expected,
         "Monaco view-line DOM mutation semantics regressed: " + result);

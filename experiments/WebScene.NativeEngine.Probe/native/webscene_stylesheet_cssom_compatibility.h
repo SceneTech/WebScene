@@ -4,8 +4,9 @@
 namespace webscene_native {
 // The pinned WebScene exposes a stable native HTMLStyleElement.sheet object,
 // but no rule mutation methods. Its textContent setter *does* replace that
-// owner's parsed native rules, recascade, and invalidate layout. Bridge the
-// dynamic style-rule operations used by Code OSS to that existing renderer.
+// owner's parsed native rules. Bridge dynamic CSSOM operations to a native
+// staged rule-set replacement so one task publishes each owner's final rules
+// and recascades once.
 // This is a bounded adapter, not a complete CSSOM implementation: constructed
 // sheets, imported-sheet inspection and nested rule mutation remain unsupported.
 // Semantics: https://www.w3.org/TR/cssom-1/
@@ -72,10 +73,19 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
     return state;
   };
   const publish = state => {
-    // Native textContent replacement is the rendering operation. Do not merely
-    // update JavaScript records: every insertion/deletion reaches the cascade.
     const source = state.rules.map(rule => rule.cssText).join('\n');
-    state.owner.textContent = source;
+    const publishedSource = state.disabled ? ''
+      : state.mediaText.trim() ? `@media ${state.mediaText} {\n${source}\n}`
+      : source;
+    if (typeof state.sheet.__webSceneStageRules === 'function') {
+      // CSSOM mutation does not replace the style element's DOM text nodes.
+      // Stage the final serialized rule set in native state; synchronous
+      // style/layout reads and the browser-task boundary flush it.
+      state.sheet.__webSceneStageRules(publishedSource);
+    } else {
+      state.owner.textContent = publishedSource;
+      state.ownerSource = publishedSource;
+    }
     state.source = source;
   };
   const makeRule = (state, parsed) => {
@@ -129,15 +139,20 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
   };
   const synchronize = state => {
     const source = state.owner.textContent || '';
-    if (source === state.source) return;
+    if (source === state.ownerSource) return;
     const parsed = splitRules(source);
     for (const rule of state.rules) rule.detach();
     state.rules = parsed.map(rule => makeRule(state, rule));
     state.source = source;
+    state.ownerSource = source;
   };
   const augment = sheet => {
     if (!sheet || typeof sheet.insertRule === 'function') return sheet;
-    const state = { sheet, owner: sheet.ownerNode, source: undefined, rules: [] };
+    const state = {
+      sheet, owner: sheet.ownerNode,
+      source: undefined, ownerSource: undefined, rules: [], disabled: false,
+      mediaText: sheet.ownerNode.getAttribute('media') || ''
+    };
     const list = new Proxy({}, {
       get(_target, key) {
         synchronize(state);
@@ -152,9 +167,39 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
       deleteProperty() { return false; },
       defineProperty() { return false; }
     });
+    const media = {};
+    Object.defineProperties(media, {
+      mediaText: {
+        enumerable: true,
+        get() { return state.mediaText; },
+        set(value) {
+          state.mediaText = text(value).trim();
+          if (state.mediaText) state.owner.setAttribute('media', state.mediaText);
+          else state.owner.removeAttribute('media');
+          publish(state);
+        }
+      },
+      length: { enumerable: true, get() {
+        return state.mediaText ? state.mediaText.split(',').length : 0;
+      } },
+      item: { value(index) {
+        return state.mediaText.split(',').map(value => value.trim())[Number(index)] || null;
+      } }
+    });
     sheets.set(sheet, state);
     Object.defineProperties(sheet, {
       cssRules: { configurable: true, enumerable: true, get() { stateFor(this); return list; } },
+      disabled: {
+        configurable: true, enumerable: true,
+        get() { return stateFor(this).disabled; },
+        set(value) {
+          const current = stateFor(this), disabled = Boolean(value);
+          if (current.disabled === disabled) return;
+          current.disabled = disabled;
+          publish(current);
+        }
+      },
+      media: { configurable: true, enumerable: true, get() { stateFor(this); return media; } },
       insertRule: { configurable: true, writable: true, value(rule, index = 0) {
         if (arguments.length === 0) throw new TypeError('A CSS rule is required');
         const current = stateFor(this);

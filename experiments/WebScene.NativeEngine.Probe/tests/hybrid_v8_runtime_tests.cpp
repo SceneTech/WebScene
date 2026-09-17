@@ -748,6 +748,34 @@ void test_message_port_clone_and_queue_bounds() {
         "message-port-close"), runtime.last_error().c_str());
 }
 
+void test_message_port_receiver_survives_gc() {
+    webscene_native::native_document document;
+    webscene_native::v8_dom_runtime runtime(document,
+        []{return webscene_native::v8_dom_runtime::viewport_metrics{640,480,1,0};});
+    require(runtime.initialize(), "MessagePort receiver runtime failed");
+    for (const auto setup : {
+        "channel.port1.onmessage = () => { ++receivedMessages; }; return channel.port2;",
+        "channel.port1.addEventListener('message', () => { ++receivedMessages; }); channel.port1.start(); return channel.port2;",
+        "channel.port1.onmessage = () => { ++receivedMessages; }; return structuredClone(channel.port2, {transfer:[channel.port2]});"
+    }) {
+        require(runtime.execute(std::string(R"JS(
+        globalThis.receivedMessages = 0;
+        globalThis.schedulerPort = (() => {
+          const channel = new MessageChannel();
+    )JS") + setup + R"JS(
+        })();
+    )JS", "message-port-unreferenced-receiver"), runtime.last_error().c_str());
+        runtime.notify_low_memory();
+        require(runtime.execute("schedulerPort.postMessage('scheduled')",
+            "message-port-after-gc"), runtime.last_error().c_str());
+        for (unsigned task = 0; task < 8; ++task)
+            require(runtime.pump_task(), runtime.last_error().c_str());
+        require(runtime.execute(
+            "if (receivedMessages !== 1) throw Error('Entangled receiver was lost during GC'); schedulerPort.close()",
+            "message-port-receiver-result"), runtime.last_error().c_str());
+    }
+}
+
 void test_message_port_binding_memory_is_bounded() {
     webscene_native::native_document document;
     webscene_native::v8_dom_runtime runtime(document,
@@ -772,10 +800,44 @@ void test_message_port_binding_memory_is_bounded() {
     const auto baseline = runtime.read_memory_metrics().used_heap_bytes;
     create_and_release_batch();
     create_and_release_batch();
+    // Private peer edges must not turn discarded, unclosed pairs into native
+    // roots. Reclaiming more than the binding capacity proves cycle collection.
+    for (unsigned batch = 0; batch < 3; ++batch) {
+        require(runtime.execute(R"JS(
+            (() => {
+              for (let index = 0; index < 2048; ++index) {
+                const channel = new MessageChannel();
+                channel.port1.onmessage = () => {};
+                channel.port2.addEventListener('message', () => {});
+              }
+            })()
+        )JS", "message-port-unrooted-cycles"), runtime.last_error().c_str());
+        runtime.notify_low_memory();
+        require(runtime.pump_task(), runtime.last_error().c_str());
+    }
     const auto retained = runtime.read_memory_metrics().used_heap_bytes;
     require(
         retained <= baseline + 16U * 1024U * 1024U,
         "Released MessagePort batches retained more than 16 MiB");
+
+    require(runtime.execute(R"JS(
+        globalThis.closedSenders = [];
+        for (let index = 0; index < 2048; ++index) {
+          const channel = new MessageChannel();
+          channel.port1.onmessage = () => {};
+          channel.port2.close();
+          closedSenders.push(channel.port2);
+        }
+    )JS", "message-port-close-releases-peer"), runtime.last_error().c_str());
+    runtime.notify_low_memory();
+    require(runtime.execute(R"JS(
+        // The 2048 reachable closed senders must not also retain 2048 peers.
+        globalThis.newChannels = [];
+        for (let index = 0; index < 1024; ++index)
+          newChannels.push(new MessageChannel());
+        closedSenders = null;
+        newChannels = null;
+    )JS", "message-port-reuse-after-close"), runtime.last_error().c_str());
 }
 
 void test_iframe_worker_extension_host_port_bootstrap() {
@@ -1366,6 +1428,7 @@ void test_compiled_document_lifecycle(bool strict) {
 }
 
 void test_worker_message_port_contracts() {
+    test_message_port_receiver_survives_gc();
     test_worker_message_port_transfer_and_throughput();
     test_message_port_clone_and_queue_bounds();
     test_message_port_binding_memory_is_bounded();
@@ -1412,6 +1475,10 @@ int main() {
             if (selected == "worker-messageport") {
                 test_blob_worker_source_lifetime();
                 test_worker_message_port_contracts();
+                return 0;
+            }
+            if (selected == "messageport-gc") {
+                test_message_port_receiver_survives_gc();
                 return 0;
             }
         }

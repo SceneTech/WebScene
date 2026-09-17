@@ -9,6 +9,13 @@
   },
   "required": [
     {
+      "path": "contracts/messageport-scheduler-lifetime.html",
+      "type": "testharness",
+      "capabilities": ["messageport-local-entanglement-lifetime"],
+      "evidence": ["spotify-react-scheduler-startup"],
+      "reason": "React retains only a MessageChannel sender. Local entanglement must retain its receiver, including after a same-isolate transfer; forced collection and bounded reclamation are covered by native companion tests."
+    },
+    {
       "path": "contracts/webcrypto-hmac-sign.html",
       "type": "contract",
       "capabilities": ["subtlecrypto-hmac-sign", "crypto-cipher-bounds"],

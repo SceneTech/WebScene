@@ -36,6 +36,30 @@ Do not import whole WPT directories into the required set. A large pass percenta
 easy tests is less useful than reviewed coverage of the DOM/CSS/input/rendering behavior
 real components depend on.
 
+## Versioned CSS capability matrix
+
+`css-capability-matrix.json` is the machine-readable CSS claim ledger. Its schema is
+`css-capability-matrix.schema.json`; the bounded evidence selection is
+`webscene-css-capability-evidence-profile.json`. The generated human report lives at
+`docs/validation/css-capability-matrix.md`.
+
+The matrix records exact WebScene, WPT, browser, native-library, profile, and evidence
+revisions. Every lane carries explicit pass, fail, skipped, unavailable, and total
+denominators. A supported row cannot contain a non-passing assertion. Partial rows keep
+their failures visible, including harness limitations, rather than reducing the total.
+
+Validate the inputs and confirm that the generated report is current with:
+
+```bash
+python3 -m unittest scripts/test_css_capability_matrix.py -v
+python3 scripts/css_capability_matrix.py --check
+```
+
+Run `python3 scripts/css_capability_matrix.py` after an intentional metadata or evidence
+change. The validator fails on stale profile/WPT digests, unknown Git revisions in a
+complete checkout, result-identity drift, missing or duplicated contracts, denominator
+drift, and configured input/report bounds.
+
 ## Runner
 
 The runner has one adapter: the native engine. There is no `--engine` option and no

@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://scenetech.dev/schemas/webscene-css-capability-matrix-v1.schema.json",
+  "title": "WebScene CSS capability matrix",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "matrixVersion",
+    "provenance",
+    "limits",
+    "capabilities"
+  ],
+  "properties": {
+    "schema": { "const": "webscene-css-capability-matrix-v1" },
+    "matrixVersion": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["webSceneBaseline", "wptRepository", "wptRevision", "wptRevisionFile", "wptFiles", "wptFilesSha256", "profile", "profileSha256"],
+      "properties": {
+        "webSceneBaseline": { "$ref": "#/$defs/gitRevision" },
+        "wptRepository": { "type": "string", "format": "uri" },
+        "wptRevision": { "$ref": "#/$defs/gitRevision" },
+        "wptRevisionFile": { "$ref": "#/$defs/repositoryPath" },
+        "wptFiles": { "$ref": "#/$defs/repositoryPath" },
+        "wptFilesSha256": { "$ref": "#/$defs/sha256" },
+        "profile": { "$ref": "#/$defs/repositoryPath" },
+        "profileSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["maxCapabilities", "maxEvidenceFiles", "maxInputBytes", "maxReportBytes"],
+      "properties": {
+        "maxCapabilities": { "type": "integer", "minimum": 1, "maximum": 4096 },
+        "maxEvidenceFiles": { "type": "integer", "minimum": 1, "maximum": 256 },
+        "maxInputBytes": { "type": "integer", "minimum": 1024, "maximum": 16777216 },
+        "maxReportBytes": { "type": "integer", "minimum": 1024, "maximum": 1048576 }
+      }
+    },
+    "capabilities": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/capability" }
+    }
+  },
+  "$defs": {
+    "gitRevision": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "repositoryPath": { "type": "string", "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$" },
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pass", "fail", "skipped", "unavailable", "total"],
+      "properties": {
+        "pass": { "type": "integer", "minimum": 0 },
+        "fail": { "type": "integer", "minimum": 0 },
+        "skipped": { "type": "integer", "minimum": 0 },
+        "unavailable": { "type": "integer", "minimum": 0 },
+        "total": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "capabilityTokens"],
+      "properties": {
+        "path": { "$ref": "#/$defs/repositoryPath" },
+        "capabilityTokens": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" }
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lane", "resultFile", "resultPath", "provenance", "counts"],
+      "properties": {
+        "lane": { "enum": ["browser", "native"] },
+        "resultFile": { "$ref": "#/$defs/repositoryPath" },
+        "resultPath": { "type": "string", "minLength": 1 },
+        "provenance": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["webSceneRevision", "wptRevision", "engineIdentity"],
+          "properties": {
+            "webSceneRevision": { "$ref": "#/$defs/gitRevision" },
+            "wptRevision": { "$ref": "#/$defs/gitRevision" },
+            "engineIdentity": { "type": "string", "minLength": 1 }
+          }
+        },
+        "counts": { "$ref": "#/$defs/counts" }
+      }
+    },
+    "capability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "area", "status", "boundary", "issues", "contracts", "evidence"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+        "area": {
+          "enum": ["parsing", "selectors", "cascade", "cssom", "values", "layout", "paint", "responsive", "animation"]
+        },
+        "status": { "enum": ["supported", "partial", "unsupported", "out-of-scope"] },
+        "boundary": { "type": "string", "minLength": 20 },
+        "issues": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "integer", "minimum": 1 }
+        },
+        "contracts": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/contract" } },
+        "evidence": { "type": "array", "minItems": 2, "items": { "$ref": "#/$defs/evidence" } }
+      }
+    }
+  }
+}

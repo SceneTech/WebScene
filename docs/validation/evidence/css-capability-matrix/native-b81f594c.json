@@ -1,0 +1,316 @@
+{
+  "schema": "webscene-wpt-subset-result-v3",
+  "profile": "webscene-css-capability-evidence-1",
+  "profileSha256": "6729c7c53e35f61dfbf9db278244693a6ff46571a34bbeed14e9683e61720c4a",
+  "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+  "runtime": "v8",
+  "engine": "native",
+  "nativeEngineIdentity": "abi=3;sha256=64c100b8fe1f1b81248b4850db59239d141e4d80d2ab2553891776977eac78ba",
+  "chromiumIdentity": null,
+  "startedAt": "2026-09-17T11:36:41.799903+00:00",
+  "duration": "00:00:01.0740420",
+  "selection": "required",
+  "summary": {
+    "tests": 9,
+    "passed": 9,
+    "failed": 0,
+    "timedOut": 0,
+    "harnessErrors": 0,
+    "subtests": 32,
+    "subtestsPassed": 32,
+    "subtestsFailed": 0
+  },
+  "results": [
+    {
+      "path": "contracts/css-syntax-parser-recovery.html",
+      "type": "contract",
+      "status": "PASS",
+      "duration": "00:00:00.9118393",
+      "message": null,
+      "subtests": [
+        {
+          "name": "semicolon and colon tokens inside strings do not terminate a declaration",
+          "status": "PASS",
+          "message": null,
+          "stack": null
+        },
+        {
+          "name": "semicolon and colon tokens inside functions do not terminate a declaration",
+          "status": "PASS",
+          "message": null,
+          "stack": null
+        },
+        {
+          "name": "semicolon and colon tokens inside quoted url() data do not terminate a declaration",
+          "status": "PASS",
+          "message": null,
+          "stack": null
+        },
+        {
+          "name": "nested function blocks preserve their complete component-value sequence",
+          "status": "PASS",
+          "message": null,
+          "stack": null
+        },
+        {
+          "name": "comments containing delimiters remain inside a custom-property token sequence",
+          "status": "PASS",
+          "message": null,
+          "stack": null
+        },
+        {
+          "name": "ordinary property names are ASCII case-insensitive",
+          "status": "PASS",
+          "message": null,
+          "stack": null
+        },
+        {
+          "name": "whitespace between ! and important is accepted case-insensitively",
+          "status": "PASS",
+          "message": null,
+          "stack": null
+        },
+        {
+          "name": "a malformed declaration does not prevent recovery at the next semicolon",
+          "status": "PASS",
+          "message": null,
+          "stack": null
+        },
+        {
+          "name": "dynamic STYLE reparsing uses the same delimiter-aware syntax path",
+          "status": "PASS",
+          "message": null,
+          "stack": null
+        },
+        {
+          "name": "large dynamic stylesheet recovers through the final rule",
+          "status": "PASS",
+          "message": null,
+          "stack": null
+        },
+        {
+          "name": "large stylesheet parse and recascade metrics",
+          "status": "PASS",
+          "message": "{\u0022bulkRuleCount\u0022:2000,\u0022bulkBytes\u0022:107644,\u0022bulkParseAndRecascadeMilliseconds\u0022:[8.588915944099426,5.727291941642761,5.570459008216858,5.693250060081482,5.519624948501587,5.482041954994202]}",
+          "stack": null
+        }
+      ],
+      "artifacts": null,
+      "chromiumOracle": null
+    },
+    {
+      "path": "css/selectors/hover-002.html",
+      "type": "testharness",
+      "status": "PASS",
+      "duration": "00:00:00.0297246",
+      "message": null,
+      "subtests": [
+        {
+          "name": "Hover #hovered element should make it go green",
+          "status": "PASS",
+          "message": null,
+          "stack": null
+        },
+        {
+          "name": "Hover #hoveredContents child should make it go green",
+          "status": "PASS",
+          "message": null,
+          "stack": null
+        }
+      ],
+      "artifacts": null,
+      "chromiumOracle": null
+    },
+    {
+      "path": "contracts/css-root-theme-interaction-recascade.html",
+      "type": "testharness",
+      "status": "PASS",
+      "duration": "00:00:00.0172486",
+      "message": null,
+      "subtests": [
+        {
+          "name": "Conditional root custom properties track theme and descendant state changes",
+          "status": "PASS",
+          "message": null,
+          "stack": null
+        },
+        {
+          "name": "Pointer hover resolves the active root theme",
+          "status": "PASS",
+          "message": null,
+          "stack": null
+        }
+      ],
+      "artifacts": null,
+      "chromiumOracle": null
+    },
+    {
+      "path": "contracts/cssom-style-recalculation-barrier.html",
+      "type": "contract",
+      "status": "PASS",
+      "duration": "00:00:00.0046035",
+      "message": null,
+      "subtests": [
+        {
+          "name": "getComputedStyle observes inline declaration removal synchronously",
+          "status": "PASS",
+          "message": null,
+          "stack": null
+        },
+        {
+          "name": "geometry observes the restored stylesheet declaration synchronously",
+          "status": "PASS",
+          "message": null,
+          "stack": null
+        },
+        {
+          "name": "inherited style resumes after inline removal in the same task",
+          "status": "PASS",
+          "message": null,
+          "stack": null
+        },
+        {
+          "name": "ancestor style-attribute selectors invalidate descendants",
+          "status": "PASS",
+          "message": null,
+          "stack": null
+        }
+      ],
+      "artifacts": null,
+      "chromiumOracle": null
+    },
+    {
+      "path": "contracts/css-border-functional-color-width.html",
+      "type": "testharness",
+      "status": "PASS",
+      "duration": "00:00:00.0183911",
+      "message": null,
+      "subtests": [
+        {
+          "name": "Color-mix percentage must not overwrite border width",
+          "status": "PASS",
+          "message": null,
+          "stack": null
+        }
+      ],
+      "artifacts": null,
+      "chromiumOracle": null
+    },
+    {
+      "path": "contracts/css-grid-template-areas.html",
+      "type": "contract",
+      "status": "PASS",
+      "duration": "00:00:00.0068162",
+      "message": null,
+      "subtests": [
+        {
+          "name": "computed grid-template-areas serializes normalized rows",
+          "status": "PASS",
+          "message": null,
+          "stack": null
+        },
+        {
+          "name": "one named grid-area expands to its four generated line names",
+          "status": "PASS",
+          "message": null,
+          "stack": null
+        },
+        {
+          "name": "named areas use sparse five-column and three-row geometry",
+          "status": "PASS",
+          "message": null,
+          "stack": null
+        },
+        {
+          "name": "fully definite items may overlap in the same named area",
+          "status": "PASS",
+          "message": null,
+          "stack": null
+        },
+        {
+          "name": "invalid nonrectangular and unequal rows are ignored atomically",
+          "status": "PASS",
+          "message": null,
+          "stack": null
+        },
+        {
+          "name": "valid template mutation moves named items and removal restores cascade",
+          "status": "PASS",
+          "message": null,
+          "stack": null
+        },
+        {
+          "name": "500 named-area mutations remain within the bounded gate",
+          "status": "PASS",
+          "message": null,
+          "stack": null
+        },
+        {
+          "name": "grid-template shorthand shares named-area state with longhand mutation",
+          "status": "PASS",
+          "message": null,
+          "stack": null
+        }
+      ],
+      "artifacts": null,
+      "chromiumOracle": null
+    },
+    {
+      "path": "contracts/css-background-image-primitives.html",
+      "type": "contract",
+      "status": "PASS",
+      "duration": "00:00:00.0602597",
+      "message": null,
+      "subtests": [
+        {
+          "name": "URL-backed SVG background longhands survive the cascade",
+          "status": "PASS",
+          "message": null,
+          "stack": null
+        },
+        {
+          "name": "background artwork does not alter the principal box geometry",
+          "status": "PASS",
+          "message": null,
+          "stack": null
+        }
+      ],
+      "artifacts": null,
+      "chromiumOracle": null
+    },
+    {
+      "path": "contracts/media-query-list-dynamic-viewport.html",
+      "type": "testharness",
+      "status": "PASS",
+      "duration": "00:00:00.0168022",
+      "message": null,
+      "subtests": [
+        {
+          "name": "MediaQueryList follows viewport breakpoint crossings",
+          "status": "PASS",
+          "message": null,
+          "stack": null
+        }
+      ],
+      "artifacts": null,
+      "chromiumOracle": null
+    },
+    {
+      "path": "contracts/css-animation-end-class-removal.html",
+      "type": "contract",
+      "status": "PASS",
+      "duration": "00:00:00.0064587",
+      "message": null,
+      "subtests": [
+        {
+          "name": "finite rotation keyframes dispatch one animationend and permit class cleanup",
+          "status": "PASS",
+          "message": null,
+          "stack": null
+        }
+      ],
+      "artifacts": null,
+      "chromiumOracle": null
+    }
+  ]
+}

@@ -1,0 +1,150 @@
+{
+  "profile": "webscene-css-capability-evidence-1",
+  "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+  "runtime": "v8",
+  "viewport": {
+    "width": 800,
+    "height": 600,
+    "deviceScaleFactor": 1
+  },
+  "required": [
+    {
+      "path": "contracts/css-syntax-parser-recovery.html",
+      "type": "contract",
+      "capabilities": [
+        "css-syntax-component-values",
+        "declaration-recovery",
+        "ascii-case-insensitive-property-names",
+        "important-token-parsing",
+        "dynamic-style-reparse"
+      ],
+      "evidence": [
+        "css-syntax-level-3-consume-declaration",
+        "wpt-css-syntax-declarations-and-recovery"
+      ],
+      "reason": "Product-neutral projection of the pinned upstream CSS Syntax declaration and recovery cases onto WebScene's supported CSSOM/computed-style surface. It isolates syntax tokenization from property grammar, selectors, cascade, and layout so the legacy splitter and cssparser variants can be compared directly."
+    },
+    {
+      "path": "css/selectors/hover-002.html",
+      "type": "testharness",
+      "capabilities": [
+        "hover-invalidation",
+        "pointer-boundary-events"
+      ],
+      "evidence": [
+        "indicators-row-hover",
+        "favorite-star-lifecycle"
+      ]
+    },
+    {
+      "path": "contracts/css-root-theme-interaction-recascade.html",
+      "type": "testharness",
+      "capabilities": [
+        "css-custom-properties",
+        "attribute-selector",
+        "focus-pseudo-class"
+      ],
+      "evidence": [
+        "kestrel-white-ui-investigation"
+      ],
+      "reason": "Reduced Kestrel dark/light theme and interaction recascade regression. This local contract does not establish upstream WPT or pixel presentation conformance."
+    },
+    {
+      "path": "contracts/cssom-style-recalculation-barrier.html",
+      "type": "contract",
+      "capabilities": [
+        "cssom-synchronous-style-recalculation",
+        "cssom-synchronous-geometry-recalculation",
+        "inherited-style-recalculation"
+      ],
+      "evidence": [
+        "web-platform-cssom-semantics",
+        "tradingview-symbol-search-regression"
+      ],
+      "reason": "CSSOM computed-style and geometry reads are synchronous style-recalculation barriers. WebScene may coalesce repeated invalidations within one browser task, but declaration removal must restore stylesheet and inherited values before any observable read in that task."
+    },
+    {
+      "path": "contracts/css-border-functional-color-width.html",
+      "type": "testharness",
+      "capabilities": [
+        "border-shorthand",
+        "functional-color"
+      ],
+      "evidence": [
+        "kestrel-white-layer-list"
+      ],
+      "reason": "Color-mix percentages must stay inside the color component instead of becoming border widths. Local regression pending cross-RID qualification."
+    },
+    {
+      "path": "contracts/css-grid-template-areas.html",
+      "type": "contract",
+      "capabilities": [
+        "grid-template-areas",
+        "named-grid-area-placement",
+        "sparse-grid-areas",
+        "template-area-validation",
+        "template-area-mutation-invalidation"
+      ],
+      "evidence": [
+        "code-oss-welcome-five-column-layout",
+        "webscene-issue-98"
+      ],
+      "reason": "Product-neutral reduction of the named-area composition used by Code OSS Welcome. It covers normalized CSSOM serialization, sparse rectangular areas across fractional and minmax tracks, atomic rejection of nonrectangular or unequal rows, synchronous mutation/removal layout, and a bounded 500-mutation gate."
+    },
+    {
+      "path": "contracts/css-background-image-primitives.html",
+      "type": "contract",
+      "capabilities": [
+        "url-backed-svg-background-image",
+        "background-repeat-no-repeat",
+        "two-axis-background-position",
+        "background-size-length-auto",
+        "background-content-layout-independence"
+      ],
+      "evidence": [
+        "public-release-list-svg-badges",
+        "native-svg-background-scene-authority"
+      ],
+      "reason": "Product-neutral reduction of an external SVG badge composition. Native must preserve all four CSS longhands and independently emit the loaded SVG at the certified scene coordinates. Keep candidate until background-image paint is stable on every released native RID; native authority is test_svg_background_image_reaches_scene_with_position_and_size."
+    },
+    {
+      "path": "contracts/media-query-list-dynamic-viewport.html",
+      "type": "testharness",
+      "capabilities": [
+        "live-media-query-list-matches",
+        "media-query-list-change-event",
+        "media-query-list-legacy-listener",
+        "viewport-breakpoint-crossing",
+        "breakpoint-change-idempotence",
+        "media-query-list-listener-removal"
+      ],
+      "evidence": [
+        "stackwich-1244-toolbar-overflow-navigation",
+        "stackwich-1246-narrow-settings-back-navigation",
+        "stackwich-1247-settings-fullscreen-resize",
+        "stackwich-1248-go-to-dialog-responsive-sizing"
+      ],
+      "reason": "Browser-authorized reduction of TradingView's device breakpoint manager: retained MediaQueryList objects must update their matches snapshots, notify modern and legacy listeners exactly once when a host resize crosses a breakpoint, remain silent within a breakpoint, and stop notifying removed listeners."
+    },
+    {
+      "path": "contracts/css-animation-end-class-removal.html",
+      "type": "contract",
+      "capabilities": [
+        "finite-keyframe-animation",
+        "animationend-event",
+        "animation-event-data",
+        "listener-class-removal",
+        "recascade-stability",
+        "host-frame-clock"
+      ],
+      "evidence": [
+        "code-oss-language-status-wiggle-reduction",
+        "native-finite-keyframe-animation-end-regression"
+      ],
+      "reason": "Product-neutral reduction of a finite status animation whose animationend listener removes the triggering class. It requires one browser-shaped terminal event after an unrelated mid-animation recascade and proves listener cleanup completes without restarting the animation. Native host-demand release is additionally asserted by the deterministic ABI regression."
+    }
+  ],
+  "candidate": [],
+  "harnessBlocked": [],
+  "excluded": []
+}

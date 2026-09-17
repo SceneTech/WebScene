@@ -1071,6 +1071,41 @@
         return true;
     }
 
+    bool load_parser_text_resource(
+        const std::string& value,
+        const std::string& base,
+        uint32_t kind,
+        uint32_t destination,
+        std::string& content,
+        std::string& resolved_name,
+        std::shared_ptr<const immutable_text_source>* immutable_content = nullptr)
+    {
+        if (value.empty() || value.starts_with("data:")
+            || value.starts_with("blob:") || object_urls.contains(value)) {
+            return load_text_resource(
+                value, base, kind, content, resolved_name, immutable_content);
+        }
+        const auto resolved = resolve_resource_url(value, base);
+        resource_request_context request_context{
+            WEBSCENE_RESOURCE_INITIATOR_SUBRESOURCE,
+            current_security_origin(),
+            base,
+            WEBSCENE_FETCH_MODE_NONE,
+            destination,
+            "GET", {}, {}, WEBSCENE_FETCH_CREDENTIALS_INCLUDE, {}};
+        request_context.cookie = cookie_header_for(resolved, request_context);
+        auto controlled = await_controlled_service_worker_fetch(
+            resolved, request_context, std::chrono::seconds(30));
+        return load_connected_text_resource(
+            value,
+            base,
+            kind,
+            content,
+            resolved_name,
+            immutable_content,
+            controlled.has_value() ? &*controlled : nullptr);
+    }
+
     bool load_connected_resource(
         dom_node& node,
         v8::Local<v8::Object> wrapper,

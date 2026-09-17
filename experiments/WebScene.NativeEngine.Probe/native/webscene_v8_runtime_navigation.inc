@@ -339,21 +339,25 @@
             for (const auto& entry : compiled->scripts)
                 scripts.push_back({entry.url, entry.source, entry.defer, scripts.size(), entry.module, entry.name});
         }
-        for (const auto& href : stylesheets) {
-            start_resource_prefetch(
-                href,
-                document_base_address,
-                WEBSCENE_RESOURCE_STYLESHEET);
-        }
-        for (const auto& script : scripts) {
-            if (!script.source.empty()) {
+        // Preserve parallel host prefetch for ordinary documents. Once a
+        // controller is claimed, parser requests wait for the client realm and
+        // pass through its FetchEvent before any host fallback.
+        if (!has_claimed_service_worker_for_url(document_base_address)) {
+            for (const auto& href : stylesheets) {
                 start_resource_prefetch(
-                    script.source,
+                    href,
                     document_base_address,
-                    WEBSCENE_RESOURCE_SCRIPT);
+                    WEBSCENE_RESOURCE_STYLESHEET);
+            }
+            for (const auto& script : scripts) {
+                if (!script.source.empty()) {
+                    start_resource_prefetch(
+                        script.source,
+                        document_base_address,
+                        WEBSCENE_RESOURCE_SCRIPT);
+                }
             }
         }
-
         auto isolate_locker = lock_shared_isolate();
         v8::Isolate::Scope isolate_scope(isolate);
         v8::HandleScope handle_scope(isolate);
@@ -551,6 +555,9 @@
         frame_hydration_states.clear();
         inactive_css_cascades.clear();
         active_css_cascade_root = &html_element;
+        // Document-start clients must exist before parser-blocking styles or
+        // scripts can synchronously ask the controlled page for response data.
+        if (!execute_document_start_scripts(local_context, false)) return false;
         css_rules.clear();
         opacity_keyframes.clear();
         css_rules_by_class.clear();
@@ -579,14 +586,17 @@
         for (const auto& href : stylesheets) {
             std::string stylesheet;
             std::string stylesheet_url;
-            if (!load_text_resource(
+            if (!load_parser_text_resource(
                     href,
                     document_base_address,
                     WEBSCENE_RESOURCE_STYLESHEET,
+                    WEBSCENE_REQUEST_DESTINATION_STYLE,
                     stylesheet,
                     stylesheet_url)) {
                 last_error = "Unable to load document stylesheet: " + href;
-                return false;
+                ++frame_script_error_count;
+                last_error.clear();
+                continue;
             }
             add_stylesheet(std::move(stylesheet), stylesheet_url);
         }
@@ -631,8 +641,6 @@
         // own image subtrees separately.
         enqueue_connected_image_resources_subtree(html_element, local_context);
 
-        if (!execute_document_start_scripts(local_context, false)) return false;
-
         const auto report_document_script_error = [&](const std::string& error) {
             if (diagnostics == nullptr || !diagnostics->enabled(WEBSCENE_DIAGNOSTIC_LEGACY_CONSOLE)) return;
             std::lock_guard lock(console_message_mutex);
@@ -650,10 +658,11 @@
                 auto name = resolved_url + (script.compiled_name.empty()
                     ? "#inline-script-" + std::to_string(script.index + 1U) : "#" + script.compiled_name);
                 if (!script.source.empty()) {
-                    if (!load_text_resource(
+                    if (!load_parser_text_resource(
                             script.source,
                             document_base_address,
                             WEBSCENE_RESOURCE_SCRIPT,
+                            WEBSCENE_REQUEST_DESTINATION_SCRIPT,
                             source,
                             name,
                             &immutable_source)) {

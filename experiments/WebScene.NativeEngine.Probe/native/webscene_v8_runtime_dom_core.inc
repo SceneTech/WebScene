@@ -928,7 +928,6 @@
         }
     }
 
-#if defined(WEBSCENE_NATIVE_ENGINE_WITH_V8_INSPECTOR)
     void destroy_detached_frame_contexts(dom_node& root)
     {
         std::unordered_set<uint32_t> node_ids;
@@ -952,7 +951,9 @@
                 inactive_css_cascades.erase(frame_root);
                 detached_contexts.push_back(local_context);
                 cancel_detached_frame_context_tasks(local_context);
+#if defined(WEBSCENE_NATIVE_ENGINE_WITH_V8_INSPECTOR)
                 destroy_inspector_context(local_context);
+#endif
                 if (!frame_context.IsEmpty()
                     && frame_context.Get(isolate) == local_context) {
                     frame_context.Reset();
@@ -980,8 +981,8 @@
                 return detached;
             });
         }
+        retire_service_worker_clients(detached_contexts);
     }
-#endif
 
     void weaken_detached_subtree_wrappers(dom_node& root)
     {
@@ -1057,9 +1058,7 @@
                 weaken(canvas_contexts, key);
             });
         }
-#if defined(WEBSCENE_NATIVE_ENGINE_WITH_V8_INSPECTOR)
         destroy_detached_frame_contexts(root);
-#endif
         register_detached_subtree(root);
     }
 
@@ -2086,7 +2085,8 @@
                 const auto& base = current_base_address();
                 const auto resolved = resolve_resource_url(source->second, base);
                 if (resolved.starts_with("http://")
-                    || resolved.starts_with("https://")) {
+                    || resolved.starts_with("https://")
+                    || resolved.starts_with("file://")) {
                     node.attributes["data-webscene-remote-attempt"] = resolved;
                     node.attributes["src"] = resolved;
                     if (prefetch_iframe_documents) {

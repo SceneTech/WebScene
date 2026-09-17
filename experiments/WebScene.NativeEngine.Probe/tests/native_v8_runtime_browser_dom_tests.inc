@@ -1601,7 +1601,30 @@ void test_native_mutable_stylesheet_cssom(webscene_engine* engine)
         const mediaIndex = sheet.insertRule(
           `@media (min-width: 1px) { .${className} { display: ${display}; } }`,
           rules.length);
-        const media = [rules.length, rules[mediaIndex].cssText.startsWith('@media'),
+        const mediaRule = rules[mediaIndex];
+        const mediaRules = mediaRule.cssRules;
+        const mediaOriginal = mediaRules?.[0];
+        const nestedIndex = mediaRule.insertRule(
+          `.${className} { display: grid; }`, mediaRules.length);
+        const nestedRule = mediaRules[nestedIndex];
+        const media = [rules.length,
+          mediaRule instanceof view.CSSMediaRule,
+          mediaRule instanceof view.CSSGroupingRule,
+          mediaRules instanceof view.CSSRuleList,
+          mediaRule.type,
+          mediaRule.conditionText,
+          mediaRule.cssRules === mediaRules,
+          mediaRules.length,
+          mediaOriginal.parentRule === mediaRule,
+          mediaOriginal.parentStyleSheet === sheet,
+          nestedRule.parentRule === mediaRule,
+          nestedRule.parentStyleSheet === sheet,
+          view.getComputedStyle(target).display,
+          mediaRule.cssText.includes('display: grid')];
+        mediaRule.deleteRule(nestedIndex);
+        const mediaDeleted = [mediaRules.length,
+          nestedRule.parentRule === null,
+          nestedRule.parentStyleSheet === null,
           view.getComputedStyle(target).display];
         sheet.deleteRule(mediaIndex);
         sheet.insertRule(`.${className} { display: grid; }`, rules.length);
@@ -1625,7 +1648,7 @@ void test_native_mutable_stylesheet_cssom(webscene_engine* engine)
         observer.disconnect();
         style.remove();
         target.remove();
-        return { inserted, mutated, media, reconnected, disabled, enabled,
+        return { inserted, mutated, media, mediaDeleted, reconnected, disabled, enabled,
           mediaMiss, mediaMatch, deleted };
       };
       const frame = document.createElement('iframe');
@@ -1641,7 +1664,7 @@ void test_native_mutable_stylesheet_cssom(webscene_engine* engine)
     })())JS", "native-mutable-stylesheet-cssom.js");
     require(
         result
-            == R"JSON({"main":{"inserted":[1,2,".monaco-main","none",true,true,true,"SyntaxError"],"mutated":[2,"inline-block","inline-block"],"media":[2,true,"inline-block"],"reconnected":[true,"grid",true],"disabled":[true,"block"],"enabled":[false,"grid"],"mediaMiss":["(max-width: 1px)",1,"(max-width: 1px)","block"],"mediaMatch":["(min-width: 1px)","grid"],"deleted":[2,true,0,true]},"frame":{"inserted":[1,2,".monaco-frame","none",true,true,true,"SyntaxError"],"mutated":[2,"inline-flex","inline-flex"],"media":[2,true,"inline-flex"],"reconnected":[true,"grid",true],"disabled":[true,"block"],"enabled":[false,"grid"],"mediaMiss":["(max-width: 1px)",1,"(max-width: 1px)","block"],"mediaMatch":["(min-width: 1px)","grid"],"deleted":[2,true,0,true]}})JSON",
+            == R"JSON({"main":{"inserted":[1,2,".monaco-main","none",true,true,true,"SyntaxError"],"mutated":[2,"inline-block","inline-block"],"media":[2,true,true,true,4,"(min-width: 1px)",true,2,true,true,true,true,"grid",true],"mediaDeleted":[1,true,true,"inline-block"],"reconnected":[true,"grid",true],"disabled":[true,"block"],"enabled":[false,"grid"],"mediaMiss":["(max-width: 1px)",1,"(max-width: 1px)","block"],"mediaMatch":["(min-width: 1px)","grid"],"deleted":[2,true,0,true]},"frame":{"inserted":[1,2,".monaco-frame","none",true,true,true,"SyntaxError"],"mutated":[2,"inline-flex","inline-flex"],"media":[2,true,true,true,4,"(min-width: 1px)",true,2,true,true,true,true,"grid",true],"mediaDeleted":[1,true,true,"inline-flex"],"reconnected":[true,"grid",true],"disabled":[true,"block"],"enabled":[false,"grid"],"mediaMiss":["(max-width: 1px)",1,"(max-width: 1px)","block"],"mediaMatch":["(min-width: 1px)","grid"],"deleted":[2,true,0,true]}})JSON",
         "mutable stylesheet CSSOM did not recascade main/frame styles: "
             + result);
 }
@@ -1740,6 +1763,64 @@ void test_batched_stylesheet_rule_mutation_performance()
             throw new Error(`latency exceeded p95=${p95} max=${maximum}`);
           }
           while (rules.length) sheet.deleteRule(0);
+          const mediaIndex = sheet.insertRule('@media (min-width: 1px) {}', 0);
+          const mediaRule = rules[mediaIndex];
+          const mediaRules = mediaRule.cssRules;
+          const nestedUpdateDurations = [];
+          const nestedLookupDurations = [];
+          for (let cycle = 0; cycle < 20; cycle++) {
+            let started = performance.now();
+            while (mediaRules.length) mediaRule.deleteRule(0);
+            for (let index = 0; index < 64; index++) {
+              const red = (cycle + index) & 255;
+              mediaRule.insertRule(
+                `.nested-theme-${index} { color: rgb(${red}, 11, 13); }`, 0);
+            }
+            target.className = 'theme-target nested-theme-63';
+            const expected = `rgb(${(cycle + 63) & 255}, 11, 13)`;
+            if (mediaRules.length !== 64
+                || getComputedStyle(target).color !== expected) {
+              throw new Error('nested media mutation was not synchronously observable');
+            }
+            nestedUpdateDurations.push(performance.now() - started);
+            started = performance.now();
+            let checksum = 0;
+            for (let index = 0; index < 4096; index++) {
+              checksum += mediaRules[index & 63].cssText.length;
+            }
+            if (checksum === 0 || mediaRule.cssRules !== mediaRules) {
+              throw new Error('nested media lookup was not live or stable');
+            }
+            nestedLookupDurations.push(performance.now() - started);
+          }
+          const nestedUpdates = nestedUpdateDurations.slice().sort((a, b) => a - b);
+          const nestedLookups = nestedLookupDurations.slice().sort((a, b) => a - b);
+          const nestedUpdateP95 = nestedUpdates[18];
+          const nestedUpdateMax = nestedUpdates[19];
+          const nestedLookupP95 = nestedLookups[18];
+          const nestedLookupMax = nestedLookups[19];
+          if (nestedUpdateP95 > 16 || nestedUpdateMax > 500
+              || nestedLookupP95 > 16 || nestedLookupMax > 500) {
+            throw new Error(`nested latency exceeded update=${nestedUpdateP95}/${nestedUpdateMax} lookup=${nestedLookupP95}/${nestedLookupMax}`);
+          }
+          sheet.deleteRule(mediaIndex);
+          for (let cycle = 0; cycle < 100; cycle++) {
+            const lifecycleStyle = document.createElement('style');
+            lifecycleStyle.textContent = '@media (min-width: 1px) {}';
+            document.head.appendChild(lifecycleStyle);
+            const lifecycleGroup = lifecycleStyle.sheet.cssRules[0];
+            const childIndex = lifecycleGroup.insertRule(
+              `.lifecycle-${cycle} { display: block; }`, 0);
+            const child = lifecycleGroup.cssRules[childIndex];
+            lifecycleGroup.deleteRule(childIndex);
+            if (child.parentRule !== null || child.parentStyleSheet !== null) {
+              throw new Error('deleted nested rule retained its parents');
+            }
+            lifecycleStyle.remove();
+            document.head.appendChild(lifecycleStyle);
+            lifecycleStyle.remove();
+          }
+          target.className = 'theme-target';
           sheet.insertRule('.theme-target { display: none; }', 0);
           const order = ['sync'];
           queueMicrotask(() => {
@@ -1763,6 +1844,9 @@ void test_batched_stylesheet_rule_mutation_performance()
               globalThis.__stylesheetMutationResult = {
                 status: 'passed', cycles: durations.length,
                 p95, max: maximum, rules: style.sheet === null ? 0 : -1,
+                nestedUpdateP95, nestedUpdateMax,
+                nestedLookupP95, nestedLookupMax,
+                lifecycleCycles: 100,
                 authoredTextStable: style.textContent === authoredText,
                 order
               };
@@ -1838,7 +1922,7 @@ void test_batched_stylesheet_rule_mutation_performance()
     }
     require(rss_before == 0U || rss_after <= rss_before + 64U * 1024U * 1024U,
         "stylesheet mutation workload exceeded the 64 MiB peak RSS budget");
-    require(engine_after.layout_passes <= engine_before.layout_passes + 23U
+    require(engine_after.layout_passes <= engine_before.layout_passes + 45U
             && engine_after.published_scenes <= engine_before.published_scenes + 2U
             && memory_after.pending_scene_count <= 2U
             && work_after.timers_fired >= work_before.timers_fired + 2U,

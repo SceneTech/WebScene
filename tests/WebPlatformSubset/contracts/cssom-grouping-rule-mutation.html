@@ -1,0 +1,123 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>CSSGroupingRule nested media mutation stays live and synchronous</title>
+<script>
+  const state = window.__webSceneWptState = {
+    complete: false, harness: null, results: [], errors: [], diagnostics: []
+  };
+
+  function record(name, error) {
+    state.results.push({
+      name,
+      status: error ? "FAIL" : "PASS",
+      message: error ? String(error && error.message || error) : null,
+      stack: error && error.stack ? String(error.stack) : null
+    });
+  }
+
+  function exercise(document, view, prefix) {
+    const style = document.createElement("style");
+    const target = document.createElement("div");
+    target.className = prefix;
+    style.textContent = `@media (min-width: 1px) {
+      .${prefix} { display: block; color: rgb(1, 2, 3); }
+    }`;
+    document.head.appendChild(style);
+    document.body.appendChild(target);
+
+    const sheet = style.sheet;
+    const group = sheet.cssRules[0];
+    const rules = group.cssRules;
+    const original = rules[0];
+    const authoredText = style.textContent;
+    const before = {
+      media: typeof view.CSSMediaRule === "function"
+        && group instanceof view.CSSMediaRule,
+      grouping: typeof view.CSSGroupingRule === "function"
+        && group instanceof view.CSSGroupingRule,
+      list: typeof view.CSSRuleList === "function"
+        && rules instanceof view.CSSRuleList,
+      type: group.type,
+      conditionText: group.conditionText,
+      length: rules.length,
+      identity: group.cssRules === rules,
+      childParentRule: original.parentRule === group,
+      childParentSheet: original.parentStyleSheet === sheet,
+      display: view.getComputedStyle(target).display
+    };
+
+    const index = group.insertRule(`.${prefix} { display: grid; }`, rules.length);
+    const inserted = rules[index];
+    const afterInsert = {
+      index,
+      length: rules.length,
+      identity: group.cssRules === rules,
+      childParentRule: inserted.parentRule === group,
+      childParentSheet: inserted.parentStyleSheet === sheet,
+      display: view.getComputedStyle(target).display,
+      serialized: group.cssText.includes(`.${prefix}`)
+        && group.cssText.includes("display: grid")
+    };
+
+    group.deleteRule(index);
+    const afterDelete = {
+      length: rules.length,
+      parentRule: inserted.parentRule,
+      parentStyleSheet: inserted.parentStyleSheet,
+      display: view.getComputedStyle(target).display,
+      textStable: style.textContent === authoredText
+    };
+
+    const errors = {};
+    try { group.insertRule(`.${prefix} { display: none; }`, 99); }
+    catch (error) { errors.insert = error.name; }
+    try { group.deleteRule(); }
+    catch (error) { errors.deleteMissing = error.name; }
+
+    style.remove();
+    target.remove();
+    return { before, afterInsert, afterDelete, errors };
+  }
+
+  try {
+    const frame = document.createElement("iframe");
+    document.body.appendChild(frame);
+    const main = exercise(document, window, "group-main");
+    const nested = exercise(frame.contentDocument, frame.contentWindow, "group-frame");
+    const expectedBefore = value => value.media && value.grouping && value.list
+      && value.type === 4 && value.conditionText === "(min-width: 1px)"
+      && value.length === 1 && value.identity && value.childParentRule
+      && value.childParentSheet && value.display === "block";
+    const expectedInsert = value => value.index === 1 && value.length === 2
+      && value.identity && value.childParentRule && value.childParentSheet
+      && value.display === "grid" && value.serialized;
+    const expectedDelete = value => value.length === 1
+      && value.parentRule === null && value.parentStyleSheet === null
+      && value.display === "block" && value.textStable;
+    record("nested media rules expose browser-shaped live identities",
+      expectedBefore(main.before) && expectedBefore(nested.before)
+        ? null : new Error(JSON.stringify({ main: main.before, nested: nested.before })));
+    record("nested insertRule publishes synchronously in each owning document",
+      expectedInsert(main.afterInsert) && expectedInsert(nested.afterInsert)
+        ? null : new Error(JSON.stringify({ main: main.afterInsert, nested: nested.afterInsert })));
+    record("nested deleteRule detaches children and restores computed style",
+      expectedDelete(main.afterDelete) && expectedDelete(nested.afterDelete)
+        ? null : new Error(JSON.stringify({ main: main.afterDelete, nested: nested.afterDelete })));
+    record("nested grouping mutation reports browser exception names",
+      main.errors.insert === "IndexSizeError"
+          && main.errors.deleteMissing === "TypeError"
+          && nested.errors.insert === "IndexSizeError"
+          && nested.errors.deleteMissing === "TypeError"
+        ? null : new Error(JSON.stringify({ main: main.errors, nested: nested.errors })));
+    state.diagnostics.push(JSON.stringify({ main, nested }));
+    frame.remove();
+  } catch (error) {
+    record("nested grouping-rule setup", error);
+  }
+
+  const failure = state.results.find(result => result.status !== "PASS");
+  state.harness = failure
+    ? { status: 1, message: failure.message, stack: failure.stack }
+    : { status: 0, message: null, stack: null };
+  state.complete = true;
+</script>

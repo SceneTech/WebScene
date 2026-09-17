@@ -1,0 +1,30 @@
+{
+  "schema": "webscene-variadic-child-vector-work-v1",
+  "recordedAt": "2026-09-17",
+  "baseCommit": "e0a55048",
+  "counter": "dom-variadic-detach-child-visits",
+  "methods": ["append", "prepend", "before", "after", "replaceChildren", "replaceWith"],
+  "counts": [8, 128],
+  "sourceParents": [1, 2, 8],
+  "totalCases": 36,
+  "controlFailedCases": 18,
+  "candidateFailedCases": 0,
+  "baseVisitsByParents": {
+    "1": {"8": 8, "128": 128},
+    "2": {"8": 20, "128": 4160},
+    "8": {"8": 8, "128": 1088}
+  },
+  "candidateVisitsByParents": {
+    "1": {"8": 8, "128": 128},
+    "2": {"8": 8, "128": 128},
+    "8": {"8": 8, "128": 128}
+  },
+  "replaceWithAdditionalReceiverVisit": 1,
+  "semanticChecks": ["all source lists empty", "complete destination identity/order", "parent identity", "first/last computed styles"],
+  "contract": "contracts/css-bulk-sibling-detachment.html",
+  "chrome": {"identity": "Google Chrome 153.0.8010.48", "passed": 76, "total": 76},
+  "native": {"passed": 76, "total": 76},
+  "limits": ["ordinary no-callback removal only", "focused replacements and active custom elements keep sequential removal", "not a wall-clock or end-to-end browser comparison"],
+  "localControl": "/tmp/css-interleaved-control-20260917.log",
+  "localCandidate": "/tmp/css-interleaved-candidate-20260917.log"
+}

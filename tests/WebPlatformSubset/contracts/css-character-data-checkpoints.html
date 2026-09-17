@@ -1,0 +1,96 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Character-data conversion and structural style checkpoints</title>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<style>
+.data-box {width:11px}
+.data-box:empty {width:41px}
+.data-scope:has(> .data-box:empty) {--data-size:61px}
+.data-consumer {width:var(--data-size,29px)}
+</style>
+<body>
+<script>
+// https://dom.spec.whatwg.org/#dom-characterdata-data
+// https://dom.spec.whatwg.org/#dom-node-nodevalue
+function fixture(t){
+  const stage=document.createElement('section');
+  stage.innerHTML='<div class="data-scope"><div class="data-box"></div><div class="data-consumer"></div></div>'.repeat(2);
+  document.body.appendChild(stage);t.add_cleanup(()=>stage.remove());
+  const [source,destination]=stage.querySelectorAll('.data-box');
+  const consumers=stage.querySelectorAll('.data-consumer');
+  return {stage,source,destination,consumers};
+}
+function create(kind){return kind==='text'?document.createTextNode('seed'):
+  kind==='comment'?document.createComment('seed'):document.createProcessingInstruction('probe','seed');}
+function checkEmpty(f,sourceEmpty,destinationEmpty){
+  [f.source,f.destination].forEach((box,i)=>{
+    const empty=i===0?sourceEmpty:destinationEmpty;
+    assert_equals(getComputedStyle(box).width,empty?'41px':'11px');
+    assert_equals(getComputedStyle(f.consumers[i]).width,empty?'61px':'29px');
+  });
+}
+for(const property of ['data','nodeValue','textContent']){
+  for(const kind of ['text','comment','processing-instruction']){
+    test(t=>{
+      const f=fixture(t),n=create(kind),sentinel={failure:true};f.source.appendChild(n);
+      let caught;try{n[property]={toString(){throw sentinel;}};}catch(e){caught=e;}
+      assert_equals(caught,sentinel);assert_equals(n.data,'seed');assert_equals(n.parentNode,f.source);
+      checkEmpty(f,kind!=='text',true);
+    },kind+'.'+property+' conversion failure preserves data and styles');
+    test(t=>{
+      const f=fixture(t),n=create(kind);f.source.appendChild(n);
+      assert_throws_js(TypeError,()=>{n[property]=Symbol('invalid');});
+      assert_equals(n.data,'seed');checkEmpty(f,kind!=='text',true);
+    },kind+'.'+property+' rejects Symbols without mutation');
+    test(t=>{
+      const f=fixture(t),n=create(kind);f.source.appendChild(n);
+      n[property]=undefined;assert_equals(n.data,property==='data'?'undefined':'');
+      checkEmpty(f,kind!=='text'||property!=='data',true);
+      n[property]=null;assert_equals(n.data,'');checkEmpty(f,true,true);
+      n[property]='\uD800';assert_equals(n.data,'\uD800');checkEmpty(f,kind!=='text',true);
+    },kind+'.'+property+' respects nullable and legacy-null DOMString conversion');
+    test(t=>{
+      const f=fixture(t),n=create(kind);f.source.appendChild(n);
+      n[property]={toString(){f.destination.appendChild(n);n.data='';return 'final';}};
+      assert_equals(n.parentNode,f.destination);assert_equals(n.data,'final');checkEmpty(f,true,kind!=='text');
+      const sentinel={failure:true};let caught;
+      try{n[property]={toString(){n.data='side effect';throw sentinel;}};}catch(e){caught=e;}
+      assert_equals(caught,sentinel);assert_equals(n.data,'side effect');checkEmpty(f,true,kind!=='text');
+    },kind+'.'+property+' commits after reentrant conversion and preserves effects on failure');
+  }
+  test(t=>{
+    const f=fixture(t),n=document.createTextNode('');f.source.appendChild(n);checkEmpty(f,true,true);
+    n[property]=' ';checkEmpty(f,false,true);
+    n[property]='another nonempty value';checkEmpty(f,false,true);
+    n[property]='';checkEmpty(f,true,true);
+    f.destination.appendChild(n);n[property]='restored';checkEmpty(f,true,false);
+  },property+' updates empty and relational subjects across content transitions and reparenting');
+  test(t=>{
+    const f=fixture(t),style=document.createElement('style'),n=document.createTextNode('.data-box {height:17px}');
+    style.appendChild(n);f.stage.appendChild(style);
+    assert_equals(getComputedStyle(f.source).height,'17px');
+    n[property]='.data-box {height:47px}';assert_equals(getComputedStyle(f.source).height,'47px');
+    n[property]='.data-box {height:47px}';assert_equals(getComputedStyle(f.source).height,'47px');
+    n[property]='.data-box {height:23px}';assert_equals(getComputedStyle(f.source).height,'23px');
+  },property+' nonempty stylesheet text changes still refresh computed style');
+  test(t=>{
+    const f=fixture(t),textarea=document.createElement('textarea'),n=document.createTextNode('one');
+    textarea.appendChild(n);f.stage.appendChild(textarea);
+    n[property]='two';assert_equals(textarea.value,'two');assert_equals(textarea.defaultValue,'two');
+    textarea.value='user';n[property]='three';
+    assert_equals(textarea.value,'user');assert_equals(textarea.defaultValue,'three');
+  },property+' preserves textarea default and dirty value checkpoints');
+}
+test(t=>{
+  const f=fixture(t),child=document.createElement('b');child.textContent='retained';f.source.appendChild(child);
+  let converted=false;f.source.nodeValue={toString(){converted=true;return 'ignored';}};
+  assert_true(converted);assert_equals(f.source.nodeValue,null);assert_equals(f.source.firstChild,child);
+  assert_equals(f.source.textContent,'retained');checkEmpty(f,false,true);
+},'Element nodeValue converts its argument but does not replace children');
+test(t=>{
+  const f=fixture(t),child=document.createElement('b');f.source.appendChild(child);const sentinel={failure:true};let caught;
+  try{f.source.textContent={toString(){throw sentinel;}};}catch(e){caught=e;}
+  assert_equals(caught,sentinel);assert_equals(f.source.firstChild,child);checkEmpty(f,false,true);
+},'Element textContent conversion failure preserves the structural tree');
+</script>

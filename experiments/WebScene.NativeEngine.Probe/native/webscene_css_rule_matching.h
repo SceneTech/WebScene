@@ -8,8 +8,9 @@ struct rule_matches {
     std::vector<const css_rule*> ordinary;
     std::vector<std::pair<int,const css_rule*>> pseudo;
 };
-// Candidates are valid indices in ascending precedence order. Results borrow the
-// rule vector and must be consumed before its owner mutates/replaces that storage.
+// Candidates are unique valid indices in any order. Only successful matches
+// need cascade precedence sorting. Results borrow the rule vector and must be
+// consumed before its owner mutates/replaces that storage.
 template<typename MatchSelector,typename MatchRule>
 rule_matches match_candidates(native_document& document,const dom_node& node,
     std::span<const css_rule> rules,std::span<const size_t> candidates,
@@ -22,8 +23,7 @@ rule_matches match_candidates(native_document& document,const dom_node& node,
             auto* scope_root = document.find_by_native_id(rule.shadow_scope_root_id);
             if (scope_root == nullptr) return false;
             const auto* scope = document.shadow_dom(*scope_root);
-            const auto host_selector = trim_css_view(rule.selector()) == ":host";
-            if (host_selector) return scope != nullptr && scope->host == &node;
+            if (rule.payload->host_selector) return scope != nullptr && scope->host == &node;
             if (scope != nullptr && scope->host == &node) return false;
             return node_shadow_root == scope_root;
         };
@@ -38,18 +38,31 @@ rule_matches match_candidates(native_document& document,const dom_node& node,
                             || container_query_matches(document, node, query);
                     })) continue;
             if (!rule_is_in_scope(rule)) continue;
-            std::string pseudo_origin;
-            const auto pseudo_kind = split_pseudo_element_selector(rule.selector(), pseudo_origin);
+            const auto pseudo_kind = rule.payload->pseudo_kind;
             if (pseudo_kind != 0) {
-                if (!pseudo_origin.empty() && match_selector(node,rule,pseudo_origin)) {
+                const auto& origin = rule.payload->compiled_pseudo_origin;
+                if (!origin.compounds.empty() && match_selector(node,rule,origin)) {
                     result.pseudo.emplace_back(pseudo_kind, &rule);
                 }
                 continue;
             }
-            if (trim_css_view(rule.selector()) != ":host"
+            if (!rule.payload->host_selector
                 && !match_rule(node,rule)) continue;
             result.ordinary.push_back(&rule);
         }
+        const auto precedes = [](const css_rule* left, const css_rule* right) {
+            const auto a = left->specificity(), b = right->specificity();
+            // Both pointers belong to the same contiguous rule span: address
+            // order is original stylesheet/source order, not discovery order.
+            return a != b ? a < b : left < right;
+        };
+        if (result.ordinary.size() > 1U)
+            std::sort(result.ordinary.begin(), result.ordinary.end(), precedes);
+        if (result.pseudo.size() > 1U)
+            std::sort(result.pseudo.begin(), result.pseudo.end(),
+                [&](const auto& left, const auto& right) {
+                    return precedes(left.second, right.second);
+                });
     return result;
 }
 } // namespace webscene_native::css

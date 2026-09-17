@@ -17,7 +17,7 @@ def read_samples(directory: pathlib.Path, minimum: int) -> list[dict[str, Any]]:
         raise RuntimeError(
             f"{directory}: expected at least {minimum} JSON samples, found {len(paths)}")
     samples = [json.loads(path.read_text()) for path in paths]
-    if any(sample.get("schema") != "webscene-native-resize-cadence-v2" for sample in samples):
+    if any(sample.get("schema") != "webscene-native-resize-cadence-v3" for sample in samples):
         raise RuntimeError(f"{directory}: contains a non-resize-cadence sample")
     return samples
 
@@ -63,11 +63,15 @@ def main() -> int:
     if len(control) != len(candidate):
         raise RuntimeError("control and candidate sample counts differ")
     option_fields = (
-        "sourceKind", "composition", "certificationTelemetryEnabled",
+        "sourceKind", "sourceIdentity", "waveform", "baseWidth", "baseHeight",
+        "widthSpan", "heightSpan", "resizeBoundsSpace", "measurementScope",
+        "composition", "certificationTelemetryEnabled",
         "requestedHz", "warmupSeconds",
         "requestedSeconds", "submitted")
     for baseline, changed in zip(control, candidate, strict=True):
-        if any(baseline.get(field) != changed.get(field) for field in option_fields):
+        if any(field not in baseline or field not in changed
+               or baseline[field] is None or changed[field] is None
+               or baseline[field] != changed[field] for field in option_fields):
             raise RuntimeError("paired control and candidate options differ")
 
     lower_is_better = (

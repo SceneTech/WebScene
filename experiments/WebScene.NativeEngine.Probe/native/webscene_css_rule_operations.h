@@ -3,6 +3,13 @@
 #include <span>
 
 namespace webscene_native::css {
+// Candidate identity is enough to deduplicate index buckets. Do not chase rule
+// payloads for precedence until selector/media/scope checks have rejected misses.
+inline void deduplicate_candidates(std::vector<size_t>& candidates) {
+    std::sort(candidates.begin(), candidates.end());
+    candidates.erase(std::unique(candidates.begin(), candidates.end()), candidates.end());
+}
+
 inline void sort_candidates(std::span<const css_rule> rules,std::vector<size_t>& candidates)
     {
         // Declarations are applied in ascending precedence; later declarations

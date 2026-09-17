@@ -251,41 +251,169 @@
         info.GetReturnValue().Set(js_dom_string(info.GetIsolate(), value));
     }
 
-    static void set_text_content(
-        v8::Local<v8::Name>,
+    static bool is_character_data_node(const dom_node& node)
+    {
+        return node.kind == dom_node_kind::text || node.kind == dom_node_kind::comment
+            || node.kind == dom_node_kind::processing_instruction;
+    }
+
+    void commit_character_data(dom_node& node, std::string text)
+    {
+        const bool empty_state_changed = node.text_content.empty() != text.empty();
+        node.text_content = std::move(text);
+        if (node.parent != nullptr) synchronize_textarea_value_from_children(*node.parent);
+        // Stable nonempty text cannot change structural selector subjects, but
+        // style element text must still refresh its stylesheet on every edit.
+        if (node.kind == dom_node_kind::text) {
+            activate_connected_stylesheet(node);
+            if (empty_state_changed && node.parent != nullptr)
+                recascade_changed_child_list(*node.parent);
+        }
+        document.mark_dirty();
+    }
+
+    static void get_character_data_length(v8::Local<v8::Name>,
+        const v8::PropertyCallbackInfo<v8::Value>& info)
+    {
+        const auto* node = unwrap_node(info.Holder());
+        if (node != nullptr && is_character_data_node(*node))
+            info.GetReturnValue().Set(static_cast<uint32_t>(
+                decode_wtf8_to_utf16(node->text_content).size()));
+    }
+
+    enum class character_data_operation { substring, append, insert, erase, replace };
+
+    static void edit_character_data(const v8::FunctionCallbackInfo<v8::Value>& info,
+        character_data_operation operation)
+    {
+        auto* isolate = info.GetIsolate();
+        auto* node = unwrap_node(info.This());
+        const int arity = operation == character_data_operation::append ? 1
+            : operation == character_data_operation::replace ? 3 : 2;
+        if (node == nullptr || !is_character_data_node(*node) || info.Length() < arity) {
+            isolate->ThrowException(v8::Exception::TypeError(
+                js_string(isolate, "CharacterData method requires a CharacterData receiver and its arguments")));
+            return;
+        }
+        const auto context = isolate->GetCurrentContext();
+        uint32_t offset = 0, count = 0;
+        // Convert left-to-right before reading the current data or parent:
+        // valueOf/toString can change either, or throw after a side effect.
+        if (operation != character_data_operation::append
+            && !info[0]->Uint32Value(context).To(&offset)) return;
+        if ((operation == character_data_operation::substring
+                || operation == character_data_operation::erase
+                || operation == character_data_operation::replace)
+            && !info[1]->Uint32Value(context).To(&count)) return;
+        std::vector<uint16_t> replacement;
+        if (operation == character_data_operation::append
+            || operation == character_data_operation::insert
+            || operation == character_data_operation::replace) {
+            const int argument = operation == character_data_operation::append ? 0
+                : operation == character_data_operation::insert ? 1 : 2;
+            v8::Local<v8::String> converted;
+            if (!info[argument]->ToString(context).ToLocal(&converted)) return;
+            replacement.resize(converted->Length());
+            if (!replacement.empty())
+                converted->Write(isolate, 0, converted->Length(), replacement.data());
+        }
+        auto units = decode_wtf8_to_utf16(node->text_content);
+        if (operation == character_data_operation::append) offset = static_cast<uint32_t>(units.size());
+        if (offset > units.size()) {
+            throw_dom_exception(info, "Offset exceeds CharacterData length", "IndexSizeError");
+            return;
+        }
+        const auto removed = std::min<size_t>(count, units.size() - offset);
+        if (operation == character_data_operation::substring) {
+            // Avoid arithmetic on a possibly null empty-vector data pointer.
+            const uint16_t empty = 0;
+            info.GetReturnValue().Set(v8::String::NewFromTwoByte(isolate,
+                removed == 0 ? &empty : units.data() + offset,
+                v8::NewStringType::kNormal, static_cast<int>(removed)).ToLocalChecked());
+            return;
+        }
+        units.erase(units.begin() + offset, units.begin() + offset + removed);
+        units.insert(units.begin() + offset, replacement.begin(), replacement.end());
+        const auto result = v8::String::NewFromTwoByte(isolate, units.data(),
+            v8::NewStringType::kNormal, static_cast<int>(units.size())).ToLocalChecked();
+        current(isolate)->commit_character_data(*node, to_wtf8(isolate, result));
+    }
+
+    static void substring_character_data(const v8::FunctionCallbackInfo<v8::Value>& info)
+    { edit_character_data(info, character_data_operation::substring); }
+    static void append_character_data(const v8::FunctionCallbackInfo<v8::Value>& info)
+    { edit_character_data(info, character_data_operation::append); }
+    static void insert_character_data(const v8::FunctionCallbackInfo<v8::Value>& info)
+    { edit_character_data(info, character_data_operation::insert); }
+    static void delete_character_data(const v8::FunctionCallbackInfo<v8::Value>& info)
+    { edit_character_data(info, character_data_operation::erase); }
+    static void replace_character_data(const v8::FunctionCallbackInfo<v8::Value>& info)
+    { edit_character_data(info, character_data_operation::replace); }
+
+    static void set_node_text_value(
         v8::Local<v8::Value> raw_value,
-        const v8::PropertyCallbackInfo<void>& info)
+        const v8::PropertyCallbackInfo<void>& info,
+        bool nullish_to_empty, bool character_data_only = false)
     {
         auto* self = current(info.GetIsolate());
+        custom_element_reaction_scope reactions(*self);
         auto* node = unwrap_node(info.Holder());
         if (node == nullptr) return;
-        const auto is_character_data = node->kind == dom_node_kind::text
-            || node->kind == dom_node_kind::comment
-            || node->kind == dom_node_kind::processing_instruction;
-        if (!is_character_data) {
-            if (!self->blur_active_descendant_before_replacing_children(*node)) return;
-            self->detach_all_children(*node);
+        const auto is_character_data = is_character_data_node(*node);
+        // Author conversion can mutate the DOM; finish it before detaching.
+        std::string text;
+        if (!raw_value->IsNull() && !(nullish_to_empty && raw_value->IsUndefined())) {
+            v8::Local<v8::String> converted;
+            if (!raw_value->ToString(info.GetIsolate()->GetCurrentContext()).ToLocal(&converted)) return;
+            text = to_wtf8(info.GetIsolate(), converted);
         }
-        const auto text = raw_value->IsNullOrUndefined()
-            ? std::string{}
-            : to_wtf8(info.GetIsolate(), raw_value);
+        // nodeValue is nullable CharacterData (or Attr), not an Element
+        // textContent alias. WebIDL conversion still precedes its no-op case.
+        if (character_data_only && !is_character_data) return;
         if (is_character_data) {
-            node->text_content = text;
-            if (node->parent != nullptr) {
-                synchronize_textarea_value_from_children(*node->parent);
-            }
-        } else {
-            node->text_content.clear();
-            if (!text.empty()) {
-                auto& text_node = self->document.create_node(
-                    dom_node_kind::text, "#text");
-                text_node.text_content = text;
-                self->document.append_child(*node, text_node);
-            }
-            if (node->tag == "textarea") synchronize_textarea_value_from_children(*node);
+            self->commit_character_data(*node, std::move(text));
+            return;
         }
+        if (!self->blur_active_descendant_before_replacing_children(*node)) return;
+        self->detach_all_children(*node);
+        node->text_content.clear();
+        if (!text.empty()) {
+            auto& text_node = self->document.create_node(dom_node_kind::text, "#text");
+            text_node.text_content = text;
+            self->document.append_child(*node, text_node);
+        }
+        if (node->tag == "textarea") synchronize_textarea_value_from_children(*node);
         self->activate_connected_stylesheet(*node);
+        self->recascade_changed_child_list(*node);
         self->document.mark_dirty();
+    }
+
+    static void set_text_content(v8::Local<v8::Name>, v8::Local<v8::Value> value,
+        const v8::PropertyCallbackInfo<void>& info)
+    {
+        set_node_text_value(value, info, true);
+    }
+
+    static void set_character_data(v8::Local<v8::Name>, v8::Local<v8::Value> value,
+        const v8::PropertyCallbackInfo<void>& info)
+    {
+        set_node_text_value(value, info, false, true);
+    }
+
+    static void get_node_value(v8::Local<v8::Name> name,
+        const v8::PropertyCallbackInfo<v8::Value>& info)
+    {
+        auto* node = unwrap_node(info.Holder());
+        if (node != nullptr && (node->kind == dom_node_kind::text
+            || node->kind == dom_node_kind::comment || node->kind == dom_node_kind::processing_instruction))
+            get_text_content(name, info);
+        else info.GetReturnValue().Set(v8::Null(info.GetIsolate()));
+    }
+
+    static void set_node_value(v8::Local<v8::Name>, v8::Local<v8::Value> value,
+        const v8::PropertyCallbackInfo<void>& info)
+    {
+        set_node_text_value(value, info, true, true);
     }
 
     static void get_script_text(
@@ -2667,6 +2795,14 @@
         info.GetReturnValue().Set(v8::Integer::NewFromUnsigned(
             info.GetIsolate(),
             static_cast<uint32_t>(form_or_select_items(*node).size())));
+    }
+
+    static void get_legacy_node_length(v8::Local<v8::Name> name,
+        const v8::PropertyCallbackInfo<v8::Value>& info)
+    {
+        const auto* node = unwrap_node(info.Holder());
+        if (node != nullptr && is_character_data_node(*node)) get_character_data_length(name, info);
+        else get_form_or_select_length(name, info);
     }
 
     static v8::Intercepted form_or_select_indexed_getter(

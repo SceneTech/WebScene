@@ -455,8 +455,11 @@
             auto& rules = feature_index[std::string(feature)];
             if (rules.empty() || rules.back() != index) rules.push_back(index);
         };
+        css::index_child_list_rule(index,
+            rule.payload->compiled_pseudo_origin.compounds.empty()
+                ? rule.compiled_selector() : rule.payload->compiled_pseudo_origin,
+            rule.payload->invalidation, css_child_list_index);
         for (const auto& component : rule.payload->invalidation) {
-            css_child_list_sensitive = css_child_list_sensitive || component.child_list_sensitive;
             for (const auto& [name, scope] : component.attributes) {
                 static_cast<void>(scope);
                 css_attribute_dependencies.emplace(name);
@@ -467,7 +470,10 @@
                 index_invalidation_rule(css_invalidation_rules_by_class, name);
             }
         }
-        css::index_selector(index, selector, css_rules_by_id, css_rules_by_class,
+        css::index_selector(index, selector,
+            rule.payload->compiled_pseudo_origin.compounds.empty()
+                ? rule.compiled_selector() : rule.payload->compiled_pseudo_origin,
+            css_rules_by_id, css_rules_by_class,
             css_rules_by_tag, css_rules_by_attribute, css_focus_rules,
             unindexed_css_rules, css_descendant_attribute_dependencies);
     }
@@ -1437,12 +1443,27 @@
                 return hash;
     }
     bool css_compound_selector_matches(const dom_node& node,const compiled_css_compound& selector,
-        const dom_node* scope_root = nullptr) const
+        const dom_node* scope_root = nullptr, bool stable_features_only = false) const
     {
 #if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
         ++css_compound_match_checks;
 #endif
-        return css::compound_matches(*this,node,selector,scope_root);
+        return css::compound_matches(*this,node,selector,scope_root,stable_features_only);
+    }
+
+    void record_css_positional_sibling_visit() const
+    {
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+        ++css_positional_sibling_visits;
+#endif
+    }
+
+    std::optional<css::positional_sibling_summary> css_positional_summary(
+        const dom_node& node, bool of_type) const
+    {
+        if (active_selector_match_context == nullptr) return std::nullopt;
+        return active_selector_match_context->position(node, of_type,
+            [this] { record_css_positional_sibling_visit(); });
     }
 
     bool css_compound_selector_matches(

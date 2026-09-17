@@ -265,15 +265,14 @@
                     class_name);
 #endif
             });
-        sort_css_candidates(candidates);
-        candidates.erase(std::unique(candidates.begin(), candidates.end()), candidates.end());
+        css::deduplicate_candidates(candidates);
 #if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
         css_cascade_candidate_checks += candidates.size();
         if (trace_css) css_profile_candidate_checks += candidates.size();
 #endif
         auto matching=css::match_candidates(document,node,css_rules,candidates,
-            [this](const dom_node& subject,const css_rule&,const std::string& selector) {
-                return css_selector_matches(subject,selector);
+            [this](const dom_node& subject,const css_rule&,const compiled_css_selector& selector) {
+                return compiled_css_selector_matches(subject,selector,selector.compounds.size()-1U);
             },[this](const dom_node& subject,const css_rule& rule) {
                 return css_rule_matches(subject,rule);
             });
@@ -969,6 +968,12 @@
         webscene_frame_trace::scope invalidation_trace(
             frame_trace, "media-invalidation-start", "media-invalidation-end", 0);
         if (changed_rules.empty()) return;
+        // Media truth changes, but this synchronous matching/cascade pass does
+        // not mutate the DOM or dispatch authored callbacks. Reuse sibling
+        // positions and selector prefixes across its subjects, then discard
+        // them before matchMedia listeners can mutate selector state.
+        selector_match_batch_scope matching_scope(*this);
+        const css::rule_subject_index changed_index(css_rules,changed_rules);
         std::vector<dom_node*> roots;
         const auto has_selected_ancestor = [&](const dom_node& node) {
             for (auto* ancestor = node.parent; ancestor != nullptr;
@@ -981,14 +986,15 @@
         };
         const auto visit = [&](const auto& self, dom_node& node) -> void {
             if (node.kind == dom_node_kind::element) {
+                const auto candidates=changed_index.candidates(node,&node==active_element);
                 const auto matching = css::match_candidates(
                     document,
                     node,
                     css_rules,
-                    changed_rules,
+                    candidates,
                     [this](const dom_node& subject, const css_rule&,
-                           const std::string& selector) {
-                        return css_selector_matches(subject, selector);
+                           const compiled_css_selector& selector) {
+                        return compiled_css_selector_matches(subject, selector, selector.compounds.size()-1U);
                     },
                     [this](const dom_node& subject, const css_rule& rule) {
                         return css_rule_matches(subject, rule);
@@ -1070,6 +1076,76 @@
         });
     }
 
+    std::vector<dom_node*> css_invalidation_route_targets(dom_node& subject,
+        const dom_node* context_root, const css::css_invalidation_route& route)
+    {
+        using step = css::css_invalidation_step;
+        std::vector<dom_node*> frontier{&subject};
+        for (const auto direction : route) {
+            std::vector<dom_node*> next;
+            std::unordered_set<dom_node*> seen;
+            const auto append = [&](dom_node* candidate) {
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+                ++selector_invalidation_candidate_visits;
+#endif
+                if (candidate != nullptr && candidate->kind == dom_node_kind::element
+                    && (candidate == context_root || !inactive_css_cascades.contains(candidate))
+                    && seen.insert(candidate).second) next.push_back(candidate);
+            };
+            std::unordered_set<dom_node*> walked;
+            const auto descendants = [&](const auto& self, dom_node& root) -> void {
+                for (auto* child : root.children) {
+                    if (child == nullptr || inactive_css_cascades.contains(child)
+                        || !walked.insert(child).second) continue;
+                    append(child);
+                    self(self, *child);
+                }
+            };
+            for (auto* origin : frontier) {
+                if (direction == step::children) {
+                    for (auto* child : origin->children) append(child);
+                } else if (direction == step::descendants
+                    || direction == step::inclusive_descendants) {
+                    if (direction == step::inclusive_descendants) append(origin);
+                    descendants(descendants, *origin);
+                } else if (direction == step::parent || direction == step::ancestors) {
+                    if (origin == context_root) continue;
+                    for (auto* parent = origin->parent; parent != nullptr; parent = parent->parent) {
+                        if (seen.contains(parent)) break;
+                        append(parent);
+                        if (direction == step::parent || parent == context_root) break;
+                    }
+                } else {
+                    if (origin == context_root || origin->parent == nullptr) continue;
+                    const auto& siblings = origin->parent->children;
+                    const auto found = std::find(siblings.begin(), siblings.end(), origin);
+                    if (found == siblings.end()) continue;
+                    const bool backwards = direction == step::previous_sibling
+                        || direction == step::preceding_siblings;
+                    const bool adjacent = direction == step::previous_sibling
+                        || direction == step::next_sibling;
+                    if (backwards) {
+                        for (auto it = found; it != siblings.begin();) {
+                            auto* candidate = *--it;
+                            if (candidate == nullptr || candidate->kind != dom_node_kind::element) continue;
+                            append(candidate);
+                            if (adjacent) break;
+                        }
+                    } else {
+                        for (auto it = std::next(found); it != siblings.end(); ++it) {
+                            auto* candidate = *it;
+                            if (candidate == nullptr || candidate->kind != dom_node_kind::element) continue;
+                            append(candidate);
+                            if (adjacent) break;
+                        }
+                    }
+                }
+            }
+            frontier = std::move(next);
+            if (frontier.empty()) break;
+        }
+        return frontier;
+    }
     template<typename DependencyScope, typename UsePreviousState,
         typename RestoreCurrentState>
     void recascade_selector_transition(
@@ -1077,7 +1153,8 @@
         std::span<const size_t> changed_rules,
         DependencyScope&& dependency_scope,
         UsePreviousState&& use_previous_state,
-        RestoreCurrentState&& restore_current_state)
+        RestoreCurrentState&& restore_current_state,
+        bool structural_change = false)
     {
         selector_match_batch_scope matching_scope(*this);
         const auto trace_transition =
@@ -1221,7 +1298,7 @@
                     if (candidate == nullptr
                         || candidate->kind != dom_node_kind::element
                         || !css_compound_selector_matches(
-                            *candidate, compiled_affected)) return;
+                            *candidate, compiled_affected, nullptr, structural_change)) return;
                     if (std::find(next.begin(), next.end(), candidate) == next.end()) {
                         next.push_back(candidate);
                     }
@@ -1274,72 +1351,7 @@
             }
         };
         const auto route_targets = [&](const css::css_invalidation_route& route) {
-            using step = css::css_invalidation_step;
-            std::vector<dom_node*> frontier{&subject};
-            for (const auto direction : route) {
-                std::vector<dom_node*> next;
-                std::unordered_set<dom_node*> seen;
-                const auto append = [&](dom_node* candidate) {
-#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
-                    ++selector_invalidation_candidate_visits;
-#endif
-                    if (candidate != nullptr && candidate->kind == dom_node_kind::element
-                        && (candidate == context_root || !inactive_css_cascades.contains(candidate))
-                        && seen.insert(candidate).second) next.push_back(candidate);
-                };
-                std::unordered_set<dom_node*> walked;
-                const auto descendants = [&](const auto& self, dom_node& root) -> void {
-                    for (auto* child : root.children) {
-                        if (child == nullptr || inactive_css_cascades.contains(child)
-                            || !walked.insert(child).second) continue;
-                        append(child);
-                        self(self, *child);
-                    }
-                };
-                for (auto* origin : frontier) {
-                    if (direction == step::children) {
-                        for (auto* child : origin->children) append(child);
-                    } else if (direction == step::descendants
-                        || direction == step::inclusive_descendants) {
-                        if (direction == step::inclusive_descendants) append(origin);
-                        descendants(descendants, *origin);
-                    } else if (direction == step::parent || direction == step::ancestors) {
-                        if (origin == context_root) continue;
-                        for (auto* parent = origin->parent; parent != nullptr; parent = parent->parent) {
-                            if (seen.contains(parent)) break;
-                            append(parent);
-                            if (direction == step::parent || parent == context_root) break;
-                        }
-                    } else {
-                        if (origin == context_root || origin->parent == nullptr) continue;
-                        const auto& siblings = origin->parent->children;
-                        const auto found = std::find(siblings.begin(), siblings.end(), origin);
-                        if (found == siblings.end()) continue;
-                        const bool backwards = direction == step::previous_sibling
-                            || direction == step::preceding_siblings;
-                        const bool adjacent = direction == step::previous_sibling
-                            || direction == step::next_sibling;
-                        if (backwards) {
-                            for (auto it = found; it != siblings.begin();) {
-                                auto* candidate = *--it;
-                                if (candidate == nullptr || candidate->kind != dom_node_kind::element) continue;
-                                append(candidate);
-                                if (adjacent) break;
-                            }
-                        } else {
-                            for (auto it = std::next(found); it != siblings.end(); ++it) {
-                                auto* candidate = *it;
-                                if (candidate == nullptr || candidate->kind != dom_node_kind::element) continue;
-                                append(candidate);
-                                if (adjacent) break;
-                            }
-                        }
-                    }
-                }
-                frontier = std::move(next);
-                if (frontier.empty()) break;
-            }
-            return frontier;
+            return css_invalidation_route_targets(subject, context_root, route);
         };
         struct trigger_transition final {
             uint8_t scope{0};
@@ -1379,12 +1391,13 @@
                 for (const auto* route : targets.routes)
                     for (auto* anchor : route_targets(*route)) append(anchor);
                 for (auto* anchor : transition.anchors)
-                    transition.current.push_back(css_compound_selector_matches(*anchor, *selector));
+                    transition.current.push_back(css_compound_selector_matches(
+                        *anchor, *selector, nullptr, structural_change));
                 transition.previous.resize(transition.anchors.size());
                 transitions.emplace(selector, std::move(transition));
             }
         }
-        if (!transitions.empty()) {
+        if (!transitions.empty() && !structural_change) {
             use_previous_state();
             matching_scope.reset();
             for (auto& [selector, transition] : transitions) {
@@ -1442,8 +1455,8 @@
                         css_rules,
                         fallback_rules,
                         [this](const dom_node& candidate, const css_rule&,
-                               const std::string& selector) {
-                            return css_selector_matches(candidate, selector);
+                               const compiled_css_selector& selector) {
+                            return compiled_css_selector_matches(candidate, selector, selector.compounds.size()-1U);
                         },
                         [this](const dom_node& candidate, const css_rule& rule) {
                             return css_rule_matches(candidate, rule);
@@ -1697,6 +1710,15 @@
         std::string_view reason = {})
     {
         selector_match_batch_scope matching_scope(*this);
+        recascade_connected_subtree_with_matching_context(node, reason);
+    }
+
+    // Caller owns a matching scope over one immutable DOM/selector state.
+    // Keeping sibling subtrees in that scope avoids rebuilding prefix and
+    // positional indexes for every child of a completed insertion.
+    void recascade_connected_subtree_with_matching_context(
+        dom_node& node, std::string_view reason)
+    {
         webscene_frame_trace::scope cascade_trace(frame_trace, "recascade-start", "recascade-end", 0);
         const auto trace_recascade_root =
             std::getenv("WEBSCENE_TRACE_RECASCADE_ROOTS") != nullptr;
@@ -1989,22 +2011,97 @@
         recascade_connected_node_now(node);
     }
 
+    std::vector<size_t> child_list_rule_candidates(dom_node& parent, const dom_node* context_root)
+    {
+        std::unordered_set<size_t> selected;
+        const auto append = [&](const std::vector<size_t>& rules) {
+            for (const auto rule : rules) {
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+                ++selector_invalidation_candidate_visits;
+#endif
+                selected.insert(rule);
+            }
+        };
+        const auto lookup = [&](const auto& index, const auto& key) {
+            if (index.empty()) return;
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+            ++selector_invalidation_plan_lookups;
+#endif
+            const auto found = index.find(key);
+            if (found != index.end()) append(found->second);
+        };
+        // This phase neither exchanges cascades nor invokes author code. Do not
+        // copy the entire index: only the selected rule IDs cross that boundary.
+        for (const auto& bucket : css_child_list_index) {
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+            ++selector_invalidation_plan_lookups;
+#endif
+            for (const auto* node : css_invalidation_route_targets(parent, context_root, bucket.route)) {
+                if (node == nullptr || node->kind != dom_node_kind::element) continue;
+                append(bucket.universal);
+                lookup(bucket.by_id, node->id_attribute);
+                // Fold keys conservatively for HTML; the full matcher retains
+                // XML case sensitivity and verifies all remaining constraints.
+                if (!bucket.by_tag.empty()) lookup(bucket.by_tag, css::ascii_lower(node->tag));
+                if (node->tag == "body" && (node->parent == nullptr || node->parent->tag == "iframe")
+                    && std::none_of(node->children.begin(), node->children.end(),
+                        [](const auto* child) { return child != nullptr && child->tag == "html"; }))
+                    lookup(bucket.by_tag, std::string{"html"});
+                if (!bucket.by_attribute.empty()) {
+                    for (const auto& [name, value] : node->attributes) {
+                        static_cast<void>(value);
+                        lookup(bucket.by_attribute, css::ascii_lower(name));
+                    }
+                }
+                if (!bucket.by_class.empty())
+                    for (const auto& token : class_tokens(*node)) lookup(bucket.by_class, token);
+            }
+        }
+        std::vector<size_t> result(selected.begin(), selected.end());
+        std::sort(result.begin(), result.end());
+        return result;
+    }
+
     void recascade_changed_child_list(dom_node& parent, dom_node* inserted = nullptr)
     {
         if (!is_connected(parent)) return;
         auto* previous_root = const_cast<dom_node*>(active_css_cascade_root);
         auto* root = css_cascade_root_for_node(parent);
         if (root != nullptr) activate_css_cascade(root);
-        const bool sensitive = css_child_list_sensitive;
-        if (previous_root != nullptr && previous_root != root) activate_css_cascade(previous_root);
-        if (sensitive) {
-            // Conservative parent-local fallback for structural selectors.
-            // Further narrowing belongs to the structural-invalidation stage.
-            recascade_connected_subtree(parent, "child-list-change");
-        } else {
-            if (inserted != nullptr) recascade_connected_subtree(*inserted, "inserted-child");
-            recascade_connected_node(parent);
+        const auto rules = child_list_rule_candidates(parent, root);
+        if (!rules.empty()) {
+            recascade_selector_transition(parent, rules,
+                [](const css::css_compound_dependencies& component) {
+                    css::css_invalidation_targets targets;
+                    targets.include(component.child_list);
+                    return targets;
+                }, [] {}, [] {}, true);
         }
+        if (previous_root != nullptr && previous_root != root) activate_css_cascade(previous_root);
+        if (inserted != nullptr) recascade_connected_subtree(*inserted, "inserted-child");
+        // The transition collector already includes its subject.
+        if (rules.empty()) recascade_connected_node(parent);
+    }
+
+    void recascade_completed_child_list(dom_node& parent,
+        const std::vector<dom_node*>& inserted,
+        const std::vector<dom_node*>& previous_parents = {})
+    {
+        std::unordered_set<dom_node*> seen{&parent};
+        for (auto* previous : previous_parents)
+            if (previous != nullptr && seen.insert(previous).second)
+                recascade_changed_child_list(*previous);
+        recascade_changed_child_list(parent);
+        selector_match_batch_scope matching_scope(*this);
+        for (auto* child : inserted)
+            if (child != nullptr && child->parent == &parent) {
+                if (style_recascade_batch_depth != 0U)
+                    recascade_connected_subtree(*child, "inserted-child");
+                else {
+                    binding_callback_timer timer(nullptr, profile_named("style-recascade/subtree-immediate"));
+                    recascade_connected_subtree_with_matching_context(*child, "inserted-child");
+                }
+            }
     }
 
     void recascade_hover_transition(
@@ -2186,7 +2283,7 @@
         css_rules_by_variable_reference.clear();
         css_invalidation_rules_by_attribute.clear();
         css_invalidation_rules_by_class.clear();
-        css_child_list_sensitive = false;
+        css_child_list_index.clear();
         css_focus_rules.clear();
         unindexed_css_rules.clear();
         css_attribute_dependencies.clear();

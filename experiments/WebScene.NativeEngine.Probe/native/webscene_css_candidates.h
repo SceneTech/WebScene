@@ -2,8 +2,8 @@
 #include "webscene_css_state.h"
 
 namespace webscene_native::css {
-// Collect candidate indices, not matches. The caller sorts by cascade precedence
-// and removes duplicates before matching. AppendClass preserves host lookup policy.
+// Collect candidate indices, not matches. The caller removes duplicate indices;
+// cascade precedence is sorted only after matching. AppendClass preserves host lookup policy.
 template<class AppendClass>
 inline std::vector<size_t> collect_candidates(const dom_node& node, bool focused,
     const css_index_string_map<std::vector<size_t>>& css_rules_by_tag,

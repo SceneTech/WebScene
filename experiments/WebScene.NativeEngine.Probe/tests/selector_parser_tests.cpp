@@ -138,6 +138,45 @@ void test_compiled_css_invalidation_plans()
         "nested structural pseudo must record child-list sensitivity");
     require(!compile(".parent > .target")[0].child_list_sensitive,
         "ordinary child matching does not require restyling existing siblings");
+    require(compile(".target:not(:last-child)")[0].child_list.routes
+        == std::vector<css_invalidation_route>{{css_invalidation_step::children}},
+        "positional invalidation starts at the changed parent's children");
+    require(compile(".parent:empty + .target")[0].child_list.scope == invalidation_subject,
+        "empty invalidation starts at the changed parent");
+    require((compile(".outer:has(.marker)")[0].child_list.scope
+        & (invalidation_subject | invalidation_ancestors))
+        == (invalidation_subject | invalidation_ancestors),
+        "relational tree mutations must reach both parent and ancestor anchors");
+    require(compile(".left + .right > .target")[1].child_list.routes
+        == std::vector<css_invalidation_route>{{css_invalidation_step::children}},
+        "sibling mutations must start at the right-hand compound");
+
+    std::vector<css_child_list_bucket> buckets;
+    const auto index = [&](size_t id, std::string_view text) {
+        const auto selector = compile_selector(text);
+        index_child_list_rule(id, selector, compile_invalidation_plan(selector), buckets);
+    };
+    index(0, R"(#escaped\2d id:empty)");
+    index(1, R"(.escaped\:class:empty)");
+    index(2, "SECTION:empty");
+    index(3, R"([DATA\2d STATE]:empty)");
+    index(4, ":not(.missing):empty");
+    index(5, ":is(.a, .b):empty");
+    require(buckets.size() == 1 && buckets[0].route.empty(),
+        "structural rules must share one bucket for an identical route");
+    require(buckets[0].by_id.at("escaped-id") == std::vector<size_t>{0}
+        && buckets[0].by_class.at("escaped:class") == std::vector<size_t>{1}
+        && buckets[0].by_tag.at("section") == std::vector<size_t>{2}
+        && buckets[0].by_attribute.at("data-state") == std::vector<size_t>{3}
+        && buckets[0].universal == std::vector<size_t>({4, 5}),
+        "structural keys must be decoded mandatory outer features, never optional pseudo arms");
+    index(6, ".parent:has(.marker)");
+    index(6, ".parent:has(.marker)");
+    require(buckets.size() == 2
+        && buckets[0].by_class.at("parent") == std::vector<size_t>{6}
+        && buckets[1].route == css_invalidation_route{css_invalidation_step::ancestors}
+        && buckets[1].by_class.at("parent") == std::vector<size_t>{6},
+        "relational subjects must index both parent and ancestor routes without duplicates");
 }
 
 } // namespace

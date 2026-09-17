@@ -1130,8 +1130,18 @@ void test_custom_element_mutation_reactions_are_pay_for_use(webscene_engine* eng
           document.body.innerHTML = '';
           const originalSubtree = globalThis.__webSceneCustomElementsNotifySubtree;
           const originalAttribute = globalThis.__webSceneCustomElementsNotifyAttribute;
+          const originalBegin = globalThis.__webSceneCustomElementsBeginReactions;
+          const originalEnd = globalThis.__webSceneCustomElementsEndReactions;
           let subtreeCalls = 0;
           let attributeCalls = 0;
+          let beginCalls = 0;
+          let endCalls = 0;
+          Object.defineProperty(globalThis, '__webSceneCustomElementsBeginReactions', {
+            value: () => { ++beginCalls; originalBegin(); }, configurable: true
+          });
+          Object.defineProperty(globalThis, '__webSceneCustomElementsEndReactions', {
+            value: () => { ++endCalls; originalEnd(); }, configurable: true
+          });
           Object.defineProperty(globalThis, '__webSceneCustomElementsNotifySubtree', {
             value: () => { ++subtreeCalls; }, configurable: true
           });
@@ -1142,20 +1152,20 @@ void test_custom_element_mutation_reactions_are_pay_for_use(webscene_engine* eng
           const cold = document.createElement('div');
           cold.setAttribute('data-cold', 'yes');
           document.body.appendChild(cold);
-          const beforeDefinition = [subtreeCalls, attributeCalls];
+          const beforeDefinition = [subtreeCalls, attributeCalls, beginCalls, endCalls];
 
           try { customElements.define('invalid', class extends HTMLElement {}); }
           catch (_) {}
           cold.setAttribute('data-invalid', 'still-cold');
           document.body.appendChild(document.createElement('span'));
-          const afterInvalidDefinition = [subtreeCalls, attributeCalls];
+          const afterInvalidDefinition = [subtreeCalls, attributeCalls, beginCalls, endCalls];
 
           class PayForUseElement extends HTMLElement {}
           customElements.define('native-pay-for-use', PayForUseElement);
           const hot = document.createElement('div');
           hot.setAttribute('data-hot', 'yes');
           document.body.appendChild(hot);
-          const afterValidDefinition = [subtreeCalls, attributeCalls];
+          const afterValidDefinition = [subtreeCalls, attributeCalls, beginCalls, endCalls];
 
           Object.defineProperty(globalThis, '__webSceneCustomElementsNotifySubtree', {
             value: originalSubtree, configurable: true
@@ -1163,11 +1173,17 @@ void test_custom_element_mutation_reactions_are_pay_for_use(webscene_engine* eng
           Object.defineProperty(globalThis, '__webSceneCustomElementsNotifyAttribute', {
             value: originalAttribute, configurable: true
           });
+          Object.defineProperty(globalThis, '__webSceneCustomElementsBeginReactions', {
+            value: originalBegin, configurable: true
+          });
+          Object.defineProperty(globalThis, '__webSceneCustomElementsEndReactions', {
+            value: originalEnd, configurable: true
+          });
           return { beforeDefinition, afterInvalidDefinition, afterValidDefinition };
         })()
     )JS", "native-custom-elements-pay-for-use.js");
     require(
-        result == R"({"beforeDefinition":[0,0],"afterInvalidDefinition":[0,0],"afterValidDefinition":[1,1]})",
+        result == R"({"beforeDefinition":[0,0,0,0],"afterInvalidDefinition":[0,0,0,0],"afterValidDefinition":[1,1,1,1]})",
         "custom-element mutation reactions were not gated by the first valid definition: "
             + result);
 }

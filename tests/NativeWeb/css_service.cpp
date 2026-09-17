@@ -61,6 +61,215 @@ struct stylesheet_test_host {
     }
 
 };
+
+bool test_subject_candidate_index_scaling() {
+    bool bounded=true;
+    for(const auto targets:{8,128}) for(const auto unrelated:{32,1024}) {
+        webscene_native::native_document document;
+        webscene_native::css::stylesheet_owner sheets;
+        std::string source=".target {width:31px}";
+        for(int i=0;i<unrelated;++i)
+            source+=":not([data-disabled]).unused-"+std::to_string(i)+" {width:7px}";
+        auto sheet=webscene_native::css::prepare_stylesheet(source,"",[](const auto&) {return true;});
+        if(!sheet) return false;
+        sheets.replace(1,std::move(*sheet));
+        size_t candidates=0;
+        for(int i=0;i<targets;++i) {
+            auto& node=document.create_element("div");node.class_name="target";
+            document.append_child(document.body(),node);
+            candidates+=sheets.candidates(node).size();
+        }
+        std::cout<<"subject-index targets="<<targets<<" unrelated="<<unrelated
+            <<" candidates="<<candidates<<'\n';
+        bounded=bounded && candidates==static_cast<size_t>(targets);
+    }
+    return bounded;
+}
+
+bool test_absent_ancestor_matching_work() {
+    using namespace webscene_native;
+    for(const auto depth:{8,64}) {
+        native_document document;
+        auto* parent=&document.body();
+        for(int i=0;i<depth;++i) {
+            auto& ancestor=document.create_element("section");
+            ancestor.class_name="present";
+            document.append_child(*parent,ancestor);parent=&ancestor;
+        }
+        auto& subject=document.create_element("div");subject.class_name="target";
+        document.append_child(*parent,subject);
+        auto selector=css::compile_selector(".absent .target");
+        css::query_host query(document);
+        css::selector_match_context context;
+        css::selector_match_context prefix_only;
+        prefix_only.ancestor_filter.capacity=0;
+        size_t checks=0, baseline_checks=0, prefix_checks=0;
+        const auto run=[&](css::selector_match_context* cache,size_t& count) {
+            return css::selector_matches(document,subject,selector,
+                selector.compounds.size()-1,nullptr,
+                [&](const auto& node,const auto& compound,const auto* scope) {
+                    ++count;return css::compound_matches(query,node,compound,scope);
+                },cache);
+        };
+        bool matched=false;
+        for(int i=0;i<128;++i) {
+            matched=run(&context,checks) || matched;
+            matched=run(nullptr,baseline_checks) || matched;
+            matched=run(&prefix_only,prefix_checks) || matched;
+        }
+        std::cout<<"absent-ancestor depth="<<depth<<" compound-checks="<<checks<<'\n';
+        // Summary construction is real work: each ancestor is indexed once,
+        // not once per repeated match. Do not report zero total work.
+        std::cout<<" ancestor-summaries="<<context.ancestor_filter.inclusive_ancestors.size()
+            <<" uncached-compound-checks="<<baseline_checks
+            <<" prefix-cache-only-compound-checks="<<prefix_checks<<'\n';
+        if(matched || checks!=0 || baseline_checks!=128U*(depth+2U)
+            || prefix_checks!=128U+depth+1U
+            || context.ancestor_filter.inclusive_ancestors.size()!=depth+1U) return false;
+    }
+    return true;
+}
+
+bool test_ancestor_filter_parity() {
+    using namespace webscene_native;
+    native_document document;
+    auto& outer=document.create_element("section");outer.class_name="outer";
+    auto& sibling=document.create_element("aside");sibling.class_name="sibling";
+    auto& parent=document.create_element("article");
+    parent.class_name="parent\tTabbed\nline\fform\rcarriage escaped:name";
+    parent.id_attribute="Parent";parent.attributes["id"]="Parent";
+    auto& target=document.create_element("div");target.class_name="target";
+    document.append_child(document.body(),outer);
+    document.append_child(outer,sibling);document.append_child(outer,parent);
+    document.append_child(parent,target);
+    css::query_host query(document);
+    const std::vector<std::pair<std::string,bool>> cases{
+        {".outer .target",true},{".parent > .target",true},
+        {".absent .target",false},{"#Parent .target",true},{"#parent .target",false},
+        {"ARTICLE .target",true},{"html .target",true},{"body .target",true},
+        {".sibling + .parent .target",true},{".sibling ~ .parent > .target",true},
+        {".outer > .sibling + .parent .target",true},{".absent + .parent .target",false},
+        {".sibling .target",false},{".Tabbed .target",true},{".tabbed .target",false},
+        {".line .target",true},{".form .target",true},{".carriage .target",true},
+        {".escaped\\:name .target",true},{":is(.absent,.parent) .target",true},
+        {":where(.parent,.absent) .target",true},{":not(.absent) .target",true},
+        {".parent:has(> .target) .target",true},{":scope > .target",true},
+        {".parent:not(.parent) .target",false},{"[id=Parent] .target",true}
+    };
+    std::vector<css::compiled_css_selector> selectors;
+    for(const auto& [text,expected]:cases) selectors.push_back(css::compile_selector(text));
+    for(const auto capacity:{size_t{0},size_t{1},size_t{2},size_t{16384}}) {
+        css::selector_match_context context;context.ancestor_filter.capacity=capacity;
+        for(int repeat=0;repeat<3;++repeat) for(size_t i=0;i<selectors.size();++i) {
+            const auto& selector=selectors[i];
+            const auto actual=css::selector_matches(document,target,selector,
+                selector.compounds.size()-1,&parent,
+                [&](const auto& node,const auto& compound,const auto* scope) {
+                    return css::compound_matches(query,node,compound,scope);
+                },&context);
+            if(actual!=cases[i].second || actual!=query.matches_prepared(target,selector,&parent)) {
+                std::cerr<<"ancestor parity: "<<cases[i].first<<" capacity="<<capacity<<'\n';
+                return false;
+            }
+        }
+        if(context.ancestor_filter.inclusive_ancestors.size()>capacity
+            || context.ancestor_filter.requirement_entries>capacity) return false;
+    }
+    // Deliberate hash collision: the filter must defer to full matching.
+    css::selector_ancestor_filter::mask present;present.add('.',"parent");
+    std::string collision;
+    for(int i=0;i<10000 && collision.empty();++i) {
+        const auto name="collision-"+std::to_string(i);
+        css::selector_ancestor_filter::mask candidate;candidate.add('.',name);
+        if(candidate.words==present.words) collision=name;
+    }
+    if(collision.empty()) {std::cerr<<"no deliberate collision\n";return false;}
+    auto colliding=css::compile_selector("."+collision+" .target");
+    css::selector_match_context context;
+    if(!context.ancestor_filter.may_match(document,target,colliding,1)) {std::cerr<<"collision rejected\n";return false;}
+    const auto match=[&](const auto& selector) {
+        return css::selector_matches(document,target,selector,selector.compounds.size()-1,nullptr,
+            [&](const auto& node,const auto& compound,const auto* scope) {
+                return css::compound_matches(query,node,compound,scope);
+            },&context);
+    };
+    if(match(colliding)) {std::cerr<<"collision matched\n";return false;}
+    // An immutable pass ends before mutation. A fresh pass must see new ancestry,
+    // classes and IDs, including values that previously produced a rejection.
+    auto changed=css::compile_selector("#Changed.changed .target");
+    if(match(changed)) {std::cerr<<"premature mutation match\n";return false;}
+    parent.class_name="changed";parent.id_attribute="Changed";context={};
+    if(!match(changed)) {std::cerr<<"mutation not matched\n";return false;}
+    if(!document.parser_append_child(sibling,target)) return false;
+    context={};
+    if(match(changed)) {std::cerr<<"reparent still matched\n";return false;}
+    sibling.tag="Widget";sibling.xml_mode=true;
+    auto exact=css::compile_selector("Widget .target");
+    auto folded=css::compile_selector("widget .target");context={};
+    if(!match(exact) || match(folded)) {std::cerr<<"XML parity failed\n";return false;}
+    return true;
+}
+
+bool test_match_before_precedence_sorting() {
+    using namespace webscene_native;
+    for(const auto unrelated:{32,1024}) {
+        native_document document;
+        auto& node=document.create_element("div");
+        node.id_attribute="target";node.class_name="target target";
+        document.append_child(document.body(),node);
+        std::string source="#target {width:43px} .target {width:11px} .target {width:17px}"
+            "#target::before {content:'high'} .target::before {content:'low'}"
+            ".target::after {content:'after'} #target {width:999px}";
+        for(int i=0;i<unrelated;++i)
+            source+=".missing-"+std::to_string(i)+" * {width:999px}";
+        auto sheet=css::prepare_stylesheet(source,"",[](const auto&) {return true;});
+        if(!sheet || sheet->rules.size()!=static_cast<size_t>(unrelated+7)) return false;
+        std::vector<css::css_rule> rules;
+        for(const auto& payload:sheet->rules) rules.push_back({payload,0,0,true});
+        rules[6].media_matches=false;
+        std::vector<size_t> indices;
+        for(size_t i=rules.size();i>0;--i) indices.push_back(i-1);
+        css::query_host query(document);
+        const auto match=[&] {
+            return css::match_candidates(document,node,rules,indices,
+                [&](const auto& subject,const auto&,const auto& selector) {
+                    return query.matches_prepared(subject,selector);
+                },[&](const auto& subject,const auto& rule) {
+                    return query.matches_prepared(subject,rule.compiled_selector());
+                });
+        };
+        const auto reversed=match();
+        if(reversed.ordinary!=std::vector<const css::css_rule*>{&rules[1],&rules[2],&rules[0]}
+            || reversed.pseudo!=std::vector<std::pair<int,const css::css_rule*>>{
+                {1,&rules[4]},{2,&rules[5]},{1,&rules[3]}}) return false;
+        indices.push_back(0);indices.push_back(4);
+        css::deduplicate_candidates(indices);
+        const auto deduplicated=match();
+        if(indices.size()!=rules.size() || deduplicated.ordinary!=reversed.ordinary
+            || deduplicated.pseudo!=reversed.pseudo) return false;
+        std::cout<<"matched-order unrelated="<<unrelated<<" candidates="<<indices.size()
+            <<" precedence-entries="<<reversed.ordinary.size()+reversed.pseudo.size()<<'\n';
+        // Also check the dense case against the previous precedence oracle:
+        // filtering is not allowed to change ordering when every selector hits.
+        const auto dense=css::match_candidates(document,node,rules,indices,
+            [](const auto&,const auto&,const auto&) {return true;},
+            [](const auto&,const auto&) {return true;});
+        auto reference_indices=indices;
+        css::sort_candidates(rules,reference_indices);
+        std::vector<const css::css_rule*> reference_ordinary;
+        std::vector<std::pair<int,const css::css_rule*>> reference_pseudo;
+        for(const auto index:reference_indices) {
+            const auto& rule=rules[index];
+            if(!rule.media_matches) continue;
+            if(rule.payload->pseudo_kind)
+                reference_pseudo.emplace_back(rule.payload->pseudo_kind,&rule);
+            else reference_ordinary.push_back(&rule);
+        }
+        if(dense.ordinary!=reference_ordinary || dense.pseudo!=reference_pseudo) return false;
+    }
+    return true;
+}
+
 int main(int argc,char** argv) {
     if(argc==2) {
         std::ifstream input(argv[1]);
@@ -82,6 +291,10 @@ int main(int argc,char** argv) {
                 <<" ("<<diagnostic.detail<<")\n";
         return 0;
     }
+    if(!test_subject_candidate_index_scaling()) return 170;
+    if(!test_absent_ancestor_matching_work()) return 174;
+    if(!test_ancestor_filter_parity()) return 175;
+    if(!test_match_before_precedence_sorting()) return 173;
     using webscene_native::css::parse_declarations;
     const auto values=parse_declarations(R"CSS(
       COLOR: red !important; --Theme: blue; --theme: green;
@@ -426,6 +639,34 @@ int main(int argc,char** argv) {
     if(!released.expired()) return 72;
     red_payload=payload_for(".base","red");
     if(!red_payload || red_payload->declarations[0].value!="red") return 73;
+    // Classification belongs to the interned selector, not to each match.
+    const std::pair<const char*,uint8_t> classified_selectors[] = {
+        {".base",0},{".base::before",1},{".base:before",1},
+        {".base::after",2},{".base:after",2},
+        {".base::-webkit-scrollbar",3},{".base::-webkit-scrollbar-thumb",4},
+        {".base::-webkit-scrollbar-track",5},{".base::-webkit-scrollbar-corner",6},
+        {".base::backdrop",7},{".base[data-label='::before']",0}
+    };
+    for(const auto& [selector,kind]:classified_selectors) {
+        const auto payload=payload_for(selector,"red");
+        if(payload->pseudo_kind!=kind || payload->host_selector ||
+           (kind!=0 && payload->compiled_pseudo_origin.compounds!=std::vector<std::string>{".base"}) ||
+           (kind==0 && !payload->compiled_pseudo_origin.compounds.empty()) ||
+           payload_for(selector,"red")!=payload) return 166;
+    }
+    const auto host_payload=payload_for(" :host ","red");
+    if(!host_payload->host_selector || host_payload->pseudo_kind!=0 ||
+       payload_for(":host(.base)","red")->host_selector) return 167;
+    size_t compile_count=0;
+    const auto counted_payload=[&] {
+        return webscene_native::css::intern_rule_payload(payload_mutex,payload_cache,
+            [&](const auto& selector) { ++compile_count; return webscene_native::css::compile_selector(selector); },
+            ".compiled-once::before",{{"content","'x'",false}},{});
+    };
+    const auto compiled_once=counted_payload();
+    for(int iteration=0;iteration<128;++iteration)
+        if(counted_payload()!=compiled_once) return 168;
+    if(compile_count!=2) return 169; // full selector and pseudo origin, only once
     const std::string css_base="asset://kestrel/css/theme/main.css";
     const auto resolved_css=webscene_native::css::resolve_resource_urls(
         R"CSS(url('../../images/grid.png?v=2'), url("../fonts/ui.woff2"), url(#mask))CSS",css_base);
@@ -740,12 +981,13 @@ int main(int argc,char** argv) {
     std::vector<webscene_native::css::css_rule> match_rules;
     for(const auto& payload:match_sheet->rules) match_rules.push_back({payload,0,0,true});
     std::vector<size_t> match_indices{2,1,0};
-    webscene_native::css::sort_candidates(match_rules,match_indices);
+    // Matching receives discovery order, not cascade order. It must return
+    // only the matches, ordered by specificity and original source position.
     ordered_node.id_attribute="panel";
     webscene_native::css::query_host match_query(ordered_document);
     const auto collect=[&] {
         return webscene_native::css::match_candidates(ordered_document,ordered_node,match_rules,match_indices,
-            [&](const auto& node,const auto&,const auto& selector) { return match_query.css_selector_matches(node,selector); },
+            [&](const auto& node,const auto&,const auto& selector) { return match_query.matches_prepared(node,selector); },
             [&](const auto& node,const auto& rule) { return match_query.matches_prepared(node,rule.compiled_selector()); });
     };
     auto collected_matches=collect();
@@ -775,7 +1017,7 @@ int main(int argc,char** argv) {
     if(webscene_native::css::computed_layout_style_equal(ordered_node.style,geometry_style)) return 139;
     webscene_native::css::css_cascade_state indexed;
     const auto index_selector_test=[&](size_t index,const std::string& selector) {
-        webscene_native::css::index_selector(index,selector,indexed.rules_by_id,
+        webscene_native::css::index_selector(index,selector,webscene_native::css::compile_selector(selector),indexed.rules_by_id,
             indexed.rules_by_class,indexed.rules_by_tag,indexed.rules_by_attribute,
             indexed.focus_rules,indexed.unindexed_rules,indexed.descendant_attribute_dependencies);
     };
@@ -809,6 +1051,45 @@ int main(int argc,char** argv) {
         });
     std::sort(candidate_indices.begin(),candidate_indices.end());
     if(candidate_indices!=std::vector<size_t>{0,0,1,2,3,4,6}) return 141;
+    index_selector_test(7,":not(.skip).after-pseudo");
+    index_selector_test(8,".escaped\\:token");
+    index_selector_test(9,".other#index\\:id");
+    index_selector_test(10,"Widget");
+    index_selector_test(11,"[DaTa-Thing]");
+    index_selector_test(12,":is(.a,.b)");
+    index_selector_test(13,":not(.excluded)");
+    if(indexed.rules_by_class["after-pseudo"]!=std::vector<size_t>{7} ||
+       indexed.rules_by_class["escaped:token"]!=std::vector<size_t>{8} ||
+       indexed.rules_by_id["index:id"]!=std::vector<size_t>{9} ||
+       indexed.rules_by_tag["Widget"]!=std::vector<size_t>{10} ||
+       indexed.rules_by_tag["widget"]!=std::vector<size_t>{10} ||
+       indexed.rules_by_attribute["DaTa-Thing"]!=std::vector<size_t>{11} ||
+       indexed.rules_by_attribute["data-thing"]!=std::vector<size_t>{11} ||
+       indexed.unindexed_rules!=std::vector<size_t>{6,12,13}) return 171;
+    // Folded name buckets must not change XML's case-sensitive matching.
+    auto name_sheet=webscene_native::css::prepare_stylesheet(
+        "Widget {width:23px} [DaTa-Thing] {height:17px}","",[](const auto&) {return true;});
+    if(!name_sheet) return 172;
+    webscene_native::css::stylesheet_owner name_sheets;
+    name_sheets.replace(1,std::move(*name_sheet));
+    for(const auto xml:{false,true}) for(const auto mixed_case:{false,true}) {
+        webscene_native::native_document names_document;
+        auto& node=names_document.create_element("div");
+        node.xml_mode=xml;
+        node.tag=mixed_case?"Widget":"widget";
+        node.attributes[mixed_case?"DaTa-Thing":"data-thing"]="yes";
+        names_document.append_child(names_document.body(),node);
+        webscene_native::css::query_host query(names_document);
+        auto indices=name_sheets.candidates(node);
+        std::vector<size_t> indexed_matches,full_matches;
+        const auto& rules=name_sheets.state().rules;
+        for(const auto index:indices)
+            if(query.matches_prepared(node,rules[index].compiled_selector())) indexed_matches.push_back(index);
+        for(size_t index=0;index<rules.size();++index)
+            if(query.matches_prepared(node,rules[index].compiled_selector())) full_matches.push_back(index);
+        if(indexed_matches!=full_matches) return 173;
+        if(xml && full_matches.size()!=(mixed_case?2U:0U)) return 174;
+    }
     webscene_native::css::stylesheet_owner sheets;
     auto responsive=std::make_shared<webscene_native::css::css_rule_payload>();
     responsive->selector=".item";

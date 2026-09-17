@@ -590,8 +590,8 @@
         state.invalidation_rules_by_attribute =
             std::move(css_invalidation_rules_by_attribute);
         state.invalidation_rules_by_class = std::move(css_invalidation_rules_by_class);
-        state.child_list_sensitive = css_child_list_sensitive;
-        css_child_list_sensitive = false;
+        state.child_list_index = std::move(css_child_list_index);
+        css_child_list_index.clear();
         state.focus_rules = std::move(css_focus_rules);
         state.unindexed_rules = std::move(unindexed_css_rules);
         state.attribute_dependencies = std::move(css_attribute_dependencies);
@@ -622,7 +622,7 @@
             std::move(state.invalidation_rules_by_attribute);
         css_invalidation_rules_by_class =
             std::move(state.invalidation_rules_by_class);
-        css_child_list_sensitive = state.child_list_sensitive;
+        css_child_list_index = std::move(state.child_list_index);
         css_focus_rules = std::move(state.focus_rules);
         unindexed_css_rules = std::move(state.unindexed_rules);
         css_attribute_dependencies = std::move(state.attribute_dependencies);
@@ -1077,9 +1077,67 @@
         return true;
     }
 
+    class custom_element_reaction_scope final {
+        implementation& owner_;
+        custom_element_reaction_scope* previous_;
+        v8::TryCatch operation_exception_;
+        v8::Local<v8::Context> context_;
+        v8::Local<v8::Function> end_;
+    public:
+        explicit custom_element_reaction_scope(implementation& owner)
+            : owner_(owner), previous_(owner.active_custom_element_reaction_scope),
+              operation_exception_(owner.isolate)
+        {
+            owner_.active_custom_element_reaction_scope = this;
+            ensure_started();
+        }
+        void ensure_started()
+        {
+            if (!owner_.custom_elements_active || !end_.IsEmpty()) return;
+            // The first registry definition may happen during argument
+            // conversion. Lazily start every enclosing operation then, while
+            // cold documents make no JS reaction calls at all.
+            if (previous_ != nullptr) previous_->ensure_started();
+            auto* isolate = owner_.isolate;
+            context_ = isolate->GetCurrentContext();
+            v8::Local<v8::Value> begin, end;
+            if (!context_->Global()->Get(context_, js_string(isolate,
+                    "__webSceneCustomElementsBeginReactions")).ToLocal(&begin)
+                || !begin->IsFunction()
+                || !context_->Global()->Get(context_, js_string(isolate,
+                    "__webSceneCustomElementsEndReactions")).ToLocal(&end)
+                || !end->IsFunction()) return;
+            v8::Local<v8::Value> result;
+            if (begin.As<v8::Function>()->Call(context_, context_->Global(),
+                    0, nullptr).ToLocal(&result)) end_ = end.As<v8::Function>();
+        }
+        ~custom_element_reaction_scope()
+        {
+            owner_.active_custom_element_reaction_scope = previous_;
+            // A rejected native operation must still pop its reaction queue,
+            // without swallowing the exception or entering JS with it pending.
+            auto exception = operation_exception_.Exception();
+            const bool failed = operation_exception_.HasCaught();
+            if (failed) operation_exception_.Reset();
+            if (!end_.IsEmpty()) {
+                v8::TryCatch try_catch(owner_.isolate);
+                static_cast<void>(end_->Call(context_, context_->Global(), 0, nullptr));
+                if (try_catch.HasCaught()) owner_.last_error =
+                    "Custom element reaction checkpoint failed: "
+                    + owner_.describe_reported_exception(try_catch, context_);
+            }
+            if (failed && !exception.IsEmpty()) {
+                owner_.isolate->ThrowException(exception);
+                static_cast<void>(operation_exception_.ReThrow());
+            }
+        }
+    };
+
     void notify_custom_elements_subtree(dom_node& root, const char* phase)
     {
         if (!custom_elements_active) return;
+        if (active_custom_element_reaction_scope != nullptr)
+            active_custom_element_reaction_scope->ensure_started();
         auto local_context = isolate->GetCurrentContext();
         v8::Local<v8::Value> raw_callback;
         if (!local_context->Global()->Get(
@@ -1122,6 +1180,8 @@
         const std::optional<std::string>& namespace_uri = std::nullopt)
     {
         if (!custom_elements_active) return;
+        if (active_custom_element_reaction_scope != nullptr)
+            active_custom_element_reaction_scope->ensure_started();
         auto local_context = isolate->GetCurrentContext();
         v8::Local<v8::Value> raw_callback;
         if (!local_context->Global()->Get(
@@ -4598,6 +4658,7 @@
     static void append_child(const v8::FunctionCallbackInfo<v8::Value>& info)
     {
         auto* self = current(info.GetIsolate());
+        custom_element_reaction_scope reactions(*self);
         binding_callback_timer binding_timer(
             self->profile(binding_category::dom_mutation),
             self->profile_named("Node.appendChild"));
@@ -4638,7 +4699,7 @@
             // affected parent subtree once. Styling every child and parent as
             // it is transferred repeats selector matching and leaves earlier
             // siblings with transient :last-child/:nth-child results.
-            self->recascade_connected_subtree(*parent, "appendChild.fragment");
+            self->recascade_completed_child_list(*parent, children);
 #endif
             for (auto* fragment_child : children) {
                 if (fragment_child == nullptr || fragment_child->parent != parent) continue;
@@ -4703,87 +4764,17 @@
             node != nullptr && !node->children.empty()));
     }
 
+#include "webscene_v8_runtime_variadic_dom.inc"
+
     static void append_nodes(const v8::FunctionCallbackInfo<v8::Value>& info)
     {
-        auto* self = current(info.GetIsolate());
-        binding_callback_timer binding_timer(
-            self->profile(binding_category::dom_mutation),
-            self->profile_named("ParentNode.append"));
-        auto* parent = unwrap_node(info.This());
-        if (parent == nullptr) return;
-
-        std::vector<dom_node*> candidates;
-        candidates.reserve(static_cast<size_t>(info.Length()));
-        for (int index = 0; index < info.Length(); ++index) {
-            dom_node* candidate = nullptr;
-            if (info[index]->IsObject()) {
-                candidate = unwrap_node(info[index].As<v8::Object>());
-            }
-            if (candidate == nullptr) {
-                auto& text = self->document.create_element("#text");
-                text.text_content = to_wtf8(info.GetIsolate(), info[index]);
-                candidate = &text;
-            }
-            if (candidate->tag == "#document-fragment") {
-                for (auto* child : candidate->children) {
-                    if (insertion_would_create_cycle(parent, child)) {
-                        throw_hierarchy_request(info.GetIsolate(), "append");
-                        return;
-                    }
-                }
-            } else if (insertion_would_create_cycle(parent, candidate)) {
-                throw_hierarchy_request(info.GetIsolate(), "append");
-                return;
-            }
-            candidates.push_back(candidate);
-        }
-
-        std::vector<dom_node*> inserted;
-        for (auto* candidate : candidates) {
-            if (candidate == nullptr) continue;
-            if (candidate->tag == "#document-fragment") {
-                auto children = std::move(candidate->children);
-                candidate->children.clear();
-                for (auto* child : children) {
-                    if (child == nullptr) continue;
-                    child->parent = nullptr;
-                    child->visible = true;
-                    if (self->document.append_child(*parent, *child)) inserted.push_back(child);
-                }
-                continue;
-            }
-            if (candidate->parent != nullptr) {
-                if (self->is_connected(*candidate)) {
-                    self->notify_custom_elements_subtree(*candidate, "disconnected");
-                }
-                auto* old_parent = candidate->parent;
-                std::erase(old_parent->children, candidate);
-                synchronize_textarea_value_from_children(*old_parent);
-                candidate->parent = nullptr;
-            }
-            candidate->visible = true;
-            if (self->document.append_child(*parent, *candidate)) inserted.push_back(candidate);
-        }
-
-        for (auto* child : inserted) {
-            if (child == nullptr) continue;
-            self->recascade_connected_subtree(*child);
-            self->enqueue_connected_resources_subtree(
-                *child,
-                self->wrap_node(*child),
-                info.GetIsolate()->GetCurrentContext());
-            self->enqueue_iframe_hydration_if_needed(*child);
-            self->notify_custom_elements_subtree(*child, "connected");
-        }
-        self->recascade_connected_node(*parent);
-        self->activate_connected_stylesheet(*parent);
-        synchronize_textarea_value_from_children(*parent);
-        self->document.mark_dirty();
+        insert_variadic_nodes(info, variadic_insertion::append);
     }
 
     static void remove_child(const v8::FunctionCallbackInfo<v8::Value>& info)
     {
         auto* self = current(info.GetIsolate());
+        custom_element_reaction_scope reactions(*self);
         binding_callback_timer binding_timer(
             self->profile(binding_category::dom_mutation),
             self->profile_named("Node.removeChild"));
@@ -4803,6 +4794,7 @@
         self->deactivate_connected_stylesheets(*child);
         std::erase(parent->children, child);
         child->parent = nullptr;
+        self->recascade_changed_child_list(*parent);
         self->weaken_detached_subtree_wrappers(*child);
         synchronize_textarea_value_from_children(*parent);
         self->document.mark_dirty();
@@ -4812,6 +4804,7 @@
     static void replace_child(const v8::FunctionCallbackInfo<v8::Value>& info)
     {
         auto* self = current(info.GetIsolate());
+        custom_element_reaction_scope reactions(*self);
         auto* parent = unwrap_node(info.This());
         auto* replacement = info.Length() > 0 && info[0]->IsObject()
             ? unwrap_node(info[0].As<v8::Object>())
@@ -4829,6 +4822,7 @@
             info.GetReturnValue().Set(info[1]);
             return;
         }
+        std::vector<dom_node*> previous_parents;
         std::vector<dom_node*> replacements;
         if (replacement->tag == "#document-fragment") {
             replacements = replacement->children;
@@ -4852,6 +4846,7 @@
                     self->notify_custom_elements_subtree(*candidate, "disconnected");
                 }
                 auto* old_parent = candidate->parent;
+                previous_parents.push_back(old_parent);
                 std::erase(old_parent->children, candidate);
                 synchronize_textarea_value_from_children(*old_parent);
                 candidate->parent = nullptr;
@@ -4880,7 +4875,10 @@
                 parent->children.begin()
                     + static_cast<std::ptrdiff_t>(next_index++),
                 candidate);
-            self->recascade_connected_subtree(*candidate);
+        }
+        self->recascade_completed_child_list(*parent, replacements, previous_parents);
+        for (auto* candidate : replacements) {
+            if (candidate == nullptr || candidate->parent != parent) continue;
             self->activate_connected_stylesheet(*candidate);
             self->enqueue_connected_resources_subtree(
                 *candidate,
@@ -4896,62 +4894,13 @@
 
     static void replace_children(const v8::FunctionCallbackInfo<v8::Value>& info)
     {
-        auto* self = current(info.GetIsolate());
-        auto* parent = unwrap_node(info.This());
-        if (parent == nullptr) return;
-        std::vector<dom_node*> children;
-        const auto collect = [&](dom_node* node) {
-            if (insertion_would_create_cycle(parent, node)) {
-                throw_hierarchy_request(info.GetIsolate(), "replaceChildren"); return false;
-            }
-            std::erase(children, node);
-            children.push_back(node);
-            return true;
-        };
-        for (int index = 0; index < info.Length(); ++index) {
-            auto value = info[index];
-            auto* child = value->IsObject() && self->node_template.Get(info.GetIsolate())->HasInstance(value)
-                ? unwrap_node(value.As<v8::Object>()) : nullptr;
-            if (!child) {
-                v8::Local<v8::String> text;
-                if (!value->ToString(info.GetIsolate()->GetCurrentContext()).ToLocal(&text)) return;
-                child = &self->document.create_node(dom_node_kind::text, "#text");
-                child->text_content = to_utf8(info.GetIsolate(), text);
-            }
-            if (child->tag == "#document-fragment") {
-                for (auto* item : child->children) if (item && !collect(item)) return;
-            } else if (!collect(child)) return;
-        }
-        if (!self->blur_active_descendant_before_replacing_children(*parent)) return;
-        self->detach_all_children(*parent);
-        parent->text_content.clear();
-        for (auto* child : children) {
-            if (child->parent != nullptr) {
-                if (self->is_connected(*child)) self->notify_custom_elements_subtree(*child, "disconnected");
-                auto* old_parent = child->parent;
-                std::erase(old_parent->children, child);
-                synchronize_textarea_value_from_children(*old_parent);
-                child->parent = nullptr;
-            }
-            child->visible = true;
-            self->document.append_child(*parent, *child);
-        }
-        // Match structural selectors against the completed sibling list. Styling
-        // each inserted child early makes every child temporarily :last-child.
-        self->recascade_connected_subtree(*parent);
-        for (auto* child : children) {
-            self->activate_connected_stylesheet(*child);
-            self->enqueue_connected_resources_subtree(*child, self->wrap_node(*child), info.GetIsolate()->GetCurrentContext());
-            self->enqueue_iframe_hydration_if_needed(*child);
-            self->notify_custom_elements_subtree(*child, "connected");
-        }
-        synchronize_textarea_value_from_children(*parent);
-        self->document.mark_dirty();
+        insert_variadic_nodes(info, variadic_insertion::replace_children);
     }
 
     static void remove_element(const v8::FunctionCallbackInfo<v8::Value>& info)
     {
         auto* self = current(info.GetIsolate());
+        custom_element_reaction_scope reactions(*self);
         auto* node = unwrap_node(info.This());
         if (node == nullptr || node->parent == nullptr) return;
         auto* parent = node->parent;
@@ -4962,6 +4911,7 @@
         self->deactivate_connected_stylesheets(*node);
         std::erase(node->parent->children, node);
         node->parent = nullptr;
+        self->recascade_changed_child_list(*parent);
         node->visible = false;
         self->weaken_detached_subtree_wrappers(*node);
         synchronize_textarea_value_from_children(*parent);
@@ -4970,111 +4920,13 @@
 
     static void replace_with(const v8::FunctionCallbackInfo<v8::Value>& info)
     {
-        auto* self = current(info.GetIsolate());
-        binding_callback_timer binding_timer(
-            self->profile(binding_category::dom_mutation),
-            self->profile_named("ChildNode.replaceWith"));
-        auto* replaced = unwrap_node(info.This());
-        if (replaced == nullptr || replaced->parent == nullptr) return;
-        auto* parent = replaced->parent;
-
-        std::vector<dom_node*> replacements;
-        for (int argument = 0; argument < info.Length(); ++argument) {
-            dom_node* replacement = nullptr;
-            if (info[argument]->IsObject()) {
-                replacement = unwrap_node(info[argument].As<v8::Object>());
-            } else {
-                auto& text = self->document.create_element("#text");
-                text.text_content = to_wtf8(info.GetIsolate(), info[argument]);
-                replacement = &text;
-            }
-            if (replacement == nullptr) continue;
-            if (replacement != replaced
-                && insertion_would_create_cycle(parent, replacement)) {
-                throw_hierarchy_request(info.GetIsolate(), "replaceWith");
-                return;
-            }
-            if (replacement->tag == "#document-fragment") {
-                for (auto* child : replacement->children) {
-                    if (insertion_would_create_cycle(parent, child)) {
-                        throw_hierarchy_request(info.GetIsolate(), "replaceWith");
-                        return;
-                    }
-                }
-            }
-            replacements.push_back(replacement);
-        }
-
-        if (replacements.size() == 1U && replacements.front() == replaced) return;
-        if (!self->blur_active_element_before_detach(*replaced)) return;
-
-        // Detach every incoming node before locating the final replacement
-        // point. This preserves identity when the source comes from Monaco's
-        // temporary parsing container and avoids stale sibling indices when a
-        // node is moved within the same parent.
-        std::vector<dom_node*> flattened;
-        for (auto* replacement : replacements) {
-            if (replacement == nullptr || replacement == replaced) continue;
-            if (replacement->tag == "#document-fragment") {
-                auto children = std::move(replacement->children);
-                replacement->children.clear();
-                for (auto* child : children) {
-                    if (child == nullptr) continue;
-                    child->parent = nullptr;
-                    flattened.push_back(child);
-                }
-                continue;
-            }
-            if (replacement->parent != nullptr) {
-                if (self->is_connected(*replacement)) {
-                    self->notify_custom_elements_subtree(
-                        *replacement, "disconnected");
-                }
-                auto* old_parent = replacement->parent;
-                std::erase(old_parent->children, replacement);
-                synchronize_textarea_value_from_children(*old_parent);
-                replacement->parent = nullptr;
-            }
-            flattened.push_back(replacement);
-        }
-
-        const auto position = std::find(
-            parent->children.begin(), parent->children.end(), replaced);
-        if (position == parent->children.end()) return;
-        auto insertion_index =
-            static_cast<size_t>(position - parent->children.begin());
-        if (self->is_connected(*replaced)) {
-            self->notify_custom_elements_subtree(*replaced, "disconnected");
-        }
-        self->deactivate_connected_stylesheets(*replaced);
-        parent->children.erase(position);
-        replaced->parent = nullptr;
-        replaced->visible = false;
-        self->weaken_detached_subtree_wrappers(*replaced);
-
-        for (auto* replacement : flattened) {
-            replacement->parent = parent;
-            replacement->visible = true;
-            parent->children.insert(
-                parent->children.begin()
-                    + static_cast<std::ptrdiff_t>(insertion_index++),
-                replacement);
-            self->recascade_connected_subtree(*replacement);
-            self->activate_connected_stylesheet(*replacement);
-            self->enqueue_connected_resources_subtree(
-                *replacement,
-                self->wrap_node(*replacement),
-                info.GetIsolate()->GetCurrentContext());
-            self->enqueue_iframe_hydration_if_needed(*replacement);
-            self->notify_custom_elements_subtree(*replacement, "connected");
-        }
-        synchronize_textarea_value_from_children(*parent);
-        self->document.mark_dirty();
+        insert_variadic_nodes(info, variadic_insertion::replace_with);
     }
 
     static void insert_adjacent_html(const v8::FunctionCallbackInfo<v8::Value>& info)
     {
         auto* self = current(info.GetIsolate());
+        custom_element_reaction_scope reactions(*self);
         binding_callback_timer binding_timer(
             self->profile(binding_category::dom_mutation),
             self->profile_named("Element.insertAdjacentHTML"));
@@ -5118,7 +4970,10 @@
                 parent->children.begin()
                     + static_cast<std::ptrdiff_t>(insertion_index++),
                 child);
-            self->recascade_connected_subtree(*child);
+        }
+        self->recascade_completed_child_list(*parent, children);
+        for (auto* child : children) {
+            if (child == nullptr || child->parent != parent) continue;
             self->activate_connected_stylesheet(*child);
             self->enqueue_connected_resources_subtree(
                 *child,
@@ -5134,6 +4989,7 @@
     static void insert_adjacent_element(const v8::FunctionCallbackInfo<v8::Value>& info)
     {
         auto* self = current(info.GetIsolate());
+        custom_element_reaction_scope reactions(*self);
         binding_callback_timer binding_timer(
             self->profile(binding_category::dom_mutation),
             self->profile_named("Element.insertAdjacentElement"));
@@ -5162,6 +5018,7 @@
             throw_hierarchy_request(info.GetIsolate(), "insertAdjacentElement");
             return;
         }
+        auto* previous_parent = child->parent;
         if (child->parent != nullptr) {
             if (self->is_connected(*child)) {
                 self->notify_custom_elements_subtree(*child, "disconnected");
@@ -5180,7 +5037,9 @@
         child->parent = parent;
         parent->children.insert(parent->children.begin() + static_cast<std::ptrdiff_t>(index), child);
         self->document.mark_dirty();
-        self->recascade_connected_subtree(*child);
+        if (previous_parent != nullptr && previous_parent != parent)
+            self->recascade_changed_child_list(*previous_parent);
+        self->recascade_changed_child_list(*parent, child);
         self->activate_connected_stylesheet(*child);
         self->notify_custom_elements_subtree(*child, "connected");
         synchronize_textarea_value_from_children(*parent);
@@ -5189,67 +5048,12 @@
 
     static void prepend_child(const v8::FunctionCallbackInfo<v8::Value>& info)
     {
-        auto* self = current(info.GetIsolate());
-        auto* parent = unwrap_node(info.This());
-        auto* child = info.Length() > 0 && info[0]->IsObject()
-            ? unwrap_node(info[0].As<v8::Object>()) : nullptr;
-        if (parent == nullptr || child == nullptr || parent == child) return;
-        if (insertion_would_create_cycle(parent, child)) {
-            throw_hierarchy_request(info.GetIsolate(), "prepend");
-            return;
-        }
-        if (child->parent != nullptr) {
-            if (self->is_connected(*child)) {
-                self->notify_custom_elements_subtree(*child, "disconnected");
-            }
-            auto* old_parent = child->parent;
-            std::erase(old_parent->children, child);
-            synchronize_textarea_value_from_children(*old_parent);
-            child->parent = nullptr;
-        }
-        child->parent = parent;
-        parent->children.insert(parent->children.begin(), child);
-        self->document.mark_dirty();
-        self->recascade_connected_subtree(*child);
-        self->activate_connected_stylesheet(*child);
-        self->notify_custom_elements_subtree(*child, "connected");
-        synchronize_textarea_value_from_children(*parent);
-        info.GetReturnValue().Set(info[0]);
+        insert_variadic_nodes(info, variadic_insertion::prepend);
     }
 
-    static void insert_sibling(
-        const v8::FunctionCallbackInfo<v8::Value>& info,
-        bool after)
+    static void insert_sibling(const v8::FunctionCallbackInfo<v8::Value>& info, bool after)
     {
-        auto* self = current(info.GetIsolate());
-        auto* reference = unwrap_node(info.This());
-        auto* child = info.Length() > 0 && info[0]->IsObject()
-            ? unwrap_node(info[0].As<v8::Object>()) : nullptr;
-        if (reference == nullptr || reference->parent == nullptr || child == nullptr
-            || reference == child) return;
-        auto* parent = reference->parent;
-        if (insertion_would_create_cycle(parent, child)) {
-            throw_hierarchy_request(info.GetIsolate(), after ? "after" : "before");
-            return;
-        }
-        if (child->parent != nullptr) {
-            if (self->is_connected(*child)) {
-                self->notify_custom_elements_subtree(*child, "disconnected");
-            }
-            auto* old_parent = child->parent;
-            std::erase(old_parent->children, child);
-            synchronize_textarea_value_from_children(*old_parent);
-            child->parent = nullptr;
-        }
-        const auto position = std::find(parent->children.begin(), parent->children.end(), reference);
-        if (position == parent->children.end()) return;
-        child->parent = parent;
-        parent->children.insert(position + (after ? 1 : 0), child);
-        self->document.mark_dirty();
-        self->recascade_connected_subtree(*child);
-        self->activate_connected_stylesheet(*child);
-        self->notify_custom_elements_subtree(*child, "connected");
-        synchronize_textarea_value_from_children(*parent);
+        insert_variadic_nodes(info, after ? variadic_insertion::after : variadic_insertion::before);
     }
 
     static void insert_before_self(const v8::FunctionCallbackInfo<v8::Value>& info)
@@ -5265,6 +5069,7 @@
     static void insert_before(const v8::FunctionCallbackInfo<v8::Value>& info)
     {
         auto* self = current(info.GetIsolate());
+        custom_element_reaction_scope reactions(*self);
         binding_callback_timer binding_timer(
             self->profile(binding_category::dom_mutation),
             self->profile_named("Node.insertBefore"));
@@ -5310,7 +5115,10 @@
                 parent->children.insert(
                     parent->children.begin() + static_cast<std::ptrdiff_t>(insertion_index++),
                     fragment_child);
-                self->recascade_connected_subtree(*fragment_child);
+            }
+            self->recascade_completed_child_list(*parent, children);
+            for (auto* fragment_child : children) {
+                if (fragment_child == nullptr || fragment_child->parent != parent) continue;
                 self->activate_connected_stylesheet(*fragment_child);
                 self->notify_custom_elements_subtree(
                     *fragment_child, "connected");

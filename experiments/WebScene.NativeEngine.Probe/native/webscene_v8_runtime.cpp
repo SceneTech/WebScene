@@ -440,11 +440,19 @@ struct v8_dom_runtime::implementation final {
                 v8::PropertyAttribute::ReadOnly
                 | v8::PropertyAttribute::DontEnum
                 | v8::PropertyAttribute::DontDelete));
-        element->InstanceTemplate()->SetNativeDataProperty(js_string(isolate, "nodeValue"), get_text_content, set_text_content);
+        element->InstanceTemplate()->SetNativeDataProperty(js_string(isolate, "nodeValue"), get_node_value, set_node_value);
         element->InstanceTemplate()->SetNativeDataProperty(js_string(isolate, "textContent"), get_text_content, set_text_content);
         element->InstanceTemplate()->SetNativeDataProperty(js_string(isolate, "innerText"), get_inner_text, set_text_content);
         element->InstanceTemplate()->SetNativeDataProperty(js_string(isolate, "text"), get_option_or_script_text, set_option_or_script_text);
-        element->InstanceTemplate()->SetNativeDataProperty(js_string(isolate, "data"), get_text_content, set_text_content);
+        element->InstanceTemplate()->SetNativeDataProperty(js_string(isolate, "data"), get_text_content, set_character_data);
+        for (const auto& method : std::initializer_list<std::tuple<const char*, v8::FunctionCallback, int>>{
+                {"substringData", substring_character_data, 2}, {"appendData", append_character_data, 1},
+                {"insertData", insert_character_data, 2}, {"deleteData", delete_character_data, 2},
+                {"replaceData", replace_character_data, 3}}) {
+            element->PrototypeTemplate()->Set(js_string(isolate, std::get<0>(method)),
+                v8::FunctionTemplate::New(isolate, std::get<1>(method), v8::Local<v8::Value>(),
+                    v8::Local<v8::Signature>(), std::get<2>(method), v8::ConstructorBehavior::kThrow));
+        }
         element->InstanceTemplate()->SetNativeDataProperty(js_string(isolate, "namespaceURI"), get_namespace_uri);
         element->InstanceTemplate()->SetNativeDataProperty(js_string(isolate, "children"), get_children);
         element->InstanceTemplate()->SetNativeDataProperty(js_string(isolate, "childNodes"), get_children);
@@ -512,7 +520,7 @@ struct v8_dom_runtime::implementation final {
             js_string(isolate, "readOnly"), get_read_only, set_read_only);
         element->InstanceTemplate()->SetNativeDataProperty(js_string(isolate, "options"), get_select_options);
         element->InstanceTemplate()->SetNativeDataProperty(js_string(isolate, "elements"), get_form_elements);
-        element->InstanceTemplate()->SetNativeDataProperty(js_string(isolate, "length"), get_form_or_select_length);
+        element->InstanceTemplate()->SetNativeDataProperty(js_string(isolate, "length"), get_legacy_node_length);
         element->InstanceTemplate()->SetNativeDataProperty(
             js_string(isolate, "selectedIndex"), get_selected_index, set_selected_index);
         element->InstanceTemplate()->SetNativeDataProperty(
@@ -2866,6 +2874,35 @@ struct v8_dom_runtime::implementation final {
                 reportReactionError(error);
               }
             };
+            const reactionStack = [];
+            const elementReactions = new WeakMap();
+            const invokeElementReactions = queue => {
+              for (const element of queue) {
+                const reactions = elementReactions.get(element);
+                // Nested CEReactions operations can drain an element already
+                // present in an outer queue. Keep one FIFO per element so its
+                // pending connected reaction precedes a reentrant disconnect.
+                while (reactions && reactions.cursor < reactions.items.length) {
+                  const reaction = reactions.items[reactions.cursor++];
+                  invokeReaction(element, reaction.callback, reaction.args);
+                }
+                if (reactions) { reactions.items = []; reactions.cursor = 0; }
+              }
+            };
+            const beginReactions = () => reactionStack.push([]);
+            const endReactions = () => {
+              const queue = reactionStack.pop();
+              if (queue) invokeElementReactions(queue);
+            };
+            const enqueueReaction = (element, callback, args) => {
+              if (typeof callback !== 'function') return;
+              let reactions = elementReactions.get(element);
+              if (!reactions) elementReactions.set(element, reactions = {items: [], cursor: 0});
+              reactions.items.push({callback, args});
+              const queue = reactionStack[reactionStack.length - 1];
+              if (queue) queue.push(element);
+              else invokeElementReactions([element]);
+            };
 
             function WebSceneHTMLElement() {
               if (!new.target) {
@@ -2948,7 +2985,7 @@ struct v8_dom_runtime::implementation final {
               if (definition.attributeChangedCallback) {
                 for (const name of definition.observedAttributes) {
                   if (!element.hasAttribute(name)) continue;
-                  invokeReaction(
+                  enqueueReaction(
                     element,
                     definition.attributeChangedCallback,
                     [name, null, element.getAttribute(name), null]);
@@ -2963,14 +3000,14 @@ struct v8_dom_runtime::implementation final {
               if (!upgraded || !state || state.state !== 'custom'
                   || state.connected || !element.isConnected) return;
               state.connected = true;
-              invokeReaction(
+              enqueueReaction(
                 element, state.definition.connectedCallback, []);
             };
             const disconnectElement = element => {
               const state = elementStates.get(element);
               if (!state || state.state !== 'custom' || !state.connected) return;
               state.connected = false;
-              invokeReaction(
+              enqueueReaction(
                 element, state.definition.disconnectedCallback, []);
             };
             const notifySubtree = (root, phase) => {
@@ -2990,10 +3027,14 @@ struct v8_dom_runtime::implementation final {
               const definition = state.definition;
               if (!definition.attributeChangedCallback
                   || !definition.observedAttributeSet.has(name)) return;
-              invokeReaction(
-                element,
-                definition.attributeChangedCallback,
-                [name, oldValue, newValue, namespace]);
+              // Attribute APIs already notify after their style checkpoint.
+              // Give them a nested reaction boundary even inside a structural
+              // operation's argument conversion or custom-element callback.
+              beginReactions();
+              try {
+                enqueueReaction(element, definition.attributeChangedCallback,
+                  [name, oldValue, newValue, namespace]);
+              } finally { endReactions(); }
             };
 
             function WebSceneCustomElementRegistry() {
@@ -3108,6 +3149,12 @@ struct v8_dom_runtime::implementation final {
               }, writable: true, configurable: true
             });
             Object.defineProperties(globalThis, {
+              __webSceneCustomElementsBeginReactions: {
+                value: beginReactions, configurable: true
+              },
+              __webSceneCustomElementsEndReactions: {
+                value: endReactions, configurable: true
+              },
               __webSceneCustomElementsNotifySubtree: {
                 value: notifySubtree, configurable: true
               },
@@ -6164,6 +6211,8 @@ std::string v8_dom_runtime::event_diagnostics() const
     result << ", selector-invalidation-fallback-visits="
         << impl_->selector_invalidation_fallback_visits;
     result << ", css-compound-match-checks=" << impl_->css_compound_match_checks;
+    result << ", css-positional-sibling-visits=" << impl_->css_positional_sibling_visits;
+    result << ", dom-variadic-detach-child-visits=" << impl_->dom_variadic_detach_child_visits;
     result << ", css-rule-match-checks=" << impl_->css_rule_match_checks;
     result << ", css-cascade-applications=" << impl_->css_cascade_applications;
     result << ", css-cascade-candidate-checks=" << impl_->css_cascade_candidate_checks;
@@ -6739,6 +6788,11 @@ v8_dom_runtime::memory_metrics v8_dom_runtime::read_memory_metrics() const noexc
                 result.process_shared_css_rule_storage_bytes +=
                     payload->invalidation.capacity() * sizeof(css::css_compound_dependencies);
                 for (const auto& dependencies : payload->invalidation) {
+                    result.process_shared_css_rule_storage_bytes +=
+                        dependencies.child_list.routes.capacity() * sizeof(css::css_invalidation_route);
+                    for (const auto& route : dependencies.child_list.routes)
+                        result.process_shared_css_rule_storage_bytes +=
+                            route.capacity() * sizeof(css::css_invalidation_step);
                     for (const auto* index : {&dependencies.attributes, &dependencies.classes}) {
                         result.process_shared_css_rule_storage_bytes += index->bucket_count() * sizeof(void*);
                         for (const auto& [key, dependency] : *index) {
@@ -6775,6 +6829,18 @@ v8_dom_runtime::memory_metrics v8_dom_runtime::read_memory_metrics() const noexc
         }
         return bytes;
     };
+    const auto child_list_index_storage = [&](const auto& buckets) {
+        uint64_t bytes = buckets.capacity() * sizeof(css::css_child_list_bucket);
+        for (const auto& bucket : buckets) {
+            bytes += bucket.route.capacity() * sizeof(css::css_invalidation_step)
+                + bucket.universal.capacity() * sizeof(size_t)
+                + indexed_rule_storage(bucket.by_id)
+                + indexed_rule_storage(bucket.by_class)
+                + indexed_rule_storage(bucket.by_tag)
+                + indexed_rule_storage(bucket.by_attribute);
+        }
+        return bytes;
+    };
     result.native_css_index_storage_bytes =
         indexed_rule_storage(impl_->css_rules_by_class)
         + indexed_rule_storage(impl_->css_rules_by_id)
@@ -6784,6 +6850,7 @@ v8_dom_runtime::memory_metrics v8_dom_runtime::read_memory_metrics() const noexc
         + indexed_rule_storage(impl_->css_invalidation_rules_by_attribute)
         + indexed_rule_storage(impl_->css_invalidation_rules_by_class)
         + impl_->css_focus_rules.capacity() * sizeof(size_t)
+        + child_list_index_storage(impl_->css_child_list_index)
         + impl_->unindexed_css_rules.capacity() * sizeof(size_t)
         + impl_->hover_selector_dependencies.capacity()
             * sizeof(implementation::hover_selector_dependency);
@@ -6849,6 +6916,7 @@ v8_dom_runtime::memory_metrics v8_dom_runtime::read_memory_metrics() const noexc
             + indexed_rule_storage(cascade.rules_by_attribute)
             + indexed_rule_storage(cascade.rules_by_variable_reference)
             + cascade.focus_rules.capacity() * sizeof(size_t)
+            + child_list_index_storage(cascade.child_list_index)
             + cascade.unindexed_rules.capacity() * sizeof(size_t)
             + cascade.hover_dependencies.capacity()
                 * sizeof(implementation::hover_selector_dependency);

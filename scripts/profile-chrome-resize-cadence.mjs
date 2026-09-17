@@ -353,11 +353,19 @@ try {
     : 0;
   const trace = traceSummary(traceEvents);
   const result = {
-    schema: "webscene-chrome-resize-cadence-v1",
+    schema: "webscene-chrome-resize-cadence-v2",
     engine: "chrome",
     identity: identity.version,
     url: options.url,
     headless: options.headless,
+    waveform: "triangle-v1",
+    baseWidth: options.width,
+    baseHeight: options.height,
+    widthSpan: options.widthSpan,
+    heightSpan: options.heightSpan,
+    resizeBoundsSpace: "chrome-outer-window",
+    measurementScope: "animation-frame-callback; not physical presentation",
+    physicalPresentationVerified: false,
     requestedHz: options.hz,
     warmupSeconds: options.warmupSeconds,
     requestedSeconds: options.seconds,

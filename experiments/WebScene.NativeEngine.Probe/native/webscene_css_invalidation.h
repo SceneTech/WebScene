@@ -1,5 +1,6 @@
 #pragma once
 #include "webscene_css_selectors.h"
+#include "webscene_css_declarations.h"
 #include <algorithm>
 
 namespace webscene_native::css {
@@ -83,12 +84,27 @@ inline std::vector<css_compound_dependencies> compile_invalidation_plan(
                 || pseudo.name == "first-child" || pseudo.name == "last-child"
                 || pseudo.name == "only-child" || pseudo.name == "first-of-type"
                 || pseudo.name == "last-of-type" || pseudo.name == "only-of-type"
-                || pseudo.name.starts_with("nth-")) output.child_list_sensitive = true;
+                || pseudo.name.starts_with("nth-")) {
+                output.child_list_sensitive = true;
+                auto structural_route = route;
+                if (pseudo.name == "has") {
+                    // Removing a descendant can change both the parent anchor
+                    // and any ancestor anchor, even when no current match remains.
+                    add(output.child_list, route);
+                    structural_route.insert(structural_route.begin(), css_invalidation_step::ancestors);
+                } else if (pseudo.name != "empty") {
+                    structural_route.insert(structural_route.begin(), css_invalidation_step::children);
+                }
+                add(output.child_list, structural_route);
+            }
             if (pseudo.name == "disabled" || pseudo.name == "enabled") {
                 auto inherited_route = css_invalidation_route{
                     css_invalidation_step::inclusive_descendants};
                 inherited_route.insert(inherited_route.end(), route.begin(), route.end());
                 add(output.attributes["disabled"], inherited_route);
+                // Moving the first legend changes inherited disabled state.
+                output.child_list_sensitive = true;
+                add(output.child_list, inherited_route);
             } else if (pseudo.name == "checked") {
                 for (const auto* name : {"checked", "selected", "type"})
                     add(output.attributes[name], route);
@@ -122,6 +138,12 @@ inline std::vector<css_compound_dependencies> compile_invalidation_plan(
                             nested_route.push_back(forward(arm.combinators[j]));
                     }
                     nested_route.insert(nested_route.end(), route.begin(), route.end());
+                    if (i > 0 && (arm.combinators[i - 1U] == '+'
+                        || arm.combinators[i - 1U] == '~')) {
+                        auto structural_route = nested_route;
+                        structural_route.insert(structural_route.begin(), css_invalidation_step::children);
+                        add(output.child_list, structural_route);
+                    }
                     self(self, arm.compiled_compounds[i], output, nested_route);
                 }
             }
@@ -129,9 +151,65 @@ inline std::vector<css_compound_dependencies> compile_invalidation_plan(
     };
     for (size_t i = 0; i < result.size(); ++i)
         collect(collect, selector.compiled_compounds[i], result[i], {});
-    if (!result.empty() && std::any_of(selector.combinators.begin(), selector.combinators.end(),
-            [](char value) { return value == '+' || value == '~'; }))
-        result.front().child_list_sensitive = true;
+    for (size_t i = 0; i < selector.combinators.size(); ++i) {
+        if (selector.combinators[i] != '+' && selector.combinators[i] != '~') continue;
+        result[i + 1U].child_list_sensitive = true;
+        add(result[i + 1U].child_list, {css_invalidation_step::children});
+    }
     return result;
+}
+// Index the stable outer compound, not a feature inside a functional pseudo.
+// For example :not(.x) does not require .x, and :is(.a,.b) requires neither arm.
+// Missing mandatory keys deliberately use the universal bucket.
+inline void index_child_list_rule(size_t rule_index,
+    const compiled_css_selector& selector,
+    const std::vector<css_compound_dependencies>& dependencies,
+    std::vector<css_child_list_bucket>& buckets)
+{
+    const auto bucket_for = [&](const css_invalidation_route& route) -> css_child_list_bucket& {
+        const auto found = std::find_if(buckets.begin(), buckets.end(),
+            [&](const auto& bucket) { return bucket.route == route; });
+        if (found != buckets.end()) return *found;
+        buckets.emplace_back();
+        buckets.back().route = route;
+        return buckets.back();
+    };
+    const auto append = [&](std::vector<size_t>& rules) {
+        if (rules.empty() || rules.back() != rule_index) rules.push_back(rule_index);
+    };
+    if (dependencies.size() != selector.compiled_compounds.size()) {
+        append(bucket_for({}).universal);
+        return;
+    }
+    for (size_t i = 0; i < dependencies.size(); ++i) {
+        const auto& dependency = dependencies[i].child_list;
+        if (dependency.scope == 0U) continue;
+        const auto& compound = selector.compiled_compounds[i];
+        const auto index_route = [&](const css_invalidation_route& route) {
+            auto& bucket = bucket_for(route);
+            for (const auto& [marker, value] : compound.identities) {
+                if (marker == '#') { append(bucket.by_id[value]); return; }
+            }
+            for (const auto& [marker, value] : compound.identities) {
+                if (marker == '.') { append(bucket.by_class[value]); return; }
+            }
+            if (!compound.tag.empty() && compound.tag != "*") {
+                append(bucket.by_tag[ascii_lower(compound.tag)]);
+                return;
+            }
+            for (const auto& attribute : compound.attributes) {
+                size_t cursor = 0;
+                const auto name = read_css_identifier(trim_css_view(attribute), cursor);
+                if (!name.empty()) { append(bucket.by_attribute[ascii_lower(name)]); return; }
+            }
+            append(bucket.universal);
+        };
+        if ((dependency.scope & invalidation_fallback) != 0U)
+            append(bucket_for({}).universal);
+        if ((dependency.scope & invalidation_subject) != 0U) index_route({});
+        if ((dependency.scope & invalidation_ancestors) != 0U)
+            index_route({css_invalidation_step::ancestors});
+        for (const auto& route : dependency.routes) index_route(route);
+    }
 }
 } // namespace webscene_native::css

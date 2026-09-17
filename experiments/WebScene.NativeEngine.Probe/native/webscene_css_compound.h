@@ -13,7 +13,8 @@ inline std::atomic<uint64_t> selector_sibling_pointer_copies{0U};
 // a plain URL hash. Compound evaluation itself has no V8 dependency.
 template<typename Host>
 inline bool compound_matches(const Host& host,const dom_node& node,
-    const compiled_css_compound& selector,const dom_node* scope_root=nullptr)
+    const compiled_css_compound& selector,const dom_node* scope_root=nullptr,
+    bool stable_features_only=false)
     {
         const auto& document=host.document;
         if (!selector.valid) return false;
@@ -57,9 +58,17 @@ inline bool compound_matches(const Host& host,const dom_node& node,
         for (const auto& attribute : selector.attributes) {
             if (!attribute_matches(node, attribute)) return false;
         }
+        // Structural invalidation must also visit subjects that stopped
+        // matching a pseudo after a removal. Identity/attribute tests remain
+        // useful filters, but testing current pseudos would lose old matches.
+        if (stable_features_only) return true;
 
         const auto is_element = [](const dom_node* candidate) {
             return candidate != nullptr && !candidate->tag.starts_with('#');
+        };
+        const auto record_sibling_visit = [&] {
+            if constexpr (requires { host.record_css_positional_sibling_visit(); })
+                host.record_css_positional_sibling_visit();
         };
 #if !defined(WEBSCENE_NATIVE_ENGINE_SELECTOR_SIBLING_SCAN_EXPERIMENT)
         std::vector<const dom_node*> element_siblings;
@@ -74,6 +83,7 @@ inline bool compound_matches(const Host& host,const dom_node& node,
             if (node.parent != nullptr) {
                 element_siblings.reserve(node.parent->children.size());
                 for (const auto* child : node.parent->children) {
+                    record_sibling_visit();
 #if defined(WEBSCENE_NATIVE_ENGINE_SELECTOR_SIBLING_BENCHMARK_COUNTERS)
                     selector_sibling_scans.fetch_add(1U, std::memory_order_relaxed);
 #endif
@@ -103,6 +113,7 @@ inline bool compound_matches(const Host& host,const dom_node& node,
             element_positions_ready = true;
             if (node.parent == nullptr) return element_positions;
             for (const auto* child : node.parent->children) {
+                record_sibling_visit();
 #if defined(WEBSCENE_NATIVE_ENGINE_SELECTOR_SIBLING_BENCHMARK_COUNTERS)
                 selector_sibling_scans.fetch_add(1U, std::memory_order_relaxed);
 #endif
@@ -119,6 +130,7 @@ inline bool compound_matches(const Host& host,const dom_node& node,
             same_type_positions_ready = true;
             if (node.parent == nullptr) return same_type_positions;
             for (const auto* child : node.parent->children) {
+                record_sibling_visit();
 #if defined(WEBSCENE_NATIVE_ENGINE_SELECTOR_SIBLING_BENCHMARK_COUNTERS)
                 selector_sibling_scans.fetch_add(1U, std::memory_order_relaxed);
 #endif
@@ -135,6 +147,32 @@ inline bool compound_matches(const Host& host,const dom_node& node,
         for (const auto& pseudo : selector.pseudos) {
             const std::string_view name(pseudo.name);
             const std::string_view argument(pseudo.argument);
+            if constexpr (requires { host.css_positional_summary(node, false); }) {
+                const bool positional = name == "first-child" || name == "last-child"
+                    || name == "only-child" || name == "nth-child" || name == "nth-last-child"
+                    || name == "first-of-type" || name == "last-of-type" || name == "only-of-type"
+                    || name == "nth-of-type" || name == "nth-last-of-type";
+                if (positional) {
+                    // A matching pass is immutable. Index each sibling list once
+                    // instead of scanning/copying it again for every subject.
+                    const auto values = host.css_positional_summary(node, name.ends_with("of-type"));
+                    if (values.has_value()) {
+#if defined(WEBSCENE_NATIVE_ENGINE_SELECTOR_SIBLING_BENCHMARK_COUNTERS)
+                        selector_sibling_positional_matches.fetch_add(1U, std::memory_order_relaxed);
+#endif
+                        if (!values->node_found) return false;
+                        if (name.starts_with("first-") && values->position != 1U) return false;
+                        if (name.starts_with("last-") && values->position != values->count) return false;
+                        if (name.starts_with("only-") && values->count != 1U) return false;
+                        if (name.starts_with("nth-")) {
+                            const auto position = name.starts_with("nth-last-")
+                                ? values->count - values->position + 1U : values->position;
+                            if (!nth_matches(argument, static_cast<int>(position))) return false;
+                        }
+                        continue;
+                    }
+                }
+            }
             const auto form_control = node.tag == "button" || node.tag == "input"
                 || node.tag == "select" || node.tag == "textarea"
                 || node.tag == "option" || node.tag == "optgroup" || node.tag == "fieldset";
@@ -254,11 +292,11 @@ inline bool compound_matches(const Host& host,const dom_node& node,
                 if (name == "only-of-type" && values.count != 1U) return false;
 #endif
             } else if (name == "empty") {
-                const auto has_text = std::any_of(
-                    node.text_content.begin(),
-                    node.text_content.end(),
-                    [](unsigned char character) { return !std::isspace(character); });
-                if (!node.children.empty() || has_text) return false;
+                if (!node.text_content.empty() || std::any_of(
+                        node.children.begin(), node.children.end(), [](const dom_node* child) {
+                            return child != nullptr && (child->kind == dom_node_kind::element
+                                || (child->kind == dom_node_kind::text && !child->text_content.empty()));
+                        })) return false;
             } else if (name == "enabled") {
                 if (!form_control || css::is_actually_disabled(document,node)) return false;
             } else if (name == "disabled") {

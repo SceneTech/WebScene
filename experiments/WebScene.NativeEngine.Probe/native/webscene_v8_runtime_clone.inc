@@ -18,6 +18,26 @@
         return v8::Private::ForApi(isolate, js_string(isolate, "WebScene.MessagePort"));
     }
 
+    static v8::Local<v8::Private> message_port_peer_private(v8::Isolate* isolate)
+    {
+        return v8::Private::ForApi(isolate, js_string(isolate, "WebScene.MessagePort.Peer"));
+    }
+
+    static void unlink_local_message_port_peer(
+        v8::Isolate* isolate,
+        message_port_binding& binding)
+    {
+        auto realm = binding.context.Get(isolate);
+        auto wrapper = binding.wrapper.Get(isolate);
+        if (realm.IsEmpty() || wrapper.IsEmpty()) return;
+        auto key = message_port_peer_private(isolate);
+        v8::Local<v8::Value> peer;
+        if (wrapper->GetPrivate(realm, key).ToLocal(&peer) && peer->IsObject()) {
+            peer.As<v8::Object>()->DeletePrivate(realm, key).Check();
+        }
+        wrapper->DeletePrivate(realm, key).Check();
+    }
+
     message_port_binding* message_port_binding_from_object(
         v8::Local<v8::Context> realm,
         v8::Local<v8::Object> object)
@@ -157,6 +177,23 @@
         {
             std::lock_guard lock(raw->endpoint->channel->mutex);
             raw->endpoint->channel->wake[raw->endpoint->side] = message_port_wake;
+        }
+        // Trace local entanglement in V8's object graph, not as permanent native
+        // roots. React-style schedulers retain only the sending port; its peer
+        // must remain reachable. Unreachable pairs can still be collected as a
+        // cycle. Also reconnect peers after a same-isolate transfer.
+        for (const auto& peer : message_port_bindings) {
+            if (peer.get() == raw || peer->transferred || peer->endpoint == nullptr
+                || peer->endpoint->channel != raw->endpoint->channel
+                || peer->endpoint->side == raw->endpoint->side
+                || message_port_endpoint_closed(peer->endpoint)
+                || message_port_endpoint_closed(raw->endpoint)) continue;
+            auto peer_wrapper = peer->wrapper.Get(isolate);
+            if (peer_wrapper.IsEmpty()) continue;
+            auto key = message_port_peer_private(isolate);
+            wrapper->SetPrivate(realm, key, peer_wrapper).Check();
+            peer_wrapper->SetPrivate(peer->context.Get(isolate), key, wrapper).Check();
+            break;
         }
         return wrapper;
     }
@@ -338,6 +375,7 @@
             if (!buffer->Detach({}).FromMaybe(false)) return false;
         }
         for (auto* port : ports) {
+            unlink_local_message_port_peer(info.GetIsolate(), *port);
             clear_message_port_wake(port->endpoint);
             port->transferred = true;
             port->endpoint.reset();
@@ -559,7 +597,10 @@
         const v8::FunctionCallbackInfo<v8::Value>& info)
     {
         auto* binding = message_port_binding_from_callback(info);
-        if (binding != nullptr) close_message_port_binding(*binding);
+        if (binding != nullptr) {
+            unlink_local_message_port_peer(info.GetIsolate(), *binding);
+            close_message_port_binding(*binding);
+        }
     }
 
     static void message_port_construct(

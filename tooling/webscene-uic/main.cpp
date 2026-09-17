@@ -1874,7 +1874,9 @@ static void emit_prepared_sheet(std::ostream& out,const css::prepared_stylesheet
   out << "webscene_native::css::prepared_stylesheet sheet;\nsheet.source_address=" << quote(sheet.source_address) << ";\n";
   for(const auto& rule:sheet.rules) {
     out << "{auto r=std::make_shared<webscene_native::css::css_rule_payload>();\nr->selector="
-        << quote(rule->selector) << ";r->specificity=" << rule->specificity << "u;\n";
+        << quote(rule->selector) << ";r->specificity=" << rule->specificity << "u;\n"
+        << "r->pseudo_kind=" << unsigned(rule->pseudo_kind) << ";\n"
+        << "r->host_selector=" << rule->host_selector << ";\n";
     emit_prepared_selector(out,"r->compiled_selector",rule->compiled_selector);
     emit_prepared_selector(out,"r->compiled_pseudo_origin",rule->compiled_pseudo_origin);
     for(const auto& declaration:rule->declarations)

@@ -1,0 +1,356 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Child-list changes invalidate structural and relational selector subjects</title>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<style>
+.tree-item {display:block;width:11px;height:13px;padding-left:0px}
+.tree-item:first-child {width:41px}
+.tree-item:last-child {height:43px}
+.tree-item:nth-child(2) {padding-left:17px}
+.tree-empty-indicator {height:19px}
+.tree-list:empty + .tree-empty-indicator {height:47px}
+.tree-has-indicator {width:23px}
+.tree-outer:has(.tree-marker) + .tree-has-indicator {width:59px}
+.tree-outer:has(.tree-marker) {--tree-size:61px}
+.tree-consumer {width:var(--tree-size, 29px)}
+.tree-nested:is(.tree-branch:not(:first-child) > .tree-nested) {width:71px}
+.tree-nested {width:17px}
+.tree-disabled:disabled {width:73px}
+.tree-disabled {width:19px}
+</style>
+<body>
+<script>
+function fixture(t) {
+  const stage = document.createElement('div');
+  stage.innerHTML = '<div class="tree-outer"><div class="tree-list"><div class="tree-item tree-marker"></div><div class="tree-item"></div><div class="tree-item"></div></div><div class="tree-empty-indicator"></div><div class="tree-consumer"></div></div><div class="tree-has-indicator"></div>';
+  document.body.appendChild(stage);
+  t.add_cleanup(() => stage.remove());
+  const list = stage.querySelector('.tree-list');
+  return {stage, list, items:Array.from(list.children),
+    empty:stage.querySelector('.tree-empty-indicator'),
+    has:stage.querySelector('.tree-has-indicator'), consumer:stage.querySelector('.tree-consumer')};
+}
+function verify(f, markerPresent) {
+  const items = Array.from(f.list.children);
+  items.forEach((node, i) => {
+    const style = getComputedStyle(node);
+    assert_equals(style.width, i === 0 ? '41px' : '11px', 'first-child ' + i);
+    assert_equals(style.height, i === items.length - 1 ? '43px' : '13px', 'last-child ' + i);
+    assert_equals(style.paddingLeft, i === 1 ? '17px' : '0px', 'nth-child ' + i);
+  });
+  assert_equals(getComputedStyle(f.empty).height, items.length === 0 ? '47px' : '19px', ':empty sibling');
+  assert_equals(getComputedStyle(f.has).width, markerPresent ? '59px' : '23px', ':has ancestor sibling');
+  assert_equals(getComputedStyle(f.consumer).width, markerPresent ? '61px' : '29px', ':has custom-property consumer');
+}
+for (const [name, mutate] of [
+  ['removeChild', f => f.list.removeChild(f.items[0])],
+  ['remove', f => f.items[0].remove()],
+  ['replaceChild', f => {const n=document.createElement('div');n.className='tree-item';f.list.replaceChild(n,f.items[0]);}],
+  ['replaceWith', f => {const n=document.createElement('div');n.className='tree-item';f.items[0].replaceWith(n);}],
+  ['replaceChildren', f => f.list.replaceChildren(f.items[1],f.items[2])],
+  ['innerHTML', f => {f.list.innerHTML='<div class="tree-item"></div>';}],
+  ['textContent', f => {f.list.textContent='';}]
+]) test(t => {
+  const f = fixture(t);
+  verify(f, true);
+  mutate(f);
+  verify(f, false);
+}, name + ' updates positional, relational, sibling and inherited-variable subjects');
+
+for (const [name, mutate] of [
+  ['appendChild', f => f.list.appendChild(f.items[0])],
+  ['append', f => f.list.append(f.items[0])],
+  ['prepend', f => f.list.prepend(f.items[2])],
+  ['insertBefore', f => f.list.insertBefore(f.items[2],f.items[0])],
+  ['before', f => f.items[0].before(f.items[2])],
+  ['after', f => f.items[2].after(f.items[0])],
+  ['insertAdjacentElement', f => f.items[2].insertAdjacentElement('afterend',f.items[0])],
+  ['insertAdjacentHTML', f => f.list.insertAdjacentHTML('afterbegin','<div class="tree-item"></div>')],
+  ['fragment append', f => {const fragment=document.createDocumentFragment();const n=document.createElement('div');n.className='tree-item';fragment.appendChild(n);f.list.appendChild(fragment);}],
+  ['fragment insertBefore', f => {const fragment=document.createDocumentFragment();for(let i=0;i<2;i++){const n=document.createElement('div');n.className='tree-item';fragment.appendChild(n);}f.list.insertBefore(fragment,f.items[0]);}]
+]) test(t => {
+  const f = fixture(t);
+  verify(f, true);
+  mutate(f);
+  verify(f, true);
+}, name + ' updates existing siblings against the final child list');
+
+test(t => {
+  const from = fixture(t), to = fixture(t);
+  to.list.replaceChildren();
+  verify(from,true); verify(to,false);
+  to.list.appendChild(from.items[0]);
+  verify(from,false); verify(to,true);
+}, 'reparenting invalidates source and destination relational ancestors');
+
+test(t => {
+  const f = fixture(t);
+  f.list.replaceChildren();
+  f.list.appendChild(document.createComment('not content'));
+  assert_equals(getComputedStyle(f.empty).height,'47px');
+  f.list.appendChild(document.createTextNode('x'));
+  assert_equals(getComputedStyle(f.empty).height,'19px');
+  f.list.lastChild.textContent='';
+  assert_equals(getComputedStyle(f.empty).height,'47px');
+}, ':empty invalidation follows character data but ignores comments and empty text');
+
+for (const [name, insert] of [
+  ['append', (list,node) => list.append(node)],
+  ['prepend', (list,node) => list.prepend(node)],
+  ['insertBefore', (list,node) => list.insertBefore(node,list.firstChild)],
+  ['before', (list,node) => list.firstChild.before(node)],
+  ['after', (list,node) => list.lastChild.after(node)],
+  ['insertAdjacentElement', (list,node) => list.insertAdjacentElement('afterbegin',node)],
+  ['replaceChild', (list,node) => list.replaceChild(node,list.firstChild)],
+  ['replaceWith', (list,node) => list.firstChild.replaceWith(node)],
+  ['replaceChildren', (list,node) => list.replaceChildren(node)]
+]) test(t => {
+  const from=fixture(t), to=fixture(t);
+  to.items[0].className='tree-item';
+  verify(from,true); verify(to,false);
+  insert(to.list,from.items[0]);
+  verify(from,false); verify(to,true);
+}, name + ' invalidates both source and destination after reparenting');
+
+for (const property of ['textContent','nodeValue','data']) test(t => {
+  const f=fixture(t); f.list.replaceChildren();
+  const text=document.createTextNode(''); f.list.appendChild(text);
+  assert_equals(getComputedStyle(f.empty).height,'47px');
+  text[property]=' ';
+  assert_equals(getComputedStyle(f.empty).height,'19px','whitespace prevents :empty');
+  text[property]='';
+  assert_equals(getComputedStyle(f.empty).height,'47px','empty text does not prevent :empty');
+}, property + ' updates empty-state sibling styles');
+
+test(t=>{
+  const stage=document.createElement('div');stage.innerHTML='<cold-checkpoint></cold-checkpoint>';
+  document.body.appendChild(stage);t.add_cleanup(()=>stage.remove());
+  const events=[];
+  stage.textContent={toString(){
+    customElements.define('cold-checkpoint',class extends HTMLElement {
+      connectedCallback(){events.push('connected');}
+      disconnectedCallback(){events.push('disconnected:'+this.isConnected);}
+    });
+    events.push('converted');return '';
+  }};
+  assert_array_equals(events,['connected','converted','disconnected:false']);
+}, 'first registry activation during argument conversion still establishes a structural reaction checkpoint');
+
+let connectionObserver=null, disconnectionObserver=null;
+customElements.define('tree-checkpoint', class extends HTMLElement {
+  connectedCallback() { if(connectionObserver) connectionObserver(this); }
+  disconnectedCallback() { if(disconnectionObserver) disconnectionObserver(this); }
+});
+for (const operation of ['appendChild','insertBefore','replaceChild','replaceWith','replaceChildren','innerHTML','insertAdjacentHTML']) test(t => {
+  const f=fixture(t); const fragment=document.createDocumentFragment();
+  for(let i=0;i<2;i++) {const n=document.createElement('tree-checkpoint');n.className='tree-item';fragment.appendChild(n);}
+  const observations=[];
+  connectionObserver=() => {
+    observations.push({styles:Array.from(f.list.children, n => {
+      const s=getComputedStyle(n);return [s.width,s.height,s.paddingLeft];
+    }),has:getComputedStyle(f.has).width,consumer:getComputedStyle(f.consumer).width});
+  };
+  t.add_cleanup(() => {connectionObserver=null;});
+  if(operation==='insertBefore') f.list.insertBefore(fragment,f.list.firstChild);
+  else if(operation==='innerHTML') f.list.innerHTML='<tree-checkpoint class="tree-item"></tree-checkpoint><tree-checkpoint class="tree-item"></tree-checkpoint>';
+  else if(operation==='insertAdjacentHTML') f.list.insertAdjacentHTML('afterbegin','<tree-checkpoint class="tree-item"></tree-checkpoint><tree-checkpoint class="tree-item"></tree-checkpoint>');
+  else if(operation==='replaceChild') f.list.replaceChild(fragment,f.list.firstChild);
+  else if(operation==='replaceWith') f.list.firstChild.replaceWith(fragment);
+  else f.list[operation](fragment);
+  connectionObserver=null;
+  assert_equals(observations.length,2,'both connection callbacks ran');
+  const markerPresent=operation==='appendChild' || operation==='insertBefore' || operation==='insertAdjacentHTML';
+  for(const observation of observations) {
+    assert_equals(observation.styles.length,f.list.children.length,'final list visible');
+    observation.styles.forEach((s,i) => assert_array_equals(s,[i===0?'41px':'11px',
+      i===observation.styles.length-1?'43px':'13px',i===1?'17px':'0px']));
+    assert_equals(observation.has,markerPresent?'59px':'23px',':has sibling visible in callback');
+    assert_equals(observation.consumer,markerPresent?'61px':'29px','inherited variable visible in callback');
+  }
+}, operation + ' fragment callbacks observe the complete child list and computed styles');
+
+test(t => {
+  const stage=document.createElement('div');
+  stage.innerHTML='<div></div><div class="tree-branch"><div class="tree-nested"></div></div>';
+  document.body.appendChild(stage);t.add_cleanup(() => stage.remove());
+  const target=stage.querySelector('.tree-nested');
+  assert_equals(getComputedStyle(target).width,'71px');
+  stage.firstChild.remove();
+  assert_equals(getComputedStyle(target).width,'17px');
+  stage.insertBefore(document.createElement('div'),stage.firstChild);
+  assert_equals(getComputedStyle(target).width,'71px');
+}, 'nested negated structural selectors route from changed siblings to descendants');
+
+test(t => {
+  const stage=document.createElement('fieldset');stage.disabled=true;
+  stage.innerHTML='<legend><input class="tree-disabled"></legend><legend><input class="tree-disabled"></legend>';
+  document.body.appendChild(stage);t.add_cleanup(() => stage.remove());
+  const first=stage.firstChild, second=stage.lastChild.firstChild;
+  assert_equals(getComputedStyle(second).width,'73px');
+  first.remove();
+  assert_equals(getComputedStyle(second).width,'19px');
+  stage.insertBefore(first,stage.firstChild);
+  assert_equals(getComputedStyle(second).width,'73px');
+}, 'changing the first legend invalidates inherited disabled state');
+
+for (const [pseudo, ofType, predicate] of [
+  ['first-child',false,(i,n)=>i===1], ['last-child',false,(i,n)=>i===n],
+  ['only-child',false,(i,n)=>n===1], ['nth-child(2n)',false,(i,n)=>i%2===0],
+  ['nth-last-child(2n)',false,(i,n)=>(n-i+1)%2===0],
+  ['first-of-type',true,(i,n)=>i===1], ['last-of-type',true,(i,n)=>i===n],
+  ['only-of-type',true,(i,n)=>n===1], ['nth-of-type(2n)',true,(i,n)=>i%2===0],
+  ['nth-last-of-type(2n)',true,(i,n)=>(n-i+1)%2===0]
+]) test(t => {
+  const style=document.createElement('style');
+  style.textContent='.position-probe {display:block;width:17px}.position-probe:'+pseudo+' {width:79px}';
+  document.head.appendChild(style);t.add_cleanup(()=>style.remove());
+  const stage=document.createElement('section');
+  stage.innerHTML='<i class="position-probe"></i>text<!--comment--><b class="position-probe"></b><i class="position-probe"></i><span class="position-probe"></span><i class="position-probe"></i><b class="position-probe"></b>';
+  document.body.appendChild(stage);t.add_cleanup(()=>stage.remove());
+  const verifyPositions=()=>{
+    const elements=Array.from(stage.children);
+    for(const node of elements) {
+      const siblings=ofType?elements.filter(s=>s.tagName===node.tagName):elements;
+      assert_equals(getComputedStyle(node).width,predicate(siblings.indexOf(node)+1,siblings.length)?'79px':'17px',pseudo+' '+node.tagName);
+    }
+  };
+  verifyPositions();
+  stage.appendChild(stage.firstChild);verifyPositions();
+  stage.children[1].remove();verifyPositions();
+  stage.insertBefore(stage.lastChild,stage.firstChild);verifyPositions();
+  stage.replaceChildren(stage.children[1]);verifyPositions();
+}, pseudo+' stays correct across matching passes, reorders, removals and non-element siblings');
+
+for (const [name, mutate] of [
+  ['removeChild',(f,n)=>f.list.removeChild(n)], ['remove',(f,n)=>n.remove()],
+  ['replaceChild',(f,n)=>f.list.replaceChild(document.createElement('div'),n)],
+  ['replaceWith',(f,n)=>n.replaceWith(document.createElement('div'))],
+  ['replaceChildren',(f,n)=>f.list.replaceChildren()],
+  ['innerHTML',(f,n)=>{f.list.innerHTML='';}], ['textContent',(f,n)=>{f.list.textContent='';}]
+]) test(t=>{
+  const f=fixture(t), node=document.createElement('tree-checkpoint');
+  node.className='tree-item tree-marker';f.list.replaceChild(node,f.list.firstChild);
+  const observations=[];
+  disconnectionObserver=n=>observations.push([n.isConnected,n.parentNode===null,
+    getComputedStyle(f.has).width,getComputedStyle(f.consumer).width,
+    f.list.children.length?getComputedStyle(f.list.firstElementChild).width:'empty']);
+  t.add_cleanup(()=>{disconnectionObserver=null;});
+  mutate(f,node);disconnectionObserver=null;
+  assert_equals(observations.length,1);
+  const first=f.list.firstElementChild;
+  assert_array_equals(observations[0],[false,true,'23px','29px',first?getComputedStyle(first).width:'empty']);
+}, name+' disconnected callback observes final tree and structural styles');
+
+test(t=>{
+  const from=fixture(t),to=fixture(t),node=document.createElement('tree-checkpoint');
+  node.className='tree-item tree-marker';from.list.replaceChild(node,from.list.firstChild);
+  to.list.replaceChildren();
+  const observations=[];
+  const snapshot=phase=>observations.push([phase,node.isConnected,node.parentNode===to.list,
+    getComputedStyle(from.has).width,getComputedStyle(to.has).width,
+    getComputedStyle(from.consumer).width,getComputedStyle(to.consumer).width]);
+  disconnectionObserver=()=>snapshot('disconnected');connectionObserver=()=>snapshot('connected');
+  t.add_cleanup(()=>{disconnectionObserver=null;connectionObserver=null;});
+  to.list.appendChild(node);disconnectionObserver=null;connectionObserver=null;
+  assert_equals(observations.length,2);
+  assert_array_equals(observations[0],['disconnected',true,true,'23px','59px','29px','61px']);
+  assert_array_equals(observations[1],['connected',true,true,'23px','59px','29px','61px']);
+}, 'reparent callbacks observe final destination and both sides of structural invalidation');
+
+test(t=>{
+  const f=fixture(t),node=document.createElement('tree-checkpoint');
+  node.className='tree-item tree-marker';f.list.replaceChild(node,f.list.firstChild);
+  const events=[];
+  disconnectionObserver=()=>{
+    events.push('disconnected:'+getComputedStyle(f.has).width);
+    f.list.appendChild(node);
+    events.push('returned:'+getComputedStyle(f.has).width);
+  };
+  connectionObserver=()=>events.push('connected:'+getComputedStyle(f.has).width);
+  t.add_cleanup(()=>{disconnectionObserver=null;connectionObserver=null;});
+  f.list.removeChild(node);disconnectionObserver=null;connectionObserver=null;
+  assert_array_equals(events,['disconnected:23px','connected:59px','returned:59px']);
+  assert_equals(node.parentNode,f.list,'callback insertion must not be overwritten by outer removal');
+  verify(f,true);
+}, 'reentrant insertion during disconnected callback keeps its final tree and style');
+
+test(t=>{
+  const stage=document.createElement('div');document.body.appendChild(stage);t.add_cleanup(()=>stage.remove());
+  const a=document.createElement('tree-checkpoint'),b=document.createElement('tree-checkpoint');
+  const fragment=document.createDocumentFragment();fragment.append(a,b);
+  const events=[];
+  connectionObserver=n=>{
+    if(n===a) {events.push('a:start');b.remove();events.push('a:end');}
+    else events.push('b:connected:'+b.isConnected);
+  };
+  disconnectionObserver=n=>events.push('b:disconnected:'+b.isConnected);
+  t.add_cleanup(()=>{disconnectionObserver=null;connectionObserver=null;});
+  stage.appendChild(fragment);connectionObserver=null;disconnectionObserver=null;
+  assert_array_equals(events,['a:start','b:connected:false','b:disconnected:false','a:end']);
+}, 'nested removal drains an element pending connected reaction before its disconnected reaction');
+
+test(t=>{
+  const stage=document.createElement('div');document.body.appendChild(stage);t.add_cleanup(()=>stage.remove());
+  const child=document.createElement('tree-checkpoint');stage.appendChild(child);
+  const events=[];disconnectionObserver=()=>events.push('removed');
+  t.add_cleanup(()=>{disconnectionObserver=null;});
+  let threw=false;try {child.appendChild(stage);}catch(e){threw=true;}
+  assert_true(threw,'invalid hierarchy throws');
+  child.remove();disconnectionObserver=null;
+  assert_array_equals(events,['removed'],'rejected operation must not retain the next reaction');
+}, 'failed tree mutation unwinds its reaction boundary and preserves the exception');
+
+test(t=>{
+  const stage=document.createElement('div');document.body.appendChild(stage);t.add_cleanup(()=>stage.remove());
+  const child=document.createElement('tree-checkpoint');stage.appendChild(child);
+  const events=[],sentinel={conversionFailure:true};let caught;
+  disconnectionObserver=()=>events.push('disconnected');
+  connectionObserver=()=>events.push('connected');
+  t.add_cleanup(()=>{disconnectionObserver=null;connectionObserver=null;});
+  try {stage.textContent={toString(){child.remove();throw sentinel;}};}catch(error){caught=error;}
+  assert_equals(caught,sentinel,'conversion must preserve the original thrown value');
+  assert_equals(child.parentNode,null,'conversion side effects remain observable');
+  stage.appendChild(child);connectionObserver=null;disconnectionObserver=null;
+  assert_array_equals(events,['disconnected','connected'],'nested and subsequent operations drain their own queues');
+}, 'throwing argument conversion preserves nested mutation reactions and exception identity');
+
+for (const anchor of ['#route\\2d parent:empty', '.route\\:class:empty', 'section:empty',
+  '[data\\2d state]:empty', '[DATA-STATE="on"]:empty', ':not(:has(.marker))',
+  ':is(.route-a,.route-b):empty', ':not(.missing):empty', 'section[data-state="on"]:empty']) {
+  test(t=>{
+    const stage=document.createElement('div');
+    stage.innerHTML='<section id="route-parent" class="route:class route-a" data-state="on"><i class="marker"></i></section><div id="route-out"></div>';
+    const style=document.createElement('style');
+    style.textContent='#route-out {width:11px} '+anchor+' + #route-out {width:41px}';
+    document.head.appendChild(style);document.body.appendChild(stage);
+    t.add_cleanup(()=>{stage.remove();style.remove();});
+    const parent=stage.firstElementChild,target=stage.lastElementChild,child=parent.firstChild;
+    assert_equals(getComputedStyle(target).width,'11px');
+    child.remove();assert_equals(getComputedStyle(target).width,'41px','required anchor feature reaches the changed rule');
+    parent.appendChild(child);assert_equals(getComputedStyle(target).width,'11px','old pseudo match is invalidated too');
+  }, 'structural route candidate keys preserve '+anchor);
+}
+
+test(t=>{
+  const stage=document.createElement('div'),style=document.createElement('style');
+  stage.innerHTML='<section class="route-old"><i></i></section><div id="route-refresh"></div>';
+  style.textContent='#route-refresh {width:11px} .route-old:empty + #route-refresh {width:41px}';
+  document.head.appendChild(style);document.body.appendChild(stage);
+  t.add_cleanup(()=>{stage.remove();style.remove();});
+  const parent=stage.firstElementChild,target=stage.lastElementChild,child=parent.firstChild;
+  const check=(value)=>{
+    if(child.parentNode)child.remove();
+    assert_equals(getComputedStyle(target).width,value,'empty checkpoint');
+    parent.appendChild(child);assert_equals(getComputedStyle(target).width,'11px','nonempty checkpoint');
+  };
+  check('41px');
+  style.sheet.deleteRule(1);check('11px');
+  parent.className='route-new';
+  style.sheet.insertRule('.route-new:empty + #route-refresh {width:53px}',1);check('53px');
+  style.textContent='#route-refresh {width:11px} [data-new]:empty + #route-refresh {width:67px}';
+  parent.setAttribute('data-new','yes');check('67px');
+  style.remove();parent.appendChild(child);child.remove();
+  document.head.appendChild(style);check('67px');
+}, 'structural route indexes follow rule deletion insertion replacement and stylesheet reattachment');
+</script>

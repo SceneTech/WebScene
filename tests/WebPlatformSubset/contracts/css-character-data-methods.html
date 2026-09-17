@@ -1,0 +1,147 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>CharacterData methods and structural CSS checkpoints</title>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<style>
+.method-box {width:11px}
+.method-box:empty {width:41px}
+.method-scope:has(> .method-box:empty) {--method-size:61px}
+.method-consumer {width:var(--method-size,29px)}
+</style>
+<body>
+<script>
+// https://dom.spec.whatwg.org/#interface-characterdata
+// https://webidl.spec.whatwg.org/#es-unsigned-long
+function create(kind,data='seed') {return kind==='text'?document.createTextNode(data):
+  kind==='comment'?document.createComment(data):document.createProcessingInstruction('probe',data);}
+function fixture(t,kind) {
+  const stage=document.createElement('section');
+  stage.innerHTML='<div class="method-scope"><div class="method-box"></div><div class="method-consumer"></div></div>'.repeat(2);
+  document.body.appendChild(stage);t.add_cleanup(()=>stage.remove());
+  const boxes=stage.querySelectorAll('.method-box'),consumers=stage.querySelectorAll('.method-consumer');
+  const n=create(kind);boxes[0].appendChild(n);
+  return {stage,boxes,consumers,n};
+}
+function check(f,first,second) {
+  [first,second].forEach((empty,i)=>{
+    assert_equals(getComputedStyle(f.boxes[i]).width,empty?'41px':'11px');
+    assert_equals(getComputedStyle(f.consumers[i]).width,empty?'61px':'29px');
+  });
+}
+for(const kind of ['text','comment','processing-instruction']) {
+  test(()=>{
+    const n=create(kind,'A\uD83D\uDE80B\uD800');
+    assert_equals(n.length,5);
+    assert_equals(n.substringData(1,1),'\uD83D');
+    assert_equals(n.substringData(2,2),'\uDE80B');
+    assert_equals(n.substringData(4,4294967295),'\uD800');
+    assert_equals(n.insertData(2,'X'),undefined);
+    assert_equals(n.data,'A\uD83DX\uDE80B\uD800');
+    n.deleteData(2,1);assert_equals(n.data,'A\uD83D\uDE80B\uD800');
+    n.replaceData(1,2,'\uDC00');assert_equals(n.data,'A\uDC00B\uD800');
+    n.appendData('\0');assert_equals(n.data,'A\uDC00B\uD800\0');assert_equals(n.length,5);
+  },kind+' methods address UTF-16 code units and retain lone surrogates and NUL');
+  test(()=>{
+    const n=create(kind);
+    assert_equals(n.substringData(4,99),'');
+    assert_throws_dom('IndexSizeError',()=>n.substringData(5,0));
+    assert_throws_dom('IndexSizeError',()=>n.insertData(5,''));
+    assert_throws_dom('IndexSizeError',()=>n.deleteData(5,0));
+    assert_throws_dom('IndexSizeError',()=>n.replaceData(5,0,''));
+    assert_equals(n.data,'seed');
+    assert_equals(n.substringData(4294967297,2.9),'ee');
+    assert_equals(n.substringData(NaN,Infinity),'');
+    assert_throws_dom('IndexSizeError',()=>n.deleteData(-1,0));
+    n.deleteData(2,-1);assert_equals(n.data,'se');
+    n.insertData(Infinity,null);assert_equals(n.data,'nullse');
+    n.appendData(undefined);assert_equals(n.data,'nullseundefined');
+    n.replaceData(0,4294967295,null);assert_equals(n.data,'null');
+  },kind+' methods use unsigned-long conversion, clamp counts and stringify null normally');
+  test(()=>{
+    const n=create(kind),methods={appendData:[1,[]],insertData:[2,[0]],deleteData:[2,[0]],replaceData:[3,[0,1]],substringData:[2,[0]]};
+    for(const [method,[arity,args]] of Object.entries(methods)) {
+      assert_equals(n[method].length,arity,method+' arity');
+      assert_throws_js(TypeError,()=>n[method](...args),method+' missing arguments');
+      assert_throws_js(TypeError,()=>n[method].call({},0,0,'x'),method+' receiver');
+      assert_throws_js(TypeError,()=>n[method].call(document.body,0,0,'x'),method+' Element receiver');
+      assert_throws_js(TypeError,()=>new n[method](0,0,'x'),method+' constructor');
+    }
+    assert_equals(n.data,'seed');
+    assert_throws_js(TypeError,()=>n.appendData(Symbol()));
+    assert_throws_js(TypeError,()=>n.insertData(0,Symbol()));
+    assert_throws_js(TypeError,()=>n.replaceData(0,1,Symbol()));
+    assert_throws_js(TypeError,()=>n.deleteData(0,1n));
+    assert_throws_js(TypeError,()=>n.substringData(Symbol(),0));
+    assert_equals(n.data,'seed');
+  },kind+' methods validate arity and receivers and propagate conversion errors');
+  test(()=>{
+    const n=create(kind,''),parts=['A','\uD83D\uDE80','\uD800','\uDC00','\0','é',''];
+    let expected='',seed=17;
+    const next=()=>seed=(Math.imul(seed,1664525)+1013904223)>>>0;
+    for(let i=0;i<256;i++) {
+      const offset=next()%(expected.length+1),count=next()%9,value=parts[next()%parts.length];
+      switch(i%4) {
+        case 0:n.appendData(value);expected+=value;break;
+        case 1:n.insertData(offset,value);expected=expected.slice(0,offset)+value+expected.slice(offset);break;
+        case 2:n.deleteData(offset,count);expected=expected.slice(0,offset)+expected.slice(offset+count);break;
+        case 3:n.replaceData(offset,count,value);expected=expected.slice(0,offset)+value+expected.slice(offset+count);break;
+      }
+      assert_equals(n.data,expected,'data after edit '+i);assert_equals(n.length,expected.length,'length after edit '+i);
+      const start=next()%(expected.length+1),length=next()%8;
+      assert_equals(n.substringData(start,length),expected.slice(start,start+length),'substring after edit '+i);
+    }
+  },kind+' repeated mixed UTF-16 edits agree with a string-slice oracle');
+  test(t=>{
+    const f=fixture(t,kind),n=f.n;check(f,kind!=='text',true);
+    n.deleteData(0,n.length);assert_equals(n.data,'');check(f,true,true);
+    n.appendData(' ');check(f,kind!=='text',true);
+    n.replaceData(0,1,'replacement');check(f,kind!=='text',true);
+    n.deleteData(0,999);check(f,true,true);
+    n.insertData(0,'restored');check(f,kind!=='text',true);
+    assert_equals(f.boxes[0].firstChild,n);assert_equals(f.boxes[0].childNodes.length,1);
+  },kind+' methods preserve identity and update empty and relational selectors');
+  test(t=>{
+    const f=fixture(t,kind),n=f.n,order=[];
+    n.replaceData({valueOf(){order.push('offset');f.boxes[1].appendChild(n);n.data='abc';return 1;}},
+      {valueOf(){order.push('count');n.data='abcd';return 2;}},
+      {toString(){order.push('data');n.data='wxyz';return 'Q';}});
+    assert_array_equals(order,['offset','count','data']);assert_equals(n.data,'wQz');
+    assert_equals(n.parentNode,f.boxes[1]);check(f,true,kind!=='text');
+    n.appendData({toString(){n.data='new';return '!';}});assert_equals(n.data,'new!');
+    assert_throws_dom('IndexSizeError',()=>n.insertData(3,{toString(){n.data='';return 'x';}}));
+    assert_equals(n.data,'');check(f,true,true);
+  },kind+' method conversions precede reentrant data and parent checkpoints');
+  test(t=>{
+    const f=fixture(t,kind),n=f.n,sentinel={failed:true},order=[];let caught;
+    try {n.replaceData({valueOf(){order.push('offset');return 99;}},
+      {valueOf(){order.push('count');return 1;}},
+      {toString(){order.push('data');n.data='';f.boxes[1].appendChild(n);throw sentinel;}});} catch(e){caught=e;}
+    assert_equals(caught,sentinel);assert_array_equals(order,['offset','count','data']);
+    assert_equals(n.data,'');assert_equals(n.parentNode,f.boxes[1]);check(f,true,true);
+    assert_throws_dom('IndexSizeError',()=>n.insertData(3,{toString(){n.data='a';return 'x';}}));
+    assert_equals(n.data,'a');check(f,true,kind!=='text');
+    assert_equals(n.substringData({valueOf(){n.data='abcdef';return 2;}},
+      {valueOf(){n.data='uvwxyz';return 3;}}),'wxy');
+    assert_equals(n.data,'uvwxyz');
+  },kind+' failing conversions preserve effects and range checks use post-conversion data');
+}
+test(t=>{
+  const f=fixture(t,'text'),style=document.createElement('style'),n=document.createTextNode('.method-box {height:17px}');
+  style.appendChild(n);f.stage.appendChild(style);
+  assert_equals(getComputedStyle(f.boxes[0]).height,'17px');
+  n.replaceData(n.data.indexOf('17'),2,'47');assert_equals(getComputedStyle(f.boxes[0]).height,'47px');
+  n.appendData('.method-box {height:23px}');assert_equals(getComputedStyle(f.boxes[0]).height,'23px');
+  n.deleteData(n.data.indexOf('.method-box',1),999);assert_equals(getComputedStyle(f.boxes[0]).height,'47px');
+  n.insertData(0,'.method-box {height:3px}');assert_equals(getComputedStyle(f.boxes[0]).height,'47px');
+},'Nonempty stylesheet edits still activate CSS and preserve source precedence');
+test(t=>{
+  const f=fixture(t,'text'),textarea=document.createElement('textarea'),n=document.createTextNode('one');
+  textarea.appendChild(n);f.stage.appendChild(textarea);
+  n.appendData(' two');assert_equals(textarea.value,'one two');
+  n.replaceData(0,3,'three');assert_equals(textarea.value,'three two');
+  textarea.value='user';n.deleteData(0,6);
+  assert_equals(textarea.value,'user');assert_equals(textarea.defaultValue,'two');
+  n.insertData(0,'new ');assert_equals(textarea.value,'user');assert_equals(textarea.defaultValue,'new two');
+},'Text-editing methods preserve textarea default and dirty-value checkpoints');
+</script>

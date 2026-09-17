@@ -27,6 +27,11 @@ std::vector<std::string> exercise(const webscene_native::css::prepared_styleshee
   compiled_ui::build(d);
   auto report=std::make_shared<shared_css_report>();
   d.set_stylesheet_resolver(make_shared_stylesheet_resolver({*sheet},report));
+  auto generated_metrics=d.element(d.body(),"div");
+  d.attribute(generated_metrics,"class","generated-metrics");
+  d.render(300,200);
+  require(d.bounds(generated_metrics).height==40);
+  d.remove(generated_metrics);
   const auto target=d.find("target");
   render(300,200);
   require(d.bounds(target).width==80 && d.bounds(target).height==20);
@@ -139,6 +144,7 @@ void compare_sheet(const webscene_native::css::prepared_stylesheet& a,
   for(size_t i=0;i<a.rules.size();++i) {
     const auto& x=*a.rules[i];const auto& y=*b.rules[i];
     require(x.selector==y.selector && x.specificity==y.specificity && x.media_queries==y.media_queries);
+    require(x.pseudo_kind==y.pseudo_kind && x.host_selector==y.host_selector);
     compare_selector(x.compiled_selector,y.compiled_selector);
     compare_selector(x.compiled_pseudo_origin,y.compiled_pseudo_origin);
     require(x.declarations.size()==y.declarations.size());

@@ -222,6 +222,7 @@
     // first custom element. Once activated, the flag remains enabled for this
     // runtime so reactions in any outer or frame realm cannot be skipped.
     bool custom_elements_active{false};
+    custom_element_reaction_scope* active_custom_element_reaction_scope{nullptr};
     std::vector<std::string> loaded_resource_names;
     uint32_t next_timer_id{1};
     uint32_t active_timer_id{0};
@@ -341,7 +342,7 @@
     // rules without rescanning the complete stylesheet.
     css_index_string_map<std::vector<size_t>> css_invalidation_rules_by_attribute;
     css_index_string_map<std::vector<size_t>> css_invalidation_rules_by_class;
-    bool css_child_list_sensitive{false};
+    std::vector<css::css_child_list_bucket> css_child_list_index;
     std::vector<size_t> css_focus_rules;
     std::vector<size_t> unindexed_css_rules;
     css_index_string_set css_attribute_dependencies;
@@ -547,6 +548,8 @@
     uint64_t selector_invalidation_candidate_visits{0U};
     uint64_t selector_invalidation_fallback_visits{0U};
     mutable uint64_t css_compound_match_checks{0U};
+    mutable uint64_t css_positional_sibling_visits{0U};
+    uint64_t dom_variadic_detach_child_visits{0U};
     mutable uint64_t css_rule_match_checks{0U};
     uint64_t css_cascade_applications{0U};
     uint64_t css_cascade_candidate_checks{0U};

@@ -1,3 +1,61 @@
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+uint64_t runtime_counter_diagnostic(webscene_engine*, std::string_view);
+void execute_and_wait_for_wrapper_retention_scene(webscene_engine*, std::string_view, std::string_view);
+#endif
+
+void test_media_query_matching_scales_linearly()
+{
+    for (const auto count : {8, 128}) {
+        auto* engine = webscene_engine_create(0);
+        require(engine != nullptr, "media matching scaling engine creation failed");
+        resize(engine, 800, 600, 1);
+        wait_for_consumed_inputs(engine, 1, "media matching initial resize failed");
+        auto setup = std::string{R"JS((count => {
+          document.body.innerHTML='<section class="media-list">'+
+            Array.from({length:count},(_,i)=>'<b class="media-item">'+i+'</b>').join('')+'</section>';
+          const style=document.createElement('style');
+          style.textContent=`.media-item {display:block;width:11px;height:13px}
+            .media-item:nth-child(odd) {height:17px}
+            .media-item:first-child ~ .media-item {width:19px}
+            @media(max-width:600px) {.media-list {--size:23px} .media-item {width:var(--size)}}`;
+          document.head.appendChild(style);
+          globalThis.mediaSnapshot=()=>Array.from(document.querySelectorAll('.media-item')).every((n,i)=>
+            getComputedStyle(n).width === (matchMedia('(max-width:600px)').matches ? (i?'19px':'23px') : (i?'19px':'11px')) &&
+            getComputedStyle(n).height === (i%2?'13px':'17px'));
+          return mediaSnapshot();
+        })(COUNT))JS"};
+        setup.replace(setup.find("COUNT"), 5, std::to_string(count));
+        const auto initial=evaluate(engine, setup, "media-match-setup.js");
+        require(initial == "true", "media matching initial styles differ: " + initial + " " +
+            (initial == "true" ? std::string{} : evaluate(engine,
+                "JSON.stringify({width:innerWidth,items:Array.from(document.querySelectorAll('.media-item')).map((n,i)=>[i,getComputedStyle(n).width,getComputedStyle(n).height]).filter(x=>x[1]!== (x[0]?'19px':'11px') || x[2]!== (x[0]%2?'13px':'17px')).slice(0,5)})",
+                "media-match-initial-failure.js")));
+        for (int transition=0; transition<4; ++transition) {
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+            std::this_thread::sleep_for(std::chrono::milliseconds(260));
+            execute_and_wait_for_wrapper_retention_scene(engine,
+                "document.body.style.backgroundColor='rgb(1,2,3)'", "media-match-before.js");
+            const auto before=runtime_counter_diagnostic(engine,"css-positional-sibling-visits");
+#endif
+            resize(engine, transition%2 ? 800 : 480, 600, transition+2);
+            wait_for_consumed_inputs(engine, transition+2, "media matching transition failed");
+            require(evaluate(engine, "mediaSnapshot()", "media-match-snapshot.js") == "true",
+                "media matching activation/deactivation styles differ");
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+            std::this_thread::sleep_for(std::chrono::milliseconds(260));
+            execute_and_wait_for_wrapper_retention_scene(engine,
+                "document.body.style.backgroundColor='rgb(3,2,1)'", "media-match-after.js");
+            const auto visits=runtime_counter_diagnostic(engine,"css-positional-sibling-visits")-before;
+            std::cout << "media-matching nodes=" << count << " transition=" << transition
+                << " positional-visits=" << visits << '\n';
+            require(visits>0 && visits<=static_cast<uint64_t>(count*3),
+                "media recascade repeated positional sibling scans");
+#endif
+        }
+        webscene_engine_destroy(engine);
+    }
+}
+
 void test_media_query_callback_can_create_more_queries()
 {
     auto* engine = webscene_engine_create(0);
@@ -21,6 +79,74 @@ void test_media_query_callback_can_create_more_queries()
     require(evaluate(engine, "mediaChanges", "media-query-reentrancy-result.js") == R"(["first","second"])",
         "creating queries during change dispatch invalidated existing query delivery");
     webscene_engine_destroy(engine);
+}
+
+void test_media_query_candidate_scaling()
+{
+    bool bounded=true;
+    for(const auto affected:{8,128}) {
+        std::vector<std::array<uint64_t,4>> observations;
+        for(const auto nodes:{32,1024}) for(const auto rules:{32,1024}) {
+            auto* engine=webscene_engine_create(0);
+            require(engine!=nullptr,"media candidate engine creation failed");
+            resize(engine,800,600,1);
+            wait_for_consumed_inputs(engine,1,"media candidate initial viewport failed");
+            auto source=std::string{R"JS((([affected,nodes,rules])=>{
+              const style=document.createElement('style');
+              style.textContent='.media-affected {display:block;width:11px;height:13px}'+
+                '@media(max-width:600px){.media-affected {width:41px}'+
+                Array.from({length:rules},(_,i)=>'.media-absent-'+i+' {width:71px}').join('')+'}';
+              document.body.innerHTML=Array.from({length:affected},()=>'<b class="media-affected"></b>').join('')+
+                Array.from({length:nodes},(_,i)=>'<i class="media-unrelated-'+i+'"></i>').join('');
+              document.head.appendChild(style);
+              const targets=Array.from(document.querySelectorAll('.media-affected'));
+              globalThis.mediaCandidateSnapshot=()=>targets.every(node=>
+                getComputedStyle(node).width===(innerWidth<=600?'41px':'11px'));
+              return mediaCandidateSnapshot();
+            })(COUNTS))JS"};
+            source.replace(source.find("COUNTS"),6,"["+std::to_string(affected)+","+
+                std::to_string(nodes)+","+std::to_string(rules)+"]");
+            const auto setup_result=evaluate(engine,source,"media-candidate-setup.js");
+            require(setup_result=="true","media candidate setup styles failed: "+setup_result+" "+
+                (setup_result=="true"?std::string{}:evaluate(engine,
+                    "JSON.stringify({width:innerWidth,items:Array.from(document.querySelectorAll('.media-affected')).map(n=>getComputedStyle(n).width)})",
+                    "media-candidate-setup-diagnostic.js")));
+            for(int transition=0;transition<2;++transition) {
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+                constexpr std::array counters{"css-rule-match-checks","css-compound-match-checks",
+                    "css-cascade-applications","css-cascade-candidate-checks"};
+                std::this_thread::sleep_for(std::chrono::milliseconds(260));
+                execute_and_wait_for_wrapper_retention_scene(engine,
+                    "document.body.style.backgroundColor='rgb(1,2,3)'","media-candidate-before.js");
+                std::array<uint64_t,4> before{};
+                for(size_t i=0;i<counters.size();++i) before[i]=runtime_counter_diagnostic(engine,counters[i]);
+#endif
+                resize(engine,transition?800:480,600,transition+2);
+                wait_for_consumed_inputs(engine,transition+2,"media candidate transition failed");
+                require(evaluate(engine,"mediaCandidateSnapshot()","media-candidate-after.js")=="true",
+                    "media candidate activation/deactivation styles failed");
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+                std::this_thread::sleep_for(std::chrono::milliseconds(260));
+                execute_and_wait_for_wrapper_retention_scene(engine,
+                    "document.body.style.backgroundColor='rgb(3,2,1)'","media-candidate-publish.js");
+                std::array<uint64_t,4> delta{};
+                std::cout<<"media-candidate-scaling affected="<<affected<<" unrelated-nodes="<<nodes
+                    <<" unrelated-media-rules="<<rules<<" transition="<<transition;
+                for(size_t i=0;i<counters.size();++i) {
+                    delta[i]=runtime_counter_diagnostic(engine,counters[i])-before[i];
+                    std::cout<<' '<<counters[i]<<'='<<delta[i];
+                    bounded &= delta[i]<=static_cast<uint64_t>(4*affected+4);
+                }
+                std::cout<<'\n';observations.push_back(delta);
+#endif
+            }
+            webscene_engine_destroy(engine);
+        }
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+        for(size_t i=2;i<observations.size();++i) bounded &= observations[i]==observations[i%2];
+#endif
+    }
+    require(bounded,"unrelated media-rule/node growth amplified breakpoint selector work");
 }
 
 void test_media_query_resize_recascades_only_affected_subtrees()

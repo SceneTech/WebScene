@@ -26,7 +26,10 @@ class stylesheet_owner {
                 auto& rule=state_.rules.back();
                 rule.media_matches=rule_media_matches(rule);
                 if(rule.selector().find("::selection")==std::string::npos)
-                    index_selector(index,rule.selector(),state_.rules_by_id,state_.rules_by_class,
+                    index_selector(index,rule.selector(),
+                        payload->compiled_pseudo_origin.compounds.empty()
+                            ? rule.compiled_selector() : payload->compiled_pseudo_origin,
+                        state_.rules_by_id,state_.rules_by_class,
                         state_.rules_by_tag,state_.rules_by_attribute,state_.focus_rules,
                         state_.unindexed_rules,state_.descendant_attribute_dependencies);
             }
@@ -72,8 +75,7 @@ public:
                 if(found!=state_.rules_by_class.end())
                     output.insert(output.end(),found->second.begin(),found->second.end());
             });
-        sort_candidates(state_.rules,result);
-        result.erase(std::unique(result.begin(),result.end()),result.end());
+        deduplicate_candidates(result);
         return result;
     }
 };

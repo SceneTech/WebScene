@@ -1,0 +1,35 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>MessagePort scheduler receiver lifetime</title>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<script>
+// The native companion forces V8 GC between setup and delivery. This portable
+// contract checks the same observable behavior without requiring a GC API.
+for (const mode of ['onmessage', 'listener', 'transferred sender']) {
+  promise_test(async t => {
+    let resolve;
+    const delivered = new Promise(done => { resolve = done; });
+    const sender = (() => {
+      const channel = new MessageChannel();
+      const receive = t.step_func(event => {
+        assert_equals(event.data, 'render');
+        assert_equals(event.target, event.currentTarget);
+        event.target.close();
+        resolve();
+      });
+      if (mode === 'listener') {
+        channel.port1.addEventListener('message', receive);
+        channel.port1.start();
+      } else channel.port1.onmessage = receive;
+      return mode === 'transferred sender'
+        ? structuredClone(channel.port2, {transfer:[channel.port2]})
+        : channel.port2;
+    })();
+    t.add_cleanup(() => sender.close());
+    await new Promise(done => t.step_timeout(done, 0));
+    sender.postMessage('render');
+    await delivered;
+  }, mode + ': keeping only the sending port preserves scheduled delivery');
+}
+</script>

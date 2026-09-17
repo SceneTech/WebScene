@@ -110,6 +110,18 @@ using css_class_index_map = std::unordered_map<
     };
     using css_invalidation_route = std::vector<css_invalidation_step>;
 
+    // Structural mutations share routes, then select only compounds whose
+    // mandatory stable feature occurs on a reached element. Pseudos are never
+    // used as keys: the changed tree may have made them stop matching.
+    struct css_child_list_bucket final {
+        css_invalidation_route route;
+        css_index_string_map<std::vector<size_t>> by_id;
+        css_class_index_map<std::vector<size_t>> by_class;
+        css_index_string_map<std::vector<size_t>> by_tag;
+        css_index_string_map<std::vector<size_t>> by_attribute;
+        std::vector<size_t> universal;
+    };
+
     struct css_feature_dependency final {
         uint8_t scope{0};
         std::vector<css_invalidation_route> routes;
@@ -127,6 +139,7 @@ using css_class_index_map = std::unordered_map<
 
     struct css_compound_dependencies final {
         bool child_list_sensitive{false};
+        css_feature_dependency child_list;
         std::unordered_map<std::string, css_feature_dependency> attributes;
         std::unordered_map<std::string, css_feature_dependency> classes;
     };
@@ -141,6 +154,10 @@ using css_class_index_map = std::unordered_map<
         std::vector<css_declaration> declarations;
         std::vector<std::string> media_queries;
         uint32_t specificity{0};
+        // Selector interpretation is immutable; do not resplit it for each
+        // element considered by the cascade.
+        uint8_t pseudo_kind{0};
+        bool host_selector{false};
     };
 
     struct css_rule final {
@@ -205,7 +222,7 @@ using css_class_index_map = std::unordered_map<
         css_index_string_map<std::vector<size_t>> rules_by_variable_reference;
         css_index_string_map<std::vector<size_t>> invalidation_rules_by_attribute;
         css_index_string_map<std::vector<size_t>> invalidation_rules_by_class;
-        bool child_list_sensitive{false};
+        std::vector<css_child_list_bucket> child_list_index;
         std::vector<size_t> focus_rules;
         std::vector<size_t> unindexed_rules;
         css_index_string_set attribute_dependencies;

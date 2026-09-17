@@ -9,6 +9,13 @@
   },
   "required": [
     {
+      "path": "contracts/messageport-scheduler-lifetime.html",
+      "type": "testharness",
+      "capabilities": ["messageport-local-entanglement-lifetime"],
+      "evidence": ["spotify-react-scheduler-startup"],
+      "reason": "React retains only a MessageChannel sender. Local entanglement must retain its receiver, including after a same-isolate transfer; forced collection and bounded reclamation are covered by native companion tests."
+    },
+    {
       "path": "contracts/webcrypto-hmac-sign.html",
       "type": "contract",
       "capabilities": ["subtlecrypto-hmac-sign", "crypto-cipher-bounds"],
@@ -177,6 +184,13 @@
       "capabilities": ["id-selector-invalidation", "dataset-selector-invalidation", "batched-style-checkpoints"],
       "evidence": ["general-css-invalidation-workstream"],
       "reason": "ID and dataset property/attribute mutation APIs must update sibling and relational subjects at synchronous checkpoints, including batched conjunctions and reentrant custom-element callbacks."
+    },
+    {
+      "path": "contracts/css-child-list-invalidation.html",
+      "type": "testharness",
+      "capabilities": ["structural-selector-invalidation", "relational-tree-invalidation", "dom-mutation-style-checkpoints"],
+      "evidence": ["general-css-invalidation-workstream"],
+      "reason": "Child-list APIs, fragments, reparenting and character-data changes must update structural selectors and relational ancestors without stale inherited custom properties."
     },
     {
       "path": "contracts/responsive-toolbar-breakpoint-navigation.html",
@@ -886,6 +900,34 @@
       "reason": "Required after direct Chrome authority and the native runner pass all 3/3 identity and bounded structural-equality assertions and the originating unchanged Bootstrap nested target cases pass. Evidence: artifacts/wpt-dom-node-equality-chrome-v1-20260723, artifacts/wpt-dom-node-equality-adapters-v1-20260723, and artifacts/ecosystem-consumers-matrix-v21-bootstrap-collapse-complete-20260723."
     },
     {
+      "path": "contracts/css-character-data-methods.html",
+      "type": "testharness",
+      "capabilities": ["character-data-methods", "character-data-style-checkpoints", "dom-string-conversion-order", "structural-selector-invalidation"],
+      "evidence": ["css-structural-mutation-audit"],
+      "reason": "Browser-referenced UTF-16 editing methods, conversion/reentrancy, empty/relational selector, stylesheet text and textarea checkpoints."
+    },
+    {
+      "path": "contracts/css-character-data-checkpoints.html",
+      "type": "testharness",
+      "capabilities": ["character-data-style-checkpoints", "dom-string-conversion-order", "structural-selector-invalidation"],
+      "evidence": ["css-structural-mutation-audit"],
+      "reason": "Browser-referenced character-data setter, conversion/error, empty/relational selector, stylesheet text and textarea checkpoints."
+    },
+    {
+      "path": "contracts/css-bulk-sibling-detachment.html",
+      "type": "testharness",
+      "capabilities": ["variadic-node-insertion", "structural-selector-invalidation", "bulk-sibling-detachment", "custom-element-reaction-checkpoints"],
+      "evidence": ["css-structural-mutation-audit"],
+      "reason": "Browser-referenced bulk sibling subset/reorder, nested and mixed-source, textarea, focus and reaction checkpoints; native vector scan scaling is independently gated."
+    },
+    {
+      "path": "contracts/css-variadic-child-list-checkpoints.html",
+      "type": "testharness",
+      "capabilities": ["variadic-node-insertion", "structural-selector-invalidation", "custom-element-reaction-checkpoints", "dom-string-conversion-order"],
+      "evidence": ["css-structural-mutation-audit"],
+      "reason": "Product-neutral DOM Standard and browser-referenced regression for append/prepend/before/after with fragments, duplicate/self arguments, viable siblings, conversion failures and final source/destination style checkpoints."
+    },
+    {
       "path": "contracts/dom-parentnode-append-variadic.html",
       "type": "contract",
       "capabilities": ["parentnode-append", "variadic-node-insertion", "append-string-to-text", "document-fragment-flattening", "node-move-order"],
@@ -1187,9 +1229,23 @@
       "capabilities": ["selector-node-identity", "selector-result-uniqueness", "element-collection-node-identity", "parent-element-node-identity"],
       "evidence": ["hosted-component-duplicate-raw-locator-reduction", "direct-chrome-neutral-contract", "managed-and-native-neutral-contract"],
       "reason": "Required after unchanged bytes pass all 4/4 assertions in Chrome and the native runner. The product-neutral contract requires selector APIs, element collections, and parentElement to return the same JavaScript object for one DOM node, with selector results unique and tree ordered across a deep id-less tree. It rules out a general core node-identity defect as the source of duplicate raw interaction paths, allowing the private inventory to reject transient unlocatable targets without weakening the DOM contract. Evidence: artifacts/web-platform-selector-identity-chrome-v2-20260726/results.json and artifacts/web-platform-selector-identity-webscene-v2-20260726/{managed,native}/results.json."
+    },
+    {
+      "path": "contracts/css-class-index-cascade-mutation.html",
+      "type": "contract",
+      "capabilities": ["css-class-index-lookup", "multi-class-compound-cascade", "class-mutation-invalidation", "compiled-subject-index", "escaped-selector-identifiers"],
+      "evidence": ["direct-chrome-neutral-contract", "native-neutral-contract", "bounded-class-lookup-allocation-benchmark", "native-subject-candidate-scaling"],
+      "reason": "Required after all four checks pass in Chrome and native. Covers long class-token lookup, className/classList mutation, mandatory subject features after functional pseudos, escaped class/ID/attribute/tag identifiers, selector alternatives, stylesheet replacement and removal. Native gates separately bound class lookup allocation and prove candidate work does not grow with unrelated pseudo-prefixed rules. This does not claim general functional-selector indexing or complete selector grammar support."
     }
   ],
   "candidate": [
+    {
+      "path": "contracts/css-textarea-dynamic-state.html",
+      "type": "testharness",
+      "capabilities": ["textarea-validity-selector", "placeholder-shown-selector", "dynamic-state-invalidation"],
+      "evidence": ["css-structural-mutation-audit", "css-dynamic-state-workstream-242"],
+      "reason": "Known pre-existing dynamic-state gaps retained for #237/#242: textarea :invalid uses the value attribute rather than live value; :placeholder-shown is unsupported. Must pass before this part of the broader CSS plan is complete."
+    },
     {
       "path": "contracts/css-grid-auto-fill-minmax-custom-property.html",
       "type": "testharness",
@@ -2266,21 +2322,6 @@
       ],
       "reason": "Candidate passes through native document navigation, preserving parser raw-text/comment/template semantics. Prepared-markup regex loading cannot qualify this parsing regression.",
       "nativeNavigation": true
-    },
-    {
-      "path": "contracts/css-class-index-cascade-mutation.html",
-      "type": "contract",
-      "capabilities": [
-        "css-class-index-lookup",
-        "multi-class-compound-cascade",
-        "class-mutation-invalidation"
-      ],
-      "evidence": [
-        "direct-chrome-neutral-contract",
-        "native-neutral-contract",
-        "bounded-class-lookup-allocation-benchmark"
-      ],
-      "reason": "Product-neutral regression for non-owning class-index lookup. Multiple class names longer than the common small-string capacity must resolve independent and compound stylesheet rules, then invalidate and recascade after className and classList mutations. The paired native benchmark requires identical cascade work and checksums while bounding temporary owned class lookup keys and bytes at zero."
     },
     {
       "path": "contracts/iframe-sandbox-dom-token-list.html",

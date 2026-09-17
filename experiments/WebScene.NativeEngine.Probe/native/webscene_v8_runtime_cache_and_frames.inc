@@ -2492,7 +2492,7 @@
         css_rules_by_variable_reference.clear();
         css_invalidation_rules_by_attribute.clear();
         css_invalidation_rules_by_class.clear();
-        css_child_list_sensitive = false;
+        css_child_list_index.clear();
         css_focus_rules.clear();
         unindexed_css_rules.clear();
         css_attribute_dependencies.clear();

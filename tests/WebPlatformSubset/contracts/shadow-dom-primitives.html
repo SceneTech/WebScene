@@ -101,6 +101,27 @@
       "shadow layout did not use scoped width");
   });
 
+  test("replacing shadow rules preserves host and pseudo-element classification", () => {
+    const style = document.createElement("style");
+    root.appendChild(style);
+    const probe = document.createElement("div");
+    probe.className = "classification-probe";
+    root.appendChild(probe);
+    try {
+      style.textContent = ":host { width: 251px; } .classification-probe { display: flex; width: 200px; } .classification-probe::before { content: ''; width: 10px; height: 61px; }";
+      equal(getComputedStyle(host).width, "251px", "replacement host width");
+      equal(probe.getBoundingClientRect().height, 61, "scoped before box");
+      style.textContent = ":host { width: 263px; } .classification-probe { display: flex; width: 131px; } .classification-probe:after { content: ''; width: 10px; height: 23px; }";
+      equal(getComputedStyle(host).width, "263px", "updated host width");
+      equal(probe.getBoundingClientRect().width, 131, "updated ordinary width");
+      equal(probe.getBoundingClientRect().height, 23, "after box replaces taller before box");
+    } finally {
+      style.remove();
+      probe.remove();
+    }
+    equal(getComputedStyle(host).width, "240px", "original host rule restored");
+  });
+
   test("composed events share slot/root/host projection and retarget outside", () => {
     const internal = root.querySelector("#internal");
     const observed = [];

@@ -2,6 +2,7 @@
 #include "webscene_css_selectors.h"
 #include "webscene_native_form_state.h"
 #include "webscene_css_declarations.h"
+#include "webscene_css_ancestor_filter.h"
 #include <charconv>
 #include <sstream>
 
@@ -253,7 +254,14 @@ inline const dom_node* previous_element_sibling(const dom_node& node)
 // Never retain this across author callbacks or selector-state transitions.
 // A relation entry answers whether this node OR an earlier sibling/ancestor
 // matches a selector prefix. Sharing that answer avoids quadratic rescans.
+struct positional_sibling_summary final {
+    size_t count{0U};
+    size_t position{0U};
+    bool node_found{false};
+};
+
 struct selector_match_context final {
+    selector_ancestor_filter ancestor_filter;
     struct key final {
         const dom_node* node;
         const compiled_css_selector* selector;
@@ -276,6 +284,34 @@ struct selector_match_context final {
     std::unordered_map<key, bool, hash> relations;
     std::unordered_map<const dom_node*, const dom_node*> previous_siblings;
     std::unordered_set<const dom_node*> indexed_parents;
+    struct positional_index final {
+        size_t count{0U};
+        std::unordered_map<std::string, size_t> type_counts;
+        // Element position and same-type position are one-based.
+        std::unordered_map<const dom_node*, std::pair<size_t, size_t>> positions;
+    };
+    std::unordered_map<const dom_node*, positional_index> positional_indexes;
+
+    template<typename RecordVisit>
+    positional_sibling_summary position(const dom_node& node, bool of_type,
+        const RecordVisit& record_visit)
+    {
+        if (node.parent == nullptr) return {};
+        auto [entry, inserted] = positional_indexes.try_emplace(node.parent);
+        auto& index = entry->second;
+        if (inserted) {
+            for (const auto* child : node.parent->children) {
+                record_visit();
+                if (child == nullptr || child->kind != dom_node_kind::element) continue;
+                const auto type_position = ++index.type_counts[child->tag];
+                index.positions.emplace(child, std::pair{++index.count, type_position});
+            }
+        }
+        const auto found = index.positions.find(&node);
+        if (found == index.positions.end()) return {};
+        return {of_type ? index.type_counts.at(node.tag) : index.count,
+            of_type ? found->second.second : found->second.first, true};
+    }
     // Recursive selector-list cache eviction must not invalidate pointer keys.
     std::unordered_map<const compiled_css_selector_list*,
         std::shared_ptr<const compiled_css_selector_list>> retained_lists;
@@ -303,6 +339,8 @@ inline bool selector_matches(const native_document& document,const dom_node& nod
         if (selector.compounds.empty()
             || selector.compiled_compounds.size() != selector.compounds.size()
             || component >= selector.compiled_compounds.size()
+            || (context != nullptr && component != 0U
+                && !context->ancestor_filter.may_match(document,node,selector,component))
             || !match_compound(
                 node,
                 selector.compiled_compounds[component],

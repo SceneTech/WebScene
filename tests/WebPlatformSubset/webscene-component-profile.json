@@ -2451,6 +2451,14 @@
       "evidence": ["streams-transform-stream-derived", "service-workers-client-message-derived", "chromium-direct-neutral-contract", "vscode-oss-chunk-response-shape"],
       "reason": "Candidate host-message streaming slice for WebScene #266/#329. It proves a controlled FetchEvent can ask its WindowClient for bytes and consume metadata plus transferred ordered chunks through the generic TransformStream fallback. The native companion gate adds bounded writable backpressure, readable-cancel/writer-abort propagation, non-byte response rejection, duplicate/late/unknown message retirement, timeout/unregister closure, 100 warm 64 KiB cycles at p95 <= 100 ms, 32 concurrent 1 MiB streams, <= 8 MiB retained V8 heap, and bounded peak RSS. Local-resource admission, localhost mapping, CSS url() interception, and unchanged Markdown remain later slices.",
       "nativeNavigation": true
+    },
+    {
+      "path": "contracts/controlled-css-image-service-worker.html",
+      "type": "contract",
+      "capabilities": ["service-worker-css-image", "service-worker-vscode-markdown-resource-broker"],
+      "evidence": ["wpt-service-workers-fetch-event", "chromium-153-direct-product-fixture", "vscode-oss-645f29c-unchanged-service-worker"],
+      "reason": "Cumulative connected-resource acceptance for WebScene #266/#308. The unchanged VS Code 645f29c webview Service Worker performs CacheStorage empty-match, client load-resource messaging, and bounded chunk streaming for prelude script, extension stylesheet, element SVG, and stylesheet CSS url() SVG while the fixture renders content from the copied current vscode-demo README. The native companion gate covers controller-first CSS image routing, unhandled host fallback, handled failure closure, stale-style response rejection, teardown, 100 warm cycles at p95 <= 100 ms, <= 8 MiB retained V8 heap, <= 64 MiB post-warm RSS growth, and <= 256 MiB absolute high-water growth.",
+      "nativeNavigation": true
     }
   ],
   "harnessBlocked": [],

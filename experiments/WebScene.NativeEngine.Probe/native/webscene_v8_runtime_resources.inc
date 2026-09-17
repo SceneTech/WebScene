@@ -1031,6 +1031,86 @@
         return task.controlled_fetch.valid();
     }
 
+    bool enqueue_controlled_css_image_resource(
+        dom_node& node,
+        v8::Local<v8::Context> resource_context,
+        const std::string& authored_url)
+    {
+        if (authored_url.empty() || authored_url.starts_with("data:")
+            || authored_url.starts_with("blob:")
+            || object_urls.contains(authored_url)) {
+            return false;
+        }
+        const auto base = current_css_base_address(node);
+        const auto resolved_url = resolve_resource_url(authored_url, base);
+        if (resolved_url.empty()) return false;
+        if (std::any_of(
+                connected_resources.begin(),
+                connected_resources.end(),
+                [&](const auto& task) {
+                    return task.css_image && task.node == &node
+                        && task.controlled_url == resolved_url;
+                })) {
+            return true;
+        }
+        resource_request_context request_context{
+            WEBSCENE_RESOURCE_INITIATOR_SUBRESOURCE,
+            current_security_origin(),
+            base,
+            WEBSCENE_FETCH_MODE_NONE,
+            WEBSCENE_REQUEST_DESTINATION_IMAGE,
+            "GET", {}, {}, WEBSCENE_FETCH_CREDENTIALS_INCLUDE, {}};
+        request_context.cookie = cookie_header_for(resolved_url, request_context);
+        v8::Context::Scope resource_context_scope(resource_context);
+        auto controlled = enqueue_controlled_service_worker_fetch(
+            resolved_url, request_context);
+        if (!controlled.valid()) return false;
+        connected_resources.push_back(connected_resource_task{
+            &node,
+            v8::Global<v8::Context>(isolate, resource_context),
+            v8::Global<v8::Object>(isolate, wrap_node(node)),
+            std::move(controlled),
+            resolved_url,
+            std::chrono::steady_clock::now() + std::chrono::seconds(30),
+            true,
+            true});
+        return true;
+    }
+
+    void apply_controlled_css_image_resource(
+        connected_resource_task& resource,
+        const service_worker_fetch_result* controlled)
+    {
+        if (resource.node == nullptr) return;
+        const auto current_url = first_css_url(
+            resource.node->style.background_image().image_value);
+        if (!current_url.has_value()
+            || resolve_resource_url(
+                *current_url,
+                current_css_base_address(*resource.node)) != resource.controlled_url) {
+            return;
+        }
+        std::string markup;
+        std::string resolved_url;
+        if (!load_connected_text_resource(
+                resource.controlled_url,
+                current_css_base_address(*resource.node),
+                WEBSCENE_RESOURCE_IMAGE,
+                markup,
+                resolved_url,
+                nullptr,
+                controlled)) {
+            return;
+        }
+        const auto view_box = svg_view_box(markup);
+        if (view_box.empty()) return;
+        auto& background = resource.node->style.mutable_background_image();
+        background.image_value = "url(\"" + resolved_url + "\")";
+        background.image_markup = std::move(markup);
+        background.image_view_box = view_box;
+        document.mark_dirty();
+    }
+
     bool has_ready_connected_resource_task() const
     {
         if (connected_resources.empty()) return false;

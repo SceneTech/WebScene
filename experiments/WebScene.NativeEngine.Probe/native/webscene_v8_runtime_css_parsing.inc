@@ -1135,7 +1135,9 @@
                 inventory_css_value_functions(declaration.value);
                 if(declaration.name == "background-image") {
                     if(const auto url=first_css_url(declaration.value);url.has_value())
-                        start_resource_prefetch(*url,{},WEBSCENE_RESOURCE_IMAGE);
+                        if (!has_claimed_service_worker_for_url(
+                                current_navigation_address()))
+                            start_resource_prefetch(*url,{},WEBSCENE_RESOURCE_IMAGE);
                 }
             },
             [this, cascade_layer_order](const std::string& selector,const std::vector<css_declaration>& values,
@@ -1151,7 +1153,10 @@
             inventory_css_value_functions(declaration.value);
             if (declaration.name == "background-image") {
                 if (const auto url = first_css_url(declaration.value); url.has_value()) {
-                    start_resource_prefetch(*url, {}, WEBSCENE_RESOURCE_IMAGE);
+                    if (!has_claimed_service_worker_for_url(
+                            current_navigation_address())) {
+                        start_resource_prefetch(*url, {}, WEBSCENE_RESOURCE_IMAGE);
+                    }
                 }
             }
         }

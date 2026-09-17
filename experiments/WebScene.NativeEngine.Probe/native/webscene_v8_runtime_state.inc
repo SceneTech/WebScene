@@ -281,9 +281,8 @@
 
     std::string current_security_origin()
     {
-        return inherited_worker_origin.empty()
-            ? resource_origin(current_base_address())
-            : inherited_worker_origin;
+        if (!inherited_worker_origin.empty()) return inherited_worker_origin;
+        return resource_origin(current_navigation_address());
     }
 
     std::optional<binary_object_url> find_binary_object_url(

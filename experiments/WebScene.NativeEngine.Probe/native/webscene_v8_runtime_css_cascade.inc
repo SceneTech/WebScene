@@ -207,6 +207,13 @@
             "style-application");
         css::apply_declaration(document,node,resolved_declaration,css_variables,inline_origin,decision,
             [this,&node](const std::string& url,std::string& markup,std::string& resolved,std::string& view_box) {
+                auto resource_context = isolate->GetCurrentContext();
+                if (resource_context.IsEmpty()) resource_context = context_for_node(node);
+                if (!resource_context.IsEmpty()
+                    && enqueue_controlled_css_image_resource(
+                        node, resource_context, url)) {
+                    return false;
+                }
                 if(!load_text_resource(url,current_css_base_address(node),WEBSCENE_RESOURCE_IMAGE,markup,resolved))
                     return false;
                 view_box=svg_view_box(markup);

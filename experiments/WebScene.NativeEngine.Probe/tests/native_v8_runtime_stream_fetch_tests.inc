@@ -317,6 +317,7 @@ void test_cache_storage_and_controlled_fetch_broker()
             'controllerchange', resolve, {once:true}));
           const registration = await navigator.serviceWorker.register(
             'service-worker.js', {type:'module'});
+          state.phase = 'await-control';
           if (!navigator.serviceWorker.controller) await changed;
           for (let cycle = 0; cycle < 100; ++cycle) {
             const start = performance.now();
@@ -1157,6 +1158,263 @@ void test_controlled_connected_resource_interception()
               << " rssAfter=" << rss_after
               << " retireNavigation=" << navigation_ms << "ms\n";
     webscene_engine_destroy(engine);
+}
+
+void test_vscode_markdown_css_image_resource_broker()
+{
+    const auto repository_root = std::filesystem::path(__FILE__)
+        .parent_path().parent_path().parent_path().parent_path();
+    const auto fixture_root = repository_root
+        / "tests/WebPlatformSubset/contracts/fixtures/vscode-markdown-preview-645f29c";
+    const auto read_fixture = [&](std::string_view name) {
+        std::ifstream stream(fixture_root / name, std::ios::binary);
+        require(stream.good(), "VS Code Markdown fixture file was not found");
+        return std::string{
+            std::istreambuf_iterator<char>(stream),
+            std::istreambuf_iterator<char>()};
+    };
+    const auto exact_worker = read_fixture("service-worker.js");
+    const auto readme = read_fixture("README.md");
+    require(exact_worker.find("const VERSION = 6;") != std::string::npos
+            && exact_worker.find("maxActiveHostResourceResponseBodies = 32")
+                != std::string::npos,
+        "VS Code Markdown fixture did not contain the pinned v6 worker bounds");
+    require(readme.find("# Code OSS on AppScene") != std::string::npos,
+        "VS Code Markdown fixture did not contain the current README");
+
+    constexpr std::string_view address{"https://css-resource.test/index.html"};
+    const auto worker = R"JS(
+      const counts = {};
+      const destinations = {};
+      const svg = viewBox => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBox}"><rect width="3" height="2"/></svg>`;
+      self.addEventListener('install', event => event.waitUntil(skipWaiting()));
+      self.addEventListener('activate', event => event.waitUntil(clients.claim()));
+      self.addEventListener('fetch', event => {
+        const url = new URL(event.request.url);
+        counts[url.pathname] = (counts[url.pathname] || 0) + 1;
+        destinations[url.pathname] = event.request.destination;
+        if (url.pathname === '/fallback.svg') return;
+        if (url.pathname === '/denied.svg') {
+          event.respondWith(Promise.reject(new Error('denied CSS image')));
+          return;
+        }
+        if (url.pathname === '/stale.svg') {
+          event.respondWith(new Promise(resolve => setTimeout(() => resolve(
+            new Response(svg('0 0 13 11'), {headers:{'content-type':'image/svg+xml'}})), 25)));
+          return;
+        }
+        if (url.pathname === '/controlled.svg' || url.pathname === '/cycle.svg') {
+          event.respondWith(new Response(svg('0 0 3 2'),
+            {headers:{'content-type':'image/svg+xml'}}));
+        }
+      });
+      self.addEventListener('message', event => {
+        if (event.data === 'report') event.source.postMessage({counts, destinations});
+      });
+    )JS";
+    const auto bypass_svg = std::string{
+        "<svg xmlns='http://www.w3.org/2000/svg' width='99' height='97' "
+        "viewBox='0 0 99 97'><rect width='99' height='97'/></svg>"};
+    struct css_resource_server final {
+        resource_server resources;
+        std::atomic<int> controlled_host_reads{0};
+        std::atomic<int> fallback_host_reads{0};
+    } server{.resources = {.content = {
+        {std::string{address},
+            "<!doctype html><title>controlled CSS image</title>"
+            "<div id='preview' style='width:32px;height:24px'></div>"},
+        {"https://css-resource.test/service-worker.js", worker},
+        {"https://css-resource.test/controlled.svg", bypass_svg},
+        {"https://css-resource.test/cycle.svg", bypass_svg},
+        {"https://css-resource.test/denied.svg", bypass_svg},
+        {"https://css-resource.test/stale.svg", bypass_svg},
+        {"https://css-resource.test/fallback.svg",
+            "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 5 4'/>"}
+    }}};
+    webscene_engine_options options{};
+    options.struct_size = sizeof(options);
+    options.resource_load_callback = +[](
+        void* user_data, uint32_t kind, const char* url, size_t url_length,
+        const char* entity_tag, size_t entity_tag_length, int64_t last_modified,
+        char* destination, size_t destination_capacity) {
+        auto& fixture = *static_cast<css_resource_server*>(user_data);
+        const std::string_view resource(url, url_length);
+        const auto known = fixture.resources.content.find(std::string(resource));
+        constexpr size_t header_size = 2U + sizeof(uint32_t) + sizeof(int64_t) * 2U;
+        const auto first_transfer = known != fixture.resources.content.end()
+            && (destination == nullptr
+                || destination_capacity != header_size + known->second.size());
+        if (first_transfer) {
+            if (resource.ends_with("/fallback.svg")) {
+                fixture.fallback_host_reads.fetch_add(1, std::memory_order_relaxed);
+            } else if (resource.find("/controlled.svg") != std::string_view::npos
+                || resource.find("/cycle.svg") != std::string_view::npos
+                || resource.find("/denied.svg") != std::string_view::npos
+                || resource.find("/stale.svg") != std::string_view::npos) {
+                fixture.controlled_host_reads.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+        return load_test_resource(
+            &fixture.resources, kind, url, url_length, entity_tag,
+            entity_tag_length, last_modified, destination, destination_capacity);
+    };
+    options.resource_load_user_data = &server;
+    auto* engine = webscene_engine_create_with_options(&options);
+    require(engine != nullptr, "VS Code Markdown CSS image engine creation failed");
+    require(webscene_engine_load_url(engine, address.data(), address.size()) != 0U,
+        "VS Code Markdown CSS image navigation failed");
+    require(evaluate_until_equals(engine, "location.href", "css-image-navigation.js",
+            R"("https://css-resource.test/index.html")", 2'500)
+            == R"("https://css-resource.test/index.html")",
+        "VS Code Markdown CSS image document did not become ready");
+
+    webscene_engine_memory_metrics memory_before{sizeof(webscene_engine_memory_metrics)};
+    require(webscene_engine_get_memory_metrics(engine, &memory_before) != 0,
+        "VS Code Markdown CSS image memory baseline unavailable");
+    const auto peak_rss_before = service_worker_test_peak_rss_bytes();
+    const auto current_rss_before = service_worker_test_current_rss_bytes();
+    execute(engine, R"JS(
+      globalThis.__webSceneWptState = {
+        complete:false, harness:null, results:[], errors:[], diagnostics:[], durations:[], phase:'register'
+      };
+      (async () => {
+        const state = __webSceneWptState;
+        try {
+          const changed = new Promise(resolve => navigator.serviceWorker.addEventListener(
+            'controllerchange', resolve, {once:true}));
+          const registration = await navigator.serviceWorker.register(
+            'service-worker.js', {type:'module'});
+          if (!navigator.serviceWorker.controller) await changed;
+          state.phase = 'controlled';
+          const target = document.getElementById('preview');
+          const report = () => new Promise(resolve => {
+          const listener = event => {
+            navigator.serviceWorker.removeEventListener('message', listener);
+            resolve(event.data);
+          };
+          navigator.serviceWorker.addEventListener('message', listener);
+          navigator.serviceWorker.controller.postMessage('report');
+          });
+          const waitFor = async (path, prior) => {
+          for (let attempt = 0; attempt < 100; ++attempt) {
+            const value = await report();
+            if ((value.counts[path] || 0) > prior) return value;
+            await new Promise(resolve => setTimeout(resolve, 1));
+          }
+          throw new Error(`CSS image did not reach controller: ${path}`);
+          };
+          target.style.backgroundImage = 'url("controlled.svg")';
+          let value = await waitFor('/controlled.svg', 0);
+          if (value.destinations['/controlled.svg'] !== 'image') {
+            throw new Error(`CSS image destination ${value.destinations['/controlled.svg']}`);
+          }
+          for (let cycle = 0; cycle < 100; ++cycle) {
+            state.phase = `cycle-${cycle}`;
+            const prior = value.counts['/cycle.svg'] || 0;
+            const started = performance.now();
+            target.style.backgroundImage = `url("cycle.svg?cycle=${cycle}")`;
+            value = await waitFor('/cycle.svg', prior);
+            state.durations.push(performance.now() - started);
+          }
+          target.style.backgroundImage = 'url("denied.svg")';
+          state.phase = 'denied';
+          value = await waitFor('/denied.svg', 0);
+          target.style.backgroundImage = 'url("fallback.svg")';
+          state.phase = 'fallback';
+          await new Promise(resolve => setTimeout(resolve, 20));
+          target.style.backgroundImage = 'url("stale.svg")';
+          state.phase = 'stale';
+          value = await waitFor('/stale.svg', 0);
+          const finalPrior = value.counts['/controlled.svg'] || 0;
+          target.style.backgroundImage = 'url("controlled.svg?final=1")';
+          await waitFor('/controlled.svg', finalPrior);
+          await new Promise(resolve => setTimeout(resolve, 40));
+          const ordered = [...state.durations].sort((a,b) => a-b);
+          const p95 = ordered[Math.ceil(ordered.length * .95) - 1];
+          state.diagnostics.push({name:'css-image-cycles', cycles:100, p95});
+          if (p95 > 100) throw new Error(`CSS image p95 ${p95}`);
+          await registration.unregister();
+          state.phase = 'done';
+          state.harness = {status:0, message:null, stack:null};
+        } catch (error) {
+          state.errors.push(String(error && error.stack || error));
+          state.harness = {status:1, message:state.errors[0], stack:null};
+        } finally { state.complete = true; }
+      })();
+    )JS", "controlled-css-image-gate.js");
+    const auto fixture_completed = evaluate_until_equals(
+        engine, "__webSceneWptState.complete", "css-image-complete.js", "true", 15'000);
+    require(fixture_completed == "true",
+        "VS Code Markdown CSS image fixture did not complete: "
+            + evaluate(engine, "JSON.stringify(__webSceneWptState)",
+                "css-image-timeout-detail.js"));
+    require(evaluate(engine, "__webSceneWptState.harness.status",
+            "css-image-status.js") == "0",
+        "VS Code Markdown CSS image fixture failed: "
+            + evaluate(engine, "JSON.stringify(__webSceneWptState)", "css-image-detail.js"));
+    const auto p95 = std::stod(evaluate(engine,
+        "__webSceneWptState.diagnostics[0].p95", "css-image-p95.js"));
+
+    webscene_engine_request_scene_checkpoint(engine);
+    auto found_current_css_image = false;
+    auto found_stale_css_image = false;
+    for (auto attempt = 0; attempt < 250; ++attempt) {
+        const auto* scene = webscene_engine_acquire_latest_scene(engine);
+        if (scene != nullptr) {
+            for (uint32_t index = 0; index < scene->header.command_count; ++index) {
+                const auto& command = scene->commands[index];
+                if (command.kind != 6U || command.flags >= scene->string_count) continue;
+                const auto resource = scene->strings[command.flags];
+                const std::string_view bytes(
+                    scene->string_bytes + resource.byte_offset, resource.byte_length);
+                found_current_css_image |= bytes.find("0 0 3 2") != std::string_view::npos;
+                found_stale_css_image |= bytes.find("0 0 13 11") != std::string_view::npos;
+            }
+            webscene_scene_acknowledge(scene);
+            webscene_scene_release(scene);
+        }
+        if (found_current_css_image) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    require(found_current_css_image,
+        "controlled CSS url() SVG did not reach the native scene");
+    require(!found_stale_css_image,
+        "late controlled CSS url() response replaced the current style");
+    require(server.controlled_host_reads.load(std::memory_order_relaxed) == 0,
+        "a handled or failed controlled CSS image reached the host loader");
+    require(server.fallback_host_reads.load(std::memory_order_relaxed) > 0,
+        "an unhandled CSS image did not fall through to the host loader");
+
+    require(webscene_engine_request_low_memory(engine) != 0,
+        "VS Code Markdown CSS image low-memory request rejected");
+    webscene_engine_memory_metrics memory_after{sizeof(webscene_engine_memory_metrics)};
+    for (auto attempt = 0; attempt < 250; ++attempt) {
+        require(webscene_engine_get_memory_metrics(engine, &memory_after) != 0,
+            "VS Code Markdown CSS image final memory metrics unavailable");
+        if (memory_after.low_memory_notifications
+            > memory_before.low_memory_notifications) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    require(memory_after.low_memory_notifications
+            > memory_before.low_memory_notifications,
+        "VS Code Markdown CSS image low-memory collection did not complete");
+    require(memory_after.v8_used_heap_bytes
+            <= memory_before.v8_used_heap_bytes + 8U * 1024U * 1024U,
+        "VS Code Markdown CSS image cycles retained more than 8 MiB V8 heap");
+    const auto peak_rss_after = service_worker_test_peak_rss_bytes();
+    require(peak_rss_after <= peak_rss_before + 256U * 1024U * 1024U,
+        "VS Code Markdown CSS image exceeded 256 MiB absolute RSS high-water growth");
+    webscene_engine_destroy(engine);
+    const auto current_rss_after = service_worker_test_current_rss_bytes();
+    require(current_rss_after <= current_rss_before + 64U * 1024U * 1024U,
+        "VS Code Markdown CSS image retained more than 64 MiB RSS after teardown");
+    std::cout << "VS Code Markdown CSS image gate: cycles=100 p95=" << p95
+              << "ms heapBefore=" << memory_before.v8_used_heap_bytes
+              << " heapAfter=" << memory_after.v8_used_heap_bytes
+              << " peakRssBefore=" << peak_rss_before
+              << " peakRssAfter=" << peak_rss_after
+              << " currentRssBefore=" << current_rss_before
+              << " currentRssAfter=" << current_rss_after << '\n';
 }
 
 void test_controlled_parser_and_nested_frame_resources()

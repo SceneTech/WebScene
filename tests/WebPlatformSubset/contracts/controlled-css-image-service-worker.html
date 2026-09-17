@@ -1,0 +1,75 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Controlled CSS image interception</title>
+<div id="target" style="width:32px;height:24px"></div>
+<script>
+  const state = window.__webSceneWptState = {
+    complete:false, harness:null, results:[], errors:[], diagnostics:[]
+  };
+  const record = (name, condition, detail = 'Contract failed') => state.results.push({
+    name, status:condition ? 'PASS' : 'FAIL',
+    message:condition ? null : detail, stack:null
+  });
+  (async () => {
+    const changed = new Promise(resolve => navigator.serviceWorker.addEventListener(
+      'controllerchange', resolve, {once:true}));
+    const registration = await navigator.serviceWorker.register(
+      'controlled-css-image-service-worker.js', {type:'module'});
+    if (!navigator.serviceWorker.controller) await changed;
+    const report = () => new Promise(resolve => {
+      const listener = event => {
+        navigator.serviceWorker.removeEventListener('message', listener);
+        resolve(event.data);
+      };
+      navigator.serviceWorker.addEventListener('message', listener);
+      navigator.serviceWorker.controller.postMessage('report');
+    });
+    const waitFor = async (path, prior) => {
+      for (let attempt = 0; attempt < 100; ++attempt) {
+        const value = await report();
+        if ((value.counts[path] || 0) > prior) return value;
+        await new Promise(resolve => setTimeout(resolve, 1));
+      }
+      throw new Error(`CSS image did not reach controller: ${path}`);
+    };
+    const target = document.getElementById('target');
+    const controlledPath = new URL('controlled-css-image.svg', location.href).pathname;
+    target.style.backgroundImage = 'url("controlled-css-image.svg")';
+    let reportValue = await waitFor(controlledPath, 0);
+    record('CSS url image reaches the controlling Service Worker',
+      reportValue.counts[controlledPath] === 1,
+      JSON.stringify(reportValue));
+    record('CSS url request has image destination',
+      reportValue.destinations[controlledPath] === 'image',
+      JSON.stringify(reportValue.destinations));
+    const durations = [];
+    for (let cycle = 0; cycle < 100; ++cycle) {
+      const prior = reportValue.counts[controlledPath] || 0;
+      const started = performance.now();
+      target.style.backgroundImage = `url("controlled-css-image.svg?cycle=${cycle}")`;
+      reportValue = await waitFor(controlledPath, prior);
+      durations.push(performance.now() - started);
+    }
+    durations.sort((a,b) => a-b);
+    const p95 = durations[Math.ceil(durations.length * .95) - 1];
+    state.diagnostics.push(`css-image-cycles=100 p95=${p95}`);
+    record('100 warm CSS url requests remain within 100 ms p95',
+      p95 <= 100, `p95=${p95}`);
+    target.style.backgroundImage = 'url("controlled-css-image-denied.svg")';
+    const deniedPath = new URL('controlled-css-image-denied.svg', location.href).pathname;
+    reportValue = await waitFor(deniedPath, 0);
+    record('handled CSS image failure remains in the controller',
+      reportValue.counts[deniedPath] === 1,
+      JSON.stringify(reportValue));
+    await registration.unregister();
+  })().catch(error => {
+    state.errors.push(String(error && error.stack || error));
+    record('contract completed', false, state.errors[0]);
+  }).finally(() => {
+    const failure = state.results.find(result => result.status !== 'PASS');
+    state.harness = failure
+      ? {status:1, message:failure.message, stack:failure.stack}
+      : {status:0, message:null, stack:null};
+    state.complete = true;
+  });
+</script>

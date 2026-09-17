@@ -816,11 +816,23 @@
 
     const std::string& navigation_address_for_root(dom_node* root)
     {
-        if (root == nullptr) root = &document.body();
+        if (root == nullptr || root == &document.body()) return document_base_address;
         const auto found = document_base_caches.find(root);
         return found == document_base_caches.end()
             ? document_base_address
             : found->second.navigation_address;
+    }
+
+    const std::string& current_navigation_address()
+    {
+        dom_node* root = nullptr;
+        const auto local_context = isolate->GetCurrentContext();
+        if (!local_context.IsEmpty()) {
+            root = static_cast<dom_node*>(
+                local_context->GetAlignedPointerFromEmbedderData(
+                    1, v8::kEmbedderDataTypeTagDefault));
+        }
+        return navigation_address_for_root(root);
     }
 
     v8::Local<v8::Context> context_for_node(const dom_node& node)
@@ -2082,7 +2094,7 @@
             &node,
             v8::Global<v8::Context>(isolate, resource_context),
             v8::Global<v8::Object>(isolate, wrapper),
-            {}, {}, {}, false});
+            {}, {}, {}, false, false});
     }
 
     void enqueue_connected_resources_subtree(

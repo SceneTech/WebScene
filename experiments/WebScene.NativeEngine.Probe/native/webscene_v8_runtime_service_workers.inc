@@ -1248,7 +1248,7 @@
         auto* isolate = info.GetIsolate();
         auto local_context = isolate->GetCurrentContext();
         const auto operation = to_utf8(isolate, info[0]);
-        auto client_url = self->current_base_address();
+        auto client_url = self->current_navigation_address();
         if (client_url.empty()) {
             v8::Local<v8::Value> location_value;
             v8::Local<v8::Value> href_value;

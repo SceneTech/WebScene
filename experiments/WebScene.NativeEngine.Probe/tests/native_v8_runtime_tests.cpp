@@ -166,6 +166,10 @@ int main()
             test_dom_token_list_collection_performance_gate();
             return 0;
         }
+        if (selected == "stylesheet-mutation-performance") {
+            test_batched_stylesheet_rule_mutation_performance();
+            return 0;
+        }
         if (selected == "iframe-sandbox") {
             test_iframe_sandbox_dom_token_list_security_and_lifecycle_gate();
             return 0;
@@ -431,6 +435,14 @@ int main()
             require(focused_engine != nullptr,
                 "stylesheet CSSOM engine creation failed");
             test_native_mutable_stylesheet_cssom(focused_engine);
+            webscene_engine_destroy(focused_engine);
+            return 0;
+        }
+        if (selected == "monaco-view-lines") {
+            auto* focused_engine = webscene_engine_create(0);
+            require(focused_engine != nullptr,
+                "Monaco view-line engine creation failed");
+            test_monaco_view_line_dom_mutations(focused_engine);
             webscene_engine_destroy(focused_engine);
             return 0;
         }

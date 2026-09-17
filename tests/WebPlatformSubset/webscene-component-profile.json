@@ -1131,6 +1131,13 @@
       "reason": "CSSOM computed-style and geometry reads are synchronous style-recalculation barriers. WebScene may coalesce repeated invalidations within one browser task, but declaration removal must restore stylesheet and inherited values before any observable read in that task."
     },
     {
+      "path": "contracts/cssom-batched-rule-mutation.html",
+      "type": "contract",
+      "capabilities": ["cssom-rule-list-identity", "cssom-synchronous-rule-mutation", "cssom-stylesheet-disabled", "cssom-stylesheet-media", "cssom-task-checkpoint-style-flush", "cssom-style-text-topology", "cssom-batched-mutation-performance"],
+      "evidence": ["cssom-cssstylesheet-insertrule", "cssom-cssstylesheet-deleterule", "cssom-cssstylesheet-disabled", "cssom-medialist-media-text", "html-style-element-text-content", "vscode-theme-rule-mutation"],
+      "reason": "CSSStyleSheet rule, enabled-state, and media mutations update live CSSOM and synchronous style/layout reads immediately without replacing the owner style element's DOM text. Native work may publish each owner's final rule set once at a browser-task checkpoint after microtasks. Twenty 256-rule replacement cycles retain exact CSSOM/DOM identity with warm p95 at most 16 ms and cold max at most 500 ms."
+    },
+    {
       "path": "contracts/cssom-computed-style-named-properties.html",
       "type": "contract",
       "capabilities": [

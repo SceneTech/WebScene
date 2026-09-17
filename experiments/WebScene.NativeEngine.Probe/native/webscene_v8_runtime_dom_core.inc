@@ -352,8 +352,72 @@
             local_context,
             js_string(isolate, "ownerNode"),
             wrap_node(node)).Check();
+        auto stage_rules = v8::Function::New(
+            local_context,
+            stage_style_sheet_rules,
+            wrap_node(node)).ToLocalChecked();
+        result->DefineOwnProperty(
+            local_context,
+            js_string(isolate, "__webSceneStageRules"),
+            stage_rules,
+            static_cast<v8::PropertyAttribute>(
+                v8::DontEnum | v8::DontDelete | v8::ReadOnly))
+            .Check();
         stylesheet_wrappers.emplace(key, v8::Global<v8::Object>(isolate, result));
         return augment_style_sheet(result);
+    }
+
+    static void stage_style_sheet_rules(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        auto* owner = info.Data()->IsObject()
+            ? unwrap_node(info.Data().As<v8::Object>())
+            : nullptr;
+        if (self == nullptr || owner == nullptr || info.Length() < 1) return;
+        v8::Local<v8::String> converted;
+        if (!info[0]->ToString(info.GetIsolate()->GetCurrentContext())
+                .ToLocal(&converted)) {
+            return;
+        }
+        auto source = to_wtf8(info.GetIsolate(), converted);
+        self->erase_pending_stylesheet_replacement(owner->id);
+        constexpr auto maximum_pending_owners = size_t{1024U};
+        constexpr auto maximum_pending_bytes = size_t{32U * 1024U * 1024U};
+        if (source.size() > maximum_pending_bytes) {
+            // A single source cannot fit in the bounded coalescing queue. Keep
+            // the CSSOM source for disconnect/reconnect semantics, but publish
+            // connected owners immediately so the same bytes are never copied
+            // into pending replacement storage as well.
+            self->flush_pending_stylesheet_replacements();
+            self->stylesheet_cssom_sources.insert_or_assign(
+                owner->id, std::move(source));
+            self->activate_connected_stylesheet(*owner);
+            self->document.mark_dirty();
+            info.GetReturnValue().Set(v8::False(info.GetIsolate()));
+            return;
+        }
+        if (self->pending_stylesheet_replacements.size() >= maximum_pending_owners
+            || source.size() > maximum_pending_bytes
+                - std::min(
+                    self->pending_stylesheet_replacement_bytes,
+                    maximum_pending_bytes)) {
+            self->flush_pending_stylesheet_replacements();
+        }
+        self->stylesheet_cssom_sources.insert_or_assign(owner->id, source);
+        auto* cascade_root = self->css_cascade_root_for_node(*owner);
+        const auto base_address = cascade_root != nullptr
+                && self->frame_base_addresses.contains(cascade_root)
+            ? self->frame_base_addresses.at(cascade_root)
+            : self->document_base_address;
+        self->pending_stylesheet_replacement_bytes += source.size();
+        self->pending_stylesheet_replacements.push_back({
+            owner->id,
+            cascade_root == nullptr ? 0U : cascade_root->id,
+            base_address,
+            std::move(source)});
+        self->document.mark_dirty();
+        info.GetReturnValue().Set(v8::True(info.GetIsolate()));
     }
 
     v8::Local<v8::Object> augment_style_sheet(v8::Local<v8::Object> sheet)
@@ -949,6 +1013,7 @@
                 collect(class_list_wrappers, key);
                 collect(sandbox_token_list_wrappers, key);
                 collect(style_wrappers, key);
+                collect(stylesheet_wrappers, key);
                 collect(computed_style_wrappers, key);
                 collect(canvas_contexts, key);
             });
@@ -987,6 +1052,7 @@
                 weaken(class_list_wrappers, key);
                 weaken(sandbox_token_list_wrappers, key);
                 weaken(style_wrappers, key);
+                weaken(stylesheet_wrappers, key);
                 weaken(computed_style_wrappers, key);
                 weaken(canvas_contexts, key);
             });
@@ -1012,6 +1078,7 @@
                 || weak(class_list_wrappers, key)
                 || weak(sandbox_token_list_wrappers, key)
                 || weak(style_wrappers, key)
+                || weak(stylesheet_wrappers, key)
                 || weak(computed_style_wrappers, key)
                 || weak(canvas_contexts, key)) {
                 return true;
@@ -1071,6 +1138,7 @@
                 retain(class_list_wrappers, key);
                 retain(sandbox_token_list_wrappers, key);
                 retain(style_wrappers, key);
+                retain(stylesheet_wrappers, key);
                 retain(computed_style_wrappers, key);
                 retain(canvas_contexts, key);
             });
@@ -1351,6 +1419,7 @@
                     || inspect(class_list_wrappers, key)
                     || inspect(sandbox_token_list_wrappers, key)
                     || inspect(style_wrappers, key)
+                    || inspect(stylesheet_wrappers, key)
                     || inspect(computed_style_wrappers, key)
                     || inspect(canvas_contexts, key);
             }
@@ -1383,6 +1452,7 @@
         erase_wrappers(class_list_wrappers);
         erase_wrappers(sandbox_token_list_wrappers);
         erase_wrappers(style_wrappers);
+        erase_wrappers(stylesheet_wrappers);
         erase_wrappers(computed_style_wrappers);
         erase_wrappers(canvas_contexts);
         std::erase_if(detached_documents, [&](const auto& entry) {
@@ -1391,6 +1461,10 @@
         std::erase_if(detached_document_roots, [&](const auto id) {
             return node_ids.contains(static_cast<uint32_t>(id));
         });
+        for (const auto id : node_ids) {
+            erase_pending_stylesheet_replacement(id);
+            stylesheet_cssom_sources.erase(id);
+        }
         std::erase_if(canvas_states, [&](const auto& entry) {
             return node_ids.contains(static_cast<uint32_t>(entry.first));
         });

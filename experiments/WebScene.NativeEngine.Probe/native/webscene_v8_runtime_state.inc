@@ -112,6 +112,16 @@
     std::unordered_map<uint64_t, v8::Global<v8::Object>> sandbox_token_list_wrappers;
     std::unordered_map<uint64_t, v8::Global<v8::Object>> style_wrappers;
     std::unordered_map<uint64_t, v8::Global<v8::Object>> stylesheet_wrappers;
+    struct pending_stylesheet_replacement final
+    {
+        uint32_t owner_id{0U};
+        uint32_t cascade_root_id{0U};
+        std::string base_address;
+        std::string source;
+    };
+    std::vector<pending_stylesheet_replacement> pending_stylesheet_replacements;
+    size_t pending_stylesheet_replacement_bytes{0U};
+    std::unordered_map<uint32_t, std::string> stylesheet_cssom_sources;
     std::unordered_map<uint64_t, v8::Global<v8::Object>> computed_style_wrappers;
     std::unordered_map<std::string, service_worker_registration_state>
         service_worker_registrations;

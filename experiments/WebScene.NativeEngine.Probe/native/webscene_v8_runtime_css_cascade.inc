@@ -1876,8 +1876,77 @@
                 std::move(custom_property)});
     }
 
+    void erase_pending_stylesheet_replacement(uint32_t owner_id)
+    {
+        std::erase_if(
+            pending_stylesheet_replacements,
+            [&](const auto& pending) {
+                if (pending.owner_id != owner_id) return false;
+                pending_stylesheet_replacement_bytes -= std::min(
+                    pending_stylesheet_replacement_bytes,
+                    pending.source.size());
+                return true;
+            });
+    }
+
+    void flush_pending_stylesheet_replacements()
+    {
+        if (pending_stylesheet_replacements.empty()) return;
+        auto pending = std::move(pending_stylesheet_replacements);
+        pending_stylesheet_replacements.clear();
+        pending_stylesheet_replacement_bytes = 0U;
+        auto* previous_root = const_cast<dom_node*>(active_css_cascade_root);
+        std::vector<dom_node*> roots;
+        for (const auto& replacement : pending) {
+            auto* owner = document.find_by_native_id(replacement.owner_id);
+            auto* root = document.find_by_native_id(replacement.cascade_root_id);
+            if (owner == nullptr || root == nullptr || !is_connected(*owner)) {
+                continue;
+            }
+            if (std::find(roots.begin(), roots.end(), root)
+                == roots.end()) {
+                roots.push_back(root);
+            }
+        }
+        for (auto* root : roots) {
+            activate_css_cascade(root);
+            std::unordered_set<uint32_t> owners;
+            for (const auto& replacement : pending) {
+                auto* owner = document.find_by_native_id(replacement.owner_id);
+                if (replacement.cascade_root_id == root->id
+                    && owner != nullptr
+                    && is_connected(*owner)) {
+                    owners.insert(owner->id);
+                }
+            }
+            std::erase_if(css_rules, [&](const auto& rule) {
+                return owners.contains(rule.stylesheet_owner_id);
+            });
+            for (auto& replacement : pending) {
+                auto* owner = document.find_by_native_id(replacement.owner_id);
+                if (replacement.cascade_root_id != root->id
+                    || owner == nullptr
+                    || !is_connected(*owner)
+                    || replacement.source.empty()) {
+                    continue;
+                }
+                const auto* shadow_root =
+                    document.containing_shadow_root(*owner);
+                add_stylesheet(
+                    std::move(replacement.source),
+                    replacement.base_address,
+                    owner->id,
+                    shadow_root == nullptr ? 0U : shadow_root->id);
+            }
+            rebuild_css_rule_indexes_and_root_variables();
+            schedule_style_recascade(*root, true, "stylesheet-change");
+        }
+        if (previous_root != nullptr) activate_css_cascade(previous_root);
+    }
+
     void flush_pending_style_recascades()
     {
+        flush_pending_stylesheet_replacements();
         if (!pending_attribute_selector_transitions.empty()) {
             auto transitions = std::move(pending_attribute_selector_transitions);
             pending_attribute_selector_transitions.clear();
@@ -2293,6 +2362,14 @@
 
     void recascade_after_stylesheet_change()
     {
+        if (style_recascade_batch_depth != 0U) {
+            schedule_style_recascade(
+                active_root(),
+                true,
+                "stylesheet-change");
+            document.mark_dirty();
+            return;
+        }
         apply_css_rules_subtree(active_root());
         document.mark_dirty();
     }
@@ -2333,11 +2410,19 @@
         });
         if (styles.empty()) return;
 
+        for (const auto* style : styles) {
+            if (style != nullptr) erase_pending_stylesheet_replacement(style->id);
+        }
         for (auto* style : styles) deactivate_connected_stylesheets(*style, false);
         const auto& base = current_base_address();
         for (auto* style : styles) {
-            std::string stylesheet;
-            append_node_text(*style, stylesheet);
+            auto stylesheet = std::string{};
+            if (const auto staged = stylesheet_cssom_sources.find(style->id);
+                staged != stylesheet_cssom_sources.end()) {
+                stylesheet = staged->second;
+            } else {
+                append_node_text(*style, stylesheet);
+            }
             if (!stylesheet.empty()) {
                 const auto* shadow_root = document.containing_shadow_root(*style);
                 add_stylesheet(

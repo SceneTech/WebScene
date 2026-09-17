@@ -1578,21 +1578,55 @@ void test_native_mutable_stylesheet_cssom(webscene_engine* engine)
         const style = document.createElement('style');
         const target = document.createElement('div');
         target.className = className;
+        style.textContent = `.${className} { display: block; color: rgb(1, 2, 3); }`;
         document.head.appendChild(style);
         document.body.appendChild(target);
         const sheet = style.sheet;
         const rules = sheet.cssRules;
-        const index = sheet.insertRule(`.${className} { display: none; }`, 0);
-        const rule = rules[0];
+        const authoredText = style.textContent;
+        const observer = new MutationObserver(() => {});
+        observer.observe(style, { childList: true, characterData: true, subtree: true });
+        let parseError = '';
+        try { sheet.insertRule(`.${className} {`); }
+        catch (error) { parseError = error.name; }
+        const index = sheet.insertRule(`.${className} { display: none; }`, rules.length);
+        const rule = rules[index];
         const inserted = [index, rules.length, rule.selectorText,
-          view.getComputedStyle(target).display];
+          view.getComputedStyle(target).display, style.textContent === authoredText,
+          style.sheet === sheet, target.matches(`.${className}`), parseError];
         rule.style.setProperty('display', display);
         const mutated = [rules.length, rule.style.display,
           view.getComputedStyle(target).display];
-        sheet.deleteRule(0);
-        const deleted = [rules.length, rule.parentStyleSheet === null,
+        sheet.deleteRule(index);
+        const mediaIndex = sheet.insertRule(
+          `@media (min-width: 1px) { .${className} { display: ${display}; } }`,
+          rules.length);
+        const media = [rules.length, rules[mediaIndex].cssText.startsWith('@media'),
           view.getComputedStyle(target).display];
-        return { inserted, mutated, deleted };
+        sheet.deleteRule(mediaIndex);
+        sheet.insertRule(`.${className} { display: grid; }`, rules.length);
+        style.remove();
+        const detached = style.sheet === null;
+        document.head.appendChild(style);
+        const reconnected = [style.sheet === sheet,
+          view.getComputedStyle(target).display, style.textContent === authoredText];
+        sheet.disabled = true;
+        const disabled = [sheet.disabled, view.getComputedStyle(target).display];
+        sheet.disabled = false;
+        const enabled = [sheet.disabled, view.getComputedStyle(target).display];
+        sheet.media.mediaText = '(max-width: 1px)';
+        const mediaMiss = [sheet.media.mediaText, sheet.media.length,
+          sheet.media.item(0), view.getComputedStyle(target).display];
+        sheet.media.mediaText = '(min-width: 1px)';
+        const mediaMatch = [sheet.media.mediaText,
+          view.getComputedStyle(target).display];
+        const deleted = [rules.length, rule.parentStyleSheet === null,
+          observer.takeRecords().length, detached];
+        observer.disconnect();
+        style.remove();
+        target.remove();
+        return { inserted, mutated, media, reconnected, disabled, enabled,
+          mediaMiss, mediaMatch, deleted };
       };
       const frame = document.createElement('iframe');
       document.body.appendChild(frame);
@@ -1607,9 +1641,215 @@ void test_native_mutable_stylesheet_cssom(webscene_engine* engine)
     })())JS", "native-mutable-stylesheet-cssom.js");
     require(
         result
-            == R"JSON({"main":{"inserted":[0,1,".monaco-main","none"],"mutated":[1,"inline-block","inline-block"],"deleted":[0,true,"block"]},"frame":{"inserted":[0,1,".monaco-frame","none"],"mutated":[1,"inline-flex","inline-flex"],"deleted":[0,true,"block"]}})JSON",
+            == R"JSON({"main":{"inserted":[1,2,".monaco-main","none",true,true,true,"SyntaxError"],"mutated":[2,"inline-block","inline-block"],"media":[2,true,"inline-block"],"reconnected":[true,"grid",true],"disabled":[true,"block"],"enabled":[false,"grid"],"mediaMiss":["(max-width: 1px)",1,"(max-width: 1px)","block"],"mediaMatch":["(min-width: 1px)","grid"],"deleted":[2,true,0,true]},"frame":{"inserted":[1,2,".monaco-frame","none",true,true,true,"SyntaxError"],"mutated":[2,"inline-flex","inline-flex"],"media":[2,true,"inline-flex"],"reconnected":[true,"grid",true],"disabled":[true,"block"],"enabled":[false,"grid"],"mediaMiss":["(max-width: 1px)",1,"(max-width: 1px)","block"],"mediaMatch":["(min-width: 1px)","grid"],"deleted":[2,true,0,true]}})JSON",
         "mutable stylesheet CSSOM did not recascade main/frame styles: "
             + result);
+}
+
+void test_batched_stylesheet_rule_mutation_performance()
+{
+    auto* engine = webscene_engine_create(0);
+    require(engine != nullptr, "stylesheet mutation performance engine creation failed");
+    resize(engine, 800, 600, 1U);
+    wait_for_consumed_inputs(
+        engine, 1U, "stylesheet mutation performance viewport was not consumed");
+    const auto oversized_result = evaluate(engine, R"JS((() => {
+      const style = document.createElement('style');
+      document.head.appendChild(style);
+      const sheet = style.sheet;
+      const stage = sheet.__webSceneStageRules;
+      style.remove();
+      // Detached owners retain their CSSOM source for a future reconnect, but
+      // an oversized first source must not enter the bounded pending queue.
+      const queued = stage('.oversized{' + 'x'.repeat(32 * 1024 * 1024) + '}');
+      return [queued, style.isConnected, style.sheet === null];
+    })())JS", "oversized-stylesheet-staging.js");
+    require(oversized_result == R"([false,false,true])",
+        "oversized stylesheet source entered pending replacement storage: "
+            + oversized_result);
+    require(webscene_engine_request_low_memory(engine) != 0,
+        "oversized stylesheet source low-memory request was rejected");
+    require(webscene_engine_set_runtime_work_metrics_enabled(engine, 1U) != 0,
+        "stylesheet mutation runtime-work metrics could not be enabled");
+    webscene_engine_metrics engine_before{};
+    webscene_engine_get_metrics(engine, &engine_before);
+    webscene_runtime_work_metrics work_before{sizeof(webscene_runtime_work_metrics)};
+    require(webscene_engine_get_runtime_work_metrics(engine, &work_before) != 0,
+        "stylesheet mutation baseline work metrics were unavailable");
+    execute_and_wait(engine, "globalThis.__stylesheetMutationBaseline = true",
+        "stylesheet-rule-mutation-baseline.js");
+    webscene_engine_memory_metrics memory_before{sizeof(webscene_engine_memory_metrics)};
+    for (auto attempt = 0; attempt < 500; ++attempt) {
+        require(webscene_engine_get_memory_metrics(engine, &memory_before) != 0,
+            "stylesheet mutation baseline memory metrics were unavailable");
+        if (memory_before.v8_used_heap_bytes != 0U
+            && memory_before.native_dom_node_count != 0U) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    require(memory_before.v8_used_heap_bytes != 0U,
+        "stylesheet mutation baseline heap snapshot was unavailable");
+    const auto rss_before = file_system_access_test_peak_rss_bytes();
+    execute(engine, R"JS((() => {
+      const style = document.createElement('style');
+      globalThis.__themeConnections = 0;
+      customElements.define('x-theme-target', class extends HTMLElement {
+        connectedCallback() { globalThis.__themeConnections++; }
+      });
+      const target = document.createElement('x-theme-target');
+      target.className = 'theme-target theme-rule-255';
+      style.textContent = '.theme-seed { color: rgb(1, 2, 3); }';
+      document.head.appendChild(style);
+      document.body.appendChild(target);
+      const authoredText = style.textContent;
+      const observer = new MutationObserver(() => {});
+      observer.observe(style, { childList: true, characterData: true, subtree: true });
+      globalThis.__stylesheetMutationResult = null;
+      setTimeout(() => {
+        try {
+          const sheet = style.sheet;
+          const rules = sheet.cssRules;
+          if (style.sheet !== sheet || rules !== sheet.cssRules) {
+            throw new Error('stylesheet or rule-list identity changed');
+          }
+          const durations = [];
+          for (let cycle = 0; cycle < 20; cycle++) {
+            const started = performance.now();
+            while (rules.length) sheet.deleteRule(0);
+            for (let index = 0; index < 256; index++) {
+              const red = (cycle + index) & 255;
+              sheet.insertRule(`.theme-rule-${index} { color: rgb(${red}, 7, 9); }`, 0);
+            }
+            if (rules.length !== 256
+                || !rules[0].cssText.includes('.theme-rule-255')
+                || style.textContent !== authoredText) {
+              throw new Error('synchronous CSSOM state mismatch');
+            }
+            const expected = `rgb(${(cycle + 255) & 255}, 7, 9)`;
+            if (getComputedStyle(target).color !== expected) {
+              throw new Error('computed style did not observe final rule set');
+            }
+            if (!target.matches('.theme-target.theme-rule-255')
+                || target.getBoundingClientRect().width < 0) {
+              throw new Error('selector or layout read failed');
+            }
+            durations.push(performance.now() - started);
+          }
+          const ordered = durations.slice().sort((left, right) => left - right);
+          const p95 = ordered[18], maximum = ordered[19];
+          if (p95 > 16 || maximum > 500) {
+            throw new Error(`latency exceeded p95=${p95} max=${maximum}`);
+          }
+          while (rules.length) sheet.deleteRule(0);
+          sheet.insertRule('.theme-target { display: none; }', 0);
+          const order = ['sync'];
+          queueMicrotask(() => {
+            order.push('microtask');
+            if (rules.length !== 1 || style.textContent !== authoredText) {
+              throw new Error('microtask observed stale CSSOM or changed DOM text');
+            }
+          });
+          setTimeout(() => {
+            try {
+              order.push('timer');
+              if (getComputedStyle(target).display !== 'none'
+                  || order.join(',') !== 'sync,microtask,timer'
+                  || globalThis.__themeConnections !== 1
+                  || observer.takeRecords().length !== 0) {
+                throw new Error('checkpoint, observer, or custom-element ordering failed');
+              }
+              observer.disconnect();
+              style.remove();
+              target.remove();
+              globalThis.__stylesheetMutationResult = {
+                status: 'passed', cycles: durations.length,
+                p95, max: maximum, rules: style.sheet === null ? 0 : -1,
+                authoredTextStable: style.textContent === authoredText,
+                order
+              };
+            } catch (error) {
+              globalThis.__stylesheetMutationResult = {
+                status: 'failed', error: String(error)
+              };
+            }
+          }, 0);
+        } catch (error) {
+          globalThis.__stylesheetMutationResult = {
+            status: 'failed', error: String(error)
+          };
+        }
+      }, 0);
+    })())JS", "stylesheet-rule-mutation-setup.js");
+    const auto result = evaluate_until_equals(
+        engine,
+        "globalThis.__stylesheetMutationResult?.status === 'passed' ? 'passed' : "
+        "globalThis.__stylesheetMutationResult?.status ?? 'pending'",
+        "stylesheet-rule-mutation-status.js",
+        R"("passed")",
+        500);
+    require(result == R"("passed")",
+        "stylesheet mutation performance workload failed: " + result);
+    const auto metrics = evaluate(
+        engine,
+        "globalThis.__stylesheetMutationResult",
+        "stylesheet-rule-mutation-result.js");
+    require(webscene_engine_request_low_memory(engine) != 0,
+        "stylesheet mutation low-memory request was rejected");
+    webscene_engine_memory_metrics memory_after{sizeof(webscene_engine_memory_metrics)};
+    for (auto attempt = 0; attempt < 500; ++attempt) {
+        require(webscene_engine_get_memory_metrics(engine, &memory_after) != 0,
+            "stylesheet mutation final memory metrics were unavailable");
+        if (memory_after.low_memory_notifications
+                > memory_before.low_memory_notifications
+            && memory_after.native_css_rule_count
+                <= memory_before.native_css_rule_count
+            && memory_after.native_dom_node_count
+                <= memory_before.native_dom_node_count + 8U
+            && memory_after.native_wrapper_handle_count
+                <= memory_before.native_wrapper_handle_count + 8U) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    webscene_engine_metrics engine_after{};
+    webscene_engine_get_metrics(engine, &engine_after);
+    webscene_runtime_work_metrics work_after{sizeof(webscene_runtime_work_metrics)};
+    require(webscene_engine_get_runtime_work_metrics(engine, &work_after) != 0,
+        "stylesheet mutation final work metrics were unavailable");
+    const auto rss_after = file_system_access_test_peak_rss_bytes();
+    const auto lifecycle_bounded = memory_after.low_memory_notifications
+            > memory_before.low_memory_notifications
+        && memory_after.v8_used_heap_bytes
+            <= memory_before.v8_used_heap_bytes + 8U * 1024U * 1024U
+        && memory_after.native_css_rule_count == memory_before.native_css_rule_count
+        && memory_after.native_dom_node_count
+            <= memory_before.native_dom_node_count + 8U
+        && memory_after.native_wrapper_handle_count
+            <= memory_before.native_wrapper_handle_count + 8U;
+    if (!lifecycle_bounded) {
+        fail("stylesheet mutation lifecycle retained heap, rules, nodes, or wrappers: "
+            + std::to_string(memory_before.low_memory_notifications) + "/"
+            + std::to_string(memory_after.low_memory_notifications) + " heap="
+            + std::to_string(memory_before.v8_used_heap_bytes) + "/"
+            + std::to_string(memory_after.v8_used_heap_bytes) + " rules="
+            + std::to_string(memory_before.native_css_rule_count) + "/"
+            + std::to_string(memory_after.native_css_rule_count) + " nodes="
+            + std::to_string(memory_before.native_dom_node_count) + "/"
+            + std::to_string(memory_after.native_dom_node_count) + " wrappers="
+            + std::to_string(memory_before.native_wrapper_handle_count) + "/"
+            + std::to_string(memory_after.native_wrapper_handle_count));
+    }
+    require(rss_before == 0U || rss_after <= rss_before + 64U * 1024U * 1024U,
+        "stylesheet mutation workload exceeded the 64 MiB peak RSS budget");
+    require(engine_after.layout_passes <= engine_before.layout_passes + 23U
+            && engine_after.published_scenes <= engine_before.published_scenes + 2U
+            && memory_after.pending_scene_count <= 2U
+            && work_after.timers_fired >= work_before.timers_fired + 2U,
+        "stylesheet mutation workload exceeded layout, scene, queue, or task bounds");
+    std::cout << "stylesheet-mutation-profile=" << metrics
+              << " layoutDelta=" << (engine_after.layout_passes - engine_before.layout_passes)
+              << " sceneDelta=" << (engine_after.published_scenes - engine_before.published_scenes)
+              << " heapBefore=" << memory_before.v8_used_heap_bytes
+              << " heapAfter=" << memory_after.v8_used_heap_bytes
+              << " rssBefore=" << rss_before << " rssAfter=" << rss_after << '\n';
+    webscene_engine_destroy(engine);
 }
 
 void test_node_has_child_nodes_contract_and_performance(webscene_engine* engine)

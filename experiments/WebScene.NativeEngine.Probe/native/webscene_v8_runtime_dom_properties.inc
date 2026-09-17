@@ -265,6 +265,13 @@
         // Stable nonempty text cannot change structural selector subjects, but
         // style element text must still refresh its stylesheet on every edit.
         if (node.kind == dom_node_kind::text) {
+            for (auto* ancestor = node.parent; ancestor != nullptr;
+                 ancestor = ancestor->parent) {
+                if (ancestor->tag != "style") continue;
+                erase_pending_stylesheet_replacement(ancestor->id);
+                stylesheet_cssom_sources.erase(ancestor->id);
+                break;
+            }
             activate_connected_stylesheet(node);
             if (empty_state_changed && node.parent != nullptr)
                 recascade_changed_child_list(*node.parent);
@@ -498,6 +505,10 @@
             return;
         }
         if (!self->blur_active_descendant_before_replacing_children(*node)) return;
+        if (node->tag == "style") {
+            self->erase_pending_stylesheet_replacement(node->id);
+            self->stylesheet_cssom_sources.erase(node->id);
+        }
         self->detach_all_children(*node);
         node->text_content.clear();
         if (!text.empty()) {

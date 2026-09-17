@@ -1308,6 +1308,13 @@
       "reason": "Unsupported commands must report false so component clipboard helpers can take their modern fallback. This does not claim legacy editing or clipboard command support. Keep candidate pending cross-RID qualification."
     },
     {
+      "path": "contracts/dom-anchor-element.html",
+      "type": "testharness",
+      "capabilities": ["anchor-interface", "element-interface-branding", "iframe-dom-constructors"],
+      "evidence": ["vscode-oss-1.137-file-and-folder-interaction"],
+      "reason": "VS Code checks anchor identity directly in the active element realm. The contract covers browser-shaped constructor/prototype identity, wrapper stability, namespace rejection, and iframe realm separation without broadening hyperlink URL parsing claims."
+    },
+    {
       "path": "contracts/dom-table-cell-element.html",
       "type": "testharness",
       "capabilities": ["table-cell-interface", "element-interface-branding", "iframe-dom-constructors", "delegated-cell-click"],

@@ -159,6 +159,14 @@ int main()
             test_dom_token_list_collection_performance_gate();
             return 0;
         }
+        if (selected == "rounded-icon-surfaces") {
+            auto* focused_engine = webscene_engine_create(0);
+            require(focused_engine != nullptr, "rounded icon surface engine creation failed");
+            test_rounded_icon_surfaces_publish_stable_commands_across_selection_mutation(
+                focused_engine);
+            webscene_engine_destroy(focused_engine);
+            return 0;
+        }
         if (selected == "worker-configuration-order") {
             test_worker_starts_after_engine_configuration();
             return 0;
@@ -336,6 +344,14 @@ int main()
             auto* focused_engine = webscene_engine_create(0);
             require(focused_engine != nullptr, "NodeIterator engine creation failed");
             test_node_iterator_dompurify_and_filter_contracts(focused_engine);
+            webscene_engine_destroy(focused_engine);
+            return 0;
+        }
+        if (selected == "html-anchor-element") {
+            auto* focused_engine = webscene_engine_create(0);
+            require(focused_engine != nullptr,
+                "HTMLAnchorElement engine creation failed");
+            test_dom_element_constructor_identity(focused_engine);
             webscene_engine_destroy(focused_engine);
             return 0;
         }
@@ -1215,6 +1231,7 @@ int main()
     test_positive_z_before_paints_above_lower_z_child(engine);
     test_element_opacity_emits_isolated_group(engine);
     test_svg_background_image_reaches_scene_with_position_and_size(engine);
+    test_rounded_icon_surfaces_publish_stable_commands_across_selection_mutation(engine);
     test_tradingview_repeating_svg_checker_background_reaches_scene(engine);
     test_image_elements_load_and_reach_scene(engine);
     test_percentage_radius_reaches_raster_image_scene_clip(engine);

@@ -1,0 +1,69 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>HTMLAnchorElement interface identity across document realms</title>
+<link rel="help" href="https://html.spec.whatwg.org/multipage/text-level-semantics.html#htmlanchorelement">
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<a id="parsed" href="#target" download="fixture.txt">fixture</a>
+<script>
+test(() => {
+  assert_equals(typeof HTMLAnchorElement, 'function');
+  assert_not_equals(HTMLAnchorElement, HTMLElement);
+  assert_equals(Object.getPrototypeOf(HTMLAnchorElement.prototype), HTMLElement.prototype);
+  assert_throws_js(TypeError, () => new HTMLAnchorElement());
+}, 'HTMLAnchorElement has its own non-directly-constructible interface');
+
+test(() => {
+  const parsed = document.getElementById('parsed');
+  const created = document.createElement('A');
+  const namespaced = document.createElementNS('http://www.w3.org/1999/xhtml', 'a');
+  for (const anchor of [parsed, created, namespaced, parsed.cloneNode(true)]) {
+    assert_true(anchor instanceof HTMLAnchorElement);
+    assert_true(anchor instanceof HTMLElement);
+    assert_equals(Object.getPrototypeOf(anchor), HTMLAnchorElement.prototype);
+    assert_equals(anchor.constructor, HTMLAnchorElement);
+    assert_true(anchor instanceof anchor.ownerDocument.defaultView.HTMLAnchorElement);
+  }
+}, 'Parsed, created, namespaced and cloned anchors expose the anchor brand');
+
+test(() => {
+  for (const tag of ['div', 'span', 'button', 'input'])
+    assert_false(document.createElement(tag) instanceof HTMLAnchorElement, tag);
+  assert_false(document.createElementNS('http://www.w3.org/2000/svg', 'a') instanceof HTMLAnchorElement);
+  assert_false(document.createElementNS('urn:custom', 'a') instanceof HTMLAnchorElement);
+}, 'Non-anchor and foreign-namespace elements do not expose the anchor brand');
+
+test(() => {
+  const anchor = document.createElement('a');
+  const host = document.createElement('div');
+  host.appendChild(anchor);
+  anchor.remove();
+  host.appendChild(anchor);
+  for (let index = 0; index < 4096; ++index) {
+    assert_equals(host.firstChild, anchor);
+    assert_true(anchor instanceof HTMLAnchorElement);
+  }
+}, 'Anchor wrapper identity and branding remain stable across repeated access');
+
+promise_test(async () => {
+  const frame = document.createElement('iframe');
+  const ready = new Promise(resolve => {
+    window.__anchorFrameReady = () => setTimeout(resolve, 0);
+  });
+  document.body.appendChild(frame);
+  const doc = frame.contentDocument;
+  doc.open();
+  doc.write('<a id="child">child</a><script>' +
+    'window.anchor = document.getElementById("child");' +
+    'window.anchorBranded = anchor instanceof HTMLAnchorElement;' +
+    'parent.__anchorFrameReady();<\/script>');
+  doc.close();
+  await ready;
+  const win = frame.contentWindow;
+  assert_equals(typeof win.HTMLAnchorElement, 'function');
+  assert_not_equals(win.HTMLAnchorElement, HTMLAnchorElement);
+  assert_true(win.anchorBranded);
+  assert_true(win.anchor instanceof win.HTMLAnchorElement);
+  assert_false(win.anchor instanceof HTMLAnchorElement);
+}, 'Iframe realms expose their own HTMLAnchorElement constructor and brand');
+</script>

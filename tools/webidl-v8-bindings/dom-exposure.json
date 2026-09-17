@@ -311,6 +311,15 @@
       "constants": []
     },
     {
+      "name": "HTMLAnchorElement",
+      "template": "html_anchor_element_template",
+      "constructor": "illegal_dom_constructor",
+      "parent": "HTMLElement",
+      "attributes": [],
+      "methods": [],
+      "constants": []
+    },
+    {
       "name": "HTMLTableCellElement",
       "template": "html_table_cell_element_template",
       "constructor": "illegal_dom_constructor",

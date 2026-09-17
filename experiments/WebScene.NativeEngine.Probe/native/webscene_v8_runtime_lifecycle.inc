@@ -106,6 +106,12 @@
             }
         }
         pending_frame_preparations.clear();
+        for (auto& preparation : retired_frame_preparations) {
+            if (!preparation.valid()) continue;
+            try { static_cast<void>(preparation.get()); }
+            catch (...) {}
+        }
+        retired_frame_preparations.clear();
         // Resource prefetch tasks capture this runtime and may still be inside
         // the host loader when teardown begins. Join them while the loader and
         // all of its bridge state are still alive.

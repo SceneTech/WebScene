@@ -27,6 +27,10 @@
     static constexpr size_t maximum_frame_preparations = 16U;
     std::unordered_map<uint32_t, pending_frame_preparation>
         pending_frame_preparations;
+    std::vector<std::shared_future<std::shared_ptr<const prepared_frame>>>
+        retired_frame_preparations;
+    std::mutex document_generation_mutex;
+    std::atomic<uint64_t> document_generation{1U};
     std::shared_ptr<shared_isolate_state> shared_isolate;
     std::shared_ptr<v8::ArrayBuffer::Allocator> allocator;
     v8::Isolate* isolate{nullptr};
@@ -134,6 +138,11 @@
     std::unordered_map<const dom_node*, std::string> frame_base_addresses;
     session_storage_state outer_session_storage;
     session_storage_state outer_local_storage;
+    std::string outer_storage_origin;
+    std::unordered_map<std::string, session_storage_state>
+        outer_session_storage_by_origin;
+    std::unordered_map<std::string, session_storage_state>
+        outer_local_storage_by_origin;
     std::unordered_map<uint32_t, std::unique_ptr<session_storage_state>> frame_session_storage;
     std::vector<document_start_script> current_document_start_scripts;
     std::unordered_map<uint32_t, v8::Global<v8::Function>> frame_load_listeners;

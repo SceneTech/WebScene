@@ -5,6 +5,8 @@ struct resource_server final {
     std::atomic<int> active_documents{0};
     std::atomic<int> peak_documents{0};
     std::atomic<int> requests{0};
+    std::atomic<bool> block_named_resource{false};
+    std::atomic<bool> release_blocked_resource{false};
     std::chrono::steady_clock::time_point observation_start{};
     std::atomic<int64_t> first_subresource_start_ms{
         std::numeric_limits<int64_t>::max()};
@@ -68,7 +70,13 @@ size_t load_test_resource(
                     std::memory_order_relaxed)) {
             }
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(60));
+        if (address.find("blocked-") != std::string::npos
+            && server.block_named_resource.load(std::memory_order_acquire)) {
+            while (!server.release_blocked_resource.load(std::memory_order_acquire))
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        } else {
+            std::this_thread::sleep_for(std::chrono::milliseconds(60));
+        }
         if (kind == WEBSCENE_RESOURCE_DOCUMENT) {
             server.active_documents.fetch_sub(1, std::memory_order_relaxed);
         }
@@ -1287,6 +1295,49 @@ void test_navigation_replaces_top_level_realm()
         document.cookie = 'reload-cookie=preserved; Path=/';
         addEventListener('retired-realm-probe', () =>
           localStorage.setItem('retired-listener-fired', 'yes'));
+        const retiredControl = document.createElement('input');
+        retiredControl.id = 'retired-control';
+        document.body.appendChild(retiredControl);
+        retiredControl.focus();
+        retiredControl.setPointerCapture(1);
+        document.body.className = 'retired-style-root';
+        const retiredStyle = document.createElement('style');
+        retiredStyle.textContent =
+          '.retired-style-root { color: rgb(1, 2, 3); }';
+        document.head.appendChild(retiredStyle);
+        customElements.define('retirement-probe', class extends HTMLElement {
+          disconnectedCallback() {
+            setTimeout(() =>
+              localStorage.setItem('retired-disconnect-timer-fired', 'yes'), 60000);
+            fetch('blocked-fetch.json').then(() =>
+              localStorage.setItem('retired-disconnect-fetch-fired', 'yes'));
+            __webSceneIndexedDBStorage(
+              'store', 'retired-disconnect-navigation', 1n,
+              new Uint8Array(2 * 1024 * 1024))
+              .then(() => localStorage.setItem(
+                'retired-disconnect-indexeddb-fired', 'yes'))
+              .catch(() => {});
+            const channel = new MessageChannel();
+            channel.port1.onmessage = () =>
+              localStorage.setItem('retired-disconnect-port-fired', 'yes');
+            channel.port2.postMessage('retired');
+            const worker = new Worker('retired-worker.js');
+            worker.onmessage = () =>
+              localStorage.setItem('retired-disconnect-worker-fired', 'yes');
+            const socket = new WebSocket('ws://127.0.0.1:1/retired');
+            socket.onopen = () =>
+              localStorage.setItem('retired-disconnect-websocket-fired', 'yes');
+          }
+        });
+        document.body.appendChild(document.createElement('retirement-probe'));
+        const frame = document.createElement('iframe');
+        frame.src = 'frame-seed.html';
+        document.body.appendChild(frame);
+        const image = document.createElement('img');
+        image.src = 'slow-data.json?image';
+        document.body.appendChild(image);
+        setTimeout(() =>
+          localStorage.setItem('retired-timer-fired', 'yes'), 60000);
       } else {
         dispatchEvent(new Event('retired-realm-probe'));
         globalThis.__reloadRealmResult = JSON.stringify({
@@ -1301,14 +1352,54 @@ void test_navigation_replaces_top_level_realm()
       sessionStorage.setItem('reload-count', String(loadNumber));
     </script></body></html>)HTML";
     resource_server server{
-        .content = {{"https://reload-realm.test/index.html", std::string(page)}}};
-    const webscene_engine_options options{
-        sizeof(webscene_engine_options),
-        64U,
-        nullptr,
-        0U,
-        load_test_resource,
-        &server};
+        .content = {
+            {"https://reload-realm.test/index.html", std::string(page)},
+            {"https://reload-realm.test/slow-data.json", R"JSON({"ok":true})JSON"},
+            {"https://reload-realm.test/blocked-frame.html",
+                "<!doctype html><html><body>blocked frame</body></html>"},
+            {"https://reload-realm.test/blocked-fetch.json", R"JSON({"ok":true})JSON"},
+            {"https://reload-realm.test/retired-worker.js",
+                "postMessage('retired-worker-message');"},
+            {"https://reload-realm.test/frame-seed.html", R"HTML(<!doctype html><html><body><script>
+              localStorage.setItem('frame-seeded', 'yes');
+              globalThis.seedRetiredFrameTasks = () => {
+                setTimeout(() =>
+                  localStorage.setItem('retired-frame-timer-fired', 'yes'), 60000);
+                fetch('blocked-fetch.json').then(() =>
+                  localStorage.setItem('retired-frame-fetch-fired', 'yes'));
+                __webSceneIndexedDBStorage(
+                  'store', 'retired-frame-navigation', 1n,
+                  new Uint8Array(2 * 1024 * 1024))
+                  .then(() =>
+                    localStorage.setItem('retired-frame-indexeddb-fired', 'yes'))
+                  .catch(() => {});
+              };
+            </script></body></html>)HTML"},
+            {"https://other-realm.test/index.html", R"HTML(<!doctype html><html><body><script>
+              globalThis.__crossOriginStorageResult = JSON.stringify({
+                session: sessionStorage.getItem('reload-count'),
+                local: localStorage.getItem('reload-local'),
+                cookie: document.cookie.includes('reload-cookie=preserved')
+              });
+              sessionStorage.setItem('other-session', 'isolated');
+              localStorage.setItem('other-local', 'isolated');
+            </script></body></html>)HTML"}}};
+    const auto storage_root = std::filesystem::temp_directory_path()
+        / ("webscene-navigation-realm-"
+            + std::to_string(std::chrono::steady_clock::now()
+                .time_since_epoch().count()));
+    std::filesystem::create_directories(storage_root);
+    const auto storage_root_text = storage_root.string();
+    constexpr std::string_view storage_partition{"navigation-realm"};
+    webscene_engine_options options{};
+    options.struct_size = sizeof(options);
+    options.resource_load_callback = load_test_resource;
+    options.resource_load_user_data = &server;
+    options.storage_directory = storage_root_text.data();
+    options.storage_directory_length = storage_root_text.size();
+    options.storage_partition_key = storage_partition.data();
+    options.storage_partition_key_length = storage_partition.size();
+    options.storage_quota_bytes = 8U * 1024U * 1024U;
     auto* engine = webscene_engine_create_with_options(&options);
     require(engine != nullptr, "Reload realm engine creation failed");
     const std::string url = "https://reload-realm.test/index.html";
@@ -1317,6 +1408,29 @@ void test_navigation_replaces_top_level_realm()
         "Initial reload realm document load was rejected");
     require(evaluate(engine, "true", "initial-reload-realm-barrier.js") == "true",
         "Initial reload realm document did not finish");
+    require(
+        evaluate_until_equals(engine,
+            "localStorage.getItem('frame-seeded')",
+            "frame-seed-barrier.js", R"("yes")", 2500) == R"("yes")",
+        "Same-origin frame did not seed its retirement callbacks");
+    server.block_named_resource.store(true, std::memory_order_release);
+    execute_and_wait(engine, R"JS(
+      document.querySelector('iframe').contentWindow.seedRetiredFrameTasks();
+      fetch('blocked-fetch.json').then(() =>
+        localStorage.setItem('retired-fetch-fired', 'yes'));
+      __webSceneIndexedDBStorage(
+        'store', 'retired-navigation', 1n, new Uint8Array(2 * 1024 * 1024))
+        .then(() => localStorage.setItem('retired-indexeddb-fired', 'yes'))
+        .catch(() => {});
+    )JS", "seed-retired-navigation-async-state.js");
+    const auto blocked_wait_started = std::chrono::steady_clock::now();
+    while (server.active.load(std::memory_order_acquire) == 0
+        && std::chrono::steady_clock::now() - blocked_wait_started
+            < std::chrono::seconds(2)) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    require(server.active.load(std::memory_order_acquire) > 0,
+        "Blocked retirement resource did not enter the host loader");
     webscene_engine_memory_metrics initial_memory{
         sizeof(webscene_engine_memory_metrics)};
     require(webscene_engine_get_memory_metrics(engine, &initial_memory) != 0,
@@ -1324,6 +1438,7 @@ void test_navigation_replaces_top_level_realm()
     constexpr unsigned load_count = 32U;
     const auto started = std::chrono::steady_clock::now();
     for (unsigned load = 1U; load < load_count; ++load) {
+        const auto replacement_started = std::chrono::steady_clock::now();
         require(
             webscene_engine_load_url(engine, url.data(), url.size()) != 0,
             "Replacement reload realm document load #"
@@ -1331,6 +1446,13 @@ void test_navigation_replaces_top_level_realm()
                 + last_error(engine));
         require(evaluate(engine, "true", "reload-realm-barrier.js") == "true",
             "Replacement reload realm document did not finish");
+        if (load == 1U) {
+            const auto replacement_elapsed = std::chrono::duration<double>(
+                std::chrono::steady_clock::now() - replacement_started).count();
+            server.release_blocked_resource.store(true, std::memory_order_release);
+            require(replacement_elapsed < 0.25,
+                "Navigation blocked on a retired iframe preparation");
+        }
     }
     const auto elapsed = std::chrono::duration<double>(
         std::chrono::steady_clock::now() - started).count();
@@ -1343,6 +1465,50 @@ void test_navigation_replaces_top_level_realm()
             == R"JSON("{\"baseUrl\":\"https://reload-realm.test/index.html\",\"loadNumber\":32,\"staleGlobal\":false,\"staleListener\":null,\"local\":\"preserved\",\"cookie\":true}")JSON",
         "Navigation reused top-level lexical/global/listener state or lost browsing-session state: "
             + result);
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    const auto retired_state = evaluate(engine, R"JS(JSON.stringify({
+          timer: localStorage.getItem('retired-timer-fired'),
+          fetch: localStorage.getItem('retired-fetch-fired'),
+          indexeddb: localStorage.getItem('retired-indexeddb-fired'),
+          frameTimer: localStorage.getItem('retired-frame-timer-fired'),
+          frameFetch: localStorage.getItem('retired-frame-fetch-fired'),
+          frameIndexeddb: localStorage.getItem('retired-frame-indexeddb-fired'),
+          disconnectTimer: localStorage.getItem('retired-disconnect-timer-fired'),
+          disconnectFetch: localStorage.getItem('retired-disconnect-fetch-fired'),
+          disconnectIndexeddb: localStorage.getItem('retired-disconnect-indexeddb-fired'),
+          disconnectPort: localStorage.getItem('retired-disconnect-port-fired'),
+          disconnectWorker: localStorage.getItem('retired-disconnect-worker-fired'),
+          disconnectWebSocket: localStorage.getItem('retired-disconnect-websocket-fired'),
+          active: document.activeElement?.id || '',
+          color: getComputedStyle(document.body).color
+        }))JS", "retired-navigation-state-result.js");
+    require(
+        retired_state
+            == R"JSON("{\"timer\":null,\"fetch\":null,\"indexeddb\":null,\"frameTimer\":null,\"frameFetch\":null,\"frameIndexeddb\":null,\"disconnectTimer\":null,\"disconnectFetch\":null,\"disconnectIndexeddb\":null,\"disconnectPort\":null,\"disconnectWorker\":null,\"disconnectWebSocket\":null,\"active\":\"\",\"color\":\"rgb(0, 0, 0)\"}")JSON",
+        "A retired async callback, input target, or style state survived navigation: "
+            + retired_state);
+
+    const std::string other_url = "https://other-realm.test/index.html";
+    require(
+        webscene_engine_load_url(engine, other_url.data(), other_url.size()) != 0,
+        "Cross-origin replacement document load was rejected");
+    require(
+        evaluate(engine, "globalThis.__crossOriginStorageResult",
+            "cross-origin-storage-result.js")
+            == R"JSON("{\"session\":null,\"local\":null,\"cookie\":false}")JSON",
+        "Top-level Storage or cookies leaked across origins");
+    require(
+        webscene_engine_load_url(engine, url.data(), url.size()) != 0,
+        "Original-origin restoration document load was rejected");
+    require(
+        evaluate(engine, R"JS(JSON.stringify({
+          reload: sessionStorage.getItem('reload-count'),
+          local: localStorage.getItem('reload-local'),
+          otherSession: sessionStorage.getItem('other-session'),
+          otherLocal: localStorage.getItem('other-local')
+        }))JS", "restored-origin-storage-result.js")
+            == R"JSON("{\"reload\":\"33\",\"local\":\"preserved\",\"otherSession\":null,\"otherLocal\":null}")JSON",
+        "Returning to an origin did not restore its isolated Storage state");
     require(webscene_engine_request_low_memory(engine) != 0,
         "Reload realm low-memory request was rejected");
     webscene_engine_memory_metrics final_memory{
@@ -1370,6 +1536,8 @@ void test_navigation_replaces_top_level_realm()
               << " listenersAfter=" << final_memory.native_event_listener_count
               << "\n";
     webscene_engine_destroy(engine);
+    std::error_code cleanup_error;
+    std::filesystem::remove_all(storage_root, cleanup_error);
 }
 
 void test_document_script_failure_remains_diagnostic()

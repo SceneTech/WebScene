@@ -1,3 +1,71 @@
+uint64_t diagnostic_unsigned_field(
+    std::string_view value,
+    std::string_view field)
+{
+    const auto start = value.find(field);
+    require(
+        start != std::string_view::npos,
+        "missing diagnostic field: " + std::string(field) + "; diagnostics="
+            + std::string(value));
+    const auto digits = start + field.size();
+    const auto end = value.find_first_not_of("0123456789", digits);
+    require(end != digits, "empty diagnostic field: " + std::string(field));
+    uint64_t result = 0U;
+    const auto parsed = std::from_chars(
+        value.data() + digits,
+        value.data() + (end == std::string_view::npos ? value.size() : end),
+        result);
+    require(parsed.ec == std::errc{}, "invalid diagnostic field: " + std::string(field));
+    return result;
+}
+
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+void test_css_style_template_installation_guard()
+{
+    constexpr size_t sample_count = 7U;
+    constexpr uint64_t maximum_median_install_ns = 5'000'000U;
+    std::array<uint64_t, sample_count> samples{};
+    for (size_t index = 0; index < sample_count; ++index) {
+        auto* engine = webscene_engine_create(0);
+        require(engine != nullptr, "CSS style-template engine creation failed");
+        execute(
+            engine,
+            "document.body.textContent='template';globalThis.__webSceneComponentReady=true",
+            "css-style-template-install-barrier.js");
+        resize(engine, 320.0, 200.0, index + 1U);
+        std::string value;
+        for (auto attempt = 0; attempt < 250; ++attempt) {
+            value = diagnostics(engine);
+            if (value.find("css-style-template={properties=") != std::string::npos) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        const auto properties = diagnostic_unsigned_field(
+            value, "css-style-template={properties=");
+        const auto accessors = diagnostic_unsigned_field(value, ",accessors=");
+        const auto install_ns = diagnostic_unsigned_field(value, ",install-ns=");
+        require(
+            properties == cssom_supported_property_catalog.size(),
+            "CSS style-template property count drifted from generated metadata");
+        require(
+            accessors == cssom_style_template_property_accessor_count,
+            "CSS style-template accessor work drifted from generated metadata");
+        require(install_ns > 0U, "CSS style-template installation was not measured");
+        samples[index] = install_ns;
+        webscene_engine_destroy(engine);
+    }
+    std::sort(samples.begin(), samples.end());
+    std::cout << "css-style-template-install properties="
+        << cssom_supported_property_catalog.size()
+        << " accessors=" << cssom_style_template_property_accessor_count
+        << " min-us=" << samples.front() / 1'000.0
+        << " median-us=" << samples[samples.size() / 2U] / 1'000.0
+        << " max-us=" << samples.back() / 1'000.0 << '\n';
+    require(
+        samples[samples.size() / 2U] <= maximum_median_install_ns,
+        "median CSS style-template installation exceeded 5 ms");
+}
+#endif
+
 void test_runtime_diagnostics()
 {
     auto* engine = webscene_engine_create(0);

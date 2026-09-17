@@ -60,6 +60,35 @@
     }
   });
 
+  test("typed compatibility properties are exposed through CSSOM", () => {
+    const style = document.createElement("div").style;
+    const cases = [
+      ["list-style", "listStyle", "inside square"],
+      ["list-style-position", "listStylePosition", "inside"],
+      ["list-style-type", "listStyleType", "square"],
+      ["-webkit-font-smoothing", "WebkitFontSmoothing", "antialiased"],
+      ["border-block", "borderBlock", "1px solid red"],
+      ["border-inline", "borderInline", "2px solid blue"],
+      ["contain-intrinsic-size", "containIntrinsicSize", "200px"],
+      ["container", "container", "sidebar / inline-size"],
+      ["container-name", "containerName", "sidebar"],
+      ["container-type", "containerType", "inline-size"],
+      ["content-visibility", "contentVisibility", "auto"],
+      ["grid-auto-columns", "gridAutoColumns", "10px"],
+      ["grid-auto-flow", "gridAutoFlow", "row"],
+      ["scrollbar-color", "scrollbarColor", "red blue"],
+      ["scrollbar-width", "scrollbarWidth", "thin"],
+      ["text-anchor", "textAnchor", "middle"]
+    ];
+    for (const [cssName, idlName, value] of cases) {
+      assert(cssName in style && idlName in style,
+        `${cssName}/${idlName} was absent from CSSStyleDeclaration`);
+      style[idlName] = value;
+      assert(style.getPropertyValue(cssName) === value,
+        `${idlName} did not update ${cssName}: ${style.getPropertyValue(cssName)}`);
+    }
+  });
+
   test("invalid declarations preserve the previous authored value", () => {
     const style = document.createElement("div").style;
     style.position = "absolute";

@@ -200,6 +200,17 @@
       "font_weight", "list_style"
     ]
   },
+  "nativeInheritedProperties": [
+    "all", "color", "cursor", "direction", "font", "font-family", "font-size", "font-style",
+    "font-weight", "letter-spacing", "line-height", "list-style", "list-style-position", "list-style-type",
+    "text-align", "text-transform", "visibility", "white-space", "word-spacing", "-webkit-font-smoothing"
+  ],
+  "nativeMasklessPropertyIds": [
+    "content", "vertical_align", "grid_auto_columns", "grid_auto_flow", "table_layout", "border_inline", "border_block",
+    "outline", "outline_width", "outline_color", "animation", "animation_name", "animation_duration", "animation_delay",
+    "animation_timing_function", "animation_iteration_count", "background_repeat", "background_position", "background_size",
+    "font", "text_transform", "list_style", "list_style_position", "list_style_type"
+  ],
   "managedKnownProperties": [
     "align-content", "align-items", "align-self", "all", "background", "background-color",
     "background-image", "border", "border-bottom-color", "border-bottom-left-radius",
@@ -226,19 +237,20 @@
     "animation-iteration-count", "animation-name", "animation-play-state", "animation-timing-function",
     "accent-color", "appearance", "backdrop-filter", "background-attachment", "background-clip",
     "background-origin", "background-position", "background-position-x", "background-position-y",
-    "background-repeat", "background-size", "border-bottom", "border-collapse", "border-left",
+    "background-repeat", "background-size", "border-block", "border-bottom", "border-collapse", "border-inline", "border-left",
     "border-right", "border-spacing", "border-top", "clear", "column-count", "columns", "css-float",
-    "box-shadow", "clip-path", "color-scheme", "contain", "empty-cells", "fill-opacity", "filter", "float", "font-stretch",
-    "grid-area", "grid-column", "grid-column-end", "grid-column-start", "grid-row", "grid-row-end",
+    "box-shadow", "clip-path", "color-scheme", "contain", "contain-intrinsic-size", "container", "container-name", "container-type", "content-visibility",
+    "empty-cells", "fill-opacity", "filter", "float", "font-stretch",
+    "grid-area", "grid-auto-columns", "grid-auto-flow", "grid-column", "grid-column-end", "grid-column-start", "grid-row", "grid-row-end",
     "grid-row-start", "grid-gap", "grid-row-gap", "grid-column-gap", "inset-block", "inset-inline", "inset-inline-start",
     "inset-inline-end", "margin-block", "margin-inline", "margin-inline-start", "margin-inline-end",
-    "mask-composite", "mask-image", "mask-position", "mask-repeat", "mask-size", "padding-block",
+    "list-style", "list-style-position", "list-style-type", "mask-composite", "mask-image", "mask-position", "mask-repeat", "mask-size", "padding-block",
     "padding-inline", "padding-inline-start", "padding-inline-end", "border-inline-start",
     "border-inline-end", "border-inline-start-width", "border-inline-end-width",
     "border-inline-start-color", "border-inline-end-color", "border-start-start-radius",
     "border-start-end-radius", "border-end-start-radius", "border-end-end-radius", "-moz-transform",
-    "moz-transform", "-webkit-transform", "webkit-transform", "webkit-font-smoothing", "orphans", "resize", "table-layout",
-    "text-decoration", "text-overflow", "vertical-align", "transition", "transition-delay",
+    "moz-transform", "-webkit-transform", "webkit-transform", "-webkit-font-smoothing", "webkit-font-smoothing", "orphans", "resize",
+    "scrollbar-color", "scrollbar-width", "table-layout", "text-anchor", "text-decoration", "text-overflow", "vertical-align", "transition", "transition-delay",
     "transition-duration", "transition-property", "transition-timing-function", "transform-origin",
     "widows", "zoom"
   ],

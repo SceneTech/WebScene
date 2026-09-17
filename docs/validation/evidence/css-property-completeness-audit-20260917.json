@@ -1,0 +1,56 @@
+{
+  "date": "2026-09-17",
+  "baselineCommit": "9fe11e00de7b85f4b5cf2fb79dd379d3d85142e8",
+  "catalog": {
+    "managedKnownPropertyCount": 105,
+    "cssomSupportedPropertyCount": 230,
+    "cssomSupportedSequenceSha256": "942b33d7fac2d56ecd448b0d5a5a3d2f34dee6f65cd471251fde7473c1494dd2",
+    "nativePropertyIdCount": 146,
+    "specialPropertyIdCount": 2,
+    "typedPropertyIdCount": 144,
+    "typedNameAndAliasCount": 201,
+    "storageOnlyPropertyCount": 54,
+    "modeledMaskPropertyIdCount": 120,
+    "masklessPropertyIdCount": 24,
+    "masklessPropertyIdSequenceSha256": "ba22ffe33da3f7535acb7993d24b1b79232089eaf50b2782d47d1d12ccc4b37c",
+    "effectivePropertyMetadataCount": 61,
+    "inheritedPropertyCount": 20,
+    "fixedTypedButUnexposedPropertyCount": 16
+  },
+  "coldStyleTemplate": {
+    "generatedPropertyCount": 230,
+    "generatedPropertyAccessorCount": 418,
+    "cssTextIncludedInAccessorCount": false,
+    "samplesPerRun": 7,
+    "maximumMedianNanoseconds": 5000000,
+    "runMedianMicroseconds": [54.333, 61.667, 64.5, 45.875, 56.542],
+    "medianOfRunMediansMicroseconds": 56.542,
+    "maximumObservedSampleMicroseconds": 117.75
+  },
+  "coverage": {
+    "allCanonicalTypedPropertiesCssomExposed": true,
+    "everyExposedPropertyExactlyTypedOrStorageOnly": true,
+    "everyTypedPropertyMaskClassificationChecked": true,
+    "everyEffectiveMetadataEntryModeledAndExposed": true,
+    "inheritanceLookupGenerated": true,
+    "specifiedValueSerializationTypedIdCoverage": 144,
+    "computedSerializationOwnedByIssue": 238
+  },
+  "validation": {
+    "generatorTests": {"passed": 14, "failed": 0},
+    "generatedOutputCheck": "passed",
+    "currentNativeBuild": "passed",
+    "legacyNativeBuild": "passed",
+    "identityExecutablesPerBuild": {"passed": 2, "failed": 0},
+    "coldTemplateFocusedCurrent": "passed",
+    "coldTemplateFocusedLegacy": "passed",
+    "coldTemplateRepeatedCurrentRuns": {"passed": 5, "failed": 0},
+    "cssomInlineDeclarationValidityCurrent": {"passed": 6, "failed": 0},
+    "cssomInlineDeclarationValidityLegacy": {"passed": 6, "failed": 0},
+    "cssomInlineDeclarationValidityNewChromeSubtest": "not-run-browser-surface-unavailable",
+    "managedCssNet8": {"passed": 383, "failed": 0},
+    "managedCssNet10": {"passed": 383, "failed": 0},
+    "nativeWebSelectedCTest": {"passed": 3, "failed": 0},
+    "diffCheck": "passed"
+  }
+}

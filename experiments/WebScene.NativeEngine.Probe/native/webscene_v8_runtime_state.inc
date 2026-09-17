@@ -618,6 +618,8 @@
         implementation* owner_;
     };
 #if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+    uint64_t css_style_template_install_ns{0};
+    size_t css_style_template_property_accessors{0};
     uint64_t last_resize_outer_listeners_ns{0};
     uint64_t last_resize_frame_listeners_ns{0};
     uint64_t last_resize_layout_ns{0};

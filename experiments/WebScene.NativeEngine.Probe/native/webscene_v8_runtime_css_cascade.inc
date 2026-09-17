@@ -1025,22 +1025,7 @@
     static bool property_change_propagates_to_descendants(
         std::string_view property)
     {
-        constexpr std::array inherited_properties{
-            std::string_view{"all"}, std::string_view{"color"},
-            std::string_view{"cursor"}, std::string_view{"direction"},
-            std::string_view{"font"}, std::string_view{"font-family"},
-            std::string_view{"font-size"}, std::string_view{"font-style"},
-            std::string_view{"font-weight"}, std::string_view{"letter-spacing"},
-            std::string_view{"line-height"}, std::string_view{"list-style"},
-            std::string_view{"list-style-position"},
-            std::string_view{"list-style-type"}, std::string_view{"text-align"},
-            std::string_view{"text-transform"}, std::string_view{"visibility"},
-            std::string_view{"white-space"}, std::string_view{"word-spacing"},
-            std::string_view{"-webkit-font-smoothing"}};
-        return std::find(
-            inherited_properties.begin(),
-            inherited_properties.end(),
-            property) != inherited_properties.end();
+        return css::generated_property_inherits_by_default(property);
     }
 
     static bool rule_change_propagates_to_descendants(const css_rule& rule)

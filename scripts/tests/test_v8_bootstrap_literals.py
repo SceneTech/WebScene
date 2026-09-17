@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import pathlib
 import re
@@ -20,6 +21,13 @@ RUNTIME_PATH = (
 )
 SERVICE_WORKER_PATH = RUNTIME_PATH.with_name(
     "webscene_v8_runtime_service_workers.inc"
+)
+INDEXEDDB_PATH = (
+    ROOT
+    / "experiments"
+    / "WebScene.NativeEngine.Probe"
+    / "native"
+    / "webscene_indexeddb_compatibility.h"
 )
 
 SPEC = importlib.util.spec_from_file_location("extract_bootstraps", EXTRACTOR_PATH)
@@ -55,6 +63,25 @@ class V8BootstrapLiteralTests(unittest.TestCase):
                 len(part.encode("utf-8")) <= EXTRACTOR.MAX_RAW_LITERAL_BYTES
                 for part in parts
             )
+        )
+
+    def test_indexeddb_bootstrap_is_portable_and_byte_exact(self) -> None:
+        source = INDEXEDDB_PATH.read_text(encoding="utf-8")
+        parts = EXTRACTOR.extract_parts(
+            source, "indexeddb_compatibility_source"
+        )
+        joined = "".join(parts)
+
+        self.assertGreater(len(parts), 1)
+        self.assertTrue(
+            all(
+                len(part.encode("utf-8")) <= EXTRACTOR.MAX_RAW_LITERAL_BYTES
+                for part in parts
+            )
+        )
+        self.assertEqual(
+            hashlib.sha256(joined.encode("utf-8")).hexdigest(),
+            "a3c907644e9b6c9d63eddfbd6a591802e99bbd3249a3b1437788ce4eb1c73b64",
         )
 
 

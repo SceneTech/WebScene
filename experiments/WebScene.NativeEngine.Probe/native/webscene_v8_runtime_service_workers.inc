@@ -7,6 +7,30 @@
     static constexpr size_t maximum_service_worker_queue_messages = 256U;
     static constexpr size_t maximum_service_worker_queue_bytes =
         16U * 1024U * 1024U;
+    static constexpr size_t maximum_service_worker_fetches = 32U;
+    static constexpr size_t maximum_service_worker_fetch_body_bytes =
+        64U * 1024U * 1024U;
+
+    struct service_worker_fetch_result final {
+        bool handled{};
+        uint32_t status{200U};
+        std::string status_text{"OK"};
+        std::string url;
+        std::string response_type{"basic"};
+        bool redirected{};
+        std::vector<std::pair<std::string, std::string>> headers;
+        std::string body;
+        std::string error;
+    };
+
+    struct service_worker_fetch_request final {
+        std::string url;
+        std::string method{"GET"};
+        std::vector<std::pair<std::string, std::string>> headers;
+        std::string client_id;
+        uint64_t client_generation{};
+        std::promise<service_worker_fetch_result> promise;
+    };
 
     static void set_service_worker_client_properties(
         v8::Isolate* isolate,
@@ -319,7 +343,8 @@
                                 state.get(),
                                 v8::kExternalPointerTypeTagDefault))
                             .ToLocalChecked()).Check();
-                    constexpr std::string_view bootstrap = R"JS(
+                    constexpr std::string_view bootstrap_parts[] = {
+                        R"JS(
                       (() => {
                         function WorkerGlobalScope() {
                           throw new TypeError('Illegal constructor');
@@ -462,6 +487,174 @@
                           await Promise.all(state.pending);
                           return response;
                         };
+                        const dispatchFetchRecord = async init => {
+                          const response = await dispatchFetch(init);
+                          if (response === undefined) return {handled:false};
+                          const chunks = [];
+                          let bodyLength = 0;
+                          if (response.body !== null) {
+                            const reader = response.body.getReader();
+                            for (;;) {
+                              const {value, done} = await reader.read();
+                              if (done) break;
+                              const bytes = value instanceof Uint8Array
+                                ? value : new Uint8Array(value);
+                              bodyLength += bytes.byteLength;
+                              if (bodyLength > 64 * 1024 * 1024) {
+                                await reader.cancel('Service worker response body limit');
+                                throw new DOMException(
+                                  'Service worker response body exceeds 64 MiB',
+                                  'QuotaExceededError');
+                              }
+                              chunks.push(bytes);
+                            }
+                          }
+                          const body = new Uint8Array(bodyLength);
+                          let bodyOffset = 0;
+                          for (const chunk of chunks) {
+                            body.set(chunk, bodyOffset);
+                            bodyOffset += chunk.byteLength;
+                          }
+                          return {
+                            handled:true,
+                            status:response.status,
+                            statusText:response.statusText,
+                            headers:[...response.headers],
+                            body,
+                            url:response.url,
+                            redirected:response.redirected,
+                            type:response.type
+                          };
+                        };
+                        const cacheState = new WeakMap();
+                        const cacheStorageState = new WeakMap();
+                        const cacheKey = request => {
+                          const value = request instanceof Request
+                            ? request : new Request(request);
+                          return `${value.method} ${value.url}`;
+                        };
+                        const requireCache = value => {
+                          const state = cacheState.get(value);
+                          if (!state) throw new TypeError('Illegal invocation');
+                          return state;
+                        };
+                        const requireCacheStorage = value => {
+                          const state = cacheStorageState.get(value);
+                          if (!state) throw new TypeError('Illegal invocation');
+                          return state;
+                        };
+                        class Cache {
+                          constructor() { throw new TypeError('Illegal constructor'); }
+                          match(request) {
+                            const state = requireCache(this);
+                            const stored = state.entries.get(cacheKey(request));
+                            return Promise.resolve(stored?.response.clone());
+                          }
+                          async put(request, response) {
+                            const state = requireCache(this);
+                            const key = cacheKey(request);
+                            if (!key.startsWith('GET ')) {
+                              throw new TypeError('Cache.put requires a GET request');
+                            }
+                            if (!(response instanceof Response)) {
+                              throw new TypeError('Cache.put requires a Response');
+                            }
+                            if (response.status === 206 || response.bodyUsed) {
+                              throw new TypeError('Response cannot be cached');
+                            }
+                            const clone = response.clone();
+                            const body = new Uint8Array(await clone.arrayBuffer());
+                            const prior = state.entries.get(key)?.bytes ?? 0;
+                            const nextBytes = state.storage.bytes - prior + body.byteLength;
+                            if (nextBytes > 64 * 1024 * 1024
+                                || (!state.entries.has(key) && state.entries.size >= 256)) {
+                              throw new DOMException('Cache quota exceeded', 'QuotaExceededError');
+                            }
+                            state.entries.set(key, {bytes:body.byteLength,
+                              response:new Response(body, {
+                                status:response.status, statusText:response.statusText,
+                                headers:response.headers, url:response.url,
+)JS",
+                        R"JS(                                redirected:response.redirected, type:response.type
+                              })});
+                            state.storage.bytes = nextBytes;
+                          }
+                          delete(request) {
+                            const state = requireCache(this);
+                            const key = cacheKey(request);
+                            const entry = state.entries.get(key);
+                            if (!entry) return Promise.resolve(false);
+                            state.entries.delete(key);
+                            state.storage.bytes -= entry.bytes;
+                            return Promise.resolve(true);
+                          }
+                          keys() {
+                            const state = requireCache(this);
+                            return Promise.resolve([...state.entries.keys()].map(key =>
+                              new Request(key.slice(key.indexOf(' ') + 1), {
+                                method:key.slice(0, key.indexOf(' '))})));
+                          }
+                        }
+                        class CacheStorage {
+                          constructor() { throw new TypeError('Illegal constructor'); }
+                          open(name) {
+                            const storage = requireCacheStorage(this);
+                            const key = String(name);
+                            let value = storage.caches.get(key);
+                            if (!value) {
+                              if (storage.caches.size >= 32) {
+                                return Promise.reject(new DOMException(
+                                  'CacheStorage quota exceeded', 'QuotaExceededError'));
+                              }
+                              value = Object.create(Cache.prototype);
+                              cacheState.set(value, {entries:new Map(), storage});
+                              storage.caches.set(key, value);
+                            }
+                            return Promise.resolve(value);
+                          }
+                          has(name) {
+                            return Promise.resolve(
+                              requireCacheStorage(this).caches.has(String(name)));
+                          }
+                          delete(name) {
+                            const storage = requireCacheStorage(this);
+                            const key = String(name);
+                            const value = storage.caches.get(key);
+                            if (!value) return Promise.resolve(false);
+                            for (const entry of requireCache(value).entries.values()) {
+                              storage.bytes -= entry.bytes;
+                            }
+                            storage.caches.delete(key);
+                            return Promise.resolve(true);
+                          }
+                          keys() {
+                            return Promise.resolve(
+                              [...requireCacheStorage(this).caches.keys()]);
+                          }
+                          async match(request) {
+                            const storage = requireCacheStorage(this);
+                            for (const cache of storage.caches.values()) {
+                              const response = await cache.match(request);
+                              if (response) return response;
+                            }
+                            return undefined;
+                          }
+                        }
+                        for (const [prototype, tag, names] of [
+                          [Cache.prototype, 'Cache', ['match', 'put', 'delete', 'keys']],
+                          [CacheStorage.prototype, 'CacheStorage',
+                            ['open', 'has', 'delete', 'keys', 'match']]
+                        ]) {
+                          Object.defineProperty(prototype, Symbol.toStringTag,
+                            {value:tag, configurable:true});
+                          for (const name of names) {
+                            const descriptor = Object.getOwnPropertyDescriptor(prototype, name);
+                            Object.defineProperty(prototype, name,
+                              {...descriptor, enumerable:true});
+                          }
+                        }
+                        const caches = Object.create(CacheStorage.prototype);
+                        cacheStorageState.set(caches, {caches:new Map(), bytes:0});
                         function Client() { throw new TypeError('Illegal constructor'); }
                         function WindowClient() { throw new TypeError('Illegal constructor'); }
                         function Clients() { throw new TypeError('Illegal constructor'); }
@@ -556,6 +749,11 @@
                           FetchEvent: {
                             value:FetchEvent, writable:true, configurable:true
                           },
+                          Cache: {value:Cache, writable:true, configurable:true},
+                          CacheStorage: {
+                            value:CacheStorage, writable:true, configurable:true
+                          },
+                          caches: {value:caches, enumerable:true, configurable:true},
                           Client: {value:Client, writable:true, configurable:true},
                           WindowClient: {value:WindowClient, writable:true, configurable:true},
                           Clients: {value:Clients, writable:true, configurable:true},
@@ -581,10 +779,16 @@
                           },
                           __webSceneDispatchServiceWorkerFetch: {
                             value:dispatchFetch, configurable:true
+                          },
+                          __webSceneDispatchServiceWorkerFetchRecord: {
+                            value:dispatchFetchRecord, configurable:true
                           }
                         });
                       })();
-                    )JS";
+                    )JS",
+                    };
+                    std::string bootstrap;
+                    for (const auto part : bootstrap_parts) bootstrap.append(part);
                     std::string error;
                     if (!child->execute_in_context(
                             realm, bootstrap, "webscene:service-worker-bootstrap", error)) {
@@ -629,12 +833,24 @@
                     if (!state->stopped) state->activated = true;
                 }
                 state->ready.notify_all();
+                struct pending_fetch final {
+                    std::shared_ptr<service_worker_fetch_request> request;
+                    v8::Global<v8::Promise> promise;
+                };
+                std::vector<pending_fetch> pending_fetches;
                 for (;;) {
                     std::optional<service_worker_message> message;
+                    std::shared_ptr<service_worker_fetch_request> fetch_request;
                     {
                         std::unique_lock lock(state->mutex);
-                        state->ready.wait_for(lock, std::chrono::milliseconds(100), [&] {
-                            return state->stopped || !state->incoming.empty();
+                        state->ready.wait_for(
+                            lock,
+                            pending_fetches.empty()
+                                ? std::chrono::milliseconds(100)
+                                : std::chrono::milliseconds(1),
+                            [&] {
+                            return state->stopped || !state->incoming.empty()
+                                || !state->fetches.empty();
                         });
                         if (state->stopped) break;
                         if (!state->incoming.empty()) {
@@ -644,11 +860,105 @@
                             state->incoming_bytes = bytes > state->incoming_bytes
                                 ? 0U : state->incoming_bytes - bytes;
                         }
+                        if (!state->fetches.empty()) {
+                            fetch_request = std::move(state->fetches.front());
+                            state->fetches.pop_front();
+                        }
                     }
                     v8::Isolate::Scope isolate_scope(child->isolate);
                     v8::HandleScope handles(child->isolate);
                     auto realm = child->context.Get(child->isolate);
                     v8::Context::Scope context_scope(realm);
+                    if (fetch_request != nullptr) {
+                        service_worker_fetch_result failure;
+                        failure.handled = true;
+                        v8::TryCatch caught(child->isolate);
+                        v8::Local<v8::Value> helper_value;
+                        v8::Local<v8::Value> request_constructor_value;
+                        if (!realm->Global()->Get(
+                                realm,
+                                js_string(child->isolate,
+                                    "__webSceneDispatchServiceWorkerFetchRecord"))
+                                .ToLocal(&helper_value)
+                            || !helper_value->IsFunction()
+                            || !realm->Global()->Get(
+                                realm,
+                                js_string(child->isolate, "Request"))
+                                .ToLocal(&request_constructor_value)
+                            || !request_constructor_value->IsFunction()) {
+                            failure.error = "Service worker fetch dispatcher is unavailable";
+                            fetch_request->promise.set_value(std::move(failure));
+                            std::lock_guard lock(state->mutex);
+                            if (state->active_fetches > 0U) --state->active_fetches;
+                        } else {
+                            auto options = v8::Object::New(child->isolate);
+                            options->Set(
+                                realm,
+                                js_string(child->isolate, "method"),
+                                js_dom_string(child->isolate, fetch_request->method)).Check();
+                            auto headers = v8::Array::New(
+                                child->isolate,
+                                static_cast<int>(fetch_request->headers.size()));
+                            for (uint32_t index = 0U;
+                                 index < fetch_request->headers.size(); ++index) {
+                                auto pair = v8::Array::New(child->isolate, 2);
+                                pair->Set(
+                                    realm, 0,
+                                    js_dom_string(child->isolate,
+                                        fetch_request->headers[index].first)).Check();
+                                pair->Set(
+                                    realm, 1,
+                                    js_dom_string(child->isolate,
+                                        fetch_request->headers[index].second)).Check();
+                                headers->Set(realm, index, pair).Check();
+                            }
+                            options->Set(
+                                realm, js_string(child->isolate, "headers"), headers).Check();
+                            v8::Local<v8::Value> request_arguments[]{
+                                js_dom_string(child->isolate, fetch_request->url), options};
+                            v8::Local<v8::Object> request_value;
+                            if (!request_constructor_value.As<v8::Function>()->NewInstance(
+                                    realm, 2, request_arguments).ToLocal(&request_value)) {
+                                failure.error = child->describe_reported_exception(caught, realm);
+                                fetch_request->promise.set_value(std::move(failure));
+                                std::lock_guard lock(state->mutex);
+                                if (state->active_fetches > 0U) --state->active_fetches;
+                            } else {
+                                auto init = v8::Object::New(child->isolate);
+                                init->Set(
+                                    realm, js_string(child->isolate, "request"),
+                                    request_value).Check();
+                                init->Set(
+                                    realm, js_string(child->isolate, "clientId"),
+                                    js_dom_string(child->isolate,
+                                        fetch_request->client_id)).Check();
+                                init->Set(
+                                    realm, js_string(child->isolate, "resultingClientId"),
+                                    js_string(child->isolate, "")).Check();
+                                init->Set(
+                                    realm, js_string(child->isolate, "replacesClientId"),
+                                    js_string(child->isolate, "")).Check();
+                                v8::Local<v8::Value> arguments[]{init};
+                                v8::Local<v8::Value> dispatched;
+                                if (!helper_value.As<v8::Function>()->Call(
+                                        realm, realm->Global(), 1, arguments)
+                                        .ToLocal(&dispatched)
+                                    || !dispatched->IsPromise()) {
+                                    failure.error = child->describe_reported_exception(
+                                        caught, realm);
+                                    fetch_request->promise.set_value(std::move(failure));
+                                    std::lock_guard lock(state->mutex);
+                                    if (state->active_fetches > 0U) --state->active_fetches;
+                                } else {
+                                    pending_fetch pending;
+                                    pending.request = std::move(fetch_request);
+                                    pending.promise.Reset(
+                                        child->isolate, dispatched.As<v8::Promise>());
+                                    pending_fetches.push_back(std::move(pending));
+                                }
+                            }
+                        }
+                    }
                     if (message.has_value()) {
                         v8::TryCatch caught(child->isolate);
                         std::vector<v8::Local<v8::Object>> ports;
@@ -740,6 +1050,93 @@
                     }
                     child->drain_tasks();
                     child->perform_microtask_checkpoint();
+                    for (auto iterator = pending_fetches.begin();
+                         iterator != pending_fetches.end();) {
+                        auto promise = iterator->promise.Get(child->isolate);
+                        if (promise->State() == v8::Promise::kPending) {
+                            ++iterator;
+                            continue;
+                        }
+                        service_worker_fetch_result result;
+                        result.handled = true;
+                        if (promise->State() == v8::Promise::kRejected) {
+                            result.error = to_utf8(child->isolate, promise->Result());
+                        } else if (!promise->Result()->IsObject()) {
+                            result.error = "Service worker fetch result is invalid";
+                        } else {
+                            auto object = promise->Result().As<v8::Object>();
+                            const auto property = [&](const char* name)
+                                -> v8::Local<v8::Value> {
+                                v8::Local<v8::Value> value;
+                                if (!object->Get(
+                                        realm, js_string(child->isolate, name))
+                                        .ToLocal(&value)) return v8::Undefined(child->isolate);
+                                return value;
+                            };
+                            result.handled = property("handled")->BooleanValue(
+                                child->isolate);
+                            if (result.handled) {
+                                result.status = property("status")->Uint32Value(
+                                    realm).FromMaybe(0U);
+                            result.status_text = to_utf8(
+                                    child->isolate, property("statusText"));
+                                result.url = to_utf8(child->isolate, property("url"));
+                                result.response_type = to_utf8(
+                                    child->isolate, property("type"));
+                                result.redirected = property("redirected")->BooleanValue(
+                                    child->isolate);
+                                auto body = property("body");
+                                if (!body->IsArrayBufferView()) {
+                                    result.error = "Service worker response body is invalid";
+                                } else {
+                                    auto view = body.As<v8::ArrayBufferView>();
+                                    if (view->ByteLength()
+                                        > maximum_service_worker_fetch_body_bytes) {
+                                        result.error = "Service worker response body exceeds 64 MiB";
+                                    } else {
+                                        const auto backing = view->Buffer()->GetBackingStore();
+                                        const auto* bytes = static_cast<const char*>(
+                                            backing->Data()) + view->ByteOffset();
+                                        result.body.assign(bytes, view->ByteLength());
+                                    }
+                                }
+                                auto headers = property("headers");
+                                if (headers->IsArray()) {
+                                    auto values = headers.As<v8::Array>();
+                                    for (uint32_t index = 0U;
+                                         index < values->Length(); ++index) {
+                                        v8::Local<v8::Value> entry_value;
+                                        if (!values->Get(realm, index).ToLocal(&entry_value)
+                                            || !entry_value->IsArray()) continue;
+                                        auto entry = entry_value.As<v8::Array>();
+                                        v8::Local<v8::Value> name;
+                                        v8::Local<v8::Value> value;
+                                        if (entry->Get(realm, 0).ToLocal(&name)
+                                            && entry->Get(realm, 1).ToLocal(&value)) {
+                                            result.headers.emplace_back(
+                                                to_utf8(child->isolate, name),
+                                                to_utf8(child->isolate, value));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        {
+                            std::lock_guard lock(state->mutex);
+                            const auto client = state->clients.find(
+                                iterator->request->client_id);
+                            if (client == state->clients.end()
+                                || client->second.generation
+                                    != iterator->request->client_generation) {
+                                result.handled = true;
+                                result.error = "Service worker fetch client was retired";
+                            }
+                            if (state->active_fetches > 0U) --state->active_fetches;
+                        }
+                        iterator->request->promise.set_value(std::move(result));
+                        iterator->promise.Reset();
+                        iterator = pending_fetches.erase(iterator);
+                    }
                 }
                 {
                     std::lock_guard lock(state->mutex);
@@ -1219,6 +1616,81 @@
             js_string(isolate, "Unknown service worker control operation")));
     }
 
+    std::shared_future<service_worker_fetch_result>
+    enqueue_controlled_service_worker_fetch(
+        const std::string& url,
+        const resource_request_context& request_context)
+    {
+        if (service_worker_realm || isolate == nullptr || context.IsEmpty()) {
+            return {};
+        }
+        const auto local_context = isolate->GetCurrentContext();
+        service_worker_client_state* client = nullptr;
+        for (auto& [id, candidate] : service_worker_clients) {
+            static_cast<void>(id);
+            if (!candidate.context.IsEmpty()
+                && candidate.context.Get(isolate) == local_context) {
+                client = &candidate;
+                break;
+            }
+        }
+        if (client == nullptr) return {};
+        std::shared_ptr<service_worker_runtime_state> runtime;
+        size_t matched_scope = 0U;
+        for (auto& [scope, registration] : service_worker_registrations) {
+            if (registration.runtime == nullptr
+                || !client->descriptor.url.starts_with(scope)
+                || scope.size() < matched_scope) continue;
+            std::lock_guard lock(registration.runtime->mutex);
+            if (registration.runtime->stopped
+                || !registration.runtime->activated
+                || !registration.runtime->claimed) continue;
+            runtime = registration.runtime;
+            matched_scope = scope.size();
+        }
+        if (runtime == nullptr) return {};
+        auto request = std::make_shared<service_worker_fetch_request>();
+        request->url = url;
+        request->method = request_context.method.empty()
+            ? "GET" : request_context.method;
+        if (!request_context.content_type.empty()) {
+            request->headers.emplace_back(
+                "content-type", request_context.content_type);
+        }
+        if (!request_context.cookie.empty()) {
+            request->headers.emplace_back("cookie", request_context.cookie);
+        }
+        request->client_id = client->descriptor.id;
+        request->client_generation = client->descriptor.generation;
+        auto future = request->promise.get_future().share();
+        {
+            std::lock_guard lock(runtime->mutex);
+            const auto runtime_client = runtime->clients.find(request->client_id);
+            if (runtime->stopped || runtime_client == runtime->clients.end()
+                || runtime_client->second.generation
+                    != request->client_generation) {
+                service_worker_fetch_result result;
+                result.handled = true;
+                result.error = "Service worker fetch client was retired";
+                request->promise.set_value(std::move(result));
+                return future;
+            }
+            if (runtime->active_fetches >= maximum_service_worker_fetches) {
+                service_worker_fetch_result result;
+                result.handled = true;
+                result.error = "Service worker fetch queue capacity exhausted";
+                request->promise.set_value(std::move(result));
+                return future;
+            }
+            ++runtime->active_fetches;
+            runtime->fetch_high_water = std::max(
+                runtime->fetch_high_water, runtime->active_fetches);
+            runtime->fetches.push_back(request);
+        }
+        runtime->ready.notify_all();
+        return future;
+    }
+
     bool has_service_worker_messages() const
     {
         for (const auto& [scope, registration] : service_worker_registrations) {
@@ -1511,10 +1983,13 @@
         std::unordered_map<std::string, service_worker_client_descriptor> clients;
         std::deque<service_worker_message> incoming;
         std::deque<service_worker_message> outgoing;
+        std::deque<std::shared_ptr<service_worker_fetch_request>> fetches;
         size_t incoming_bytes{};
         size_t outgoing_bytes{};
         size_t incoming_high_water{};
         size_t outgoing_high_water{};
+        size_t fetch_high_water{};
+        size_t active_fetches{};
         std::function<void()> notify_client;
         bool stopped{false};
         bool activated{false};
@@ -1530,8 +2005,10 @@
                 clients.clear();
                 incoming.clear();
                 outgoing.clear();
+                fetches.clear();
                 incoming_bytes = 0U;
                 outgoing_bytes = 0U;
+                active_fetches = 0U;
             }
             ready.notify_all();
             if (thread.joinable()) thread.join();

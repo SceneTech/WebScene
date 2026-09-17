@@ -1422,6 +1422,8 @@ struct v8_dom_runtime::implementation final {
         pending.context.Reset(info.GetIsolate(), local_context);
         pending.resolver.Reset(info.GetIsolate(), resolver);
         const auto notify = self->runtime_work_available;
+        auto controlled_fetch = self->enqueue_controlled_service_worker_fetch(
+            resolved, request_context);
         pending.future = std::async(
             std::launch::async,
             [self,
@@ -1430,13 +1432,50 @@ struct v8_dom_runtime::implementation final {
                 method,
                 redirect,
                 request_context = std::move(request_context),
+                controlled_fetch = std::move(controlled_fetch),
                 notify]() mutable {
                 async_fetch_result result;
                 result.resolved_url = resolved;
                 try {
                     resource_response response;
                     auto loaded = false;
-                    if (self->load_resource_callback) {
+                    auto handled_by_service_worker = false;
+                    if (controlled_fetch.valid()) {
+                        if (controlled_fetch.wait_for(std::chrono::seconds(30))
+                            != std::future_status::ready) {
+                            handled_by_service_worker = true;
+                            result.error = "Service worker fetch timed out";
+                        } else {
+                            auto controlled = controlled_fetch.get();
+                            handled_by_service_worker = controlled.handled;
+                            if (controlled.handled) {
+                                if (!controlled.error.empty()) {
+                                    result.error = std::move(controlled.error);
+                                } else {
+                                    result.loaded = true;
+                                    result.status = controlled.status;
+                                    result.status_text = std::move(
+                                        controlled.status_text);
+                                    if (!controlled.url.empty()) {
+                                        result.resolved_url = std::move(controlled.url);
+                                    }
+                                    result.redirected = controlled.redirected;
+                                    result.response_type = std::move(
+                                        controlled.response_type);
+                                    for (auto& header : controlled.headers) {
+                                        if (header.first != "set-cookie"
+                                            && header.first != "set-cookie2") {
+                                            result.headers.push_back(std::move(header));
+                                        }
+                                    }
+                                    if (method != "HEAD") {
+                                        result.body = std::move(controlled.body);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if (!handled_by_service_worker && self->load_resource_callback) {
                         if (method == "GET" || method == "HEAD") {
                             auto shared = self->load_resource_single_flight(
                                 WEBSCENE_RESOURCE_DATA,
@@ -1455,7 +1494,7 @@ struct v8_dom_runtime::implementation final {
                                 0,
                                 response);
                         }
-                    } else {
+                    } else if (!handled_by_service_worker) {
                         auto path = self->resolve_resource_path(specifier);
                         std::ifstream stream(path, std::ios::binary);
                         if (stream) {
@@ -1466,8 +1505,8 @@ struct v8_dom_runtime::implementation final {
                             loaded = true;
                         }
                     }
-                    result.loaded = loaded;
-                    if (loaded) {
+                    if (!handled_by_service_worker) result.loaded = loaded;
+                    if (!handled_by_service_worker && loaded) {
                         self->accept_response_cookies(
                             result.resolved_url, request_context, response);
                         result.status = response.status;
@@ -1543,9 +1582,10 @@ struct v8_dom_runtime::implementation final {
                             });
                         }
                     }
-                    if (result.loaded && method != "HEAD") {
+                    if (!handled_by_service_worker && result.loaded && method != "HEAD") {
                         result.body = std::move(response.content);
-                    } else if (!result.loaded && result.error.empty()) {
+                    } else if (!handled_by_service_worker
+                        && !result.loaded && result.error.empty()) {
                         result.error = "Unable to fetch WebScene resource: " + specifier;
                     }
                 } catch (const std::exception& error) {

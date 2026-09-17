@@ -1,0 +1,27 @@
+{
+  "profile": "webscene-css-clip-path-inset-paint-1",
+  "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+  "runtime": "v8",
+  "viewport": {
+    "width": 240,
+    "height": 160,
+    "deviceScaleFactor": 1
+  },
+  "required": [
+    {
+      "path": "contracts/css-clip-path-inset-paint.html",
+      "type": "reftest",
+      "reference": "contracts/css-clip-path-inset-paint-ref.html",
+      "capabilities": [
+        "clip-path-inset-paint",
+        "clip-path-percentage-insets",
+        "clip-path-class-mutation",
+        "clip-path-descendant-clipping"
+      ],
+      "evidence": ["css-retained-effects-256-inset-clip"],
+      "reason": "Exact-pixel retained-scene oracle for rectangular inset clip paths over element backgrounds and overflowing descendants."
+    }
+  ],
+  "harnessBlocked": [],
+  "excluded": []
+}

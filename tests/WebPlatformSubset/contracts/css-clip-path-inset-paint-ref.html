@@ -1,0 +1,19 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Retained inset clip-path reference</title>
+<style>
+  html, body {
+    margin: 0;
+    width: 240px;
+    height: 160px;
+    overflow: hidden;
+    background: rgb(16, 24, 32);
+  }
+  .visible { position: absolute; }
+  #pixels { left: 25px; top: 30px; width: 75px; height: 45px; background: rgb(30, 90, 210); }
+  #percent { left: 150px; top: 40px; width: 60px; height: 40px; background: rgb(40, 180, 90); }
+  #nested { left: 30px; top: 115px; width: 180px; height: 25px; background: rgb(230, 180, 40); }
+</style>
+<div id="pixels" class="visible"></div>
+<div id="percent" class="visible"></div>
+<div id="nested" class="visible"></div>

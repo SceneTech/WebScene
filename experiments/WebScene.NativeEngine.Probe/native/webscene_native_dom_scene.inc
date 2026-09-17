@@ -420,6 +420,102 @@ void native_document::append_scene(
         ? node.style.visibility_hidden
         : inherited_visibility_hidden;
     const auto paint_self = !visibility_hidden && paint_target == nullptr && !pseudo_only;
+    struct inset_clip_length final {
+        float value{};
+        bool percent{};
+    };
+    const auto ascii_equal = [](char left, char right) {
+        const auto lower = [](unsigned char character) {
+            return character >= 'A' && character <= 'Z'
+                ? static_cast<char>(character - 'A' + 'a')
+                : static_cast<char>(character);
+        };
+        return lower(static_cast<unsigned char>(left))
+            == lower(static_cast<unsigned char>(right));
+    };
+    const auto parse_inset_clip_length = [](std::string_view token)
+        -> std::optional<inset_clip_length> {
+        if (token.empty()) return std::nullopt;
+        auto first = token.data();
+        if (*first == '+') ++first;
+        if (first == token.data() + token.size()) return std::nullopt;
+        float number = 0.0F;
+        const auto parsed = std::from_chars(first, token.data() + token.size(), number);
+        if (parsed.ec != std::errc{} || parsed.ptr == first || !std::isfinite(number)) {
+            return std::nullopt;
+        }
+        const std::string_view suffix(parsed.ptr, token.data() + token.size() - parsed.ptr);
+        if (suffix.empty()) {
+            if (std::abs(number) > 0.0001F) return std::nullopt;
+            return inset_clip_length{0.0F, false};
+        }
+        if (suffix.size() == 2U
+            && (suffix[0] == 'p' || suffix[0] == 'P')
+            && (suffix[1] == 'x' || suffix[1] == 'X')) {
+            return inset_clip_length{number, false};
+        }
+        if (suffix == "%") return inset_clip_length{number, true};
+        return std::nullopt;
+    };
+    const auto resolve_inset_clip = [&]() -> std::optional<layout_rect> {
+        const auto& effects = node.style.textual().effect_values;
+        const auto known = effects.find("clip-path");
+        if (known == effects.end()) return std::nullopt;
+        const std::string_view value = known->second;
+        constexpr std::string_view inset_prefix = "inset(";
+        if (value.size() < inset_prefix.size() + 1U || value.back() != ')') return std::nullopt;
+        for (size_t index = 0; index < inset_prefix.size(); ++index) {
+            if (!ascii_equal(value[index], inset_prefix[index])) return std::nullopt;
+        }
+        const std::string_view arguments(value.data() + 6U, value.size() - 7U);
+        std::array<inset_clip_length, 4> parsed{};
+        size_t count = 0U;
+        size_t cursor = 0U;
+        while (cursor < arguments.size()) {
+            while (cursor < arguments.size()
+                && std::isspace(static_cast<unsigned char>(arguments[cursor]))) ++cursor;
+            if (cursor == arguments.size()) break;
+            const auto end = arguments.find_first_of(" \t\r\n\f", cursor);
+            const auto token = arguments.substr(
+                cursor,
+                end == std::string_view::npos ? arguments.size() - cursor : end - cursor);
+            if (count == parsed.size()) return std::nullopt;
+            const auto length = parse_inset_clip_length(token);
+            if (!length.has_value()) return std::nullopt;
+            parsed[count++] = *length;
+            if (end == std::string_view::npos) break;
+            cursor = end + 1U;
+        }
+        if (count == 0U) return std::nullopt;
+        const auto top = parsed[0];
+        const auto right = count > 1U ? parsed[1] : parsed[0];
+        const auto bottom = count > 2U ? parsed[2] : parsed[0];
+        const auto left = count > 3U ? parsed[3] : count > 1U ? parsed[1] : parsed[0];
+        const auto pixels = [](inset_clip_length length, float available) {
+            return length.percent ? available * length.value / 100.0F : length.value;
+        };
+        const auto top_pixels = pixels(top, node.layout.height);
+        const auto right_pixels = pixels(right, node.layout.width);
+        const auto bottom_pixels = pixels(bottom, node.layout.height);
+        const auto left_pixels = pixels(left, node.layout.width);
+        return layout_rect{
+            node.layout.x + left_pixels,
+            node.layout.y + top_pixels,
+            std::max(0.0F, node.layout.width - left_pixels - right_pixels),
+            std::max(0.0F, node.layout.height - top_pixels - bottom_pixels)};
+    };
+    const auto inset_clip = resolve_inset_clip();
+    if (inset_clip.has_value()) {
+        commands.push_back(webscene_scene_command{
+            12U,
+            0U,
+            inset_clip->x,
+            inset_clip->y,
+            inset_clip->width,
+            inset_clip->height,
+            0U,
+            node.id});
+    }
     const auto paint_box_in_foreground = [&] {
         auto fixed_layer = false;
         auto outermost_z_index = 0;
@@ -2070,6 +2166,10 @@ void native_document::append_scene(
                 thumb_width - border * 2, horizontal_thickness - border * 2,
                 scrollbar.thumb_rgba, std::max(0.0F, scrollbar.thumb_radius - border));
         }
+    }
+    if (inset_clip.has_value()) {
+        commands.push_back(webscene_scene_command{
+            13U, 0U, 0, 0, 0, 0, 0U, node.id});
     }
     if (has_rotate_transform) {
         commands.push_back(webscene_scene_command{20U, 0U, 0, 0, 0, 0, 0U, node.id});

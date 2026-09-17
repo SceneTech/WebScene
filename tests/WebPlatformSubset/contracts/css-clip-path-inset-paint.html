@@ -1,0 +1,40 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Retained inset clip-path paints element contents</title>
+<link rel="match" href="css-clip-path-inset-paint-ref.html">
+<style>
+  html, body {
+    margin: 0;
+    width: 240px;
+    height: 160px;
+    overflow: hidden;
+    background: rgb(16, 24, 32);
+  }
+  .subject { position: absolute; overflow: visible; }
+  .paint { position: absolute; inset: -20px; }
+  #pixels {
+    left: 20px; top: 20px; width: 100px; height: 70px;
+    background: rgb(180, 30, 30);
+  }
+  #pixels .paint { background: rgb(30, 90, 210); }
+  #pixels.clipped { clip-path: inset(10px 20px 15px 5px); }
+  #percent {
+    left: 140px; top: 20px; width: 80px; height: 80px;
+    background: rgb(180, 30, 30);
+    clip-path: inset(25% 12.5%);
+  }
+  #percent .paint { background: rgb(40, 180, 90); }
+  #nested {
+    left: 20px; top: 110px; width: 200px; height: 35px;
+    background: rgb(180, 30, 30);
+    clip-path: inset(5px 10px);
+  }
+  #nested .paint {
+    left: -30px; top: -30px; right: -30px; bottom: -30px;
+    background: rgb(230, 180, 40);
+  }
+</style>
+<div id="pixels" class="subject"><div class="paint"></div></div>
+<div id="percent" class="subject"><div class="paint"></div></div>
+<div id="nested" class="subject"><div class="paint"></div></div>
+<script>document.getElementById("pixels").classList.add("clipped");</script>

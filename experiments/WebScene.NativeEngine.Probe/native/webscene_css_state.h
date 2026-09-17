@@ -1,6 +1,7 @@
 #pragma once
 #include "webscene_native_dom.h"
 #include "webscene_css_specified_ir.h"
+#include <array>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -85,12 +86,44 @@ using css_class_index_map = std::unordered_map<
     std::string, Value, transparent_string_hash, transparent_string_equal>;
 #endif
 
-    struct compiled_css_selector final {
-        std::vector<std::string> compounds;
-        std::vector<char> combinators;
-        uint32_t specificity{0};
-        std::vector<compiled_css_compound> compiled_compounds;
-    };
+struct css_ancestor_feature_mask final {
+    std::array<uint64_t,4> words{};
+
+    void add(char kind,std::string_view text) {
+        uint64_t hash=14695981039346656037ULL;
+        hash=(hash^static_cast<unsigned char>(kind))*1099511628211ULL;
+        for(unsigned char c:text) {
+            // Folding is conservative for XML and case-sensitive identities.
+            if(c>='A' && c<='Z') c+=static_cast<unsigned char>('a'-'A');
+            hash=(hash^c)*1099511628211ULL;
+        }
+        const auto bit=static_cast<size_t>(hash&255U);
+        words[bit/64U]|=uint64_t{1}<<(bit%64U);
+    }
+    void merge(const css_ancestor_feature_mask& other) {
+        for(size_t i=0;i<words.size();++i) words[i]|=other.words[i];
+    }
+    bool empty() const { return (words[0]|words[1]|words[2]|words[3])==0; }
+    bool contains(const css_ancestor_feature_mask& required) const {
+        for(size_t i=0;i<words.size();++i)
+            if((words[i]&required.words[i])!=required.words[i]) return false;
+        return true;
+    }
+    static css_ancestor_feature_mask saturated() {
+        return {{~uint64_t{0},~uint64_t{0},~uint64_t{0},~uint64_t{0}}};
+    }
+};
+
+struct compiled_css_selector final {
+    std::vector<std::string> compounds;
+    std::vector<char> combinators;
+    uint32_t specificity{0};
+    std::vector<compiled_css_compound> compiled_compounds;
+    // Negative-only ancestor requirements are immutable selector metadata.
+    // Align one mask with each compiled compound so matching passes do not
+    // rebuild or hash-index the same requirements for every recascade.
+    std::vector<css_ancestor_feature_mask> ancestor_requirements;
+};
 
     struct compiled_css_selector_list final {
         std::vector<compiled_css_selector> selectors;

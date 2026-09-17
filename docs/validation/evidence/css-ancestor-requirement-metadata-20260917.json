@@ -1,0 +1,77 @@
+{
+  "date": "2026-09-17",
+  "baselineCommit": "5c67a183637c59da1515beddc3d3800f8c0a32c6",
+  "appSceneCommit": "68a9dbd15e6b02e4bec0a76d5190713868b6517a",
+  "change": {
+    "compiledSelectorOwnsAncestorRequirements": true,
+    "requirementMaskWords": 4,
+    "passLocalSelectorRequirementMapRemoved": true,
+    "passLocalDomAncestorSummariesRetained": true,
+    "computedStyleCacheAdded": false,
+    "crossMutationStateAdded": false
+  },
+  "spotifyWorkload": {
+    "readyNodeCount": 2733,
+    "measuredNodeCount": 2732,
+    "imageCount": 18,
+    "measuredTransitionsPerProcess": 12,
+    "serialOrder": ["baselineA1", "candidateB1", "candidateB2", "baselineA2"],
+    "layoutPassesPerMeasuredTransition": 4,
+    "contentEquivalent": true
+  },
+  "dispatchMilliseconds": {
+    "baselineA1": {
+      "samples": [125.176, 131.916, 121.017, 121.780, 130.838, 119.169, 133.144, 123.254, 119.864, 131.890, 119.538, 132.769],
+      "median": 124.215,
+      "mean": 125.8629166667,
+      "p95": 132.769
+    },
+    "candidateB1": {
+      "samples": [109.104, 104.988, 104.529, 106.392, 115.244, 116.259, 115.721, 106.659, 105.601, 104.394, 114.687, 116.359],
+      "median": 107.8815,
+      "mean": 109.99475,
+      "p95": 116.259
+    },
+    "candidateB2": {
+      "samples": [108.798, 116.892, 105.643, 106.760, 115.901, 110.154, 106.421, 114.231, 108.326, 106.173, 106.761, 106.558],
+      "median": 107.5435,
+      "mean": 109.3848333333,
+      "p95": 115.901
+    },
+    "baselineA2": {
+      "samples": [124.770, 123.000, 121.978, 120.131, 131.187, 121.836, 121.159, 131.790, 120.564, 123.164, 131.151, 121.253],
+      "median": 122.489,
+      "mean": 124.3319166667,
+      "p95": 131.187
+    },
+    "baselinePooled": {"median": 123.082, "mean": 125.0974166667, "p95": 131.916},
+    "candidatePooled": {"median": 107.5435, "mean": 109.6897916667, "p95": 116.259},
+    "pooledMedianReductionPercent": 12.6245104889
+  },
+  "validation": {
+    "nativeWebCssService": "passed",
+    "nativeWebSharedStyles": "passed",
+    "currentNativeBuild": "passed",
+    "focusedNativeGroups": [
+      "media-query-targeted-recascade",
+      "css-invalidation-scaling",
+      "attribute-invalidation-scope",
+      "stylesheet-cssom",
+      "dimension-variable-compatibility"
+    ],
+    "wptStyleContract": {
+      "path": "tests/WebPlatformSubset/contracts/css-nested-selector-invalidation.html",
+      "native": {"passed": 10, "failed": 0},
+      "chrome153_0_8010_48": {"passed": 10, "failed": 0}
+    },
+    "appSceneProducerTests": {"passed": 16, "failed": 0},
+    "sdkManifestFileCount": 2870,
+    "sdkArchiveSha256": "f6849bb28d83a86c209cda9af659e585f54365b42c358ff09907c6525b38db93",
+    "diffCheck": "passed"
+  },
+  "claimsNotMade": [
+    "physical-window smoothness",
+    "Chrome parity or superiority",
+    "16.7 ms media-threshold frame budget"
+  ]
+}

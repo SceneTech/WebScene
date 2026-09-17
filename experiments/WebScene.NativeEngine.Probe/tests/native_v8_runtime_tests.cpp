@@ -694,6 +694,13 @@ int main()
             webscene_engine_destroy(focused_engine);
             return 0;
         }
+        if (selected == "html-select-add") {
+            auto* focused_engine = webscene_engine_create(0);
+            require(focused_engine != nullptr, "HTMLSelectElement.add engine creation failed");
+            test_html_select_add_contract(focused_engine);
+            webscene_engine_destroy(focused_engine);
+            return 0;
+        }
         if (selected == "dom-box-dimensions-primitives") {
             auto* focused_engine = webscene_engine_create(0);
             require(focused_engine != nullptr, "focused engine creation failed");

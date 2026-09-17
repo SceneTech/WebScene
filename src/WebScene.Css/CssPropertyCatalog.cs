@@ -11,31 +11,7 @@ namespace WebScene.Css;
 /// </summary>
 public static class CssPropertyCatalog
 {
-    private static readonly FrozenSet<string> s_supported = CssKnownProperties.Names
-        .Concat(new[]
-        {
-            "animation-delay", "animation-direction", "animation-duration", "animation-fill-mode",
-            "animation-iteration-count", "animation-name", "animation-play-state", "animation-timing-function",
-            "accent-color", "appearance", "backdrop-filter", "background-attachment", "background-clip", "background-origin",
-            "background-position", "background-position-x", "background-position-y", "background-repeat",
-            "background-size", "border-bottom", "border-collapse", "border-left", "border-right",
-            "border-spacing", "border-top", "clear", "column-count", "columns", "css-float",
-            "clip-path", "color-scheme", "empty-cells", "fill-opacity", "filter", "float", "font-stretch", "grid-area", "grid-column",
-            "grid-column-end", "grid-column-start", "grid-row", "grid-row-end", "grid-row-start",
-            "grid-gap", "inset-block", "inset-inline", "inset-inline-start", "inset-inline-end",
-            "margin-block", "margin-inline", "margin-inline-start", "margin-inline-end",
-            "mask-composite", "mask-image", "mask-position", "mask-repeat", "mask-size",
-            "padding-block", "padding-inline", "padding-inline-start", "padding-inline-end",
-            "border-inline-start", "border-inline-end",
-            "border-inline-start-width", "border-inline-end-width",
-            "border-inline-start-color", "border-inline-end-color",
-            "border-start-start-radius", "border-start-end-radius",
-            "border-end-start-radius", "border-end-end-radius",
-            "-moz-transform", "moz-transform", "-webkit-transform", "webkit-transform",
-            "orphans", "resize", "table-layout", "text-decoration", "text-overflow", "vertical-align",
-            "transition", "transition-delay", "transition-duration", "transition-property",
-            "transition-timing-function", "transform-origin", "widows", "zoom"
-        })
+    private static readonly FrozenSet<string> s_supported = CssGeneratedPropertyMetadata.SupportedNames
         .ToFrozenSet(StringComparer.OrdinalIgnoreCase);
 
     public static bool IsSupported(string? propertyName)

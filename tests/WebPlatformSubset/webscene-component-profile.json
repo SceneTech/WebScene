@@ -1021,9 +1021,9 @@
     {
       "path": "contracts/cssom-inline-declaration-validity.html",
       "type": "contract",
-      "capabilities": ["cssstyledeclaration-supported-idl", "cssstyledeclaration-expandos", "invalid-declaration-retention", "empty-declaration-removal", "disconnected-resolved-style"],
+      "capabilities": ["cssstyledeclaration-supported-idl", "generated-logical-property-cssom-exposure", "cssstyledeclaration-expandos", "invalid-declaration-retention", "empty-declaration-removal", "disconnected-resolved-style"],
       "evidence": ["jquery-4.0.0-css-unit-reduction", "direct-chrome-neutral-contract", "managed-and-native-neutral-contract"],
-      "reason": "Required after the same 4/4 product-neutral assertions pass direct Chrome and rebuilt native. The contract bounds CSSStyleDeclaration feature detection, invalid-value retention, empty-value removal, expando isolation, and disconnected resolved-style behavior exposed by jQuery's unchanged css.js suite. Evidence: artifacts/web-platform-cssom-inline-validity-chrome-v1-20260723/results.json, artifacts/web-platform-cssom-inline-validity-managed-v2-20260723/results.json, and artifacts/web-platform-cssom-inline-validity-native-v1-20260723/results.json."
+      "reason": "Required after the same 5/5 product-neutral assertions pass Chrome 153 and rebuilt native with both current and legacy CSS parsers. The contract bounds CSSStyleDeclaration feature detection, generated logical-property exposure, invalid-value retention, empty-value removal, expando isolation, and disconnected resolved-style behavior exposed by jQuery's unchanged css.js suite. Evidence: artifacts/web-platform-cssom-inline-validity-chrome-v1-20260723/results.json, artifacts/web-platform-cssom-inline-validity-managed-v2-20260723/results.json, artifacts/web-platform-cssom-inline-validity-native-v1-20260723/results.json, and docs/validation/css-property-identity-20260917.md."
     },
     {
       "path": "contracts/css-connected-used-value-geometry.html",

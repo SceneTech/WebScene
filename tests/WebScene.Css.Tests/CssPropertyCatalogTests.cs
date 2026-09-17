@@ -32,6 +32,11 @@ public sealed class CssPropertyCatalogTests
     [InlineData("WebkitTransform")]
     [InlineData("grid-gap")]
     [InlineData("insetInlineStart")]
+    [InlineData("insetBlockEnd")]
+    [InlineData("borderBlockWidth")]
+    [InlineData("border-inline-color")]
+    [InlineData("paddingBlockStart")]
+    [InlineData("margin-block-end")]
     [InlineData("padding-inline-end")]
     [InlineData("borderStartEndRadius")]
     [InlineData("transitionTimingFunction")]
@@ -45,6 +50,19 @@ public sealed class CssPropertyCatalogTests
     [InlineData("backdropFilter")]
     public void ExposesSupportedCssomProperties(string name)
         => Assert.True(CssPropertyCatalog.IsSupported(name));
+
+    [Fact]
+    public void ExposesEveryGeneratedSupportedProperty()
+    {
+        Assert.Equal(
+            CssGeneratedPropertyMetadata.SupportedNames.Length,
+            CssGeneratedPropertyMetadata.SupportedNames.Distinct(StringComparer.OrdinalIgnoreCase).Count());
+
+        foreach (var name in CssGeneratedPropertyMetadata.SupportedNames)
+        {
+            Assert.True(CssPropertyCatalog.IsSupported(name), name);
+        }
+    }
 
     [Theory]
     [InlineData("fakeProperty")]

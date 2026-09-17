@@ -281,6 +281,7 @@ __pycache__/
 # Cake - Uncomment if you are using it
 tools/**
 # !tools/packages.config
+!tools/generate_css_property_metadata.py
 !tools/webidl-v8-bindings/
 !tools/webidl-v8-bindings/dom-exposure.json
 !tools/webidl-v8-bindings/generate.mjs

@@ -6932,6 +6932,36 @@ v8_dom_runtime::memory_metrics v8_dom_runtime::read_memory_metrics() const noexc
     return result;
 }
 
+v8_dom_runtime::message_port_metrics
+v8_dom_runtime::read_message_port_metrics() const noexcept
+{
+    message_port_metrics result{};
+    if (impl_->isolate == nullptr) return result;
+    auto isolate_locker = impl_->lock_shared_isolate();
+    result.binding_slots = impl_->message_port_bindings.size();
+    result.queue_high_water_messages =
+        impl_->message_port_queue_high_water_messages;
+    result.queue_high_water_bytes = impl_->message_port_queue_high_water_bytes;
+    for (const auto& binding : impl_->message_port_bindings) {
+        if (binding == nullptr) continue;
+        if (binding->reclaimed) {
+            ++result.reclaimed_bindings;
+            continue;
+        }
+        ++result.retained_bindings;
+        if (binding->transferred) ++result.transferred_bindings;
+        if (binding->endpoint == nullptr || binding->endpoint->channel == nullptr)
+            continue;
+        std::lock_guard lock(binding->endpoint->channel->mutex);
+        const auto side = binding->endpoint->side;
+        result.queued_messages +=
+            binding->endpoint->channel->incoming[side].size();
+        result.queued_bytes +=
+            binding->endpoint->channel->incoming_bytes[side];
+    }
+    return result;
+}
+
 uint64_t v8_dom_runtime::external_script_source_bytes() const noexcept
 {
     return impl_->external_script_source_byte_count->load(

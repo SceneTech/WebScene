@@ -224,6 +224,17 @@ public:
         uint64_t native_text_measurement_cache_storage_bytes{0};
     };
 
+    struct message_port_metrics final {
+        uint64_t binding_slots{0};
+        uint64_t retained_bindings{0};
+        uint64_t reclaimed_bindings{0};
+        uint64_t transferred_bindings{0};
+        uint64_t queued_messages{0};
+        uint64_t queued_bytes{0};
+        uint64_t queue_high_water_messages{0};
+        uint64_t queue_high_water_bytes{0};
+    };
+
     struct viewport_metrics final {
         float width{1};
         float height{1};
@@ -434,6 +445,7 @@ public:
     uint64_t last_resize_layout_nanoseconds() const noexcept;
     uint64_t last_resize_observers_nanoseconds() const noexcept;
     memory_metrics read_memory_metrics() const noexcept;
+    message_port_metrics read_message_port_metrics() const noexcept;
     const std::string& frame_last_error() const noexcept;
 
 private:

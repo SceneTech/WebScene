@@ -1,0 +1,60 @@
+{
+  "schema": "webscene-messageport-active-gc-evidence-v1",
+  "date": "2026-09-17",
+  "issue": "https://github.com/SceneTech/WebScene/issues/288",
+  "base": "0d3b29da78df774ac41e90ff251c7b2ffb828d43",
+  "native": {
+    "configuration": "Release, V8, pointer compression, bootstrap snapshot, certification telemetry",
+    "focusedReceiverCases": 4,
+    "stressCycles": 1000,
+    "listenerModes": [
+      "direct Promise resolver",
+      "addEventListener(message)"
+    ],
+    "forcedGarbageCollectionsPerCycle": 2,
+    "p95Milliseconds": 0.823209,
+    "maximumMilliseconds": 1.08904,
+    "bindingSlots": 2,
+    "retainedBindings": 0,
+    "reclaimedBindings": 2,
+    "queueHighWaterMessages": 1,
+    "queueHighWaterBytes": 5,
+    "queuedMessagesAfterSettle": 0,
+    "queuedBytesAfterSettle": 0,
+    "v8HeapBytesBefore": 507576,
+    "v8HeapBytesAfter": 507828,
+    "peakRssBytesBefore": 36962304,
+    "peakRssBytesAfter": 37289984,
+    "adjacentFilters": {
+      "messageport-gc": "pass",
+      "worker-messageport": "pass"
+    },
+    "wpt": {
+      "documentsPassed": 1,
+      "documentsTotal": 1,
+      "subtestsPassed": 5,
+      "subtestsTotal": 5,
+      "durationMilliseconds": 1239,
+      "nativeEngineSha256": "1a93cda03cf500fd78056aef2c634a7fd137b305f405114a9f415eb09d73958a"
+    }
+  },
+  "chromium": {
+    "identity": "Google Chrome for Testing 151.0.7922.34",
+    "launchFlag": "--js-flags=--expose-gc",
+    "forcedGarbageCollectionsPerMode": 8,
+    "modesPassed": 5,
+    "modesTotal": 5,
+    "modes": [
+      "onmessage",
+      "addEventListener(message)",
+      "transferred sender",
+      "direct Promise resolver",
+      "direct Promise resolver with transferred sender"
+    ]
+  },
+  "limits": [
+    "This slice measures same-realm MessageChannel ownership and sender transfer.",
+    "Dedicated Worker, ServiceWorker, iframe, navigation, worker termination, and engine teardown remain separate acceptance work.",
+    "The Chromium oracle executes the same contract logic in an isolated CDP page because the standalone repository WPT harness did not reach a debuggable completion state in this environment."
+  ]
+}

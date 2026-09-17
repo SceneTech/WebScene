@@ -5406,6 +5406,12 @@ std::string v8_dom_runtime::event_diagnostics() const
         << impl_->attribute_transition_schedule_requests;
     result << ", attribute-transition-coalesced-requests="
         << impl_->attribute_transition_coalesced_requests;
+    result << ", selector-invalidation-plan-lookups="
+        << impl_->selector_invalidation_plan_lookups;
+    result << ", selector-invalidation-candidate-visits="
+        << impl_->selector_invalidation_candidate_visits;
+    result << ", selector-invalidation-fallback-visits="
+        << impl_->selector_invalidation_fallback_visits;
     result << ", style-recascade-schedule-requests="
         << impl_->style_recascade_schedule_requests;
     result << ", style-recascade-coalesced-requests="
@@ -5971,6 +5977,20 @@ v8_dom_runtime::memory_metrics v8_dom_runtime::read_memory_metrics() const noexc
                         result.process_shared_css_rule_storage_bytes +=
                             string_bytes(pseudo.name)
                             + string_bytes(pseudo.argument);
+                    }
+                }
+                result.process_shared_css_rule_storage_bytes +=
+                    payload->invalidation.capacity() * sizeof(css::css_compound_dependencies);
+                for (const auto& dependencies : payload->invalidation) {
+                    for (const auto* index : {&dependencies.attributes, &dependencies.classes}) {
+                        result.process_shared_css_rule_storage_bytes += index->bucket_count() * sizeof(void*);
+                        for (const auto& [key, scope] : *index) {
+                            static_cast<void>(scope);
+                            result.process_shared_css_rule_storage_bytes +=
+                                sizeof(std::pair<const std::string, uint8_t>);
+                            result.process_shared_css_rule_storage_bytes +=
+                                2U * sizeof(void*) + string_bytes(key);
+                        }
                     }
                 }
                 for (const auto& declaration : payload->declarations) {

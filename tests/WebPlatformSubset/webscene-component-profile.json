@@ -125,9 +125,9 @@
     {
       "path": "contracts/css-attribute-invalidation-scope.html",
       "type": "testharness",
-      "capabilities": ["rightmost-attribute-subject-invalidation", "ancestor-attribute-descendant-invalidation", "attribute-removal-recascade"],
+      "capabilities": ["rightmost-attribute-subject-invalidation", "ancestor-attribute-descendant-invalidation", "attribute-removal-recascade", "compiled-selector-dependencies", "class-mutation-invalidation", "batched-conjunctive-removal"],
       "evidence": ["spotify-overlayscrollbars-resize-invalidation-profile"],
-      "reason": "Product-neutral regression for selector-aware attribute invalidation. A rightmost attribute selector updates only its subject, while an attribute in an ancestor compound still invalidates affected descendants on addition and removal."
+      "reason": "Product-neutral regression for compiled selector dependencies, nested relational selectors, escaped identifiers, class mutation APIs, inherited control state, conservative fallback, and multi-attribute removal at rendering checkpoints."
     },
     {
       "path": "contracts/responsive-toolbar-breakpoint-navigation.html",

@@ -1,5 +1,9 @@
 # Spotify resize invalidation
 
+The general follow-up is documented in
+[compiled CSS invalidation](css-invalidation-workstream.md), including its
+product-neutral correctness and operation-count scaling gates.
+
 The Spotify catalog probe exposed a resize bottleneck in style invalidation rather
 than image rasterization or scene serialization. On the September 16, 2026 macOS
 profile, one host resize input took 477.423 ms. The first stylesheet recascade used

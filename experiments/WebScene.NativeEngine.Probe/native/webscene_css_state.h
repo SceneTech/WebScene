@@ -85,10 +85,24 @@ using css_index_string_set = std::unordered_set<std::string>;
         std::vector<compiled_css_selector> selectors;
     };
 
+    enum css_invalidation_scope : uint8_t {
+        invalidation_subject = 1U,
+        invalidation_ancestors = 2U,
+        invalidation_fallback = 4U
+    };
+
+    struct css_compound_dependencies final {
+        std::unordered_map<std::string, uint8_t> attributes;
+        std::unordered_map<std::string, uint8_t> classes;
+    };
+
     struct css_rule_payload final {
         std::string selector;
         compiled_css_selector compiled_selector;
         compiled_css_selector compiled_pseudo_origin;
+        // Immutable dependency plans, aligned with the originating selector's
+        // compounds. Functional selectors are analyzed once at preparation.
+        std::vector<css_compound_dependencies> invalidation;
         std::vector<css_declaration> declarations;
         std::vector<std::string> media_queries;
         uint32_t specificity{0};

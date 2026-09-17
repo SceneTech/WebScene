@@ -826,7 +826,7 @@
         else if (name == "class") node->class_name = value;
         if (self->attribute_requires_recascade(name)) {
             if (name == "class") {
-                self->recascade_dynamic_state_subject(*node, "setAttributeNS-class");
+                self->recascade_class_selector_transition(*node, old_value, value);
             } else {
                 self->recascade_connected_subtree(*node, "style.removeProperty-custom");
             }
@@ -864,7 +864,7 @@
         }
         if (self->attribute_requires_recascade(name)) {
             if (name == "class") {
-                self->recascade_dynamic_state_subject(*node, "removeAttribute-class");
+                self->recascade_class_selector_transition(*node, old_value, std::nullopt);
             } else if (name == "style" || name == "id" || name == "dir"
                 || name == "lang") {
                 self->recascade_connected_subtree(*node, "removeAttribute");
@@ -939,7 +939,7 @@
         }
         if (self->attribute_requires_recascade(name)) {
             if (name == "class") {
-                self->recascade_dynamic_state_subject(*node, "removeAttributeNS-class");
+                self->recascade_class_selector_transition(*node, old_value, std::nullopt);
             } else if (name == "style" || name == "id" || name == "dir"
                 || name == "lang") {
                 self->recascade_connected_subtree(*node, "removeAttributeNS");
@@ -977,19 +977,16 @@
             if (name == "width" || name == "height") reset_canvas_backing_store(*self, *node);
             if (name == "id") node->id_attribute.clear();
             else if (name == "class") node->class_name.clear();
-            self->notify_custom_element_attribute(
-                *node, name, std::nullopt, std::string{});
         } else {
             node->attributes.erase(name);
             if (name == "width" || name == "height") reset_canvas_backing_store(*self, *node);
             if (name == "id") node->id_attribute.clear();
             else if (name == "class") node->class_name.clear();
-            self->notify_custom_element_attribute(
-                *node, name, old_value, std::nullopt);
         }
         if (self->attribute_requires_recascade(name)) {
             if (name == "class") {
-                self->recascade_dynamic_state_subject(*node, "toggleAttribute-class");
+                self->recascade_class_selector_transition(*node, old_value,
+                    force_present ? std::optional<std::string>(std::string{}) : std::nullopt);
             } else if (name == "style" || name == "id" || name == "dir"
                 || name == "lang") {
                 self->recascade_connected_subtree(*node, "toggleAttribute");
@@ -1005,6 +1002,10 @@
         } else {
             self->document.mark_dirty();
         }
+        // Queue invalidation before author callbacks: they may synchronously
+        // read styles or replace this attribute with another value.
+        self->notify_custom_element_attribute(*node, name, old_value,
+            force_present ? std::optional<std::string>(std::string{}) : std::nullopt);
         info.GetReturnValue().Set(force_present);
     }
 

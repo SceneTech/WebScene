@@ -1315,6 +1315,12 @@ void test_resize_event_coalesces_attribute_selector_recascades(
     require(setup == "true", "attribute batching fixture setup did not complete");
 
 #if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+    // Counters are published with scenes and throttled to 250 ms. Input
+    // consumption alone is not a diagnostic snapshot barrier.
+    std::this_thread::sleep_for(std::chrono::milliseconds(275));
+    execute_and_wait_for_wrapper_retention_scene(engine,
+        "document.body.setAttribute('data-attribute-diagnostic', 'before')",
+        "native-resize-attribute-diagnostic-before.js");
     const auto transition_requests_before = runtime_counter_diagnostic(
         engine, "attribute-transition-schedule-requests");
     const auto transition_coalesced_before = runtime_counter_diagnostic(
@@ -1348,6 +1354,10 @@ void test_resize_event_coalesces_attribute_selector_recascades(
         "resize attribute batching changed synchronous CSS semantics: " + result);
 
 #if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+    std::this_thread::sleep_for(std::chrono::milliseconds(275));
+    execute_and_wait_for_wrapper_retention_scene(engine,
+        "document.body.setAttribute('data-attribute-diagnostic', 'after')",
+        "native-resize-attribute-diagnostic-after.js");
     const auto transition_request_delta = runtime_counter_diagnostic(
         engine, "attribute-transition-schedule-requests")
         - transition_requests_before;

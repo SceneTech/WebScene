@@ -453,67 +453,16 @@
             auto& rules = feature_index[std::string(feature)];
             if (rules.empty() || rules.back() != index) rules.push_back(index);
         };
-        if (selector.find(":disabled") != std::string::npos
-            || selector.find(":enabled") != std::string::npos) {
-            css_attribute_dependencies.emplace("disabled");
-            index_invalidation_rule(css_invalidation_rules_by_attribute, "disabled");
-        }
-        if (selector.find(":checked") != std::string::npos) {
-            css_attribute_dependencies.emplace("checked");
-            css_attribute_dependencies.emplace("selected");
-            css_attribute_dependencies.emplace("type");
-            index_invalidation_rule(css_invalidation_rules_by_attribute, "checked");
-            index_invalidation_rule(css_invalidation_rules_by_attribute, "selected");
-            index_invalidation_rule(css_invalidation_rules_by_attribute, "type");
-        }
-        std::unordered_set<std::string> rule_attributes;
-        for (size_t open = 0; (open = selector.find('[', open)) != std::string::npos;) {
-            auto cursor = open + 1U;
-            while (cursor < selector.size()
-                && std::isspace(static_cast<unsigned char>(selector[cursor]))) ++cursor;
-            const auto start = cursor;
-            while (cursor < selector.size()
-                && (std::isalnum(static_cast<unsigned char>(selector[cursor]))
-                    || selector[cursor] == '-' || selector[cursor] == '_')) ++cursor;
-            if (cursor > start) {
-                auto name = selector.substr(start, cursor - start);
+        for (const auto& component : rule.payload->invalidation) {
+            for (const auto& [name, scope] : component.attributes) {
+                static_cast<void>(scope);
                 css_attribute_dependencies.emplace(name);
-                rule_attributes.emplace(std::move(name));
+                index_invalidation_rule(css_invalidation_rules_by_attribute, name);
             }
-            open = cursor;
-        }
-        for (auto& name : rule_attributes) {
-            index_invalidation_rule(css_invalidation_rules_by_attribute, name);
-        }
-        std::unordered_set<std::string> rule_classes;
-        auto bracket_depth = 0;
-        char quote = 0;
-        for (size_t position = 0; position < selector.size(); ++position) {
-            const auto character = selector[position];
-            if (quote != 0) {
-                if (character == quote
-                    && (position == 0U || selector[position - 1U] != '\\')) quote = 0;
-                continue;
+            for (const auto& [name, scope] : component.classes) {
+                static_cast<void>(scope);
+                index_invalidation_rule(css_invalidation_rules_by_class, name);
             }
-            if (character == '\'' || character == '"') {
-                quote = character;
-                continue;
-            }
-            if (character == '[') { ++bracket_depth; continue; }
-            if (character == ']') { --bracket_depth; continue; }
-            if (character != '.' || bracket_depth != 0) continue;
-            auto end = position + 1U;
-            while (end < selector.size()
-                && (std::isalnum(static_cast<unsigned char>(selector[end]))
-                    || selector[end] == '-' || selector[end] == '_')) ++end;
-            if (end > position + 1U) {
-                rule_classes.emplace(
-                    selector.substr(position + 1U, end - position - 1U));
-            }
-            position = end == 0U ? position : end - 1U;
-        }
-        for (auto& name : rule_classes) {
-            index_invalidation_rule(css_invalidation_rules_by_class, name);
         }
         css::index_selector(index, selector, css_rules_by_id, css_rules_by_class,
             css_rules_by_tag, css_rules_by_attribute, css_focus_rules,

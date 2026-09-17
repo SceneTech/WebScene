@@ -135,3 +135,173 @@
     assert_equals(getComputedStyle(target).width, "19px");
   }, ":has() invalidation follows relational and direct attribute dependencies");
 </script>
+<style>
+  .compiled-card { width:11px; }
+  .compiled-card:not(:has([data-ready])) { width:61px; }
+  .compiled-subject { width:13px; }
+  .compiled-subject:is(:where([data-mode="on"])) { width:67px; }
+  .compiled-child { width:17px; }
+  [class~="selected"] > .compiled-child { width:71px; }
+  .batch-child { width:19px; }
+  [data-a][data-b] > .batch-child { width:73px; }
+  .batch-active[data-c] > .batch-child { height:79px; }
+  .batch-child { height:23px; }
+  .escaped\:active > .compiled-child { height:83px; }
+  .compiled-child { height:29px; }
+  .complex-target { width:31px; }
+  .complex-target:is(.complex-active .complex-target) { width:89px; }
+  .disabled-target { width:37px; }
+  .disabled-target:disabled { width:97px; }
+  .variable-sibling-target { height:var(--sibling-height, 17px); }
+  .variable-trigger.active + .variable-wrapper { --sibling-height:61px; }
+  .variable-stage { --base:17px; }
+  .variable-stage > .variable-wrapper { --resolved:var(--sibling-height, var(--base)); }
+  .variable-stage.active { --base:19px; }
+  .variable-chain-target { height:var(--resolved); }
+</style>
+<div class="compiled-card" id="compiled-card"><span id="compiled-trigger"></span></div>
+<div class="compiled-subject" id="compiled-subject"></div>
+<div id="compiled-parent"><div class="compiled-child"></div></div>
+<div id="batch-parent" class="batch-active" data-a data-b data-c><div class="batch-child"></div></div>
+<div id="complex-parent"><div class="complex-target"></div></div>
+<fieldset id="disabled-parent"><input class="disabled-target"></fieldset>
+<div><div id="variable-trigger" class="variable-trigger"></div><div class="variable-wrapper"><span class="variable-sibling-target"></span></div></div>
+<div id="variable-stage" class="variable-stage"><div id="variable-chain-trigger" class="variable-trigger"></div><div class="variable-wrapper"><span class="variable-chain-target"></span></div></div>
+<script>
+  promise_test(t => new Promise(resolve => {
+    const stage = document.getElementById('variable-stage');
+    const trigger = document.getElementById('variable-chain-trigger');
+    const consumer = document.querySelector('.variable-chain-target');
+    assert_equals(getComputedStyle(consumer).height, '17px');
+    requestAnimationFrame(t.step_func(() => {
+      stage.classList.add('active');
+      trigger.classList.add('active');
+      assert_equals(getComputedStyle(consumer).height, '61px');
+      stage.classList.remove('active');
+      trigger.classList.remove('active');
+      assert_equals(getComputedStyle(consumer).height, '17px');
+      resolve();
+    }));
+  }), 'batched variable providers recascade before previously queued descendant consumers');
+
+  test(() => {
+    customElements.define('invalidation-reentrant', class extends HTMLElement {
+      static get observedAttributes() { return ['class']; }
+      attributeChangedCallback(name, oldValue, newValue) {
+        if (newValue === null) {
+          this.callbackWidth = getComputedStyle(this.firstElementChild).width;
+          this.className = 'selected';
+        }
+      }
+    });
+    const parent = document.createElement('invalidation-reentrant');
+    parent.innerHTML = '<div class="compiled-child"></div>';
+    parent.className = 'selected';
+    document.body.appendChild(parent);
+    assert_equals(getComputedStyle(parent.firstElementChild).width, '71px');
+    parent.toggleAttribute('class', false);
+    assert_equals(parent.callbackWidth, '17px');
+    assert_equals(parent.className, 'selected');
+    assert_equals(getComputedStyle(parent.firstElementChild).width, '71px');
+    parent.remove();
+  }, 'toggleAttribute invalidates before reentrant custom-element callbacks');
+
+  test(() => {
+    const trigger = document.getElementById('variable-trigger');
+    const consumer = document.querySelector('.variable-sibling-target');
+    trigger.classList.add('active');
+    assert_equals(getComputedStyle(consumer).height, '61px');
+    trigger.classList.remove('active');
+    assert_equals(getComputedStyle(consumer).height, '17px');
+  }, 'sibling invalidation reaches descendants consuming changed custom properties');
+
+  test(() => {
+    const parent = document.getElementById('complex-parent');
+    const child = parent.firstElementChild;
+    parent.className = 'complex-active';
+    assert_equals(getComputedStyle(child).width, '89px');
+    parent.removeAttribute('class');
+    assert_equals(getComputedStyle(child).width, '31px');
+  }, 'complex nested selectors retain a correct conservative invalidation path');
+
+  test(() => {
+    const parent = document.getElementById('disabled-parent');
+    const child = parent.firstElementChild;
+    parent.setAttribute('disabled', '');
+    assert_equals(getComputedStyle(child).width, '97px');
+    parent.removeAttribute('disabled');
+    assert_equals(getComputedStyle(child).width, '37px');
+  }, 'inherited fieldset state is not mistaken for subject-only invalidation');
+
+  test(() => {
+    const card = document.getElementById('compiled-card');
+    const trigger = document.getElementById('compiled-trigger');
+    assert_equals(getComputedStyle(card).width, '61px');
+    trigger.setAttribute('data-ready', '');
+    assert_equals(getComputedStyle(card).width, '11px');
+    trigger.removeAttribute('data-ready');
+    assert_equals(getComputedStyle(card).width, '61px');
+  }, 'nested :not(:has()) preserves ancestor invalidation on addition and removal');
+
+  test(() => {
+    const subject = document.getElementById('compiled-subject');
+    subject.setAttribute('data-mode', 'on');
+    assert_equals(getComputedStyle(subject).width, '67px');
+    subject.removeAttribute('data-mode');
+    assert_equals(getComputedStyle(subject).width, '13px');
+  }, 'compiled dependencies traverse nested :is() and :where() arguments');
+
+  test(() => {
+    const parent = document.getElementById('compiled-parent');
+    const child = parent.firstElementChild;
+    parent.className = 'selected';
+    assert_equals(getComputedStyle(child).width, '71px');
+    parent.removeAttribute('class');
+    assert_equals(getComputedStyle(child).width, '17px');
+    parent.classList.add('selected');
+    assert_equals(getComputedStyle(child).width, '71px');
+    parent.classList.toggle('selected', false);
+    assert_equals(getComputedStyle(child).width, '17px');
+    parent.classList.value = 'selected';
+    assert_equals(getComputedStyle(child).width, '71px');
+    parent.classList.remove('selected');
+    assert_equals(getComputedStyle(child).width, '17px');
+    parent.setAttributeNS(null, 'class', 'selected');
+    assert_equals(getComputedStyle(child).width, '71px');
+    parent.removeAttributeNS(null, 'class');
+    assert_equals(getComputedStyle(child).width, '17px');
+  }, 'class mutation APIs invalidate raw class-attribute dependencies consistently');
+
+  test(() => {
+    const parent = document.getElementById('compiled-parent');
+    parent.className = 'escaped:active';
+    assert_equals(getComputedStyle(parent.firstElementChild).height, '83px');
+    parent.classList.remove('escaped:active');
+    assert_equals(getComputedStyle(parent.firstElementChild).height, '29px');
+  }, 'compiled dependencies decode escaped class identifiers');
+
+  promise_test(t => new Promise(resolve => {
+    const parent = document.getElementById('batch-parent');
+    const child = parent.firstElementChild;
+    assert_equals(getComputedStyle(child).width, '73px');
+    assert_equals(getComputedStyle(child).height, '79px');
+    requestAnimationFrame(t.step_func(() => {
+      parent.removeAttribute('data-a');
+      parent.removeAttribute('data-b');
+      parent.classList.remove('batch-active');
+      parent.removeAttribute('data-c');
+      // Force a checkpoint inside the callback, not just after it returns.
+      assert_equals(getComputedStyle(child).width, '19px');
+      assert_equals(getComputedStyle(child).height, '23px');
+      parent.setAttribute('data-a', '');
+      parent.setAttribute('data-b', '');
+      assert_equals(getComputedStyle(child).width, '73px');
+      parent.removeAttribute('data-a');
+      parent.removeAttribute('data-b');
+      requestAnimationFrame(t.step_func(() => {
+        assert_equals(getComputedStyle(child).width, '19px');
+        resolve();
+      }));
+    }));
+  }), 'batched conjunctive removals and class/attribute changes preserve checkpoint semantics');
+</script>

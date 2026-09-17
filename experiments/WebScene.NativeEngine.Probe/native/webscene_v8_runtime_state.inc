@@ -403,10 +403,15 @@
     std::vector<pending_style_recascade> pending_style_recascades;
     std::vector<pending_attribute_selector_transition>
         pending_attribute_selector_transitions;
+    std::unordered_map<dom_node*, std::unordered_map<std::string, size_t>>
+        pending_attribute_selector_transition_index;
     bool flushing_attribute_selector_transitions{false};
 #if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
     uint64_t attribute_transition_schedule_requests{0U};
     uint64_t attribute_transition_coalesced_requests{0U};
+    uint64_t selector_invalidation_plan_lookups{0U};
+    uint64_t selector_invalidation_candidate_visits{0U};
+    uint64_t selector_invalidation_fallback_visits{0U};
     uint64_t style_recascade_schedule_requests{0U};
     uint64_t style_recascade_coalesced_requests{0U};
     uint64_t style_recascade_flush_batches{0U};

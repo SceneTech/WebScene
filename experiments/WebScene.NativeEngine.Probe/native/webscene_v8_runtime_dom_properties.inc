@@ -71,7 +71,7 @@
             }
             node->class_name = class_name;
             node->attributes["class"] = node->class_name;
-            self->recascade_dynamic_state_subject(*node, "className-property");
+            self->recascade_class_selector_transition(*node, old_value, class_name);
             self->notify_custom_element_attribute(
                 *node, "class", old_value, node->class_name);
         }
@@ -800,9 +800,17 @@
             && node->attributes.contains("class")) {
             return;
         }
+        const auto old_value = class_attribute_value(*node);
         node->class_name = value;
         node->attributes["class"] = node->class_name;
-        self->recascade_dynamic_state_subject(*node, "classList.value");
+        self->recascade_class_selector_transition(*node, old_value, value);
+    }
+
+    static std::optional<std::string> class_attribute_value(const dom_node& node)
+    {
+        const auto found = node.attributes.find("class");
+        return found == node.attributes.end() ? std::nullopt
+            : std::optional<std::string>(found->second);
     }
 
     bool has_class(const dom_node& node, std::string_view value) const
@@ -876,6 +884,7 @@
             self->profile_named("DOMTokenList.add"));
         auto* node = class_list_node(info);
         if (node == nullptr) return;
+        const auto old_value = class_attribute_value(*node);
         auto changed = false;
         for (int index = 0; index < info.Length(); ++index) {
             const auto value = to_utf8(info.GetIsolate(), info[index]);
@@ -887,7 +896,7 @@
             }
         }
         if (changed) {
-            self->recascade_dynamic_state_subject(*node, "classList.add");
+            self->recascade_class_selector_transition(*node, old_value, class_attribute_value(*node));
         }
     }
 
@@ -899,12 +908,13 @@
             self->profile_named("DOMTokenList.remove"));
         auto* node = class_list_node(info);
         if (node == nullptr || info.Length() < 1) return;
+        const auto old_value = class_attribute_value(*node);
         auto changed = false;
         for (int index = 0; index < info.Length(); ++index) {
             changed |= self->remove_class(*node, to_utf8(info.GetIsolate(), info[index]));
         }
         if (changed) {
-            self->recascade_dynamic_state_subject(*node, "classList.remove");
+            self->recascade_class_selector_transition(*node, old_value, class_attribute_value(*node));
         }
     }
 
@@ -929,6 +939,7 @@
         if (node == nullptr || info.Length() < 1) return;
         const auto value = to_utf8(info.GetIsolate(), info[0]);
         const auto present = self->has_class(*node, value);
+        const auto old_value = class_attribute_value(*node);
         const auto enabled = info.Length() > 1 ? info[1]->BooleanValue(info.GetIsolate()) : !present;
         auto changed = false;
         if (enabled && !present) {
@@ -940,7 +951,7 @@
             changed = self->remove_class(*node, value);
         }
         if (changed) {
-            self->recascade_dynamic_state_subject(*node, "classList.toggle");
+            self->recascade_class_selector_transition(*node, old_value, class_attribute_value(*node));
         }
         info.GetReturnValue().Set(v8::Boolean::New(info.GetIsolate(), enabled));
     }

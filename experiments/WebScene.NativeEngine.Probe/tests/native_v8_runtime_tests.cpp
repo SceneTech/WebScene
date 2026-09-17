@@ -87,6 +87,7 @@ uint8_t measure_baseline_fixture_text(
 #include "native_v8_runtime_layout_scene_tests.inc"
 #include "native_v8_runtime_canvas_tests.inc"
 #include "native_v8_runtime_frame_scheduling_tests.inc"
+#include "native_css_invalidation_tests.inc"
 #include "native_youtube_embed_tests.inc"
 #include "native_v8_runtime_browser_dom_tests.inc"
 #include "native_v8_runtime_resize_observer_tests.inc"
@@ -181,6 +182,10 @@ int main()
         }
         if (selected == "attribute-invalidation-scope") {
             test_attribute_invalidation_scopes_subject_and_descendant_rules();
+            return 0;
+        }
+        if (selected == "css-invalidation-scaling") {
+            test_compiled_css_invalidation_scaling();
             return 0;
         }
         if (selected == "runtime-diagnostics") {
@@ -698,6 +703,7 @@ int main()
     test_media_query_callback_can_create_more_queries();
     test_media_query_resize_recascades_only_affected_subtrees();
     test_attribute_invalidation_scopes_subject_and_descendant_rules();
+    test_compiled_css_invalidation_scaling();
     test_concurrent_input_producers_remain_consumable();
     test_dom_implementation_create_html_document();
     test_mixed_continuous_input_backlog_is_coalesced();

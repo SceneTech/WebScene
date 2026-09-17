@@ -1,0 +1,21 @@
+{
+  "profile": "webscene-document-live-effective-base-1",
+  "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+  "runtime": "v8",
+  "viewport": { "width": 800, "height": 600, "deviceScaleFactor": 1 },
+  "required": [
+    {
+      "path": "contracts/document-live-effective-base.html",
+      "type": "contract",
+      "capabilities": [
+        "document-base-uri",
+        "base-element-live-mutation",
+        "cross-document-url-isolation"
+      ],
+      "evidence": ["document-live-effective-base-327"],
+      "reason": "Chromium authority and native regression for live first-base selection and per-document URL resolution."
+    }
+  ],
+  "harnessBlocked": [],
+  "excluded": []
+}

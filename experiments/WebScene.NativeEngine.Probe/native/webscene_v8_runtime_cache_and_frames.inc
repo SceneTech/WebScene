@@ -1418,9 +1418,12 @@
             js_string(isolate, "structuredClone"),
             v8::Function::New(local_context, structured_clone, {}, 1).ToLocalChecked()).Check();
 
-        const auto& current_frame_base = current_base_address();
-        const auto frame_href = !current_frame_base.empty()
-            ? current_frame_base
+        auto* frame_root = static_cast<dom_node*>(
+            local_context->GetAlignedPointerFromEmbedderData(
+                1, v8::kEmbedderDataTypeTagDefault));
+        const auto& current_frame_navigation = navigation_address_for_root(frame_root);
+        const auto frame_href = !current_frame_navigation.empty()
+            ? current_frame_navigation
             : std::string("http://127.0.0.1/")
                 + resource_root.filename().generic_string() + '/';
         set_context_location(local_context, global, frame_href);
@@ -2433,6 +2436,12 @@
             ++frame_script_error_count;
             return frame_hydration_result::failed;
         }
+        const auto frame_source = frame.attributes.find("src");
+        const auto parent_base = effective_document_base(css_cascade_root_for_node(frame));
+        const auto frame_navigation_address = frame_source != frame.attributes.end()
+            && !frame_source->second.empty()
+            ? resolve_resource_url(frame_source->second, parent_base)
+            : parent_base;
         const auto preparation = take_frame_preparation(frame, html);
         std::vector<std::string> stylesheets;
         std::vector<frame_script> scripts;
@@ -2454,12 +2463,11 @@
                     ? std::string{}
                     : html.substr(open, close - open + 1U);
             };
-            const auto frame_source = frame.attributes.find("src");
             frame_base_address = frame_source != frame.attributes.end()
                 && (frame_source->second.starts_with("http://")
                     || frame_source->second.starts_with("https://"))
-                ? resolve_resource_url(frame_source->second, document_base_address)
-                : document_base_address;
+                ? frame_navigation_address
+                : parent_base;
             const auto base_opening = opening_tag("base");
             if (!base_opening.empty()) {
                 for (const auto& [name, value] : parse_html_attributes(base_opening, 5U)) {
@@ -2493,6 +2501,10 @@
         }
         auto& frame_body = document.create_element("body");
         frame_base_addresses[&frame_body] = frame_base_address;
+        register_document_base(
+            frame_body,
+            frame_navigation_address,
+            frame_base_address);
         activate_css_cascade(&frame_body);
         css_rules.clear();
         opacity_keyframes.clear();

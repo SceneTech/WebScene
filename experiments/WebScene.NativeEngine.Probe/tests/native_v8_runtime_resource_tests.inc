@@ -2646,6 +2646,162 @@ void test_dynamic_frame_resources_use_each_document_base_url()
             == "\"url(\\\"https://first-frame.test/assets/chart.svg\\\")\"",
         "frame CSS URL did not resolve against its relative base element: "
             + frame_background);
+    const auto live_base = evaluate(engine, R"JS((() => {
+      const exercise = (document, navigation) => {
+        const host = document.createElement('div');
+        host.className = 'live-base-target';
+        document.body.appendChild(host);
+        const first = document.createElement('base');
+        first.setAttribute('href', '/alpha/');
+        document.head.appendChild(first);
+        const alpha = [document.URL, document.baseURI,
+          new URL('next.js', document.baseURI).href];
+        const alphaStyle = document.createElement('style');
+        alphaStyle.textContent = '.live-base-target { background-image: url(retained.svg); }';
+        document.head.appendChild(alphaStyle);
+        const retained = document.defaultView.getComputedStyle(host).backgroundImage;
+        first.setAttribute('href', '/beta/');
+        const beta = [document.URL, document.baseURI,
+          new URL('next.js', document.baseURI).href, retained,
+          document.defaultView.getComputedStyle(host).backgroundImage];
+        const second = document.createElement('base');
+        second.setAttribute('href', '/first/');
+        document.head.insertBefore(second, first);
+        const reordered = document.baseURI;
+        second.remove();
+        const restored = document.baseURI;
+        first.setAttribute('href', '/attr/');
+        const attr = document.baseURI;
+        first.removeAttribute('href');
+        const removedHref = document.baseURI;
+        first.remove();
+        alphaStyle.remove();
+        host.remove();
+        return { navigation, alpha, beta, reordered, restored, attr, removedHref,
+          removed: document.baseURI };
+      };
+      const frames = document.querySelectorAll('iframe');
+      return {
+        top: exercise(document, 'https://parent.test/index.html'),
+        frame: exercise(frames[1].contentDocument,
+          'https://second-frame.test/frame.html')
+      };
+    })())JS", "live-document-base-result.js");
+    require(
+        live_base
+            == R"JSON({"top":{"navigation":"https://parent.test/index.html","alpha":["https://parent.test/index.html","https://parent.test/alpha/","https://parent.test/alpha/next.js"],"beta":["https://parent.test/index.html","https://parent.test/beta/","https://parent.test/beta/next.js","url(\"https://parent.test/alpha/retained.svg\")","url(\"https://parent.test/alpha/retained.svg\")"],"reordered":"https://parent.test/first/","restored":"https://parent.test/beta/","attr":"https://parent.test/attr/","removedHref":"https://parent.test/index.html","removed":"https://parent.test/index.html"},"frame":{"navigation":"https://second-frame.test/frame.html","alpha":["https://second-frame.test/frame.html","https://second-frame.test/alpha/","https://second-frame.test/alpha/next.js"],"beta":["https://second-frame.test/frame.html","https://second-frame.test/beta/","https://second-frame.test/beta/next.js","none","none"],"reordered":"https://second-frame.test/first/","restored":"https://second-frame.test/beta/","attr":"https://second-frame.test/attr/","removedHref":"https://second-frame.test/frame.html","removed":"https://second-frame.test/frame.html"}})JSON",
+        "live effective base did not preserve navigation, ordering, or resolved CSS: "
+            + live_base);
+    webscene_engine_memory_metrics base_memory_before{
+        sizeof(webscene_engine_memory_metrics)};
+    require(webscene_engine_get_memory_metrics(engine, &base_memory_before) != 0,
+        "live effective base baseline memory metrics unavailable");
+    const auto base_rss_before = file_system_access_test_peak_rss_bytes();
+    const auto descriptor_count = [] {
+        size_t count = 0U;
+        std::error_code error;
+        for (std::filesystem::directory_iterator iterator("/dev/fd", error), end;
+             !error && iterator != end; iterator.increment(error)) ++count;
+        return error ? size_t{0U} : count;
+    };
+    const auto descriptors_before = descriptor_count();
+    const auto base_profile = evaluate(engine, R"JS((() => {
+      const doc = document.querySelectorAll('iframe')[1].contentDocument;
+      const root = doc.createElement('div');
+      const fragment = doc.createDocumentFragment();
+      for (let index = 0; index < 4096; index++) {
+        const node = doc.createElement('span');
+        node.dataset.index = String(index);
+        fragment.appendChild(node);
+      }
+      root.appendChild(fragment);
+      doc.body.appendChild(root);
+      const base = doc.createElement('base');
+      doc.head.appendChild(base);
+      const updates = [], lookups = [];
+      let checksum = 0;
+      for (let cycle = 0; cycle < 20; cycle++) {
+        let started = performance.now();
+        base.setAttribute('href', `/cycle-${cycle}/`);
+        if (!doc.baseURI.endsWith(`/cycle-${cycle}/`)) throw new Error('stale base');
+        updates.push(performance.now() - started);
+        started = performance.now();
+        for (let index = 0; index < 4096; index++) {
+          checksum += new URL(`asset-${index}.js`, doc.baseURI).href.length;
+        }
+        lookups.push(performance.now() - started);
+      }
+      for (let cycle = 0; cycle < 100; cycle++) {
+        const transient = doc.createElement('base');
+        transient.setAttribute('href', `/transient-${cycle}/`);
+        doc.head.insertBefore(transient, base);
+        if (!doc.baseURI.endsWith(`/transient-${cycle}/`)) throw new Error('reorder');
+        transient.remove();
+        if (!doc.baseURI.endsWith('/cycle-19/')) throw new Error('restore');
+      }
+      const summary = values => {
+        const ordered = values.slice().sort((a, b) => a - b);
+        return { p95: ordered[18], max: ordered[19] };
+      };
+      const update = summary(updates), lookup = summary(lookups);
+      if (update.p95 > 16 || update.max > 250
+          || lookup.p95 > 250 || lookup.max > 1000) {
+        throw new Error(`base latency exceeded ${JSON.stringify({ update, lookup })}`);
+      }
+      base.remove();
+      root.remove();
+      return { nodes: 4096, urls: 4096 * 20, cycles: 20,
+        lifecycleCycles: 100, checksum,
+        update, lookup,
+        restored: doc.baseURI };
+    })())JS", "live-document-base-profile.js");
+    require(
+        base_profile.find("\"nodes\":4096") != std::string::npos
+            && base_profile.find("\"urls\":81920") != std::string::npos
+            && base_profile.find("\"lifecycleCycles\":100") != std::string::npos
+            && base_profile.find(
+                "\"restored\":\"https://second-frame.test/frame.html\"")
+                != std::string::npos,
+        "live effective base profile failed: " + base_profile);
+    require(webscene_engine_request_low_memory(engine) != 0,
+        "live effective base low-memory request failed");
+    webscene_engine_memory_metrics base_memory_after{
+        sizeof(webscene_engine_memory_metrics)};
+    for (auto attempt = 0; attempt < 500; ++attempt) {
+        require(webscene_engine_get_memory_metrics(engine, &base_memory_after) != 0,
+            "live effective base final memory metrics unavailable");
+        if (base_memory_after.low_memory_notifications
+                > base_memory_before.low_memory_notifications
+            && base_memory_after.native_dom_node_count
+                <= base_memory_before.native_dom_node_count + 16U) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    const auto base_rss_after = file_system_access_test_peak_rss_bytes();
+    const auto descriptors_after = descriptor_count();
+    require(
+        base_memory_after.v8_used_heap_bytes
+                <= base_memory_before.v8_used_heap_bytes + 16U * 1024U * 1024U
+            && base_memory_after.native_dom_node_count
+                <= base_memory_before.native_dom_node_count + 16U
+            && base_memory_after.native_wrapper_handle_count
+                <= base_memory_before.native_wrapper_handle_count + 16U,
+        "live effective base retained heap, DOM nodes, or wrappers");
+    require(base_rss_before == 0U
+            || base_rss_after <= base_rss_before + 64U * 1024U * 1024U,
+        "live effective base exceeded the 64 MiB RSS budget");
+    require(descriptors_before == 0U || descriptors_after <= descriptors_before + 2U,
+        "live effective base retained file descriptors");
+    std::cout << "document-base-profile=" << base_profile
+              << " heapBefore=" << base_memory_before.v8_used_heap_bytes
+              << " heapAfter=" << base_memory_after.v8_used_heap_bytes
+              << " nodesBefore=" << base_memory_before.native_dom_node_count
+              << " nodesAfter=" << base_memory_after.native_dom_node_count
+              << " wrappersBefore=" << base_memory_before.native_wrapper_handle_count
+              << " wrappersAfter=" << base_memory_after.native_wrapper_handle_count
+              << " rssBefore=" << base_rss_before
+              << " rssAfter=" << base_rss_after
+              << " fdBefore=" << descriptors_before
+              << " fdAfter=" << descriptors_after << '\n';
     require(
         server.peak_documents.load(std::memory_order_relaxed) >= 2,
         "dynamic iframe documents were not prefetched concurrently");

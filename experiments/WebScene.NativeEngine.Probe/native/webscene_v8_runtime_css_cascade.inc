@@ -164,39 +164,7 @@
         // their navigation and <base> URL semantics without dereferencing an
         // empty Local<Context>.
         auto* root = css_cascade_root_for_node(node);
-        if (root != nullptr) {
-            if (const auto found = frame_base_addresses.find(root);
-                found != frame_base_addresses.end()) {
-                return found->second;
-            }
-        }
-
-        auto base = document_base_address;
-        if (base.empty()) {
-            const auto local_context = context_for_node(node);
-            if (!local_context.IsEmpty()) {
-                v8::Local<v8::Value> location_value;
-                if (local_context->Global()->Get(
-                        local_context,
-                        js_string(isolate, "location")).ToLocal(&location_value)
-                    && location_value->IsObject()) {
-                    v8::Local<v8::Value> href_value;
-                    if (location_value.As<v8::Object>()->Get(
-                            local_context,
-                            js_string(isolate, "href")).ToLocal(&href_value)) {
-                        base = to_utf8(isolate, href_value);
-                    }
-                }
-            }
-        }
-        if (root == nullptr) root = &document.body();
-        for (auto* candidate : document.query_selector_all(*root, "base")) {
-            if (candidate == nullptr) continue;
-            const auto href = candidate->attributes.find("href");
-            if (href == candidate->attributes.end() || href->second.empty()) continue;
-            return resolve_resource_url(href->second, base);
-        }
-        return base;
+        return effective_document_base(root);
     }
 
     void apply_css_declaration(dom_node& node, const css_declaration& declaration, bool inline_origin = false)

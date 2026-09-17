@@ -244,6 +244,7 @@
         actual_frame_contexts.clear();
         actual_frame_documents.clear();
         frame_base_addresses.clear();
+        document_base_caches.clear();
         provisional_frame_bodies.clear();
         canvas_contexts.clear();
         canvas_states.clear();

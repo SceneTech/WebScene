@@ -1,4 +1,5 @@
 #include "webscene_native_engine.h"
+#include "webscene_file_panel_v2.hpp"
 #include "webscene/compiled_document.hpp"
 #include "webscene_native_dom.h"
 #include "webscene_v8_runtime.h"
@@ -386,6 +387,21 @@ struct webscene_engine final {
     size_t copy_runtime_failure(char* destination, size_t capacity) {
         return diagnostics_.copy_failure(destination, capacity);
     }
+    bool queue_file_panel_request_v2(
+        const webscene_file_panel_request_v2& request,
+        webscene_native::file_panel_completion_callback_v2 callback) {
+        if (!file_panel_broker_v2_.queue(request, std::move(callback))) return false;
+        notify_host_work();
+        return true;
+    }
+    std::unique_ptr<webscene_native::file_panel_request_lease_v2>
+    take_file_panel_request_v2() {
+        return file_panel_broker_v2_.take();
+    }
+    bool complete_file_panel_request_v2(
+        const webscene_file_panel_completion_v2& completion) {
+        return file_panel_broker_v2_.complete(completion);
+    }
 private:
 #if defined(WEBSCENE_GRAPHICS_SCENE_TESTS)
     friend void test_native_gpu_scene_leases();
@@ -463,6 +479,7 @@ private:
     std::atomic<bool> frame_paced_pointer_pending_{false};
     webscene_native::native_document document_;
     webscene_native::runtime_diagnostics diagnostics_;
+    webscene_native::file_panel_broker_v2 file_panel_broker_v2_;
 #if defined(WEBSCENE_NATIVE_ENGINE_WITH_V8)
     std::unique_ptr<webscene_native::v8_dom_runtime> runtime_;
     std::atomic<bool> file_service_enabled_{false};
@@ -1946,4 +1963,29 @@ uint8_t webscene_engine_complete_file_request_v1(webscene_engine* engine,
         completion.files.push_back(std::move(value));
     }
     return engine->complete_file_request(std::move(completion));
+}
+const webscene_file_panel_request_v2*
+webscene_engine_take_file_panel_request_v2(webscene_engine* engine) {
+    if (!engine) return nullptr;
+    try {
+        auto request = engine->take_file_panel_request_v2();
+        return request ? &request.release()->view : nullptr;
+    } catch (...) {
+        return nullptr;
+    }
+}
+void webscene_file_panel_request_release_v2(
+    const webscene_file_panel_request_v2* request) {
+    delete reinterpret_cast<const webscene_native::file_panel_request_lease_v2*>(
+        request);
+}
+uint8_t webscene_engine_complete_file_panel_request_v2(
+    webscene_engine* engine,
+    const webscene_file_panel_completion_v2* completion) {
+    if (engine == nullptr || completion == nullptr) return 0;
+    try {
+        return engine->complete_file_panel_request_v2(*completion);
+    } catch (...) {
+        return 0;
+    }
 }

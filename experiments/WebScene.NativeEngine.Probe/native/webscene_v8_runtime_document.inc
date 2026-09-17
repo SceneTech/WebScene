@@ -1225,7 +1225,15 @@
         v8::Local<v8::Object> global,
         const std::string& href)
     {
+        if (context.IsEmpty() || local_context == context.Get(isolate)) {
+            top_level_location_address = href;
+        }
         auto location = v8::Object::New(isolate);
+        location->SetNativeDataProperty(
+            local_context,
+            js_string(isolate, "href"),
+            get_location_href,
+            set_location_href).Check();
         const auto scheme_end = href.find(':');
         const auto authority_start = href.find("://");
         const auto authority_end = authority_start == std::string::npos
@@ -1260,7 +1268,10 @@
         const auto hash = hash_start == std::string::npos
             ? std::string{}
             : href.substr(hash_start);
-        location->Set(local_context, js_string(isolate, "href"), js_string(isolate, href.c_str())).Check();
+        location->SetPrivate(
+            local_context,
+            location_href_key(isolate),
+            js_string(isolate, href.c_str())).Check();
         location->Set(
             local_context,
             js_string(isolate, "protocol"),
@@ -1293,6 +1304,14 @@
             local_context,
             js_string(isolate, "toString"),
             v8::Function::New(local_context, location_to_string).ToLocalChecked()).Check();
+        location->Set(
+            local_context,
+            js_string(isolate, "assign"),
+            v8::Function::New(local_context, location_assign).ToLocalChecked()).Check();
+        location->Set(
+            local_context,
+            js_string(isolate, "replace"),
+            v8::Function::New(local_context, location_replace).ToLocalChecked()).Check();
         location->Set(
             local_context,
             js_string(isolate, "reload"),

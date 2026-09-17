@@ -1,0 +1,340 @@
+{
+  "schemaVersion": 1,
+  "catalogRevision": "2026-09-17",
+  "codeOssRevision": "645f29cc3176500b4b5762ba887cf2a7f0ffdf2c",
+  "scope": [
+    "src",
+    "extensions"
+  ],
+  "excludedDirectoryNames": [
+    ".git",
+    "fixtures",
+    "node_modules",
+    "out",
+    "test",
+    "tests"
+  ],
+  "scannedFileCount": 9379,
+  "apis": [
+    {
+      "id": "abort",
+      "reachable": true,
+      "hitCount": 464,
+      "fileCount": 65,
+      "examples": [
+        "extensions/copilot/dist/extension.js",
+        "extensions/copilot/dist/sanity-test-extension.js",
+        "extensions/copilot/dist/simulationMain.js",
+        "extensions/copilot/dist/test-extension.js",
+        "extensions/copilot/src/extension/byok/vscode-node/geminiNativeProvider.ts"
+      ]
+    },
+    {
+      "id": "animation-frame",
+      "reachable": true,
+      "hitCount": 92,
+      "fileCount": 39,
+      "examples": [
+        "extensions/copilot/dist/extension.js",
+        "extensions/copilot/dist/sanity-test-extension.js",
+        "extensions/copilot/dist/simulationMain.js",
+        "extensions/copilot/dist/simulationWorkbench.js",
+        "extensions/copilot/dist/suggestionsPanelWebview.js"
+      ]
+    },
+    {
+      "id": "broadcast-channel",
+      "reachable": true,
+      "hitCount": 14,
+      "fileCount": 6,
+      "examples": [
+        "extensions/markdown-language-features/preview-src/diffScrollSync.ts",
+        "extensions/markdown-language-features/types/previewMessaging.d.ts",
+        "src/vs/base/browser/broadcast.ts",
+        "src/vs/workbench/contrib/agentsVoice/browser/agentsVoiceWidget.ts",
+        "src/vs/workbench/contrib/agentsVoice/browser/agentsVoiceWindowService.ts"
+      ]
+    },
+    {
+      "id": "cache-storage",
+      "reachable": true,
+      "hitCount": 30,
+      "fileCount": 5,
+      "examples": [
+        "extensions/copilot/dist/extension.js",
+        "extensions/copilot/dist/sanity-test-extension.js",
+        "extensions/copilot/dist/simulationMain.js",
+        "extensions/copilot/dist/test-extension.js",
+        "src/vs/workbench/contrib/webview/browser/pre/service-worker.js"
+      ]
+    },
+    {
+      "id": "canvas-2d",
+      "reachable": true,
+      "hitCount": 74,
+      "fileCount": 33,
+      "examples": [
+        "extensions/copilot/dist/simulationMain.js",
+        "extensions/html-language-features/server/dist/node/htmlServerMain.js",
+        "extensions/markdown-language-features/preview-src/index.ts",
+        "extensions/media-preview/media/imagePreview.js",
+        "src/vs/base/browser/pixelRatio.ts"
+      ]
+    },
+    {
+      "id": "clipboard",
+      "reachable": true,
+      "hitCount": 54,
+      "fileCount": 20,
+      "examples": [
+        "extensions/copilot/dist/simulationWorkbench.js",
+        "extensions/markdown-language-features/preview-src/index.ts",
+        "extensions/media-preview/media/imagePreview.js",
+        "src/vs/base/browser/canIUse.ts",
+        "src/vs/editor/browser/controller/editContext/clipboardUtils.ts"
+      ]
+    },
+    {
+      "id": "crypto",
+      "reachable": true,
+      "hitCount": 226,
+      "fileCount": 45,
+      "examples": [
+        "extensions/copilot/dist/extension.js",
+        "extensions/copilot/dist/sanity-test-extension.js",
+        "extensions/copilot/dist/simulationMain.js",
+        "extensions/copilot/dist/simulationWorkbench.js",
+        "extensions/copilot/dist/test-extension.js"
+      ]
+    },
+    {
+      "id": "dom-core",
+      "reachable": true,
+      "hitCount": 906,
+      "fileCount": 294,
+      "examples": [
+        "extensions/copilot/dist/extension.js",
+        "extensions/copilot/dist/sanity-test-extension.js",
+        "extensions/copilot/dist/simulationMain.js",
+        "extensions/copilot/dist/simulationWorkbench.js",
+        "extensions/copilot/dist/suggestionsPanelWebview.js"
+      ]
+    },
+    {
+      "id": "drag-drop",
+      "reachable": true,
+      "hitCount": 305,
+      "fileCount": 74,
+      "examples": [
+        "extensions/css-language-features/client/src/dropOrPaste/dropOrPasteResource.ts",
+        "extensions/ipynb/src/notebookImagePaste.ts",
+        "extensions/markdown-language-features/src/languageFeatures/copyFiles/dropOrPasteResource.ts",
+        "extensions/markdown-language-features/src/languageFeatures/copyFiles/pasteUrlProvider.ts",
+        "extensions/markdown-language-features/src/languageFeatures/updateLinksOnPaste.ts"
+      ]
+    },
+    {
+      "id": "fetch",
+      "reachable": true,
+      "hitCount": 4006,
+      "fileCount": 430,
+      "examples": [
+        "extensions/configuration-editing/dist/configurationEditingMain.js",
+        "extensions/copilot/dist/extension.js",
+        "extensions/copilot/dist/sanity-test-extension.js",
+        "extensions/copilot/dist/simulationMain.js",
+        "extensions/copilot/dist/simulationWorkbench.js"
+      ]
+    },
+    {
+      "id": "file-api",
+      "reachable": true,
+      "hitCount": 300,
+      "fileCount": 49,
+      "examples": [
+        "extensions/copilot/dist/extension.js",
+        "extensions/copilot/dist/sanity-test-extension.js",
+        "extensions/copilot/dist/simulationMain.js",
+        "extensions/copilot/dist/test-extension.js",
+        "extensions/copilot/src/extension/completions-core/vscode-node/completionsServiceBridges.ts"
+      ]
+    },
+    {
+      "id": "file-system-access",
+      "reachable": true,
+      "hitCount": 47,
+      "fileCount": 7,
+      "examples": [
+        "src/vs/platform/dnd/browser/dnd.ts",
+        "src/vs/platform/files/browser/htmlFileSystemProvider.ts",
+        "src/vs/platform/files/browser/webFileSystemAccess.ts",
+        "src/vs/workbench/contrib/files/browser/fileImportExport.ts",
+        "src/vs/workbench/services/dialogs/browser/fileDialogService.ts"
+      ]
+    },
+    {
+      "id": "focus-selection",
+      "reachable": true,
+      "hitCount": 1564,
+      "fileCount": 402,
+      "examples": [
+        "extensions/copilot/dist/extension.js",
+        "extensions/copilot/dist/sanity-test-extension.js",
+        "extensions/copilot/dist/simulationMain.js",
+        "extensions/copilot/dist/simulationWorkbench.js",
+        "extensions/copilot/dist/test-extension.js"
+      ]
+    },
+    {
+      "id": "form-data",
+      "reachable": true,
+      "hitCount": 144,
+      "fileCount": 4,
+      "examples": [
+        "extensions/copilot/dist/extension.js",
+        "extensions/copilot/dist/sanity-test-extension.js",
+        "extensions/copilot/dist/simulationMain.js",
+        "extensions/copilot/dist/test-extension.js"
+      ]
+    },
+    {
+      "id": "iframe",
+      "reachable": true,
+      "hitCount": 181,
+      "fileCount": 42,
+      "examples": [
+        "extensions/copilot/dist/extension.js",
+        "extensions/copilot/dist/sanity-test-extension.js",
+        "extensions/copilot/dist/simulationMain.js",
+        "extensions/copilot/dist/simulationWorkbench.js",
+        "extensions/copilot/dist/test-extension.js"
+      ]
+    },
+    {
+      "id": "indexeddb",
+      "reachable": true,
+      "hitCount": 41,
+      "fileCount": 6,
+      "examples": [
+        "src/vs/base/browser/indexedDB.ts",
+        "src/vs/platform/files/browser/htmlFileSystemProvider.ts",
+        "src/vs/platform/files/browser/indexedDBFileSystemProvider.ts",
+        "src/vs/workbench/api/worker/extensionHostWorker.ts",
+        "src/vs/workbench/browser/web.main.ts"
+      ]
+    },
+    {
+      "id": "message-port",
+      "reachable": true,
+      "hitCount": 133,
+      "fileCount": 41,
+      "examples": [
+        "extensions/copilot/dist/extension.js",
+        "extensions/copilot/dist/sanity-test-extension.js",
+        "extensions/copilot/dist/simulationMain.js",
+        "extensions/copilot/dist/simulationWorkbench.js",
+        "extensions/copilot/dist/test-extension.js"
+      ]
+    },
+    {
+      "id": "observers",
+      "reachable": true,
+      "hitCount": 79,
+      "fileCount": 42,
+      "examples": [
+        "extensions/copilot/dist/simulationWorkbench.js",
+        "extensions/markdown-language-features/test-workspace/checkbox-count-extension/editor/main.ts",
+        "extensions/mermaid-markdown-features/preview-src/chat/mermaidWebview.ts",
+        "extensions/mermaid-markdown-features/preview-src/shared/diagramManager.ts",
+        "src/vs/base/browser/animationSync.ts"
+      ]
+    },
+    {
+      "id": "performance-timing",
+      "reachable": true,
+      "hitCount": 356,
+      "fileCount": 74,
+      "examples": [
+        "extensions/copilot/dist/diffWorker.js",
+        "extensions/copilot/dist/extension.js",
+        "extensions/copilot/dist/sanity-test-extension.js",
+        "extensions/copilot/dist/simulationMain.js",
+        "extensions/copilot/dist/simulationWorkbench.js"
+      ]
+    },
+    {
+      "id": "service-worker",
+      "reachable": true,
+      "hitCount": 9,
+      "fileCount": 1,
+      "examples": [
+        "src/vs/workbench/contrib/webview/browser/pre/index.html"
+      ]
+    },
+    {
+      "id": "storage",
+      "reachable": true,
+      "hitCount": 104,
+      "fileCount": 26,
+      "examples": [
+        "extensions/copilot/dist/extension.js",
+        "extensions/copilot/dist/sanity-test-extension.js",
+        "extensions/copilot/dist/simulationMain.js",
+        "extensions/copilot/dist/simulationWorkbench.js",
+        "extensions/copilot/dist/test-extension.js"
+      ]
+    },
+    {
+      "id": "streams",
+      "reachable": true,
+      "hitCount": 297,
+      "fileCount": 25,
+      "examples": [
+        "extensions/copilot/dist/extension.js",
+        "extensions/copilot/dist/sanity-test-extension.js",
+        "extensions/copilot/dist/simulationMain.js",
+        "extensions/copilot/dist/test-extension.js",
+        "extensions/copilot/src/extension/chatSessions/vscode-node/copilotCLIPythonEnvironmentApi.ts"
+      ]
+    },
+    {
+      "id": "url",
+      "reachable": true,
+      "hitCount": 239,
+      "fileCount": 69,
+      "examples": [
+        "extensions/copilot/dist/extension.js",
+        "extensions/copilot/dist/sanity-test-extension.js",
+        "extensions/copilot/dist/simulationMain.js",
+        "extensions/copilot/dist/simulationWorkbench.js",
+        "extensions/copilot/dist/test-extension.js"
+      ]
+    },
+    {
+      "id": "websocket",
+      "reachable": true,
+      "hitCount": 655,
+      "fileCount": 93,
+      "examples": [
+        "extensions/copilot/dist/extension.js",
+        "extensions/copilot/dist/sanity-test-extension.js",
+        "extensions/copilot/dist/simulationMain.js",
+        "extensions/copilot/dist/test-extension.js",
+        "extensions/copilot/src/extension/prompt/common/intents.ts"
+      ]
+    },
+    {
+      "id": "worker",
+      "reachable": true,
+      "hitCount": 18,
+      "fileCount": 17,
+      "examples": [
+        "extensions/copilot/dist/extension.js",
+        "extensions/copilot/dist/sanity-test-extension.js",
+        "extensions/copilot/dist/simulationMain.js",
+        "extensions/copilot/dist/test-extension.js",
+        "extensions/copilot/src/util/node/worker.ts"
+      ]
+    }
+  ]
+}

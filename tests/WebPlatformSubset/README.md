@@ -60,6 +60,42 @@ change. The validator fails on stale profile/WPT digests, unknown Git revisions 
 complete checkout, result-identity drift, missing or duplicated contracts, denominator
 drift, and configured input/report bounds.
 
+## Code OSS Web API ledger
+
+`code-oss-web-api-catalog.json` defines the non-CSS browser-shaped API probes used by
+unchanged Code OSS. `code-oss-web-api-reachability.json` is the deterministic static
+snapshot from the pinned Code OSS checkout. It scans both authored sources and shipped,
+generated extension bundles while excluding dependencies, tests, fixtures, and build
+output directories. A source match establishes reachability only; it does not promote a
+runtime support claim.
+
+`code-oss-web-api-ledger.json` reconciles every catalog entry with an explicit state,
+owner issue, evidence, and known boundary. CSS claims are composed from the separately
+versioned CSS matrix by SHA-256, schema, matrix version, evidence-profile digest, and
+full native/browser denominators. The generated report is
+`docs/validation/code-oss-web-api-ledger.md`.
+
+Validate the committed snapshot, claims, CSS slice, and report with:
+
+```bash
+python3 -m unittest scripts/test_code_oss_web_api_ledger.py -v
+python3 scripts/code_oss_web_api_ledger.py
+```
+
+After intentionally changing the pinned Code OSS checkout or catalog, regenerate and
+verify the snapshot and report from that exact checkout:
+
+```bash
+python3 scripts/code_oss_web_api_ledger.py \
+  --source-root /absolute/path/to/vscode \
+  --write-snapshot --write-report
+python3 scripts/code_oss_web_api_ledger.py --source-root /absolute/path/to/vscode
+```
+
+The scanner uses `rg` when available and retains a dependency-free Python fallback.
+Validation fails on missing catalog rows, stale reachability, silent metadata, unsupported
+state promotion, stale revisions, missing evidence, or CSS digest/denominator drift.
+
 ## Runner
 
 The runner has one adapter: the native engine. There is no `--engine` option and no

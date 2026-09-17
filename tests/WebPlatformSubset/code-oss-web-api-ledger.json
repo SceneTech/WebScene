@@ -1,0 +1,448 @@
+{
+  "schemaVersion": 1,
+  "revisions": {
+    "codeOss": "645f29cc3176500b4b5762ba887cf2a7f0ffdf2c",
+    "webScene": "b81f594cfe0effe742942b8ccf643c2e1f42bc6a",
+    "appScene": "9f434e0deea632fe28962ce32e2f4ddede4aa14c",
+    "wpt": "2c705104a295c48053eeddf7fe0170d790a4e853"
+  },
+  "cssSlice": {
+    "path": "tests/WebPlatformSubset/css-capability-matrix.json",
+    "sha256": "5ec2dedd957b91d3220504bca19073f844f4b17405c4a674fbc631d4b15bad7a",
+    "schema": "webscene-css-capability-matrix-v1",
+    "matrixVersion": "1.0.0",
+    "profileSha256": "6729c7c53e35f61dfbf9db278244693a6ff46571a34bbeed14e9683e61720c4a",
+    "denominators": {
+      "capabilities": {
+        "supported": 4,
+        "partial": 5,
+        "total": 9
+      },
+      "native": {
+        "pass": 32,
+        "fail": 0,
+        "skipped": 0,
+        "unavailable": 0,
+        "total": 32
+      },
+      "browser": {
+        "pass": 25,
+        "fail": 7,
+        "skipped": 0,
+        "unavailable": 0,
+        "total": 32
+      }
+    }
+  },
+  "claims": [
+    {
+      "id": "abort",
+      "reachable": true,
+      "state": "blocked",
+      "issues": [
+        "WebScene#263"
+      ],
+      "evidence": [],
+      "limits": [],
+      "reason": "Cancellation and teardown remain unqualified across every accepted Code OSS scenario and realm.",
+      "platforms": [
+        "linux-x64",
+        "macos-arm64",
+        "windows-x64"
+      ]
+    },
+    {
+      "id": "animation-frame",
+      "reachable": true,
+      "state": "blocked",
+      "issues": [
+        "WebScene#242",
+        "WebScene#258"
+      ],
+      "evidence": [],
+      "limits": [],
+      "reason": "Frame scheduling has focused coverage but lacks a complete Code OSS idle, visibility, cancellation, and panel-churn evidence bundle.",
+      "platforms": [
+        "linux-x64",
+        "macos-arm64",
+        "windows-x64"
+      ]
+    },
+    {
+      "id": "broadcast-channel",
+      "reachable": true,
+      "state": "blocked",
+      "issues": [
+        "WebScene#81"
+      ],
+      "evidence": [],
+      "limits": [],
+      "reason": "Cross-realm ordering, clone, teardown, queue, and product evidence are incomplete.",
+      "platforms": [
+        "linux-x64",
+        "macos-arm64",
+        "windows-x64"
+      ]
+    },
+    {
+      "id": "cache-storage",
+      "reachable": true,
+      "state": "blocked",
+      "issues": [
+        "WebScene#266"
+      ],
+      "evidence": [],
+      "limits": [],
+      "reason": "CacheStorage is required by webview resources and remains scheduled in the webview stack.",
+      "platforms": [
+        "linux-x64",
+        "macos-arm64",
+        "windows-x64"
+      ]
+    },
+    {
+      "id": "canvas-2d",
+      "reachable": true,
+      "state": "blocked",
+      "issues": [
+        "WebScene#227"
+      ],
+      "evidence": [],
+      "limits": [],
+      "reason": "Broad engine coverage exists, but the accepted Code OSS visual scenarios have not yet supplied revision-pinned product evidence here.",
+      "platforms": [
+        "linux-x64",
+        "macos-arm64",
+        "windows-x64"
+      ]
+    },
+    {
+      "id": "clipboard",
+      "reachable": true,
+      "state": "blocked",
+      "issues": [
+        "WebScene#227"
+      ],
+      "evidence": [],
+      "limits": [],
+      "reason": "The host ABI exists; editor, terminal, webview, denial, focus, and large-payload product qualification is incomplete.",
+      "platforms": [
+        "linux-x64",
+        "macos-arm64",
+        "windows-x64"
+      ]
+    },
+    {
+      "id": "crypto",
+      "reachable": true,
+      "state": "blocked",
+      "issues": [
+        "WebScene#102"
+      ],
+      "evidence": [],
+      "limits": [],
+      "reason": "Random generation is available while the reachable subtle-crypto surface remains incomplete.",
+      "platforms": [
+        "linux-x64",
+        "macos-arm64",
+        "windows-x64"
+      ]
+    },
+    {
+      "id": "dom-core",
+      "reachable": true,
+      "state": "blocked",
+      "issues": [
+        "WebScene#227",
+        "WebScene#260"
+      ],
+      "evidence": [],
+      "limits": [],
+      "reason": "DOM coverage is extensive but no exhaustive reachable-surface and accepted-scenario reconciliation has been promoted.",
+      "platforms": [
+        "linux-x64",
+        "macos-arm64",
+        "windows-x64"
+      ]
+    },
+    {
+      "id": "drag-drop",
+      "reachable": true,
+      "state": "blocked",
+      "issues": [
+        "WebScene#260"
+      ],
+      "evidence": [],
+      "limits": [],
+      "reason": "Explorer/editor drag data, cancellation, focus, native input, and teardown evidence is incomplete.",
+      "platforms": [
+        "linux-x64",
+        "macos-arm64",
+        "windows-x64"
+      ]
+    },
+    {
+      "id": "fetch",
+      "reachable": true,
+      "state": "blocked",
+      "issues": [
+        "WebScene#266"
+      ],
+      "evidence": [],
+      "limits": [],
+      "reason": "Webview request admission, streaming, cancellation, origin policy, and product evidence remain scheduled.",
+      "platforms": [
+        "linux-x64",
+        "macos-arm64",
+        "windows-x64"
+      ]
+    },
+    {
+      "id": "file-api",
+      "reachable": true,
+      "state": "blocked",
+      "issues": [
+        "WebScene#269"
+      ],
+      "evidence": [],
+      "limits": [],
+      "reason": "Blob and FileReader paths exist; complete edit/save/revert/conflict/recovery qualification remains open.",
+      "platforms": [
+        "linux-x64",
+        "macos-arm64",
+        "windows-x64"
+      ]
+    },
+    {
+      "id": "file-system-access",
+      "reachable": true,
+      "state": "blocked",
+      "issues": [
+        "WebScene#248",
+        "AppScene#123"
+      ],
+      "evidence": [],
+      "limits": [],
+      "reason": "Typed grants, picker handles, revocation, and installed-package qualification are not complete.",
+      "platforms": [
+        "linux-x64",
+        "macos-arm64",
+        "windows-x64"
+      ]
+    },
+    {
+      "id": "focus-selection",
+      "reachable": true,
+      "state": "blocked",
+      "issues": [
+        "WebScene#260",
+        "WebScene#262"
+      ],
+      "evidence": [],
+      "limits": [],
+      "reason": "Keyboard, focus restoration, hidden/inert content, selection, and accessibility exposure are not fully qualified.",
+      "platforms": [
+        "linux-x64",
+        "macos-arm64",
+        "windows-x64"
+      ]
+    },
+    {
+      "id": "form-data",
+      "reachable": true,
+      "state": "blocked",
+      "issues": [
+        "WebScene#266"
+      ],
+      "evidence": [],
+      "limits": [],
+      "reason": "Multipart serialization and webview resource transport need bounded browser/native/product evidence.",
+      "platforms": [
+        "linux-x64",
+        "macos-arm64",
+        "windows-x64"
+      ]
+    },
+    {
+      "id": "iframe",
+      "reachable": true,
+      "state": "blocked",
+      "issues": [
+        "WebScene#253",
+        "WebScene#264"
+      ],
+      "evidence": [],
+      "limits": [],
+      "reason": "Sandbox work is active; origin, policy, navigation, teardown, and interaction layers remain scheduled.",
+      "platforms": [
+        "linux-x64",
+        "macos-arm64",
+        "windows-x64"
+      ]
+    },
+    {
+      "id": "indexeddb",
+      "reachable": true,
+      "state": "blocked",
+      "issues": [
+        "WebScene#56",
+        "WebScene#227"
+      ],
+      "evidence": [],
+      "limits": [],
+      "reason": "Engine contracts exist, but Code OSS origin durability, quota, failure recovery, and package evidence are incomplete.",
+      "platforms": [
+        "linux-x64",
+        "macos-arm64",
+        "windows-x64"
+      ]
+    },
+    {
+      "id": "message-port",
+      "reachable": true,
+      "state": "blocked",
+      "issues": [
+        "WebScene#81"
+      ],
+      "evidence": [],
+      "limits": [],
+      "reason": "Transfer, structured clone, ordering, close/error, backpressure, and product qualification remain open.",
+      "platforms": [
+        "linux-x64",
+        "macos-arm64",
+        "windows-x64"
+      ]
+    },
+    {
+      "id": "observers",
+      "reachable": true,
+      "state": "blocked",
+      "issues": [
+        "WebScene#227",
+        "WebScene#258"
+      ],
+      "evidence": [],
+      "limits": [],
+      "reason": "Observer scheduling, batching, disconnection, memory, and Code OSS panel-churn evidence are incomplete.",
+      "platforms": [
+        "linux-x64",
+        "macos-arm64",
+        "windows-x64"
+      ]
+    },
+    {
+      "id": "performance-timing",
+      "reachable": true,
+      "state": "blocked",
+      "issues": [
+        "WebScene#227"
+      ],
+      "evidence": [],
+      "limits": [],
+      "reason": "Monotonicity exists but accepted-scenario marks, observers, resource timing, bounds, and package evidence are not reconciled.",
+      "platforms": [
+        "linux-x64",
+        "macos-arm64",
+        "windows-x64"
+      ]
+    },
+    {
+      "id": "service-worker",
+      "reachable": true,
+      "state": "blocked",
+      "issues": [
+        "WebScene#265"
+      ],
+      "evidence": [],
+      "limits": [],
+      "reason": "Controller, registration, Clients, origin, lifecycle, update, and teardown support is scheduled.",
+      "platforms": [
+        "linux-x64",
+        "macos-arm64",
+        "windows-x64"
+      ]
+    },
+    {
+      "id": "storage",
+      "reachable": true,
+      "state": "blocked",
+      "issues": [
+        "WebScene#56",
+        "WebScene#227"
+      ],
+      "evidence": [],
+      "limits": [],
+      "reason": "Origin isolation, quota, persistence, malformed data, recovery, and installed-package qualification remain incomplete.",
+      "platforms": [
+        "linux-x64",
+        "macos-arm64",
+        "windows-x64"
+      ]
+    },
+    {
+      "id": "streams",
+      "reachable": true,
+      "state": "blocked",
+      "issues": [
+        "WebScene#266"
+      ],
+      "evidence": [],
+      "limits": [],
+      "reason": "Readable and writable stream backpressure, cancellation, errors, transfer, and webview evidence are scheduled.",
+      "platforms": [
+        "linux-x64",
+        "macos-arm64",
+        "windows-x64"
+      ]
+    },
+    {
+      "id": "url",
+      "reachable": true,
+      "state": "blocked",
+      "issues": [
+        "WebScene#270",
+        "AppScene#124"
+      ],
+      "evidence": [],
+      "limits": [],
+      "reason": "Parsing coverage exists while native-host navigation and object-URL lifetime qualification remain incomplete.",
+      "platforms": [
+        "linux-x64",
+        "macos-arm64",
+        "windows-x64"
+      ]
+    },
+    {
+      "id": "websocket",
+      "reachable": true,
+      "state": "blocked",
+      "issues": [
+        "WebScene#227"
+      ],
+      "evidence": [],
+      "limits": [],
+      "reason": "Connection, framing, close/error, authentication, bounds, backpressure, and Code OSS extension evidence are not reconciled.",
+      "platforms": [
+        "linux-x64",
+        "macos-arm64",
+        "windows-x64"
+      ]
+    },
+    {
+      "id": "worker",
+      "reachable": true,
+      "state": "blocked",
+      "issues": [
+        "WebScene#81"
+      ],
+      "evidence": [],
+      "limits": [],
+      "reason": "Editor workers run, but complete module/classic worker, nested realm, messaging, termination, memory, and product qualification is open.",
+      "platforms": [
+        "linux-x64",
+        "macos-arm64",
+        "windows-x64"
+      ]
+    }
+  ]
+}

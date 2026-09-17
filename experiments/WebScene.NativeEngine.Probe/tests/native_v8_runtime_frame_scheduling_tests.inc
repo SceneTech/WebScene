@@ -458,10 +458,12 @@ void test_outer_dynamic_recascade_preserves_iframe_cascade()
           const frameDocument = frame.contentDocument;
           frameDocument.open();
           frameDocument.write(`
-            <html><head><style>
+            <html><head><base href="https://frames.test/assets/"><style>
               html, body { margin: 0; width: 100%; height: 100%; }
               #chart { display: block; color: rgb(0, 187, 0);
-                       background: rgb(4, 5, 6); width: 320px; height: 180px; }
+                       background-color: rgb(4, 5, 6);
+                       background-image: url("chart.svg");
+                       width: 320px; height: 180px; }
             </style></head><body><div id="chart">chart-ready</div><script>
               globalThis.__readChartStyle = () => {
                 const chart = document.getElementById('chart');
@@ -469,6 +471,7 @@ void test_outer_dynamic_recascade_preserves_iframe_cascade()
                 return {
                   text: chart.textContent, display: style.display,
                   color: style.color, background: style.backgroundColor,
+                  backgroundImage: style.backgroundImage,
                   width: style.width, height: style.height
                 };
               };
@@ -479,7 +482,7 @@ void test_outer_dynamic_recascade_preserves_iframe_cascade()
         })()
     )JS", "outer-dynamic-recascade-frame-setup.js");
     constexpr auto expected =
-        R"JSON({"text":"chart-ready","display":"block","color":"rgb(0, 187, 0)","background":"rgb(4, 5, 6)","width":"320px","height":"180px"})JSON";
+        R"JSON({"text":"chart-ready","display":"block","color":"rgb(0, 187, 0)","background":"rgb(4, 5, 6)","backgroundImage":"url(\"https://frames.test/assets/chart.svg\")","width":"320px","height":"180px"})JSON";
     const auto inspect =
         "globalThis.__recascadeFrame.contentWindow.__readChartStyle()";
     auto result = std::string{};

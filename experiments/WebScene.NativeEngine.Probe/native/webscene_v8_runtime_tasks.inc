@@ -968,6 +968,11 @@
 
     bool dispatch_resize()
     {
+        const auto trace_resize_phases =
+            std::getenv("WEBSCENE_TRACE_RESIZE_PHASES") != nullptr;
+        const auto trace_resize_started = trace_resize_phases
+            ? std::chrono::steady_clock::now()
+            : std::chrono::steady_clock::time_point{};
         record_feature(
             "event", "type:resize", "supported", {}, "event-dispatch");
 #if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
@@ -1068,6 +1073,9 @@
             std::chrono::duration_cast<std::chrono::nanoseconds>(
                 outer_listeners_finished - resize_started).count());
 #endif
+        const auto trace_outer_listeners_finished = trace_resize_phases
+            ? std::chrono::steady_clock::now()
+            : std::chrono::steady_clock::time_point{};
 
         // Media matches and selector indexes belong to each browsing context.
         // Recompute only contexts whose query truth changed, retaining relative
@@ -1090,6 +1098,9 @@
         }
         activate_css_cascade(context.Get(isolate));
         if (!dispatch_media_query_list_changes()) return false;
+        const auto trace_media_finished = trace_resize_phases
+            ? std::chrono::steady_clock::now()
+            : std::chrono::steady_clock::time_point{};
 
         // The outer document also needs the post-layout observation checkpoint
         // when no iframe exists (including a scale-only host resize).
@@ -1205,7 +1216,13 @@
             std::chrono::duration_cast<std::chrono::nanoseconds>(
                 frame_listeners_finished - outer_listeners_finished).count());
 #endif
+        const auto trace_frame_listeners_finished = trace_resize_phases
+            ? std::chrono::steady_clock::now()
+            : std::chrono::steady_clock::time_point{};
         style_batch.finish();
+        const auto trace_batch_finished = trace_resize_phases
+            ? std::chrono::steady_clock::now()
+            : std::chrono::steady_clock::time_point{};
         if (shared_isolate != nullptr) {
             isolate->Exit();
             try {
@@ -1227,12 +1244,35 @@
             std::chrono::duration_cast<std::chrono::nanoseconds>(
                 layout_finished - frame_listeners_finished).count());
 #endif
+        const auto trace_layout_finished = trace_resize_phases
+            ? std::chrono::steady_clock::now()
+            : std::chrono::steady_clock::time_point{};
         const auto result = deliver_resize_observer_checkpoint();
 #if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
         last_resize_observers_ns = static_cast<uint64_t>(
             std::chrono::duration_cast<std::chrono::nanoseconds>(
                 std::chrono::steady_clock::now() - layout_finished).count());
 #endif
+        if (trace_resize_phases) {
+            const auto milliseconds = [](auto from, auto to) {
+                return std::chrono::duration<double, std::milli>(to - from).count();
+            };
+            const auto trace_finished = std::chrono::steady_clock::now();
+            std::cerr << "WebScene resize phases: outer-ms="
+                << milliseconds(trace_resize_started, trace_outer_listeners_finished)
+                << ", media-ms="
+                << milliseconds(trace_outer_listeners_finished, trace_media_finished)
+                << ", frame-listeners-ms="
+                << milliseconds(trace_media_finished, trace_frame_listeners_finished)
+                << ", batched-recascade-ms="
+                << milliseconds(trace_frame_listeners_finished, trace_batch_finished)
+                << ", layout-ms="
+                << milliseconds(trace_batch_finished, trace_layout_finished)
+                << ", observers-ms="
+                << milliseconds(trace_layout_finished, trace_finished)
+                << ", total-ms="
+                << milliseconds(trace_resize_started, trace_finished) << '\n';
+        }
         return result;
     }
 

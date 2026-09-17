@@ -279,7 +279,11 @@ void test_media_query_custom_property_consumer_cascade_work()
                 << descendants << " transition=" << transition
                 << " css-cascade-applications="
                 << applications[transition] << '\n';
-            bounded = bounded && applications[transition] <= 20U;
+            // The token owner and two alias owners require complete cascades.
+            // The ten ordinary consumers use property-targeted replay, so
+            // growing unrelated descendants must not restore one full cascade
+            // per consumer.
+            bounded = bounded && applications[transition] <= 3U;
 #endif
         }
         observations.push_back(applications);

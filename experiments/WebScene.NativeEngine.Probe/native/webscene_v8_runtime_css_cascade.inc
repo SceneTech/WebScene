@@ -641,10 +641,10 @@
     };
 
     css_variable_recascade_plan make_css_variable_recascade_plan(
-        size_t first_new_rule) const
+        std::unordered_set<std::string> variables) const
     {
         css_variable_recascade_plan plan;
-        plan.variables = appended_css_custom_properties(first_new_rule);
+        plan.variables = std::move(variables);
         expand_css_variable_dependencies(plan.variables);
         if (plan.variables.empty()) return plan;
 
@@ -717,6 +717,13 @@
             }
         }
         return plan;
+    }
+
+    css_variable_recascade_plan make_css_variable_recascade_plan(
+        size_t first_new_rule) const
+    {
+        return make_css_variable_recascade_plan(
+            appended_css_custom_properties(first_new_rule));
     }
 
     bool reapply_css_variable_dependent_rules(
@@ -1033,6 +1040,7 @@
             bool subtree;
             uint64_t changed_properties;
             uint64_t inherited_properties;
+            bool full_cascade;
         };
         struct rule_effect final {
             bool subtree{};
@@ -1182,6 +1190,8 @@
         std::sort(variable_rule_indices.begin(), variable_rule_indices.end());
         const css::rule_subject_index variable_index(
             css_rules, variable_rule_indices);
+        const auto variable_recascade_plan =
+            make_css_variable_recascade_plan(affected_variable_set);
         const auto references_affected_variable = [&](std::string_view value) {
             if (value.find("var(") == std::string::npos) return false;
             const auto references = css_variable_references(value);
@@ -1286,10 +1296,14 @@
                 });
         };
         std::vector<std::string> active_variables;
+        size_t changed_rule_subjects = 0U;
+        size_t variable_consumer_subjects = 0U;
+        size_t inline_variable_consumer_subjects = 0U;
         const auto visit = [&](const auto& self, dom_node& node) -> void {
             const auto inherited_variable_count = active_variables.size();
             rule_effect effect;
             bool has_request = false;
+            bool full_cascade = false;
             if (node.kind == dom_node_kind::element) {
                 const auto candidates=changed_index.candidates(node,&node==active_element);
                 const auto matching = css::match_candidates(
@@ -1335,6 +1349,8 @@
                 }
                 has_request = !matching.ordinary.empty()
                     || !matching.pseudo.empty();
+                full_cascade = has_request;
+                if (has_request) ++changed_rule_subjects;
                 for (const auto& variable : effect.changed_variables) {
                     append_variable(active_variables, variable);
                 }
@@ -1390,6 +1406,7 @@
                                 declaration.value,
                                 active_variables)) continue;
                             has_request = true;
+                            ++variable_consumer_subjects;
                             classify_declaration(effect, declaration);
                         }
                     }
@@ -1411,6 +1428,7 @@
                                 });
                         })) {
                         has_request = true;
+                        full_cascade = true;
                     }
                 }
                 if (!effect.subtree && !active_variables.empty()) {
@@ -1419,6 +1437,7 @@
                         if (!references_active_variables(
                             value, active_variables)) continue;
                         has_request = true;
+                        ++inline_variable_consumer_subjects;
                         classify_declaration(
                             effect,
                             {name, value,
@@ -1432,7 +1451,7 @@
                 if (has_request) {
                     requests.push_back(
                         {&node, effect.subtree, effect.changed_properties,
-                            effect.inherited_properties});
+                            effect.inherited_properties, full_cascade});
                 }
                 if (exact_changed_properties != 0U
                     && !inheritance_rule_indices.empty()) {
@@ -1534,9 +1553,11 @@
             if (const auto found = request_by_node.find(consumer.node);
                 found != request_by_node.end()) {
                 requests[found->second].changed_properties |= affected;
+                requests[found->second].full_cascade = true;
             } else {
                 request_by_node.emplace(consumer.node, requests.size());
-                requests.push_back({consumer.node, false, affected, 0U});
+                requests.push_back(
+                    {consumer.node, false, affected, 0U, true});
             }
         }
         const auto inherited_style_changes = [](const node_style& left,
@@ -1625,6 +1646,7 @@
             }
         };
         size_t triggered_inherited_roots = 0U;
+        size_t targeted_variable_replays = 0U;
         for (const auto& current : requests) {
             if (std::any_of(
                 applied_subtree_roots.begin(), applied_subtree_roots.end(),
@@ -1637,6 +1659,14 @@
                 continue;
             }
             if (applied_nodes.contains(current.root)) continue;
+            if (!current.full_cascade
+                && current.inherited_properties == 0U
+                && reapply_css_variable_dependent_rules(
+                    *current.root, variable_recascade_plan)) {
+                ++targeted_variable_replays;
+                applied_nodes.insert(current.root);
+                continue;
+            }
             if (current.inherited_properties == 0U) {
                 apply_css_rules(*current.root);
                 applied_nodes.insert(current.root);
@@ -1675,10 +1705,17 @@
                 << ", changed-rules=" << changed_rules.size()
                 << ", inheritance-rules=" << inheritance_rule_indices.size()
                 << ", variable-rules=" << variable_rule_indices.size()
+                << ", changed-rule-subjects=" << changed_rule_subjects
+                << ", variable-consumer-declarations="
+                << variable_consumer_subjects
+                << ", inline-variable-consumer-declarations="
+                << inline_variable_consumer_subjects
                 << ", requests=" << requests.size()
                 << ", subtree-requests=" << subtrees
                 << ", conditional-inherited=" << conditional_inherited
                 << ", triggered-inherited=" << triggered_inherited_roots
+                << ", targeted-variable-replays="
+                << targeted_variable_replays
                 << ", exact-property-mask=0x" << std::hex
                 << exact_changed_properties << std::dec << '\n';
         }

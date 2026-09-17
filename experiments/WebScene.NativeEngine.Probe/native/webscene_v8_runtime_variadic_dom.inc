@@ -80,6 +80,9 @@
             if (old_parent == nullptr) return;
             if (self->is_connected(*node)) self->notify_custom_elements_subtree(*node, "disconnected");
             remember_parent(old_parent);
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+            self->dom_variadic_detach_child_visits += old_parent->children.size();
+#endif
             std::erase(old_parent->children, node);
             node->parent = nullptr;
             synchronize_textarea_value_from_children(*old_parent);
@@ -102,10 +105,49 @@
         }
         if (nodes.size() > 1U) {
             std::unordered_map<dom_node*, size_t> last_occurrence;
+            std::vector<dom_node*> first_occurrences;
+            const bool can_batch_detachment = !self->custom_elements_active
+                && (!(replace_all || replace_self) || self->active_element == nullptr);
+            if (can_batch_detachment) first_occurrences.reserve(nodes.size());
             for (size_t i = 0; i < nodes.size(); ++i) {
                 const auto [entry, first] = last_occurrence.try_emplace(nodes[i], i);
-                if (first) detach(nodes[i]);
+                if (first) {
+                    if (can_batch_detachment) first_occurrences.push_back(nodes[i]);
+                    else detach(nodes[i]);
+                }
                 else entry->second = i;
+            }
+            for (size_t begin = 0; begin < first_occurrences.size();) {
+                auto* old_parent = first_occurrences[begin]->parent;
+                size_t end = begin + 1;
+                // Compact a run of direct siblings once, not once per node.
+                // Do not delay the visible child-list update across a possible
+                // JS reaction bridge or focus recascade. Those paths keep the
+                // sequential algorithm; nested source nodes also split runs.
+                if (old_parent != nullptr) {
+                    while (end < first_occurrences.size() && first_occurrences[end]->parent == old_parent) ++end;
+                }
+                if (end == begin + 1) {
+                    detach(first_occurrences[begin]);
+                } else {
+                    remember_parent(old_parent);
+                    for (size_t i = begin; i < end; ++i) {
+                        auto* node = first_occurrences[i];
+                        if (replace_all || replace_self) clear_replacement_focus(*node);
+                        node->parent = nullptr;
+                    }
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+                    self->dom_variadic_detach_child_visits += old_parent->children.size();
+#endif
+                    // Parent links identify precisely this run's removed
+                    // children; all other entries still name old_parent.
+                    // No author code or style read can see this transient state.
+                    std::erase_if(old_parent->children, [](auto* node) {
+                        return node != nullptr && node->parent == nullptr;
+                    });
+                    synchronize_textarea_value_from_children(*old_parent);
+                }
+                begin = end;
             }
             size_t output = 0;
             for (size_t i = 0; i < nodes.size(); ++i)

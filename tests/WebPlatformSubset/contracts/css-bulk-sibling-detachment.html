@@ -1,0 +1,113 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Bulk sibling moves preserve source and destination checkpoints</title>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<style>
+.bulk-list > b {display:block;width:11px;height:13px}
+.bulk-list > b:first-child {width:41px}
+.bulk-list > b:last-child {height:43px}
+</style>
+<body>
+<script>
+// Keep the ordinary cases before custom-element registration: the native fast
+// path must not defer child-vector compaction across author-code checkpoints.
+const methods=['append','prepend','before','after','replaceChildren','replaceWith'];
+function fixture(t){
+  const stage=document.createElement('section');
+  stage.innerHTML='<div class="bulk-list"></div><div class="bulk-list"><i></i></div>';
+  document.body.appendChild(stage);t.add_cleanup(()=>stage.remove());
+  return {stage,source:stage.firstChild,destination:stage.lastChild,anchor:stage.lastChild.firstChild};
+}
+function make(parent,count=5){
+  return Array.from({length:count},()=>{const n=document.createElement('b');parent.appendChild(n);return n;});
+}
+function invoke(method,f,...nodes){
+  if(['before','after','replaceWith'].includes(method))f.anchor[method](...nodes);
+  else f.destination[method](...nodes);
+}
+function expected(method,f,nodes){
+  return ['append','after'].includes(method)?[f.anchor,...nodes]:
+    ['prepend','before'].includes(method)?[...nodes,f.anchor]:nodes;
+}
+function verify(parent,nodes){
+  assert_array_equals(Array.from(parent.childNodes),nodes,'child identities and order');
+  nodes.forEach((n,i)=>{
+    assert_equals(n.parentNode,parent,'parent identity');
+    if(n.tagName==='B'){
+      assert_equals(getComputedStyle(n).width,i===0?'41px':'11px','first-child style');
+      assert_equals(getComputedStyle(n).height,i===nodes.length-1?'43px':'13px','last-child style');
+    }
+  });
+}
+for(const method of methods){
+  test(t=>{
+    const f=fixture(t),n=make(f.source),moving=[n[3],n[1],n[4]];
+    invoke(method,f,...moving);
+    verify(f.source,[n[0],n[2]]);verify(f.destination,expected(method,f,moving));
+  },method+' moves an unordered sibling subset and keeps untouched siblings stable');
+
+  test(t=>{
+    const f=fixture(t),[a,b,c,d]=make(f.source,4);
+    f.destination.replaceChildren(a,b,c,d);f.anchor=b;
+    invoke(method,f,b,d,a,b);
+    verify(f.destination,method==='replaceChildren'?[d,a,b]:method==='append'?[c,d,a,b]:[d,a,b,c]);
+  },method+' deduplicates same-parent moves using last occurrence and viable siblings');
+
+  test(t=>{
+    const f=fixture(t),other=document.createElement('div');other.className='bulk-list';f.stage.appendChild(other);
+    const a=make(f.source,4),b=make(other,4),moving=[a[3],a[1],b[1],b[0],a[0],b[3]];
+    invoke(method,f,...moving);
+    verify(f.source,[a[2]]);verify(other,[b[2]]);verify(f.destination,expected(method,f,moving));
+  },method+' preserves order across multiple runs from different source parents');
+
+  test(t=>{
+    const f=fixture(t),[a,b,c]=make(f.source,3),child=document.createElement('i');a.appendChild(child);
+    f.destination=a;f.anchor=child;
+    assert_throws_dom('HierarchyRequestError',()=>invoke(method,f,a,b));
+    assert_equals(a.parentNode,null);assert_equals(b.parentNode,null);
+    verify(f.source,[c]);verify(a,[child]);
+  },method+' completes sibling source removals before a rejected multi-node insertion');
+
+  for(const ancestorFirst of [true,false])test(t=>{
+    const f=fixture(t),[ancestor]=make(f.source,1),[child]=make(ancestor,1);
+    const moving=ancestorFirst?[ancestor,child]:[child,ancestor];
+    invoke(method,f,...moving);
+    verify(f.source,[]);verify(ancestor,[]);verify(f.destination,expected(method,f,moving));
+  },method+' keeps nested source detachment order, ancestor first='+ancestorFirst);
+
+  for(const dirty of [false,true])test(t=>{
+    const f=fixture(t),area=document.createElement('textarea');f.stage.appendChild(area);
+    const a=document.createTextNode('alpha'),b=document.createTextNode('beta');area.append(a,b);
+    if(dirty)area.value='edited';
+    invoke(method,f,b,a);
+    verify(f.destination,expected(method,f,[b,a]));
+    assert_equals(area.childNodes.length,0);assert_equals(area.defaultValue,'');
+    assert_equals(area.value,dirty?'edited':'');
+    if(dirty)assert_equals(area.selectionStart,6,'dirty selection remains unchanged');
+  },method+' synchronizes source textarea after sibling text moves, dirty='+dirty);
+}
+for(const method of ['replaceChildren','replaceWith'])test(t=>{
+  const f=fixture(t),[a,b]=make(f.source,2),input=document.createElement('input');a.appendChild(input);
+  input.focus();assert_equals(document.activeElement,input);
+  invoke(method,f,b,a);
+  assert_not_equals(document.activeElement,input,'replacement clears focus on moved descendant');
+  verify(f.source,[]);verify(f.destination,[b,a]);
+},method+' retains focus-removal behavior when the focused node is moved last');
+
+let reactions=null;
+customElements.define('bulk-sibling-check',class extends HTMLElement{
+  disconnectedCallback(){if(reactions)reactions.push(['disconnected',this,this.parentNode]);}
+  connectedCallback(){if(reactions)reactions.push(['connected',this,this.parentNode]);}
+});
+for(const method of ['append','replaceChildren'])test(t=>{
+  const f=fixture(t),a=document.createElement('bulk-sibling-check'),b=document.createElement('bulk-sibling-check');
+  f.source.append(a,b);reactions=[];t.add_cleanup(()=>{reactions=null;});
+  invoke(method,f,b,a);
+  const captured=reactions;reactions=null;
+  assert_array_equals(captured.map(r=>r[0]),['disconnected','connected','disconnected','connected']);
+  assert_array_equals(captured.map(r=>r[1]),[b,b,a,a]);
+  assert_true(captured.every(r=>r[2]===f.destination),'all reactions observe completed destination');
+  verify(f.source,[]);verify(f.destination,expected(method,f,[b,a]));
+},method+' preserves per-element reaction order and completed-tree observations');
+</script>

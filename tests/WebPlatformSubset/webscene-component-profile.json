@@ -900,6 +900,13 @@
       "reason": "Browser-referenced character-data setter, conversion/error, empty/relational selector, stylesheet text and textarea checkpoints."
     },
     {
+      "path": "contracts/css-bulk-sibling-detachment.html",
+      "type": "testharness",
+      "capabilities": ["variadic-node-insertion", "structural-selector-invalidation", "bulk-sibling-detachment", "custom-element-reaction-checkpoints"],
+      "evidence": ["css-structural-mutation-audit"],
+      "reason": "Browser-referenced bulk sibling subset/reorder, nested and mixed-source, textarea, focus and reaction checkpoints; native vector scan scaling is independently gated."
+    },
+    {
       "path": "contracts/css-variadic-child-list-checkpoints.html",
       "type": "testharness",
       "capabilities": ["variadic-node-insertion", "structural-selector-invalidation", "custom-element-reaction-checkpoints", "dom-string-conversion-order"],

@@ -1,5 +1,64 @@
 // These tests measure invalidation work, not wall-clock limits. Unrelated DOM
 // and stylesheet growth must not amplify a fixed-size component mutation.
+void test_variadic_child_vector_scaling()
+{
+    bool bounded = true;
+    for (const auto* method : {"append", "prepend", "before", "after", "replaceChildren", "replaceWith"})
+    for (const auto count : {8, 128}) {
+        auto* engine = webscene_engine_create(0);
+        require(engine != nullptr, "variadic child-vector engine creation failed");
+        resize(engine, 800, 600, 1);
+        wait_for_consumed_inputs(engine, 1, "variadic child-vector viewport not applied");
+        auto source = std::string{R"JS((() => {
+          const source=document.createElement('div'), destination=document.createElement('div');
+          const anchor=document.createElement('i'); destination.appendChild(anchor);
+          const nodes=Array.from({length:COUNT},(_,i)=>{
+            const n=document.createElement('b'); n.id='move-'+i; source.appendChild(n); return n;
+          });
+          document.body.append(source,destination);
+          const style=document.createElement('style');
+          style.textContent='b {display:block;width:11px;height:13px} b:first-child {width:41px} b:last-child {height:43px}';
+          document.head.appendChild(style);
+          globalThis.moveSiblings=()=>{
+            const ordered=nodes.slice().reverse();
+            if(['before','after','replaceWith'].includes('METHOD')) anchor.METHOD(...ordered);
+            else destination.METHOD(...ordered);
+            const expected=['append','after'].includes('METHOD')?[anchor,...ordered]:
+              ['prepend','before'].includes('METHOD')?[...ordered,anchor]:ordered;
+            return source.childNodes.length===0 && destination.childNodes.length===expected.length &&
+              expected.every((n,i)=>destination.childNodes[i]===n && n.parentNode===destination) &&
+              getComputedStyle(ordered[0]).width=== (expected[0]===anchor?'11px':'41px') &&
+              getComputedStyle(ordered[ordered.length-1]).height===(expected[expected.length-1]===anchor?'13px':'43px');
+          };
+          return true;
+        })())JS"};
+        source.replace(source.find("COUNT"), 5, std::to_string(count));
+        for (size_t at = source.find("METHOD"); at != std::string::npos; at = source.find("METHOD"))
+            source.replace(at, 6, method);
+        require(evaluate(engine, source, "variadic-vector-setup.js") == "true", "variadic vector setup failed");
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+        constexpr auto counter = "dom-variadic-detach-child-visits";
+        std::this_thread::sleep_for(std::chrono::milliseconds(260));
+        execute_and_wait_for_wrapper_retention_scene(engine,
+            "document.body.style.backgroundColor='rgb(1,2,3)'", "variadic-vector-before.js");
+        const auto before = runtime_counter_diagnostic(engine, counter);
+#endif
+        require(evaluate(engine, "moveSiblings()", "variadic-vector-move.js") == "true",
+            std::string("variadic child-vector move changed order, identity or styles: ") + method);
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+        std::this_thread::sleep_for(std::chrono::milliseconds(260));
+        execute_and_wait_for_wrapper_retention_scene(engine,
+            "document.body.style.backgroundColor='rgb(3,2,1)'", "variadic-vector-after.js");
+        const auto delta = runtime_counter_diagnostic(engine, counter) - before;
+        std::cout << "variadic-child-vector method=" << method << " children=" << count
+            << " detach-child-visits=" << delta << '\n';
+        bounded &= delta > 0 && delta <= static_cast<uint64_t>(count + 1);
+#endif
+        webscene_engine_destroy(engine);
+    }
+    require(bounded, "variadic sibling removal rescanned the child vector instead of compacting once");
+}
+
 void test_compiled_css_invalidation_scaling()
 {
     std::vector<std::array<uint64_t, 7>> observations;

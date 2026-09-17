@@ -55,6 +55,28 @@ Validation: three focused .NET workload tests; three Python comparator tests
 syntax check; native v3 fixture smoke; Chrome v2 live-page smoke; native consumption
 of that v2 reference. These validate the harness changes, not browser performance.
 
+## Native AppScene attempt: rejected before performance qualification
+
+The September 17 native attempt used WebScene `5e9b0d13`, AppScene main `9f434e0`
+and SpotifyCatalog sample `8576fb6f`. The fresh SDK built with the pinned LLVM
+22.1.8 toolchain and passed `qualify_macos_profile.py`, including the independent
+consumer build/run and system-runtime closure check. Existing V8/Dawn packages
+were reused; this is not qualification of all SDK release gates or macOS 26.0.
+
+The native process completed its 40-second probe, but **the workload was invalid**:
+Spotify client `1.3.2.203.geee177de` reached `document.readyState === 'complete'`
+with 80 DOM elements and **zero catalog cards, links or images**. The logged
+failures included `NodeList is not defined` in the cookie banner and a rejected
+Spotify `fetchCurrentSession` promise. Neither diagnostic alone establishes the
+root cause. A subsequent manual launch also displayed a blank window.
+
+The programmatic window driver separately failed with `AXError` before completing
+its resize sequence. Therefore neither the process's successful exit, its Metal
+presentation trace, nor its CPU sample qualifies Spotify resize performance.
+These failed acceptance attempts must not be combined with the earlier populated
+Avalonia workload or used as an optimization baseline. The next native measurement
+must first establish populated catalog content and a completed resize workload.
+
 ## Next acceptance steps
 
 1. Rebuild the actual AppScene Spotify demo using the qualified compiler and record
@@ -65,7 +87,8 @@ of that v2 reference. These validate the harness changes, not browser performanc
    compiler/configuration/header hashes and a system-runtime C++20 smoke passed.
    A custom-root propagation bug in the macOS toolchain was fixed with a regression:
    the full SDK now configures through C/C++/Objective-C++ ABI checks using that root.
-   SDK build/consumer and native-demo presentation qualification remain separate gates.
+   SDK build/consumer qualification subsequently passed as described above;
+   native-demo content and presentation qualification did not.
 2. Qualify equal content and CSS viewport sequences in AppScene and headed Chrome.
    Separate event scheduling, forced layout, final layout, scene generation,
    retained rendering and actual presentation. Include continuous real live-resize,

@@ -220,7 +220,8 @@ not an end-to-end performance claim.
 This audits the exposed setter paths, not all CharacterData APIs. The exposure
 manifest still lacks `appendData`/`insertData`/`deleteData`/`replaceData`, `splitText`
 and `normalize` entry points; their broader API/structural contracts remain separate
-follow-up work. Native child-vector movement also remains to be measured and bounded.
+follow-up work. Native child-vector movement is measured separately in the
+sibling-detachment stage below; sensitive/interleaved removal paths remain open.
 
 ### Structural follow-up after #148 merged
 
@@ -425,9 +426,48 @@ The final production build (certification telemetry disabled) also passes all
 groups and parser tests.
 
 Exposed character-data setters are now covered by the later stage above. Remaining
-structural work includes unexposed character-data APIs and accounting for native
-child-vector movement separately from the CSS matching/cascade counters.
-Those counters do not prove linear total mutation CPU or end-to-end resize performance.
+structural work includes unexposed character-data APIs. The native child-vector
+stage below extends accounting beyond CSS matching/cascade counters; neither set
+of counters proves linear total mutation CPU or end-to-end resize performance.
+
+### Native sibling-detachment cost
+
+The new certification counter `dom-variadic-detach-child-visits` measures entries
+examined by variadic source-child removal, separately from CSS invalidation and
+matching. A new default-suite/filter gate (`dom-variadic-detach-scaling`) moves
+8/128 siblings in reverse order through all six variadic methods, checking exact
+source/destination child identities/order/parents and final positional styles.
+It fails on the preceding implementation for all twelve cases:
+
+| Method | Control, 8 / 128 children | Candidate, 8 / 128 children |
+| --- | ---: | ---: |
+| append / prepend / before / after / replaceChildren | 36 / 8,256 | 8 / 128 |
+| replaceWith, including receiver removal | 37 / 8,257 | 9 / 129 |
+
+The shared flat-list algorithm now compacts a consecutive run of direct siblings
+once. It still processes source runs in first-occurrence order, deduplicates final
+insertion by last occurrence, and preserves the existing style checkpoints. No
+temporary fragment, deferred layout, or cross-frame cache is introduced. Parent
+links identify removed entries during the non-observable compaction interval,
+avoiding a second per-run hash set.
+
+The fast path cannot cross a custom-element reaction bridge or a replacement focus
+recascade: active custom-element registries and focused replacement paths retain
+their original sequential removal loop, without allocating the new run worklist.
+Nested source nodes split runs. Arbitrarily interleaved source parents can still
+require repeated compactions, and single-node removal APIs are unchanged. This is
+a bounded common-path improvement, **not a claim that all DOM removal is linear**.
+
+The required-profile local WPT-style contract `css-bulk-sibling-detachment.html`
+adds 52 browser/native checks: sparse subsets, same-parent reorder/deduplication,
+multiple source runs, both nested ancestor orders, hierarchy failure after source
+removal, clean/dirty textarea values, replacement focus and reaction observations.
+Chrome rejected an initial assumption of globally batched disconnection callbacks;
+the retained checks require the actual per-element disconnect/connect FIFO.
+The native twelve-case scan ceiling fails on the control despite those semantic
+checks passing, preventing correctness-only success from hiding quadratic work.
+Counter reductions are deterministic work evidence, not a repeated wall-clock A/B
+or a demonstrated improvement in live Spotify frame time.
 
 ### Remaining acceptance work
 

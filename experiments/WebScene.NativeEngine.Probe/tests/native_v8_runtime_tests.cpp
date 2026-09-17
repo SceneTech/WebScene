@@ -264,6 +264,7 @@ int main()
             return 0;
         }
         if (selected == "css-invalidation-scaling") {
+            test_variadic_child_vector_scaling();
             test_character_data_stable_style_scaling();
             test_compiled_css_invalidation_scaling();
             test_compiled_css_route_scaling();
@@ -280,6 +281,10 @@ int main()
         }
         if (selected == "css-character-data-scaling") {
             test_character_data_stable_style_scaling();
+            return 0;
+        }
+        if (selected == "dom-variadic-detach-scaling") {
+            test_variadic_child_vector_scaling();
             return 0;
         }
         if (selected == "custom-element-checkpoints") {
@@ -939,6 +944,7 @@ int main()
     test_attribute_invalidation_scopes_subject_and_descendant_rules();
     test_compiled_css_invalidation_scaling();
     test_character_data_stable_style_scaling();
+    test_variadic_child_vector_scaling();
     test_compiled_css_route_scaling();
     test_compiled_css_route_scaling(true, true);
     test_concurrent_input_producers_remain_consumable();

@@ -3,6 +3,8 @@ using System.Collections.Concurrent;
 using Avalonia;
 using Avalonia.Rendering;
 using System.Text.Json;
+using System.Security.Cryptography;
+using System.Text;
 using Avalonia.Controls;
 using Avalonia.Threading;
 using WebScene.Backends.Avalonia.Native;
@@ -84,6 +86,7 @@ internal static class NativeResizeCadenceProbe
         var enforceChromeReference = HasOption(
             args,
             "--enforce-chrome-reference");
+        ResizeCadenceWorkload.RejectPhysicalPresentationGate(enforceChromeReference);
         if (seconds <= 0 || warmupSeconds < 0 || frequency <= 0
             || baseWidth <= 1 || baseHeight <= 1 || widthSpan < 1 || heightSpan < 1)
         {
@@ -102,12 +105,8 @@ internal static class NativeResizeCadenceProbe
             ReadOption(args, "--chrome-reference"),
             source,
             frequency,
-            seconds);
-        if (enforceChromeReference && chromeReference is null)
-        {
-            throw new InvalidOperationException(
-                "--enforce-chrome-reference requires --chrome-reference <JSON>.");
-        }
+            seconds,
+            baseWidth, baseHeight, widthSpan, heightSpan);
         var view = new NativeWebSceneView(useCompositionVisual: composition);
         var window = new Window
         {
@@ -193,6 +192,8 @@ internal static class NativeResizeCadenceProbe
             var maximumInterval = renderIntervals.Length == 0 ? double.PositiveInfinity : renderIntervals.Max();
             var compositionTiming = NativeSceneSurface.LastCompositionTiming;
             var certificationDiagnostics = view.SceneDiagnostics;
+            var certificationTelemetryEnabled = !certificationDiagnostics.StartsWith(
+                "certification telemetry disabled", StringComparison.Ordinal);
             var passed = renderP95 <= 16.7
                 && renderedFps >= 58
                 && maximumInterval <= 33.4
@@ -207,7 +208,7 @@ internal static class NativeResizeCadenceProbe
             var json = JsonSerializer.Serialize(
                 new
                 {
-                    schema = "webscene-native-resize-cadence-v2",
+                    schema = "webscene-native-resize-cadence-v3",
                     measurementScope = "headless-cpu-draw-callback",
                     physicalPresentationVerified = false,
                     headlessRenderTimer = new
@@ -218,10 +219,13 @@ internal static class NativeResizeCadenceProbe
                         intervalMilliseconds = Summary(timerIntervals)
                     },
                     sourceKind = ReadOption(args, "--url") is null ? "deterministic-fixture" : "url",
+                    sourceIdentity = ReadOption(args, "--url") ?? "sha256:"
+                        + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(Fixture))),
+                    waveform = ResizeCadenceWorkload.Waveform,
+                    baseWidth, baseHeight, widthSpan, heightSpan,
+                    resizeBoundsSpace = "avalonia-headless-window",
                     composition,
-                    certificationTelemetryEnabled = !certificationDiagnostics.StartsWith(
-                        "certification telemetry disabled",
-                        StringComparison.Ordinal),
+                    certificationTelemetryEnabled,
                     requestedHz = frequency,
                     warmupSeconds,
                     requestedSeconds = seconds,
@@ -263,14 +267,14 @@ internal static class NativeResizeCadenceProbe
                     },
                     lastResizeStageMilliseconds = new
                     {
-                        outerListeners = snapshot.Engine
-                            .LastResizeOuterListenersNanoseconds / 1_000_000d,
-                        frameListeners = snapshot.Engine
-                            .LastResizeFrameListenersNanoseconds / 1_000_000d,
-                        finalLayout = snapshot.Engine
-                            .LastResizeLayoutNanoseconds / 1_000_000d,
-                        observers = snapshot.Engine
-                            .LastResizeObserversNanoseconds / 1_000_000d,
+                        outerListeners = certificationTelemetryEnabled ? (double?)(snapshot.Engine
+                            .LastResizeOuterListenersNanoseconds / 1_000_000d) : null,
+                        frameListeners = certificationTelemetryEnabled ? (double?)(snapshot.Engine
+                            .LastResizeFrameListenersNanoseconds / 1_000_000d) : null,
+                        finalLayout = certificationTelemetryEnabled ? (double?)(snapshot.Engine
+                            .LastResizeLayoutNanoseconds / 1_000_000d) : null,
+                        observers = certificationTelemetryEnabled ? (double?)(snapshot.Engine
+                            .LastResizeObserversNanoseconds / 1_000_000d) : null,
                         totalDispatch = snapshot.Engine
                             .LastResizeDispatchNanoseconds / 1_000_000d,
                         scenePublication = snapshot.Engine
@@ -302,6 +306,7 @@ internal static class NativeResizeCadenceProbe
                         {
                             identity = reference.Identity,
                             comparisonScope = "headless-draw-callback-versus-reference; not physical presentation",
+                            equivalentViewportAndContentVerified = false,
                             referenceFramesPerSecond = reference.FramesPerSecond,
                             nativeFramesPerSecond = presentationFps,
                             framesPerSecondDelta =
@@ -312,7 +317,7 @@ internal static class NativeResizeCadenceProbe
                             p95IntervalDeltaMilliseconds =
                                 presentationP95
                                     - reference.P95IntervalMilliseconds,
-                            passed = chromeReferencePassed
+                            callbackCadenceAtLeastReference = chromeReferencePassed
                         }
                         : null,
                     certificationDiagnostics
@@ -325,10 +330,7 @@ internal static class NativeResizeCadenceProbe
                 Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
                 File.WriteAllText(outputPath, json);
             }
-            return (enforce && !passed)
-                || (enforceChromeReference && chromeReferencePassed != true)
-                ? 1
-                : 0;
+            return enforce && !passed ? 1 : 0;
         }
         finally
         {
@@ -355,7 +357,8 @@ internal static class NativeResizeCadenceProbe
         string? path,
         string source,
         double requestedHz,
-        double requestedSeconds)
+        double requestedSeconds,
+        double baseWidth, double baseHeight, int widthSpan, int heightSpan)
     {
         if (path is null)
         {
@@ -365,7 +368,7 @@ internal static class NativeResizeCadenceProbe
         using var document = JsonDocument.Parse(File.ReadAllText(path));
         var root = document.RootElement;
         if (root.GetProperty("schema").GetString()
-            != "webscene-chrome-resize-cadence-v1")
+            != "webscene-chrome-resize-cadence-v2")
         {
             throw new InvalidOperationException(
                 $"Chrome reference '{path}' has an unsupported schema.");
@@ -375,10 +378,15 @@ internal static class NativeResizeCadenceProbe
         var referenceSeconds = root.GetProperty("requestedSeconds").GetDouble();
         if (!string.Equals(referenceUrl, source, StringComparison.Ordinal)
             || Math.Abs(referenceHz - requestedHz) > 0.001
-            || Math.Abs(referenceSeconds - requestedSeconds) > 0.001)
+            || Math.Abs(referenceSeconds - requestedSeconds) > 0.001
+            || root.GetProperty("waveform").GetString() != ResizeCadenceWorkload.Waveform
+            || root.GetProperty("baseWidth").GetDouble() != baseWidth
+            || root.GetProperty("baseHeight").GetDouble() != baseHeight
+            || root.GetProperty("widthSpan").GetInt32() != widthSpan
+            || root.GetProperty("heightSpan").GetInt32() != heightSpan)
         {
             throw new InvalidOperationException(
-                "Chrome reference URL, cadence, and duration must match the native probe.");
+                "Chrome reference URL, cadence, duration, waveform and requested bounds must match the native probe.");
         }
         return new ChromeReference(
             root.GetProperty("identity").GetString() ?? "Chrome",
@@ -415,8 +423,8 @@ internal static class NativeResizeCadenceProbe
                     Thread.SpinWait(32);
                 }
             }
-            window.Width = baseWidth + index % widthSpan;
-            window.Height = baseHeight + index % heightSpan;
+            window.Width = ResizeCadenceWorkload.Dimension(baseWidth, widthSpan, index);
+            window.Height = ResizeCadenceWorkload.Dimension(baseHeight, heightSpan, index);
             Dispatcher.UIThread.RunJobs();
         }
         return frameCount;

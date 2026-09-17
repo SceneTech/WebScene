@@ -7,6 +7,7 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../../benchmarks/WebScene.NativeEngine.Benchmarks/ResizeCadenceWorkload.cs" Link="Probe/ResizeCadenceWorkload.cs" />
     <Compile Include="../../experiments/WebScene.GpuHost.Probe/KestrelDragWorkloadValidator.cs" Link="Probe/KestrelDragWorkloadValidator.cs" />
     <ProjectReference Include="..\..\src\WebScene.Core\WebScene.Core.csproj" />
     <ProjectReference Include="..\..\src\WebScene.Backend.Avalonia\WebScene.Backend.Avalonia.csproj" />

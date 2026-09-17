@@ -424,11 +424,16 @@ The final production build (certification telemetry disabled) also passes all
 116 semantic cases, all 279 related WPT-style checks, the ten adjacent native
 groups and parser tests.
 
-Remaining structural work includes character-data mutation paths and accounting for
-native child-vector movement separately from the CSS matching/cascade counters.
+Exposed character-data setters are now covered by the later stage above. Remaining
+structural work includes unexposed character-data APIs and accounting for native
+child-vector movement separately from the CSS matching/cascade counters.
 Those counters do not prove linear total mutation CPU or end-to-end resize performance.
 
 ### Remaining acceptance work
+
+The [September 17 resize-stage investigation](css-resize-stage-profile.md) records
+fresh production profiles and fixes the mismatched native/Chrome benchmark waveform.
+It does not qualify physical presentation or end-to-end browser parity.
 
 1. Extend the implemented descendant/sibling/custom-property/disabled/relational
    matrix to structural mutations, media/container queries, and additional dynamic

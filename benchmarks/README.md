@@ -232,7 +232,7 @@ Run with `probe` and no recognized name to list the focused probes.
 
 ## Resize cadence
 
-`native-resize-cadence` drives a real Avalonia window at a configurable cadence and
+`native-resize-cadence` drives a **headless** Avalonia window at a configurable cadence and
 emits machine-readable engine, publication, render, CPU, and latency metrics. Its
 default local fixture exercises generic grid, flex, text, synchronous geometry reads,
 resize listeners, and animation-frame work; `--url` can qualify any external page
@@ -251,8 +251,15 @@ dropped. `--output <file>` writes the same JSON emitted on stdout. Use repeated 
 control/candidate processes for performance decisions, then compare paired directories
 with `scripts/compare-native-resize-cadence.py`. The comparator uses paired bootstrap
 95% intervals, rejects supported regressions above 3%, and can require both a material
-improvement and the practical-vsync gate. It also rejects pairs that mix certification
-and production runtimes.
+improvement and the CPU-cadence gate (`--require-cpu-cadence`). Physical vsync cannot
+be qualified here: `--require-vsync` deliberately fails. The headless render timer
+may run below the requested input rate. The comparator rejects pairs with missing or
+different source identities, requested dimensions, resize waveforms, host bounds
+spaces, or certification/production settings. A URL identity does not prove identical
+remote content; retain independent content/geometry evidence for live-site comparisons.
+Native v3 results use a triangle waveform, matching Chrome v2's requested sequence;
+older native v2 results used a sawtooth and must not be paired with the new results.
+Stage breakdowns unavailable in production are null, not zero-cost measurements.
 
 The Spotify catalog resize investigation, selector/media invalidation design, trace
 switches, and focused regression coverage are recorded in
@@ -277,12 +284,15 @@ node scripts/profile-chrome-resize-cadence.mjs \
   --output artifacts/chrome-resize.json
 ```
 
-Use `--headless` only for automation smoke tests; headed Chrome is the visual smoothness
-reference.
+Use `--headless` only for automation smoke tests. Headed Chrome permits visual
+inspection, but its recorded rAF callbacks are not proof of physical presentation.
 
-Pass that immutable Chrome result back to the native probe to report an exact matched
-cadence comparison. Add `--enforce-chrome-reference` when the native run should fail
-unless its measured presentation throughput and p95 interval equal or beat Chrome:
+Pass that immutable Chrome v2 result back to the native probe for an **informational**
+callback-cadence comparison. URL, requested rate/duration, waveform and bounds must
+match. Avalonia's headless bounds and Chrome's outer-window bounds do not establish
+equal CSS viewports or semantic content; warmup behavior also differs. The result
+therefore cannot qualify browser parity. `--enforce-chrome-reference` is rejected
+because headless draw callbacks cannot qualify physical presentation:
 
 ```bash
 WEBSCENE_NATIVE_ENGINE_PATH=/absolute/path/to/libwebscene_native_engine.dylib \

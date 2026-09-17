@@ -1,0 +1,532 @@
+{
+  "schema": "webscene-css-resize-investigation-v1",
+  "date": "2026-09-17",
+  "engineSourceRevision": "66af2789e75fde8f334a1d642a4df1c36e3a2e88",
+  "benchmarkSourceRevision": "66af2789e75fde8f334a1d642a4df1c36e3a2e88",
+  "scope": "diagnostic only; original native sawtooth workload, headless Avalonia; not browser parity",
+  "production": true,
+  "samples": [
+    {
+      "artifact": "/tmp/css-resize-baseline-20260917.json",
+      "sha256": "f00f04f9b8e60f5a71877346f104e18d6fa30c5d5652391e1d061334fa2f036e",
+      "report": {
+        "schema": "webscene-native-resize-cadence-v2",
+        "measurementScope": "headless-cpu-draw-callback",
+        "physicalPresentationVerified": false,
+        "headlessRenderTimer": {
+          "available": true,
+          "tickCount": 150,
+          "ticksPerSecond": 29.99978460154656,
+          "intervalMilliseconds": {
+            "count": 149,
+            "average": 33.33148825503358,
+            "p50": 33.502,
+            "p95": 34.907375,
+            "maximum": 35.115834
+          }
+        },
+        "sourceKind": "deterministic-fixture",
+        "composition": false,
+        "certificationTelemetryEnabled": false,
+        "requestedHz": 60,
+        "warmupSeconds": 2,
+        "requestedSeconds": 5,
+        "elapsedMilliseconds": 5000.0359,
+        "submitted": 300,
+        "acceptedSubmissions": 300,
+        "appliedPairs": 300,
+        "publishedPairs": 150,
+        "coalescedPairs": 0,
+        "renderedFrames": 150,
+        "drawCallbackCompletions": 0,
+        "renderedFramesPerSecond": 29.99978460154656,
+        "drawCallbackCompletionsPerSecond": 0,
+        "layoutPasses": 900,
+        "layoutPassesPerAppliedResize": 3,
+        "publishedScenes": 150,
+        "publicationAttempts": 302,
+        "blockedPublications": 152,
+        "fullInvalidations": 0,
+        "unchangedRenderCallbacks": 0,
+        "droppedInputs": 0,
+        "processCpuMilliseconds": 2347.131,
+        "normalizedProcessCpuPercent": 46.942282954408384,
+        "lastCompositionMilliseconds": {
+          "diffApply": 0,
+          "retainedDraw": 0,
+          "skiaSubmit": 0,
+          "callback": 0
+        },
+        "lastResizeStageMilliseconds": {
+          "outerListeners": 0,
+          "frameListeners": 0,
+          "finalLayout": 0,
+          "observers": 0,
+          "totalDispatch": 2.697834,
+          "scenePublication": 0.638542
+        },
+        "queueMilliseconds": {
+          "average": 0.010610973333333334,
+          "maximum": 0.020834
+        },
+        "dispatchMilliseconds": {
+          "average": 2.6695255466666667,
+          "maximum": 4.237292
+        },
+        "publicationLatencyMilliseconds": {
+          "count": 299,
+          "average": 13.05609962876254,
+          "p50": 6.331917,
+          "p95": 21.872875,
+          "maximum": 22.962083
+        },
+        "publicationToRenderLatencyMilliseconds": {
+          "count": 148,
+          "average": 64.02576130405406,
+          "p50": 64.019208,
+          "p95": 64.9805,
+          "maximum": 65.482208
+        },
+        "renderLatencyMilliseconds": {
+          "count": 295,
+          "average": 77.08506486440683,
+          "p50": 69.951417,
+          "p95": 86.280834,
+          "maximum": 86.642
+        },
+        "renderIntervalMilliseconds": {
+          "count": 149,
+          "average": 33.3358129194631,
+          "p50": 33.903542,
+          "p95": 34.773542,
+          "maximum": 34.96375
+        },
+        "drawCallbackIntervalMilliseconds": {
+          "count": 0,
+          "average": 0,
+          "p50": 0,
+          "p95": 0,
+          "maximum": 0
+        },
+        "cpuCadenceGate": {
+          "maximumP95LatencyMilliseconds": 16.7,
+          "minimumFramesPerSecond": 58,
+          "maximumConsecutiveMissIntervalMilliseconds": 33.4,
+          "passed": false
+        },
+        "chromeReferenceComparison": null,
+        "certificationDiagnostics": "certification telemetry disabled at compile time"
+      }
+    },
+    {
+      "artifact": "/tmp/css-resize-traced-20260917.json",
+      "sha256": "8b9e74725c84168a0c09c814de58cd8777f0b77d4872d4783559940196e17ef7",
+      "report": {
+        "schema": "webscene-native-resize-cadence-v2",
+        "measurementScope": "headless-cpu-draw-callback",
+        "physicalPresentationVerified": false,
+        "headlessRenderTimer": {
+          "available": true,
+          "tickCount": 63,
+          "ticksPerSecond": 31.49948498342052,
+          "intervalMilliseconds": {
+            "count": 62,
+            "average": 31.66633333870968,
+            "p50": 32.536833,
+            "p95": 34.551917,
+            "maximum": 34.62425
+          }
+        },
+        "sourceKind": "deterministic-fixture",
+        "composition": true,
+        "certificationTelemetryEnabled": false,
+        "requestedHz": 60,
+        "warmupSeconds": 1,
+        "requestedSeconds": 2,
+        "elapsedMilliseconds": 2000.0327,
+        "submitted": 120,
+        "acceptedSubmissions": 120,
+        "appliedPairs": 120,
+        "publishedPairs": 63,
+        "coalescedPairs": 0,
+        "renderedFrames": 63,
+        "drawCallbackCompletions": 63,
+        "renderedFramesPerSecond": 31.49948498342052,
+        "drawCallbackCompletionsPerSecond": 31.557440490524783,
+        "layoutPasses": 357,
+        "layoutPassesPerAppliedResize": 2.975,
+        "publishedScenes": 63,
+        "publicationAttempts": 121,
+        "blockedPublications": 58,
+        "fullInvalidations": 63,
+        "unchangedRenderCallbacks": 0,
+        "droppedInputs": 0,
+        "processCpuMilliseconds": 1313.006,
+        "normalizedProcessCpuPercent": 65.64922663514452,
+        "lastCompositionMilliseconds": {
+          "diffApply": 0.664875,
+          "retainedDraw": 0.223708,
+          "skiaSubmit": 0.312,
+          "callback": 0.312792
+        },
+        "lastResizeStageMilliseconds": {
+          "outerListeners": 0,
+          "frameListeners": 0,
+          "finalLayout": 0,
+          "observers": 0,
+          "totalDispatch": 2.675209,
+          "scenePublication": 0.553
+        },
+        "queueMilliseconds": {
+          "average": 0.0102392,
+          "maximum": 0.019167
+        },
+        "dispatchMilliseconds": {
+          "average": 2.383950725,
+          "maximum": 3.72875
+        },
+        "publicationLatencyMilliseconds": {
+          "count": 119,
+          "average": 11.888345655462185,
+          "p50": 4.721417,
+          "p95": 21.333292,
+          "maximum": 21.588875
+        },
+        "publicationToRenderLatencyMilliseconds": {
+          "count": 61,
+          "average": 61.30989603278687,
+          "p50": 64.286916,
+          "p95": 65.554334,
+          "maximum": 66.630208
+        },
+        "renderLatencyMilliseconds": {
+          "count": 115,
+          "average": 73.36749955652171,
+          "p50": 69.165875,
+          "p95": 86.176083,
+          "maximum": 87.489833
+        },
+        "renderIntervalMilliseconds": {
+          "count": 62,
+          "average": 31.68568480645161,
+          "p50": 32.479208,
+          "p95": 34.45625,
+          "maximum": 34.737125
+        },
+        "drawCallbackIntervalMilliseconds": {
+          "count": 62,
+          "average": 31.688247983870948,
+          "p50": 32.47925,
+          "p95": 34.45825,
+          "maximum": 34.737291
+        },
+        "cpuCadenceGate": {
+          "maximumP95LatencyMilliseconds": 16.7,
+          "minimumFramesPerSecond": 58,
+          "maximumConsecutiveMissIntervalMilliseconds": 33.4,
+          "passed": false
+        },
+        "chromeReferenceComparison": null,
+        "certificationDiagnostics": "certification telemetry disabled at compile time"
+      }
+    },
+    {
+      "artifact": "/tmp/css-spotify-resize-traced-20260917.json",
+      "sha256": "73f594f46b68724f5bc69dd295ec1472a778dee4be31c37b0f9811489b1fee5d",
+      "report": {
+        "schema": "webscene-native-resize-cadence-v2",
+        "measurementScope": "headless-cpu-draw-callback",
+        "physicalPresentationVerified": false,
+        "headlessRenderTimer": {
+          "available": true,
+          "tickCount": 84,
+          "ticksPerSecond": 16.71768679119247,
+          "intervalMilliseconds": {
+            "count": 83,
+            "average": 59.74235642168678,
+            "p50": 51.619291,
+            "p95": 106.918916,
+            "maximum": 238.92425
+          }
+        },
+        "sourceKind": "url",
+        "composition": true,
+        "certificationTelemetryEnabled": false,
+        "requestedHz": 60,
+        "warmupSeconds": 5,
+        "requestedSeconds": 5,
+        "elapsedMilliseconds": 5024.6186,
+        "submitted": 300,
+        "acceptedSubmissions": 300,
+        "appliedPairs": 246,
+        "publishedPairs": 84,
+        "coalescedPairs": 54,
+        "renderedFrames": 84,
+        "drawCallbackCompletions": 84,
+        "renderedFramesPerSecond": 16.71768679119247,
+        "drawCallbackCompletionsPerSecond": 16.706211829985612,
+        "layoutPasses": 246,
+        "layoutPassesPerAppliedResize": 1,
+        "publishedScenes": 84,
+        "publicationAttempts": 322,
+        "blockedPublications": 238,
+        "fullInvalidations": 84,
+        "unchangedRenderCallbacks": 0,
+        "droppedInputs": 0,
+        "processCpuMilliseconds": 3223.081,
+        "normalizedProcessCpuPercent": 64.1457841198136,
+        "lastCompositionMilliseconds": {
+          "diffApply": 4.35875,
+          "retainedDraw": 18.443584,
+          "skiaSubmit": 18.599417,
+          "callback": 18.600958
+        },
+        "lastResizeStageMilliseconds": {
+          "outerListeners": 0,
+          "frameListeners": 0,
+          "finalLayout": 0,
+          "observers": 0,
+          "totalDispatch": 2.03225,
+          "scenePublication": 7.1505
+        },
+        "queueMilliseconds": {
+          "average": 1.0973519471544717,
+          "maximum": 13.479125
+        },
+        "dispatchMilliseconds": {
+          "average": 1.8282676097560977,
+          "maximum": 17.628959
+        },
+        "publicationLatencyMilliseconds": {
+          "count": 300,
+          "average": 42.49591440333333,
+          "p50": 44.726167,
+          "p95": 58.655125,
+          "maximum": 98.668375
+        },
+        "publicationToRenderLatencyMilliseconds": {
+          "count": 82,
+          "average": 124.85314893902441,
+          "p50": 98.828875,
+          "p95": 244.55325,
+          "maximum": 292.88625
+        },
+        "renderLatencyMilliseconds": {
+          "count": 294,
+          "average": 169.52693766326536,
+          "p50": 146.813875,
+          "p95": 300.679375,
+          "maximum": 332.376083
+        },
+        "renderIntervalMilliseconds": {
+          "count": 83,
+          "average": 59.84733433734937,
+          "p50": 52.412791,
+          "p95": 106.924709,
+          "maximum": 238.431125
+        },
+        "drawCallbackIntervalMilliseconds": {
+          "count": 83,
+          "average": 59.857974397590375,
+          "p50": 52.412375,
+          "p95": 106.92475,
+          "maximum": 238.430583
+        },
+        "cpuCadenceGate": {
+          "maximumP95LatencyMilliseconds": 16.7,
+          "minimumFramesPerSecond": 58,
+          "maximumConsecutiveMissIntervalMilliseconds": 33.4,
+          "passed": false
+        },
+        "chromeReferenceComparison": null,
+        "certificationDiagnostics": "certification telemetry disabled at compile time"
+      }
+    },
+    {
+      "artifact": "/tmp/css-resize-cpu-profile-20260917.json",
+      "sha256": "0cf418c0002e4ba0d510ed3ba14ebf831235d0d343273cff1eae0a272e0b79cd",
+      "report": {
+        "schema": "webscene-native-resize-cadence-v2",
+        "measurementScope": "headless-cpu-draw-callback",
+        "physicalPresentationVerified": false,
+        "headlessRenderTimer": {
+          "available": true,
+          "tickCount": 451,
+          "ticksPerSecond": 30.066618960964583,
+          "intervalMilliseconds": {
+            "count": 450,
+            "average": 33.25707648222221,
+            "p50": 32.426041,
+            "p95": 35.369375,
+            "maximum": 273.165209
+          }
+        },
+        "sourceKind": "deterministic-fixture",
+        "composition": true,
+        "certificationTelemetryEnabled": false,
+        "requestedHz": 60,
+        "warmupSeconds": 2,
+        "requestedSeconds": 15,
+        "elapsedMilliseconds": 15000.0238,
+        "submitted": 900,
+        "acceptedSubmissions": 900,
+        "appliedPairs": 887,
+        "publishedPairs": 451,
+        "coalescedPairs": 13,
+        "renderedFrames": 451,
+        "drawCallbackCompletions": 451,
+        "renderedFramesPerSecond": 30.066618960964583,
+        "drawCallbackCompletionsPerSecond": 30.06744930678159,
+        "layoutPasses": 2658,
+        "layoutPassesPerAppliedResize": 2.9966178128523113,
+        "publishedScenes": 451,
+        "publicationAttempts": 888,
+        "blockedPublications": 437,
+        "fullInvalidations": 451,
+        "unchangedRenderCallbacks": 0,
+        "droppedInputs": 0,
+        "processCpuMilliseconds": 5960.434,
+        "normalizedProcessCpuPercent": 39.73616361862039,
+        "lastCompositionMilliseconds": {
+          "diffApply": 0.738333,
+          "retainedDraw": 0.391667,
+          "skiaSubmit": 0.490959,
+          "callback": 0.492208
+        },
+        "lastResizeStageMilliseconds": {
+          "outerListeners": 0,
+          "frameListeners": 0,
+          "finalLayout": 0,
+          "observers": 0,
+          "totalDispatch": 3.11225,
+          "scenePublication": 0.681542
+        },
+        "queueMilliseconds": {
+          "average": 0.013661784667418264,
+          "maximum": 1.872167
+        },
+        "dispatchMilliseconds": {
+          "average": 3.0700800552423897,
+          "maximum": 241.472167
+        },
+        "publicationLatencyMilliseconds": {
+          "count": 899,
+          "average": 13.820439635150152,
+          "p50": 15.437625,
+          "p95": 22.511458,
+          "maximum": 260.092125
+        },
+        "publicationToRenderLatencyMilliseconds": {
+          "count": 449,
+          "average": 63.77773730512248,
+          "p50": 63.833042,
+          "p95": 65.262083,
+          "maximum": 303.105
+        },
+        "renderLatencyMilliseconds": {
+          "count": 895,
+          "average": 77.65525521229058,
+          "p50": 69.986708,
+          "p95": 86.630834,
+          "maximum": 324.414584
+        },
+        "renderIntervalMilliseconds": {
+          "count": 450,
+          "average": 33.25810120444444,
+          "p50": 32.250917,
+          "p95": 35.406291,
+          "maximum": 273.348875
+        },
+        "drawCallbackIntervalMilliseconds": {
+          "count": 450,
+          "average": 33.2585577777778,
+          "p50": 32.251541,
+          "p95": 35.406208,
+          "maximum": 273.349083
+        },
+        "cpuCadenceGate": {
+          "maximumP95LatencyMilliseconds": 16.7,
+          "minimumFramesPerSecond": 58,
+          "maximumConsecutiveMissIntervalMilliseconds": 33.4,
+          "passed": false
+        },
+        "chromeReferenceComparison": null,
+        "certificationDiagnostics": "certification telemetry disabled at compile time"
+      }
+    }
+  ],
+  "tracePhases": [
+    {
+      "artifact": "/tmp/css-resize-traced-20260917.log",
+      "includesStartupAndWarmup": true,
+      "phases": {
+        "prepare": {
+          "count": 539,
+          "totalMilliseconds": 0.013665000000000047,
+          "p50": 0,
+          "p95": 0.000083
+        },
+        "tree": {
+          "count": 539,
+          "totalMilliseconds": 590.1035530000005,
+          "p50": 1.06038,
+          "p95": 1.32046
+        },
+        "sticky": {
+          "count": 539,
+          "totalMilliseconds": 12.459797999999992,
+          "p50": 0.019458,
+          "p95": 0.0465
+        },
+        "paint-order": {
+          "count": 539,
+          "totalMilliseconds": 9.154665,
+          "p50": 0.016209,
+          "p95": 0.02275
+        },
+        "canvas-retention": {
+          "count": 539,
+          "totalMilliseconds": 10.602128000000004,
+          "p50": 0.019167,
+          "p95": 0.02375
+        }
+      }
+    },
+    {
+      "artifact": "/tmp/css-spotify-resize-traced-20260917.log",
+      "includesStartupAndWarmup": true,
+      "phases": {
+        "prepare": {
+          "count": 560,
+          "totalMilliseconds": 0.015299000000000064,
+          "p50": 0.000041,
+          "p95": 0.000083
+        },
+        "tree": {
+          "count": 560,
+          "totalMilliseconds": 629.3400989999998,
+          "p50": 0.622292,
+          "p95": 2.23358
+        },
+        "sticky": {
+          "count": 560,
+          "totalMilliseconds": 37.654990999999995,
+          "p50": 0.038,
+          "p95": 0.151083
+        },
+        "paint-order": {
+          "count": 560,
+          "totalMilliseconds": 19.733877000000007,
+          "p50": 0.020792,
+          "p95": 0.073584
+        },
+        "canvas-retention": {
+          "count": 560,
+          "totalMilliseconds": 17.729176,
+          "p50": 0.019375,
+          "p95": 0.06325
+        }
+      }
+    }
+  ]
+}

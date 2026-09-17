@@ -2,6 +2,7 @@
 #include "webscene_native_dom.h"
 #include <iostream>
 #include <stdexcept>
+#include <atomic>
 #include <chrono>
 #include <cstdlib>
 #include <string_view>
@@ -829,6 +830,110 @@ void test_nested_worker_blob_url_identity() {
     require(finished, "Nested worker did not execute its own Blob source");
 }
 
+void test_worker_inherits_authenticated_cookie_jar() {
+    webscene_native::native_document document;
+    std::atomic<bool> authenticated_module_request{false};
+    std::atomic<bool> cross_origin_module_request{false};
+    std::atomic<bool> cross_origin_cookie_disclosed{false};
+    bool finished = false;
+    std::string result;
+    webscene_native::v8_dom_runtime runtime(document,
+        []{return webscene_native::v8_dom_runtime::viewport_metrics{640,480,1,0};}, {},
+        [&](uint32_t kind, const std::string& url,
+            const webscene_native::v8_dom_runtime::resource_request_context& context,
+            const std::string&, int64_t,
+            webscene_native::v8_dom_runtime::resource_response& response) {
+            response.has_http_metadata = true;
+            response.final_url = url;
+            if (kind == WEBSCENE_RESOURCE_DOCUMENT
+                && url == "https://cross-origin.test/setup.html") {
+                response.content = "<!doctype html>";
+                response.headers.emplace_back(
+                    "set-cookie", "cross-secret=private; Path=/; HttpOnly; SameSite=None; Secure");
+                return true;
+            }
+            if (kind == WEBSCENE_RESOURCE_DOCUMENT
+                && url == "https://authenticated-worker.test/index.html") {
+                response.content = "<!doctype html>";
+                response.headers.emplace_back(
+                    "set-cookie", "vscode-tkn=worker-secret; Path=/; HttpOnly; SameSite=Lax");
+                return true;
+            }
+            if (kind == WEBSCENE_RESOURCE_SCRIPT
+                && url == "https://authenticated-worker.test/authenticated-module.js") {
+                authenticated_module_request.store(true, std::memory_order_relaxed);
+                if (context.cookie.find("vscode-tkn=worker-secret") == std::string::npos) {
+                    response.status = 403U;
+                    response.status_text = "Forbidden";
+                    response.content = "Forbidden.";
+                } else {
+                    response.content = "export const authenticated = true;";
+                }
+                return true;
+            }
+            if (kind == WEBSCENE_RESOURCE_SCRIPT
+                && url == "https://cross-origin.test/module.js") {
+                cross_origin_module_request.store(true, std::memory_order_relaxed);
+                const auto disclosed = context.cookie.find("cross-secret=private")
+                    != std::string::npos;
+                cross_origin_cookie_disclosed.store(
+                    disclosed, std::memory_order_relaxed);
+                response.content = disclosed
+                    ? "throw Error('cross-origin-cookie-leaked');"
+                    : "export const crossOriginLoaded = true;";
+                return true;
+            }
+            return false;
+        });
+    runtime.register_compiled_template("worker-cookie-result",
+        [&](auto& dom, const std::string& value) -> auto& {
+            result = value;
+            finished = true;
+            return dom.create_element("span");
+        });
+    require(runtime.initialize(), "Authenticated worker runtime failed");
+    require(runtime.load_url("https://cross-origin.test/setup.html"),
+        runtime.last_error().c_str());
+    require(runtime.load_url("https://authenticated-worker.test/index.html"),
+        runtime.last_error().c_str());
+    require(runtime.execute(R"JS(
+      const source = `
+        await import('https://authenticated-worker.test/authenticated-module.js');
+        await import('https://cross-origin.test/module.js');
+        postMessage('authenticated-worker-module');
+      `;
+      const url = URL.createObjectURL(
+        new Blob([source], {type:'application/javascript'}));
+      const worker = new Worker(url, {type:'module'});
+      URL.revokeObjectURL(url);
+      worker.onmessage = event => {
+        worker.terminate();
+        document.createCompiledTemplate('worker-cookie-result', event.data);
+      };
+      worker.onerror = event => {
+        worker.terminate();
+        document.createCompiledTemplate(
+          'worker-cookie-result', `error: ${event.message}`);
+      };
+    )JS", "authenticated-worker-cookie-jar"), runtime.last_error().c_str());
+    const auto started = std::chrono::steady_clock::now();
+    while (!finished
+        && std::chrono::steady_clock::now() - started < std::chrono::seconds(5)) {
+        require(runtime.pump_task(), runtime.last_error().c_str());
+        std::this_thread::yield();
+    }
+    require(authenticated_module_request.load(std::memory_order_relaxed),
+        "Worker did not request its authenticated module");
+    require(cross_origin_module_request.load(std::memory_order_relaxed),
+        "Worker did not request its cross-origin module");
+    require(!cross_origin_cookie_disclosed.load(std::memory_order_relaxed),
+        "Worker disclosed a target-matching cookie to a cross-origin module");
+    require(result == "\"authenticated-worker-module\"",
+        result.empty() ? "Authenticated worker did not complete" : result.c_str());
+    require(std::chrono::steady_clock::now() - started < std::chrono::seconds(4),
+        "Authenticated worker startup exceeded four seconds");
+}
+
 void test_object_url_registry_capacity_and_reuse() {
     webscene_native::native_document document;
     webscene_native::v8_dom_runtime runtime(document,
@@ -1081,6 +1186,7 @@ void test_worker_message_port_contracts() {
     test_worker_and_port_navigation_shutdown();
     test_window_messageerror_on_receiver_resource_exhaustion();
     test_nested_worker_blob_url_identity();
+    test_worker_inherits_authenticated_cookie_jar();
     test_object_url_registry_capacity_and_reuse();
 }
 

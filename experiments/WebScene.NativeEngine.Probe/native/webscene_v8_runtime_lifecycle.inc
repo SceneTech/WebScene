@@ -942,7 +942,10 @@
                 inspector_state->promise_rejections.shrink_to_fit();
             }
 #endif
-            document_cookies.shrink_to_fit();
+            {
+                std::lock_guard lock(cookie_jar->mutex);
+                cookie_jar->cookies.shrink_to_fit();
+            }
             css_rules.shrink_to_fit();
             for (auto& [name, keyframes] : opacity_keyframes) {
                 static_cast<void>(name);

@@ -496,6 +496,12 @@
         cookie_same_site same_site{cookie_same_site::lax};
     };
 
+    struct shared_cookie_jar final {
+        std::mutex mutex;
+        std::vector<stored_cookie> cookies;
+        uint64_t next_creation_order{1U};
+    };
+
     struct pending_fetch_task final {
         v8::Global<v8::Context> context;
         v8::Global<v8::Promise::Resolver> resolver;

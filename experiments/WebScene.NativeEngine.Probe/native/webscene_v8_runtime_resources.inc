@@ -207,31 +207,31 @@
                     + std::chrono::seconds(std::min<int64_t>(
                         maximum_age.value(), 400LL * 24LL * 60LL * 60LL));
         }
-        std::lock_guard lock(cookie_mutex);
+        std::lock_guard lock(cookie_jar->mutex);
         const auto same_cookie = [&](const stored_cookie& known) {
             return known.name == cookie.name && known.domain == cookie.domain
                 && known.path == cookie.path;
         };
-        auto known = std::find_if(document_cookies.begin(), document_cookies.end(), same_cookie);
-        if (!from_http && known != document_cookies.end() && known->http_only) return;
+        auto known = std::find_if(cookie_jar->cookies.begin(), cookie_jar->cookies.end(), same_cookie);
+        if (!from_http && known != cookie_jar->cookies.end() && known->http_only) return;
         if (cookie.persistent && cookie.expires <= std::chrono::system_clock::now()) {
-            if (known != document_cookies.end()) document_cookies.erase(known);
+            if (known != cookie_jar->cookies.end()) cookie_jar->cookies.erase(known);
             return;
         }
-        if (known != document_cookies.end()) {
+        if (known != cookie_jar->cookies.end()) {
             cookie.creation_order = known->creation_order;
             *known = std::move(cookie);
         } else {
-            cookie.creation_order = next_cookie_creation_order++;
-            if (document_cookies.size() >= maximum_cookie_count) {
+            cookie.creation_order = cookie_jar->next_creation_order++;
+            if (cookie_jar->cookies.size() >= maximum_cookie_count) {
                 const auto oldest = std::min_element(
-                    document_cookies.begin(), document_cookies.end(),
+                    cookie_jar->cookies.begin(), cookie_jar->cookies.end(),
                     [](const auto& left, const auto& right) {
                         return left.creation_order < right.creation_order;
                     });
-                document_cookies.erase(oldest);
+                cookie_jar->cookies.erase(oldest);
             }
-            document_cookies.push_back(std::move(cookie));
+            cookie_jar->cookies.push_back(std::move(cookie));
         }
     }
 
@@ -254,11 +254,11 @@
             && (context.method.empty() || context.method == "GET" || context.method == "HEAD");
         std::vector<const stored_cookie*> matches;
         const auto now = std::chrono::system_clock::now();
-        std::lock_guard lock(cookie_mutex);
-        std::erase_if(document_cookies, [now](const auto& cookie) {
+        std::lock_guard lock(cookie_jar->mutex);
+        std::erase_if(cookie_jar->cookies, [now](const auto& cookie) {
             return cookie.persistent && cookie.expires <= now;
         });
-        for (const auto& cookie : document_cookies) {
+        for (const auto& cookie : cookie_jar->cookies) {
             if (script_visible && cookie.http_only) continue;
             if (cookie.secure && target.scheme != "https") continue;
             if (cookie.host_only ? cookie.domain != target.host

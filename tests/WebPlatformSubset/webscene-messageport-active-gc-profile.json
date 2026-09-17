@@ -1,0 +1,25 @@
+{
+  "profile": "webscene-messageport-active-gc-1",
+  "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+  "runtime": "v8",
+  "viewport": {
+    "width": 800,
+    "height": 600,
+    "deviceScaleFactor": 1
+  },
+  "required": [
+    {
+      "path": "contracts/messageport-scheduler-lifetime.html",
+      "type": "testharness",
+      "capabilities": [
+        "messageport-active-listener-reachability",
+        "messageport-direct-promise-resolver",
+        "messageport-queued-delivery"
+      ],
+      "evidence": ["messageport-active-gc-288"],
+      "reason": "Focused active-port lifetime contract covering direct Promise resolvers, EventTarget listeners, queued delivery, and sender transfer while the receiver has no unrelated JavaScript root."
+    }
+  ],
+  "harnessBlocked": [],
+  "excluded": []
+}

@@ -565,6 +565,12 @@
             }
             endpoint->channel->incoming_bytes[destination] += packet_bytes;
             endpoint->channel->incoming[destination].push_back(std::move(packet));
+            self->message_port_queue_high_water_messages = std::max(
+                self->message_port_queue_high_water_messages,
+                endpoint->channel->incoming[destination].size());
+            self->message_port_queue_high_water_bytes = std::max(
+                self->message_port_queue_high_water_bytes,
+                endpoint->channel->incoming_bytes[destination]);
             wake = endpoint->channel->wake[destination].lock();
         }
         if (wake != nullptr) wake->signal();

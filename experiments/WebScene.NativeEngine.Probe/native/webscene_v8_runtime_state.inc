@@ -183,6 +183,8 @@
     std::shared_ptr<message_port_runtime_wake> message_port_wake =
         std::make_shared<message_port_runtime_wake>();
     std::vector<std::unique_ptr<message_port_binding>> message_port_bindings;
+    size_t message_port_queue_high_water_messages{};
+    size_t message_port_queue_high_water_bytes{};
     std::vector<pending_dialog_close_event> pending_dialog_close_events;
     std::vector<pending_programmatic_scroll_event>
         pending_programmatic_scroll_events;

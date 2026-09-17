@@ -5,9 +5,29 @@
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
+#include <algorithm>
 #include <string_view>
 #include <thread>
+#include <vector>
+#if defined(__APPLE__) || defined(__linux__)
+#include <sys/resource.h>
+#endif
 void require(bool value, const char* message) { if (!value) throw std::runtime_error(message); }
+
+uint64_t peak_rss_bytes()
+{
+#if defined(__APPLE__) || defined(__linux__)
+    rusage usage{};
+    if (getrusage(RUSAGE_SELF, &usage) != 0) return 0U;
+#if defined(__APPLE__)
+    return static_cast<uint64_t>(usage.ru_maxrss);
+#else
+    return static_cast<uint64_t>(usage.ru_maxrss) * 1024U;
+#endif
+#else
+    return 0U;
+#endif
+}
 
 void test_web_crypto_secure_random_realms() {
     webscene_native::native_document document;
@@ -754,12 +774,17 @@ void test_message_port_receiver_survives_gc() {
         []{return webscene_native::v8_dom_runtime::viewport_metrics{640,480,1,0};});
     require(runtime.initialize(), "MessagePort receiver runtime failed");
     for (const auto setup : {
+        "new Promise(resolve => { channel.port1.onmessage = resolve; channel.port1.start(); })"
+            ".then(event => { receivedDirectPromise = event.data === 'scheduled'; ++receivedMessages; }); return channel.port2;",
         "channel.port1.onmessage = () => { ++receivedMessages; }; return channel.port2;",
         "channel.port1.addEventListener('message', () => { ++receivedMessages; }); channel.port1.start(); return channel.port2;",
         "channel.port1.onmessage = () => { ++receivedMessages; }; return structuredClone(channel.port2, {transfer:[channel.port2]});"
     }) {
+        const auto direct_resolver = std::string_view(setup).find("resolve")
+            != std::string_view::npos;
         require(runtime.execute(std::string(R"JS(
         globalThis.receivedMessages = 0;
+        globalThis.receivedDirectPromise = false;
         globalThis.schedulerPort = (() => {
           const channel = new MessageChannel();
     )JS") + setup + R"JS(
@@ -771,9 +796,131 @@ void test_message_port_receiver_survives_gc() {
         for (unsigned task = 0; task < 8; ++task)
             require(runtime.pump_task(), runtime.last_error().c_str());
         require(runtime.execute(
-            "if (receivedMessages !== 1) throw Error('Entangled receiver was lost during GC'); schedulerPort.close()",
+            std::string("if (receivedMessages !== 1")
+                + (direct_resolver ? " || !receivedDirectPromise" : "")
+                + ") throw Error('Entangled receiver was lost during GC'); schedulerPort.close()",
             "message-port-receiver-result"), runtime.last_error().c_str());
     }
+}
+
+void test_message_port_active_listener_gc_stress()
+{
+    webscene_native::native_document document;
+    webscene_native::v8_dom_runtime runtime(document,
+        []{return webscene_native::v8_dom_runtime::viewport_metrics{640,480,1,0};});
+    require(runtime.initialize(), "MessagePort GC stress runtime failed");
+    require(runtime.execute(R"JS(
+        globalThis.__messagePortGcState = {
+          expected: 0,
+          result: -1,
+          deliveries: 0,
+          sender: null,
+          receiver: null
+        };
+        globalThis.__messagePortGcSetup = mode => {
+          const state = __messagePortGcState;
+          ++state.expected;
+          state.result = -1;
+          state.deliveries = 0;
+          const channel = new MessageChannel();
+          state.sender = channel.port2;
+          if (mode === 0) {
+            new Promise(resolve => {
+              channel.port1.onmessage = resolve;
+              channel.port1.start();
+            }).then(event => {
+              state.result = event.data;
+              ++state.deliveries;
+              state.receiver = event.target;
+            });
+          } else {
+            const listener = event => {
+              state.result = event.data;
+              ++state.deliveries;
+              event.currentTarget.removeEventListener('message', listener);
+              state.receiver = event.currentTarget;
+            };
+            channel.port1.addEventListener('message', listener);
+            channel.port1.start();
+          }
+        };
+        globalThis.__messagePortGcSend = () => {
+          const state = __messagePortGcState;
+          state.sender.postMessage(state.expected);
+        };
+        globalThis.__messagePortGcVerifyAndRelease = () => {
+          const state = __messagePortGcState;
+          if (state.result !== state.expected || state.deliveries !== 1)
+            throw Error(`MessagePort cycle ${state.expected} delivered ${state.deliveries} times with result ${state.result}`);
+          if (!(state.receiver instanceof MessagePort))
+            throw Error(`MessagePort cycle ${state.expected} lost receiver identity`);
+          state.receiver.close();
+          state.sender.close();
+          state.receiver = null;
+          state.sender = null;
+        };
+    )JS", "message-port-gc-stress-bootstrap"), runtime.last_error().c_str());
+
+    auto cycle = [&](unsigned mode) {
+        require(runtime.execute(
+            mode == 0U ? "__messagePortGcSetup(0)" : "__messagePortGcSetup(1)",
+            "message-port-gc-stress-setup"), runtime.last_error().c_str());
+        runtime.notify_low_memory();
+        require(runtime.execute("__messagePortGcSend()",
+            "message-port-gc-stress-send"), runtime.last_error().c_str());
+        for (unsigned task = 0; task < 4; ++task)
+            require(runtime.pump_task(), runtime.last_error().c_str());
+        require(runtime.execute("__messagePortGcVerifyAndRelease()",
+            "message-port-gc-stress-result"), runtime.last_error().c_str());
+        runtime.notify_low_memory();
+    };
+
+    for (unsigned warmup = 0; warmup < 16; ++warmup) cycle(warmup & 1U);
+    const auto heap_before = runtime.read_memory_metrics().used_heap_bytes;
+    const auto rss_before = peak_rss_bytes();
+    std::vector<double> elapsed_milliseconds;
+    elapsed_milliseconds.reserve(1000);
+    for (unsigned index = 0; index < 1000; ++index) {
+        const auto started = std::chrono::steady_clock::now();
+        cycle(index & 1U);
+        elapsed_milliseconds.push_back(
+            std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - started).count());
+    }
+    runtime.notify_low_memory();
+    require(runtime.pump_task(), runtime.last_error().c_str());
+    const auto heap_after = runtime.read_memory_metrics().used_heap_bytes;
+    const auto rss_after = peak_rss_bytes();
+    const auto ports = runtime.read_message_port_metrics();
+    std::sort(elapsed_milliseconds.begin(), elapsed_milliseconds.end());
+    const auto p95 = elapsed_milliseconds[949];
+    const auto maximum = elapsed_milliseconds.back();
+
+    require(p95 <= 250.0, "MessagePort forced-GC round-trip p95 exceeded 250 ms");
+    require(ports.queue_high_water_messages <= 1U,
+        "Sequential MessagePort stress queue exceeded one message");
+    require(ports.queued_messages == 0U && ports.queued_bytes == 0U,
+        "MessagePort stress retained queued messages or bytes");
+    require(ports.retained_bindings == 0U,
+        "MessagePort stress retained active or transferred bindings");
+    require(ports.binding_slots <= 4U,
+        "MessagePort stress did not reuse reclaimed binding slots");
+    require(heap_after <= heap_before + 8U * 1024U * 1024U,
+        "MessagePort stress retained more than 8 MiB of V8 heap");
+    require(rss_before == 0U || rss_after <= rss_before + 64U * 1024U * 1024U,
+        "MessagePort stress grew peak RSS by more than 64 MiB");
+    std::cout << "message-port-gc-stress cycles=1000 p95Ms=" << p95
+              << " maxMs=" << maximum
+              << " bindingSlots=" << ports.binding_slots
+              << " retainedBindings=" << ports.retained_bindings
+              << " reclaimedBindings=" << ports.reclaimed_bindings
+              << " queueHighWater=" << ports.queue_high_water_messages
+              << " queueByteHighWater=" << ports.queue_high_water_bytes
+              << " queuedBytes=" << ports.queued_bytes
+              << " heapBefore=" << heap_before
+              << " heapAfter=" << heap_after
+              << " rssBefore=" << rss_before
+              << " rssAfter=" << rss_after << '\n';
 }
 
 void test_message_port_binding_memory_is_bounded() {
@@ -1479,6 +1626,10 @@ int main() {
             }
             if (selected == "messageport-gc") {
                 test_message_port_receiver_survives_gc();
+                return 0;
+            }
+            if (selected == "messageport-gc-stress") {
+                test_message_port_active_listener_gc_stress();
                 return 0;
             }
         }

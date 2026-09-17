@@ -4,32 +4,51 @@
 <script src="/resources/testharness.js"></script>
 <script src="/resources/testharnessreport.js"></script>
 <script>
-// The native companion forces V8 GC between setup and delivery. This portable
-// contract checks the same observable behavior without requiring a GC API.
-for (const mode of ['onmessage', 'listener', 'transferred sender']) {
+// The native companion always forces V8 GC between setup and delivery. Browser
+// oracles do the same when launched with --js-flags=--expose-gc.
+for (const mode of [
+  'onmessage',
+  'listener',
+  'transferred sender',
+  'direct promise resolver',
+  'direct promise resolver with transferred sender'
+]) {
   promise_test(async t => {
-    let resolve;
-    const delivered = new Promise(done => { resolve = done; });
-    const sender = (() => {
-      const channel = new MessageChannel();
-      const receive = t.step_func(event => {
-        assert_equals(event.data, 'render');
-        assert_equals(event.target, event.currentTarget);
-        event.target.close();
-        resolve();
-      });
-      if (mode === 'listener') {
-        channel.port1.addEventListener('message', receive);
-        channel.port1.start();
-      } else channel.port1.onmessage = receive;
-      return mode === 'transferred sender'
-        ? structuredClone(channel.port2, {transfer:[channel.port2]})
-        : channel.port2;
-    })();
+    let sender;
+    const directResolver = mode.startsWith('direct promise resolver');
+    const transferredSender = mode.includes('transferred sender');
+    let resolveDelivery;
+    const delivered = directResolver
+      ? new Promise(resolve => {
+          const channel = new MessageChannel();
+          channel.port1.onmessage = resolve;
+          channel.port1.start();
+          sender = transferredSender
+            ? structuredClone(channel.port2, {transfer:[channel.port2]})
+            : channel.port2;
+        })
+      : new Promise(resolve => {
+          resolveDelivery = resolve;
+          const channel = new MessageChannel();
+          const receive = t.step_func(event => resolveDelivery(event));
+          if (mode === 'listener') {
+            channel.port1.addEventListener('message', receive);
+            channel.port1.start();
+          } else channel.port1.onmessage = receive;
+          sender = transferredSender
+            ? structuredClone(channel.port2, {transfer:[channel.port2]})
+            : channel.port2;
+        });
     t.add_cleanup(() => sender.close());
+    if (typeof gc === 'function') {
+      for (let collection = 0; collection < 8; ++collection) gc();
+    }
     await new Promise(done => t.step_timeout(done, 0));
     sender.postMessage('render');
-    await delivered;
+    const event = await delivered;
+    assert_equals(event.data, 'render');
+    assert_true(event.target instanceof MessagePort);
+    event.target.close();
   }, mode + ': keeping only the sending port preserves scheduled delivery');
 }
 </script>

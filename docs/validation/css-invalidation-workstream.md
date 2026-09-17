@@ -595,6 +595,19 @@ preference work. The combined native contract slice passes 79/79 and portable
 CSS tests 364/364 on both frameworks. Fresh packaged SDK and populated native
 Spotify/Chrome qualification remain required at this combined baseline.
 
+The [prepared-payload integration follow-up](css-compiled-payload-integration-20260917.md)
+closes a packaging regression in `86c83845`: the UI compiler omitted the new
+pseudo/host classification fields. Its controlled compiler test fails before
+and passes after; parsed/cache-replayed/precompiled stylesheet parity and
+Chrome/native generated-box coverage pass. The corrected clean SDK with AppScene
+`68a9dbd` passes the source-denied relocated consumer gates and installed Kestrel
+smoke/three-snapshot parity (376, 298, 311 matching nodes, zero differences).
+The manual native Spotify demo has been replaced with this build and visibly
+renders artwork. Physical resize/Chrome parity and header clipping remain open.
+Fresh populated profiling still points to compound matching and candidate
+sorting, but changed live content and concurrent host compilation exclude its
+timings from improvement/regression claims. No further speedup is claimed.
+
 The [September 17 resize-stage investigation](css-resize-stage-profile.md) records
 fresh production profiles and fixes the mismatched native/Chrome benchmark waveform.
 It does not qualify physical presentation or end-to-end browser parity.

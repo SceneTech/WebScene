@@ -1,0 +1,121 @@
+{
+  "schemaVersion": 1,
+  "websceneRevision": "86c83845ab40de1214abb3af5952c90a41d5a453",
+  "appsceneRevision": "68a9dbd15e6b02e4bec0a76d5190713868b6517a",
+  "sdk": "/Volumes/SSD/sdks/spotify-css-compiled-qualified-20260917",
+  "archiveSha256": "6bf47256e72b31d7946d05e33f7433bd514576cf3f0459045661507d0bc603bc",
+  "engineArchiveSha256": "72bd32198a9595f23b2f9876f7b6238725a0df68d0b6768582a01a28c315b2e3",
+  "qualification": {
+    "schemaVersion": 1,
+    "checks": [
+      {
+        "name": "Producer manifest integrity",
+        "passed": true
+      },
+      {
+        "name": "Producer source/build trees inaccessible",
+        "passed": true,
+        "paths": [
+          "/private/tmp/appscene-pr61",
+          "/private/tmp/webscene-spotify-probe",
+          "/Volumes/SSD/builds/appscene-spotify-integrated-sdk",
+          "/Volumes/SSD/builds/webscene-css-profile-sdk"
+        ]
+      },
+      {
+        "name": "Concurrent independent hybrid application builds",
+        "passed": true
+      },
+      {
+        "name": "All standalone installed sample builds",
+        "passed": true
+      },
+      {
+        "name": "Runtime HTML configuration and independent WebScene contracts",
+        "passed": true
+      },
+      {
+        "name": "Native dependency isolation: no V8, no Dawn in non-GPU native apps, no Foco",
+        "passed": true
+      },
+      {
+        "name": "Incremental CSS, worker, asset and application C++ outputs",
+        "passed": true
+      },
+      {
+        "name": "Read-only relocated SDK unchanged after all builds",
+        "passed": true
+      }
+    ],
+    "status": "passed",
+    "gpuQualification": false
+  },
+  "kestrelParity": [
+    {
+      "width": 1280,
+      "height": 800,
+      "theme": "dark",
+      "tab": "Home",
+      "parsed_nodes": 376,
+      "compiled_nodes": 376,
+      "differences": []
+    },
+    {
+      "width": 980,
+      "height": 620,
+      "theme": "dark",
+      "tab": "Text",
+      "parsed_nodes": 298,
+      "compiled_nodes": 298,
+      "differences": []
+    },
+    {
+      "width": 1440,
+      "height": 900,
+      "theme": "light",
+      "tab": "Drafting",
+      "parsed_nodes": 311,
+      "compiled_nodes": 311,
+      "differences": []
+    }
+  ],
+  "kestrelSmokePassed": true,
+  "appsceneNativeTests": 16,
+  "compilerRegression": {
+    "oldCompilerPassed": false,
+    "newCompilerPassed": true,
+    "fullCompilerSuitePassed": true,
+    "sharedStylesheetParityPassed": true
+  },
+  "wpt": {
+    "contract": "cssom-style-recalculation-barrier.html",
+    "chromePassed": 6,
+    "nativePassed": 6
+  },
+  "rejectedIntegration": {
+    "websceneRevision": "5c72775651bc56505e0ef4370cb5265afb4c9605",
+    "kestrelDifferences": [
+      41,
+      0,
+      41
+    ],
+    "cause": "Prepared stylesheet generator omitted pseudo_kind and host_selector"
+  },
+  "profile": {
+    "websceneRevision": "5c72775651bc56505e0ef4370cb5265afb4c9605",
+    "acceptedTimingComparison": false,
+    "reason": "Sampling, different live content and concurrent host compilation",
+    "transitions": 12,
+    "elementsPerTransition": 2726,
+    "imagesPerTransition": 18,
+    "topLeafSamples": {
+      "compoundMatching": 268,
+      "relationCacheLookup": 122,
+      "candidateSortPartition": 107,
+      "candidateIntrosort": 56
+    }
+  },
+  "physicalResizeQualified": false,
+  "chromeSpeedAdvantageClaimed": false,
+  "ciMonitored": false
+}

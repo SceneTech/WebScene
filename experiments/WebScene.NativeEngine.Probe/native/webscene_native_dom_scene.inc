@@ -618,10 +618,13 @@ void native_document::append_scene(
         };
         const auto inherited_font_size = resolved_font_size(node);
         const auto font_size = pseudo.font_size >= 0 ? pseudo.font_size : inherited_font_size;
-        auto line_height = pseudo.line_height >= 0
-            ? pseudo.line_height
-            : resolved_line_height(node, font_size);
-        if (line_height > 0 && line_height <= 4) line_height *= font_size;
+        const auto line_height = pseudo.line_height <= -3.0F
+            ? (-3.0F - pseudo.line_height) * font_size
+            : pseudo.line_height == -2.0F
+                ? font_size * 1.125F
+                : pseudo.line_height >= 0
+                    ? pseudo.line_height
+                    : resolved_line_height(node, font_size);
         const auto x = pseudo.layout.x;
         const auto y = pseudo.layout.y;
         const auto width = pseudo.layout.width;

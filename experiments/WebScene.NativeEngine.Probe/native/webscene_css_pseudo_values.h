@@ -288,11 +288,26 @@ inline property_result apply_pseudo_value(node_style::pseudo_element& pseudo,
         } else if (name == "line-height") {
             if (value == "normal" || value == "initial" || value == "revert") {
                 pseudo.line_height = -2.0F;
-            } else if (value != "inherit" && value != "unset") {
-                pseudo.line_height = std::max(0.0F, native_document::parse_length(value).value);
             } else {
-                decision.classification = "partially-supported";
-                decision.semantic_slice = "explicit numeric lengths";
+                if (value == "inherit" || value == "unset") {
+                    pseudo.line_height = -1.0F;
+                } else {
+                    const auto parsed_value = std::max(
+                        0.0F,
+                        native_document::parse_length(value).value);
+                    const auto has_explicit_unit = std::any_of(
+                        value.begin(),
+                        value.end(),
+                        [](unsigned char character) {
+                            return std::isalpha(character) || character == '%';
+                        });
+                    // Keep <number> as a multiplier until the generated box's
+                    // own font size is known. Treating it as pixels made a
+                    // 40px pseudo with line-height:1 produce a 1px flex item.
+                    pseudo.line_height = has_explicit_unit
+                        ? parsed_value
+                        : -3.0F - parsed_value;
+                }
             }
         } else {
             decision.classification = "unsupported";

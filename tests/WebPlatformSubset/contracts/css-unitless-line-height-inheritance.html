@@ -12,6 +12,17 @@ body { margin:0 }
 <div id="large" style="font-size:10px;line-height:5">Large multiplier</div>
 <style>.relative{font-size:20px;line-height:1.5em}.relative.small{font-size:14px}</style>
 <div id="relative" class="relative small"><span id="relativeChild" style="font-size:10px">Relative length</span></div>
+<style>
+.pseudo-line { display:flex; font-size:10px; line-height:1.5 }
+.pseudo-line::before { content:'x'; font-size:40px }
+.pseudo-line.own::before { line-height:1 }
+.pseudo-line.large::before { line-height:5 }
+.pseudo-line.length::before { line-height:2px }
+</style>
+<div id="pseudoInherited" class="pseudo-line"></div>
+<div id="pseudoOwn" class="pseudo-line own"></div>
+<div id="pseudoLarge" class="pseudo-line large"></div>
+<div id="pseudoLength" class="pseudo-line length"></div>
 <script>
 test(()=>{
  assert_equals(getComputedStyle(cascade).lineHeight,'21px');
@@ -37,4 +48,14 @@ test(()=>{
  assert_equals(getComputedStyle(relative).lineHeight,'27px');
  assert_equals(getComputedStyle(relativeChild).lineHeight,'27px');
 },'An em line-height uses the final declaring font size and inherits as a length');
+test(()=>{
+ assert_equals(pseudoInherited.getBoundingClientRect().height,60);
+ assert_equals(pseudoOwn.getBoundingClientRect().height,40);
+ assert_equals(pseudoLarge.getBoundingClientRect().height,200);
+ assert_equals(pseudoLength.getBoundingClientRect().height,2);
+ pseudoOwn.classList.remove('own');
+ assert_equals(pseudoOwn.getBoundingClientRect().height,60);
+ pseudoOwn.classList.add('large');
+ assert_equals(pseudoOwn.getBoundingClientRect().height,200);
+},'Generated content preserves inherited and authored unitless line-height multipliers');
 </script>

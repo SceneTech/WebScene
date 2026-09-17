@@ -16,11 +16,11 @@ public static class CssPropertyCatalog
         {
             "animation-delay", "animation-direction", "animation-duration", "animation-fill-mode",
             "animation-iteration-count", "animation-name", "animation-play-state", "animation-timing-function",
-            "appearance", "background-attachment", "background-clip", "background-origin",
+            "accent-color", "appearance", "background-attachment", "background-clip", "background-origin",
             "background-position", "background-position-x", "background-position-y", "background-repeat",
             "background-size", "border-bottom", "border-collapse", "border-left", "border-right",
             "border-spacing", "border-top", "clear", "column-count", "columns", "css-float",
-            "empty-cells", "fill-opacity", "float", "font-stretch", "grid-area", "grid-column",
+            "color-scheme", "empty-cells", "fill-opacity", "float", "font-stretch", "grid-area", "grid-column",
             "grid-column-end", "grid-column-start", "grid-row", "grid-row-end", "grid-row-start",
             "grid-gap", "inset-block", "inset-inline", "inset-inline-start", "inset-inline-end",
             "margin-block", "margin-inline", "margin-inline-start", "margin-inline-end",
@@ -100,6 +100,9 @@ public static class CssPropertyCatalog
             "position" => normalizedValue is "static" or "relative" or "absolute" or "fixed" or "sticky"
                 or "-webkit-sticky",
             "font-size" => IsFontSize(normalizedValue),
+            "color-scheme" => normalizedValue is "normal" or "light" or "dark"
+                or "light dark" or "dark light" or "only light" or "only dark",
+            "accent-color" => normalizedValue == "auto" || !string.IsNullOrWhiteSpace(trimmed),
             "letter-spacing" => normalizedValue == "normal"
                 || !IsInvalidUnitlessLength(trimmed),
             _ => true

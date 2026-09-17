@@ -263,6 +263,32 @@ bool apply_text_value(dom_node& node,const std::string& name,const std::string& 
             } else if (value == "inherit" || value == "unset") {
                 node.style.mutable_textual().svg_text_anchor.clear();
             }
+        } else if (name == "color-scheme" && !is_inline(inline_accessibility_colors)) {
+            const auto normalized = value == "inherit" || value == "unset"
+                ? std::string{} : value == "initial" ? std::string{"normal"} : value;
+            if (normalized.empty() || normalized == "normal" || normalized == "light"
+                || normalized == "dark" || normalized == "light dark"
+                || normalized == "dark light" || normalized == "only light"
+                || normalized == "only dark") {
+                node.style.mutable_textual().color_scheme = normalized;
+            } else {
+                decision.classification = "unsupported";
+                decision.semantic_slice = "normal, light, dark, only, and inheritance";
+            }
+        } else if (name == "accent-color" && !is_inline(inline_accessibility_colors)) {
+            if (value == "inherit" || value == "unset") {
+                node.style.mutable_textual().accent_color.clear();
+            } else if (value == "initial" || value == "auto") {
+                node.style.mutable_textual().accent_color = "auto";
+            } else {
+                const auto parsed = native_document::parse_color(value);
+                if (is_explicit_color_token(value, parsed)) {
+                    node.style.mutable_textual().accent_color = value;
+                } else {
+                    decision.classification = "unsupported";
+                    decision.semantic_slice = "auto, CSS colors, system colors, and inheritance";
+                }
+            }
         } else if (name == "cursor" && !is_inline(inline_cursor)) {
             node.style.mutable_textual().cursor =
                 value == "initial" ? "auto" : value;

@@ -38,11 +38,20 @@
         runtime_ = std::make_unique<webscene_native::v8_dom_runtime>(
             document_,
             [this] {
+                const auto scheme = preferred_color_scheme_.load(
+                    std::memory_order_acquire);
+                const auto accessibility = accessibility_preference_flags_.load(
+                    std::memory_order_acquire);
+                webscene_native::css::set_active_accessibility_preferences({
+                    scheme == WEBSCENE_PREFERRED_COLOR_SCHEME_DARK,
+                    (accessibility & WEBSCENE_ACCESSIBILITY_PREFERENCE_FORCED_COLORS_V1) != 0U,
+                    (accessibility & WEBSCENE_ACCESSIBILITY_PREFERENCE_REDUCED_MOTION_V1) != 0U,
+                    (accessibility & WEBSCENE_ACCESSIBILITY_PREFERENCE_MORE_CONTRAST_V1) != 0U});
                 return webscene_native::v8_dom_runtime::viewport_metrics{
                     static_cast<float>(viewport_width_),
                     static_cast<float>(viewport_height_),
                     device_scale_factor_,
-                    preferred_color_scheme_.load(std::memory_order_acquire)};
+                    scheme};
             },
             compilation_cache_directory_,
             [this](
@@ -386,10 +395,14 @@
             bool host_frame_applied = false;
             changed = apply_canvas_checkpoint() || changed;
 #if defined(WEBSCENE_NATIVE_ENGINE_WITH_V8)
-            const auto refresh_preferred_color_scheme = [&] {
-                if (!preferred_color_scheme_changed_.exchange(
-                        false,
-                        std::memory_order_acq_rel)) {
+            const auto refresh_accessibility_preferences = [&] {
+                const auto scheme_changed = preferred_color_scheme_changed_.exchange(
+                    false,
+                    std::memory_order_acq_rel);
+                const auto accessibility_changed = accessibility_preferences_changed_.exchange(
+                    false,
+                    std::memory_order_acq_rel);
+                if (!scheme_changed && !accessibility_changed) {
                     return false;
                 }
                 if (runtime_ != nullptr
@@ -454,7 +467,7 @@
                 update_compilation_metrics();
                 hidden_low_memory_deadline.reset();
             }
-            if (refresh_preferred_color_scheme()) {
+            if (refresh_accessibility_preferences()) {
                 changed = true;
             }
 #endif
@@ -988,7 +1001,7 @@
                 // after it can arrive after the iteration-level refresh above.
                 // Recheck at the script boundary so live matchMedia queries and
                 // the CSS cascade always observe the same environment.
-                if (refresh_preferred_color_scheme()) changed = true;
+                if (refresh_accessibility_preferences()) changed = true;
 #endif
                 auto& request = *iterator;
 #if defined(WEBSCENE_NATIVE_ENGINE_WITH_V8_INSPECTOR)
@@ -1414,6 +1427,8 @@
                     || focus_changed_.load(std::memory_order_acquire)
                     || fullscreen_changed_.load(std::memory_order_acquire)
                     || preferred_color_scheme_changed_.load(
+                        std::memory_order_acquire)
+                    || accessibility_preferences_changed_.load(
                         std::memory_order_acquire);
                 });
             if (collect_runtime_work_metrics && signalled) {

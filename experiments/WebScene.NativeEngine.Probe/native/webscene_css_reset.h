@@ -58,6 +58,10 @@ inline void apply_all_unset(dom_node& node)
         textual.contain_intrinsic_size = previous.textual().contain_intrinsic_size;
         reset.content_visibility_hidden = previous.content_visibility_hidden;
     }
+    if (is_inline(inline_accessibility_colors)) {
+        reset.mutable_textual().color_scheme = previous.textual().color_scheme;
+        reset.mutable_textual().accent_color = previous.textual().accent_color;
+    }
     if (is_inline(inline_padding)) {
         reset.padding_left = previous.padding_left;
         reset.padding_top = previous.padding_top;

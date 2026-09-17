@@ -324,6 +324,23 @@
         return true;
     }
 
+    bool set_accessibility_preferences(uint32_t preference_flags)
+    {
+        constexpr auto supported =
+            WEBSCENE_ACCESSIBILITY_PREFERENCE_FORCED_COLORS_V1
+            | WEBSCENE_ACCESSIBILITY_PREFERENCE_REDUCED_MOTION_V1
+            | WEBSCENE_ACCESSIBILITY_PREFERENCE_MORE_CONTRAST_V1;
+        if ((preference_flags & ~supported) != 0U) return false;
+        const auto previous = accessibility_preference_flags_.exchange(
+            preference_flags,
+            std::memory_order_acq_rel);
+        if (previous != preference_flags) {
+            accessibility_preferences_changed_.store(true, std::memory_order_release);
+            signal_worker();
+        }
+        return true;
+    }
+
     uint32_t cursor() const noexcept
     {
         return current_cursor_.load(std::memory_order_acquire);

@@ -21,6 +21,7 @@ public sealed class CssMediaQueryEvaluatorTests
     [InlineData("(-webkit-max-device-pixel-ratio: 1)", false)]
     [InlineData("(hover) and (pointer: fine)", true)]
     [InlineData("(prefers-color-scheme: light) and (prefers-reduced-motion: no-preference)", true)]
+    [InlineData("(forced-colors: none) and (prefers-contrast: no-preference)", true)]
     [InlineData("(unsupported: yes)", false)]
     [InlineData("(width: nope)", false)]
     [InlineData("width: 1280px", false)]
@@ -37,13 +38,17 @@ public sealed class CssMediaQueryEvaluatorTests
             Pointer: CssMediaPointer.Coarse,
             Hover: CssMediaHover.None,
             ColorScheme: CssPreferredColorScheme.Dark,
-            Motion: CssPreferredMotion.Reduce);
+            Motion: CssPreferredMotion.Reduce,
+            ForcedColors: CssForcedColors.Active,
+            Contrast: CssPreferredContrast.More);
 
         Assert.True(CssMediaQueryEvaluator.Matches(
             "screen and (orientation: portrait) and (pointer: coarse) and (prefers-color-scheme: dark) and (prefers-reduced-motion: reduce)",
             environment));
         Assert.False(CssMediaQueryEvaluator.Matches("(hover: hover)", environment));
         Assert.True(CssMediaQueryEvaluator.Matches("(pointer: coarse)", environment));
+        Assert.True(CssMediaQueryEvaluator.Matches("(forced-colors: active)", environment));
+        Assert.True(CssMediaQueryEvaluator.Matches("(prefers-contrast: more)", environment));
     }
 
     [Theory]

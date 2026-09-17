@@ -28,6 +28,18 @@ public enum CssPreferredMotion
     Reduce
 }
 
+public enum CssForcedColors
+{
+    None,
+    Active
+}
+
+public enum CssPreferredContrast
+{
+    NoPreference,
+    More
+}
+
 /// <summary>Portable environment used to evaluate CSS media queries.</summary>
 public readonly record struct CssMediaEnvironment(
     double Width,
@@ -37,7 +49,9 @@ public readonly record struct CssMediaEnvironment(
     CssMediaPointer Pointer = CssMediaPointer.Fine,
     CssMediaHover Hover = CssMediaHover.Hover,
     CssPreferredColorScheme ColorScheme = CssPreferredColorScheme.Light,
-    CssPreferredMotion Motion = CssPreferredMotion.NoPreference);
+    CssPreferredMotion Motion = CssPreferredMotion.NoPreference,
+    CssForcedColors ForcedColors = CssForcedColors.None,
+    CssPreferredContrast Contrast = CssPreferredContrast.NoPreference);
 
 /// <summary>
 /// Evaluates the bounded media-query profile supported by WebScene without depending on
@@ -135,6 +149,8 @@ public static partial class CssMediaQueryEvaluator
             "orientation" => value == (environment.Width >= environment.Height ? "landscape" : "portrait"),
             "prefers-reduced-motion" => value == (environment.Motion == CssPreferredMotion.Reduce ? "reduce" : "no-preference"),
             "prefers-color-scheme" => value == (environment.ColorScheme == CssPreferredColorScheme.Dark ? "dark" : "light"),
+            "forced-colors" => value == (environment.ForcedColors == CssForcedColors.Active ? "active" : "none"),
+            "prefers-contrast" => value == (environment.Contrast == CssPreferredContrast.More ? "more" : "no-preference"),
             "min-width" => TryParseCssPixels(value, out var minWidth) && environment.Width >= minWidth,
             "max-width" => TryParseCssPixels(value, out var maxWidth) && environment.Width <= maxWidth,
             "width" => TryParseCssPixels(value, out var exactWidth) && NearlyEqual(environment.Width, exactWidth),

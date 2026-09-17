@@ -1,10 +1,36 @@
 #pragma once
 #include "webscene_css_container_queries.h"
 #include "webscene_css_matching.h"
+#include "webscene_accessibility_preferences.h"
 #include <cstdlib>
 
 namespace webscene_native::css {
-struct media_environment { float width; float height; bool dark=false; bool reduced_motion=false; };
+struct media_environment {
+    float width{};
+    float height{};
+    bool dark{false};
+    bool reduced_motion{false};
+    bool forced_colors{false};
+    bool contrast_more{false};
+
+    media_environment() = default;
+    media_environment(float width_value, float height_value)
+        : media_environment(width_value, height_value, false) {}
+    media_environment(float width_value, float height_value, bool dark_value)
+        : width(width_value), height(height_value), dark(dark_value)
+    {
+        const auto preferences = get_active_accessibility_preferences();
+        reduced_motion = preferences.reduced_motion;
+        forced_colors = preferences.forced_colors;
+        contrast_more = preferences.contrast_more;
+    }
+    media_environment(float width_value, float height_value, bool dark_value,
+        bool reduced_motion_value, bool forced_colors_value = false,
+        bool contrast_more_value = false)
+        : width(width_value), height(height_value), dark(dark_value),
+          reduced_motion(reduced_motion_value), forced_colors(forced_colors_value),
+          contrast_more(contrast_more_value) {}
+};
 inline bool media_matches(std::string query, const media_environment& environment)
 {
     if (is_container_query(query)) return true;
@@ -85,6 +111,10 @@ inline bool media_matches(std::string query, const media_environment& environmen
                         environment.dark
                             ? "dark"
                             : "light");
+                } else if (feature == "forced-colors") {
+                    matches = value == (environment.forced_colors ? "active" : "none");
+                } else if (feature == "prefers-contrast") {
+                    matches = value == (environment.contrast_more ? "more" : "no-preference");
                 } else {
                     matches = false;
                 }
@@ -152,7 +182,8 @@ bool inventory_media(std::string query, Record&& record_feature)
                 static const std::unordered_set<std::string> supported_features{
                     "max-width", "min-width", "max-height", "min-height", "orientation",
                     "hover", "any-hover", "pointer", "any-pointer",
-                    "prefers-reduced-motion", "prefers-color-scheme"};
+                    "prefers-reduced-motion", "prefers-color-scheme",
+                    "forced-colors", "prefers-contrast"};
                 const auto known = range_syntax || (separator != std::string::npos
                     && supported_features.contains(feature));
                 record_feature(

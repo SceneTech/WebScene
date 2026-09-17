@@ -51,6 +51,25 @@ internal enum NativePreferredColorScheme : uint
     Dark = 1
 }
 
+[Flags]
+internal enum NativeAccessibilityPreferences : uint
+{
+    None = 0,
+    ForcedColors = 1 << 0,
+    ReducedMotion = 1 << 1,
+    MoreContrast = 1 << 2
+}
+
+/// <summary>Host accessibility preferences published to CSS media queries.</summary>
+[Flags]
+public enum WebSceneAccessibilityPreferences : uint
+{
+    None = 0,
+    ForcedColors = 1 << 0,
+    ReducedMotion = 1 << 1,
+    MoreContrast = 1 << 2
+}
+
 internal static class NativeFrameInput
 {
     private const uint Frame = 5;

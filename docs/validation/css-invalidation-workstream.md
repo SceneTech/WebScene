@@ -608,6 +608,17 @@ Fresh populated profiling still points to compound matching and candidate
 sorting, but changed live content and concurrent host compilation exclude its
 timings from improvement/regression claims. No further speedup is claimed.
 
+The [matched-rule ordering stage](css-matched-rule-ordering-20260917.md),
+`6aa01a5c`, moves precedence sorting after selector/media/scope rejection. The
+focused sparse fixture sorts six matching entries while candidate counts grow
+39→1,031; numeric index deduplication still visits the full list. Native contracts
+pass 81/81, cumulative scaling and adjacent runtime groups pass, and development
+SDK Kestrel parity remains exact. Serial Spotify A/B/B/A completes but is rejected
+for timing claims because of large variation and concurrent host compilation.
+This is verified structural work reduction, not another accepted Spotify
+speedup or completion of breakpoint/physical-frame acceptance. The manual demo
+remains the previous qualified build.
+
 The [September 17 resize-stage investigation](css-resize-stage-profile.md) records
 fresh production profiles and fixes the mismatched native/Chrome benchmark waveform.
 It does not qualify physical presentation or end-to-end browser parity.

@@ -125,6 +125,23 @@ bool test_match_before_precedence_sorting() {
             || deduplicated.pseudo!=reversed.pseudo) return false;
         std::cout<<"matched-order unrelated="<<unrelated<<" candidates="<<indices.size()
             <<" precedence-entries="<<reversed.ordinary.size()+reversed.pseudo.size()<<'\n';
+        // Also check the dense case against the previous precedence oracle:
+        // filtering is not allowed to change ordering when every selector hits.
+        const auto dense=css::match_candidates(document,node,rules,indices,
+            [](const auto&,const auto&,const auto&) {return true;},
+            [](const auto&,const auto&) {return true;});
+        auto reference_indices=indices;
+        css::sort_candidates(rules,reference_indices);
+        std::vector<const css::css_rule*> reference_ordinary;
+        std::vector<std::pair<int,const css::css_rule*>> reference_pseudo;
+        for(const auto index:reference_indices) {
+            const auto& rule=rules[index];
+            if(!rule.media_matches) continue;
+            if(rule.payload->pseudo_kind)
+                reference_pseudo.emplace_back(rule.payload->pseudo_kind,&rule);
+            else reference_ordinary.push_back(&rule);
+        }
+        if(dense.ordinary!=reference_ordinary || dense.pseudo!=reference_pseudo) return false;
     }
     return true;
 }

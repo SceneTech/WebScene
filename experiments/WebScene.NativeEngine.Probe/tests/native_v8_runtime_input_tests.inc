@@ -1929,15 +1929,13 @@ void test_pointer_cursor_and_external_anchor_host_handoff(webscene_engine* engin
 
     require(
         evaluate(engine,
-            "(() => { focus(); close(); return [typeof focus, typeof close]; })()",
+            "(() => { focus(); return [typeof focus, typeof close]; })()",
             "native-window-actions.js") == R"(["function","function"])",
         "top-level focus/close methods were not installed");
     const auto focus_request = take_typed_host_request(engine);
-    const auto close_request = take_typed_host_request(engine);
     require(
-        focus_request.kind == WEBSCENE_HOST_REQUEST_WINDOW_FOCUS_V1
-            && close_request.kind == WEBSCENE_HOST_REQUEST_WINDOW_CLOSE_V1,
-        "top-level focus/close did not emit ordered typed host requests");
+        focus_request.kind == WEBSCENE_HOST_REQUEST_WINDOW_FOCUS_V1,
+        "top-level focus did not emit its typed host request");
 
     execute(engine, R"JS(
         addEventListener('beforeunload', event => event.preventDefault(), { once: true });
@@ -2235,6 +2233,175 @@ void test_typed_window_host_request_performance(webscene_engine* engine)
         "10,000 typed window host requests exceeded five seconds");
     std::cout << "Typed window host request gate: operations="
               << operation_count << " elapsed=" << elapsed << "s\n";
+}
+
+void test_script_window_close_lifecycle(webscene_engine* engine)
+{
+    execute_and_wait(engine, R"JS(
+        globalThis.__scriptCloseLifecycle = {
+          beforeunload: 0,
+          pagehide: 0,
+          microtasks: 0,
+          veto: true,
+          pagehideCancelable: null,
+          persisted: null
+        };
+        addEventListener('beforeunload', event => {
+          ++__scriptCloseLifecycle.beforeunload;
+          Promise.resolve().then(() => ++__scriptCloseLifecycle.microtasks);
+          if (__scriptCloseLifecycle.veto) event.preventDefault();
+        });
+        addEventListener('pagehide', event => {
+          ++__scriptCloseLifecycle.pagehide;
+          __scriptCloseLifecycle.pagehideCancelable = event.cancelable;
+          __scriptCloseLifecycle.persisted = event.persisted;
+          Promise.resolve().then(() => ++__scriptCloseLifecycle.microtasks);
+        });
+    )JS", "script-close-lifecycle-setup.js");
+
+    execute_and_wait(engine, "close()", "script-close-veto.js");
+    auto state = evaluate(engine, "__scriptCloseLifecycle",
+        "script-close-veto-result.js");
+    require(
+        !take_typed_host_request(engine)
+            && state
+                == R"({"beforeunload":1,"pagehide":0,"microtasks":1,"veto":true,"pagehideCancelable":null,"persisted":null})",
+        "vetoed script close reached the host or dispatched pagehide: " + state);
+
+    execute_and_wait(engine, R"JS(
+        __scriptCloseLifecycle.veto = false;
+        close();
+    )JS", "script-close-allow.js");
+    const auto allowed_request = take_typed_host_request(engine);
+    state = evaluate(engine, "__scriptCloseLifecycle",
+        "script-close-allow-result.js");
+    require(
+        allowed_request.kind == WEBSCENE_HOST_REQUEST_WINDOW_CLOSE_V1
+            && state
+                == R"({"beforeunload":2,"pagehide":1,"microtasks":3,"veto":false,"pagehideCancelable":false,"persisted":false})",
+        "allowed script close did not publish pagehide before host handoff: "
+            + state);
+
+    execute_and_wait(engine, "close()", "script-close-repeat.js");
+    const auto repeated_request = take_typed_host_request(engine);
+    require(
+        repeated_request.kind == WEBSCENE_HOST_REQUEST_WINDOW_CLOSE_V1
+            && evaluate(engine, "__scriptCloseLifecycle",
+                "script-close-repeat-result.js") == state,
+        "repeated script close redispatched a terminal lifecycle event");
+
+    webscene_engine_memory_metrics memory_before{
+        sizeof(webscene_engine_memory_metrics)};
+    require(webscene_engine_get_memory_metrics(engine, &memory_before) != 0,
+        "script close baseline memory metrics were unavailable");
+    constexpr unsigned operation_count = 10000U;
+    constexpr unsigned batch_size = 1000U;
+    const auto started = std::chrono::steady_clock::now();
+    for (unsigned offset = 0; offset < operation_count; offset += batch_size) {
+        require(evaluate(engine, R"JS(
+            for (let index = 0; index < 1000; ++index) close();
+            true
+        )JS", "script-close-performance.js") == "true",
+            "repeated script close batch did not complete");
+        for (unsigned index = 0; index < batch_size; ++index) {
+            require(
+                take_typed_host_request(engine).kind
+                    == WEBSCENE_HOST_REQUEST_WINDOW_CLOSE_V1,
+                "repeated script close changed host request ordering");
+        }
+    }
+    const auto elapsed = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - started).count();
+    require(elapsed < 5.0,
+        "10,000 coalesced script close requests exceeded five seconds");
+    require(
+        evaluate(engine, "__scriptCloseLifecycle",
+            "script-close-performance-result.js") == state,
+        "repeated script close redispatched terminal lifecycle events under load");
+
+    require(webscene_engine_request_low_memory(engine) != 0,
+        "script close low-memory request was rejected");
+    webscene_engine_memory_metrics memory_after{
+        sizeof(webscene_engine_memory_metrics)};
+    for (auto attempt = 0; attempt < 500; ++attempt) {
+        require(webscene_engine_get_memory_metrics(engine, &memory_after) != 0,
+            "script close final memory metrics were unavailable");
+        if (memory_after.low_memory_notifications
+            > memory_before.low_memory_notifications) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    require(
+        memory_after.low_memory_notifications
+            > memory_before.low_memory_notifications,
+        "script close low-memory collection did not complete");
+    require(
+        memory_after.v8_used_heap_bytes
+            <= memory_before.v8_used_heap_bytes + 4U * 1024U * 1024U,
+        "repeated script close retained more than 4 MiB of V8 heap");
+    std::cout << "Script close gate: operations=" << operation_count
+              << " elapsed=" << elapsed << "s heapBefore="
+              << memory_before.v8_used_heap_bytes << " heapAfter="
+              << memory_after.v8_used_heap_bytes << "\n";
+
+    auto* overflow_engine = webscene_engine_create(0);
+    require(overflow_engine != nullptr,
+        "script close queue-overflow engine creation failed");
+    execute_and_wait(overflow_engine, R"JS(
+        globalThis.__overflowCloseLifecycle = { beforeunload: 0, pagehide: 0 };
+        addEventListener('beforeunload', () => ++__overflowCloseLifecycle.beforeunload);
+        addEventListener('pagehide', () => ++__overflowCloseLifecycle.pagehide);
+        for (let index = 0; index < 1024; ++index) focus();
+        try { close(); } catch (error) { globalThis.__overflowCloseError = String(error); }
+    )JS", "script-close-queue-overflow.js");
+    require(
+        evaluate(overflow_engine,
+            "[__overflowCloseLifecycle, __overflowCloseError.includes('rejected')]",
+            "script-close-queue-overflow-result.js")
+                == R"([{"beforeunload":0,"pagehide":0},true])",
+        "a rejected script-close handoff dispatched terminal lifecycle events");
+    for (auto index = 0; index < 1024; ++index) {
+        require(
+            take_typed_host_request(overflow_engine).kind
+                == WEBSCENE_HOST_REQUEST_WINDOW_FOCUS_V1,
+            "script-close queue-overflow setup changed host request ordering");
+    }
+    execute_and_wait(overflow_engine, "close()",
+        "script-close-queue-overflow-recovery.js");
+    require(
+        take_typed_host_request(overflow_engine).kind
+                == WEBSCENE_HOST_REQUEST_WINDOW_CLOSE_V1
+            && evaluate(overflow_engine, "__overflowCloseLifecycle",
+                "script-close-queue-overflow-recovery-result.js")
+                == R"({"beforeunload":1,"pagehide":1})",
+        "script close did not recover after host-request queue pressure");
+    webscene_engine_destroy(overflow_engine);
+
+    auto* error_engine = webscene_engine_create(0);
+    require(error_engine != nullptr,
+        "script close error recovery engine creation failed");
+    execute_and_wait(error_engine, R"JS(
+        const dispatch = globalThis.dispatchEvent;
+        let failPagehide = true;
+        globalThis.dispatchEvent = event => {
+          if (event.type === 'pagehide' && failPagehide) {
+            failPagehide = false;
+            throw new Error('script pagehide failure');
+          }
+          return dispatch.call(globalThis, event);
+        };
+        try { close(); } catch (error) { globalThis.__scriptCloseError = String(error); }
+    )JS", "script-close-pagehide-error.js");
+    require(
+        !take_typed_host_request(error_engine)
+            && evaluate(error_engine, "__scriptCloseError.includes('script pagehide failure')",
+                "script-close-pagehide-error-result.js") == "true",
+        "failed script pagehide reached the host or lost its error");
+    execute_and_wait(error_engine, "close()", "script-close-error-recovery.js");
+    require(
+        take_typed_host_request(error_engine).kind
+            == WEBSCENE_HOST_REQUEST_WINDOW_CLOSE_V1,
+        "script close did not recover after a pagehide listener error");
+    webscene_engine_destroy(error_engine);
 }
 
 void test_host_driven_window_close_lifecycle(webscene_engine* engine)

@@ -353,6 +353,11 @@ int main()
                 "host-driven close engine creation failed");
             test_host_driven_window_close_lifecycle(focused_engine);
             webscene_engine_destroy(focused_engine);
+            focused_engine = webscene_engine_create(0);
+            require(focused_engine != nullptr,
+                "script close engine creation failed");
+            test_script_window_close_lifecycle(focused_engine);
+            webscene_engine_destroy(focused_engine);
             return 0;
         }
         if (selected == "input-diagnostics-pointer-focus") {
@@ -951,6 +956,13 @@ int main()
         require(close_engine != nullptr,
             "host-driven close engine creation failed");
         test_host_driven_window_close_lifecycle(close_engine);
+        webscene_engine_destroy(close_engine);
+    }
+    {
+        auto* close_engine = webscene_engine_create(0);
+        require(close_engine != nullptr,
+            "script close engine creation failed");
+        test_script_window_close_lifecycle(close_engine);
         webscene_engine_destroy(close_engine);
     }
     test_enter_dispatches_browser_keypress_for_interval_commit(engine);

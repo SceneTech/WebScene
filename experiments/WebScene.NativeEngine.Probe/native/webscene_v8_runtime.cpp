@@ -4571,14 +4571,22 @@ struct v8_dom_runtime::implementation final {
         return true;
     }
 
+    static constexpr size_t maximum_host_request_count = 1024U;
+
+    bool typed_host_request_capacity_available()
+    {
+        std::lock_guard lock(host_request_mutex);
+        return host_requests.size() + typed_host_requests.size()
+            < maximum_host_request_count;
+    }
+
     bool enqueue_typed_host_request(std::unique_ptr<native_host_request> request)
     {
         if (!request) return false;
         {
             std::lock_guard lock(host_request_mutex);
-            constexpr size_t maximum_host_requests = 1024U;
             if (host_requests.size() + typed_host_requests.size()
-                >= maximum_host_requests) return false;
+                >= maximum_host_request_count) return false;
             typed_host_requests.push_back(std::move(request));
         }
         if (host_request_available) host_request_available();
@@ -4780,23 +4788,24 @@ struct v8_dom_runtime::implementation final {
         auto local_context = info.GetIsolate()->GetCurrentContext();
         if (self == nullptr || local_context != self->context.Get(info.GetIsolate()))
             return;
-        auto global = local_context->Global();
-        auto event = self->create_event_instance(local_context);
-        event->Set(local_context, js_string(info.GetIsolate(), "type"),
-            js_string(info.GetIsolate(), "beforeunload")).Check();
-        event->Set(local_context, js_string(info.GetIsolate(), "bubbles"),
-            v8::False(info.GetIsolate())).Check();
-        event->Set(local_context, js_string(info.GetIsolate(), "cancelable"),
-            v8::True(info.GetIsolate())).Check();
-        v8::Local<v8::Value> dispatcher;
-        v8::Local<v8::Value> dispatch_result;
-        v8::Local<v8::Value> arguments[] = {event};
-        if (global->Get(local_context, js_string(info.GetIsolate(), "dispatchEvent"))
-                .ToLocal(&dispatcher)
-            && dispatcher->IsFunction()
-            && dispatcher.As<v8::Function>()->Call(
-                    local_context, global, 1, arguments).ToLocal(&dispatch_result)
-            && dispatch_result->IsFalse()) {
+        // All producers run on this engine's worker. Check capacity before
+        // dispatching the terminal lifecycle so a rejected handoff cannot
+        // leave the document page-hidden while its native window remains open.
+        if (!self->typed_host_request_capacity_available()) {
+            info.GetIsolate()->ThrowException(v8::Exception::Error(
+                js_string(info.GetIsolate(), "WebScene rejected the close-window request")));
+            return;
+        }
+        const auto decision =
+            self->request_window_close_in_current_realm(local_context);
+        if (decision == WEBSCENE_WINDOW_CLOSE_VETO_V1) {
+            return;
+        }
+        if (decision != WEBSCENE_WINDOW_CLOSE_ALLOW_V1) {
+            const auto message = "WebScene rejected the close-window lifecycle: "
+                + self->last_error;
+            info.GetIsolate()->ThrowException(v8::Exception::Error(
+                js_string(info.GetIsolate(), message.c_str())));
             return;
         }
         if (!self->queue_top_level_window_action(

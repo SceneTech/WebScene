@@ -4,6 +4,165 @@
         return resource_origin(std::string(address));
     }
 
+    static constexpr size_t maximum_service_worker_queue_messages = 256U;
+    static constexpr size_t maximum_service_worker_queue_bytes =
+        16U * 1024U * 1024U;
+
+    static void set_service_worker_client_properties(
+        v8::Isolate* isolate,
+        v8::Local<v8::Context> context,
+        v8::Local<v8::Object> object,
+        const service_worker_client_descriptor& client)
+    {
+        const auto set = [&](const char* name, std::string_view value) {
+            object->Set(
+                context,
+                js_string(isolate, name),
+                js_dom_string(isolate, value)).Check();
+        };
+        set("id", client.id);
+        set("url", client.url);
+        set("type", client.type);
+        set("frameType", client.frame_type);
+        object->Set(
+            context,
+            js_string(isolate, "generation"),
+            v8::Number::New(isolate, static_cast<double>(client.generation))).Check();
+    }
+
+    static v8::MaybeLocal<v8::Value> service_worker_transfer(
+        const v8::FunctionCallbackInfo<v8::Value>& info,
+        int index)
+    {
+        if (info.Length() <= index) return v8::Undefined(info.GetIsolate());
+        if (info[index]->IsObject() && !info[index]->IsArray()) {
+            return info[index].As<v8::Object>()->Get(
+                info.GetIsolate()->GetCurrentContext(),
+                js_string(info.GetIsolate(), "transfer"));
+        }
+        return info[index];
+    }
+
+    static void service_worker_global_control(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* runtime = static_cast<service_worker_runtime_state*>(
+            info.Data().As<v8::External>()->Value(
+                v8::kExternalPointerTypeTagDefault));
+        if (runtime == nullptr || info.Length() < 1) return;
+        auto* isolate = info.GetIsolate();
+        auto context = isolate->GetCurrentContext();
+        const auto operation = to_utf8(isolate, info[0]);
+        if (operation == "claim") {
+            std::lock_guard lock(runtime->mutex);
+            if (!runtime->stopped) runtime->claimed = true;
+            return;
+        }
+        if (operation == "get" || operation == "list") {
+            std::vector<service_worker_client_descriptor> clients;
+            {
+                std::lock_guard lock(runtime->mutex);
+                if (operation == "get") {
+                    if (info.Length() < 2) return;
+                    const auto id = to_utf8(isolate, info[1]);
+                    if (const auto found = runtime->clients.find(id);
+                        found != runtime->clients.end()) {
+                        clients.push_back(found->second);
+                    }
+                } else {
+                    const auto requested_type = info.Length() > 1
+                        ? to_utf8(isolate, info[1]) : std::string{};
+                    for (const auto& [id, client] : runtime->clients) {
+                        static_cast<void>(id);
+                        if (requested_type.empty() || requested_type == "all"
+                            || client.type == requested_type) {
+                            clients.push_back(client);
+                        }
+                    }
+                }
+            }
+            std::ranges::sort(clients, {}, [](const auto& client) {
+                return client.id;
+            });
+            if (operation == "get") {
+                if (clients.empty()) {
+                    info.GetReturnValue().Set(v8::Undefined(isolate));
+                    return;
+                }
+                auto value = v8::Object::New(isolate);
+                set_service_worker_client_properties(
+                    isolate, context, value, clients.front());
+                info.GetReturnValue().Set(value);
+                return;
+            }
+            auto result = v8::Array::New(isolate, static_cast<int>(clients.size()));
+            for (uint32_t index = 0U; index < clients.size(); ++index) {
+                auto value = v8::Object::New(isolate);
+                set_service_worker_client_properties(
+                    isolate, context, value, clients[index]);
+                result->Set(context, index, value).Check();
+            }
+            info.GetReturnValue().Set(result);
+            return;
+        }
+        if (operation == "post") {
+            if (info.Length() < 3) return;
+            const auto client_id = to_utf8(isolate, info[1]);
+            uint64_t generation = 0U;
+            size_t remaining_bytes = 0U;
+            {
+                std::lock_guard lock(runtime->mutex);
+                const auto client = runtime->clients.find(client_id);
+                if (runtime->stopped || client == runtime->clients.end()) {
+                    throw_dom_exception(
+                        info, "The service worker client is unavailable.",
+                        "InvalidStateError");
+                    return;
+                }
+                if (runtime->outgoing.size()
+                        >= maximum_service_worker_queue_messages
+                    || runtime->outgoing_bytes
+                        >= maximum_service_worker_queue_bytes) {
+                    throw_dom_exception(
+                        info, "Service worker message queue capacity exhausted.",
+                        "QuotaExceededError");
+                    return;
+                }
+                generation = client->second.generation;
+                remaining_bytes = maximum_service_worker_queue_bytes
+                    - runtime->outgoing_bytes;
+            }
+            v8::Local<v8::Value> transfer;
+            if (!service_worker_transfer(info, 3).ToLocal(&transfer)) return;
+            clone_packet packet;
+            if (!serialize_clone(
+                    info, info[2], transfer, packet, remaining_bytes)) return;
+            const auto bytes = clone_packet_size(packet);
+            {
+                std::lock_guard lock(runtime->mutex);
+                if (runtime->stopped
+                    || runtime->outgoing.size()
+                        >= maximum_service_worker_queue_messages
+                    || bytes > maximum_service_worker_queue_bytes
+                        - runtime->outgoing_bytes) {
+                    throw_dom_exception(
+                        info, "Service worker message queue capacity exhausted.",
+                        "QuotaExceededError");
+                    return;
+                }
+                runtime->outgoing_bytes += bytes;
+                runtime->outgoing_high_water = std::max(
+                    runtime->outgoing_high_water, runtime->outgoing.size() + 1U);
+                runtime->outgoing.push_back(service_worker_message{
+                    client_id, generation, std::move(packet)});
+            }
+            if (runtime->notify_client) runtime->notify_client();
+            return;
+        }
+        isolate->ThrowException(v8::Exception::TypeError(
+            js_string(isolate, "Unknown service worker global operation")));
+    }
+
     static bool is_service_worker_secure_origin(std::string_view origin)
     {
         if (origin == "file://") return true;
@@ -83,9 +242,14 @@
     std::shared_ptr<service_worker_runtime_state> start_service_worker_runtime(
         const service_worker_registration_state& registration,
         std::string source,
-        std::string origin)
+        std::string origin,
+        std::vector<service_worker_client_descriptor> clients)
     {
         auto state = std::make_shared<service_worker_runtime_state>();
+        for (auto& client : clients) {
+            state->clients.emplace(client.id, std::move(client));
+        }
+        state->notify_client = runtime_work_available;
         auto loader = load_resource_callback;
         auto root = resource_root;
         auto object_urls = object_url_registry;
@@ -146,16 +310,10 @@
                     global->Delete(realm, js_string(child->isolate, "window")).FromMaybe(false);
                     global->Set(
                         realm,
-                        js_string(child->isolate, "__webSceneServiceWorkerClaim"),
+                        js_string(child->isolate, "__webSceneServiceWorkerGlobalControl"),
                         v8::Function::New(
                             realm,
-                            [](const v8::FunctionCallbackInfo<v8::Value>& info) {
-                                auto* runtime = static_cast<service_worker_runtime_state*>(
-                                    info.Data().As<v8::External>()->Value(
-                                        v8::kExternalPointerTypeTagDefault));
-                                std::lock_guard lock(runtime->mutex);
-                                if (!runtime->stopped) runtime->claimed = true;
-                            },
+                            service_worker_global_control,
                             v8::External::New(
                                 child->isolate,
                                 state.get(),
@@ -190,14 +348,60 @@
                         });
                         Object.setPrototypeOf(
                           globalThis, ServiceWorkerGlobalScope.prototype);
-                        const claim = globalThis.__webSceneServiceWorkerClaim;
-                        delete globalThis.__webSceneServiceWorkerClaim;
+                        const control = globalThis.__webSceneServiceWorkerGlobalControl;
+                        delete globalThis.__webSceneServiceWorkerGlobalControl;
+                        function Client() { throw new TypeError('Illegal constructor'); }
+                        function WindowClient() { throw new TypeError('Illegal constructor'); }
+                        Object.setPrototypeOf(WindowClient.prototype, Client.prototype);
+                        Object.defineProperty(Client.prototype, Symbol.toStringTag,
+                          {value:'Client', configurable:true});
+                        Object.defineProperty(WindowClient.prototype, Symbol.toStringTag,
+                          {value:'WindowClient', configurable:true});
+                        const clientState = new WeakMap();
+                        const clientWrappers = new Map();
+                        const hydrateClient = snapshot => {
+                          if (!snapshot) return undefined;
+                          let value = clientWrappers.get(snapshot.id);
+                          if (!value) {
+                            value = Object.create(WindowClient.prototype);
+                            clientWrappers.set(snapshot.id, value);
+                          }
+                          clientState.set(value, snapshot);
+                          return value;
+                        };
+                        Object.defineProperty(
+                          globalThis,
+                          Symbol.for('webscene.internal.serviceWorkerClient'),
+                          {value:hydrateClient});
+                        Object.defineProperties(Client.prototype, {
+                          id: {get() { return clientState.get(this).id; }},
+                          type: {get() { return clientState.get(this).type; }},
+                          url: {get() { return clientState.get(this).url; }},
+                          postMessage: {value(message, options = []) {
+                            control('post', clientState.get(this).id, message, options);
+                          }, writable:true, configurable:true}
+                        });
+                        Object.defineProperties(WindowClient.prototype, {
+                          focused: {get() { return true; }},
+                          visibilityState: {get() { return 'visible'; }},
+                          frameType: {get() { return clientState.get(this).frameType; }},
+                          focus: {value() { return Promise.resolve(this); },
+                            writable:true, configurable:true}
+                        });
                         const clients = Object.freeze({
-                          get() { return Promise.resolve(undefined); },
-                          matchAll() { return Promise.resolve([]); },
-                          claim() { claim(); return Promise.resolve(); }
+                          get(id) {
+                            return Promise.resolve(hydrateClient(control('get', String(id))));
+                          },
+                          matchAll(options = {}) {
+                            const type = options.type === undefined
+                              ? 'all' : String(options.type);
+                            return Promise.resolve(control('list', type).map(hydrateClient));
+                          },
+                          claim() { control('claim'); return Promise.resolve(); }
                         });
                         Object.defineProperties(globalThis, {
+                          Client: {value:Client, writable:true, configurable:true},
+                          WindowClient: {value:WindowClient, writable:true, configurable:true},
                           clients: {value:clients, enumerable:true},
                           skipWaiting: {
                             value() { return Promise.resolve(); },
@@ -266,17 +470,114 @@
                 }
                 state->ready.notify_all();
                 for (;;) {
+                    std::optional<service_worker_message> message;
                     {
                         std::unique_lock lock(state->mutex);
                         state->ready.wait_for(lock, std::chrono::milliseconds(100), [&] {
-                            return state->stopped;
+                            return state->stopped || !state->incoming.empty();
                         });
                         if (state->stopped) break;
+                        if (!state->incoming.empty()) {
+                            message = std::move(state->incoming.front());
+                            state->incoming.pop_front();
+                            const auto bytes = clone_packet_size(message->packet);
+                            state->incoming_bytes = bytes > state->incoming_bytes
+                                ? 0U : state->incoming_bytes - bytes;
+                        }
                     }
                     v8::Isolate::Scope isolate_scope(child->isolate);
                     v8::HandleScope handles(child->isolate);
                     auto realm = child->context.Get(child->isolate);
                     v8::Context::Scope context_scope(realm);
+                    if (message.has_value()) {
+                        v8::TryCatch caught(child->isolate);
+                        std::vector<v8::Local<v8::Object>> ports;
+                        v8::Local<v8::Value> data;
+                        const auto decoded = child->deserialize_clone(
+                            child->isolate,
+                            realm,
+                            message->packet,
+                            &ports).ToLocal(&data);
+                        if (!decoded) caught.Reset();
+                        auto event = v8::Object::New(child->isolate);
+                        event->Set(
+                            realm,
+                            js_string(child->isolate, "type"),
+                            js_string(child->isolate,
+                                decoded ? "message" : "messageerror")).Check();
+                        if (decoded) {
+                            event->Set(
+                                realm, js_string(child->isolate, "data"), data).Check();
+                        }
+                        event->Set(
+                            realm,
+                            js_string(child->isolate, "waitUntil"),
+                            v8::Function::New(
+                                realm,
+                                [](const v8::FunctionCallbackInfo<v8::Value>&) {})
+                                .ToLocalChecked()).Check();
+                        auto port_array = v8::Array::New(
+                            child->isolate, static_cast<int>(ports.size()));
+                        for (uint32_t index = 0U; index < ports.size(); ++index) {
+                            port_array->Set(realm, index, ports[index]).Check();
+                        }
+                        event->Set(
+                            realm,
+                            js_string(child->isolate, "ports"),
+                            port_array).Check();
+                        v8::Local<v8::Value> hydrate_value;
+                        if (auto symbol = v8::Symbol::For(
+                                child->isolate,
+                                js_string(child->isolate,
+                                    "webscene.internal.serviceWorkerClient"));
+                            realm->Global()->Get(realm, symbol).ToLocal(&hydrate_value)
+                            && hydrate_value->IsFunction()) {
+                            service_worker_client_descriptor client;
+                            {
+                                std::lock_guard lock(state->mutex);
+                                if (const auto found = state->clients.find(
+                                        message->client_id);
+                                    found != state->clients.end()
+                                    && found->second.generation
+                                        == message->client_generation) {
+                                    client = found->second;
+                                }
+                            }
+                            if (!client.id.empty()) {
+                                auto snapshot = v8::Object::New(child->isolate);
+                                set_service_worker_client_properties(
+                                    child->isolate, realm, snapshot, client);
+                                v8::Local<v8::Value> argument[]{snapshot};
+                                v8::Local<v8::Value> source;
+                                if (hydrate_value.As<v8::Function>()->Call(
+                                        realm,
+                                        realm->Global(),
+                                        1,
+                                        argument).ToLocal(&source)) {
+                                    event->Set(
+                                        realm,
+                                        js_string(child->isolate, "source"),
+                                        source).Check();
+                                }
+                            }
+                        }
+                        v8::Local<v8::Value> dispatch;
+                        if (realm->Global()->Get(
+                                realm,
+                                js_string(child->isolate, "dispatchEvent"))
+                                .ToLocal(&dispatch)
+                            && dispatch->IsFunction()) {
+                            v8::Local<v8::Value> argument[]{event};
+                            if (dispatch.As<v8::Function>()->Call(
+                                    realm,
+                                    realm->Global(),
+                                    1,
+                                    argument).IsEmpty()) {
+                                throw std::runtime_error(
+                                    child->describe_reported_exception(caught, realm));
+                            }
+                        }
+                    }
                     child->drain_tasks();
                     child->perform_microtask_checkpoint();
                 }
@@ -294,6 +595,20 @@
             }
         });
         return state;
+    }
+
+    std::vector<service_worker_client_descriptor> service_worker_clients_for_scope(
+        std::string_view scope)
+    {
+        std::vector<service_worker_client_descriptor> result;
+        for (const auto& [id, client] : service_worker_clients) {
+            static_cast<void>(id);
+            if (!client.context.IsEmpty()
+                && client.descriptor.url.starts_with(scope)) {
+                result.push_back(client.descriptor);
+            }
+        }
+        return result;
     }
 
     static void service_worker_control(
@@ -331,6 +646,154 @@
             info.GetReturnValue().Set(
                 self->service_worker_registration_snapshot(local_context, value));
         };
+        if (operation == "client") {
+            service_worker_client_state* known = nullptr;
+            for (auto& [id, client] : self->service_worker_clients) {
+                static_cast<void>(id);
+                if (!client.context.IsEmpty()
+                    && client.context.Get(isolate) == local_context) {
+                    known = &client;
+                    break;
+                }
+            }
+            if (known == nullptr) {
+                service_worker_client_descriptor descriptor;
+                descriptor.id = "webscene-client-"
+                    + std::to_string(self->next_service_worker_client_id++);
+                descriptor.url = client_url;
+                descriptor.frame_type = self->in_frame_context()
+                    ? "nested" : "top-level";
+                descriptor.generation = self->document_generation.load(
+                    std::memory_order_acquire);
+                service_worker_client_state client;
+                client.descriptor = descriptor;
+                client.context.Reset(isolate, local_context);
+                auto [inserted, created] = self->service_worker_clients.emplace(
+                    descriptor.id, std::move(client));
+                static_cast<void>(created);
+                known = &inserted->second;
+                for (auto& [scope, registration] :
+                    self->service_worker_registrations) {
+                    if (registration.runtime == nullptr
+                        || !descriptor.url.starts_with(scope)) continue;
+                    std::lock_guard lock(registration.runtime->mutex);
+                    if (!registration.runtime->stopped) {
+                        registration.runtime->clients[descriptor.id] = descriptor;
+                    }
+                }
+            }
+            auto value = v8::Object::New(isolate);
+            set_service_worker_client_properties(
+                isolate, local_context, value, known->descriptor);
+            info.GetReturnValue().Set(value);
+            return;
+        }
+        if (operation == "bind") {
+            if (info.Length() < 3 || !info[2]->IsObject()) return;
+            const auto id = to_utf8(isolate, info[1]);
+            if (auto client = self->service_worker_clients.find(id);
+                client != self->service_worker_clients.end()
+                && !client->second.context.IsEmpty()
+                && client->second.context.Get(isolate) == local_context) {
+                client->second.container.Reset(isolate, info[2].As<v8::Object>());
+                info.GetReturnValue().Set(v8::True(isolate));
+            } else {
+                info.GetReturnValue().Set(v8::False(isolate));
+            }
+            return;
+        }
+        if (operation == "controller") {
+            if (info.Length() < 2) return;
+            const auto id = to_utf8(isolate, info[1]);
+            const auto client = self->service_worker_clients.find(id);
+            if (client == self->service_worker_clients.end()) {
+                info.GetReturnValue().Set(v8::Null(isolate));
+                return;
+            }
+            service_worker_registration_state* matched = nullptr;
+            for (auto& [scope, registration] : self->service_worker_registrations) {
+                if (registration.runtime == nullptr
+                    || !client->second.descriptor.url.starts_with(scope)) continue;
+                std::lock_guard lock(registration.runtime->mutex);
+                if (!registration.runtime->activated
+                    || !registration.runtime->claimed) continue;
+                if (matched == nullptr || scope.size() > matched->scope.size()) {
+                    matched = &registration;
+                }
+            }
+            if (matched == nullptr) info.GetReturnValue().Set(v8::Null(isolate));
+            else snapshot(*matched);
+            return;
+        }
+        if (operation == "post") {
+            if (info.Length() < 5) return;
+            const auto scope = to_utf8(isolate, info[1]);
+            const auto client_id = to_utf8(isolate, info[2]);
+            const auto registration = self->service_worker_registrations.find(scope);
+            const auto client = self->service_worker_clients.find(client_id);
+            if (registration == self->service_worker_registrations.end()
+                || registration->second.runtime == nullptr
+                || client == self->service_worker_clients.end()) {
+                throw_dom_exception(
+                    info, "The service worker is not active.", "InvalidStateError");
+                return;
+            }
+            auto runtime = registration->second.runtime;
+            size_t remaining_bytes = 0U;
+            {
+                std::lock_guard lock(runtime->mutex);
+                const auto runtime_client = runtime->clients.find(client_id);
+                if (runtime->stopped || !runtime->activated
+                    || !runtime->claimed
+                    || runtime_client == runtime->clients.end()
+                    || runtime_client->second.generation
+                        != client->second.descriptor.generation) {
+                    throw_dom_exception(
+                        info, "The service worker client is unavailable.",
+                        "InvalidStateError");
+                    return;
+                }
+                if (runtime->incoming.size()
+                        >= maximum_service_worker_queue_messages
+                    || runtime->incoming_bytes
+                        >= maximum_service_worker_queue_bytes) {
+                    throw_dom_exception(
+                        info, "Service worker message queue capacity exhausted.",
+                        "QuotaExceededError");
+                    return;
+                }
+                remaining_bytes = maximum_service_worker_queue_bytes
+                    - runtime->incoming_bytes;
+            }
+            v8::Local<v8::Value> transfer;
+            if (!service_worker_transfer(info, 4).ToLocal(&transfer)) return;
+            clone_packet packet;
+            if (!serialize_clone(
+                    info, info[3], transfer, packet, remaining_bytes)) return;
+            const auto bytes = clone_packet_size(packet);
+            {
+                std::lock_guard lock(runtime->mutex);
+                if (runtime->stopped
+                    || runtime->incoming.size()
+                        >= maximum_service_worker_queue_messages
+                    || bytes > maximum_service_worker_queue_bytes
+                        - runtime->incoming_bytes) {
+                    throw_dom_exception(
+                        info, "Service worker message queue capacity exhausted.",
+                        "QuotaExceededError");
+                    return;
+                }
+                runtime->incoming_bytes += bytes;
+                runtime->incoming_high_water = std::max(
+                    runtime->incoming_high_water, runtime->incoming.size() + 1U);
+                runtime->incoming.push_back(service_worker_message{
+                    client_id,
+                    client->second.descriptor.generation,
+                    std::move(packet)});
+            }
+            runtime->ready.notify_one();
+            return;
+        }
         if (operation == "register") {
             if (info.Length() < 2) {
                 isolate->ThrowException(v8::Exception::TypeError(
@@ -423,7 +886,10 @@
             if (needs_start || known->second.runtime == nullptr) {
                 auto candidate = known->second;
                 candidate.runtime = self->start_service_worker_runtime(
-                    candidate, source, client_origin);
+                    candidate,
+                    source,
+                    client_origin,
+                    self->service_worker_clients_for_scope(candidate.scope));
                 std::unique_lock lock(candidate.runtime->mutex);
                 candidate.runtime->ready.wait_for(
                     lock,
@@ -527,7 +993,10 @@
                 candidate.source_digest = digest;
                 ++candidate.generation;
                 candidate.runtime = self->start_service_worker_runtime(
-                    candidate, source, client_origin);
+                    candidate,
+                    source,
+                    client_origin,
+                    self->service_worker_clients_for_scope(candidate.scope));
                 std::unique_lock lock(candidate.runtime->mutex);
                 candidate.runtime->ready.wait_for(
                     lock,
@@ -590,6 +1059,127 @@
             js_string(isolate, "Unknown service worker control operation")));
     }
 
+    bool has_service_worker_messages() const
+    {
+        for (const auto& [scope, registration] : service_worker_registrations) {
+            static_cast<void>(scope);
+            if (registration.runtime == nullptr) continue;
+            std::lock_guard lock(registration.runtime->mutex);
+            if (!registration.runtime->outgoing.empty()) return true;
+        }
+        return false;
+    }
+
+    bool drain_service_worker_message()
+    {
+        std::optional<service_worker_message> message;
+        for (auto& [scope, registration] : service_worker_registrations) {
+            static_cast<void>(scope);
+            if (registration.runtime == nullptr) continue;
+            std::lock_guard lock(registration.runtime->mutex);
+            if (registration.runtime->outgoing.empty()) continue;
+            message = std::move(registration.runtime->outgoing.front());
+            registration.runtime->outgoing.pop_front();
+            const auto bytes = clone_packet_size(message->packet);
+            registration.runtime->outgoing_bytes =
+                bytes > registration.runtime->outgoing_bytes
+                    ? 0U : registration.runtime->outgoing_bytes - bytes;
+            break;
+        }
+        if (!message.has_value()) return true;
+        const auto client = service_worker_clients.find(message->client_id);
+        if (client == service_worker_clients.end()
+            || client->second.descriptor.generation
+                != message->client_generation
+            || client->second.context.IsEmpty()
+            || client->second.container.IsEmpty()) {
+            return true;
+        }
+        auto realm = client->second.context.Get(isolate);
+        auto container = client->second.container.Get(isolate);
+        if (realm.IsEmpty() || container.IsEmpty()) return true;
+        v8::Context::Scope scope(realm);
+        v8::TryCatch caught(isolate);
+        std::vector<v8::Local<v8::Object>> ports;
+        v8::Local<v8::Value> data;
+        const auto decoded = deserialize_clone(
+            isolate, realm, message->packet, &ports).ToLocal(&data);
+        if (!decoded) caught.Reset();
+        auto event = v8::Object::New(isolate);
+        event->Set(
+            realm,
+            js_string(isolate, "type"),
+            js_string(isolate, decoded ? "message" : "messageerror")).Check();
+        if (decoded) event->Set(realm, js_string(isolate, "data"), data).Check();
+        auto port_array = v8::Array::New(isolate, static_cast<int>(ports.size()));
+        for (uint32_t index = 0U; index < ports.size(); ++index) {
+            port_array->Set(realm, index, ports[index]).Check();
+        }
+        event->Set(realm, js_string(isolate, "ports"), port_array).Check();
+        v8::Local<v8::Value> source;
+        if (container->Get(
+                realm, js_string(isolate, "controller")).ToLocal(&source)) {
+            event->Set(realm, js_string(isolate, "source"), source).Check();
+        }
+        v8::Local<v8::Value> dispatch;
+        if (!container->Get(
+                realm, js_string(isolate, "dispatchEvent")).ToLocal(&dispatch)
+            || !dispatch->IsFunction()) return true;
+        v8::Local<v8::Value> argument[]{event};
+        if (dispatch.As<v8::Function>()->Call(
+                realm, container, 1, argument).IsEmpty()) {
+            last_error = describe_reported_exception(caught, realm);
+            return false;
+        }
+        perform_microtask_checkpoint();
+        return true;
+    }
+
+    void retire_service_worker_clients(
+        const std::vector<v8::Local<v8::Context>>& retired_contexts)
+    {
+        std::vector<std::string> retired_ids;
+        std::erase_if(service_worker_clients, [&](auto& entry) {
+            if (entry.second.context.IsEmpty()) return true;
+            const auto realm = entry.second.context.Get(isolate);
+            if (std::find(retired_contexts.begin(), retired_contexts.end(), realm)
+                == retired_contexts.end()) return false;
+            retired_ids.push_back(entry.first);
+            entry.second.context.Reset();
+            entry.second.container.Reset();
+            return true;
+        });
+        if (retired_ids.empty()) return;
+        for (auto& [scope, registration] : service_worker_registrations) {
+            static_cast<void>(scope);
+            if (registration.runtime == nullptr) continue;
+            std::lock_guard lock(registration.runtime->mutex);
+            for (const auto& id : retired_ids) {
+                registration.runtime->clients.erase(id);
+            }
+            std::erase_if(
+                registration.runtime->incoming,
+                [&](const auto& message) {
+                    return std::ranges::find(retired_ids, message.client_id)
+                        != retired_ids.end();
+                });
+            std::erase_if(
+                registration.runtime->outgoing,
+                [&](const auto& message) {
+                    return std::ranges::find(retired_ids, message.client_id)
+                        != retired_ids.end();
+                });
+            registration.runtime->incoming_bytes = 0U;
+            for (const auto& message : registration.runtime->incoming) {
+                registration.runtime->incoming_bytes += clone_packet_size(message.packet);
+            }
+            registration.runtime->outgoing_bytes = 0U;
+            for (const auto& message : registration.runtime->outgoing) {
+                registration.runtime->outgoing_bytes += clone_packet_size(message.packet);
+            }
+        }
+    }
+
     void install_service_worker_control(
         v8::Local<v8::Context> local_context,
         v8::Local<v8::Object> global)
@@ -614,6 +1204,7 @@
         constexpr std::string_view source = R"JS(
           (() => {
             const bridge = globalThis.__webSceneServiceWorkerControl;
+            const client = bridge('client');
             const registrations = new Map();
             const registrationState = new WeakMap();
             const workerState = new WeakMap();
@@ -650,11 +1241,12 @@
             Object.defineProperties(ServiceWorker.prototype, {
               scriptURL: {get() { return workerState.get(this).scriptURL; }},
               state: {get() { return workerState.get(this).state; }},
-              postMessage: {value() {
-                throw new DOMException('The service worker is not active.', 'InvalidStateError');
+              postMessage: {value(message, options = []) {
+                const state = workerState.get(this);
+                bridge('post', state.scope, client.id, message, options);
               }, writable:true, configurable:true}
             });
-            const hydrate = snapshot => {
+            const hydrate = (snapshot, notifyControllerChange = true) => {
               let value = registrations.get(snapshot.scope);
               if (!value) {
                 value = eventTarget(ServiceWorkerRegistration.prototype);
@@ -672,11 +1264,13 @@
               const next = registrationState.get(value);
               if (next.active) resolveReady(value);
               if (next.active && snapshot.claimed
-                  && String(location.href).startsWith(snapshot.scope)
+                  && client.url.startsWith(snapshot.scope)
                   && controller !== next.active) {
                 controller = next.active;
-                Promise.resolve().then(() => container.dispatchEvent(
-                  new Event('controllerchange')));
+                if (notifyControllerChange) {
+                  Promise.resolve().then(() => container.dispatchEvent(
+                    new Event('controllerchange')));
+                }
               }
               return value;
             };
@@ -700,6 +1294,7 @@
               }, writable:true, configurable:true}
             });
             const container = eventTarget(ServiceWorkerContainer.prototype);
+            bridge('bind', client.id, container);
             Object.defineProperties(ServiceWorkerContainer.prototype, {
               controller: {get() { return controller; }},
               ready: {get() { return ready; }},
@@ -738,6 +1333,8 @@
             Object.defineProperty(Navigator.prototype, 'serviceWorker', {
               get() { return container; }, enumerable:true, configurable:true
             });
+            const initialController = bridge('controller', client.id);
+            if (initialController !== null) hydrate(initialController, false);
             delete globalThis.__webSceneServiceWorkerControl;
           })();
         )JS";
@@ -751,6 +1348,14 @@
         std::condition_variable ready;
         std::thread thread;
         v8::Isolate* running_isolate{};
+        std::unordered_map<std::string, service_worker_client_descriptor> clients;
+        std::deque<service_worker_message> incoming;
+        std::deque<service_worker_message> outgoing;
+        size_t incoming_bytes{};
+        size_t outgoing_bytes{};
+        size_t incoming_high_water{};
+        size_t outgoing_high_water{};
+        std::function<void()> notify_client;
         bool stopped{false};
         bool activated{false};
         bool claimed{false};
@@ -762,6 +1367,11 @@
                 std::lock_guard lock(mutex);
                 stopped = true;
                 if (running_isolate != nullptr) running_isolate->TerminateExecution();
+                clients.clear();
+                incoming.clear();
+                outgoing.clear();
+                incoming_bytes = 0U;
+                outgoing_bytes = 0U;
             }
             ready.notify_all();
             if (thread.joinable()) thread.join();

@@ -95,6 +95,7 @@
         for (const auto& retired : retired_contexts) {
             cancel_detached_frame_context_tasks(retired);
         }
+        retire_service_worker_clients(retired_contexts);
 #if defined(WEBSCENE_NATIVE_ENGINE_ENABLE_GRAPHICS)
         retire_document_graphics();
 #endif

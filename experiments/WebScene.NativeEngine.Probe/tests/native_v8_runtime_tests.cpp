@@ -31,6 +31,10 @@
 #include <unordered_map>
 #include <vector>
 
+#if defined(__APPLE__) || defined(__linux__)
+#include <sys/resource.h>
+#endif
+
 namespace {
 
 [[noreturn]] void fail(std::string_view message)
@@ -166,6 +170,11 @@ int main()
         }
         if (selected == "service-worker-lifecycle") {
             test_service_worker_lifecycle_performance_and_teardown_gate();
+            return 0;
+        }
+        if (selected == "service-worker-clients") {
+            test_service_worker_client_navigation_generation_gate();
+            test_service_worker_client_queue_performance_and_memory_gate();
             return 0;
         }
         if (selected == "rounded-icon-surfaces") {

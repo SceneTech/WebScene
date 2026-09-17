@@ -1509,6 +1509,8 @@
                         ? html_form_element_template.Get(isolate)
                     : node.tag == "select"
                         ? html_select_element_template.Get(isolate)
+                    : node.tag == "option"
+                        ? html_option_element_template.Get(isolate)
                     : node.tag == "meta"
                         ? html_meta_element_template.Get(isolate)
                     : node.tag == "script"

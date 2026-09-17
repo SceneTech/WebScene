@@ -306,6 +306,59 @@
         set_text_content(name, value, info);
     }
 
+    static void get_option_text(
+        v8::Local<v8::Name>,
+        const v8::PropertyCallbackInfo<v8::Value>& info)
+    {
+        auto* node = unwrap_node(info.Holder());
+        if (node == nullptr || node->tag != "option") return;
+        std::string text;
+        append_node_text(*node, text);
+        std::string normalized;
+        auto pending_space = false;
+        for (const auto character : text) {
+            const auto whitespace = character == ' ' || character == '\t'
+                || character == '\n' || character == '\r' || character == '\f';
+            if (whitespace) {
+                pending_space = !normalized.empty();
+                continue;
+            }
+            if (pending_space) normalized.push_back(' ');
+            normalized.push_back(character);
+            pending_space = false;
+        }
+        info.GetReturnValue().Set(js_dom_string(info.GetIsolate(), normalized));
+    }
+
+    static void set_option_text(
+        v8::Local<v8::Name> name,
+        v8::Local<v8::Value> value,
+        const v8::PropertyCallbackInfo<void>& info)
+    {
+        auto* node = unwrap_node(info.Holder());
+        if (node == nullptr || node->tag != "option") return;
+        set_text_content(name, value, info);
+    }
+
+    static void get_option_or_script_text(
+        v8::Local<v8::Name> name,
+        const v8::PropertyCallbackInfo<v8::Value>& info)
+    {
+        auto* node = unwrap_node(info.Holder());
+        if (node != nullptr && node->tag == "option") get_option_text(name, info);
+        else get_script_text(name, info);
+    }
+
+    static void set_option_or_script_text(
+        v8::Local<v8::Name> name,
+        v8::Local<v8::Value> value,
+        const v8::PropertyCallbackInfo<void>& info)
+    {
+        auto* node = unwrap_node(info.Holder());
+        if (node != nullptr && node->tag == "option") set_option_text(name, value, info);
+        else set_script_text(name, value, info);
+    }
+
     static void get_document_node_type(v8::Local<v8::Name>, const v8::PropertyCallbackInfo<v8::Value>& info)
     {
         info.GetReturnValue().Set(v8::Integer::New(info.GetIsolate(), 9));

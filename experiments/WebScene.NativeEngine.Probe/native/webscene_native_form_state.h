@@ -139,10 +139,9 @@ inline void set_select_value(dom_node& select,std::string_view value) {
     select.mutable_form_control().selection_explicitly_empty=!matched;
 }
 
-inline bool is_text_control(const dom_node* node)
+inline bool supports_text_selection(const dom_node* node)
     {
-        if (node == nullptr || (node->tag != "input" && node->tag != "textarea")
-            || node->attributes.contains("disabled")) {
+        if (node == nullptr || (node->tag != "input" && node->tag != "textarea")) {
             return false;
         }
         if (node->tag == "textarea") return true;
@@ -153,6 +152,12 @@ inline bool is_text_control(const dom_node* node)
             && type->second != "reset" && type->second != "file"
             && type->second != "image" && type->second != "range"
             && type->second != "color";
+    }
+
+inline bool is_text_control(const dom_node* node)
+    {
+        return supports_text_selection(node)
+            && !node->attributes.contains("disabled");
     }
 
 // Initialize the live value once from authored markup. No HTML parser is needed.
@@ -178,6 +183,8 @@ inline void ensure_text_value(dom_node& node) {
     }
     control.value_initialized=true;
     control.selection_start=control.selection_end=control.value.size();
+    control.selection_start_utf16_suboffset=0U;
+    control.selection_end_utf16_suboffset=0U;
     control.selection_direction=text_selection_direction::none;
 }
 
@@ -193,6 +200,128 @@ inline size_t next_utf8_boundary(const std::string& value,size_t index) {
     ++index;
     while(index<value.size() && (static_cast<unsigned char>(value[index])&0xc0U)==0x80U) ++index;
     return index;
+}
+
+inline std::pair<size_t,size_t> utf8_scalar_extent(
+    std::string_view value,size_t index) {
+    if(index>=value.size()) return {0U,0U};
+    const auto first=static_cast<unsigned char>(value[index]);
+    size_t bytes=1U;
+    size_t utf16_units=1U;
+    if((first&0xe0U)==0xc0U) bytes=2U;
+    else if((first&0xf0U)==0xe0U) bytes=3U;
+    else if((first&0xf8U)==0xf0U) {bytes=4U;utf16_units=2U;}
+    if(index+bytes>value.size()) return {1U,1U};
+    for(size_t offset=1U;offset<bytes;++offset)
+        if((static_cast<unsigned char>(value[index+offset])&0xc0U)!=0x80U)
+            return {1U,1U};
+    return {bytes,utf16_units};
+}
+
+// Form-control storage remains byte-oriented so edits never split UTF-8.
+// Selection APIs expose browser UTF-16 code-unit offsets at the JS boundary.
+struct utf8_selection_offset {
+    size_t byte_offset{};
+    uint8_t utf16_suboffset{};
+};
+
+inline size_t utf16_offset_from_utf8_selection(
+    std::string_view value,utf8_selection_offset selection) {
+    const auto byte_offset=selection.byte_offset;
+    const auto limit=std::min(byte_offset,value.size());
+    size_t bytes=0U,units=0U;
+    while(bytes<limit) {
+        const auto [length,utf16_units]=utf8_scalar_extent(value,bytes);
+        if(length==0U || bytes+length>limit) break;
+        bytes+=length;
+        units+=utf16_units;
+    }
+    if(bytes<value.size()) {
+        const auto [length,utf16_units]=utf8_scalar_extent(value,bytes);
+        if(length!=0U)
+            units+=std::min<size_t>(selection.utf16_suboffset,utf16_units-1U);
+    }
+    return units;
+}
+
+inline utf8_selection_offset utf8_selection_from_utf16_offset(
+    std::string_view value,size_t utf16_offset) {
+    size_t bytes=0U,units=0U;
+    while(bytes<value.size() && units<utf16_offset) {
+        const auto [length,utf16_units]=utf8_scalar_extent(value,bytes);
+        if(length==0U) break;
+        if(units+utf16_units>utf16_offset)
+            return {bytes,static_cast<uint8_t>(utf16_offset-units)};
+        bytes+=length;
+        units+=utf16_units;
+    }
+    return {bytes,0U};
+}
+
+inline bool selection_offset_less(
+    utf8_selection_offset left,utf8_selection_offset right) {
+    return left.byte_offset<right.byte_offset
+        || (left.byte_offset==right.byte_offset
+            && left.utf16_suboffset<right.utf16_suboffset);
+}
+
+inline bool selection_offset_equal(
+    utf8_selection_offset left,utf8_selection_offset right) {
+    return left.byte_offset==right.byte_offset
+        && left.utf16_suboffset==right.utf16_suboffset;
+}
+
+inline std::vector<uint16_t> utf16_units_from_utf8(std::string_view value) {
+    std::vector<uint16_t> result;
+    result.reserve(value.size());
+    for(size_t index=0;index<value.size();) {
+        const auto [length,utf16_length]=utf8_scalar_extent(value,index);
+        if(length==0U) break;
+        uint32_t scalar=static_cast<unsigned char>(value[index]);
+        if(length>1U) {
+            scalar&=length==2U?0x1fU:length==3U?0x0fU:0x07U;
+            for(size_t offset=1U;offset<length;++offset)
+                scalar=(scalar<<6U)|(static_cast<unsigned char>(value[index+offset])&0x3fU);
+        }
+        if(utf16_length==2U) {
+            scalar-=0x10000U;
+            result.push_back(static_cast<uint16_t>(0xd800U+(scalar>>10U)));
+            result.push_back(static_cast<uint16_t>(0xdc00U+(scalar&0x3ffU)));
+        } else result.push_back(static_cast<uint16_t>(scalar));
+        index+=length;
+    }
+    return result;
+}
+
+inline void append_wtf8_scalar(std::string& result,uint32_t scalar) {
+    if(scalar<0x80U) result.push_back(static_cast<char>(scalar));
+    else if(scalar<0x800U) {
+        result.push_back(static_cast<char>(0xc0U|(scalar>>6U)));
+        result.push_back(static_cast<char>(0x80U|(scalar&0x3fU)));
+    } else if(scalar<0x10000U) {
+        result.push_back(static_cast<char>(0xe0U|(scalar>>12U)));
+        result.push_back(static_cast<char>(0x80U|((scalar>>6U)&0x3fU)));
+        result.push_back(static_cast<char>(0x80U|(scalar&0x3fU)));
+    } else {
+        result.push_back(static_cast<char>(0xf0U|(scalar>>18U)));
+        result.push_back(static_cast<char>(0x80U|((scalar>>12U)&0x3fU)));
+        result.push_back(static_cast<char>(0x80U|((scalar>>6U)&0x3fU)));
+        result.push_back(static_cast<char>(0x80U|(scalar&0x3fU)));
+    }
+}
+
+inline std::string wtf8_from_utf16_units(const std::vector<uint16_t>& units) {
+    std::string result;
+    result.reserve(units.size()*3U);
+    for(size_t index=0;index<units.size();++index) {
+        uint32_t scalar=units[index];
+        if(scalar>=0xd800U && scalar<=0xdbffU && index+1U<units.size()
+            && units[index+1U]>=0xdc00U && units[index+1U]<=0xdfffU) {
+            scalar=0x10000U+((scalar-0xd800U)<<10U)+(units[++index]-0xdc00U);
+        }
+        append_wtf8_scalar(result,scalar);
+    }
+    return result;
 }
 
 }

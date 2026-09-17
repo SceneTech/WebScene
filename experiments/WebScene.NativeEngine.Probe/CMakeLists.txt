@@ -866,6 +866,7 @@ if(WEBSCENE_NATIVE_ENGINE_ENABLE_V8)
             LABELS "native;css;syntax;resource;security;performance;lifecycle")
         add_test(NAME webscene_native_idle_v8_platform COMMAND webscene_native_engine_tests)
         add_test(NAME webscene_native_dom_punctuation_keyboard COMMAND webscene_native_engine_tests)
+        add_test(NAME webscene_native_text_control_select_all COMMAND webscene_native_engine_tests)
         add_test(NAME webscene_native_shortcut_activation COMMAND webscene_native_engine_tests)
         add_test(NAME webscene_native_select_popup_context COMMAND webscene_native_engine_tests)
         add_test(NAME webscene_native_html_select_add COMMAND webscene_native_engine_tests)
@@ -907,6 +908,10 @@ if(WEBSCENE_NATIVE_ENGINE_ENABLE_V8)
             ENVIRONMENT "WEBSCENE_NATIVE_ENGINE_TEST_FILTER=idle-v8-platform")
         set_tests_properties(webscene_native_dom_punctuation_keyboard PROPERTIES
             ENVIRONMENT "WEBSCENE_NATIVE_ENGINE_TEST_FILTER=dom-punctuation-keyboard")
+        set_tests_properties(webscene_native_text_control_select_all PROPERTIES
+            ENVIRONMENT "WEBSCENE_NATIVE_ENGINE_TEST_FILTER=text-control-select-all"
+            TIMEOUT 30
+            LABELS "native;runtime;input;security;performance;lifecycle")
         set_tests_properties(webscene_native_shortcut_activation PROPERTIES
             ENVIRONMENT "WEBSCENE_NATIVE_ENGINE_TEST_FILTER=shortcut-activation"
             TIMEOUT 30

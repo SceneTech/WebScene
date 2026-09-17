@@ -748,6 +748,8 @@
                 control.value_initialized = true;
                 control.selection_start = value.size();
                 control.selection_end = value.size();
+                control.selection_start_utf16_suboffset = 0U;
+                control.selection_end_utf16_suboffset = 0U;
                 control.selection_direction = text_selection_direction::none;
             }
         }

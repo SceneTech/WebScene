@@ -238,6 +238,14 @@ int main()
             webscene_engine_destroy(focused_engine);
             return 0;
         }
+        if (selected == "text-control-select-all") {
+            auto* focused_engine = webscene_engine_create(0);
+            require(focused_engine != nullptr,
+                "text-control select-all engine creation failed");
+            test_text_control_select_all_default_action(focused_engine);
+            webscene_engine_destroy(focused_engine);
+            return 0;
+        }
         if (selected == "shortcut-activation") {
             auto* focused_engine = webscene_engine_create(0);
             require(focused_engine != nullptr,
@@ -1357,6 +1365,7 @@ int main()
 #endif
     test_native_text_input_focus_events_and_caret(engine);
     test_dom_punctuation_keyboard_event_identity(engine);
+    test_text_control_select_all_default_action(engine);
     test_native_shortcut_activation_focus_retarget_and_publication(engine);
     test_chart_printable_key_does_not_duplicate_into_newly_focused_search_input(engine);
     test_svg_dom_parser_preserves_fill_rule(engine);

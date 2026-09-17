@@ -4443,6 +4443,83 @@
         }
     }
 
+    static void element_set_range_text(const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        auto* node = unwrap_node(info.This());
+        if (node == nullptr || !forms::supports_text_selection(node)) return;
+        forms::ensure_text_value(*node);
+        auto& control = node->mutable_form_control();
+        const auto old_start = forms::utf16_offset_from_utf8_selection(
+            control.value,
+            {control.selection_start, control.selection_start_utf16_suboffset});
+        const auto old_end = forms::utf16_offset_from_utf8_selection(
+            control.value,
+            {control.selection_end, control.selection_end_utf16_suboffset});
+        const auto replacement = info.Length() > 0
+            ? forms::utf16_units_from_utf8(to_wtf8(info.GetIsolate(), info[0]))
+            : std::vector<uint16_t>{};
+        auto start = old_start;
+        auto end = old_end;
+        const auto context = info.GetIsolate()->GetCurrentContext();
+        if (info.Length() >= 3) {
+            start = static_cast<size_t>(std::max(
+                0, info[1]->Int32Value(context).FromMaybe(0)));
+            end = static_cast<size_t>(std::max(
+                0, info[2]->Int32Value(context).FromMaybe(0)));
+        }
+        auto units = forms::utf16_units_from_utf8(control.value);
+        start = std::min(start, units.size());
+        end = std::min(end, units.size());
+        if (start > end) std::swap(start, end);
+        units.erase(
+            units.begin() + static_cast<std::ptrdiff_t>(start),
+            units.begin() + static_cast<std::ptrdiff_t>(end));
+        units.insert(
+            units.begin() + static_cast<std::ptrdiff_t>(start),
+            replacement.begin(), replacement.end());
+        control.value = forms::wtf8_from_utf16_units(units);
+        control.value_initialized = true;
+        control.dirty_value = true;
+
+        const auto replacement_end = start + replacement.size();
+        auto selection_start = old_start;
+        auto selection_end = old_end;
+        const auto mode = info.Length() > 3
+            ? to_utf8(info.GetIsolate(), info[3])
+            : std::string{"preserve"};
+        if (mode == "select") {
+            selection_start = start;
+            selection_end = replacement_end;
+        } else if (mode == "start") {
+            selection_start = selection_end = start;
+        } else if (mode == "end") {
+            selection_start = selection_end = replacement_end;
+        } else {
+            const auto delta = static_cast<std::ptrdiff_t>(replacement.size())
+                - static_cast<std::ptrdiff_t>(end - start);
+            const auto adjust = [&](size_t position) {
+                if (position <= start) return position;
+                if (position >= end) return static_cast<size_t>(
+                    static_cast<std::ptrdiff_t>(position) + delta);
+                return start;
+            };
+            selection_start = adjust(old_start);
+            selection_end = adjust(old_end);
+        }
+        const auto start_offset = forms::utf8_selection_from_utf16_offset(
+            control.value, selection_start);
+        const auto end_offset = forms::utf8_selection_from_utf16_offset(
+            control.value, selection_end);
+        control.selection_start = start_offset.byte_offset;
+        control.selection_start_utf16_suboffset = start_offset.utf16_suboffset;
+        control.selection_end = end_offset.byte_offset;
+        control.selection_end_utf16_suboffset = end_offset.utf16_suboffset;
+        control.selection_direction = text_selection_direction::none;
+        control.selection_explicitly_set = true;
+        self->document.mark_dirty();
+    }
+
     static void element_select(const v8::FunctionCallbackInfo<v8::Value>& info)
     {
         auto* self = current(info.GetIsolate());
@@ -4458,7 +4535,8 @@
                 local_context,
                 js_string(info.GetIsolate(), "value")).ToLocal(&value)
             && !value->IsNullOrUndefined()) {
-            length = static_cast<int>(to_utf8(info.GetIsolate(), value).size());
+            length = static_cast<int>(decode_wtf8_to_utf16(
+                to_wtf8(info.GetIsolate(), value)).size());
         }
         v8::Local<v8::Value> arguments[] = {
             v8::Integer::New(info.GetIsolate(), 0),

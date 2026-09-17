@@ -2301,6 +2301,8 @@
                     next->form_control().value.size();
                 next->mutable_form_control().selection_end =
                     next->form_control().value.size();
+                next->mutable_form_control().selection_start_utf16_suboffset = 0U;
+                next->mutable_form_control().selection_end_utf16_suboffset = 0U;
                 next->mutable_form_control().selection_direction =
                     text_selection_direction::none;
                 next->mutable_form_control().selection_explicitly_set = true;
@@ -2453,14 +2455,36 @@
             if (prevented) return true;
             ensure_form_value(*target);
             const auto text = utf8_scalar(static_cast<uint32_t>(input.x));
-            const auto start = std::min(target->mutable_form_control().selection_start, target->mutable_form_control().value.size());
-            const auto end = std::min(
-                std::max(target->mutable_form_control().selection_start, target->mutable_form_control().selection_end),
-                target->mutable_form_control().value.size());
-            target->mutable_form_control().value.replace(start, end - start, text);
+            const forms::utf8_selection_offset start{
+                std::min(target->mutable_form_control().selection_start,
+                    target->mutable_form_control().value.size()),
+                target->mutable_form_control().selection_start_utf16_suboffset};
+            const forms::utf8_selection_offset end{
+                std::min(target->mutable_form_control().selection_end,
+                    target->mutable_form_control().value.size()),
+                target->mutable_form_control().selection_end_utf16_suboffset};
+            auto units=forms::utf16_units_from_utf8(
+                target->mutable_form_control().value);
+            const auto start_units=forms::utf16_offset_from_utf8_selection(
+                target->mutable_form_control().value,start);
+            const auto end_units=forms::utf16_offset_from_utf8_selection(
+                target->mutable_form_control().value,end);
+            const auto inserted_units=forms::utf16_units_from_utf8(text);
+            units.erase(units.begin()+static_cast<std::ptrdiff_t>(start_units),
+                units.begin()+static_cast<std::ptrdiff_t>(end_units));
+            units.insert(units.begin()+static_cast<std::ptrdiff_t>(start_units),
+                inserted_units.begin(),inserted_units.end());
+            target->mutable_form_control().value=forms::wtf8_from_utf16_units(units);
             target->mutable_form_control().dirty_value = true;
-            target->mutable_form_control().selection_start = start + text.size();
-            target->mutable_form_control().selection_end = target->mutable_form_control().selection_start;
+            const auto caret=forms::utf8_selection_from_utf16_offset(
+                target->mutable_form_control().value,
+                start_units+inserted_units.size());
+            target->mutable_form_control().selection_start = caret.byte_offset;
+            target->mutable_form_control().selection_end = caret.byte_offset;
+            target->mutable_form_control().selection_start_utf16_suboffset =
+                caret.utf16_suboffset;
+            target->mutable_form_control().selection_end_utf16_suboffset =
+                caret.utf16_suboffset;
             target->mutable_form_control().selection_direction = text_selection_direction::none;
             target->mutable_form_control().selection_explicitly_set = true;
             target->mutable_form_control().caret_visible = true;
@@ -2581,6 +2605,23 @@
         const auto clipboard_modifier = (input.flags
             & (WEBSCENE_INPUT_MODIFIER_CONTROL | WEBSCENE_INPUT_MODIFIER_META)) != 0U
             && (input.flags & WEBSCENE_INPUT_MODIFIER_ALT) == 0U;
+        if (!prevented && clipboard_modifier
+            && (key_code == 'A' || key_code == 'a')
+            && is_text_control(target)) {
+            ensure_form_value(*target);
+            target->mutable_form_control().selection_start = 0U;
+            target->mutable_form_control().selection_end =
+                target->mutable_form_control().value.size();
+            target->mutable_form_control().selection_start_utf16_suboffset = 0U;
+            target->mutable_form_control().selection_end_utf16_suboffset = 0U;
+            target->mutable_form_control().selection_direction =
+                text_selection_direction::none;
+            target->mutable_form_control().selection_explicitly_set = true;
+            target->mutable_form_control().caret_visible = true;
+            caret_blink_epoch_ms = last_animation_frame_timestamp_ms;
+            document.mark_dirty();
+            return true;
+        }
         if (!prevented && clipboard_modifier) {
             if (key_code == 'C' || key_code == 'c')
                 return dispatch_clipboard_shortcut(*target, "copy");
@@ -2625,6 +2666,8 @@
                         ? end
                         : boundary;
                 target->mutable_form_control().selection_start = target->mutable_form_control().selection_end = position;
+                target->mutable_form_control().selection_start_utf16_suboffset = 0U;
+                target->mutable_form_control().selection_end_utf16_suboffset = 0U;
                 target->mutable_form_control().selection_direction = text_selection_direction::none;
             } else {
                 const auto anchor =
@@ -2644,6 +2687,8 @@
                             : next_utf8_boundary(target->mutable_form_control().value, focus);
                 target->mutable_form_control().selection_start = std::min(anchor, next_focus);
                 target->mutable_form_control().selection_end = std::max(anchor, next_focus);
+                target->mutable_form_control().selection_start_utf16_suboffset = 0U;
+                target->mutable_form_control().selection_end_utf16_suboffset = 0U;
                 target->mutable_form_control().selection_direction = next_focus < anchor
                     ? text_selection_direction::backward
                     : next_focus > anchor
@@ -2666,6 +2711,8 @@
                 target->mutable_form_control().dirty_value = true;
                 target->mutable_form_control().selection_start =
                     target->mutable_form_control().selection_end = start;
+                target->mutable_form_control().selection_start_utf16_suboffset = 0U;
+                target->mutable_form_control().selection_end_utf16_suboffset = 0U;
                 target->mutable_form_control().selection_direction = text_selection_direction::none;
                 target->mutable_form_control().selection_explicitly_set = true;
                 if (!dispatch_input_event_type(input, "input", *target)) return false;

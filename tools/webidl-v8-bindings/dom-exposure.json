@@ -363,6 +363,17 @@
       "constants": []
     },
     {
+      "name": "HTMLOptionElement",
+      "template": "html_option_element_template",
+      "constructor": "illegal_dom_constructor",
+      "parent": "HTMLElement",
+      "attributes": [
+        { "name": "text", "getter": "get_option_text", "setter": "set_option_text" }
+      ],
+      "methods": [],
+      "constants": []
+    },
+    {
       "name": "HTMLMetaElement",
       "template": "html_meta_element_template",
       "constructor": "illegal_dom_constructor",

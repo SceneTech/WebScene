@@ -1394,6 +1394,13 @@
       "reason": "Product-neutral reduction of the reported porting workaround: a default single-select is one replaced control, only its selected label is projected, option descendants do not enter page flow, and programmatic selectedIndex/value state remains live. Native pointer and keyboard tests separately cover user activation."
     },
     {
+      "path": "contracts/html-dynamic-select-layout.html",
+      "type": "contract",
+      "capabilities": ["dynamic-select-principal-box", "select-intrinsic-block-contribution", "selected-option-paint", "select-hit-testing", "following-block-flow"],
+      "evidence": ["settings-shaped-dynamic-select-layout-reduction"],
+      "reason": "A settings-shaped row attaches an empty native select, measures it, populates options through HTMLSelectElement.add(), and requires the resulting 320 by 26 control to contribute to row height, paint its selected value, retain its hit target, and preserve following-row cadence."
+    },
+    {
       "path": "contracts/html-single-select-input.html",
       "type": "testharness",
       "capabilities": ["collapsed-single-select-pointer-activation", "select-focus", "select-input-change-events"],

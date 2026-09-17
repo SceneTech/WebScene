@@ -1,0 +1,123 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Dynamically populated native selects retain their principal box</title>
+<style>
+  body { margin: 0; font: 13px/20px Arial, sans-serif; }
+  .monaco-workbench, .monaco-workbench * { box-sizing: border-box; }
+  .settings-editor { width: 600px; }
+  .settings-editor > .settings-body .settings-tree-container .setting-item-contents {
+    position: relative;
+    padding: 12px 14px 18px;
+    white-space: normal;
+  }
+  .settings-editor > .settings-body .settings-tree-container .setting-item-contents .setting-item-title {
+    display: inline-block;
+    padding-bottom: 2px;
+    font-weight: 600;
+  }
+  .settings-editor > .settings-body .settings-tree-container .setting-item-contents .setting-item-description {
+    margin-top: -1px;
+  }
+  .settings-editor > .settings-body .settings-tree-container .setting-item-contents .setting-item-value {
+    margin-top: 9px;
+    display: flex;
+  }
+  .settings-editor > .settings-body .settings-tree-container .setting-item.setting-item-enum .setting-item-value > .setting-item-control {
+    min-width: initial;
+  }
+  .settings-editor > .settings-body .settings-tree-container .setting-item.setting-item-enum .setting-item-value > .setting-item-control > select {
+    width: 320px;
+  }
+  .monaco-workbench select {
+    font-family: inherit;
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    border: 1px solid;
+  }
+  .monaco-select-box {
+    width: 100%;
+  }
+  .settings-editor > .settings-body .settings-tree-container .setting-item-contents .monaco-select-box {
+    width: initial;
+    font: inherit;
+    height: 26px;
+    padding: 2px 6px;
+  }
+  .monaco-workbench .select-container { position: relative; }
+  .monaco-workbench .select-container::after {
+    content: "v";
+    width: 16px;
+    height: 16px;
+    line-height: 16px;
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    right: 4px;
+    margin: auto;
+    pointer-events: none;
+  }
+  #following { height: 20px; background: green; }
+</style>
+<div class="monaco-workbench">
+  <div class="settings-editor"><div class="settings-body"><div class="settings-tree-container">
+    <div id="enum-row" class="setting-item setting-item-enum">
+      <div class="setting-item-contents">
+        <div class="setting-item-title">Delivery mode</div>
+        <div class="setting-item-description">Controls when changes are delivered.</div>
+        <div class="setting-item-value"><div class="setting-item-control select-container"><select id="choice" class="monaco-select-box"></select></div></div>
+      </div>
+    </div>
+    <div id="following"></div>
+  </div></div></div>
+</div>
+<script>
+  const state = window.__webSceneWptState = {
+    complete: false, harness: null, results: [], errors: [], diagnostics: []
+  };
+  const check = (name, assertion) => {
+    const result = { name };
+    try { assertion(); result.status = "PASS"; result.message = null; result.stack = null; }
+    catch (error) { result.status = "FAIL"; result.message = String(error.message || error); result.stack = error.stack || null; }
+    state.results.push(result);
+  };
+  const require = (value, message) => { if (!value) throw new Error(message); };
+  const close = (actual, expected) => Math.abs(actual - expected) <= .01;
+
+  // Component renderers commonly attach an empty select, allow a synchronous
+  // measurement, and populate options in their subsequent render callback.
+  choice.getBoundingClientRect();
+  choice.options.length = 0;
+  for (const [value, label] of [["off", "Off"], ["delay", "After delay"], ["focus", "On focus change"]]) {
+    const option = document.createElement("option");
+    option.value = value;
+    option.text = label;
+    choice.add(option);
+  }
+  choice.selectedIndex = 1;
+
+  const selectRect = choice.getBoundingClientRect();
+  const rowRect = document.getElementById("enum-row").getBoundingClientRect();
+  const followingRect = document.getElementById("following").getBoundingClientRect();
+
+  check("a populated select retains its authored replaced-control geometry", () => {
+    require(close(selectRect.width, 320) && close(selectRect.height, 26), JSON.stringify(selectRect));
+    require(rowRect.height >= 105, "row height=" + rowRect.height);
+    require(close(followingRect.top, rowRect.bottom), JSON.stringify({ rowRect, followingRect }));
+  });
+  check("the selected label and hit target remain on the principal select", () => {
+    require(choice.value === "delay" && choice.selectedIndex === 1, choice.value);
+    require(choice.options[1].text === "After delay"
+      && choice.options[1].textContent === "After delay", "selected option text was not reflected");
+    require(document.elementFromPoint(selectRect.left + 20, selectRect.top + 13) === choice,
+      "select did not own its center hit target");
+    for (const option of choice.options) {
+      const rect = option.getBoundingClientRect();
+      require(rect.width === 0 && rect.height === 0, "option generated a box: " + JSON.stringify(rect));
+    }
+  });
+
+  state.diagnostics = [JSON.stringify({ selectRect, rowRect, followingRect, value: choice.value })];
+  state.harness = { status: state.results.some(result => result.status !== "PASS") ? 1 : 0, message: null, stack: null };
+  state.complete = true;
+</script>

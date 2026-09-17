@@ -65,6 +65,7 @@
     v8::Global<v8::FunctionTemplate> html_dialog_element_template;
     v8::Global<v8::FunctionTemplate> html_form_element_template;
     v8::Global<v8::FunctionTemplate> html_select_element_template;
+    v8::Global<v8::FunctionTemplate> html_option_element_template;
     v8::Global<v8::FunctionTemplate> html_meta_element_template;
     v8::Global<v8::FunctionTemplate> html_script_element_template;
     v8::Global<v8::FunctionTemplate> html_slot_element_template;

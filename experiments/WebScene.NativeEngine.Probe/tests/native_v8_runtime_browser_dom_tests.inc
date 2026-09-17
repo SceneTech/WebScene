@@ -289,13 +289,14 @@ void test_specialized_content_properties(webscene_engine* engine)
 
 void test_html_select_add_contract(webscene_engine* engine)
 {
+    resize(engine, 600, 300, 1U);
     const auto result = evaluate(engine, R"JS(
         (() => {
           const select = document.createElement('select');
           const option = value => {
             const result = document.createElement('option');
             result.value = value;
-            result.textContent = value;
+            result.text = `  ${value}\t label  `;
             return result;
           };
           const first = option('first');
@@ -319,6 +320,12 @@ void test_html_select_add_contract(webscene_engine* engine)
           const beforeSelf = select.length;
           const selfResult = select.add(first, first);
 
+          select.id = 'dynamic-select';
+          select.style.cssText = 'box-sizing:border-box;width:320px;height:26px;padding:2px 6px;border:1px solid #345;background:#f4f4f4;color:#123456';
+          select.selectedIndex = 2;
+          document.body.appendChild(select);
+          const rect = select.getBoundingClientRect();
+
           // Exercise the VS Code population shape with a direct ceiling that
           // catches blocking publication or accidental quadratic insertion.
           const bounded = document.createElement('select');
@@ -335,7 +342,15 @@ void test_html_select_add_contract(webscene_engine* engine)
           }
           return {
             type: typeof select.add,
+            option: [
+              first instanceof HTMLOptionElement,
+              first.text,
+              first.textContent,
+              Object.getPrototypeOf(first) === HTMLOptionElement.prototype
+            ],
             order: Array.from({length: select.length}, (_, index) => select[index].value),
+            principal: [rect.width, rect.height,
+              document.elementFromPoint(rect.left + 20, rect.top + 13) === select],
             parents: [third.parentNode === group, group.firstChild === third],
             rejection: notFound,
             self: [selfResult === undefined, select.length === beforeSelf],
@@ -343,8 +358,21 @@ void test_html_select_add_contract(webscene_engine* engine)
           };
         })()
     )JS", "native-html-select-add-contract.js");
-    const auto expected = R"JSON({"type":"function","order":["first","indexed","second","third","nested"],"parents":[true,true],"rejection":"NotFoundError","self":[true,true],"bounded":[4096,true]})JSON";
+    const auto expected = R"JSON({"type":"function","option":[true,"first label","  first\t label  ",true],"order":["first","indexed","second","third","nested"],"principal":[320,26,true],"parents":[true,true],"rejection":"NotFoundError","self":[true,true],"bounded":[4096,true]})JSON";
     require(result == expected, "HTMLSelectElement.add contract diverged: " + result);
+
+    webscene_engine_memory_metrics memory{sizeof(webscene_engine_memory_metrics)};
+    for (auto attempt = 0; attempt < 100 && memory.v8_used_heap_bytes == 0U; ++attempt) {
+        require(webscene_engine_get_memory_metrics(engine, &memory) != 0,
+            "dynamic select memory metrics were unavailable");
+        if (memory.v8_used_heap_bytes == 0U) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+    }
+    require(memory.v8_used_heap_bytes > 0U
+            && memory.v8_used_heap_bytes <= 256U * 1024U * 1024U,
+        "dynamic select fixture exceeded the 256 MiB V8 heap ceiling: "
+            + std::to_string(memory.v8_used_heap_bytes));
 }
 
 void test_child_collection_item(webscene_engine* engine)

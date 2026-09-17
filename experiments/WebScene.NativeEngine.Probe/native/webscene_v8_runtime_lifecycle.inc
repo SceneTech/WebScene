@@ -264,6 +264,7 @@
         html_dialog_element_template.Reset();
         html_form_element_template.Reset();
         html_select_element_template.Reset();
+        html_option_element_template.Reset();
         html_meta_element_template.Reset();
         html_script_element_template.Reset();
         html_slot_element_template.Reset();

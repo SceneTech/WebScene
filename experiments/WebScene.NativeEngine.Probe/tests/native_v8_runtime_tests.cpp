@@ -89,6 +89,7 @@ uint8_t measure_baseline_fixture_text(
 #include "native_table_cell_copy_tests.inc"
 #include "native_v8_runtime_resource_tests.inc"
 #include "native_v8_runtime_service_worker_tests.inc"
+#include "native_v8_runtime_stream_fetch_tests.inc"
 #include "native_v8_runtime_response_cookie_tests.inc"
 #include "native_v8_runtime_diagnostics_tests.inc"
 #include "native_resource_failure_diagnostics_tests.inc"
@@ -181,6 +182,10 @@ int main()
         if (selected == "service-worker-clients") {
             test_service_worker_client_navigation_generation_gate();
             test_service_worker_client_queue_performance_and_memory_gate();
+            return 0;
+        }
+        if (selected == "service-worker-fetch") {
+            test_readable_stream_body_and_fetch_event_vertical();
             return 0;
         }
         if (selected == "rounded-icon-surfaces") {

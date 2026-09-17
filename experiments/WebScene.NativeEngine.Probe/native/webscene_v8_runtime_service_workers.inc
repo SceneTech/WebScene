@@ -350,6 +350,118 @@
                           globalThis, ServiceWorkerGlobalScope.prototype);
                         const control = globalThis.__webSceneServiceWorkerGlobalControl;
                         delete globalThis.__webSceneServiceWorkerGlobalControl;
+                        const extendableEventState = new WeakMap();
+                        class ExtendableEvent extends Event {
+                          constructor(type, init = {}) {
+                            super(type, init);
+                            extendableEventState.set(this, {
+                              dispatching:false, pending:[], response:undefined,
+                              responded:false, handledResolve:undefined,
+                              handled:undefined
+                            });
+                            const state = extendableEventState.get(this);
+                            state.handled = new Promise(resolve => state.handledResolve = resolve);
+                          }
+                          waitUntil(value) {
+                            const state = extendableEventState.get(this);
+                            if (!state || !state.dispatching) {
+                              throw new DOMException(
+                                'The event is not being dispatched.', 'InvalidStateError');
+                            }
+                            state.pending.push(Promise.resolve(value));
+                          }
+                        }
+                        Object.defineProperty(ExtendableEvent.prototype, Symbol.toStringTag,
+                          {value:'ExtendableEvent', configurable:true});
+                        const fetchEventState = new WeakMap();
+                        class FetchEvent extends ExtendableEvent {
+                          constructor(type, init) {
+                            if (!init || !(init.request instanceof Request)) {
+                              throw new TypeError('FetchEvent requires a Request');
+                            }
+                            super(type, init);
+                            fetchEventState.set(this, {
+                              request:init.request,
+                              clientId:String(init.clientId ?? ''),
+                              resultingClientId:String(init.resultingClientId ?? ''),
+                              replacesClientId:String(init.replacesClientId ?? ''),
+                              preloadResponse:Promise.resolve(init.preloadResponse),
+                            });
+                          }
+                          get request() {
+                            const state = fetchEventState.get(this);
+                            if (!state) throw new TypeError('Illegal invocation');
+                            return state.request;
+                          }
+                          get clientId() {
+                            const state = fetchEventState.get(this);
+                            if (!state) throw new TypeError('Illegal invocation');
+                            return state.clientId;
+                          }
+                          get resultingClientId() {
+                            const state = fetchEventState.get(this);
+                            if (!state) throw new TypeError('Illegal invocation');
+                            return state.resultingClientId;
+                          }
+                          get replacesClientId() {
+                            const state = fetchEventState.get(this);
+                            if (!state) throw new TypeError('Illegal invocation');
+                            return state.replacesClientId;
+                          }
+                          get preloadResponse() {
+                            const state = fetchEventState.get(this);
+                            if (!state) throw new TypeError('Illegal invocation');
+                            return state.preloadResponse;
+                          }
+                          get handled() {
+                            const state = extendableEventState.get(this);
+                            if (!state) throw new TypeError('Illegal invocation');
+                            return state.handled;
+                          }
+                          respondWith(value) {
+                            const state = extendableEventState.get(this);
+                            if (!state || !state.dispatching || state.responded) {
+                              throw new DOMException(
+                                'respondWith() is unavailable.', 'InvalidStateError');
+                            }
+                            state.responded = true;
+                            state.response = Promise.resolve(value).then(response => {
+                              if (!(response instanceof Response)) {
+                                throw new TypeError('FetchEvent response must be a Response');
+                              }
+                              return response;
+                            });
+                            state.response.then(
+                              () => state.handledResolve(),
+                              () => state.handledResolve());
+                          }
+                        }
+                        Object.defineProperty(FetchEvent.prototype, Symbol.toStringTag,
+                          {value:'FetchEvent', configurable:true});
+                        for (const [prototype, names] of [
+                          [ExtendableEvent.prototype, ['waitUntil']],
+                          [FetchEvent.prototype, [
+                            'request', 'clientId', 'resultingClientId',
+                            'replacesClientId', 'preloadResponse', 'handled',
+                            'respondWith']]
+                        ]) {
+                          for (const name of names) {
+                            const descriptor = Object.getOwnPropertyDescriptor(prototype, name);
+                            Object.defineProperty(
+                              prototype, name, {...descriptor, enumerable:true});
+                          }
+                        }
+                        const dispatchFetch = async init => {
+                          const event = new FetchEvent('fetch', init);
+                          const state = extendableEventState.get(event);
+                          state.dispatching = true;
+                          try { dispatchEvent(event); }
+                          finally { state.dispatching = false; }
+                          if (!state.responded) return undefined;
+                          const response = await state.response;
+                          await Promise.all(state.pending);
+                          return response;
+                        };
                         function Client() { throw new TypeError('Illegal constructor'); }
                         function WindowClient() { throw new TypeError('Illegal constructor'); }
                         function Clients() { throw new TypeError('Illegal constructor'); }
@@ -438,6 +550,12 @@
                         const clients = Object.create(Clients.prototype);
                         clientsState.add(clients);
                         Object.defineProperties(globalThis, {
+                          ExtendableEvent: {
+                            value:ExtendableEvent, writable:true, configurable:true
+                          },
+                          FetchEvent: {
+                            value:FetchEvent, writable:true, configurable:true
+                          },
                           Client: {value:Client, writable:true, configurable:true},
                           WindowClient: {value:WindowClient, writable:true, configurable:true},
                           Clients: {value:Clients, writable:true, configurable:true},
@@ -460,6 +578,9 @@
                               return true;
                             },
                             configurable:true
+                          },
+                          __webSceneDispatchServiceWorkerFetch: {
+                            value:dispatchFetch, configurable:true
                           }
                         });
                       })();

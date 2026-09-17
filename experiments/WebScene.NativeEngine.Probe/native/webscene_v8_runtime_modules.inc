@@ -56,7 +56,16 @@
             if (entry.url == url && entry.realm.Get(isolate) == realm)
                 return entry.module.Get(isolate);
         std::string source, resolved;
-        if (!load_text_resource(url, {}, WEBSCENE_RESOURCE_SCRIPT, source, resolved)) {
+        const resource_request_context request_context{
+            WEBSCENE_RESOURCE_INITIATOR_SUBRESOURCE,
+            current_security_origin(),
+            base.empty() ? current_base_address() : base,
+            WEBSCENE_FETCH_MODE_CORS,
+            WEBSCENE_REQUEST_DESTINATION_SCRIPT,
+            "GET", {}, {}, WEBSCENE_FETCH_CREDENTIALS_SAME_ORIGIN, {}};
+        if (!load_text_resource(
+                url, {}, WEBSCENE_RESOURCE_SCRIPT, source, resolved,
+                nullptr, request_context)) {
             isolate->ThrowException(v8::Exception::TypeError(js_dom_string(isolate,
                 "Unable to load module: " + url)));
             return {};

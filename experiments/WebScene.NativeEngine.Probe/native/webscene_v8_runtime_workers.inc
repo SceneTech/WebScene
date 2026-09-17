@@ -214,7 +214,16 @@
                 return;
             }
             std::string source,resolved,error;
-            if (!self->load_text_resource(url,{},WEBSCENE_RESOURCE_SCRIPT,source,resolved)
+            const resource_request_context request_context{
+                WEBSCENE_RESOURCE_INITIATOR_SUBRESOURCE,
+                self->current_security_origin(),
+                self->current_base_address(),
+                WEBSCENE_FETCH_MODE_SAME_ORIGIN,
+                WEBSCENE_REQUEST_DESTINATION_SCRIPT,
+                "GET", {}, {}, WEBSCENE_FETCH_CREDENTIALS_SAME_ORIGIN, {}};
+            if (!self->load_text_resource(
+                    url, {}, WEBSCENE_RESOURCE_SCRIPT, source, resolved,
+                    nullptr, request_context)
                 || !self->execute_in_context(realm,source,resolved,error)) {
                 info.GetIsolate()->ThrowException(v8::Exception::Error(
                     js_dom_string(info.GetIsolate(),
@@ -338,9 +347,10 @@
         auto loader=self->load_resource_callback;
         auto root=self->resource_root;
         auto object_url_registry=self->object_url_registry;
+        auto cookie_jar=self->cookie_jar;
         auto worker_origin=self->current_security_origin();
         self->dedicated_workers.push_back(std::move(state));
-        raw->thread=std::thread([raw,url,module,worker_origin=std::move(worker_origin),embedded_source=std::move(embedded_source),worker_name=std::move(worker_name),loader=std::move(loader),root=std::move(root),object_url_registry=std::move(object_url_registry)] {
+        raw->thread=std::thread([raw,url,module,worker_origin=std::move(worker_origin),embedded_source=std::move(embedded_source),worker_name=std::move(worker_name),loader=std::move(loader),root=std::move(root),object_url_registry=std::move(object_url_registry),cookie_jar=std::move(cookie_jar)] {
             auto report=[&](const std::string& text) {
                 {
                     std::lock_guard lock(raw->mutex);
@@ -355,6 +365,7 @@
                 v8_dom_runtime runtime(document,[]{return v8_dom_runtime::viewport_metrics{1,1,1,0};},{},loader);
                 auto* child=runtime.impl_.get();
                 child->object_url_registry = object_url_registry;
+                child->cookie_jar = cookie_jar;
                 child->inherited_worker_origin = worker_origin;
                 struct running_guard {
                     worker_state* state;implementation* child;
@@ -398,7 +409,16 @@
                     child->install_dedicated_worker_global_scope(realm);
                     std::string source,resolved,error;
                     if (embedded_source) { source = *embedded_source; resolved = url; }
-                    if(!embedded_source && !child->load_text_resource(url,{},WEBSCENE_RESOURCE_SCRIPT,source,resolved))report("Unable to load worker: "+url);
+                    const resource_request_context request_context{
+                        WEBSCENE_RESOURCE_INITIATOR_SUBRESOURCE,
+                        child->current_security_origin(),
+                        child->current_base_address(),
+                        WEBSCENE_FETCH_MODE_SAME_ORIGIN,
+                        WEBSCENE_REQUEST_DESTINATION_SCRIPT,
+                        "GET", {}, {}, WEBSCENE_FETCH_CREDENTIALS_SAME_ORIGIN, {}};
+                    if(!embedded_source && !child->load_text_resource(
+                            url, {}, WEBSCENE_RESOURCE_SCRIPT, source, resolved,
+                            nullptr, request_context))report("Unable to load worker: "+url);
                     else if(!(module ? child->execute_module(realm,source,resolved,error)
                                       : child->execute_in_context(realm,source,resolved,error)))report(error);
                 }

@@ -1374,7 +1374,7 @@ struct v8_dom_runtime::implementation final {
         auto resolved = resolve_resource_url(specifier, base);
         resource_request_context request_context{
             WEBSCENE_RESOURCE_INITIATOR_FETCH,
-            resource_origin(base),
+            self->current_security_origin(),
             base,
             mode,
             WEBSCENE_REQUEST_DESTINATION_NONE,

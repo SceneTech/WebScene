@@ -167,6 +167,8 @@
     using css_index_string_set = webscene_native::css::css_index_string_set;
     template<typename Value>
     using css_index_string_map = webscene_native::css::css_index_string_map<Value>;
+    template<typename Value>
+    using css_class_index_map = webscene_native::css::css_class_index_map<Value>;
 
     inline static std::mutex shared_css_rule_payload_mutex;
     inline static std::unordered_map<

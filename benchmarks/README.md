@@ -114,11 +114,12 @@ recomputes root variables while retaining selector indexes. Although it eliminat
 targeted exact work, the cumulative product gate found a supported CPU and cadence
 regression, so the experiment is off by default.
 
-For the separate rejected class-key view experiment, build the candidate with
-`WEBSCENE_NATIVE_ENGINE_CSS_CLASS_LOOKUP_VIEW_EXPERIMENT=ON` and use
-`compare_css_class_lookup_benchmark.py` for an ABBA exact-counter report. It eliminates
-owned class lookup keys, but failed the product presentation-cadence gate and remains
-off by default.
+The earlier class-key view experiment changed every selector-index map and failed the
+product presentation-cadence gate. The accepted narrower implementation changes only
+the class index. Use `WEBSCENE_NATIVE_ENGINE_CSS_OWNED_CLASS_LOOKUP_CONTROL=ON` for
+the old owning-key control and `compare_css_class_lookup_benchmark.py` for an ABBA
+exact-counter report. The candidate must preserve cascade work and checksum while
+reporting zero temporary owned class keys and bytes.
 
 The layout benchmark also accepts `--phase scene`. The paired
 `webscene_scene_paint_order_control_benchmark` and

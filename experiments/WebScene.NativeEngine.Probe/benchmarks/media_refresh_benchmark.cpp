@@ -106,13 +106,19 @@ std::string setup_source(int indexed_rules)
               "@media (min-width:601px) { :root { --probe-size: 23px; } }\n"
               ".probe-class-name-that-exceeds-small-string-capacity { "
               "width:var(--probe-size); height:1px; }\n";
+    source << ".settings-panel-class-name-that-exceeds-small-string-capacity { display:block; }\n"
+              ".settings-row-class-name-that-exceeds-small-string-capacity { min-width:0; }\n"
+              ".settings-control-class-name-that-exceeds-small-string-capacity { box-sizing:border-box; }\n";
     for (auto index = 0; index < indexed_rules; ++index) {
         source << ".indexed-rule-" << index << " { padding-left:"
                << (index % 13) << "px; }\n";
     }
     source << "`; document.head.appendChild(style); "
               "const probe = document.createElement('div'); "
-              "probe.className = 'probe-class-name-that-exceeds-small-string-capacity'; "
+              "probe.className = 'probe-class-name-that-exceeds-small-string-capacity "
+              "settings-panel-class-name-that-exceeds-small-string-capacity "
+              "settings-row-class-name-that-exceeds-small-string-capacity "
+              "settings-control-class-name-that-exceeds-small-string-capacity'; "
               "document.body.appendChild(probe); "
               "globalThis.__mediaRefreshProbe = probe; return 1; })()";
     return source.str();

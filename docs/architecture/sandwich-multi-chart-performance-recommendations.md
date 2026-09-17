@@ -499,14 +499,18 @@ comparison/conversion; the cache remains only behind the off-by-default
 target is CSS cascade/index ownership, excluding the already rejected media-refresh
 and sibling-scan designs.
 
-The non-owning CSS class-index lookup experiment is also rejected. Its exact
+The broad non-owning CSS index-map experiment is also rejected. Its exact
 media-refresh fixture preserves 26,000 index operations, 100 root-variable refreshes,
 100 class lookups, and checksum 4,050 while reducing owned lookup keys from 100 to zero
 and copied key bytes from 5,100 to zero. Complete correctness and package gates pass.
 Two incremental product ABBA blocks measure neutral CPU and memory, but
 presentation-interval p95 regresses 9.00% (95% CI +0.66% to +17.90%). Production
-therefore retains the original owning keys and map types; the view path remains only
-behind `WEBSCENE_NATIVE_ENGINE_CSS_CLASS_LOOKUP_VIEW_EXPERIMENT`.
+therefore retained the original owning keys and map types at that checkpoint. The
+later accepted implementation changes only the class index and leaves id, tag,
+attribute, variable-reference, and dependency indexes unchanged. Its four-long-token
+fixture preserves 52,600 index operations and checksum 8,100 while eliminating 800
+temporary owned keys and 46,200 copied bytes. The owning class path remains available
+as `WEBSCENE_NATIVE_ENGINE_CSS_OWNED_CLASS_LOOKUP_CONTROL` for A/B measurement.
 
 The recursive inline-box bounds walker is accepted as the next allocation win. A
 1,013-node exact fixture reduces allocations per layout from 512 to 288 (-43.75%) and

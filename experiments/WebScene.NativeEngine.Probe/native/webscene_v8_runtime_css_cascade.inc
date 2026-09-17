@@ -609,10 +609,10 @@
     };
 
     css_variable_recascade_plan make_css_variable_recascade_plan(
-        size_t first_new_rule) const
+        std::unordered_set<std::string> variables) const
     {
         css_variable_recascade_plan plan;
-        plan.variables = appended_css_custom_properties(first_new_rule);
+        plan.variables = std::move(variables);
         expand_css_variable_dependencies(plan.variables);
         if (plan.variables.empty()) return plan;
 
@@ -685,6 +685,13 @@
             }
         }
         return plan;
+    }
+
+    css_variable_recascade_plan make_css_variable_recascade_plan(
+        size_t first_new_rule) const
+    {
+        return make_css_variable_recascade_plan(
+            appended_css_custom_properties(first_new_rule));
     }
 
     bool reapply_css_variable_dependent_rules(
@@ -972,14 +979,21 @@
     }
 
     // A viewport change does not alter selector state. Re-evaluate only the
-    // rules whose media-query truth changed, then run the complete cascade on
-    // their matched subtrees. Replaying from each matched root preserves
-    // inheritance, custom properties, pseudo-elements and explicit `inherit`
-    // without matching every unrelated Spotify rule against every DOM node.
+    // rules whose media-query truth changed. Non-inherited properties update
+    // their matched subjects and explicit-inherit consumers. Custom-property
+    // dependencies follow their stylesheet and inline alias chains. Modeled
+    // inherited values propagate only while the computed value changes;
+    // unknown/unmodeled inherited properties and shadow boundaries retain the
+    // conservative complete-subtree path.
     void recascade_media_query_changes(
         dom_node& root,
         std::span<const size_t> changed_rules)
     {
+        const auto trace_transition =
+            std::getenv("WEBSCENE_TRACE_RECASCADE_ROOTS") != nullptr;
+        const auto transition_started = trace_transition
+            ? std::chrono::steady_clock::now()
+            : std::chrono::steady_clock::time_point{};
         webscene_frame_trace::scope invalidation_trace(
             frame_trace, "media-invalidation-start", "media-invalidation-end", 0);
         if (changed_rules.empty()) return;
@@ -989,17 +1003,275 @@
         // them before matchMedia listeners can mutate selector state.
         selector_match_batch_scope matching_scope(*this);
         const css::rule_subject_index changed_index(css_rules,changed_rules);
-        std::vector<dom_node*> roots;
-        const auto has_selected_ancestor = [&](const dom_node& node) {
-            for (auto* ancestor = node.parent; ancestor != nullptr;
-                 ancestor = ancestor->parent) {
-                if (std::find(roots.begin(), roots.end(), ancestor) != roots.end()) {
-                    return true;
-                }
+        struct request final {
+            dom_node* root;
+            bool subtree;
+            uint64_t changed_properties;
+            uint64_t inherited_properties;
+            bool full_cascade;
+        };
+        struct rule_effect final {
+            bool subtree{};
+            uint64_t changed_properties{};
+            uint64_t inherited_properties{};
+            std::vector<std::string> changed_variables;
+        };
+        const auto append_variable = [](auto& variables, std::string_view name) {
+            if (std::find(variables.begin(), variables.end(), name)
+                == variables.end()) {
+                variables.emplace_back(name);
+                return true;
             }
             return false;
         };
+        const auto is_known_property = [](std::string_view name) {
+            return css::generated_property_id_lowercase(name)
+                    != css::css_property_id::unknown
+                || std::binary_search(
+                    css::native_storage_only_property_catalog.begin(),
+                    css::native_storage_only_property_catalog.end(), name);
+        };
+        const auto classify_declaration = [
+            &append_variable,
+            &is_known_property](
+            rule_effect& effect,
+            const css_declaration& declaration) {
+            if (declaration.name.starts_with("--")) {
+                append_variable(effect.changed_variables, declaration.name);
+                return;
+            }
+            const auto mask = css::property_mask(declaration.name);
+            if (declaration.name == "all") {
+                effect.subtree = true;
+                return;
+            }
+            if (mask == 0U) {
+                // A supported non-inherited property without a modeled
+                // dependency mask still changes only its matched subject.
+                // Unknown properties and unmodeled inherited values retain
+                // the conservative subtree path.
+                if (!is_known_property(declaration.name)
+                    || css::generated_property_inherits_by_default(
+                        declaration.name)) {
+                    effect.subtree = true;
+                }
+                return;
+            }
+            if (css::generated_property_inherits_by_default(
+                    declaration.name)) {
+                effect.inherited_properties |= mask;
+                return;
+            }
+            effect.changed_properties |= mask;
+        };
+        const auto classify_rule_effect = [&classify_declaration](
+            const css_rule& rule) {
+            rule_effect effect;
+            for (const auto& declaration : rule.declarations()) {
+                classify_declaration(effect, declaration);
+            }
+            return effect;
+        };
+        uint64_t exact_changed_properties = 0U;
+        std::vector<std::string> changed_variables;
+        for (const auto index : changed_rules) {
+            if (index >= css_rules.size()) continue;
+            const auto effect = classify_rule_effect(css_rules[index]);
+            if (!effect.subtree) {
+                exact_changed_properties |= effect.changed_properties;
+                for (const auto& variable : effect.changed_variables) {
+                    append_variable(changed_variables, variable);
+                }
+            }
+        }
+        struct inline_variable_declaration final {
+            std::string_view name;
+            std::string_view value;
+            std::vector<std::string> references;
+        };
+        std::vector<inline_variable_declaration> inline_variable_declarations;
+        if (!changed_variables.empty()) {
+            const auto collect_inline = [&](const auto& self, dom_node& node) -> void {
+                for (const auto& [name, value] :
+                     node.authored_style().declarations) {
+                    if (value.find("var(") == std::string::npos) continue;
+                    const auto references = css_variable_references(value);
+                    inline_variable_declarations.push_back(
+                        {name, value,
+                            {references.begin(), references.end()}});
+                }
+                for (auto* child : node.children) {
+                    if (child == nullptr) continue;
+                    if (child != active_css_cascade_root
+                        && inactive_css_cascades.contains(child)) continue;
+                    self(self, *child);
+                }
+                const auto* shadow = document.shadow_dom(node);
+                if (shadow != nullptr && shadow->root != nullptr) {
+                    self(self, *shadow->root);
+                }
+            };
+            collect_inline(collect_inline, root);
+        }
+        std::unordered_set<std::string> affected_variable_set;
+        std::vector<std::string> affected_variables;
+        const auto queue_affected_variable = [&](std::string_view name) {
+            if (!affected_variable_set.emplace(name).second) return;
+            affected_variables.emplace_back(name);
+        };
+        for (const auto& variable : changed_variables) {
+            queue_affected_variable(variable);
+        }
+        std::unordered_set<size_t> variable_rule_set;
+        for (size_t cursor = 0; cursor < affected_variables.size(); ++cursor) {
+            // Discovering another alias can grow affected_variables. Keep the
+            // current name by value so that growth cannot invalidate the name
+            // while stylesheet and inline dependency edges are inspected.
+            const auto variable = affected_variables[cursor];
+            if (const auto found = css_rules_by_variable_reference.find(variable);
+                found != css_rules_by_variable_reference.end()) {
+                for (const auto index : found->second) {
+                    if (index >= css_rules.size()) continue;
+                    variable_rule_set.insert(index);
+                    for (const auto& declaration :
+                         css_rules[index].declarations()) {
+                        if (!declaration.name.starts_with("--")) continue;
+                        if (css_variable_references(
+                                declaration.value).contains(variable)) {
+                            queue_affected_variable(declaration.name);
+                        }
+                    }
+                }
+            }
+            for (const auto& declaration : inline_variable_declarations) {
+                if (declaration.name.starts_with("--")
+                    && std::find(
+                        declaration.references.begin(),
+                        declaration.references.end(),
+                        variable) != declaration.references.end()) {
+                    queue_affected_variable(declaration.name);
+                }
+            }
+        }
+        std::vector<size_t> variable_rule_indices(
+            variable_rule_set.begin(), variable_rule_set.end());
+        std::sort(variable_rule_indices.begin(), variable_rule_indices.end());
+        const css::rule_subject_index variable_index(
+            css_rules, variable_rule_indices);
+        const auto variable_recascade_plan =
+            make_css_variable_recascade_plan(affected_variable_set);
+        const auto references_affected_variable = [&](std::string_view value) {
+            if (value.find("var(") == std::string::npos) return false;
+            const auto references = css_variable_references(value);
+            return std::any_of(
+                references.begin(), references.end(),
+                [&affected_variable_set](const auto& name) {
+                    return affected_variable_set.contains(name);
+                });
+        };
+        for (const auto index : variable_rule_indices) {
+            for (const auto& declaration : css_rules[index].declarations()) {
+                if (declaration.name.starts_with("--")
+                    || !references_affected_variable(declaration.value)) continue;
+                const auto mask = css::property_mask(declaration.name);
+                if (mask != 0U && declaration.name != "all"
+                    && !css::generated_property_inherits_by_default(
+                        declaration.name)) {
+                    exact_changed_properties |= mask;
+                }
+            }
+        }
+        for (const auto& declaration : inline_variable_declarations) {
+            if (declaration.name.starts_with("--")
+                || !references_affected_variable(declaration.value)) continue;
+            const auto mask = css::property_mask(declaration.name);
+            if (mask != 0U && declaration.name != "all"
+                && !css::generated_property_inherits_by_default(
+                    declaration.name)) {
+                exact_changed_properties |= mask;
+            }
+        }
+        std::vector<size_t> inheritance_rule_indices;
+        inheritance_rule_indices.reserve(css_rules.size());
+        for (size_t index = 0; index < css_rules.size(); ++index) {
+            if (exact_changed_properties == 0U) break;
+            const auto& rule = css_rules[index];
+            if (!rule.media_matches) continue;
+            const auto potential = std::any_of(
+                rule.declarations().begin(),
+                rule.declarations().end(),
+                [exact_changed_properties](const css_declaration& declaration) {
+                    const auto mask = css::property_mask(declaration.name);
+                    return !declaration.name.starts_with("--")
+                        && (mask & exact_changed_properties) != 0U
+                        && (css::cascade_keyword_is(
+                                declaration.value, "inherit")
+                            || declaration.value.find("var(")
+                                != std::string::npos);
+                });
+            if (potential) inheritance_rule_indices.push_back(index);
+        }
+        const css::rule_subject_index inheritance_index(
+            css_rules, inheritance_rule_indices);
+        std::vector<request> requests;
+        struct inheritance_consumer final {
+            dom_node* node;
+            uint64_t properties;
+        };
+        std::vector<inheritance_consumer> inheritance_consumers;
+        std::vector<dom_node*> shadow_hosts;
+        const auto inherited_properties = [&](
+            dom_node& node,
+            std::span<const css_rule* const> rules) {
+            uint64_t result = 0U;
+            const auto inspect = [&](const css_declaration& declaration) {
+                if (declaration.name.starts_with("--")) return;
+                const auto mask = css::property_mask(declaration.name);
+                if ((mask & exact_changed_properties) == 0U) return;
+                const auto inherits = css::cascade_keyword_is(
+                        declaration.value, "inherit")
+                    || (declaration.value.find("var(") != std::string::npos
+                        && css::cascade_keyword_is(
+                            resolve_css_value(node, declaration.value),
+                            "inherit"));
+                if (inherits) result |= mask;
+            };
+            for (const auto* rule : rules) {
+                for (const auto& declaration : rule->declarations()) {
+                    inspect(declaration);
+                }
+            }
+            for (const auto& [name, value] :
+                 node.authored_style().declarations) {
+                inspect({name, value,
+                    node.authored_style().important_declarations.contains(name)});
+            }
+            return result;
+        };
+        const auto references_active_variables = [](
+            std::string_view value,
+            const std::vector<std::string>& active_variables) {
+            if (active_variables.empty()
+                || value.find("var(") == std::string::npos) return false;
+            const auto references = css_variable_references(value);
+            return std::any_of(
+                references.begin(), references.end(),
+                [&active_variables](const auto& name) {
+                    return std::find(
+                        active_variables.begin(),
+                        active_variables.end(),
+                        name) != active_variables.end();
+                });
+        };
+        std::vector<std::string> active_variables;
+        size_t changed_rule_subjects = 0U;
+        size_t variable_consumer_subjects = 0U;
+        size_t inline_variable_consumer_subjects = 0U;
         const auto visit = [&](const auto& self, dom_node& node) -> void {
+            const auto inherited_variable_count = active_variables.size();
+            rule_effect effect;
+            bool has_request = false;
+            bool full_cascade = false;
             if (node.kind == dom_node_kind::element) {
                 const auto candidates=changed_index.candidates(node,&node==active_element);
                 const auto matching = css::match_candidates(
@@ -1015,11 +1287,175 @@
                         return css_rule_matches(subject, rule);
                     },
                     false);
-                if ((!matching.ordinary.empty() || !matching.pseudo.empty())
-                    && !has_selected_ancestor(node)) {
-                    roots.push_back(&node);
-                    return;
+                for (const auto* rule : matching.ordinary) {
+                    const auto changed_effect = classify_rule_effect(*rule);
+                    if (trace_transition && changed_effect.subtree) {
+                        std::cerr << "WebScene media subtree rule: selector="
+                            << rule->selector() << ", declarations=";
+                        for (const auto& declaration : rule->declarations()) {
+                            const auto mask = css::property_mask(declaration.name);
+                            if (declaration.name == "all") {
+                                std::cerr << declaration.name << "(all) ";
+                            } else if (mask == 0U) {
+                                std::cerr << declaration.name << "(unknown) ";
+                            } else if (css::generated_property_inherits_by_default(
+                                    declaration.name)) {
+                                std::cerr << declaration.name << "(inherited) ";
+                            }
+                        }
+                        std::cerr << '\n';
+                    }
+                    effect.subtree = effect.subtree || changed_effect.subtree;
+                    effect.changed_properties |=
+                        changed_effect.changed_properties;
+                    effect.inherited_properties |=
+                        changed_effect.inherited_properties;
+                    for (const auto& variable :
+                         changed_effect.changed_variables) {
+                        append_variable(effect.changed_variables, variable);
+                    }
                 }
+                has_request = !matching.ordinary.empty()
+                    || !matching.pseudo.empty();
+                full_cascade = has_request;
+                if (has_request) ++changed_rule_subjects;
+                for (const auto& variable : effect.changed_variables) {
+                    append_variable(active_variables, variable);
+                }
+                if (!effect.subtree && !active_variables.empty()
+                    && !variable_rule_indices.empty()) {
+                    const auto variable_candidates = variable_index.candidates(
+                        node, &node == active_element);
+                    const auto variable_matching = css::match_candidates(
+                        document,
+                        node,
+                        css_rules,
+                        variable_candidates,
+                        [this](const dom_node& subject, const css_rule&,
+                               const compiled_css_selector& selector) {
+                            return compiled_css_selector_matches(
+                                subject,
+                                selector,
+                                selector.compounds.size() - 1U);
+                        },
+                        [this](const dom_node& subject, const css_rule& rule) {
+                            return css_rule_matches(subject, rule);
+                        });
+                    // Establish custom-property aliases first so declarations
+                    // later in the same matched rule can consume the alias.
+                    bool grew = false;
+                    do {
+                        grew = false;
+                        for (const auto* rule : variable_matching.ordinary) {
+                            for (const auto& declaration :
+                                 rule->declarations()) {
+                                if (!declaration.name.starts_with("--")
+                                    || !references_active_variables(
+                                        declaration.value,
+                                        active_variables)) continue;
+                                grew = append_variable(
+                                    active_variables,
+                                    declaration.name) || grew;
+                            }
+                        }
+                        for (const auto& [name, value] :
+                             node.authored_style().declarations) {
+                            if (!name.starts_with("--")
+                                || !references_active_variables(
+                                    value, active_variables)) continue;
+                            grew = append_variable(
+                                active_variables, name) || grew;
+                        }
+                    } while (grew);
+                    for (const auto* rule : variable_matching.ordinary) {
+                        for (const auto& declaration :
+                             rule->declarations()) {
+                            if (!references_active_variables(
+                                declaration.value,
+                                active_variables)) continue;
+                            has_request = true;
+                            ++variable_consumer_subjects;
+                            classify_declaration(effect, declaration);
+                        }
+                    }
+                    if (std::any_of(
+                        variable_matching.pseudo.begin(),
+                        variable_matching.pseudo.end(),
+                        [&active_variables,
+                         &references_active_variables](const auto& pseudo) {
+                            const auto* rule = pseudo.second;
+                            return std::any_of(
+                                rule->declarations().begin(),
+                                rule->declarations().end(),
+                                [&active_variables,
+                                 &references_active_variables](
+                                    const css_declaration& declaration) {
+                                    return references_active_variables(
+                                        declaration.value,
+                                        active_variables);
+                                });
+                        })) {
+                        has_request = true;
+                        full_cascade = true;
+                    }
+                }
+                if (!effect.subtree && !active_variables.empty()) {
+                    for (const auto& [name, value] :
+                         node.authored_style().declarations) {
+                        if (!references_active_variables(
+                            value, active_variables)) continue;
+                        has_request = true;
+                        ++inline_variable_consumer_subjects;
+                        classify_declaration(
+                            effect,
+                            {name, value,
+                                node.authored_style().important_declarations.contains(
+                                    name)});
+                    }
+                }
+                for (const auto& variable : effect.changed_variables) {
+                    append_variable(active_variables, variable);
+                }
+                if (has_request) {
+                    requests.push_back(
+                        {&node, effect.subtree, effect.changed_properties,
+                            effect.inherited_properties, full_cascade});
+                }
+                if (exact_changed_properties != 0U
+                    && !inheritance_rule_indices.empty()) {
+                    const auto inheritance_candidates =
+                        inheritance_index.candidates(
+                            node, &node == active_element);
+                    const auto inheritance_matching = css::match_candidates(
+                        document,
+                        node,
+                        css_rules,
+                        inheritance_candidates,
+                        [this](const dom_node& subject, const css_rule&,
+                               const compiled_css_selector& selector) {
+                            return compiled_css_selector_matches(
+                                subject,
+                                selector,
+                                selector.compounds.size() - 1U);
+                        },
+                        [this](const dom_node& subject, const css_rule& rule) {
+                            return css_rule_matches(subject, rule);
+                        });
+                    const auto properties = inherited_properties(
+                        node, inheritance_matching.ordinary);
+                    if (properties != 0U) {
+                        inheritance_consumers.push_back({&node, properties});
+                    }
+                } else if (exact_changed_properties != 0U) {
+                    const auto properties = inherited_properties(node, {});
+                    if (properties != 0U) {
+                        inheritance_consumers.push_back({&node, properties});
+                    }
+                }
+            }
+            if (effect.subtree) {
+                active_variables.resize(inherited_variable_count);
+                return;
             }
             for (auto* child : node.children) {
                 if (child == nullptr) continue;
@@ -1031,12 +1467,225 @@
             }
             const auto* shadow = document.shadow_dom(node);
             if (shadow != nullptr && shadow->root != nullptr) {
+                shadow_hosts.push_back(&node);
                 self(self, *shadow->root);
             }
+            active_variables.resize(inherited_variable_count);
         };
         visit(visit, root);
-        for (auto* matched_root : roots) {
-            apply_css_rules_subtree(*matched_root);
+        // A shadow tree owns another rule index. Preserve the prior whole-tree
+        // behavior whenever an exact request could flow into that boundary.
+        for (auto& current : requests) {
+            if (current.subtree) continue;
+            current.subtree = std::any_of(
+                shadow_hosts.begin(), shadow_hosts.end(),
+                [this, &current](const dom_node* host) {
+                    return subtree_contains(*current.root, host);
+                });
+        }
+        std::vector<dom_node*> subtree_roots;
+        for (const auto& current : requests) {
+            if (current.subtree) subtree_roots.push_back(current.root);
+        }
+        std::erase_if(requests, [this, &subtree_roots](const request& current) {
+            return std::any_of(
+                subtree_roots.begin(), subtree_roots.end(),
+                [this, &current](const dom_node* ancestor) {
+                    return ancestor != current.root
+                        && subtree_contains(*ancestor, current.root);
+                });
+        });
+        std::unordered_map<dom_node*, size_t> request_by_node;
+        for (size_t index = 0; index < requests.size(); ++index) {
+            request_by_node.emplace(requests[index].root, index);
+        }
+        // Exact inheritance consumers form a sparse dependency chain. Add all
+        // of them relative to the original changed subject; ancestor ordering
+        // below makes multi-level `inherit` chains observe fresh parent values.
+        for (const auto& consumer : inheritance_consumers) {
+            uint64_t affected = 0U;
+            bool covered = false;
+            for (auto* ancestor = document.event_parent(*consumer.node);
+                 ancestor != nullptr;
+                 ancestor = document.event_parent(*ancestor)) {
+                const auto found = request_by_node.find(ancestor);
+                if (found == request_by_node.end()) continue;
+                const auto& source = requests[found->second];
+                if (source.subtree) {
+                    covered = true;
+                    break;
+                }
+                affected |= source.changed_properties & consumer.properties;
+            }
+            if (covered || affected == 0U) continue;
+            if (const auto found = request_by_node.find(consumer.node);
+                found != request_by_node.end()) {
+                requests[found->second].changed_properties |= affected;
+                requests[found->second].full_cascade = true;
+            } else {
+                request_by_node.emplace(consumer.node, requests.size());
+                requests.push_back(
+                    {consumer.node, false, affected, 0U, true});
+            }
+        }
+        const auto inherited_style_changes = [](const node_style& left,
+                                                 const node_style& right,
+                                                 uint64_t properties) {
+            const auto& left_text = left.textual();
+            const auto& right_text = right.textual();
+            uint64_t changed = 0U;
+            const auto record = [&](uint64_t property, bool equal) {
+                if ((properties & property) != 0U && !equal) {
+                    changed |= property;
+                }
+            };
+            record(css::inline_color,
+                left.foreground_rgba == right.foreground_rgba);
+            record(css::inline_cursor,
+                left_text.cursor == right_text.cursor);
+            record(css::inline_font_size,
+                left.font_size == right.font_size);
+            record(css::inline_font_family,
+                left_text.font_family == right_text.font_family);
+            record(css::inline_font_smoothing,
+                left_text.font_smoothing == right_text.font_smoothing);
+            record(css::inline_font_weight,
+                left.font_weight == right.font_weight);
+            record(css::inline_line_height,
+                left.line_height == right.line_height);
+            record(css::inline_letter_spacing,
+                left.letter_spacing == right.letter_spacing
+                    && left.letter_spacing_specified
+                        == right.letter_spacing_specified);
+            record(css::inline_word_spacing,
+                left.word_spacing == right.word_spacing
+                    && left.word_spacing_specified
+                        == right.word_spacing_specified);
+            record(css::inline_text_align,
+                left_text.text_align == right_text.text_align);
+            record(css::inline_visibility,
+                left.visibility_hidden == right.visibility_hidden
+                    && left.visibility_specified
+                        == right.visibility_specified);
+            record(css::inline_white_space,
+                left_text.white_space == right_text.white_space);
+            return changed;
+        };
+        order_recascade_roots(requests);
+        const auto application_started = trace_transition
+            ? std::chrono::steady_clock::now()
+            : std::chrono::steady_clock::time_point{};
+        std::vector<dom_node*> applied_subtree_roots;
+        std::unordered_set<dom_node*> applied_nodes;
+        std::unordered_map<dom_node*, uint64_t> conditional_masks;
+        for (const auto& current : requests) {
+            if (!current.subtree && current.inherited_properties != 0U) {
+                conditional_masks[current.root] |= current.inherited_properties;
+            }
+        }
+        const auto propagate_inherited = [&](
+            const auto& self,
+            dom_node& parent,
+            uint64_t inherited_mask) -> void {
+            const auto apply_child = [&](dom_node& child) {
+                auto mask = inherited_mask;
+                if (const auto found = conditional_masks.find(&child);
+                    found != conditional_masks.end()) {
+                    mask |= found->second;
+                }
+                const auto previous_style = child.style;
+                apply_css_rules(child);
+                applied_nodes.insert(&child);
+                const auto changed = inherited_style_changes(
+                    previous_style, child.style, mask);
+                if (changed != 0U) {
+                    self(self, child, changed);
+                }
+            };
+            for (auto* child : parent.children) {
+                if (child == nullptr) continue;
+                if (child != active_css_cascade_root
+                    && inactive_css_cascades.contains(child)) continue;
+                apply_child(*child);
+            }
+            const auto* shadow = document.shadow_dom(parent);
+            if (shadow != nullptr && shadow->root != nullptr) {
+                apply_child(*shadow->root);
+            }
+        };
+        size_t triggered_inherited_roots = 0U;
+        size_t targeted_variable_replays = 0U;
+        for (const auto& current : requests) {
+            if (std::any_of(
+                applied_subtree_roots.begin(), applied_subtree_roots.end(),
+                [this, &current](const dom_node* ancestor) {
+                    return subtree_contains(*ancestor, current.root);
+                })) continue;
+            if (current.subtree) {
+                apply_css_rules_subtree(*current.root);
+                applied_subtree_roots.push_back(current.root);
+                continue;
+            }
+            if (applied_nodes.contains(current.root)) continue;
+            if (!current.full_cascade
+                && current.inherited_properties == 0U
+                && reapply_css_variable_dependent_rules(
+                    *current.root, variable_recascade_plan)) {
+                ++targeted_variable_replays;
+                applied_nodes.insert(current.root);
+                continue;
+            }
+            if (current.inherited_properties == 0U) {
+                apply_css_rules(*current.root);
+                applied_nodes.insert(current.root);
+                continue;
+            }
+            const auto previous_style = current.root->style;
+            apply_css_rules(*current.root);
+            applied_nodes.insert(current.root);
+            const auto changed = inherited_style_changes(
+                    previous_style,
+                    current.root->style,
+                    current.inherited_properties);
+            if (changed == 0U) continue;
+            ++triggered_inherited_roots;
+            propagate_inherited(
+                propagate_inherited,
+                *current.root,
+                changed);
+        }
+        if (trace_transition) {
+            const auto planned = std::chrono::duration<double, std::milli>(
+                application_started - transition_started).count();
+            const auto applied = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - application_started).count();
+            const auto subtrees = std::count_if(
+                requests.begin(), requests.end(), [](const request& current) {
+                    return current.subtree;
+                });
+            const auto conditional_inherited = std::count_if(
+                requests.begin(), requests.end(), [](const request& current) {
+                    return !current.subtree
+                        && current.inherited_properties != 0U;
+                });
+            std::cerr << "WebScene media transition: plan-ms=" << planned
+                << ", apply-ms=" << applied
+                << ", changed-rules=" << changed_rules.size()
+                << ", inheritance-rules=" << inheritance_rule_indices.size()
+                << ", variable-rules=" << variable_rule_indices.size()
+                << ", changed-rule-subjects=" << changed_rule_subjects
+                << ", variable-consumer-declarations="
+                << variable_consumer_subjects
+                << ", inline-variable-consumer-declarations="
+                << inline_variable_consumer_subjects
+                << ", requests=" << requests.size()
+                << ", subtree-requests=" << subtrees
+                << ", conditional-inherited=" << conditional_inherited
+                << ", triggered-inherited=" << triggered_inherited_roots
+                << ", targeted-variable-replays="
+                << targeted_variable_replays
+                << ", exact-property-mask=0x" << std::hex
+                << exact_changed_properties << std::dec << '\n';
         }
     }
 

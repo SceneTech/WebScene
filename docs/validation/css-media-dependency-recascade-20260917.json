@@ -1,0 +1,78 @@
+{
+  "date": "2026-09-17",
+  "scope": "viewport media-query dependency-directed recascade",
+  "native": {
+    "focused_filter": "media-query-targeted-recascade",
+    "passed": true,
+    "custom_property_applications": {
+      "32_unrelated": [3, 3],
+      "1024_unrelated": [3, 3]
+    },
+    "inherited_value_applications": {
+      "32_unrelated": [10, 10],
+      "1024_unrelated": [10, 10]
+    },
+    "exact_root_applications": {
+      "32_unrelated": [1, 1],
+      "1024_unrelated": [1, 1]
+    }
+  },
+  "wpt": {
+    "native": {
+      "documents": "1/1",
+      "subtests": "4/4",
+      "result": "/tmp/webscene-media-final-native.Jwgzym/results/results.json"
+    },
+    "chromium": {
+      "subtests": "4/4",
+      "result": "/tmp/webscene-media-final-chrome.D3l9Z8/results/results.json"
+    }
+  },
+  "spotify": {
+    "nodes": 2732,
+    "images": 18,
+    "samples_per_engine": 240,
+    "widths": [800, 700],
+    "control_dispatch_ms": {
+      "median": 92.1278,
+      "mean": 92.99222416666665,
+      "min": 86.947,
+      "max": 104.625
+    },
+    "candidate_dispatch_ms": {
+      "median": 59.46415,
+      "mean": 59.652355,
+      "min": 58.058,
+      "max": 81.707
+    },
+    "median_reduction_percent": 35.45471616602155,
+    "median_speedup": 1.5492998722759848,
+    "control_log": "/tmp/spotify-media-control-profile-20260917.log",
+    "intermediate_candidate_log": "/tmp/spotify-media-final-profile-20260917.log",
+    "candidate_log": "/tmp/spotify-variable-targeted-profile-20260917.log",
+    "trace_log": "/tmp/spotify-variable-targeted-once-20260917.log",
+    "targeted_variable_replays_per_threshold": 287
+  },
+  "rejected_experiments": {
+    "selector_index_reuse": {
+      "focused_index_rule_calls": {
+        "control": 26300,
+        "experiment": 0
+      },
+      "spotify_dispatch_ms": {
+        "control_median": 64.87815,
+        "experiment_median": 64.80615,
+        "control_mean": 65.91895583333333,
+        "experiment_mean": 69.85602625
+      },
+      "decision": "reject"
+    }
+  },
+  "claims_excluded": [
+    "physical window cadence",
+    "Chrome speed comparison",
+    "release SDK qualification",
+    "completion of issue 235",
+    "completion of issue 238"
+  ]
+}

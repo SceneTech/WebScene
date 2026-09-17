@@ -621,3 +621,429 @@ void test_controlled_connected_resource_interception()
               << " retireNavigation=" << navigation_ms << "ms\n";
     webscene_engine_destroy(engine);
 }
+
+void test_controlled_parser_and_nested_frame_resources()
+{
+    resource_server server{.content = {
+        {"https://parser-resource.test/bootstrap.html",
+            "<!doctype html><title>parser controller bootstrap</title>"},
+        {"https://parser-resource.test/controlled.html", R"HTML(
+            <!doctype html>
+            <html><head>
+              <link rel="stylesheet" href="/parser.css">
+              <link rel="stylesheet" href="/denied.css">
+            </head><body id="styled">
+              <script src="/parser-message.js"></script>
+              <script src="/fallback.js"></script>
+              <script src="/denied.js"></script>
+              <script src="/malformed.js"></script>
+              <script>
+                __parserTrace.push('inline');
+                globalThis.__parserSemantic = {
+                  trace:[...__parserTrace],
+                  color:getComputedStyle(document.body).color,
+                  deniedStyleBypass:getComputedStyle(document.body).backgroundColor
+                    === 'rgb(222, 1, 2)',
+                  deniedBypass:globalThis.__deniedParserBypass === true,
+                  malformedBypass:globalThis.__malformedParserBypass === true
+                };
+              </script>
+            </body></html>)HTML"},
+        {"https://parser-resource.test/frame.html", R"HTML(
+            <!doctype html><html><head>
+              <link rel="stylesheet" href="/frame.css">
+            </head><body>
+              <div id="frame-styled">nested</div>
+              <script src="/frame-message.js"></script>
+              <img id="frame-image" src="/frame.svg">
+              <script>
+                const image = document.querySelector('img');
+                image.addEventListener('load', () => {
+                  parent.__nestedParser.imageLoads++;
+                  parent.__nestedParser.result = {
+                    script:globalThis.__frameParserBody === true,
+                    color:getComputedStyle(document.getElementById('frame-styled')).color,
+                    width:image.naturalWidth,height:image.naturalHeight
+                  };
+                  parent.__nestedParser.complete = true;
+                });
+                image.addEventListener('error', () => {
+                  parent.__nestedParser.imageErrors++;
+                  parent.__nestedParser.complete = true;
+                });
+              </script>
+            </body></html>)HTML"},
+        {"https://parser-resource.test/cycle-frame.html", R"HTML(
+            <!doctype html><html><head>
+              <link rel="stylesheet" href="/cycle.css">
+            </head><body>
+              <div id="frame-styled">cycle</div>
+              <script src="/cycle.js"></script>
+              <img id="cycle-image" src="/cycle.svg">
+              <script>
+                const image = document.querySelector('img');
+                image.addEventListener('load', () => parent.__finishParserCycle({
+                  script:globalThis.__cycleParserBody === true,
+                  color:getComputedStyle(document.getElementById('frame-styled')).color,
+                  width:image.naturalWidth,height:image.naturalHeight
+                }));
+                image.addEventListener('error', () =>
+                  parent.__finishParserCycle({error:'image'}));
+              </script>
+            </body></html>)HTML"},
+        {"https://parser-resource.test/service-worker.js", R"JS(
+            const requests = [];
+            const pending = new Map();
+            let token = 0;
+            self.addEventListener('install', event => event.waitUntil(skipWaiting()));
+            self.addEventListener('activate', event => event.waitUntil(clients.claim()));
+            self.addEventListener('fetch', event => {
+              const url = new URL(event.request.url);
+              const record = {
+                path:url.pathname,
+                destination:event.request.destination,
+                clientId:event.clientId,
+                frameType:null
+              };
+              requests.push(record);
+              if (url.pathname === '/fallback.js') return;
+              if (url.pathname === '/denied.js' || url.pathname === '/denied.css') {
+                event.respondWith(Promise.reject(new Error('parser resource denied')));
+                return;
+              }
+              if (url.pathname === '/malformed.js') {
+                event.respondWith(Promise.resolve({status:200}));
+                return;
+              }
+              if (url.pathname === '/pending-frame.js') {
+                event.respondWith((async () => {
+                  const client = await clients.get(event.clientId);
+                  if (client) client.postMessage({kind:'remove-pending-frame'});
+                  return new Promise(() => {});
+                })());
+                return;
+              }
+              if (url.pathname === '/frame.svg' || url.pathname === '/cycle.svg') {
+                event.respondWith(new Response(
+                  '<svg xmlns="http://www.w3.org/2000/svg" width="7" height="5" viewBox="0 0 7 5"><rect width="7" height="5"/></svg>',
+                  {headers:{'content-type':'image/svg+xml'}}));
+                return;
+              }
+              if (url.pathname === '/parser.css'
+                  || url.pathname === '/frame.css'
+                  || url.pathname === '/cycle.css'
+                  || url.pathname === '/parser-message.js'
+                  || url.pathname === '/frame-message.js'
+                  || url.pathname === '/cycle.js') {
+                const currentToken = `${url.pathname}:${++token}`;
+                event.respondWith((async () => {
+                  const client = await clients.get(event.clientId);
+                  if (!client) throw new Error('parser client retired before byte request');
+                  record.frameType = client.frameType;
+                  const response = new Promise((resolve, reject) => pending.set(
+                    currentToken, {resolve, reject, clientId:event.clientId}));
+                  client.postMessage({kind:'parser-byte-request',
+                    token:currentToken, path:url.pathname});
+                  return response;
+                })());
+              }
+            });
+            self.addEventListener('message', event => {
+              const data = event.data || {};
+              if (data.kind === 'parser-byte-response') {
+                const entry = pending.get(data.token);
+                if (!entry || entry.clientId !== event.source.id) return;
+                pending.delete(data.token);
+                entry.resolve(new Response(data.body,
+                  {headers:{'content-type':data.contentType}}));
+                return;
+              }
+              if (data === 'report') event.waitUntil((async () => {
+                const activeClients = await clients.matchAll();
+                event.source.postMessage({requests, pending:pending.size,
+                  clients:activeClients.map(client => ({id:client.id,
+                    frameType:client.frameType}))});
+              })());
+            });
+        )JS"},
+        {"https://parser-resource.test/parser.css",
+            "#styled{color:rgb(255, 0, 0)}"},
+        {"https://parser-resource.test/denied.css",
+            "#styled{background-color:rgb(222, 1, 2)}"},
+        {"https://parser-resource.test/parser-message.js",
+            "globalThis.__parserHostBypass=true;"},
+        {"https://parser-resource.test/fallback.js",
+            "globalThis.__parserTrace=(globalThis.__parserTrace||[]);"
+            "__parserTrace.push('fallback');"},
+        {"https://parser-resource.test/denied.js",
+            "globalThis.__deniedParserBypass=true;"},
+        {"https://parser-resource.test/malformed.js",
+            "globalThis.__malformedParserBypass=true;"},
+        {"https://parser-resource.test/pending-frame.js",
+            "parent.__pendingParserHostBypass=true;"}
+    }};
+    webscene_engine_options options{};
+    options.struct_size = sizeof(options);
+    options.resource_load_callback = load_test_resource;
+    options.resource_load_user_data = &server;
+    auto* engine = webscene_engine_create_with_options(&options);
+    require(engine != nullptr, "parser resource engine creation failed");
+
+    constexpr std::string_view bootstrap{
+        "https://parser-resource.test/bootstrap.html"};
+    require(webscene_engine_load_url(
+            engine, bootstrap.data(), bootstrap.size()) != 0U,
+        "parser controller bootstrap navigation failed");
+    execute(engine, R"JS(
+      globalThis.__parserRegistration = {complete:false,error:null};
+      (async () => {
+        try {
+          const changed = new Promise(resolve => navigator.serviceWorker.addEventListener(
+            'controllerchange', resolve, {once:true}));
+          await navigator.serviceWorker.register('/service-worker.js', {type:'module'});
+          if (!navigator.serviceWorker.controller) await changed;
+        } catch (error) {
+          __parserRegistration.error = String(error && error.stack || error);
+        } finally { __parserRegistration.complete = true; }
+      })();
+    )JS", "parser-register.js");
+    require(evaluate_until_equals(engine, "__parserRegistration.complete",
+            "parser-register-complete.js", "true", 2'500) == "true",
+        "parser controller registration did not complete");
+    require(evaluate(engine, "__parserRegistration.error",
+            "parser-register-error.js") == "null",
+        "parser controller registration failed");
+
+    constexpr std::string_view document_start = R"JS(
+      globalThis.__parserTrace = [];
+      navigator.serviceWorker.addEventListener('message', event => {
+        const data = event.data || {};
+        if (data.kind === 'remove-pending-frame') {
+          if (parent !== window && typeof parent.__removePendingParserFrame === 'function') {
+            parent.__removePendingParserFrame();
+          }
+          return;
+        }
+        if (data.kind !== 'parser-byte-request') {
+          globalThis.__parserWorkerReport = data;
+          return;
+        }
+        let source;
+        let contentType = 'text/javascript';
+        if (data.path === '/parser.css') {
+          source = '#styled{color:rgb(12, 34, 56)}';
+          contentType = 'text/css';
+        } else if (data.path === '/frame.css' || data.path === '/cycle.css') {
+          source = '#frame-styled{color:rgb(44, 55, 66)}';
+          contentType = 'text/css';
+        } else if (data.path === '/parser-message.js') {
+          source = "__parserTrace.push('controlled');globalThis.__parserBody=true;";
+        } else if (data.path === '/frame-message.js') {
+          source = "globalThis.__frameParserBody=true;";
+        } else {
+          source = "globalThis.__cycleParserBody=true;";
+        }
+        if (source.length < 65536) source += ' '.repeat(65536 - source.length);
+        navigator.serviceWorker.controller.postMessage({
+          kind:'parser-byte-response', token:data.token, body:source, contentType
+        });
+      });
+    )JS";
+    constexpr std::string_view document_start_name =
+        "parser-client-byte-provider.js";
+    const webscene_document_script script{
+        sizeof(webscene_document_script),
+        WEBSCENE_DOCUMENT_SCRIPT_ALL_FRAMES,
+        document_start.data(), document_start.size(),
+        document_start_name.data(), document_start_name.size()};
+    const webscene_navigation_options navigation{
+        sizeof(webscene_navigation_options), 1U, &script};
+    constexpr std::string_view controlled{
+        "https://parser-resource.test/controlled.html"};
+    const auto parser_started = std::chrono::steady_clock::now();
+    require(webscene_engine_load_url_with_options(
+            engine, controlled.data(), controlled.size(), &navigation) != 0U,
+        "controlled parser navigation failed: " + last_error(engine));
+    const auto parser_ms = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - parser_started).count();
+    require(parser_ms <= 500.0,
+        "controlled parser navigation exceeded 500 ms");
+    require(evaluate(engine, R"JS((() => {
+      const value = __parserSemantic;
+      return value.trace.join(',') === 'controlled,fallback,inline'
+        && value.color === 'rgb(12, 34, 56)'
+        && value.deniedStyleBypass === false
+        && value.deniedBypass === false
+        && value.malformedBypass === false
+        && __parserBody === true
+        && globalThis.__parserHostBypass !== true;
+    })())JS", "parser-semantic.js") == "true",
+        "parser script/style ordering or fail-closed behavior diverged: "
+            + evaluate(engine, "JSON.stringify(__parserSemantic)",
+                "parser-semantic-detail.js"));
+    execute(engine, R"JS(
+      globalThis.__nestedParser = {complete:false,error:null,imageLoads:0,imageErrors:0};
+      (() => {
+        try {
+          const frame = document.createElement('iframe');
+          frame.src = '/frame.html';
+          document.body.append(frame);
+          __nestedParser.frame = frame;
+        } catch (error) {
+          __nestedParser.error = String(error && error.stack || error);
+          __nestedParser.complete = true;
+        }
+      })();
+    )JS", "nested-parser-setup.js");
+    require(evaluate_until_equals(engine, "__nestedParser.complete",
+            "nested-parser-complete.js", "true", 2'500) == "true",
+        "nested parser resources did not complete: "
+            + evaluate(engine, "JSON.stringify(__nestedParser)",
+                "nested-parser-timeout-detail.js")
+            + " / tags=" + evaluate(engine, R"JS(
+                [...__nestedParser.frame.contentDocument.querySelectorAll('*')]
+                  .map(node => `${node.tagName}:${node.id}`).join(',')
+              )JS", "nested-parser-timeout-tags.js")
+            + " / " + last_error(engine));
+    require(evaluate(engine, R"JS((() => {
+      const value = __nestedParser;
+      return value.error === null && value.imageLoads === 1 && value.imageErrors === 0
+        && value.result.script && value.result.color === 'rgb(44, 55, 66)'
+        && value.result.width === 7 && value.result.height === 5;
+    })())JS", "nested-parser-result.js") == "true",
+        "nested parser script/style/image result diverged: "
+            + evaluate(engine, "JSON.stringify(__nestedParser)",
+                "nested-parser-detail.js"));
+    execute(engine, "__nestedParser.frame.remove();",
+        "nested-parser-remove.js");
+
+    execute(engine, R"JS(
+      globalThis.__pendingParserRetirement = {complete:false,duration:0};
+      (() => {
+        const frame = document.createElement('iframe');
+        document.body.append(frame);
+        globalThis.__removePendingParserFrame = () => frame.remove();
+        const started = performance.now();
+        const frameDocument = frame.contentDocument;
+        frameDocument.open();
+        frameDocument.write('<!doctype html><script src="/pending-frame.js"><\/script>');
+        frameDocument.close();
+        __pendingParserRetirement.duration = performance.now() - started;
+        __pendingParserRetirement.complete = true;
+      })();
+    )JS", "pending-parser-retirement.js");
+    require(evaluate(engine, "__pendingParserRetirement.complete",
+            "pending-parser-retirement-complete.js") == "true",
+        "retired pending parser request did not return");
+    require(std::stod(evaluate(engine, "__pendingParserRetirement.duration",
+            "pending-parser-retirement-duration.js")) <= 500.0,
+        "retiring a pending parser request exceeded 500 ms");
+    require(evaluate(engine, "globalThis.__pendingParserHostBypass === true",
+            "pending-parser-host-bypass.js") == "false",
+        "retired handled parser request reached host fallback");
+    webscene_engine_memory_metrics memory_before{
+        sizeof(webscene_engine_memory_metrics)};
+    require(webscene_engine_get_memory_metrics(engine, &memory_before) != 0,
+        "parser resource memory baseline unavailable");
+    const auto rss_before = service_worker_test_peak_rss_bytes();
+    execute(engine, R"JS(
+      globalThis.__parserCycles = {complete:false,error:null,durations:[],count:0};
+      (async () => {
+        try {
+          for (let cycle = 0; cycle < 100; ++cycle) {
+            const started = performance.now();
+            await new Promise((resolve, reject) => {
+              const frame = document.createElement('iframe');
+              const timeout = setTimeout(() => reject(new Error(`cycle ${cycle} timed out`)), 1000);
+              globalThis.__finishParserCycle = value => {
+                clearTimeout(timeout);
+                frame.remove();
+                if (!value.script || value.color !== 'rgb(44, 55, 66)'
+                    || value.width !== 7 || value.height !== 5) {
+                  reject(new Error(`cycle ${cycle} mismatch ${JSON.stringify(value)}`));
+                } else resolve();
+              };
+              frame.src = '/cycle-frame.html';
+              document.body.append(frame);
+            });
+            __parserCycles.durations.push(performance.now() - started);
+            ++__parserCycles.count;
+          }
+        } catch (error) {
+          __parserCycles.error = String(error && error.stack || error);
+        } finally { __parserCycles.complete = true; }
+      })();
+    )JS", "parser-cycle-gate.js");
+    require(evaluate_until_equals(engine, "__parserCycles.complete",
+            "parser-cycle-complete.js", "true", 30'000) == "true",
+        "100 parser/frame hydrate-remove cycles did not complete");
+    require(evaluate(engine, "__parserCycles.error",
+            "parser-cycle-error.js") == "null",
+        "parser/frame cycle failed: "
+            + evaluate(engine, "__parserCycles.error", "parser-cycle-error-detail.js"));
+    require(evaluate(engine, "__parserCycles.count",
+            "parser-cycle-count.js") == "100",
+        "parser/frame cycle count diverged");
+    const auto p95 = std::stod(evaluate(engine, R"JS((() => {
+      const values = [...__parserCycles.durations].sort((a,b) => a-b);
+      return values[Math.ceil(values.length * .95) - 1];
+    })())JS", "parser-cycle-p95.js"));
+    require(p95 <= 100.0,
+        "64 KiB intercepted parser resource p95 exceeded 100 ms: "
+            + std::to_string(p95));
+
+    execute(engine, R"JS(
+      navigator.serviceWorker.controller.postMessage('report');
+    )JS", "parser-worker-report-request.js");
+    require(evaluate_until_equals(engine,
+            "globalThis.__parserWorkerReport !== undefined",
+            "parser-worker-report-ready.js", "true", 2'500) == "true",
+        "parser worker report did not arrive");
+    require(evaluate(engine, R"JS((() => {
+      const report = __parserWorkerReport;
+      const top = report.requests.find(value => value.path === '/parser-message.js');
+      const nested = report.requests.find(value => value.path === '/frame-message.js');
+      const cycleIds = new Set(report.requests
+        .filter(value => value.path === '/cycle.js').map(value => value.clientId));
+      const destinations = report.requests.every(value => {
+        if (value.path.endsWith('.js')) return value.destination === 'script';
+        if (value.path.endsWith('.css')) return value.destination === 'style';
+        if (value.path.endsWith('.svg')) return value.destination === 'image';
+        return true;
+      });
+      return report.pending === 0 && report.clients.length === 1
+        && top.frameType === 'top-level' && nested.frameType === 'nested'
+        && top.clientId !== nested.clientId
+        && cycleIds.size === 100 && destinations;
+    })())JS", "parser-worker-report.js") == "true",
+        "parser request destination/client/lifecycle report diverged: "
+            + evaluate(engine, "JSON.stringify(__parserWorkerReport)",
+                "parser-worker-report-detail.js"));
+
+    require(webscene_engine_request_low_memory(engine) != 0,
+        "parser resource low-memory request rejected");
+    webscene_engine_memory_metrics memory_after{
+        sizeof(webscene_engine_memory_metrics)};
+    for (auto attempt = 0; attempt < 250; ++attempt) {
+        require(webscene_engine_get_memory_metrics(engine, &memory_after) != 0,
+            "parser resource final memory metrics unavailable");
+        if (memory_after.low_memory_notifications
+            > memory_before.low_memory_notifications) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    require(memory_after.low_memory_notifications
+            > memory_before.low_memory_notifications,
+        "parser resource low-memory collection did not complete");
+    require(memory_after.v8_used_heap_bytes
+            <= memory_before.v8_used_heap_bytes + 8U * 1024U * 1024U,
+        "parser/frame cycles retained more than 8 MiB V8 heap");
+    const auto rss_after = service_worker_test_peak_rss_bytes();
+    require(rss_after <= rss_before + 64U * 1024U * 1024U,
+        "parser/frame cycles exceeded 64 MiB RSS growth");
+    std::cout << "Parser/frame resource gate: cycles=100 p95=" << p95
+              << "ms initial=" << parser_ms
+              << "ms heapBefore=" << memory_before.v8_used_heap_bytes
+              << " heapAfter=" << memory_after.v8_used_heap_bytes
+              << " rssBefore=" << rss_before << " rssAfter=" << rss_after << '\n';
+    webscene_engine_destroy(engine);
+}

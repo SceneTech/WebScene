@@ -1426,7 +1426,9 @@
         set_context_location(local_context, global, frame_href);
 
         install_navigator(isolate, local_context, global);
-        install_service_worker_control(local_context, global);
+        if (iframe_sandbox_allows(frame, "allow-same-origin")) {
+            install_service_worker_control(local_context, global);
+        }
 
         install_console(local_context, global);
 
@@ -1957,13 +1959,16 @@
         }
         if (!document_future.valid()) return;
         const auto outer_base_address = document_base_address;
+        const auto allow_host_prefetch = !has_claimed_service_worker_for_url(
+            resolve_resource_url(source, outer_base_address));
         const auto generation = document_generation.load(std::memory_order_acquire);
 
         pending_frame_preparation preparation;
         preparation.source = source;
         preparation.future = std::async(
             std::launch::async,
-            [this, source, outer_base_address, document_future, generation]()
+            [this, source, outer_base_address, document_future, generation,
+                allow_host_prefetch]()
                 -> std::shared_ptr<const prepared_frame> {
                 const auto started = std::chrono::steady_clock::now();
                 try {
@@ -1983,7 +1988,8 @@
                             std::lock_guard lock(document_generation_mutex);
                             if (document_generation.load(std::memory_order_acquire)
                                 != generation) return {};
-                            prepare_frame_resource_plan(*result, outer_base_address);
+                            prepare_frame_resource_plan(
+                                *result, outer_base_address, allow_host_prefetch);
                         }
                         result->completed = std::chrono::steady_clock::now();
                         return result;
@@ -1999,7 +2005,8 @@
                         std::lock_guard lock(document_generation_mutex);
                         if (document_generation.load(std::memory_order_acquire)
                             != generation) return {};
-                        prepare_frame_resource_plan(*result, outer_base_address);
+                        prepare_frame_resource_plan(
+                            *result, outer_base_address, allow_host_prefetch);
                     }
                     result->completed = std::chrono::steady_clock::now();
                     return result;
@@ -2012,7 +2019,8 @@
 
     void prepare_frame_resource_plan(
         prepared_frame& result,
-        const std::string& outer_base_address)
+        const std::string& outer_base_address,
+        bool allow_host_prefetch)
     {
         const auto normalized_html = lower_html_name(result.html);
         const auto opening_tag = [&](std::string_view name) {
@@ -2037,6 +2045,10 @@
         result.body_opening = opening_tag("body");
         result.stylesheets = parse_frame_stylesheets(result.html);
         result.scripts = parse_frame_scripts(result.html);
+        // Keep speculative host I/O for uncontrolled documents. A claimed
+        // controller must see each request first, so controlled parser
+        // resources wait until the nested client realm exists.
+        if (!allow_host_prefetch) return;
         for (const auto& href : result.stylesheets) {
             start_resource_prefetch(
                 href,
@@ -2116,14 +2128,16 @@
             ++frame_script_error_count;
             return false;
         }
+        v8::Context::Scope parser_context_scope(local_frame_context);
         std::string source = script.code;
         std::shared_ptr<const immutable_text_source> immutable_source;
         auto name = hydration.base_address + "#inline-script-" + std::to_string(script.index);
         if (!script.source.empty()) {
-            if (!load_text_resource(
+            if (!load_parser_text_resource(
                     script.source,
                     hydration.base_address,
                     WEBSCENE_RESOURCE_SCRIPT,
+                    WEBSCENE_REQUEST_DESTINATION_SCRIPT,
                     source,
                     name,
                     &immutable_source)) {
@@ -2132,14 +2146,11 @@
                 return false;
             }
         }
-        {
-            v8::Context::Scope context_scope(local_frame_context);
-            auto document_value = local_frame_context->Global()->Get(
-                local_frame_context,
-                js_string(isolate, "document")).ToLocalChecked().As<v8::Object>();
-            if(script.module)document_value->Set(local_frame_context,js_string(isolate,"currentScript"),v8::Null(isolate)).Check();
-            else set_current_script(local_frame_context, document_value, name);
-        }
+        auto document_value = local_frame_context->Global()->Get(
+            local_frame_context,
+            js_string(isolate, "document")).ToLocalChecked().As<v8::Object>();
+        if(script.module)document_value->Set(local_frame_context,js_string(isolate,"currentScript"),v8::Null(isolate)).Check();
+        else set_current_script(local_frame_context, document_value, name);
         std::string error;
         const auto script_source = immutable_source != nullptr
             ? immutable_source->view()
@@ -2181,7 +2192,20 @@
                 const auto& script = hydration.scripts[hydration.next_script++];
                 if (script.defer != defer) continue;
                 if (!execute_frame_hydration_script(frame, hydration, script)) {
-                    return restore_outer(frame_hydration_result::failed);
+                    // A parser-inserted script fetch or evaluation failure does
+                    // not abort parsing the containing document. Keep the
+                    // diagnostic/error counter and advance to the next script.
+                    // A worker message may synchronously remove the iframe
+                    // while its response is pending; that retires the realm
+                    // and the hydration state, so there is nothing to resume.
+                    if (!is_connected(frame)) {
+                        return restore_outer(frame_hydration_result::failed);
+                    }
+                    // The failure belongs to the script element, not to the
+                    // cooperative task that resumes parsing. Preserve the
+                    // error counter without poisoning that task's API result.
+                    frame_last_error_value.clear();
+                    continue;
                 }
                 executed_script = true;
                 if (cooperative
@@ -2361,7 +2385,11 @@
                 existing->second,
                 cooperative);
             if (result != frame_hydration_result::pending) {
-                frame_hydration_states.erase(existing);
+                // A parser resource may message its client, whose callback can
+                // synchronously remove this iframe and erase the hydration
+                // state. Erase by key so the callback cannot invalidate an
+                // iterator retained across script execution.
+                frame_hydration_states.erase(frame.id);
             }
             return result;
         }
@@ -2394,7 +2422,10 @@
         }
         const auto html_iterator = frame.attributes.find("frame-html");
         const auto object_iterator = frame.attributes.find("object-html");
-        const auto& html = html_iterator != frame.attributes.end() && !html_iterator->second.empty()
+        // Installing the actual frame realm replaces the provisional document
+        // and may clear its frame-html attribute. Keep the navigation bytes
+        // alive while parser resources are fetched in that new realm.
+        const auto html = html_iterator != frame.attributes.end() && !html_iterator->second.empty()
             ? html_iterator->second
             : object_iterator != frame.attributes.end() ? object_iterator->second : empty_string;
         if (html.empty()) {
@@ -2443,27 +2474,6 @@
             stylesheets = parse_frame_stylesheets(html);
             scripts = parse_frame_scripts(html);
         }
-        const auto requires_resource_loader = !stylesheets.empty()
-            || std::any_of(scripts.begin(), scripts.end(), [](const auto& script) {
-                return !script.source.empty();
-            });
-        if (requires_resource_loader && resource_root.empty() && !load_resource_callback) {
-            frame_last_error_value = "The connected component resource root was not configured";
-            ++frame_script_error_count;
-            return frame_hydration_result::failed;
-        }
-        for (const auto& href : stylesheets) {
-            start_resource_prefetch(href, frame_base_address, WEBSCENE_RESOURCE_STYLESHEET);
-        }
-        for (const auto& script : scripts) {
-            if (!script.source.empty()) {
-                start_resource_prefetch(
-                    script.source,
-                    frame_base_address,
-                    WEBSCENE_RESOURCE_SCRIPT);
-            }
-        }
-
         // Navigation replaces the previous document's layout root. Preserve
         // existing JS references until the frame is disposed, but never stack
         // old and new documents vertically inside the same iframe.
@@ -2505,23 +2515,6 @@
             add_stylesheet(std::move(stylesheet), frame_base_address);
         }
 #endif
-        for (const auto& href : stylesheets) {
-            std::string stylesheet;
-            std::string stylesheet_name;
-            if (!load_text_resource(
-                    href,
-                    frame_base_address,
-                    WEBSCENE_RESOURCE_STYLESHEET,
-                    stylesheet,
-                    stylesheet_name)) {
-                frame_last_error_value = "Unable to load iframe stylesheet: " + href;
-                ++frame_script_error_count;
-                activate_css_cascade(context.Get(isolate));
-                return frame_hydration_result::failed;
-            }
-            add_stylesheet(std::move(stylesheet), stylesheet_name);
-        }
-
         record_feature(
             "html",
             "element:body",
@@ -2554,6 +2547,64 @@
         frame_body.style.width = {100, length_unit::percent};
         frame_body.style.height = {100, length_unit::percent};
         frame_body.style.background_rgba = 0x131722FFU;
+
+        // Establish the nested browsing context before fetching parser
+        // resources. A controlling worker identifies the nested client by
+        // this realm and may message it while a parser-blocking response is
+        // pending.
+        auto frame_global_template = v8::ObjectTemplate::New(isolate);
+        frame_global_template->SetHandler(v8::NamedPropertyHandlerConfiguration(
+            get_window_named_property,
+            nullptr,
+            nullptr,
+            nullptr,
+            nullptr,
+            {},
+            v8::PropertyHandlerFlags::kNonMasking));
+        auto local_frame_context = v8::Context::New(isolate, nullptr, frame_global_template);
+        if (iframe_sandbox_allows(frame, "allow-same-origin")) {
+            local_frame_context->SetSecurityToken(context.Get(isolate)->GetSecurityToken());
+        } else {
+            local_frame_context->SetSecurityToken(js_string(
+                isolate,
+                ("webscene-opaque-sandbox-" + std::to_string(frame.id)).c_str()));
+        }
+        local_frame_context->SetAlignedPointerInEmbedderData(
+            runtime_context_embedder_slot,
+            this,
+            v8::kEmbedderDataTypeTagDefault);
+        local_frame_context->SetAlignedPointerInEmbedderData(
+            1,
+            &frame_body,
+            v8::kEmbedderDataTypeTagDefault);
+        frame_context.Reset(isolate, local_frame_context);
+        install_frame_globals(local_frame_context, frame, frame_body);
+        {
+            v8::Context::Scope parser_context_scope(local_frame_context);
+            if (iframe_sandbox_allows(frame, "allow-scripts")
+                && !execute_document_start_scripts(local_frame_context, true)) {
+                activate_css_cascade(context.Get(isolate));
+                return frame_hydration_result::failed;
+            }
+            for (const auto& href : stylesheets) {
+                std::string stylesheet;
+                std::string stylesheet_name;
+                if (!load_parser_text_resource(
+                        href,
+                        frame_base_address,
+                        WEBSCENE_RESOURCE_STYLESHEET,
+                        WEBSCENE_REQUEST_DESTINATION_STYLE,
+                        stylesheet,
+                        stylesheet_name)) {
+                    frame_last_error_value =
+                        "Unable to load iframe stylesheet: " + href;
+                    ++frame_script_error_count;
+                    frame_last_error_value.clear();
+                    continue;
+                }
+                add_stylesheet(std::move(stylesheet), stylesheet_name);
+            }
+        }
         apply_css_rules(frame_body);
         retire_provisional_frame_document(frame);
         document.append_child(frame, frame_body);
@@ -2638,33 +2689,6 @@
         }
         append_script_elements(frame_body, scripts);
 
-        auto frame_global_template = v8::ObjectTemplate::New(isolate);
-        frame_global_template->SetHandler(v8::NamedPropertyHandlerConfiguration(
-            get_window_named_property,
-            nullptr,
-            nullptr,
-            nullptr,
-            nullptr,
-            {},
-            v8::PropertyHandlerFlags::kNonMasking));
-        auto local_frame_context = v8::Context::New(isolate, nullptr, frame_global_template);
-        if (iframe_sandbox_allows(frame, "allow-same-origin")) {
-            local_frame_context->SetSecurityToken(context.Get(isolate)->GetSecurityToken());
-        } else {
-            local_frame_context->SetSecurityToken(js_string(
-                isolate,
-                ("webscene-opaque-sandbox-" + std::to_string(frame.id)).c_str()));
-        }
-        local_frame_context->SetAlignedPointerInEmbedderData(
-            runtime_context_embedder_slot,
-            this,
-            v8::kEmbedderDataTypeTagDefault);
-        local_frame_context->SetAlignedPointerInEmbedderData(
-            1,
-            &frame_body,
-            v8::kEmbedderDataTypeTagDefault);
-        frame_context.Reset(isolate, local_frame_context);
-        install_frame_globals(local_frame_context, frame, frame_body);
         {
             // Parser-created images need the same resource task as appended
             // images, using their own frame's URL and wrapper context.
@@ -2676,11 +2700,6 @@
             local_frame_context,
             "WebScene frame " + std::to_string(frame.id));
 #endif
-        if (iframe_sandbox_allows(frame, "allow-scripts")
-            && !execute_document_start_scripts(local_frame_context, true)) {
-            activate_css_cascade(context.Get(isolate));
-            return frame_hydration_result::failed;
-        }
         frame_hydration_state hydration;
         hydration.body = &frame_body;
         hydration.scripts = std::move(scripts);
@@ -2701,7 +2720,7 @@
             state->second,
             cooperative);
         if (result != frame_hydration_result::pending) {
-            frame_hydration_states.erase(state);
+            frame_hydration_states.erase(frame.id);
         }
         return result;
     }

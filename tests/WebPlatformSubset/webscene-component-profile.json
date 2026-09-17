@@ -2427,6 +2427,14 @@
       "evidence": ["wpt-service-workers-fetch-event", "chromium-direct-neutral-contract", "vscode-oss-webview-resource-broker"],
       "reason": "Candidate connected-resource slice for WebScene #266/#308. It proves asynchronous controller-first routing for dynamically connected script, stylesheet, and image requests, Request destination identity, unhandled host fallback, and fail-closed handled rejection. Native companion coverage adds client-task nonblocking behavior, 100 script/style/image cycles, p95 <= 100 ms, <= 8 MiB retained V8 heap, and <= 64 MiB peak-RSS growth. Parser-blocking initial document resources, CSS url() images, nested frame hydration, range/cache validators, and exact unchanged Markdown remain cumulative work.",
       "nativeNavigation": true
+    },
+    {
+      "path": "contracts/controlled-parser-frame-resources.html",
+      "type": "contract",
+      "capabilities": ["service-worker-parser-script", "service-worker-parser-stylesheet", "service-worker-nested-frame-image", "service-worker-client-retirement"],
+      "evidence": ["wpt-service-workers-fetch-event", "chromium-direct-neutral-contract", "vscode-oss-webview-parser-resource-broker"],
+      "reason": "Candidate parser and nested-frame resource slice for WebScene #266/#312. It proves controller-first parser stylesheet and classic-script ordering, nested client identity, Request destination values, one parser-image load, unhandled host fallback, and fail-closed handled rejection. Native companion coverage adds top-level initial navigation, client-to-worker byte exchange during parser waits, malformed-response closure, retirement of a pending frame request, and 100 hydrate/remove cycles with p95 <= 100 ms, <= 8 MiB retained V8 heap, and <= 64 MiB peak-RSS growth. CSS url() fetching, cache validators/ranges, and exact unchanged Markdown remain separate work.",
+      "nativeNavigation": true
     }
   ],
   "harnessBlocked": [],

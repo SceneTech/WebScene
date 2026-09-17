@@ -1,0 +1,73 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Controlled parser and nested-frame resources</title>
+<script>
+  const state = window.__webSceneWptState = {
+    complete:false, harness:null, results:[], errors:[], diagnostics:[]
+  };
+  function record(name, condition, detail = 'Contract failed') {
+    state.results.push({name, status:condition ? 'PASS' : 'FAIL',
+      message:condition ? null : detail, stack:null});
+  }
+  (async () => {
+    const changed = new Promise(resolve => navigator.serviceWorker.addEventListener(
+      'controllerchange', resolve, {once:true}));
+    const registration = await navigator.serviceWorker.register(
+      'controlled-parser-frame-resources-worker.js');
+    if (!navigator.serviceWorker.controller) await changed;
+
+    const result = await new Promise((resolve, reject) => {
+      const frame = document.createElement('iframe');
+      const timeout = setTimeout(
+        () => reject(new Error('controlled parser frame timed out')), 5000);
+      globalThis.__controlledParserFrameFinished = value => {
+        clearTimeout(timeout);
+        resolve(value);
+      };
+      frame.src = 'fixtures/controlled-parser-frame.html';
+      document.body.append(frame);
+    });
+    record('nested parser waits for controlled stylesheet and scripts in order',
+      result.trace.join(',') === 'controlled,fallback,inline'
+        && result.color === 'rgb(12, 34, 56)', JSON.stringify(result));
+    record('handled parser failure stays closed while unhandled script falls through',
+      result.fallback === 1 && result.deniedBypass === false
+        && result.deniedStyleBypass === false,
+      JSON.stringify(result));
+    record('parser-created image receives one controlled body and one load event',
+      result.imageLoads === 1 && result.imageErrors === 0
+        && result.width === 7 && result.height === 5,
+      JSON.stringify(result));
+
+    const report = await new Promise(resolve => {
+      const listener = event => {
+        navigator.serviceWorker.removeEventListener('message', listener);
+        resolve(event.data);
+      };
+      navigator.serviceWorker.addEventListener('message', listener);
+      navigator.serviceWorker.controller.postMessage('report');
+    });
+    const find = suffix => report.requests.find(value => value.path.endsWith(suffix));
+    const script = find('/controlled-parser-script.js');
+    const style = find('/controlled-parser-style.css');
+    const image = find('/controlled-parser-image.svg');
+    record('FetchEvent exposes parser destinations and the nested client identity',
+      script && style && image
+        && script.destination === 'script' && style.destination === 'style'
+        && image.destination === 'image'
+        && script.clientId && script.clientId === style.clientId
+        && script.clientId === image.clientId
+        && script.clientId !== report.sourceId,
+      JSON.stringify(report));
+    await registration.unregister();
+  })().catch(error => {
+    state.errors.push(String(error && error.stack || error));
+    record('contract completed', false, state.errors[0]);
+  }).finally(() => {
+    const failure = state.results.find(result => result.status !== 'PASS');
+    state.harness = failure
+      ? {status:1, message:failure.message, stack:failure.stack}
+      : {status:0, message:null, stack:null};
+    state.complete = true;
+  });
+</script>

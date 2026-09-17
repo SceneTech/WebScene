@@ -200,6 +200,10 @@ int main()
             test_controlled_connected_resource_interception();
             return 0;
         }
+        if (selected == "service-worker-parser-resources") {
+            test_controlled_parser_and_nested_frame_resources();
+            return 0;
+        }
         if (selected == "rounded-icon-surfaces") {
             auto* focused_engine = webscene_engine_create(0);
             require(focused_engine != nullptr, "rounded icon surface engine creation failed");

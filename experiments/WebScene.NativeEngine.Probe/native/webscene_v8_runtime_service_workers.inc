@@ -1244,8 +1244,13 @@
                 descriptor.url = client_url;
                 descriptor.frame_type = self->in_frame_context()
                     ? "nested" : "top-level";
-                descriptor.generation = self->document_generation.load(
-                    std::memory_order_acquire);
+                // Each Window client has its own monotonically increasing
+                // generation. A replacement iframe can be created within the
+                // same top-level document generation, so the document counter
+                // alone cannot distinguish a late response from its retired
+                // predecessor.
+                descriptor.generation =
+                    self->next_service_worker_client_generation++;
                 service_worker_client_state client;
                 client.descriptor = descriptor;
                 client.context.Reset(isolate, local_context);
@@ -1640,6 +1645,20 @@
             js_string(isolate, "Unknown service worker control operation")));
     }
 
+    bool has_claimed_service_worker_for_url(std::string_view url)
+    {
+        for (const auto& [scope, registration] : service_worker_registrations) {
+            if (registration.runtime == nullptr || !url.starts_with(scope)) continue;
+            std::lock_guard lock(registration.runtime->mutex);
+            if (!registration.runtime->stopped
+                && registration.runtime->activated
+                && registration.runtime->claimed) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     std::shared_future<service_worker_fetch_result>
     enqueue_controlled_service_worker_fetch(
         const std::string& url,
@@ -1715,6 +1734,77 @@
         }
         runtime->ready.notify_all();
         return future;
+    }
+
+    std::optional<service_worker_fetch_result>
+    await_controlled_service_worker_fetch(
+        const std::string& url,
+        const resource_request_context& request_context,
+        std::chrono::steady_clock::duration timeout)
+    {
+        const auto client_context = isolate->GetCurrentContext();
+        std::string client_id;
+        uint64_t client_generation = 0U;
+        for (const auto& [id, candidate] : service_worker_clients) {
+            if (!candidate.context.IsEmpty()
+                && candidate.context.Get(isolate) == client_context) {
+                client_id = id;
+                client_generation = candidate.descriptor.generation;
+                break;
+            }
+        }
+        auto future = enqueue_controlled_service_worker_fetch(url, request_context);
+        if (!future.valid()) return std::nullopt;
+        const auto generation = document_generation.load(std::memory_order_acquire);
+        const auto deadline = std::chrono::steady_clock::now() + timeout;
+        while (future.wait_for(std::chrono::seconds(0))
+                != std::future_status::ready) {
+            const auto current_client = service_worker_clients.find(client_id);
+            if (document_generation.load(std::memory_order_acquire) != generation
+                || client_id.empty()
+                || current_client == service_worker_clients.end()
+                || current_client->second.descriptor.generation
+                    != client_generation
+                || current_client->second.context.IsEmpty()
+                || current_client->second.context.Get(isolate)
+                    != client_context) {
+                service_worker_fetch_result retired;
+                retired.handled = true;
+                retired.error = "Service worker parser resource client was retired";
+                return retired;
+            }
+            if (has_service_worker_messages() && !drain_service_worker_message()) {
+                service_worker_fetch_result failed;
+                failed.handled = true;
+                failed.error = last_error.empty()
+                    ? "Service worker parser resource message delivery failed"
+                    : last_error;
+                return failed;
+            }
+            if (std::chrono::steady_clock::now() >= deadline) {
+                service_worker_fetch_result timed_out;
+                timed_out.handled = true;
+                timed_out.error = "Service worker parser resource timed out";
+                return timed_out;
+            }
+            pump_v8_platform_tasks();
+            perform_microtask_checkpoint();
+            static_cast<void>(future.wait_for(std::chrono::milliseconds(1)));
+        }
+        try {
+            return future.get();
+        } catch (const std::exception& error) {
+            service_worker_fetch_result failed;
+            failed.handled = true;
+            failed.error = std::string(
+                "Service worker parser resource failed: ") + error.what();
+            return failed;
+        } catch (...) {
+            service_worker_fetch_result failed;
+            failed.handled = true;
+            failed.error = "Service worker parser resource failed";
+            return failed;
+        }
     }
 
     bool has_service_worker_messages() const
@@ -1808,6 +1898,8 @@
             return true;
         });
         if (retired_ids.empty()) return;
+        std::vector<std::shared_ptr<service_worker_fetch_request>>
+            retired_fetches;
         for (auto& [scope, registration] : service_worker_registrations) {
             static_cast<void>(scope);
             if (registration.runtime == nullptr) continue;
@@ -1827,6 +1919,21 @@
                     return std::ranges::find(retired_ids, message.client_id)
                         != retired_ids.end();
                 });
+            std::erase_if(
+                registration.runtime->fetches,
+                [&](const auto& request) {
+                    if (request == nullptr
+                        || std::ranges::find(
+                            retired_ids, request->client_id)
+                            == retired_ids.end()) {
+                        return false;
+                    }
+                    retired_fetches.push_back(request);
+                    if (registration.runtime->active_fetches > 0U) {
+                        --registration.runtime->active_fetches;
+                    }
+                    return true;
+                });
             registration.runtime->incoming_bytes = 0U;
             for (const auto& message : registration.runtime->incoming) {
                 registration.runtime->incoming_bytes += clone_packet_size(message.packet);
@@ -1835,6 +1942,12 @@
             for (const auto& message : registration.runtime->outgoing) {
                 registration.runtime->outgoing_bytes += clone_packet_size(message.packet);
             }
+        }
+        for (auto& request : retired_fetches) {
+            service_worker_fetch_result retired;
+            retired.handled = true;
+            retired.error = "Service worker fetch client was retired";
+            request->settle(std::move(retired));
         }
     }
 

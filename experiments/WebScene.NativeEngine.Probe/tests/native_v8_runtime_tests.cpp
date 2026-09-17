@@ -136,6 +136,10 @@ int main()
             test_indexeddb_runtime_contract();
             return 0;
         }
+        if (selected == "navigation-realm") {
+            test_navigation_replaces_top_level_realm();
+            return 0;
+        }
         if (selected == "idle-v8-platform") {
             test_idle_v8_foreground_completion();
             return 0;
@@ -807,6 +811,7 @@ int main()
 #if defined(WEBSCENE_NATIVE_ENGINE_WITH_V8_INSPECTOR)
     test_inspector_navigation_resets_context_group();
 #endif
+    test_navigation_replaces_top_level_realm();
     test_document_script_failure_remains_diagnostic();
     test_outer_document_lifecycle_for_editor_bootstrap();
     test_event_listener_exceptions_do_not_abort_document_load();

@@ -341,7 +341,7 @@ int main(int argc,char** argv) {
     if(animated.animation_runtime() && animated.animation_runtime()->opacity_keyframe_animation_active) return 64;
     webscene_native::node_style::pseudo_element generated;
     const auto apply_generated=[&](const std::string& name,const std::string& value) {
-        return webscene_native::css::apply_pseudo_value(generated,0x123456FF,name,value);
+        return webscene_native::css::apply_pseudo_value(generated,0x123456FF,false,name,value);
     };
     apply_generated("content",R"("\2192 next")");
     apply_generated("display","inline-block");
@@ -359,6 +359,10 @@ int main(int argc,char** argv) {
     apply_generated("content","none");
     apply_generated("border","none");
     if(generated.generated || !generated.content.empty() || generated.border_left_width.value!=0) return 67;
+    webscene_native::css::apply_pseudo_value(generated,0x123456FF,true,"box-sizing","inherit");
+    if(!generated.border_box) return 166;
+    webscene_native::css::apply_pseudo_value(generated,0x123456FF,false,"box-sizing","inherit");
+    if(generated.border_box) return 167;
     stylesheet_test_host stylesheet_host;
     const std::string stylesheet_address="embedded:styles.css";
     webscene_native::css::stylesheet_sink stylesheet_sink(stylesheet_host,stylesheet_address,1024);

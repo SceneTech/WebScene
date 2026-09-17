@@ -25,6 +25,11 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
     - uses: actions/checkout@v4
+    - name: Repair incomplete .NET install
+      shell: bash
+      env:
+        DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
+      run: python3 scripts/prepare_dotnet_install.py "$DOTNET_INSTALL_DIR"
     - name: Setup .NET
       uses: actions/setup-dotnet@v5
       env:
@@ -148,6 +153,11 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
     - uses: actions/checkout@v4
+    - name: Repair incomplete .NET install
+      shell: bash
+      env:
+        DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
+      run: python3 scripts/prepare_dotnet_install.py "$DOTNET_INSTALL_DIR"
     - uses: actions/setup-dotnet@v5
       env:
         DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet

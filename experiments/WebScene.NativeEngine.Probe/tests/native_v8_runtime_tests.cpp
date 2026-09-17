@@ -270,8 +270,10 @@ int main()
         if (selected == "media-query-targeted-recascade") {
             test_media_query_resize_recascades_only_affected_subtrees();
             test_media_query_matching_scales_linearly();
+            test_media_query_candidate_scaling();
             return 0;
         }
+        if (selected == "media-query-candidate-scaling") { test_media_query_candidate_scaling(); return 0; }
         if (selected == "attribute-invalidation-scope") {
             test_attribute_invalidation_scopes_subject_and_descendant_rules();
             return 0;
@@ -967,6 +969,7 @@ int main()
     test_runtime_diagnostics_frame_and_failure();
     test_media_query_callback_can_create_more_queries();
     test_media_query_resize_recascades_only_affected_subtrees();
+    test_media_query_candidate_scaling();
     test_media_query_matching_scales_linearly();
     test_attribute_invalidation_scopes_subject_and_descendant_rules();
     test_compiled_subject_index_scaling();

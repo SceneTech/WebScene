@@ -221,6 +221,9 @@ async function evaluate(client, expression) {
 async function runDocument(client, baseUrl, relativePath, timeoutSeconds, exceptionState) {
   const started = Date.now();
   exceptionState.current = [];
+  // A newly created headless target can have an activeElement while its
+  // document is unfocused. Activate the page before testing real :focus CSS.
+  await client.send("Page.bringToFront");
   await client.send("Page.navigate", { url: new URL(relativePath, baseUrl).href });
   const deadline = Date.now() + timeoutSeconds * 1000;
   let state = null;

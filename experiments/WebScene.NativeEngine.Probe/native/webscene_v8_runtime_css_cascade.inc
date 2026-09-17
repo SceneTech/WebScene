@@ -973,6 +973,7 @@
         // positions and selector prefixes across its subjects, then discard
         // them before matchMedia listeners can mutate selector state.
         selector_match_batch_scope matching_scope(*this);
+        const css::rule_subject_index changed_index(css_rules,changed_rules);
         std::vector<dom_node*> roots;
         const auto has_selected_ancestor = [&](const dom_node& node) {
             for (auto* ancestor = node.parent; ancestor != nullptr;
@@ -985,11 +986,12 @@
         };
         const auto visit = [&](const auto& self, dom_node& node) -> void {
             if (node.kind == dom_node_kind::element) {
+                const auto candidates=changed_index.candidates(node,&node==active_element);
                 const auto matching = css::match_candidates(
                     document,
                     node,
                     css_rules,
-                    changed_rules,
+                    candidates,
                     [this](const dom_node& subject, const css_rule&,
                            const compiled_css_selector& selector) {
                         return compiled_css_selector_matches(subject, selector, selector.compounds.size()-1U);

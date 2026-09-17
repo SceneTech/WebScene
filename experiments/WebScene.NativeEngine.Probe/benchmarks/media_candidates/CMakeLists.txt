@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.28)
+project(WebSceneMediaCandidates LANGUAGES CXX)
+find_package(WebScene REQUIRED CONFIG)
+add_executable(webscene_media_candidates main.cpp)
+target_link_libraries(webscene_media_candidates PRIVATE WebScene::Runtime)
+webscene_stage_runtime(webscene_media_candidates)

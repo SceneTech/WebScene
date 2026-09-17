@@ -156,11 +156,24 @@
     void recompute_cascaded_line_height(dom_node& node,const std::vector<const css_rule*>& rules)
     { css::recompute_cascaded_line_height(node,rules,css_variables); }
 
-    std::string current_css_base_address()
+    std::string current_css_base_address(dom_node& node)
     {
-        auto base = current_base_address();
+        // CSS may be applied while cooperative frame hydration is outside an
+        // entered V8 context.  Resolve from the styled node's own cascade root
+        // instead of the caller/current context so nested documents retain
+        // their navigation and <base> URL semantics without dereferencing an
+        // empty Local<Context>.
+        auto* root = css_cascade_root_for_node(node);
+        if (root != nullptr) {
+            if (const auto found = frame_base_addresses.find(root);
+                found != frame_base_addresses.end()) {
+                return found->second;
+            }
+        }
+
+        auto base = document_base_address;
         if (base.empty()) {
-            const auto local_context = isolate->GetCurrentContext();
+            const auto local_context = context_for_node(node);
             if (!local_context.IsEmpty()) {
                 v8::Local<v8::Value> location_value;
                 if (local_context->Global()->Get(
@@ -176,7 +189,8 @@
                 }
             }
         }
-        for (auto* candidate : document.query_selector_all(active_root(), "base")) {
+        if (root == nullptr) root = &document.body();
+        for (auto* candidate : document.query_selector_all(*root, "base")) {
             if (candidate == nullptr) continue;
             const auto href = candidate->attributes.find("href");
             if (href == candidate->attributes.end() || href->second.empty()) continue;
@@ -212,10 +226,11 @@
             return;
         }
         auto resolved_declaration = declaration;
-        if (name == "background" || name == "background-image") {
+        if ((name == "background" || name == "background-image")
+            && first_css_url(declaration.value).has_value()) {
             resolved_declaration.value = resolve_css_resource_urls(
                 declaration.value,
-                current_css_base_address());
+                current_css_base_address(node));
         }
         feature_decision decision(
             *this,
@@ -223,8 +238,8 @@
             "property:" + name,
             "style-application");
         css::apply_declaration(document,node,resolved_declaration,css_variables,inline_origin,decision,
-            [this](const std::string& url,std::string& markup,std::string& resolved,std::string& view_box) {
-                if(!load_text_resource(url,current_css_base_address(),WEBSCENE_RESOURCE_IMAGE,markup,resolved))
+            [this,&node](const std::string& url,std::string& markup,std::string& resolved,std::string& view_box) {
+                if(!load_text_resource(url,current_css_base_address(node),WEBSCENE_RESOURCE_IMAGE,markup,resolved))
                     return false;
                 view_box=svg_view_box(markup);
                 return true;

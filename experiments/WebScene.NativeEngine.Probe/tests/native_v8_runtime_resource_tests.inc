@@ -2568,7 +2568,7 @@ void test_dynamic_frame_resources_use_each_document_base_url()
                   globalThis.__frameResourceOrigins = [];
                   globalThis.__frameMessageOrigins = [];
                   for (const source of [
-                    'https://first-frame.test/frame.html',
+                    'https://first-frame.test/dir/frame.html',
                     'https://second-frame.test/frame.html'
                   ]) {
                     const frame = document.createElement('iframe');
@@ -2576,8 +2576,10 @@ void test_dynamic_frame_resources_use_each_document_base_url()
                     document.body.appendChild(frame);
                   }
                 </script></body></html>)HTML"},
-            {"https://first-frame.test/frame.html", R"HTML(
-                <html><body><script>
+            {"https://first-frame.test/dir/frame.html", R"HTML(
+                <html><head><base href="../assets/"><style>
+                  body { background-image: url("chart.svg"); }
+                </style></head><body><script>
                   addEventListener('message', event =>
                     parent.__frameMessageOrigins.push([
                       'first', event.origin, event.source === parent
@@ -2600,6 +2602,8 @@ void test_dynamic_frame_resources_use_each_document_base_url()
                 </script></body></html>)HTML"},
             {"https://first-frame.test/assets/dynamic.js",
                 "parent.__frameResourceOrigins.push('first-script');"},
+            {"https://first-frame.test/assets/chart.svg",
+                "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 1 1\"/>"},
             {"https://second-frame.test/assets/dynamic.js",
                 "parent.__frameResourceOrigins.push('second-script');"}
         }};
@@ -2633,6 +2637,15 @@ void test_dynamic_frame_resources_use_each_document_base_url()
         origins == R"(["first-load","first-script","second-load","second-script"])",
         "dynamic frame resources did not resolve against their owning documents: "
             + origins);
+    const auto frame_background = evaluate(
+        engine,
+        "getComputedStyle(document.querySelector('iframe').contentDocument.body).backgroundImage",
+        "frame-css-base-result.js");
+    require(
+        frame_background
+            == "\"url(\\\"https://first-frame.test/assets/chart.svg\\\")\"",
+        "frame CSS URL did not resolve against its relative base element: "
+            + frame_background);
     require(
         server.peak_documents.load(std::memory_order_relaxed) >= 2,
         "dynamic iframe documents were not prefetched concurrently");

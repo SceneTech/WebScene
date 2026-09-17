@@ -2036,7 +2036,7 @@
         if (!base_opening.empty()) {
             for (const auto& [name, value] : parse_html_attributes(base_opening, 5U)) {
                 if (lower_html_name(name) == "href" && !value.empty()) {
-                    result.base_address = resolve_resource_url(value, outer_base_address);
+                    result.base_address = resolve_resource_url(value, result.base_address);
                     break;
                 }
             }
@@ -2464,7 +2464,7 @@
             if (!base_opening.empty()) {
                 for (const auto& [name, value] : parse_html_attributes(base_opening, 5U)) {
                     if (lower_html_name(name) == "href" && !value.empty()) {
-                        frame_base_address = resolve_resource_url(value, document_base_address);
+                        frame_base_address = resolve_resource_url(value, frame_base_address);
                         break;
                     }
                 }

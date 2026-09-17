@@ -250,11 +250,17 @@ void test_cache_storage_and_controlled_fetch_broker()
                 const known = await cache.match(event.request);
                 if (known) return known;
                 ++misses;
-                const response = new Response('broker-ok', {
+                const transform = new TransformStream();
+                const writer = transform.writable.getWriter();
+                const response = new Response(transform.readable, {
                   status:200,
                   headers:{'content-type':'text/plain', 'x-resource-plane':'native'}
                 });
                 const stored = cache.put(event.request, response.clone());
+                await writer.write(new Uint8Array([98, 114, 111, 107, 101, 114, 45]));
+                await writer.write(new Uint8Array([111, 107]));
+                await writer.close();
+                await writer.closed;
                 await stored;
                 return response;
               })());
@@ -266,7 +272,13 @@ void test_cache_storage_and_controlled_fetch_broker()
                 cachesTag:Object.prototype.toString.call(caches),
                 cacheStorageBrand:caches instanceof CacheStorage,
                 cacheMethodEnumerable:Object.getOwnPropertyDescriptor(
-                  CacheStorage.prototype, 'open').enumerable
+                  CacheStorage.prototype, 'open').enumerable,
+                transformTag:Object.prototype.toString.call(new TransformStream()),
+                transformReadable:Object.getOwnPropertyDescriptor(
+                  TransformStream.prototype, 'readable').enumerable,
+                writableTag:Object.prototype.toString.call(new WritableStream()),
+                writerMethodEnumerable:Object.getOwnPropertyDescriptor(
+                  WritableStreamDefaultWriter.prototype, 'write').enumerable
               });
             });
         )JS"}
@@ -297,6 +309,10 @@ void test_cache_storage_and_controlled_fetch_broker()
       };
       (async () => {
         try {
+          if (Object.prototype.toString.call(new TransformStream()) !==
+              '[object TransformStream]') {
+            throw new Error('top-level TransformStream brand');
+          }
           const changed = new Promise(resolve => navigator.serviceWorker.addEventListener(
             'controllerchange', resolve, {once:true}));
           const registration = await navigator.serviceWorker.register(
@@ -353,9 +369,13 @@ void test_cache_storage_and_controlled_fetch_broker()
       const value = __resourcePlane.report;
       return value.fetches === 100 && value.misses === 1 && value.emptyMatch
         && value.cachesTag === '[object CacheStorage]' && value.cacheStorageBrand
-        && value.cacheMethodEnumerable;
+        && value.cacheMethodEnumerable
+        && value.transformTag === '[object TransformStream]'
+        && value.transformReadable
+        && value.writableTag === '[object WritableStream]'
+        && value.writerMethodEnumerable;
     })())JS", "resource-plane-report.js") == "true",
-        "CacheStorage/controlled broker worker contract failed: "
+        "CacheStorage/TransformStream worker contract failed: "
             + evaluate(engine, "JSON.stringify(__resourcePlane.report)",
                 "resource-plane-report-detail.js"));
     const auto p95 = std::stod(evaluate(engine, R"JS((() => {

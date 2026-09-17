@@ -4431,6 +4431,176 @@ struct v8_dom_runtime::implementation final {
               }
             }
 
+            const writableStreamState = new WeakMap();
+            const writableStreamWriterState = new WeakMap();
+            const requireWritableStream = value => {
+              const state = writableStreamState.get(value);
+              if (!state) throw new TypeError('Illegal invocation');
+              return state;
+            };
+            const requireWritableStreamWriter = value => {
+              const state = writableStreamWriterState.get(value);
+              if (!state) throw new TypeError('Illegal invocation');
+              return state;
+            };
+            class WritableStreamDefaultWriter {
+              constructor(stream) {
+                const state = requireWritableStream(stream);
+                if (state.locked) throw new TypeError('WritableStream is locked');
+                state.locked = true;
+                writableStreamWriterState.set(this, {stream, state});
+              }
+              get closed() { return requireWritableStreamWriter(this).state.closed; }
+              get ready() { return requireWritableStreamWriter(this).state.ready; }
+              get desiredSize() {
+                const state = requireWritableStreamWriter(this).state;
+                return state.status === 'errored' ? null
+                  : state.status === 'closed' ? 0 : 1;
+              }
+              write(chunk) {
+                const {stream, state} = requireWritableStreamWriter(this);
+                if (!stream) return Promise.reject(new TypeError('Writer released'));
+                if (state.status !== 'writable') {
+                  return Promise.reject(state.error ?? new TypeError('WritableStream is closed'));
+                }
+                const operation = state.chain.then(() => state.write?.(chunk));
+                state.chain = operation.catch(error => {
+                  state.status = 'errored'; state.error = error;
+                  state.closedReject(error); throw error;
+                });
+                state.chain.catch(() => {});
+                return operation;
+              }
+              close() {
+                const {stream, state} = requireWritableStreamWriter(this);
+                if (!stream) return Promise.reject(new TypeError('Writer released'));
+                if (state.status !== 'writable') {
+                  return Promise.reject(state.error ?? new TypeError('WritableStream is closed'));
+                }
+                state.status = 'closing';
+                const operation = state.chain.then(() => state.close?.());
+                state.chain = operation.then(() => {
+                  state.status = 'closed'; state.closedResolve();
+                }, error => {
+                  state.status = 'errored'; state.error = error;
+                  state.closedReject(error); throw error;
+                });
+                state.chain.catch(() => {});
+                return operation;
+              }
+              abort(reason = undefined) {
+                const {stream, state} = requireWritableStreamWriter(this);
+                if (!stream) return Promise.reject(new TypeError('Writer released'));
+                if (state.status === 'closed') return Promise.resolve();
+                state.status = 'errored'; state.error = reason;
+                state.closedReject(reason);
+                try { return Promise.resolve(state.abort?.(reason)); }
+                catch (error) { return Promise.reject(error); }
+              }
+              releaseLock() {
+                const value = requireWritableStreamWriter(this);
+                if (!value.stream) return;
+                value.state.locked = false;
+                value.stream = undefined;
+              }
+            }
+            class WritableStream {
+              constructor(underlyingSink = {}) {
+                if (underlyingSink === null || typeof underlyingSink !== 'object') {
+                  throw new TypeError('underlyingSink must be an object');
+                }
+                let closedResolve;
+                let closedReject;
+                const closed = new Promise((resolve, reject) => {
+                  closedResolve = resolve; closedReject = reject;
+                });
+                closed.catch(() => {});
+                const state = {
+                  locked:false, status:'writable', error:undefined,
+                  write:typeof underlyingSink.write === 'function'
+                    ? underlyingSink.write.bind(underlyingSink) : undefined,
+                  close:typeof underlyingSink.close === 'function'
+                    ? underlyingSink.close.bind(underlyingSink) : undefined,
+                  abort:typeof underlyingSink.abort === 'function'
+                    ? underlyingSink.abort.bind(underlyingSink) : undefined,
+                  chain:Promise.resolve(), ready:Promise.resolve(),
+)JS",
+            R"JS(                  closed, closedResolve, closedReject
+                };
+                writableStreamState.set(this, state);
+                if (typeof underlyingSink.start === 'function') {
+                  try { state.chain = Promise.resolve(underlyingSink.start()); }
+                  catch (error) { state.chain = Promise.reject(error); }
+                }
+                state.chain.catch(error => {
+                  state.status = 'errored'; state.error = error; state.closedReject(error);
+                });
+              }
+              get locked() { return requireWritableStream(this).locked; }
+              getWriter() { return new WritableStreamDefaultWriter(this); }
+              abort(reason = undefined) {
+                const state = requireWritableStream(this);
+                if (state.locked) return Promise.reject(new TypeError('WritableStream is locked'));
+                const writer = new WritableStreamDefaultWriter(this);
+                const result = writer.abort(reason);
+                writer.releaseLock();
+                return result;
+              }
+              close() {
+                const state = requireWritableStream(this);
+                if (state.locked) return Promise.reject(new TypeError('WritableStream is locked'));
+                const writer = new WritableStreamDefaultWriter(this);
+                const result = writer.close();
+                writer.releaseLock();
+                return result;
+              }
+            }
+            const transformStreamState = new WeakMap();
+            class TransformStream {
+              constructor(transformer = {}) {
+                let controller;
+                const readable = new ReadableStream({start(value) { controller = value; }});
+                const transform = typeof transformer.transform === 'function'
+                  ? transformer.transform.bind(transformer) : undefined;
+                const flush = typeof transformer.flush === 'function'
+                  ? transformer.flush.bind(transformer) : undefined;
+                const writable = new WritableStream({
+                  async write(chunk) {
+                    if (transform) await transform(chunk, controller);
+                    else controller.enqueue(chunk);
+                  },
+                  async close() { if (flush) await flush(controller); controller.close(); },
+                  abort(reason) { controller.error(reason); }
+                });
+                transformStreamState.set(this, {readable, writable});
+              }
+              get readable() {
+                const state = transformStreamState.get(this);
+                if (!state) throw new TypeError('Illegal invocation');
+                return state.readable;
+              }
+              get writable() {
+                const state = transformStreamState.get(this);
+                if (!state) throw new TypeError('Illegal invocation');
+                return state.writable;
+              }
+            }
+            for (const [prototype, tag, names] of [
+              [WritableStream.prototype, 'WritableStream',
+                ['locked', 'getWriter', 'abort', 'close']],
+              [WritableStreamDefaultWriter.prototype, 'WritableStreamDefaultWriter',
+                ['closed', 'ready', 'desiredSize', 'write', 'close', 'abort', 'releaseLock']],
+              [TransformStream.prototype, 'TransformStream', ['readable', 'writable']]
+            ]) {
+              Object.defineProperty(prototype, Symbol.toStringTag,
+                {value:tag, configurable:true});
+              for (const name of names) {
+                const descriptor = Object.getOwnPropertyDescriptor(prototype, name);
+                if (descriptor) Object.defineProperty(
+                  prototype, name, {...descriptor, enumerable:true});
+              }
+            }
+
             const bodyBytes = body => body instanceof ArrayBuffer
               ? new Uint8Array(body.slice(0))
               : ArrayBuffer.isView(body)
@@ -4708,6 +4878,15 @@ struct v8_dom_runtime::implementation final {
               ReadableStreamDefaultController: {
                 value: ReadableStreamDefaultController, writable: true, configurable: true
               },
+              WritableStream: {
+                value: WritableStream, writable: true, configurable: true
+              },
+              WritableStreamDefaultWriter: {
+                value: WritableStreamDefaultWriter, writable: true, configurable: true
+              },
+              TransformStream: {
+                value: TransformStream, writable: true, configurable: true
+              },
               Request: {
                 value: WebSceneRequest, writable: true, configurable: true
               },
@@ -4724,8 +4903,10 @@ struct v8_dom_runtime::implementation final {
           })();
         )JS",
         };
+        size_t source_size = 0U;
+        for (const auto part : source_parts) source_size += part.size();
         std::string source;
-        source.reserve(27687);
+        source.reserve(source_size);
         for (const auto part : source_parts) source.append(part);
         auto script = v8::Script::Compile(
             local_context,

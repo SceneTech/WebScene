@@ -1,0 +1,53 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>CacheStorage, TransformStream, and controlled fetch broker</title>
+<script>
+  const state = window.__webSceneWptState = {
+    complete:false, harness:null, results:[], errors:[], diagnostics:[]
+  };
+  function record(name, condition, detail = 'Contract failed') {
+    state.results.push({name, status:condition ? 'PASS' : 'FAIL',
+      message:condition ? null : detail, stack:null});
+  }
+  (async () => {
+    const changed = new Promise(resolve => navigator.serviceWorker.addEventListener(
+      'controllerchange', resolve, {once:true}));
+    const registration = await navigator.serviceWorker.register(
+      'cache-storage-transform-stream-worker.js');
+    if (!navigator.serviceWorker.controller) await changed;
+    const first = await fetch('cache-transform-oracle');
+    const firstText = await first.text();
+    const second = await fetch('cache-transform-oracle');
+    const secondText = await second.text();
+    const report = await new Promise(resolve => {
+      const channel = new MessageChannel();
+      channel.port1.onmessage = event => resolve(event.data);
+      navigator.serviceWorker.controller.postMessage('probe', [channel.port2]);
+    });
+    record('CacheStorage starts empty and returns a stable cached clone',
+      report.emptyMatch && report.fetches === 2 && report.misses === 1
+        && firstText === 'broker-ok' && secondText === 'broker-ok',
+      JSON.stringify({report, firstText, secondText}));
+    record('CacheStorage exposes browser-shaped brands and descriptors',
+      report.cacheStorageBrand && report.cachesTag === '[object CacheStorage]'
+        && report.cacheTag === '[object Cache]' && report.cacheMethodEnumerable,
+      JSON.stringify(report));
+    record('TransformStream fallback preserves byte order and stream brands',
+      first.status === 200 && second.status === 200
+        && report.transformTag === '[object TransformStream]'
+        && report.writableTag === '[object WritableStream]'
+        && report.writerTag === '[object WritableStreamDefaultWriter]'
+        && report.transformReadable && report.writerMethodEnumerable,
+      JSON.stringify(report));
+    await registration.unregister();
+  })().catch(error => {
+    state.errors.push(String(error && error.stack || error));
+    record('contract completed', false, state.errors[0]);
+  }).finally(() => {
+    const failure = state.results.find(result => result.status !== 'PASS');
+    state.harness = failure
+      ? {status:1, message:failure.message, stack:failure.stack}
+      : {status:0, message:null, stack:null};
+    state.complete = true;
+  });
+</script>

@@ -111,13 +111,76 @@ void test_compiled_css_invalidation_scaling()
 #endif
 }
 
+void test_character_data_stable_style_scaling()
+{
+    for (const auto affected : {8, 128}) for (const auto unrelated : {32, 1024}) {
+        auto* engine = webscene_engine_create(0);
+        require(engine != nullptr, "character-data scaling engine creation failed");
+        resize(engine, 800, 600, 1);
+        wait_for_consumed_inputs(engine, 1, "character-data viewport not applied");
+        auto source = std::string{R"JS((() => {
+          document.body.innerHTML='<main>'+('<div class="data-shell">seed</div><div class="data-target"></div>').repeat(AFFECTED)+
+            '</main><aside>'+Array.from({length:UNRELATED},(_,i)=>'<div class="noise-'+i+'"></div>').join('')+'</aside>';
+          const style=document.createElement('style');
+          style.textContent='.data-target {display:block;width:11px}.data-shell:empty + .data-target {width:41px}'+
+            Array.from({length:UNRELATED},(_,i)=>'.noise-'+i+':empty {height:1px}').join('');
+          document.head.appendChild(style);
+          const nodes=Array.from(document.querySelectorAll('.data-shell'),n=>n.firstChild);
+          const targets=Array.from(document.querySelectorAll('.data-target'));
+          globalThis.editStableText=()=>{
+            const properties=['data','nodeValue','textContent'];
+            for(let i=0;i<200;i++)for(const n of nodes)n[properties[i%3]]='edit-'+i;
+            return nodes.every(n=>n.data==='edit-199' && n.parentNode.childNodes.length===1) &&
+              targets.every(n=>getComputedStyle(n).width==='11px');
+          };
+          return targets.every(n=>getComputedStyle(n).width==='11px');
+        })())JS"};
+        source.replace(source.find("AFFECTED"), 8, std::to_string(affected));
+        for (size_t at = source.find("UNRELATED"); at != std::string::npos; at = source.find("UNRELATED"))
+            source.replace(at, 9, std::to_string(unrelated));
+        require(evaluate(engine, source, "character-data-setup.js") == "true", "character-data setup mismatch");
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+        const std::array<std::string_view, 8> names{
+            "selector-invalidation-plan-lookups", "selector-invalidation-candidate-visits",
+            "selector-invalidation-fallback-visits", "css-compound-match-checks", "css-rule-match-checks",
+            "css-cascade-applications", "css-cascade-candidate-checks", "css-positional-sibling-visits"};
+        std::this_thread::sleep_for(std::chrono::milliseconds(260));
+        execute_and_wait_for_wrapper_retention_scene(engine,
+            "document.body.style.backgroundColor='rgb(1,2,3)'", "character-data-before.js");
+        std::array<uint64_t, 8> before{};
+        for (size_t i = 0; i < names.size(); ++i) before[i] = runtime_counter_diagnostic(engine, names[i]);
+#endif
+        const auto started = std::chrono::steady_clock::now();
+        require(evaluate(engine, "editStableText()", "character-data-edit.js") == "true",
+            "character-data stable editing lost text, identity or computed style");
+        std::cout << "character-data-stable affected=" << affected << " unrelated=" << unrelated
+            << " edits=" << 200 * affected << " edit-and-check-ms="
+            << std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+        std::this_thread::sleep_for(std::chrono::milliseconds(260));
+        execute_and_wait_for_wrapper_retention_scene(engine,
+            "document.body.style.backgroundColor='rgb(3,2,1)'", "character-data-after.js");
+        bool unchanged = true;
+        for (size_t i = 0; i < names.size(); ++i) {
+            const auto delta = runtime_counter_diagnostic(engine, names[i]) - before[i];
+            std::cout << ' ' << names[i] << '=' << delta;
+            unchanged &= delta == 0;
+        }
+        require(unchanged, "nonempty character-data edits unnecessarily recascaded structural selectors");
+#endif
+        std::cout << '\n';
+        webscene_engine_destroy(engine);
+    }
+}
+
 void test_compiled_css_route_scaling(bool structural_only = false, bool structural_noise = false)
 {
     // Two independent axes: grow the affected component and grow unrelated
     // DOM/rules. Actual matching/cascade work must follow only the first axis.
     for (const auto* shape : {"descendants", "siblings", "disabled", "variables", "relational", "identity", "dataset",
             "tree-wide-position", "tree-position", "tree-siblings", "tree-relational", "tree-empty", "tree-reactions",
-            "tree-prepend", "tree-before", "tree-after", "tree-replace-children", "tree-replace-with"}) {
+            "tree-prepend", "tree-before", "tree-after", "tree-replace-children", "tree-replace-with",
+            "tree-data", "tree-node-value", "tree-text-content"}) {
         if (structural_only && !std::string_view(shape).starts_with("tree-")) continue;
         for (const auto affected_count : {8, 128}) {
             std::vector<std::array<uint64_t, 8>> observations;
@@ -163,6 +226,9 @@ void test_compiled_css_route_scaling(bool structural_only = false, bool structur
                   } else if (shape === 'tree-relational') {
                     markup = '<div class="tree-list"></div>' + target.repeat(count);
                     rule = '.tree-list:has(.marker) ~ .matrix-target {width:41px}';
+                  } else if (shape === 'tree-data' || shape === 'tree-node-value' || shape === 'tree-text-content') {
+                    markup = ('<div class="tree-list">seed</div>' + target).repeat(count);
+                    rule = '.tree-list:empty + .matrix-target {width:41px}';
                   } else if (shape === 'tree-empty' || shape === 'tree-reactions') {
                     const marker = shape === 'tree-reactions'
                       ? '<matrix-checkpoint class="marker"></matrix-checkpoint>' : '<i class="marker"></i>';
@@ -198,6 +264,13 @@ void test_compiled_css_route_scaling(bool structural_only = false, bool structur
                   globalThis.matrixMutation = enabled => {
                     reactions.length = 0;
                     if (shape.startsWith('tree-')) lists.forEach(list => {
+                      if (shape === 'tree-data' || shape === 'tree-node-value' || shape === 'tree-text-content') {
+                        const property=shape==='tree-data'?'data':shape==='tree-node-value'?'nodeValue':'textContent';
+                        list.firstChild[property]=enabled?'':'restored';
+                        if(list.childNodes.length!==1 || list.firstChild.nodeType!==3 ||
+                            list.firstChild.data!==(enabled?'':'restored'))throw new Error('Character-data update replaced or lost the text node');
+                        return;
+                      }
                       if (shape === 'tree-prepend' || shape === 'tree-before' || shape === 'tree-after'
                           || shape === 'tree-replace-children' || shape === 'tree-replace-with') {
                         if (enabled) {

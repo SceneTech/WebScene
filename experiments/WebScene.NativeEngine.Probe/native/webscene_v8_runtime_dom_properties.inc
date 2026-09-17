@@ -251,10 +251,10 @@
         info.GetReturnValue().Set(js_dom_string(info.GetIsolate(), value));
     }
 
-    static void set_text_content(
-        v8::Local<v8::Name>,
+    static void set_node_text_value(
         v8::Local<v8::Value> raw_value,
-        const v8::PropertyCallbackInfo<void>& info)
+        const v8::PropertyCallbackInfo<void>& info,
+        bool nullish_to_empty, bool character_data_only = false)
     {
         auto* self = current(info.GetIsolate());
         custom_element_reaction_scope reactions(*self);
@@ -264,9 +264,16 @@
             || node->kind == dom_node_kind::comment
             || node->kind == dom_node_kind::processing_instruction;
         // Author conversion can mutate the DOM; finish it before detaching.
-        const auto text = raw_value->IsNullOrUndefined()
-            ? std::string{}
-            : to_wtf8(info.GetIsolate(), raw_value);
+        std::string text;
+        if (!raw_value->IsNull() && !(nullish_to_empty && raw_value->IsUndefined())) {
+            v8::Local<v8::String> converted;
+            if (!raw_value->ToString(info.GetIsolate()->GetCurrentContext()).ToLocal(&converted)) return;
+            text = to_wtf8(info.GetIsolate(), converted);
+        }
+        // nodeValue is nullable CharacterData (or Attr), not an Element
+        // textContent alias. WebIDL conversion still precedes its no-op case.
+        if (character_data_only && !is_character_data) return;
+        const bool empty_state_changed = node->text_content.empty() != text.empty();
         if (!is_character_data) {
             if (!self->blur_active_descendant_before_replacing_children(*node)) return;
             self->detach_all_children(*node);
@@ -286,11 +293,43 @@
             }
             if (node->tag == "textarea") synchronize_textarea_value_from_children(*node);
         }
-        self->activate_connected_stylesheet(*node);
+        // Comments/processing instructions do not contribute stylesheet text.
+        // Text changes still run stylesheet activation even without an :empty
+        // transition: rule text and CSSOM identity are a separate checkpoint.
+        if (!is_character_data || node->kind == dom_node_kind::text)
+            self->activate_connected_stylesheet(*node);
         if (!is_character_data) self->recascade_changed_child_list(*node);
-        else if (node->kind == dom_node_kind::text && node->parent != nullptr)
+        else if (node->kind == dom_node_kind::text && empty_state_changed && node->parent != nullptr)
             self->recascade_changed_child_list(*node->parent);
         self->document.mark_dirty();
+    }
+
+    static void set_text_content(v8::Local<v8::Name>, v8::Local<v8::Value> value,
+        const v8::PropertyCallbackInfo<void>& info)
+    {
+        set_node_text_value(value, info, true);
+    }
+
+    static void set_character_data(v8::Local<v8::Name>, v8::Local<v8::Value> value,
+        const v8::PropertyCallbackInfo<void>& info)
+    {
+        set_node_text_value(value, info, false, true);
+    }
+
+    static void get_node_value(v8::Local<v8::Name> name,
+        const v8::PropertyCallbackInfo<v8::Value>& info)
+    {
+        auto* node = unwrap_node(info.Holder());
+        if (node != nullptr && (node->kind == dom_node_kind::text
+            || node->kind == dom_node_kind::comment || node->kind == dom_node_kind::processing_instruction))
+            get_text_content(name, info);
+        else info.GetReturnValue().Set(v8::Null(info.GetIsolate()));
+    }
+
+    static void set_node_value(v8::Local<v8::Name>, v8::Local<v8::Value> value,
+        const v8::PropertyCallbackInfo<void>& info)
+    {
+        set_node_text_value(value, info, true, true);
     }
 
     static void get_script_text(

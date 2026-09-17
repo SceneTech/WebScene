@@ -1,0 +1,26 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Textarea text and live value drive dynamic CSS state</title>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<style>
+.state-probe {padding-left:19px;padding-top:17px}
+.state-probe:invalid {padding-left:47px}
+.state-probe:placeholder-shown {padding-top:83px}
+</style>
+<body>
+<script>
+// Known native selector/state gaps tracked through #237/#242 under #235.
+// Test style properties, not textarea inner dimensions affected by scrollbars.
+for(const property of ['data','nodeValue','textContent'])for(const pseudo of ['invalid','placeholder-shown'])test(t=>{
+  const textarea=document.createElement('textarea'),text=document.createTextNode('seed');
+  textarea.className='state-probe';textarea.setAttribute('required','');textarea.setAttribute('placeholder','enter');
+  textarea.appendChild(text);document.body.appendChild(textarea);t.add_cleanup(()=>textarea.remove());
+  const check=empty=>assert_equals(getComputedStyle(textarea)[pseudo==='invalid'?'paddingLeft':'paddingTop'],
+    pseudo==='invalid'?(empty?'47px':'19px'):(empty?'83px':'17px'));
+  check(false); // Establish support before testing the mutation checkpoint.
+  for(const value of ['another value','','restored']){text[property]=value;check(!value);}
+  textarea.value='user';text[property]='';check(false);
+  assert_equals(textarea.defaultValue,'');assert_equals(textarea.value,'user');
+},property+' textarea :'+pseudo+' uses live value and preserves dirty-value state');
+</script>

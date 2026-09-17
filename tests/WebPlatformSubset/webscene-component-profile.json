@@ -893,6 +893,13 @@
       "reason": "Required after direct Chrome authority and the native runner pass all 3/3 identity and bounded structural-equality assertions and the originating unchanged Bootstrap nested target cases pass. Evidence: artifacts/wpt-dom-node-equality-chrome-v1-20260723, artifacts/wpt-dom-node-equality-adapters-v1-20260723, and artifacts/ecosystem-consumers-matrix-v21-bootstrap-collapse-complete-20260723."
     },
     {
+      "path": "contracts/css-character-data-checkpoints.html",
+      "type": "testharness",
+      "capabilities": ["character-data-style-checkpoints", "dom-string-conversion-order", "structural-selector-invalidation"],
+      "evidence": ["css-structural-mutation-audit"],
+      "reason": "Browser-referenced character-data setter, conversion/error, empty/relational selector, stylesheet text and textarea checkpoints."
+    },
+    {
       "path": "contracts/css-variadic-child-list-checkpoints.html",
       "type": "testharness",
       "capabilities": ["variadic-node-insertion", "structural-selector-invalidation", "custom-element-reaction-checkpoints", "dom-string-conversion-order"],
@@ -1204,6 +1211,13 @@
     }
   ],
   "candidate": [
+    {
+      "path": "contracts/css-textarea-dynamic-state.html",
+      "type": "testharness",
+      "capabilities": ["textarea-validity-selector", "placeholder-shown-selector", "dynamic-state-invalidation"],
+      "evidence": ["css-structural-mutation-audit", "css-dynamic-state-workstream-242"],
+      "reason": "Known pre-existing dynamic-state gaps retained for #237/#242: textarea :invalid uses the value attribute rather than live value; :placeholder-shown is unsupported. Must pass before this part of the broader CSS plan is complete."
+    },
     {
       "path": "contracts/css-grid-auto-fill-minmax-custom-property.html",
       "type": "testharness",

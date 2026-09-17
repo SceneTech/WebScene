@@ -22,7 +22,7 @@
       "attributes": [
         { "name": "nodeName", "getter": "get_tag_name" },
         { "name": "nodeType", "getter": "get_element_node_type" },
-        { "name": "nodeValue", "getter": "get_text_content", "setter": "set_text_content" },
+        { "name": "nodeValue", "getter": "get_node_value", "setter": "set_node_value" },
         { "name": "textContent", "getter": "get_text_content", "setter": "set_text_content" },
         { "name": "isConnected", "getter": "get_is_connected" },
         { "name": "ownerDocument", "getter": "get_owner_document" },
@@ -107,7 +107,7 @@
       "constructor": "illegal_dom_constructor",
       "parent": "Node",
       "attributes": [
-        { "name": "data", "getter": "get_text_content", "setter": "set_text_content" }
+        { "name": "data", "getter": "get_text_content", "setter": "set_character_data" }
       ],
       "methods": [],
       "constants": []

@@ -264,6 +264,7 @@ int main()
             return 0;
         }
         if (selected == "css-invalidation-scaling") {
+            test_character_data_stable_style_scaling();
             test_compiled_css_invalidation_scaling();
             test_compiled_css_route_scaling();
             test_compiled_css_route_scaling(true, true);
@@ -275,6 +276,10 @@ int main()
         }
         if (selected == "css-structural-rule-scaling") {
             test_compiled_css_route_scaling(true, true);
+            return 0;
+        }
+        if (selected == "css-character-data-scaling") {
+            test_character_data_stable_style_scaling();
             return 0;
         }
         if (selected == "custom-element-checkpoints") {
@@ -933,6 +938,7 @@ int main()
     test_media_query_resize_recascades_only_affected_subtrees();
     test_attribute_invalidation_scopes_subject_and_descendant_rules();
     test_compiled_css_invalidation_scaling();
+    test_character_data_stable_style_scaling();
     test_compiled_css_route_scaling();
     test_compiled_css_route_scaling(true, true);
     test_concurrent_input_producers_remain_consumable();

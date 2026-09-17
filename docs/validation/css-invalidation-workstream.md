@@ -74,6 +74,10 @@ used.
   the last occurrence of duplicate nodes, and resolve viable sibling positions.
   Deliver structural reactions after both source/destination style checkpoints,
   including source removals when final multi-node insertion fails.
+- Preserve character-data conversion/error checkpoints for `data`, `nodeValue`
+  and `textContent`, including generated and manual bindings. Nonempty-to-nonempty
+  text edits do not invalidate structural selectors; stylesheet text still has
+  its separate activation checkpoint.
 
 ## Correctness and scaling gates
 
@@ -134,9 +138,9 @@ WEBSCENE_NATIVE_ENGINE_TEST_FILTER=css-invalidation-scaling \
 
 ## Component-size matrix and measured matching bottleneck
 
-The same native filter now runs 116 cases: eighteen component shapes with ordinary
-unrelated rules (72 cases), plus eleven structural shapes with unrelated structural
-rules (44 cases); both use 8/128 affected targets and 32/1,024 unrelated nodes/rule
+The same native filter now runs 140 route cases: twenty-one component shapes with
+ordinary unrelated rules (84 cases), plus fourteen structural shapes with unrelated
+structural rules (56 cases); both use 8/128 affected targets and 32/1,024 unrelated nodes/rule
 families. Each case adds then removes selector state and checks every target's
 computed width. All eight counters
 must be identical at both unrelated sizes; work must stay within a linear
@@ -164,6 +168,59 @@ operation-count comparison between development variants, not a timing A/B, an
 end-to-end Spotify result, or a Chrome-speed claim. Timing remains informational.
 
 ## Remaining stages
+
+### Character-data setter checkpoints and stable-content work
+
+The new required-profile `css-character-data-checkpoints.html` initially passed
+**47/47 in Chrome vs 15/47 in WebScene**. Failed string conversions erased existing
+text and author conversion side effects, `data = undefined` incorrectly became an
+empty string, and Element `nodeValue` incorrectly replaced its children. The shared
+text-value path now stops on failed conversion before mutation, distinguishes
+nullable `nodeValue`/`textContent` from legacy-null `data`, preserves WTF-8 data,
+and retains Element `nodeValue`'s conversion-before-no-op behavior. Both the manual
+bindings and the generated WebIDL exposure manifest/output are updated.
+
+The contract covers text, comments and processing instructions, exceptions/Symbols,
+reentrant reparenting/conversion, nullable values and lone surrogates, `:empty` and
+relational/inherited-variable checkpoints, stylesheet text and dirty textarea values.
+It now passes **47/47 in the certification native build** as well as Chrome.
+The **140-case route matrix plus four stable-text cases** also pass with
+certification telemetry; ten adjacent native groups and parser checks pass.
+Related required/candidate contracts total **342 passing checks** (including
+generated binding shape, attribute records and custom-element lifecycle).
+The final production build also passes those 342 checks, all 140 route cases,
+all four stable-text semantic cases, the ten adjacent native groups and parser
+tests. The generated WebIDL catalog check passes. No remote CI status is claimed.
+
+**Remaining dynamic-state evidence, not counted as passing:** the separate candidate
+`css-textarea-dynamic-state.html` passes **6/6 Chrome but 0/6 native**. Its validity
+check already fails before text mutation: `:invalid` reads the value attribute
+instead of the live textarea value. `:placeholder-shown` is not implemented.
+The regression uses padding to avoid textarea scrollbar adjustments contaminating
+computed-size expectations. These are pre-existing selector/dynamic-state gaps
+for coordinated follow-up under #237/#242, not completed by this optimization;
+their tests remain in the manifest and block completion of that broader plan item.
+
+Repeated ordinary nonempty text edits cannot change the supported structural
+selector inputs. Only text emptiness transitions trigger child-list invalidation;
+text nodes still update layout data and run stylesheet activation. In particular,
+nonempty CSS text edits (including repeated values) retain their existing stylesheet
+update path rather than conflating text editing with CSSOM identity caching.
+
+A new native gate performs 200 edits per text node through all three property
+aliases at 8/128 targets and 32/1,024 unrelated structural rule families. The control
+path fails: its first **1,600 edits produce 8,000 planning lookups, 6,400 candidate
+visits, 8,000 compound checks and 3,200 cascades**. With the emptiness guard, all eight
+CSS counters remain **zero**, including at **25,600 edits**. Final data, node identity
+and computed styles are asserted. Three additional route-matrix shapes independently
+test empty/nonempty transitions through each property, so suppressing all invalidation
+cannot pass. Counts exclude native text allocation, layout and scene work; this is
+not an end-to-end performance claim.
+
+This audits the exposed setter paths, not all CharacterData APIs. The exposure
+manifest still lacks `appendData`/`insertData`/`deleteData`/`replaceData`, `splitText`
+and `normalize` entry points; their broader API/structural contracts remain separate
+follow-up work. Native child-vector movement also remains to be measured and bounded.
 
 ### Structural follow-up after #148 merged
 

@@ -439,11 +439,11 @@ struct v8_dom_runtime::implementation final {
                 v8::PropertyAttribute::ReadOnly
                 | v8::PropertyAttribute::DontEnum
                 | v8::PropertyAttribute::DontDelete));
-        element->InstanceTemplate()->SetNativeDataProperty(js_string(isolate, "nodeValue"), get_text_content, set_text_content);
+        element->InstanceTemplate()->SetNativeDataProperty(js_string(isolate, "nodeValue"), get_node_value, set_node_value);
         element->InstanceTemplate()->SetNativeDataProperty(js_string(isolate, "textContent"), get_text_content, set_text_content);
         element->InstanceTemplate()->SetNativeDataProperty(js_string(isolate, "innerText"), get_inner_text, set_text_content);
         element->InstanceTemplate()->SetNativeDataProperty(js_string(isolate, "text"), get_option_or_script_text, set_option_or_script_text);
-        element->InstanceTemplate()->SetNativeDataProperty(js_string(isolate, "data"), get_text_content, set_text_content);
+        element->InstanceTemplate()->SetNativeDataProperty(js_string(isolate, "data"), get_text_content, set_character_data);
         element->InstanceTemplate()->SetNativeDataProperty(js_string(isolate, "namespaceURI"), get_namespace_uri);
         element->InstanceTemplate()->SetNativeDataProperty(js_string(isolate, "children"), get_children);
         element->InstanceTemplate()->SetNativeDataProperty(js_string(isolate, "childNodes"), get_children);

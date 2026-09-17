@@ -1,6 +1,7 @@
 #pragma once
 
 #include "webscene_native_engine.h"
+#include "webscene_file_panel_v2.hpp"
 #include "webscene_compiled_document.h"
 
 #include <chrono>
@@ -266,6 +267,8 @@ public:
         resource_response& response)>;
     using interop_callback_sink_v3 =
         std::function<uint64_t(interop_callback_request_data_v3&&)>;
+    using file_panel_request_sink_v2 =
+        std::function<bool(const webscene_file_panel_request_v2&)>;
     using inspector_message_sink =
         std::function<void(uint64_t, std::string_view)>;
 
@@ -281,7 +284,8 @@ public:
         class runtime_diagnostics* diagnostics = nullptr,
         std::string storage_directory = {},
         std::string storage_partition_key = {},
-        uint64_t storage_quota_bytes = 0);
+        uint64_t storage_quota_bytes = 0,
+        file_panel_request_sink_v2 file_panel_request_sink = {});
     ~v8_dom_runtime();
 
     v8_dom_runtime(const v8_dom_runtime&) = delete;
@@ -325,6 +329,7 @@ public:
     void set_native_media_policy(uint32_t flags);
     std::unique_ptr<native_file_request> take_file_request();
     void complete_file_request(native_file_completion& completion);
+    void complete_file_panel_request(file_panel_completion_data_v2& completion);
     void complete_host_request(native_host_completion& completion);
     bool try_take_host_request(std::string& request);
     std::unique_ptr<native_host_request> take_typed_host_request();

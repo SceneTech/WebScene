@@ -144,6 +144,8 @@ int main() {
     request_fixture directory;
     directory.request.request_id = 10;
     directory.request.kind = WEBSCENE_FILE_PANEL_OPEN_DIRECTORY_V2;
+    directory.request.flags = 0;
+    directory.request.maximum_selection_count = 1;
     directory.request.filters = nullptr;
     directory.request.filter_count = 0;
     require(broker.queue(directory.request,
@@ -237,6 +239,21 @@ int main() {
     require(!broker.queue(invalid.request, {}), "multi-select save was accepted");
     invalid.request.kind = WEBSCENE_FILE_PANEL_OPEN_DIRECTORY_V2;
     require(!broker.queue(invalid.request, {}), "directory filters were accepted");
+    invalid.request.filters = nullptr;
+    invalid.request.filter_count = 0;
+    require(!broker.queue(invalid.request, {}),
+            "multi-select directory request was accepted");
+    invalid.request.flags = WEBSCENE_FILE_PANEL_REQUEST_WRITE_V2;
+    invalid.request.maximum_selection_count = 1;
+    require(broker.queue(invalid.request, {}),
+            "directory read-write option was rejected");
+    require(static_cast<bool>(broker.take()),
+            "directory read-write request was not leased");
+    webscene_file_panel_completion_v2 option_cancelled{
+        sizeof(option_cancelled), 2, invalid.request.request_id,
+        WEBSCENE_FILE_PANEL_CANCELLED_V2, 0, nullptr, 0, {}, {}};
+    require(broker.complete(option_cancelled),
+            "directory read-write request could not be cancelled");
 
     const auto started = std::chrono::steady_clock::now();
     constexpr std::uint64_t cycles = 10000;

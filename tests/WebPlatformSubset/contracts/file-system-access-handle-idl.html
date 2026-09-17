@@ -1,0 +1,79 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>File System Access picker and handle IDL surface</title>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<body>
+<script>
+  test(() => {
+    for (const name of [
+      "showOpenFilePicker", "showDirectoryPicker", "showSaveFilePicker"
+    ]) {
+      const descriptor = Object.getOwnPropertyDescriptor(window, name);
+      assert_equals(typeof window[name], "function", `${name} was absent`);
+      assert_equals(window[name].length, 0, `${name}.length`);
+      assert_true(Boolean(descriptor && descriptor.writable
+        && descriptor.configurable && descriptor.enumerable),
+        `${name} global descriptor changed`);
+      assert_equals(window[name].name, name, `${name}.name`);
+    }
+  }, "picker globals have the optional-dictionary function shape");
+
+  test(() => {
+    for (const constructor of [
+      FileSystemHandle, FileSystemFileHandle, FileSystemDirectoryHandle
+    ]) {
+      let error = null;
+      try { new constructor(); } catch (caught) { error = caught; }
+      assert_equals(error && error.name, "TypeError",
+        `${constructor.name} construction`);
+    }
+    assert_equals(Object.getPrototypeOf(FileSystemFileHandle.prototype),
+      FileSystemHandle.prototype, "file handle prototype inheritance changed");
+    assert_equals(Object.getPrototypeOf(FileSystemDirectoryHandle.prototype),
+      FileSystemHandle.prototype, "directory handle prototype inheritance changed");
+  }, "handle constructors are illegal and inherit by interface");
+
+  test(() => {
+    for (const name of ["kind", "name"]) {
+      const descriptor = Object.getOwnPropertyDescriptor(
+        FileSystemHandle.prototype, name);
+      assert_true(Boolean(descriptor && typeof descriptor.get === "function"
+        && descriptor.enumerable && descriptor.configurable),
+        `${name} attribute descriptor changed`);
+    }
+    for (const [name, length] of [
+      ["isSameEntry", 1], ["queryPermission", 0], ["requestPermission", 0]
+    ]) {
+      const descriptor = Object.getOwnPropertyDescriptor(
+        FileSystemHandle.prototype, name);
+      assert_true(Boolean(descriptor && typeof descriptor.value === "function"
+        && descriptor.value.length === length && descriptor.enumerable
+        && descriptor.configurable && descriptor.writable),
+        `${name} operation descriptor changed`);
+      assert_equals(descriptor.value.name, name, `${name}.name`);
+    }
+  }, "base handle attributes and operations use Web IDL descriptors");
+
+  test(() => {
+    assert_equals(FileSystemHandle.prototype[Symbol.toStringTag], "FileSystemHandle",
+      "base handle tag changed");
+    assert_equals(FileSystemFileHandle.prototype[Symbol.toStringTag],
+      "FileSystemFileHandle", "file handle tag changed");
+    assert_equals(FileSystemDirectoryHandle.prototype[Symbol.toStringTag],
+      "FileSystemDirectoryHandle", "directory handle tag changed");
+    for (const [name, length] of [["getFile", 0], ["createWritable", 0]]) {
+      assert_equals(typeof FileSystemFileHandle.prototype[name], "function", `${name} was absent`);
+      assert_equals(FileSystemFileHandle.prototype[name].name, name, `${name}.name`);
+      assert_equals(FileSystemFileHandle.prototype[name].length, length, `${name}.length`);
+    }
+    for (const [name, length] of [
+      ["getFileHandle", 1], ["getDirectoryHandle", 1], ["removeEntry", 1], ["resolve", 1]
+    ]) {
+      assert_equals(typeof FileSystemDirectoryHandle.prototype[name], "function", `${name} was absent`);
+      assert_equals(FileSystemDirectoryHandle.prototype[name].name, name, `${name}.name`);
+      assert_equals(FileSystemDirectoryHandle.prototype[name].length, length, `${name}.length`);
+    }
+  }, "specialized handle operations have the expected brands");
+</script>
+</body>

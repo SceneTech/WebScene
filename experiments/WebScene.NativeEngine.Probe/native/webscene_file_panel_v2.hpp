@@ -277,7 +277,9 @@ private:
             WEBSCENE_FILE_PANEL_ALLOW_MULTIPLE_V2
             | WEBSCENE_FILE_PANEL_SHOW_HIDDEN_V2
             | WEBSCENE_FILE_PANEL_CAN_CREATE_DIRECTORIES_V2
-            | WEBSCENE_FILE_PANEL_CONFIRM_OVERWRITE_V2;
+            | WEBSCENE_FILE_PANEL_CONFIRM_OVERWRITE_V2
+            | WEBSCENE_FILE_PANEL_EXCLUDE_ACCEPT_ALL_V2
+            | WEBSCENE_FILE_PANEL_REQUEST_WRITE_V2;
         if (source.struct_size < sizeof(source) || source.version != 2
             || source.request_id == 0
             || source.reserved != 0
@@ -291,9 +293,18 @@ private:
         const bool multiple =
             (source.flags & WEBSCENE_FILE_PANEL_ALLOW_MULTIPLE_V2) != 0;
         if ((!multiple && source.maximum_selection_count != 1)
-            || (source.kind == WEBSCENE_FILE_PANEL_SAVE_FILE_V2 && multiple)
+            || (source.kind != WEBSCENE_FILE_PANEL_OPEN_FILE_V2 && multiple)
             || (source.kind == WEBSCENE_FILE_PANEL_OPEN_DIRECTORY_V2
-                && source.filter_count != 0)) return {};
+                && source.filter_count != 0)
+            || (source.kind == WEBSCENE_FILE_PANEL_OPEN_DIRECTORY_V2
+                && (source.flags & WEBSCENE_FILE_PANEL_EXCLUDE_ACCEPT_ALL_V2) != 0)
+            || (source.kind != WEBSCENE_FILE_PANEL_OPEN_DIRECTORY_V2
+                && (source.flags & WEBSCENE_FILE_PANEL_REQUEST_WRITE_V2) != 0)
+            || (source.kind != WEBSCENE_FILE_PANEL_SAVE_FILE_V2
+                && (source.flags & WEBSCENE_FILE_PANEL_CONFIRM_OVERWRITE_V2) != 0)
+            || (source.kind == WEBSCENE_FILE_PANEL_OPEN_FILE_V2
+                && (source.flags & WEBSCENE_FILE_PANEL_CAN_CREATE_DIRECTORIES_V2) != 0))
+            return {};
         const auto title = file_panel_string_view_v2(
             source.title, file_panel_maximum_text_bytes_v2);
         const auto prompt = file_panel_string_view_v2(

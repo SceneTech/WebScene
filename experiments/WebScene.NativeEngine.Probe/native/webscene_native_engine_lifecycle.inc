@@ -120,6 +120,12 @@
         signal_worker();
         return true;
     }
+    void complete_file_panel_request_v2(
+        webscene_native::file_panel_completion_data_v2 completion) {
+        std::lock_guard lock(script_mutex_);
+        script_work_.emplace_back(std::move(completion));
+        signal_worker();
+    }
     bool complete_host_request(webscene_native::native_host_completion completion) {
         std::lock_guard lock(script_mutex_);
         if (script_work_.size() >= 1024) return false;

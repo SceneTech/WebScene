@@ -836,6 +836,12 @@ if(WEBSCENE_NATIVE_ENGINE_ENABLE_V8)
         add_test(NAME webscene_native_indexeddb_contract COMMAND webscene_native_engine_tests)
         add_test(NAME webscene_native_panel_listener_lifecycle COMMAND webscene_native_engine_tests)
         add_test(NAME webscene_native_navigation_realm COMMAND webscene_native_engine_tests)
+        add_test(NAME webscene_native_file_system_access
+            COMMAND webscene_native_engine_tests)
+        set_tests_properties(webscene_native_file_system_access PROPERTIES
+            ENVIRONMENT "WEBSCENE_NATIVE_ENGINE_TEST_FILTER=file-system-access"
+            LABELS "native;file-system-access;security;lifecycle;performance"
+            TIMEOUT 30)
         add_test(NAME webscene_native_host_close_decision COMMAND webscene_native_engine_tests)
         set_tests_properties(webscene_native_idle_v8_platform PROPERTIES
             ENVIRONMENT "WEBSCENE_NATIVE_ENGINE_TEST_FILTER=idle-v8-platform")

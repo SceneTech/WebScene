@@ -2243,6 +2243,45 @@ void test_host_driven_window_close_lifecycle(webscene_engine* engine)
         webscene_engine_request_window_close_v1(nullptr)
             == WEBSCENE_WINDOW_CLOSE_ERROR_V1,
         "a null engine did not return the native close error decision");
+
+    const auto rejection_path = std::filesystem::temp_directory_path() / (
+        "webscene-native-close-prior-rejection-"
+        + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count())
+        + ".html");
+    {
+        std::ofstream file(rejection_path);
+        file << R"HTML(<!doctype html><script>
+          globalThis.__webSceneComponentReady = true;
+          Promise.reject(new Error('unrelated rejection before native close'));
+        </script>)HTML";
+    }
+    auto* rejection_engine = webscene_engine_create(0);
+    require(rejection_engine != nullptr,
+        "prior promise rejection close fixture engine creation failed");
+    const auto rejection_root = rejection_path.parent_path().string();
+    webscene_engine_set_resource_root(
+        rejection_engine, rejection_root.data(), rejection_root.size());
+    const auto rejection_url = "file://" + rejection_path.string();
+    require(
+        webscene_engine_load_url(
+            rejection_engine, rejection_url.data(), rejection_url.size()) != 0U,
+        "prior promise rejection close fixture navigation failed");
+    webscene_engine_metrics rejection_metrics{};
+    for (auto attempt = 0; attempt < 250; ++attempt) {
+        webscene_engine_get_metrics(rejection_engine, &rejection_metrics);
+        if (rejection_metrics.component_ready != 0U) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    require(rejection_metrics.component_ready != 0U,
+        "prior promise rejection close fixture did not become ready");
+    require(
+        webscene_engine_request_window_close_v1(rejection_engine)
+            == WEBSCENE_WINDOW_CLOSE_ALLOW_V1,
+        "an unrelated prior promise rejection poisoned an uncancelled native close: "
+            + last_error(rejection_engine));
+    webscene_engine_destroy(rejection_engine);
+    std::filesystem::remove(rejection_path);
+
     execute_and_wait(engine, R"JS(
         globalThis.__nativeCloseLifecycle = {
           beforeunload: 0,
@@ -2320,6 +2359,50 @@ void test_host_driven_window_close_lifecycle(webscene_engine* engine)
             == WEBSCENE_WINDOW_CLOSE_ERROR_V1,
         "a missing top-level dispatcher did not return a native close error");
     webscene_engine_destroy(error_engine);
+
+    auto* beforeunload_error_engine = webscene_engine_create(0);
+    require(beforeunload_error_engine != nullptr,
+        "beforeunload error fixture engine creation failed");
+    execute_and_wait(beforeunload_error_engine, R"JS(
+        const dispatch = globalThis.dispatchEvent;
+        globalThis.dispatchEvent = event => {
+          if (event.type === 'beforeunload') {
+            throw new Error('synchronous beforeunload failure');
+          }
+          return dispatch.call(globalThis, event);
+        };
+    )JS", "native-host-close-beforeunload-error.js");
+    require(
+        webscene_engine_request_window_close_v1(beforeunload_error_engine)
+            == WEBSCENE_WINDOW_CLOSE_ERROR_V1,
+        "a synchronous beforeunload failure did not return a native close error");
+    require(
+        last_error(beforeunload_error_engine).find("synchronous beforeunload failure")
+            != std::string::npos,
+        "the native close error did not preserve the beforeunload failure");
+    webscene_engine_destroy(beforeunload_error_engine);
+
+    auto* pagehide_error_engine = webscene_engine_create(0);
+    require(pagehide_error_engine != nullptr,
+        "pagehide error fixture engine creation failed");
+    execute_and_wait(pagehide_error_engine, R"JS(
+        const dispatch = globalThis.dispatchEvent;
+        globalThis.dispatchEvent = event => {
+          if (event.type === 'pagehide') {
+            throw new Error('synchronous pagehide failure');
+          }
+          return dispatch.call(globalThis, event);
+        };
+    )JS", "native-host-close-pagehide-error.js");
+    require(
+        webscene_engine_request_window_close_v1(pagehide_error_engine)
+            == WEBSCENE_WINDOW_CLOSE_ERROR_V1,
+        "a synchronous pagehide failure did not return a native close error");
+    require(
+        last_error(pagehide_error_engine).find("synchronous pagehide failure")
+            != std::string::npos,
+        "the native close error did not preserve the pagehide failure");
+    webscene_engine_destroy(pagehide_error_engine);
 }
 
 void test_css_linear_gradient_reaches_the_retained_scene(webscene_engine* engine)

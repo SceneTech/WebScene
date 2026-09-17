@@ -66,6 +66,10 @@ inline bool compound_matches(const Host& host,const dom_node& node,
         const auto is_element = [](const dom_node* candidate) {
             return candidate != nullptr && !candidate->tag.starts_with('#');
         };
+        const auto record_sibling_visit = [&] {
+            if constexpr (requires { host.record_css_positional_sibling_visit(); })
+                host.record_css_positional_sibling_visit();
+        };
 #if !defined(WEBSCENE_NATIVE_ENGINE_SELECTOR_SIBLING_SCAN_EXPERIMENT)
         std::vector<const dom_node*> element_siblings;
         auto element_siblings_ready = false;
@@ -79,6 +83,7 @@ inline bool compound_matches(const Host& host,const dom_node& node,
             if (node.parent != nullptr) {
                 element_siblings.reserve(node.parent->children.size());
                 for (const auto* child : node.parent->children) {
+                    record_sibling_visit();
 #if defined(WEBSCENE_NATIVE_ENGINE_SELECTOR_SIBLING_BENCHMARK_COUNTERS)
                     selector_sibling_scans.fetch_add(1U, std::memory_order_relaxed);
 #endif
@@ -108,6 +113,7 @@ inline bool compound_matches(const Host& host,const dom_node& node,
             element_positions_ready = true;
             if (node.parent == nullptr) return element_positions;
             for (const auto* child : node.parent->children) {
+                record_sibling_visit();
 #if defined(WEBSCENE_NATIVE_ENGINE_SELECTOR_SIBLING_BENCHMARK_COUNTERS)
                 selector_sibling_scans.fetch_add(1U, std::memory_order_relaxed);
 #endif
@@ -124,6 +130,7 @@ inline bool compound_matches(const Host& host,const dom_node& node,
             same_type_positions_ready = true;
             if (node.parent == nullptr) return same_type_positions;
             for (const auto* child : node.parent->children) {
+                record_sibling_visit();
 #if defined(WEBSCENE_NATIVE_ENGINE_SELECTOR_SIBLING_BENCHMARK_COUNTERS)
                 selector_sibling_scans.fetch_add(1U, std::memory_order_relaxed);
 #endif
@@ -140,6 +147,32 @@ inline bool compound_matches(const Host& host,const dom_node& node,
         for (const auto& pseudo : selector.pseudos) {
             const std::string_view name(pseudo.name);
             const std::string_view argument(pseudo.argument);
+            if constexpr (requires { host.css_positional_summary(node, false); }) {
+                const bool positional = name == "first-child" || name == "last-child"
+                    || name == "only-child" || name == "nth-child" || name == "nth-last-child"
+                    || name == "first-of-type" || name == "last-of-type" || name == "only-of-type"
+                    || name == "nth-of-type" || name == "nth-last-of-type";
+                if (positional) {
+                    // A matching pass is immutable. Index each sibling list once
+                    // instead of scanning/copying it again for every subject.
+                    const auto values = host.css_positional_summary(node, name.ends_with("of-type"));
+                    if (values.has_value()) {
+#if defined(WEBSCENE_NATIVE_ENGINE_SELECTOR_SIBLING_BENCHMARK_COUNTERS)
+                        selector_sibling_positional_matches.fetch_add(1U, std::memory_order_relaxed);
+#endif
+                        if (!values->node_found) return false;
+                        if (name.starts_with("first-") && values->position != 1U) return false;
+                        if (name.starts_with("last-") && values->position != values->count) return false;
+                        if (name.starts_with("only-") && values->count != 1U) return false;
+                        if (name.starts_with("nth-")) {
+                            const auto position = name.starts_with("nth-last-")
+                                ? values->count - values->position + 1U : values->position;
+                            if (!nth_matches(argument, static_cast<int>(position))) return false;
+                        }
+                        continue;
+                    }
+                }
+            }
             const auto form_control = node.tag == "button" || node.tag == "input"
                 || node.tag == "select" || node.tag == "textarea"
                 || node.tag == "option" || node.tag == "optgroup" || node.tag == "fieldset";

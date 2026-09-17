@@ -539,6 +539,7 @@
     uint64_t selector_invalidation_candidate_visits{0U};
     uint64_t selector_invalidation_fallback_visits{0U};
     mutable uint64_t css_compound_match_checks{0U};
+    mutable uint64_t css_positional_sibling_visits{0U};
     mutable uint64_t css_rule_match_checks{0U};
     uint64_t css_cascade_applications{0U};
     uint64_t css_cascade_candidate_checks{0U};

@@ -268,6 +268,10 @@ int main()
             test_compiled_css_route_scaling();
             return 0;
         }
+        if (selected == "css-structural-scaling") {
+            test_compiled_css_route_scaling(true);
+            return 0;
+        }
         if (selected == "runtime-diagnostics") {
             test_runtime_diagnostics();
             test_runtime_diagnostics_frame_and_failure();

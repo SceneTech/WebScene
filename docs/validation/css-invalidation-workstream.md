@@ -116,7 +116,7 @@ WEBSCENE_NATIVE_ENGINE_TEST_FILTER=css-invalidation-scaling \
 
 ## Component-size matrix and measured matching bottleneck
 
-The same native filter now runs 44 cases: eleven component shapes, 8/128 affected
+The same native filter now runs 48 cases: twelve component shapes, 8/128 affected
 targets, and 32/1,024 unrelated nodes plus unrelated rules. Each case adds then
 removes selector state and checks every target's computed width. All seven counters
 must be identical at both unrelated sizes; work must stay within a linear
@@ -150,18 +150,34 @@ end-to-end Spotify result, or a Chrome-speed claim. Timing remains informational
 `css-child-list-invalidation.html` is a required-profile WPT-style contract,
 not an upstream WPT submission. Its initial 19 tests passed Chrome but exposed
 16 native failures on the preceding build. The expanded contract now passes
-**40/40 in WebScene and Chrome**: removal/replacement/reorder APIs, both sides of
+**50/50 in WebScene and Chrome**: removal/replacement/reorder APIs, both sides of
 reparenting, `:empty` character data, fragment/HTML connection checkpoints,
 nested negated positional selectors, inherited custom properties, and first-legend
-disabled-state changes. Callback observations are captured and asserted outside
+disabled-state changes, and all ten modeled positional pseudo classes across
+mixed tags/non-element siblings and repeated reorders/removals. Callback observations are captured and asserted outside
 the callback, so swallowed custom-element exceptions cannot masquerade as passes.
 
-Four additional native scaling shapes exercise positional insertion/removal,
+Five additional native scaling shapes exercise positional insertion/removal,
 general-sibling insertion/removal, relational-ancestor sibling targets, and empty
-state. All 44 cases pass with bounded counters, zero document fallback, and exact
-counter equality as unrelated DOM/rules grow from 32 to 1,024. These fixtures do
-not yet count the internal cost of every positional sibling scan or prove scaling
-with unrelated *structural* rules; those remain important profiling extensions.
+state, including a wide positional sibling list. The matrix additionally records
+`css-positional-sibling-visits`, so bounded compound-match counts cannot hide
+quadratic internal scans. Its linear scan gate reproduced the old path's failure:
+8/128 affected siblings required 136/32,896 visits, despite unchanged CSS results.
+Pass-local positional indexing reduces this to **17/257 visits**, with identical
+other matching/cascade counts and widths. The index stores element and same-tag
+positions/counts per parent only for the current immutable matching pass, and is
+discarded/reset with the existing relationship memo before changed states.
+Calls outside such a pass keep the uncached matcher. This preserves the existing
+matching semantics rather than claiming new namespace or `nth-child(... of S)`
+support. Unrelated *structural* rule scaling remains to be measured. Operation
+counts are not a timing or end-to-end browser-speed claim.
+
+The certification build passes all 48 cases with identical eight-counter vectors
+across unrelated growth, including the stricter wide-list scan budget. Seven
+adjacent native groups and eight WPT-style contracts (98 checks) also pass after
+the positional-index change. The structural contract passes Chrome 50/50.
+The production build also passes the 48-case semantic matrix and 50-check
+structural contract without certification telemetry.
 
 This stage does not complete every DOM checkpoint: disconnected custom-element
 reactions, variadic/fragment forms of `prepend`/`before`/`after`, and further
@@ -174,7 +190,7 @@ from the structural operation counts.
 1. Extend the implemented descendant/sibling/custom-property/disabled/relational
    matrix to structural mutations, media/container queries, and additional dynamic
    state. Continue measuring matching and cascade work, not just plan traversal.
-2. Finish the structural checkpoint audit above and profile positional scans and
+2. Finish the structural checkpoint audit above and profile
    unrelated structural-rule growth. Compiled child-list, nested-selector and
    inherited-control routes are implemented; this does not claim broader selector
    matching conformance.

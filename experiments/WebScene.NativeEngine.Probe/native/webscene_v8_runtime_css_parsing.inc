@@ -1447,6 +1447,21 @@
         return css::compound_matches(*this,node,selector,scope_root,stable_features_only);
     }
 
+    void record_css_positional_sibling_visit() const
+    {
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+        ++css_positional_sibling_visits;
+#endif
+    }
+
+    std::optional<css::positional_sibling_summary> css_positional_summary(
+        const dom_node& node, bool of_type) const
+    {
+        if (active_selector_match_context == nullptr) return std::nullopt;
+        return active_selector_match_context->position(node, of_type,
+            [this] { record_css_positional_sibling_visit(); });
+    }
+
     bool css_compound_selector_matches(
         const dom_node& node,
         std::string_view selector,

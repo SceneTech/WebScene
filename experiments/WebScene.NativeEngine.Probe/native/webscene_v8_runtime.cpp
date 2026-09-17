@@ -6145,6 +6145,7 @@ std::string v8_dom_runtime::event_diagnostics() const
     result << ", selector-invalidation-fallback-visits="
         << impl_->selector_invalidation_fallback_visits;
     result << ", css-compound-match-checks=" << impl_->css_compound_match_checks;
+    result << ", css-positional-sibling-visits=" << impl_->css_positional_sibling_visits;
     result << ", css-rule-match-checks=" << impl_->css_rule_match_checks;
     result << ", css-cascade-applications=" << impl_->css_cascade_applications;
     result << ", css-cascade-candidate-checks=" << impl_->css_cascade_candidate_checks;

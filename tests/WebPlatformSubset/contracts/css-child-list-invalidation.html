@@ -178,4 +178,32 @@ test(t => {
   stage.insertBefore(first,stage.firstChild);
   assert_equals(getComputedStyle(second).width,'73px');
 }, 'changing the first legend invalidates inherited disabled state');
+
+for (const [pseudo, ofType, predicate] of [
+  ['first-child',false,(i,n)=>i===1], ['last-child',false,(i,n)=>i===n],
+  ['only-child',false,(i,n)=>n===1], ['nth-child(2n)',false,(i,n)=>i%2===0],
+  ['nth-last-child(2n)',false,(i,n)=>(n-i+1)%2===0],
+  ['first-of-type',true,(i,n)=>i===1], ['last-of-type',true,(i,n)=>i===n],
+  ['only-of-type',true,(i,n)=>n===1], ['nth-of-type(2n)',true,(i,n)=>i%2===0],
+  ['nth-last-of-type(2n)',true,(i,n)=>(n-i+1)%2===0]
+]) test(t => {
+  const style=document.createElement('style');
+  style.textContent='.position-probe {display:block;width:17px}.position-probe:'+pseudo+' {width:79px}';
+  document.head.appendChild(style);t.add_cleanup(()=>style.remove());
+  const stage=document.createElement('section');
+  stage.innerHTML='<i class="position-probe"></i>text<!--comment--><b class="position-probe"></b><i class="position-probe"></i><span class="position-probe"></span><i class="position-probe"></i><b class="position-probe"></b>';
+  document.body.appendChild(stage);t.add_cleanup(()=>stage.remove());
+  const verifyPositions=()=>{
+    const elements=Array.from(stage.children);
+    for(const node of elements) {
+      const siblings=ofType?elements.filter(s=>s.tagName===node.tagName):elements;
+      assert_equals(getComputedStyle(node).width,predicate(siblings.indexOf(node)+1,siblings.length)?'79px':'17px',pseudo+' '+node.tagName);
+    }
+  };
+  verifyPositions();
+  stage.appendChild(stage.firstChild);verifyPositions();
+  stage.children[1].remove();verifyPositions();
+  stage.insertBefore(stage.lastChild,stage.firstChild);verifyPositions();
+  stage.replaceChildren(stage.children[1]);verifyPositions();
+}, pseudo+' stays correct across matching passes, reorders, removals and non-element siblings');
 </script>

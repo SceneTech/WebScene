@@ -111,14 +111,15 @@ void test_compiled_css_invalidation_scaling()
 #endif
 }
 
-void test_compiled_css_route_scaling()
+void test_compiled_css_route_scaling(bool structural_only = false)
 {
     // Two independent axes: grow the affected component and grow unrelated
     // DOM/rules. Actual matching/cascade work must follow only the first axis.
     for (const auto* shape : {"descendants", "siblings", "disabled", "variables", "relational", "identity", "dataset",
-            "tree-position", "tree-siblings", "tree-relational", "tree-empty"}) {
+            "tree-wide-position", "tree-position", "tree-siblings", "tree-relational", "tree-empty"}) {
+        if (structural_only && !std::string_view(shape).starts_with("tree-")) continue;
         for (const auto affected_count : {8, 128}) {
-            std::vector<std::array<uint64_t, 7>> observations;
+            std::vector<std::array<uint64_t, 8>> observations;
             for (const auto unrelated_count : {32, 1024}) {
                 auto* engine = webscene_engine_create(0);
                 require(engine != nullptr, "CSS route scaling engine creation failed");
@@ -149,9 +150,11 @@ void test_compiled_css_route_scaling()
                   } else if (shape === 'tree-position') {
                     markup = ('<div class="tree-list">' + target + '</div>').repeat(count);
                     rule = '.matrix-target:nth-child(2) {width:41px}';
-                  } else if (shape === 'tree-siblings') {
+                  } else if (shape === 'tree-siblings' || shape === 'tree-wide-position') {
                     markup = '<div class="tree-list">' + target.repeat(count) + '</div>';
-                    rule = '.marker ~ .matrix-target {width:41px}';
+                    rule = shape === 'tree-wide-position'
+                      ? '.marker ~ .matrix-target:nth-child(n+2) {width:41px}'
+                      : '.marker ~ .matrix-target {width:41px}';
                   } else if (shape === 'tree-relational') {
                     markup = '<div class="tree-list"></div>' + target.repeat(count);
                     rule = '.tree-list:has(.marker) ~ .matrix-target {width:41px}';
@@ -205,14 +208,15 @@ void test_compiled_css_route_scaling()
                 require(setup == expected("11px"),
                     std::string("CSS route initial style mismatch: ") + shape + ": " + setup);
 #if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
-                const std::array<std::string_view, 7> names{
+                const std::array<std::string_view, 8> names{
                     "selector-invalidation-plan-lookups", "selector-invalidation-candidate-visits",
                     "selector-invalidation-fallback-visits", "css-compound-match-checks",
-                    "css-rule-match-checks", "css-cascade-applications", "css-cascade-candidate-checks"};
+                    "css-rule-match-checks", "css-cascade-applications", "css-cascade-candidate-checks",
+                    "css-positional-sibling-visits"};
                 std::this_thread::sleep_for(std::chrono::milliseconds(260));
                 execute_and_wait_for_wrapper_retention_scene(engine,
                     "document.body.style.backgroundColor = 'rgb(1, 2, 3)'", "css-route-baseline.js");
-                std::array<uint64_t, 7> before{};
+                std::array<uint64_t, 8> before{};
                 for (size_t i = 0; i < names.size(); ++i)
                     before[i] = runtime_counter_diagnostic(engine, names[i]);
 #endif
@@ -228,7 +232,7 @@ void test_compiled_css_route_scaling()
                 std::this_thread::sleep_for(std::chrono::milliseconds(260));
                 execute_and_wait_for_wrapper_retention_scene(engine,
                     "document.body.style.backgroundColor = 'rgb(3, 2, 1)'", "css-route-result.js");
-                std::array<uint64_t, 7> delta{};
+                std::array<uint64_t, 8> delta{};
                 for (size_t i = 0; i < names.size(); ++i) {
                     delta[i] = runtime_counter_diagnostic(engine, names[i]) - before[i];
                     std::cout << ' ' << names[i] << '=' << delta[i];
@@ -241,6 +245,9 @@ void test_compiled_css_route_scaling()
                 for (const auto value : delta)
                     require(value <= static_cast<uint64_t>(200 * affected_count + 256),
                         "compiled route work exceeded its linear component-size budget");
+                if (std::string_view(shape) == "tree-wide-position")
+                    require(delta[7] > 0 && delta[7] <= static_cast<uint64_t>(4 * (affected_count + 1)),
+                        "positional selectors repeatedly scanned the same sibling list");
                 observations.push_back(delta);
 #endif
                 std::cout << '\n';

@@ -190,6 +190,11 @@ struct compiled_css_selector final {
         // streams on every mutation or viewport transition.
         std::vector<std::vector<std::string>> declaration_variable_references;
         std::vector<std::string> variable_references;
+        // Modeled properties whose declarations can resolve to `inherit`
+        // directly or through var(). Media-query planning indexes this mask
+        // when the stylesheet changes instead of rescanning declarations on
+        // every viewport transition.
+        uint64_t inheritance_candidate_mask{0U};
         std::vector<std::string> media_queries;
         uint32_t specificity{0};
         // One-based index into prepared_stylesheet::cascade_layers. Runtime
@@ -231,6 +236,11 @@ struct compiled_css_selector final {
         std::vector<node_style::rotation_keyframe> rotation_stops;
     };
 
+    struct css_inheritance_candidate_rule final {
+        size_t index{0U};
+        uint64_t properties{0U};
+    };
+
     enum class hover_invalidation_scope : uint8_t
     {
         subject,
@@ -264,6 +274,8 @@ struct compiled_css_selector final {
         css_index_string_map<std::vector<size_t>> rules_by_tag;
         css_index_string_map<std::vector<size_t>> rules_by_attribute;
         css_index_string_map<std::vector<size_t>> rules_by_variable_reference;
+        std::vector<css_inheritance_candidate_rule>
+            inheritance_candidate_rules;
         css_index_string_map<std::vector<size_t>> invalidation_rules_by_attribute;
         css_index_string_map<std::vector<size_t>> invalidation_rules_by_class;
         std::vector<css_child_list_bucket> child_list_index;

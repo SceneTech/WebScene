@@ -991,6 +991,7 @@
             compact_index(css_rules_by_tag);
             compact_index(css_rules_by_attribute);
             compact_index(css_rules_by_variable_reference);
+            css_inheritance_candidate_rules.shrink_to_fit();
             compact_index(css_invalidation_rules_by_attribute);
             compact_index(css_invalidation_rules_by_class);
             css_focus_rules.shrink_to_fit();
@@ -1009,6 +1010,7 @@
                 compact_index(cascade.rules_by_tag);
                 compact_index(cascade.rules_by_attribute);
                 compact_index(cascade.rules_by_variable_reference);
+                cascade.inheritance_candidate_rules.shrink_to_fit();
                 compact_index(cascade.invalidation_rules_by_attribute);
                 compact_index(cascade.invalidation_rules_by_class);
                 cascade.focus_rules.shrink_to_fit();

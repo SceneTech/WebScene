@@ -1895,6 +1895,8 @@ static void emit_prepared_sheet(std::ostream& out,const css::prepared_stylesheet
     }
     for(const auto& reference:rule->variable_references)
       out << "r->variable_references.push_back(" << quote(reference) << ");\n";
+    out << "r->inheritance_candidate_mask="
+        << rule->inheritance_candidate_mask << "ULL;\n";
     for(const auto& query:rule->media_queries)
       out << "r->media_queries.push_back(" << quote(query) << ");\n";
     out << "sheet.rules.push_back(std::move(r));}\n";

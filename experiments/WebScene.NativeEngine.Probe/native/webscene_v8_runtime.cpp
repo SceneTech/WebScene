@@ -6961,6 +6961,10 @@ std::string v8_dom_runtime::event_diagnostics() const
     result << ", css-cascade-candidate-checks=" << impl_->css_cascade_candidate_checks;
     result << ", css-variable-runtime-token-scans="
         << impl_->css_variable_runtime_token_scans;
+    result << ", css-inheritance-candidate-runtime-declaration-scans="
+        << impl_->css_inheritance_candidate_runtime_declaration_scans;
+    result << ", css-media-inheritance-candidate-index-visits="
+        << impl_->css_media_inheritance_candidate_index_visits;
     result << ", style-recascade-schedule-requests="
         << impl_->style_recascade_schedule_requests;
     result << ", style-recascade-coalesced-requests="
@@ -7623,6 +7627,8 @@ v8_dom_runtime::memory_metrics v8_dom_runtime::read_memory_metrics() const noexc
         + indexed_rule_storage(impl_->css_rules_by_tag)
         + indexed_rule_storage(impl_->css_rules_by_attribute)
         + indexed_rule_storage(impl_->css_rules_by_variable_reference)
+        + impl_->css_inheritance_candidate_rules.capacity()
+            * sizeof(css::css_inheritance_candidate_rule)
         + indexed_rule_storage(impl_->css_invalidation_rules_by_attribute)
         + indexed_rule_storage(impl_->css_invalidation_rules_by_class)
         + impl_->css_focus_rules.capacity() * sizeof(size_t)
@@ -7691,6 +7697,8 @@ v8_dom_runtime::memory_metrics v8_dom_runtime::read_memory_metrics() const noexc
             + indexed_rule_storage(cascade.rules_by_tag)
             + indexed_rule_storage(cascade.rules_by_attribute)
             + indexed_rule_storage(cascade.rules_by_variable_reference)
+            + cascade.inheritance_candidate_rules.capacity()
+                * sizeof(css::css_inheritance_candidate_rule)
             + cascade.focus_rules.capacity() * sizeof(size_t)
             + child_list_index_storage(cascade.child_list_index)
             + cascade.unindexed_rules.capacity() * sizeof(size_t)

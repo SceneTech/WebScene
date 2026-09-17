@@ -339,6 +339,7 @@ int main()
             test_media_query_custom_property_consumer_cascade_work();
             test_media_query_variable_reference_metadata_work();
             test_media_query_inherited_variable_consumer_replay_work();
+            test_media_query_inheritance_candidate_metadata_work();
             test_media_query_inherited_value_propagation_work();
             return 0;
         }
@@ -1081,6 +1082,7 @@ int main()
     test_media_query_custom_property_consumer_cascade_work();
     test_media_query_variable_reference_metadata_work();
     test_media_query_inherited_variable_consumer_replay_work();
+    test_media_query_inheritance_candidate_metadata_work();
     test_media_query_inherited_value_propagation_work();
     test_media_query_matching_scales_linearly();
     test_attribute_invalidation_scopes_subject_and_descendant_rules();

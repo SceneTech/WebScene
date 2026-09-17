@@ -1270,24 +1270,18 @@
             }
         }
         std::vector<size_t> inheritance_rule_indices;
-        inheritance_rule_indices.reserve(css_rules.size());
-        for (size_t index = 0; index < css_rules.size(); ++index) {
+        inheritance_rule_indices.reserve(
+            css_inheritance_candidate_rules.size());
+        for (const auto& candidate : css_inheritance_candidate_rules) {
             if (exact_changed_properties == 0U) break;
-            const auto& rule = css_rules[index];
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+            ++css_media_inheritance_candidate_index_visits;
+#endif
+            if ((candidate.properties & exact_changed_properties) == 0U
+                || candidate.index >= css_rules.size()) continue;
+            const auto& rule = css_rules[candidate.index];
             if (!rule.media_matches) continue;
-            const auto potential = std::any_of(
-                rule.declarations().begin(),
-                rule.declarations().end(),
-                [exact_changed_properties](const css_declaration& declaration) {
-                    const auto mask = css::property_mask(declaration.name);
-                    return !declaration.name.starts_with("--")
-                        && (mask & exact_changed_properties) != 0U
-                        && (css::cascade_keyword_is(
-                                declaration.value, "inherit")
-                            || declaration.value.find("var(")
-                                != std::string::npos);
-                });
-            if (potential) inheritance_rule_indices.push_back(index);
+            inheritance_rule_indices.push_back(candidate.index);
         }
         const css::rule_subject_index inheritance_index(
             css_rules, inheritance_rule_indices);
@@ -3100,6 +3094,7 @@
         css_rules_by_tag.clear();
         css_rules_by_attribute.clear();
         css_rules_by_variable_reference.clear();
+        css_inheritance_candidate_rules.clear();
         css_invalidation_rules_by_attribute.clear();
         css_invalidation_rules_by_class.clear();
         css_child_list_index.clear();

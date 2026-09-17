@@ -370,6 +370,8 @@
     css_index_string_map<std::vector<size_t>> css_rules_by_tag;
     css_index_string_map<std::vector<size_t>> css_rules_by_attribute;
     css_index_string_map<std::vector<size_t>> css_rules_by_variable_reference;
+    std::vector<css::css_inheritance_candidate_rule>
+        css_inheritance_candidate_rules;
     // Subject-key indexes above accelerate matching one element. These feature
     // indexes include every selector compound so mutations can find affected
     // rules without rescanning the complete stylesheet.
@@ -589,6 +591,8 @@
     uint64_t css_cascade_applications{0U};
     uint64_t css_cascade_candidate_checks{0U};
     mutable uint64_t css_variable_runtime_token_scans{0U};
+    uint64_t css_inheritance_candidate_runtime_declaration_scans{0U};
+    uint64_t css_media_inheritance_candidate_index_visits{0U};
     uint64_t style_recascade_schedule_requests{0U};
     uint64_t style_recascade_coalesced_requests{0U};
     uint64_t style_recascade_flush_batches{0U};

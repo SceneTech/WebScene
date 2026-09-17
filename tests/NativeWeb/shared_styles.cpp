@@ -150,6 +150,7 @@ void compare_sheet(const webscene_native::css::prepared_stylesheet& a,
     require(x.pseudo_kind==y.pseudo_kind && x.host_selector==y.host_selector);
     require(x.declaration_variable_references==y.declaration_variable_references &&
         x.variable_references==y.variable_references);
+    require(x.inheritance_candidate_mask==y.inheritance_candidate_mask);
     compare_selector(x.compiled_selector,y.compiled_selector);
     compare_selector(x.compiled_pseudo_origin,y.compiled_pseudo_origin);
     require(x.declarations.size()==y.declarations.size());

@@ -451,6 +451,90 @@ void test_media_query_inherited_variable_consumer_replay_work()
         "inherited variable replay recascaded unrelated descendants");
 }
 
+void test_media_query_inheritance_candidate_metadata_work()
+{
+    bool bounded = true;
+    std::vector<uint64_t> visit_observations;
+    for (const auto unrelated_rules : {32, 1024}) {
+        auto* engine = webscene_engine_create(0);
+        require(engine != nullptr,
+            "media inheritance metadata engine creation failed");
+        resize(engine, 800, 600, 1);
+        wait_for_consumed_inputs(
+            engine, 1, "media inheritance metadata initial viewport failed");
+        auto source = std::string{R"JS((unrelatedRules => {
+          let css=`
+            .inheritance-metadata-root {display:block;width:17px}
+            .inheritance-metadata-child {display:block;width:inherit;height:3px}
+            @media(max-width:600px) {.inheritance-metadata-root {width:41px}}`;
+          for(let index=0;index<unrelatedRules;++index) {
+            css+=`.inheritance-metadata-noise-${index}{opacity:.5}`;
+          }
+          const style=document.createElement('style'); style.textContent=css;
+          const root=document.createElement('section');
+          root.className='inheritance-metadata-root';
+          const child=document.createElement('b');
+          child.className='inheritance-metadata-child'; root.appendChild(child);
+          document.head.appendChild(style); document.body.appendChild(root);
+          globalThis.inheritanceMetadataWidth=()=>getComputedStyle(child).width;
+          return inheritanceMetadataWidth();
+        })(COUNT))JS"};
+        source.replace(
+            source.find("COUNT"), 5, std::to_string(unrelated_rules));
+        require(evaluate(engine, source,
+                "media-inheritance-metadata-setup.js") == R"("17px")",
+            "media inheritance metadata setup failed");
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+        std::this_thread::sleep_for(std::chrono::milliseconds(260));
+        execute_and_wait_for_wrapper_retention_scene(engine,
+            "document.body.style.backgroundColor='rgb(1,2,3)'",
+            "media-inheritance-metadata-before.js");
+        const auto visits_before = runtime_counter_diagnostic(
+            engine, "css-media-inheritance-candidate-index-visits");
+        const auto scans_before = runtime_counter_diagnostic(
+            engine,
+            "css-inheritance-candidate-runtime-declaration-scans");
+#endif
+        resize(engine, 480, 600, 2);
+        wait_for_consumed_inputs(
+            engine, 2, "media inheritance metadata activation failed");
+        require(evaluate(engine, "inheritanceMetadataWidth()",
+                "media-inheritance-metadata-narrow.js") == R"("41px")",
+            "media inheritance metadata activation style failed");
+        resize(engine, 800, 600, 3);
+        wait_for_consumed_inputs(
+            engine, 3, "media inheritance metadata deactivation failed");
+        require(evaluate(engine, "inheritanceMetadataWidth()",
+                "media-inheritance-metadata-wide.js") == R"("17px")",
+            "media inheritance metadata deactivation style failed");
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+        std::this_thread::sleep_for(std::chrono::milliseconds(260));
+        execute_and_wait_for_wrapper_retention_scene(engine,
+            "document.body.style.backgroundColor='rgb(3,2,1)'",
+            "media-inheritance-metadata-after.js");
+        const auto visits = runtime_counter_diagnostic(
+            engine, "css-media-inheritance-candidate-index-visits")
+            - visits_before;
+        const auto scans = runtime_counter_diagnostic(
+            engine,
+            "css-inheritance-candidate-runtime-declaration-scans")
+            - scans_before;
+        std::cout << "media-inheritance-metadata unrelated-rules="
+            << unrelated_rules << " candidate-index-visits=" << visits
+            << " runtime-declaration-scans=" << scans << '\n';
+        visit_observations.push_back(visits);
+        bounded = bounded && scans == 0U;
+#endif
+        webscene_engine_destroy(engine);
+    }
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+    bounded = bounded && visit_observations.size() == 2U
+        && visit_observations[0] == visit_observations[1];
+#endif
+    require(bounded,
+        "unrelated rules amplified media inheritance candidate planning");
+}
+
 void test_media_query_inherited_value_propagation_work()
 {
     bool bounded = true;

@@ -151,7 +151,9 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
     const state = {
       sheet, owner: sheet.ownerNode,
       source: undefined, ownerSource: undefined, rules: [], disabled: false,
-      mediaText: sheet.ownerNode.getAttribute('media') || ''
+      mediaText: typeof sheet.ownerNode?.getAttribute === 'function'
+        ? sheet.ownerNode.getAttribute('media') || ''
+        : ''
     };
     const list = new Proxy({}, {
       get(_target, key) {

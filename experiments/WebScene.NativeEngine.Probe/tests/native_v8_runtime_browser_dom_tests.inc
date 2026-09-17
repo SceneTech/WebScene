@@ -1653,6 +1653,22 @@ void test_batched_stylesheet_rule_mutation_performance()
     resize(engine, 800, 600, 1U);
     wait_for_consumed_inputs(
         engine, 1U, "stylesheet mutation performance viewport was not consumed");
+    const auto oversized_result = evaluate(engine, R"JS((() => {
+      const style = document.createElement('style');
+      document.head.appendChild(style);
+      const sheet = style.sheet;
+      const stage = sheet.__webSceneStageRules;
+      style.remove();
+      // Detached owners retain their CSSOM source for a future reconnect, but
+      // an oversized first source must not enter the bounded pending queue.
+      const queued = stage('.oversized{' + 'x'.repeat(32 * 1024 * 1024) + '}');
+      return [queued, style.isConnected, style.sheet === null];
+    })())JS", "oversized-stylesheet-staging.js");
+    require(oversized_result == R"([false,false,true])",
+        "oversized stylesheet source entered pending replacement storage: "
+            + oversized_result);
+    require(webscene_engine_request_low_memory(engine) != 0,
+        "oversized stylesheet source low-memory request was rejected");
     require(webscene_engine_set_runtime_work_metrics_enabled(engine, 1U) != 0,
         "stylesheet mutation runtime-work metrics could not be enabled");
     webscene_engine_metrics engine_before{};

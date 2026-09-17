@@ -384,12 +384,24 @@
         self->erase_pending_stylesheet_replacement(owner->id);
         constexpr auto maximum_pending_owners = size_t{1024U};
         constexpr auto maximum_pending_bytes = size_t{32U * 1024U * 1024U};
+        if (source.size() > maximum_pending_bytes) {
+            // A single source cannot fit in the bounded coalescing queue. Keep
+            // the CSSOM source for disconnect/reconnect semantics, but publish
+            // connected owners immediately so the same bytes are never copied
+            // into pending replacement storage as well.
+            self->flush_pending_stylesheet_replacements();
+            self->stylesheet_cssom_sources.insert_or_assign(
+                owner->id, std::move(source));
+            self->activate_connected_stylesheet(*owner);
+            self->document.mark_dirty();
+            info.GetReturnValue().Set(v8::False(info.GetIsolate()));
+            return;
+        }
         if (self->pending_stylesheet_replacements.size() >= maximum_pending_owners
-            || (!self->pending_stylesheet_replacements.empty()
-                && source.size() > maximum_pending_bytes
-                    - std::min(
-                        self->pending_stylesheet_replacement_bytes,
-                        maximum_pending_bytes))) {
+            || source.size() > maximum_pending_bytes
+                - std::min(
+                    self->pending_stylesheet_replacement_bytes,
+                    maximum_pending_bytes)) {
             self->flush_pending_stylesheet_replacements();
         }
         self->stylesheet_cssom_sources.insert_or_assign(owner->id, source);
@@ -405,6 +417,7 @@
             base_address,
             std::move(source)});
         self->document.mark_dirty();
+        info.GetReturnValue().Set(v8::True(info.GetIsolate()));
     }
 
     v8::Local<v8::Object> augment_style_sheet(v8::Local<v8::Object> sheet)

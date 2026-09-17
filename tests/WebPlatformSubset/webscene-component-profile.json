@@ -162,7 +162,14 @@
       "type": "testharness",
       "capabilities": ["rightmost-attribute-subject-invalidation", "ancestor-attribute-descendant-invalidation", "attribute-removal-recascade", "compiled-selector-dependencies", "class-mutation-invalidation", "batched-conjunctive-removal"],
       "evidence": ["spotify-overlayscrollbars-resize-invalidation-profile"],
-      "reason": "Product-neutral regression for compiled selector dependencies, nested relational selectors, escaped identifiers, class mutation APIs, inherited control state, conservative fallback, and multi-attribute removal at rendering checkpoints."
+      "reason": "Product-neutral regression for compiled selector dependencies, nested relational selectors, escaped identifiers, class mutation APIs, inherited control state, and multi-attribute removal at rendering checkpoints."
+    },
+    {
+      "path": "contracts/css-nested-selector-invalidation.html",
+      "type": "testharness",
+      "capabilities": ["nested-selector-invalidation", "compiled-forward-reverse-routes", "inherited-disabled-invalidation"],
+      "evidence": ["general-css-invalidation-workstream"],
+      "reason": "Product-neutral coverage for nested forward and reverse dependency routes, sibling boundaries, inherited disabled controls, and combined mutation checkpoints."
     },
     {
       "path": "contracts/responsive-toolbar-breakpoint-navigation.html",

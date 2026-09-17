@@ -456,6 +456,7 @@
             if (rules.empty() || rules.back() != index) rules.push_back(index);
         };
         for (const auto& component : rule.payload->invalidation) {
+            css_child_list_sensitive = css_child_list_sensitive || component.child_list_sensitive;
             for (const auto& [name, scope] : component.attributes) {
                 static_cast<void>(scope);
                 css_attribute_dependencies.emplace(name);
@@ -1437,7 +1438,12 @@
     }
     bool css_compound_selector_matches(const dom_node& node,const compiled_css_compound& selector,
         const dom_node* scope_root = nullptr) const
-    { return css::compound_matches(*this,node,selector,scope_root); }
+    {
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+        ++css_compound_match_checks;
+#endif
+        return css::compound_matches(*this,node,selector,scope_root);
+    }
 
     bool css_compound_selector_matches(
         const dom_node& node,
@@ -1594,6 +1600,8 @@
     {
         if (const auto known = compiled_css_selector_lists.find(selector);
             known != compiled_css_selector_lists.end()) {
+            if (active_selector_match_context != nullptr)
+                active_selector_match_context->retained_lists.try_emplace(known->second.get(), known->second);
             return known->second;
         }
         if (compiled_css_selector_lists.size()
@@ -1603,6 +1611,8 @@
         auto key = std::string(selector);
         auto prepared = std::make_shared<const compiled_css_selector_list>(
             compile_css_selector_list(key));
+        if (active_selector_match_context != nullptr)
+            active_selector_match_context->retained_lists.try_emplace(prepared.get(), prepared);
         return compiled_css_selector_lists.emplace(
             key,
             std::move(prepared)).first->second;
@@ -1632,7 +1642,7 @@
         return css::selector_matches(document,node,selector,component,scope_root,
             [&](const dom_node& candidate,const compiled_css_compound& compound,const dom_node* scope) {
                 return css_compound_selector_matches(candidate,compound,scope);
-            });
+            }, active_selector_match_context);
     }
 
     bool css_rule_matches(
@@ -1640,6 +1650,9 @@
         const css_rule& rule,
         const dom_node* scope_root = nullptr) const
     {
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+        ++css_rule_match_checks;
+#endif
         return !rule.compiled_selector().compounds.empty()
             && compiled_css_selector_matches(
                 node,

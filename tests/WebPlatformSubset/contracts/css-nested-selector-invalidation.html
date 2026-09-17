@@ -1,0 +1,177 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Nested selector invalidation follows compiled relationship paths</title>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<style>
+.route-target { width:11px; }
+.descendant:is(.active .route-target) { width:41px; }
+.child:where([data-active] > .route-target) { width:43px; }
+.adjacent:is(.active + .route-target) { width:47px; }
+.following:not([data-active] ~ .route-target) { width:53px; }
+.mixed:is(.active + .wrapper > .route-target) { width:59px; }
+.card { width:13px; }
+.card:has(.branch > [data-ready]) { width:61px; }
+.card:has(.branch > .ready) { height:67px; }
+.card { height:17px; }
+.outer:is(.active .card:has([data-ready])) { width:71px; }
+.control { width:19px; }
+.control:disabled { width:73px; }
+.control:enabled { height:79px; }
+.control { height:23px; }
+.control-card:has(:disabled) { width:83px; }
+.control-card { width:29px; }
+</style>
+<div id="descendant"><div><div class="route-target descendant"></div></div></div>
+<div id="child"><div class="route-target child"></div><div><div class="route-target child"></div></div></div>
+<div><i id="adjacent"></i> text <div class="route-target adjacent"></div><div class="route-target adjacent"></div></div>
+<div><div class="route-target following"></div><i id="following"></i><div></div><div class="route-target following"></div><div class="route-target following"></div></div>
+<div><i id="mixed"></i><div class="wrapper"><div class="route-target mixed"></div></div></div>
+<div id="card" class="card"><div class="branch"><span id="ready"></span></div><div><span id="decoy"></span></div></div>
+<div id="outer"><div class="card outer"><span id="outer-ready"></span></div></div>
+<div class="control-card"><fieldset id="fieldset"><legend><input id="exempt" class="control"></legend><div><input id="disabled" class="control"></div></fieldset></div>
+<script>
+test(() => {
+  const trigger = document.getElementById('descendant');
+  const target = trigger.querySelector('.route-target');
+  trigger.classList.add('active');
+  assert_equals(getComputedStyle(target).width, '41px');
+  trigger.classList.remove('active');
+  assert_equals(getComputedStyle(target).width, '11px');
+}, ':is descendant dependency follows descendants on class addition and removal');
+
+test(() => {
+  const trigger = document.getElementById('child');
+  const targets = trigger.querySelectorAll('.route-target');
+  trigger.setAttribute('data-active', '');
+  assert_equals(getComputedStyle(targets[0]).width, '43px');
+  assert_equals(getComputedStyle(targets[1]).width, '11px');
+  trigger.removeAttribute('data-active');
+  assert_equals(getComputedStyle(targets[0]).width, '11px');
+}, ':where child dependency excludes deeper descendants');
+
+test(() => {
+  const trigger = document.getElementById('adjacent');
+  const targets = trigger.parentElement.querySelectorAll('.route-target');
+  trigger.className = 'active';
+  assert_equals(getComputedStyle(targets[0]).width, '47px');
+  assert_equals(getComputedStyle(targets[1]).width, '11px');
+  trigger.className = '';
+  assert_equals(getComputedStyle(targets[0]).width, '11px');
+}, ':is adjacent dependency skips text but not another element');
+
+test(() => {
+  const trigger = document.getElementById('following');
+  const targets = trigger.parentElement.querySelectorAll('.route-target');
+  trigger.setAttribute('data-active', '');
+  assert_equals(getComputedStyle(targets[0]).width, '53px');
+  assert_equals(getComputedStyle(targets[1]).width, '11px');
+  assert_equals(getComputedStyle(targets[2]).width, '11px');
+  trigger.removeAttribute('data-active');
+  assert_equals(getComputedStyle(targets[1]).width, '53px');
+  assert_equals(getComputedStyle(targets[2]).width, '53px');
+}, ':not general sibling dependency reaches following but not preceding subjects');
+
+test(() => {
+  const trigger = document.getElementById('mixed');
+  const target = trigger.parentElement.querySelector('.route-target');
+  trigger.className = 'active';
+  assert_equals(getComputedStyle(target).width, '59px');
+  trigger.removeAttribute('class');
+  assert_equals(getComputedStyle(target).width, '11px');
+}, 'nested forward routes compose sibling and child combinators');
+
+test(() => {
+  const card = document.getElementById('card');
+  const ready = document.getElementById('ready');
+  const decoy = document.getElementById('decoy');
+  decoy.setAttribute('data-ready', '');
+  assert_equals(getComputedStyle(card).width, '13px');
+  ready.setAttribute('data-ready', '');
+  ready.className = 'ready';
+  assert_equals(getComputedStyle(card).width, '61px');
+  assert_equals(getComputedStyle(card).height, '67px');
+  ready.removeAttribute('data-ready');
+  ready.removeAttribute('class');
+  assert_equals(getComputedStyle(card).width, '13px');
+  assert_equals(getComputedStyle(card).height, '17px');
+}, ':has reverse routes compose parent and ancestor steps for attributes and classes');
+
+test(() => {
+  const outer = document.getElementById('outer');
+  const ready = document.getElementById('outer-ready');
+  const card = ready.parentElement;
+  outer.className = 'active';
+  ready.setAttribute('data-ready', '');
+  assert_equals(getComputedStyle(card).width, '71px');
+  outer.className = '';
+  ready.removeAttribute('data-ready');
+  assert_equals(getComputedStyle(card).width, '13px');
+}, 'nested forward and reverse dependencies preserve combined state checkpoints');
+
+test(() => {
+  const fieldset = document.getElementById('fieldset');
+  const exempt = document.getElementById('exempt');
+  const control = document.getElementById('disabled');
+  const card = fieldset.parentElement;
+  fieldset.setAttribute('disabled', '');
+  assert_equals(getComputedStyle(control).width, '73px');
+  assert_equals(getComputedStyle(control).height, '23px');
+  assert_equals(getComputedStyle(exempt).width, '19px');
+  assert_equals(getComputedStyle(exempt).height, '79px');
+  assert_equals(getComputedStyle(card).width, '83px');
+  fieldset.removeAttribute('disabled');
+  assert_equals(getComputedStyle(control).width, '19px');
+  assert_equals(getComputedStyle(control).height, '79px');
+  assert_equals(getComputedStyle(card).width, '29px');
+}, 'inherited control state routes preserve first-legend exemption and nested :has');
+test(() => {
+  const style = document.createElement('style');
+  style.textContent = '.batch-target {width:11px} .batch-target:is(.on ~ .middle ~ .batch-target) {width:41px}';
+  document.head.appendChild(style);
+  const root = document.createElement('div');
+  root.innerHTML = '<div><i class="on"></i><b class="middle"></b><span class="batch-target"></span><span class="batch-target"></span></div><div><b class="middle"></b><span class="batch-target"></span></div>';
+  document.body.appendChild(root);
+  const group = root.firstElementChild;
+  const trigger = group.firstElementChild;
+  const middle = trigger.nextElementSibling;
+  const targets = root.querySelectorAll('.batch-target');
+  const widths = () => Array.from(targets, node => getComputedStyle(node).width).join(',');
+  assert_equals(widths(), '41px,41px,11px');
+  trigger.className = '';
+  assert_equals(widths(), '11px,11px,11px', 'class removal');
+  trigger.className = 'on';
+  assert_equals(widths(), '41px,41px,11px');
+  group.appendChild(middle);
+  assert_equals(widths(), '11px,11px,11px', 'move middle after targets');
+  group.insertBefore(middle, targets[0]);
+  assert_equals(widths(), '41px,41px,11px');
+  root.lastElementChild.insertBefore(trigger, root.lastElementChild.firstElementChild);
+  assert_equals(widths(), '11px,11px,41px');
+  style.sheet.insertRule('.batch-target {width:59px !important}', style.sheet.cssRules.length);
+  assert_equals(widths(), '59px,59px,59px');
+  root.remove();
+  style.remove();
+}, 'matching reuse respects sibling chains, independent parents, reparenting, and CSSOM checkpoints');
+
+test(() => {
+  const style = document.createElement('style');
+  style.textContent = '.eviction-target {width:11px}' + Array.from({length:520}, (_, i) =>
+    '.eviction-target:is(.on ~ .eviction-target:not([data-never="' + i + '"])) {width:41px}').join('');
+  document.head.appendChild(style);
+  const root = document.createElement('div');
+  root.innerHTML = '<i></i><span class="eviction-target"></span><span class="eviction-target"></span>';
+  document.body.appendChild(root);
+  const trigger = root.firstElementChild;
+  const targets = root.querySelectorAll('.eviction-target');
+  const widths = () => Array.from(targets, node => getComputedStyle(node).width).join(',');
+  trigger.className = 'on';
+  assert_equals(widths(), '41px,41px');
+  trigger.className = '';
+  assert_equals(widths(), '11px,11px');
+  trigger.className = 'on';
+  assert_equals(widths(), '41px,41px');
+  root.remove();
+  style.remove();
+}, 'matching reuse pins recursive selectors across compiled-list cache eviction');
+</script>

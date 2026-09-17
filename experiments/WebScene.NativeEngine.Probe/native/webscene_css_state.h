@@ -88,12 +88,36 @@ using css_index_string_set = std::unordered_set<std::string>;
     enum css_invalidation_scope : uint8_t {
         invalidation_subject = 1U,
         invalidation_ancestors = 2U,
-        invalidation_fallback = 4U
+        invalidation_fallback = 4U,
+        invalidation_routed = 8U
+    };
+
+    enum class css_invalidation_step : uint8_t {
+        descendants, children, next_sibling, following_siblings,
+        ancestors, parent, previous_sibling, preceding_siblings,
+        inclusive_descendants
+    };
+    using css_invalidation_route = std::vector<css_invalidation_step>;
+
+    struct css_feature_dependency final {
+        uint8_t scope{0};
+        std::vector<css_invalidation_route> routes;
+    };
+
+    // A lightweight mutation-time view; the immutable rule owns each route.
+    struct css_invalidation_targets final {
+        uint8_t scope{0};
+        std::vector<const css_invalidation_route*> routes;
+        void include(const css_feature_dependency& dependency) {
+            scope |= dependency.scope;
+            for (const auto& route : dependency.routes) routes.push_back(&route);
+        }
     };
 
     struct css_compound_dependencies final {
-        std::unordered_map<std::string, uint8_t> attributes;
-        std::unordered_map<std::string, uint8_t> classes;
+        bool child_list_sensitive{false};
+        std::unordered_map<std::string, css_feature_dependency> attributes;
+        std::unordered_map<std::string, css_feature_dependency> classes;
     };
 
     struct css_rule_payload final {
@@ -170,6 +194,7 @@ using css_index_string_set = std::unordered_set<std::string>;
         css_index_string_map<std::vector<size_t>> rules_by_variable_reference;
         css_index_string_map<std::vector<size_t>> invalidation_rules_by_attribute;
         css_index_string_map<std::vector<size_t>> invalidation_rules_by_class;
+        bool child_list_sensitive{false};
         std::vector<size_t> focus_rules;
         std::vector<size_t> unindexed_rules;
         css_index_string_set attribute_dependencies;

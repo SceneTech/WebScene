@@ -228,6 +228,9 @@
             else document.mark_scene_changed();
             return;
         }
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+        ++css_cascade_applications;
+#endif
         const auto previous_style = node.style;
         css::reset_cascaded_style(node,css_variables);
 #if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
@@ -265,6 +268,7 @@
         sort_css_candidates(candidates);
         candidates.erase(std::unique(candidates.begin(), candidates.end()), candidates.end());
 #if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+        css_cascade_candidate_checks += candidates.size();
         if (trace_css) css_profile_candidate_checks += candidates.size();
 #endif
         auto matching=css::match_candidates(document,node,css_rules,candidates,
@@ -1067,6 +1071,7 @@
         UsePreviousState&& use_previous_state,
         RestoreCurrentState&& restore_current_state)
     {
+        selector_match_batch_scope matching_scope(*this);
         const auto trace_transition =
             std::getenv("WEBSCENE_TRACE_RECASCADE_ROOTS") != nullptr;
         const auto transition_started = trace_transition
@@ -1260,104 +1265,133 @@
                 add_custom_property_consumers(*candidate, changed_rule);
             }
         };
-        struct trigger_transition final
-        {
-            const compiled_css_compound* selector{nullptr};
-            std::optional<compiled_css_compound> pseudo_origin;
-            bool current{false};
-            bool previous{false};
+        const auto route_targets = [&](const css::css_invalidation_route& route) {
+            using step = css::css_invalidation_step;
+            std::vector<dom_node*> frontier{&subject};
+            for (const auto direction : route) {
+                std::vector<dom_node*> next;
+                std::unordered_set<dom_node*> seen;
+                const auto append = [&](dom_node* candidate) {
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+                    ++selector_invalidation_candidate_visits;
+#endif
+                    if (candidate != nullptr && candidate->kind == dom_node_kind::element
+                        && (candidate == context_root || !inactive_css_cascades.contains(candidate))
+                        && seen.insert(candidate).second) next.push_back(candidate);
+                };
+                std::unordered_set<dom_node*> walked;
+                const auto descendants = [&](const auto& self, dom_node& root) -> void {
+                    for (auto* child : root.children) {
+                        if (child == nullptr || inactive_css_cascades.contains(child)
+                            || !walked.insert(child).second) continue;
+                        append(child);
+                        self(self, *child);
+                    }
+                };
+                for (auto* origin : frontier) {
+                    if (direction == step::children) {
+                        for (auto* child : origin->children) append(child);
+                    } else if (direction == step::descendants
+                        || direction == step::inclusive_descendants) {
+                        if (direction == step::inclusive_descendants) append(origin);
+                        descendants(descendants, *origin);
+                    } else if (direction == step::parent || direction == step::ancestors) {
+                        if (origin == context_root) continue;
+                        for (auto* parent = origin->parent; parent != nullptr; parent = parent->parent) {
+                            if (seen.contains(parent)) break;
+                            append(parent);
+                            if (direction == step::parent || parent == context_root) break;
+                        }
+                    } else {
+                        if (origin == context_root || origin->parent == nullptr) continue;
+                        const auto& siblings = origin->parent->children;
+                        const auto found = std::find(siblings.begin(), siblings.end(), origin);
+                        if (found == siblings.end()) continue;
+                        const bool backwards = direction == step::previous_sibling
+                            || direction == step::preceding_siblings;
+                        const bool adjacent = direction == step::previous_sibling
+                            || direction == step::next_sibling;
+                        if (backwards) {
+                            for (auto it = found; it != siblings.begin();) {
+                                auto* candidate = *--it;
+                                if (candidate == nullptr || candidate->kind != dom_node_kind::element) continue;
+                                append(candidate);
+                                if (adjacent) break;
+                            }
+                        } else {
+                            for (auto it = std::next(found); it != siblings.end(); ++it) {
+                                auto* candidate = *it;
+                                if (candidate == nullptr || candidate->kind != dom_node_kind::element) continue;
+                                append(candidate);
+                                if (adjacent) break;
+                            }
+                        }
+                    }
+                }
+                frontier = std::move(next);
+                if (frontier.empty()) break;
+            }
+            return frontier;
         };
-        std::unordered_map<const compiled_css_compound*, trigger_transition>
-            trigger_transitions;
-        struct relational_transition final
-        {
-            const compiled_css_compound* selector{nullptr};
+        struct trigger_transition final {
+            uint8_t scope{0};
             std::vector<dom_node*> anchors;
             std::vector<bool> current;
             std::vector<bool> previous;
         };
-        std::unordered_map<const compiled_css_compound*, relational_transition>
-            relational_transitions;
-        trigger_transitions.reserve(changed_rules.size());
-        relational_transitions.reserve(changed_rules.size());
+        std::unordered_map<const compiled_css_compound*, trigger_transition> transitions;
+        transitions.reserve(changed_rules.size());
         for (const auto index : changed_rules) {
             if (index >= css_rules.size()) continue;
             const auto& rule = css_rules[index];
             const auto& compiled = rule.payload->compiled_pseudo_origin.compounds.empty()
-                ? rule.compiled_selector()
-                : rule.payload->compiled_pseudo_origin;
+                ? rule.compiled_selector() : rule.payload->compiled_pseudo_origin;
             if (compiled.compounds.empty()
                 || compiled.compiled_compounds.size() != compiled.compounds.size()
                 || rule.payload->invalidation.size() != compiled.compounds.size()) continue;
-            for (size_t component = 0;
-                 component < compiled.compounds.size(); ++component) {
+            for (size_t component = 0; component < compiled.compounds.size(); ++component) {
                 const auto* selector = &compiled.compiled_compounds[component];
+                if (transitions.contains(selector)) continue;
 #if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
                 ++selector_invalidation_plan_lookups;
 #endif
-                const auto scope = dependency_scope(rule.payload->invalidation[component]);
-                if ((scope & css::invalidation_ancestors) != 0U
-                    && !relational_transitions.contains(selector)) {
-                    relational_transition transition;
-                    transition.selector = selector;
-                    for (auto* anchor = subject.parent;
-                         anchor != nullptr; anchor = anchor->parent) {
-#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
-                        ++selector_invalidation_candidate_visits;
-#endif
-                        if (anchor->kind != dom_node_kind::element) continue;
-                        transition.anchors.push_back(anchor);
-                        transition.current.push_back(
-                            css_compound_selector_matches(*anchor, *selector));
-                    }
-                    transition.previous.resize(transition.anchors.size());
-                    relational_transitions.emplace(selector, std::move(transition));
-                }
-                if ((scope & css::invalidation_subject) == 0U
-                    || trigger_transitions.contains(selector)) continue;
+                const auto targets = dependency_scope(rule.payload->invalidation[component]);
+                if (targets.scope == 0U) continue;
                 trigger_transition transition;
-                transition.selector = selector;
-                std::string pseudo_origin;
-                if (split_pseudo_element_selector(
-                        compiled.compounds[component], pseudo_origin) != 0
-                    && !pseudo_origin.empty()) {
-                    transition.pseudo_origin =
-                        compile_css_compound_selector(pseudo_origin);
+                transition.scope = targets.scope;
+                std::unordered_set<dom_node*> seen;
+                const auto append = [&](dom_node* anchor) {
+                    if (anchor != nullptr && anchor->kind == dom_node_kind::element
+                        && seen.insert(anchor).second) transition.anchors.push_back(anchor);
+                };
+                if ((targets.scope & css::invalidation_subject) != 0U) append(&subject);
+                if ((targets.scope & css::invalidation_ancestors) != 0U) {
+                    for (auto* anchor : route_targets({css::css_invalidation_step::ancestors})) append(anchor);
                 }
-                const auto& matcher = transition.pseudo_origin.has_value()
-                    ? *transition.pseudo_origin
-                    : *transition.selector;
-                transition.current =
-                    css_compound_selector_matches(subject, matcher);
-                trigger_transitions.emplace(selector, std::move(transition));
+                for (const auto* route : targets.routes)
+                    for (auto* anchor : route_targets(*route)) append(anchor);
+                for (auto* anchor : transition.anchors)
+                    transition.current.push_back(css_compound_selector_matches(*anchor, *selector));
+                transition.previous.resize(transition.anchors.size());
+                transitions.emplace(selector, std::move(transition));
             }
         }
-        if (!trigger_transitions.empty() || !relational_transitions.empty()) {
+        if (!transitions.empty()) {
             use_previous_state();
-            for (auto& [selector, transition] : trigger_transitions) {
-                static_cast<void>(selector);
-                const auto& matcher = transition.pseudo_origin.has_value()
-                    ? *transition.pseudo_origin
-                    : *transition.selector;
-                transition.previous =
-                    css_compound_selector_matches(subject, matcher);
-            }
-            for (auto& [selector, transition] : relational_transitions) {
-                static_cast<void>(selector);
-                for (size_t index = 0; index < transition.anchors.size(); ++index) {
-                    transition.previous[index] = css_compound_selector_matches(
-                        *transition.anchors[index], *transition.selector);
-                }
+            matching_scope.reset();
+            for (auto& [selector, transition] : transitions) {
+                for (size_t i = 0; i < transition.anchors.size(); ++i)
+                    transition.previous[i] = css_compound_selector_matches(*transition.anchors[i], *selector);
             }
             restore_current_state();
+            matching_scope.reset();
         }
         std::vector<size_t> fallback_rules;
         for (const auto index : changed_rules) {
             if (index >= css_rules.size()) continue;
             const auto& rule = css_rules[index];
             const auto& compiled = rule.payload->compiled_pseudo_origin.compounds.empty()
-                ? rule.compiled_selector()
-                : rule.payload->compiled_pseudo_origin;
+                ? rule.compiled_selector() : rule.payload->compiled_pseudo_origin;
             if (compiled.compounds.empty()
                 || compiled.compiled_compounds.size() != compiled.compounds.size()
                 || rule.payload->invalidation.size() != compiled.compounds.size()) {
@@ -1365,46 +1399,23 @@
                 continue;
             }
             auto found_trigger = false;
-            for (size_t component = 0;
-                 component < compiled.compounds.size(); ++component) {
-                const auto propagates = rule_change_propagates_to_descendants(rule);
-                const auto* component_selector =
-                    &compiled.compiled_compounds[component];
-                const auto scope = dependency_scope(rule.payload->invalidation[component]);
-                if ((scope & css::invalidation_fallback) != 0U) {
+            for (size_t component = 0; component < compiled.compounds.size(); ++component) {
+                const auto found = transitions.find(&compiled.compiled_compounds[component]);
+                if (found == transitions.end()) continue;
+                found_trigger = true;
+                const auto& transition = found->second;
+                if ((transition.scope & css::invalidation_fallback) != 0U) {
                     fallback_rules.push_back(index);
-                    found_trigger = true;
                     break;
                 }
-                if ((scope & css::invalidation_subject) != 0U) {
-                    found_trigger = true;
-                    const auto transition = trigger_transitions.find(component_selector);
-                    if (transition != trigger_transitions.end()
-                        && transition->second.current != transition->second.previous) {
-                        if (component + 1U == compiled.compounds.size()) {
-                            add_request(&subject, propagates);
-                            add_custom_property_consumers(subject, rule);
-                        } else {
-                            visit_related_candidates(
-                                subject, compiled, component, rule);
-                        }
-                    }
-                }
-                if ((scope & css::invalidation_ancestors) == 0U) continue;
-                found_trigger = true;
-                const auto transition = relational_transitions.find(component_selector);
-                if (transition == relational_transitions.end()) continue;
-                for (size_t anchor_index = 0;
-                     anchor_index < transition->second.anchors.size(); ++anchor_index) {
-                    if (transition->second.current[anchor_index]
-                        == transition->second.previous[anchor_index]) continue;
-                    auto& anchor = *transition->second.anchors[anchor_index];
+                for (size_t i = 0; i < transition.anchors.size(); ++i) {
+                    if (transition.current[i] == transition.previous[i]) continue;
+                    auto& anchor = *transition.anchors[i];
                     if (component + 1U == compiled.compounds.size()) {
-                        add_request(&anchor, propagates);
+                        add_request(&anchor, rule_change_propagates_to_descendants(rule));
                         add_custom_property_consumers(anchor, rule);
                     } else {
-                        visit_related_candidates(
-                            anchor, compiled, component, rule);
+                        visit_related_candidates(anchor, compiled, component, rule);
                     }
                 }
             }
@@ -1455,8 +1466,10 @@
         if (!fallback_rules.empty()) {
             collect_fallback();
             use_previous_state();
+            matching_scope.reset();
             collect_fallback();
             restore_current_state();
+            matching_scope.reset();
         }
         add_request(&subject, false);
         const auto application_started = trace_transition
@@ -1490,8 +1503,7 @@
                 });
             std::cerr << "WebScene selector transition: plan-ms=" << planned
                 << ", apply-ms=" << applied << ", rules=" << changed_rules.size()
-                << ", triggers=" << trigger_transitions.size()
-                << ", relational=" << relational_transitions.size()
+                << ", triggers=" << transitions.size()
                 << ", fallback=" << fallback_rules.size()
                 << ", requests=" << requests.size()
                 << ", subtrees=" << subtree_requests << '\n';
@@ -1560,8 +1572,10 @@
             subject,
             changed_rules,
             [&](const css::css_compound_dependencies& dependencies) {
+                css::css_invalidation_targets result;
                 const auto found = dependencies.attributes.find(std::string(name));
-                return found == dependencies.attributes.end() ? uint8_t{0} : found->second;
+                if (found != dependencies.attributes.end()) result.include(found->second);
+                return result;
             },
             [&] {
                 if (previous_value.has_value()) {
@@ -1625,14 +1639,14 @@
             subject,
             changed_rules,
             [&](const css::css_compound_dependencies& dependencies) {
-                uint8_t scope = 0;
+                css::css_invalidation_targets result;
                 if (const auto found = dependencies.attributes.find("class");
-                    found != dependencies.attributes.end()) scope |= found->second;
+                    found != dependencies.attributes.end()) result.include(found->second);
                 for (const auto& name : changed_classes) {
                     const auto found = dependencies.classes.find(name);
-                    if (found != dependencies.classes.end()) scope |= found->second;
+                    if (found != dependencies.classes.end()) result.include(found->second);
                 }
-                return scope;
+                return result;
             },
             [&] {
                 subject.class_name = previous_value.value_or(std::string{});
@@ -1672,6 +1686,7 @@
         dom_node& node,
         std::string_view reason = {})
     {
+        selector_match_batch_scope matching_scope(*this);
         webscene_frame_trace::scope cascade_trace(frame_trace, "recascade-start", "recascade-end", 0);
         const auto trace_recascade_root =
             std::getenv("WEBSCENE_TRACE_RECASCADE_ROOTS") != nullptr;
@@ -1880,6 +1895,7 @@
         auto pending = std::move(pending_style_recascades);
         pending_style_recascades.clear();
         order_recascade_roots(pending);
+        selector_match_batch_scope matching_scope(*this);
 #if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
         ++style_recascade_flush_batches;
         style_recascade_flush_roots += pending.size();
@@ -1959,6 +1975,24 @@
             nullptr,
             profile_named("style-recascade/node-immediate"));
         recascade_connected_node_now(node);
+    }
+
+    void recascade_changed_child_list(dom_node& parent, dom_node* inserted = nullptr)
+    {
+        if (!is_connected(parent)) return;
+        auto* previous_root = const_cast<dom_node*>(active_css_cascade_root);
+        auto* root = css_cascade_root_for_node(parent);
+        if (root != nullptr) activate_css_cascade(root);
+        const bool sensitive = css_child_list_sensitive;
+        if (previous_root != nullptr && previous_root != root) activate_css_cascade(previous_root);
+        if (sensitive) {
+            // Conservative parent-local fallback for structural selectors.
+            // Further narrowing belongs to the structural-invalidation stage.
+            recascade_connected_subtree(parent, "child-list-change");
+        } else {
+            if (inserted != nullptr) recascade_connected_subtree(*inserted, "inserted-child");
+            recascade_connected_node(parent);
+        }
     }
 
     void recascade_hover_transition(
@@ -2140,6 +2174,7 @@
         css_rules_by_variable_reference.clear();
         css_invalidation_rules_by_attribute.clear();
         css_invalidation_rules_by_class.clear();
+        css_child_list_sensitive = false;
         css_focus_rules.clear();
         unindexed_css_rules.clear();
         css_attribute_dependencies.clear();

@@ -2,7 +2,7 @@
 // and stylesheet growth must not amplify a fixed-size component mutation.
 void test_compiled_css_invalidation_scaling()
 {
-    std::vector<std::array<uint64_t, 3>> observations;
+    std::vector<std::array<uint64_t, 7>> observations;
     for (const auto unrelated_count : {32, 1024}) {
         auto* engine = webscene_engine_create(0);
         require(engine != nullptr, "compiled invalidation engine creation failed");
@@ -60,11 +60,13 @@ void test_compiled_css_invalidation_scaling()
         execute_and_wait_for_wrapper_retention_scene(engine,
             "document.body.style.backgroundColor = 'rgb(1, 2, 3)'",
             "compiled-invalidation-baseline-publication.js");
-        const std::array<std::string_view, 3> names{
+        const std::array<std::string_view, 7> names{
             "selector-invalidation-plan-lookups",
             "selector-invalidation-candidate-visits",
-            "selector-invalidation-fallback-visits"};
-        std::array<uint64_t, 3> before{};
+            "selector-invalidation-fallback-visits",
+            "css-compound-match-checks", "css-rule-match-checks",
+            "css-cascade-applications", "css-cascade-candidate-checks"};
+        std::array<uint64_t, 7> before{};
         for (size_t i = 0; i < names.size(); ++i)
             before[i] = runtime_counter_diagnostic(engine, names[i]);
 #endif
@@ -91,7 +93,7 @@ void test_compiled_css_invalidation_scaling()
         execute_and_wait_for_wrapper_retention_scene(engine,
             "document.body.style.backgroundColor = 'rgb(3, 2, 1)'",
             "compiled-invalidation-result-publication.js");
-        std::array<uint64_t, 3> delta{};
+        std::array<uint64_t, 7> delta{};
         for (size_t i = 0; i < names.size(); ++i) {
             delta[i] = runtime_counter_diagnostic(engine, names[i]) - before[i];
             std::cout << ' ' << names[i] << '=' << delta[i];
@@ -107,4 +109,118 @@ void test_compiled_css_invalidation_scaling()
     require(observations[0] == observations[1],
         "unrelated DOM/rule growth amplified local selector invalidation work");
 #endif
+}
+
+void test_compiled_css_route_scaling()
+{
+    // Two independent axes: grow the affected component and grow unrelated
+    // DOM/rules. Actual matching/cascade work must follow only the first axis.
+    for (const auto* shape : {"descendants", "siblings", "disabled", "variables", "relational"}) {
+        for (const auto affected_count : {8, 128}) {
+            std::vector<std::array<uint64_t, 7>> observations;
+            for (const auto unrelated_count : {32, 1024}) {
+                auto* engine = webscene_engine_create(0);
+                require(engine != nullptr, "CSS route scaling engine creation failed");
+                resize(engine, 800, 600, 1);
+                wait_for_consumed_inputs(engine, 1, "CSS route scaling viewport not applied");
+                auto source = std::string{R"JS(((shape, count, unrelated) => {
+                  const style = document.createElement('style');
+                  const target = '<div class="matrix-target"></div>';
+                  let markup = '';
+                  let rule = '';
+                  if (shape === 'descendants') {
+                    markup = '<div id="trigger">' + ('<div>' + target + '</div>').repeat(count) + '</div>';
+                    rule = '.matrix-target:is(.active .matrix-target) {width:41px}';
+                  } else if (shape === 'siblings') {
+                    markup = '<div><i id="trigger"></i>' + target.repeat(count) + '</div>';
+                    rule = '.matrix-target:where(.active ~ .matrix-target) {width:41px}';
+                  } else if (shape === 'disabled') {
+                    markup = '<fieldset id="trigger">' + '<input class="matrix-target">'.repeat(count) + '</fieldset>';
+                    rule = '.matrix-target:disabled {width:41px}';
+                  } else if (shape === 'variables') {
+                    markup = '<div><i id="trigger"></i><div class="provider">' +
+                      ('<div class="alias">' + target + '</div>').repeat(count) + '</div></div>';
+                    rule = '.active + .provider {--base:41px} .alias {--alias:var(--base, 11px)} .matrix-target {width:var(--alias)}';
+                  } else {
+                    markup = ('<div class="matrix-target"><div class="branch"><i class="ready"></i></div></div>').repeat(count);
+                    rule = '.matrix-target:has(.branch > [data-ready]) {width:41px}';
+                  }
+                  document.body.innerHTML = '<main>' + markup + '</main><aside>' +
+                    Array.from({length:unrelated}, (_, i) => '<div class="noise-' + i + '"></div>').join('') + '</aside>';
+                  style.textContent = '.matrix-target {display:block;width:11px}' + rule +
+                    Array.from({length:unrelated}, (_, i) => '.noise-' + i + ' {height:1px}').join('');
+                  document.head.appendChild(style);
+                  const targets = Array.from(document.querySelectorAll('.matrix-target'));
+                  const ready = Array.from(document.querySelectorAll('.ready'));
+                  const trigger = document.getElementById('trigger');
+                  globalThis.matrixMutation = enabled => {
+                    if (shape === 'disabled') trigger.toggleAttribute('disabled', enabled);
+                    else if (shape === 'relational') ready.forEach(node => node.toggleAttribute('data-ready', enabled));
+                    else trigger.className = enabled ? 'active' : '';
+                    return targets.map(node => getComputedStyle(node).width).join(',');
+                  };
+                  return targets.map(node => getComputedStyle(node).width).join(',');
+                })(SHAPE,COUNT,UNRELATED))JS"};
+                source.replace(source.find("SHAPE"), 5, "'" + std::string(shape) + "'");
+                source.replace(source.find("COUNT"), 5, std::to_string(affected_count));
+                source.replace(source.find("UNRELATED"), 9, std::to_string(unrelated_count));
+                const auto expected = [&](const char* value) {
+                    std::string result = "\"";
+                    for (int i = 0; i < affected_count; ++i) {
+                        if (i) result += ',';
+                        result += value;
+                    }
+                    return result + '"';
+                };
+                const auto setup = evaluate(engine, source, "css-route-setup.js");
+                require(setup == expected("11px"),
+                    std::string("CSS route initial style mismatch: ") + shape + ": " + setup);
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+                const std::array<std::string_view, 7> names{
+                    "selector-invalidation-plan-lookups", "selector-invalidation-candidate-visits",
+                    "selector-invalidation-fallback-visits", "css-compound-match-checks",
+                    "css-rule-match-checks", "css-cascade-applications", "css-cascade-candidate-checks"};
+                std::this_thread::sleep_for(std::chrono::milliseconds(260));
+                execute_and_wait_for_wrapper_retention_scene(engine,
+                    "document.body.style.backgroundColor = 'rgb(1, 2, 3)'", "css-route-baseline.js");
+                std::array<uint64_t, 7> before{};
+                for (size_t i = 0; i < names.size(); ++i)
+                    before[i] = runtime_counter_diagnostic(engine, names[i]);
+#endif
+                const auto started = std::chrono::steady_clock::now();
+                require(evaluate(engine, "matrixMutation(true)", "css-route-add.js") == expected("41px"),
+                    std::string("CSS route addition failed: ") + shape);
+                require(evaluate(engine, "matrixMutation(false)", "css-route-remove.js") == expected("11px"),
+                    std::string("CSS route removal failed: ") + shape);
+                std::cout << "css-route-scaling shape=" << shape << " affected=" << affected_count
+                    << " unrelated=" << unrelated_count << " mutation-and-check-ms="
+                    << std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+                std::this_thread::sleep_for(std::chrono::milliseconds(260));
+                execute_and_wait_for_wrapper_retention_scene(engine,
+                    "document.body.style.backgroundColor = 'rgb(3, 2, 1)'", "css-route-result.js");
+                std::array<uint64_t, 7> delta{};
+                for (size_t i = 0; i < names.size(); ++i) {
+                    delta[i] = runtime_counter_diagnostic(engine, names[i]) - before[i];
+                    std::cout << ' ' << names[i] << '=' << delta[i];
+                }
+                require(delta[2] == 0, "compiled routes unexpectedly used document fallback");
+                require(delta[5] >= static_cast<uint64_t>(2 * affected_count),
+                    "route scaling failed to measure the affected cascades");
+                // Generous linear ceilings catch accidental quadratic cascades
+                // without binding the test to an incidental exact count.
+                for (const auto value : delta)
+                    require(value <= static_cast<uint64_t>(200 * affected_count + 256),
+                        "compiled route work exceeded its linear component-size budget");
+                observations.push_back(delta);
+#endif
+                std::cout << '\n';
+                webscene_engine_destroy(engine);
+            }
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+            require(observations[0] == observations[1],
+                std::string("unrelated DOM/rules amplified compiled route work: ") + shape);
+#endif
+        }
+    }
 }

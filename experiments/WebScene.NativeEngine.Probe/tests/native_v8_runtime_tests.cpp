@@ -265,6 +265,7 @@ int main()
         }
         if (selected == "css-invalidation-scaling") {
             test_compiled_css_invalidation_scaling();
+            test_compiled_css_route_scaling();
             return 0;
         }
         if (selected == "runtime-diagnostics") {
@@ -915,6 +916,7 @@ int main()
     test_media_query_resize_recascades_only_affected_subtrees();
     test_attribute_invalidation_scopes_subject_and_descendant_rules();
     test_compiled_css_invalidation_scaling();
+    test_compiled_css_route_scaling();
     test_concurrent_input_producers_remain_consumable();
     test_dom_implementation_create_html_document();
     test_mixed_continuous_input_backlog_is_coalesced();

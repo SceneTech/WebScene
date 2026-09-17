@@ -222,7 +222,7 @@
     assert_equals(getComputedStyle(child).width, '89px');
     parent.removeAttribute('class');
     assert_equals(getComputedStyle(child).width, '31px');
-  }, 'complex nested selectors retain a correct conservative invalidation path');
+  }, 'complex nested selectors invalidate their dependent subjects');
 
   test(() => {
     const parent = document.getElementById('disabled-parent');

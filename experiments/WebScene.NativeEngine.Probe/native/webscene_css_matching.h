@@ -249,10 +249,56 @@ inline const dom_node* previous_element_sibling(const dom_node& node)
         return nullptr;
     }
 
+// Ephemeral memoization for one immutable DOM/interaction-state matching pass.
+// Never retain this across author callbacks or selector-state transitions.
+// A relation entry answers whether this node OR an earlier sibling/ancestor
+// matches a selector prefix. Sharing that answer avoids quadratic rescans.
+struct selector_match_context final {
+    struct key final {
+        const dom_node* node;
+        const compiled_css_selector* selector;
+        const dom_node* scope;
+        size_t component;
+        bool siblings;
+        bool operator==(const key&) const = default;
+    };
+    struct hash final {
+        size_t operator()(const key& value) const {
+            auto result = std::hash<const void*>{}(value.node);
+            const auto combine = [&](size_t part) { result ^= part + 0x9e3779b9U + (result << 6U) + (result >> 2U); };
+            combine(std::hash<const void*>{}(value.selector));
+            combine(std::hash<const void*>{}(value.scope));
+            combine(value.component);
+            combine(value.siblings);
+            return result;
+        }
+    };
+    std::unordered_map<key, bool, hash> relations;
+    std::unordered_map<const dom_node*, const dom_node*> previous_siblings;
+    std::unordered_set<const dom_node*> indexed_parents;
+    // Recursive selector-list cache eviction must not invalidate pointer keys.
+    std::unordered_map<const compiled_css_selector_list*,
+        std::shared_ptr<const compiled_css_selector_list>> retained_lists;
+
+    const dom_node* previous(const dom_node& node) {
+        if (node.parent == nullptr) return nullptr;
+        if (indexed_parents.insert(node.parent).second) {
+            const dom_node* previous = nullptr;
+            for (const auto* child : node.parent->children) {
+                if (child == nullptr) continue;
+                previous_siblings.emplace(child, previous);
+                if (child->kind == dom_node_kind::element) previous = child;
+            }
+        }
+        const auto found = previous_siblings.find(&node);
+        return found == previous_siblings.end() ? nullptr : found->second;
+    }
+};
+
 template<typename CompoundMatcher>
 inline bool selector_matches(const native_document& document,const dom_node& node,
     const compiled_css_selector& selector,size_t component,const dom_node* scope_root,
-    const CompoundMatcher& match_compound)
+    const CompoundMatcher& match_compound, selector_match_context* context = nullptr)
     {
         if (selector.compounds.empty()
             || selector.compiled_compounds.size() != selector.compounds.size()
@@ -274,16 +320,42 @@ inline bool selector_matches(const native_document& document,const dom_node& nod
                     *parent,
                     selector,
                     component - 1U,
-                    scope_root,match_compound);
+                    scope_root,match_compound,context);
         }
         if (combinator == '+') {
-            const auto* sibling = previous_element_sibling(node);
+            const auto* sibling = context ? context->previous(node) : previous_element_sibling(node);
             return sibling != nullptr
                 && selector_matches(document,
                     *sibling,
                     selector,
                     component - 1U,
-                    scope_root,match_compound);
+                    scope_root,match_compound,context);
+        }
+        if (context != nullptr) {
+            const bool siblings = combinator == '~';
+            const auto previous = [&](const dom_node& origin) {
+                return siblings ? context->previous(origin) : document.dom_parent(origin);
+            };
+            std::vector<selector_match_context::key> visited;
+            bool matched = false;
+            for (auto* candidate = previous(node); candidate != nullptr; candidate = previous(*candidate)) {
+                const selector_match_context::key key{candidate, &selector, scope_root, component - 1U, siblings};
+                if (const auto known = context->relations.find(key); known != context->relations.end()) {
+                    matched = known->second;
+                    break;
+                }
+                visited.push_back(key);
+                if (selector_matches(document, *candidate, selector, component - 1U,
+                        scope_root, match_compound, context)) {
+                    matched = true;
+                    break;
+                }
+            }
+            // Bound transient storage. Clearing only loses reuse; it never
+            // changes an answer or releases the selectors owning our keys.
+            if (context->relations.size() + visited.size() > 16384U) context->relations.clear();
+            for (const auto& key : visited) context->relations.insert_or_assign(key, matched);
+            return matched;
         }
         if (combinator == '~') {
             for (auto* sibling = previous_element_sibling(node); sibling != nullptr;
@@ -292,7 +364,7 @@ inline bool selector_matches(const native_document& document,const dom_node& nod
                         *sibling,
                         selector,
                         component - 1U,
-                        scope_root,match_compound)) {
+                        scope_root,match_compound,context)) {
                     return true;
                 }
             }
@@ -304,7 +376,7 @@ inline bool selector_matches(const native_document& document,const dom_node& nod
                     *ancestor,
                     selector,
                     component - 1U,
-                    scope_root,match_compound)) {
+                    scope_root,match_compound,context)) {
                 return true;
             }
         }

@@ -6144,6 +6144,10 @@ std::string v8_dom_runtime::event_diagnostics() const
         << impl_->selector_invalidation_candidate_visits;
     result << ", selector-invalidation-fallback-visits="
         << impl_->selector_invalidation_fallback_visits;
+    result << ", css-compound-match-checks=" << impl_->css_compound_match_checks;
+    result << ", css-rule-match-checks=" << impl_->css_rule_match_checks;
+    result << ", css-cascade-applications=" << impl_->css_cascade_applications;
+    result << ", css-cascade-candidate-checks=" << impl_->css_cascade_candidate_checks;
     result << ", style-recascade-schedule-requests="
         << impl_->style_recascade_schedule_requests;
     result << ", style-recascade-coalesced-requests="
@@ -6716,10 +6720,13 @@ v8_dom_runtime::memory_metrics v8_dom_runtime::read_memory_metrics() const noexc
                 for (const auto& dependencies : payload->invalidation) {
                     for (const auto* index : {&dependencies.attributes, &dependencies.classes}) {
                         result.process_shared_css_rule_storage_bytes += index->bucket_count() * sizeof(void*);
-                        for (const auto& [key, scope] : *index) {
-                            static_cast<void>(scope);
+                        for (const auto& [key, dependency] : *index) {
                             result.process_shared_css_rule_storage_bytes +=
-                                sizeof(std::pair<const std::string, uint8_t>);
+                                sizeof(std::pair<const std::string, css::css_feature_dependency>)
+                                + dependency.routes.capacity() * sizeof(css::css_invalidation_route);
+                            for (const auto& route : dependency.routes)
+                                result.process_shared_css_rule_storage_bytes +=
+                                    route.capacity() * sizeof(css::css_invalidation_step);
                             result.process_shared_css_rule_storage_bytes +=
                                 2U * sizeof(void*) + string_bytes(key);
                         }

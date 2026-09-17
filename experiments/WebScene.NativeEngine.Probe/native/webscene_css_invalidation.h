@@ -39,31 +39,63 @@ inline std::vector<css_compound_dependencies> compile_invalidation_plan(
     const compiled_css_selector& selector)
 {
     std::vector<css_compound_dependencies> result(selector.compiled_compounds.size());
+    const auto add = [](css_feature_dependency& dependency, const css_invalidation_route& route) {
+        if (route.empty()) dependency.scope |= invalidation_subject;
+        else if (route.size() == 1U && route.front() == css_invalidation_step::ancestors)
+            dependency.scope |= invalidation_ancestors;
+        else {
+            dependency.scope |= invalidation_routed;
+            if (std::find(dependency.routes.begin(), dependency.routes.end(), route)
+                == dependency.routes.end()) dependency.routes.push_back(route);
+        }
+    };
+    const auto forward = [](char combinator) {
+        switch (combinator) {
+        case '>': return css_invalidation_step::children;
+        case '+': return css_invalidation_step::next_sibling;
+        case '~': return css_invalidation_step::following_siblings;
+        default: return css_invalidation_step::descendants;
+        }
+    };
+    const auto reverse = [](char combinator) {
+        switch (combinator) {
+        case '>': return css_invalidation_step::parent;
+        case '+': return css_invalidation_step::previous_sibling;
+        case '~': return css_invalidation_step::preceding_siblings;
+        default: return css_invalidation_step::ancestors;
+        }
+    };
     const auto collect = [&](const auto& self, const compiled_css_compound& compound,
-                             css_compound_dependencies& output, uint8_t scope) -> void {
+                             css_compound_dependencies& output,
+                             const css_invalidation_route& route) -> void {
         for (const auto& [marker, name] : compound.identities) {
-            if (marker == '.') output.classes[name] |= scope;
-            else if (marker == '#') output.attributes["id"] |= scope;
+            if (marker == '.') add(output.classes[name], route);
+            else if (marker == '#') add(output.attributes["id"], route);
         }
         for (const auto& attribute : compound.attributes) {
             auto text = trim_css_view(attribute);
             size_t cursor = 0;
             auto name = read_css_identifier(text, cursor);
-            if (!name.empty()) output.attributes[std::move(name)] |= scope;
+            if (!name.empty()) add(output.attributes[std::move(name)], route);
         }
         for (const auto& pseudo : compound.pseudos) {
+            if (pseudo.name == "has" || pseudo.name == "empty"
+                || pseudo.name == "first-child" || pseudo.name == "last-child"
+                || pseudo.name == "only-child" || pseudo.name == "first-of-type"
+                || pseudo.name == "last-of-type" || pseudo.name == "only-of-type"
+                || pseudo.name.starts_with("nth-")) output.child_list_sensitive = true;
             if (pseudo.name == "disabled" || pseudo.name == "enabled") {
-                // A fieldset/optgroup attribute also changes descendant
-                // controls. Keep the conservative route until that inherited
-                // HTML state has a dedicated invalidation scope.
-                output.attributes["disabled"] |= invalidation_fallback;
+                auto inherited_route = css_invalidation_route{
+                    css_invalidation_step::inclusive_descendants};
+                inherited_route.insert(inherited_route.end(), route.begin(), route.end());
+                add(output.attributes["disabled"], inherited_route);
             } else if (pseudo.name == "checked") {
                 for (const auto* name : {"checked", "selected", "type"})
-                    output.attributes[name] |= scope;
+                    add(output.attributes[name], route);
             } else if (pseudo.name == "required" || pseudo.name == "optional"
                 || pseudo.name == "valid" || pseudo.name == "invalid") {
-                output.attributes["required"] |= scope;
-                output.attributes["value"] |= scope;
+                add(output.attributes["required"], route);
+                add(output.attributes["value"], route);
             }
             if (pseudo.argument.empty()) continue;
             const bool has = pseudo.name == "has";
@@ -73,28 +105,33 @@ inline std::vector<css_compound_dependencies> compile_invalidation_plan(
             auto nested = compile_selector_list(has
                 ? anchor_relative_selector_list(pseudo.argument) : pseudo.argument);
             for (const auto& arm : nested.selectors) {
-                auto nested_scope = scope;
-                if (has) {
-                    nested_scope = invalidation_ancestors;
-                    if ((scope & invalidation_fallback) != 0U
-                        || std::any_of(arm.combinators.begin(), arm.combinators.end(),
-                            [](char c) { return c == '+' || c == '~'; })) {
-                        nested_scope = invalidation_fallback;
+                if (std::any_of(arm.combinators.begin(), arm.combinators.end(),
+                        [](char value) { return value == '+' || value == '~'; }))
+                    output.child_list_sensitive = true;
+                for (size_t i = 0; i < arm.compiled_compounds.size(); ++i) {
+                    css_invalidation_route nested_route;
+                    if (has) {
+                        // The relative selector is anchored at its first
+                        // compound. Walk backwards from the changed feature.
+                        for (size_t j = i; j > 0; --j)
+                            nested_route.push_back(reverse(arm.combinators[j - 1U]));
+                    } else {
+                        // :is/:not/:where test their final compound against
+                        // the outer subject. Reach it from any inner feature.
+                        for (size_t j = i; j < arm.combinators.size(); ++j)
+                            nested_route.push_back(forward(arm.combinators[j]));
                     }
-                } else if (arm.compounds.size() > 1U) {
-                    // A feature inside :is(.ancestor .subject) may be on a
-                    // different element. Retain a measured conservative path
-                    // until a full reverse/forward route is compiled for it.
-                    nested_scope = invalidation_fallback;
+                    nested_route.insert(nested_route.end(), route.begin(), route.end());
+                    self(self, arm.compiled_compounds[i], output, nested_route);
                 }
-                for (const auto& child : arm.compiled_compounds)
-                    self(self, child, output, nested_scope);
             }
         }
     };
     for (size_t i = 0; i < result.size(); ++i)
-        collect(collect, selector.compiled_compounds[i], result[i],
-            invalidation_subject);
+        collect(collect, selector.compiled_compounds[i], result[i], {});
+    if (!result.empty() && std::any_of(selector.combinators.begin(), selector.combinators.end(),
+            [](char value) { return value == '+' || value == '~'; }))
+        result.front().child_list_sensitive = true;
     return result;
 }
 } // namespace webscene_native::css

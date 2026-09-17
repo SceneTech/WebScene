@@ -1354,6 +1354,66 @@ struct v8_dom_runtime::implementation final {
         const auto redirect = info.Length() > 6
             ? info[6]->Uint32Value(info.GetIsolate()->GetCurrentContext()).FromMaybe(0U)
             : 0U;
+        std::vector<std::pair<std::string, std::string>> headers;
+        size_t header_bytes = 0U;
+        if (info.Length() > 7 && !info[7]->IsUndefined()) {
+            if (!info[7]->IsArray()) {
+                info.GetIsolate()->ThrowException(v8::Exception::TypeError(
+                    js_string(info.GetIsolate(), "Invalid fetch request headers")));
+                return;
+            }
+            auto values = info[7].As<v8::Array>();
+            if (values->Length() > 128U) {
+                info.GetIsolate()->ThrowException(v8::Exception::TypeError(
+                    js_string(info.GetIsolate(), "Too many fetch request headers")));
+                return;
+            }
+            headers.reserve(values->Length());
+            for (uint32_t index = 0U; index < values->Length(); ++index) {
+                v8::Local<v8::Value> entry_value;
+                if (!values->Get(info.GetIsolate()->GetCurrentContext(), index)
+                        .ToLocal(&entry_value)
+                    || !entry_value->IsArray()) {
+                    info.GetIsolate()->ThrowException(v8::Exception::TypeError(
+                        js_string(info.GetIsolate(), "Invalid fetch request header")));
+                    return;
+                }
+                auto entry = entry_value.As<v8::Array>();
+                v8::Local<v8::Value> name_value;
+                v8::Local<v8::Value> value_value;
+                if (entry->Length() < 2U
+                    || !entry->Get(info.GetIsolate()->GetCurrentContext(), 0U)
+                        .ToLocal(&name_value)
+                    || !entry->Get(info.GetIsolate()->GetCurrentContext(), 1U)
+                        .ToLocal(&value_value)) {
+                    info.GetIsolate()->ThrowException(v8::Exception::TypeError(
+                        js_string(info.GetIsolate(), "Invalid fetch request header")));
+                    return;
+                }
+                auto name = to_utf8(info.GetIsolate(), name_value);
+                auto value = to_utf8(info.GetIsolate(), value_value);
+                header_bytes += name.size() + value.size();
+                const auto valid_name = !name.empty() && std::all_of(
+                    name.begin(), name.end(), [](unsigned char character) {
+                        return std::isalnum(character) || character == '!'
+                            || character == '#' || character == '$'
+                            || character == '%' || character == '&'
+                            || character == '\'' || character == '*'
+                            || character == '+' || character == '-'
+                            || character == '.' || character == '^'
+                            || character == '_' || character == '`'
+                            || character == '|' || character == '~';
+                    });
+                if (!valid_name || value.find_first_of("\r\n") != std::string::npos
+                    || value.find('\0') != std::string::npos
+                    || header_bytes > 64U * 1024U) {
+                    info.GetIsolate()->ThrowException(v8::Exception::TypeError(
+                        js_string(info.GetIsolate(), "Invalid fetch request headers")));
+                    return;
+                }
+                headers.emplace_back(std::move(name), std::move(value));
+            }
+        }
         const auto valid_method = !method.empty() && std::all_of(
             method.begin(), method.end(), [](unsigned char character) {
                 return std::isalnum(character) || character == '!' || character == '#'
@@ -1382,7 +1442,8 @@ struct v8_dom_runtime::implementation final {
             body,
             content_type,
             credentials,
-            {}};
+            {},
+            std::move(headers)};
         request_context.cookie = self->cookie_header_for(resolved, request_context);
         const auto local_context = info.GetIsolate()->GetCurrentContext();
         if(specifier.starts_with("blob:")) {
@@ -4743,7 +4804,8 @@ struct v8_dom_runtime::implementation final {
                         request.headers.get('content-type') ?? '',
                         credentials,
                         mode,
-                        redirect)
+                        redirect,
+                        [...request.headers])
                         .then(result => new WebSceneResponse(
                           result.body,
                           { status: result.status, statusText: result.statusText,

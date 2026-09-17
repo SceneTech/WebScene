@@ -267,6 +267,7 @@ public:
         std::string content_type;
         uint32_t credentials{WEBSCENE_FETCH_CREDENTIALS_SAME_ORIGIN};
         std::string cookie;
+        std::vector<std::pair<std::string, std::string>> headers{};
     };
 
     using resource_loader = std::function<bool(

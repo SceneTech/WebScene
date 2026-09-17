@@ -198,6 +198,10 @@ int main()
             test_cache_storage_and_controlled_fetch_broker();
             return 0;
         }
+        if (selected == "service-worker-range-cache") {
+            test_controlled_range_cache_headers_and_body_budget();
+            return 0;
+        }
         if (selected == "service-worker-connected-resources") {
             test_controlled_connected_resource_interception();
             return 0;

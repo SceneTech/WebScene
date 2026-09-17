@@ -4425,6 +4425,72 @@
         }
     }
 
+    static v8::Local<v8::Private> location_href_key(v8::Isolate* isolate)
+    {
+        return v8::Private::ForApi(
+            isolate, js_string(isolate, "WebScene.Location.href"));
+    }
+
+    static void get_location_href(
+        v8::Local<v8::Name>,
+        const v8::PropertyCallbackInfo<v8::Value>& info)
+    {
+        auto local_context = info.GetIsolate()->GetCurrentContext();
+        v8::Local<v8::Value> href;
+        if (info.Holder()->GetPrivate(
+                local_context, location_href_key(info.GetIsolate()))
+                .ToLocal(&href)) {
+            info.GetReturnValue().Set(href);
+        }
+    }
+
+    static bool request_location_navigation(
+        v8::Isolate* isolate,
+        v8::Local<v8::Context> local_context,
+        v8::Local<v8::Value> value,
+        bool replace)
+    {
+        auto* self = current(isolate);
+        return self != nullptr && self->queue_top_level_navigation(
+            local_context, to_utf8(isolate, value), replace);
+    }
+
+    static void set_location_href(
+        v8::Local<v8::Name>,
+        v8::Local<v8::Value> value,
+        const v8::PropertyCallbackInfo<void>& info)
+    {
+        auto local_context = info.GetIsolate()->GetCurrentContext();
+        if (!request_location_navigation(
+                info.GetIsolate(), local_context, value, false)) {
+            info.GetIsolate()->ThrowException(v8::Exception::Error(
+                js_string(info.GetIsolate(),
+                    "WebScene rejected the same-window navigation request")));
+        }
+    }
+
+    static void location_assign(const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto local_context = info.GetIsolate()->GetCurrentContext();
+        if (info.Length() == 0 || !request_location_navigation(
+                info.GetIsolate(), local_context, info[0], false)) {
+            info.GetIsolate()->ThrowException(v8::Exception::Error(
+                js_string(info.GetIsolate(),
+                    "WebScene rejected the same-window navigation request")));
+        }
+    }
+
+    static void location_replace(const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto local_context = info.GetIsolate()->GetCurrentContext();
+        if (info.Length() == 0 || !request_location_navigation(
+                info.GetIsolate(), local_context, info[0], true)) {
+            info.GetIsolate()->ThrowException(v8::Exception::Error(
+                js_string(info.GetIsolate(),
+                    "WebScene rejected the same-window navigation request")));
+        }
+    }
+
     static void location_reload(const v8::FunctionCallbackInfo<v8::Value>& info)
     {
         auto* self = current(info.GetIsolate());

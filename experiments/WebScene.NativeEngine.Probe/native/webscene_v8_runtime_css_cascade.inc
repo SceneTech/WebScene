@@ -578,6 +578,63 @@
         return properties;
     }
 
+    bool declaration_references_variable(
+        const css_rule& rule,
+        size_t declaration_index,
+        std::string_view variable) const
+    {
+        if (declaration_index
+            < rule.payload->declaration_variable_references.size()) {
+            const auto& references =
+                rule.payload->declaration_variable_references[declaration_index];
+            return std::find(
+                references.begin(), references.end(), variable)
+                != references.end();
+        }
+        return declaration_index < rule.declarations().size()
+            && css_variable_references(
+                rule.declarations()[declaration_index].value).contains(
+                    std::string(variable));
+    }
+
+    template<typename Variables>
+    bool declaration_references_any_variable(
+        const css_rule& rule,
+        size_t declaration_index,
+        const Variables& variables) const
+    {
+        if (declaration_index
+            < rule.payload->declaration_variable_references.size()) {
+            const auto& references =
+                rule.payload->declaration_variable_references[declaration_index];
+            return std::any_of(
+                references.begin(), references.end(),
+                [&variables](const auto& reference) {
+                    if constexpr (requires { variables.contains(reference); }) {
+                        return variables.contains(reference);
+                    } else {
+                        return std::find(
+                            variables.begin(), variables.end(), reference)
+                            != variables.end();
+                    }
+                });
+        }
+        if (declaration_index >= rule.declarations().size()) return false;
+        const auto references = css_variable_references(
+            rule.declarations()[declaration_index].value);
+        return std::any_of(
+            references.begin(), references.end(),
+            [&variables](const auto& reference) {
+                if constexpr (requires { variables.contains(reference); }) {
+                    return variables.contains(reference);
+                } else {
+                    return std::find(
+                        variables.begin(), variables.end(), reference)
+                        != variables.end();
+                }
+            });
+    }
+
     void expand_css_variable_dependencies(
         std::unordered_set<std::string>& properties) const
     {
@@ -587,10 +644,15 @@
             if (indexed == css_rules_by_variable_reference.end()) continue;
             for (const auto rule_index : indexed->second) {
                 if (rule_index >= css_rules.size()) continue;
-                for (const auto& declaration : css_rules[rule_index].declarations()) {
+                const auto& rule = css_rules[rule_index];
+                for (size_t declaration_index = 0U;
+                     declaration_index < rule.declarations().size();
+                     ++declaration_index) {
+                    const auto& declaration =
+                        rule.declarations()[declaration_index];
                     if (!declaration.name.starts_with("--")) continue;
-                    const auto references = css_variable_references(declaration.value);
-                    if (!references.contains(pending[cursor])) continue;
+                    if (!declaration_references_variable(
+                            rule, declaration_index, pending[cursor])) continue;
                     if (properties.insert(declaration.name).second) {
                         pending.push_back(declaration.name);
                     }
@@ -640,15 +702,15 @@
         for (const auto index : dependent_rules) {
             if (index >= css_rules.size()) continue;
             css_variable_recascade_rule dependent{index, {}};
-            for (const auto& declaration : css_rules[index].declarations()) {
+            const auto& rule = css_rules[index];
+            for (size_t declaration_index = 0U;
+                 declaration_index < rule.declarations().size();
+                 ++declaration_index) {
+                const auto& declaration =
+                    rule.declarations()[declaration_index];
                 if (declaration.name.starts_with("--")) continue;
-                const auto references = css_variable_references(declaration.value);
-                if (std::any_of(
-                        references.begin(),
-                        references.end(),
-                        [&](const auto& reference) {
-                            return plan.variables.contains(reference);
-                        })) {
+                if (declaration_references_any_variable(
+                        rule, declaration_index, plan.variables)) {
                     dependent.properties.push_back(declaration.name);
                 }
             }
@@ -917,8 +979,14 @@
                 if (rule.shadow_scope_root_id != 0U
                     || split_pseudo_element_selector(rule.selector(), origin) != 0)
                     return false;
-                for (const auto& declaration : rule.declarations()) {
-                    if (references(declaration.value) && !is_geometry_property(declaration.name))
+                for (size_t declaration_index = 0U;
+                     declaration_index < rule.declarations().size();
+                     ++declaration_index) {
+                    const auto& declaration =
+                        rule.declarations()[declaration_index];
+                    if (declaration_references_variable(
+                            rule, declaration_index, name)
+                        && !is_geometry_property(declaration.name))
                         return false;
                 }
                 rules.push_back(&rule);
@@ -1140,11 +1208,15 @@
                 for (const auto index : found->second) {
                     if (index >= css_rules.size()) continue;
                     variable_rule_set.insert(index);
-                    for (const auto& declaration :
-                         css_rules[index].declarations()) {
+                    const auto& rule = css_rules[index];
+                    for (size_t declaration_index = 0U;
+                         declaration_index < rule.declarations().size();
+                         ++declaration_index) {
+                        const auto& declaration =
+                            rule.declarations()[declaration_index];
                         if (!declaration.name.starts_with("--")) continue;
-                        if (css_variable_references(
-                                declaration.value).contains(variable)) {
+                        if (declaration_references_variable(
+                                rule, declaration_index, variable)) {
                             queue_affected_variable(declaration.name);
                         }
                     }
@@ -1177,9 +1249,15 @@
                 });
         };
         for (const auto index : variable_rule_indices) {
-            for (const auto& declaration : css_rules[index].declarations()) {
+            const auto& rule = css_rules[index];
+            for (size_t declaration_index = 0U;
+                 declaration_index < rule.declarations().size();
+                 ++declaration_index) {
+                const auto& declaration =
+                    rule.declarations()[declaration_index];
                 if (declaration.name.starts_with("--")
-                    || !references_affected_variable(declaration.value)) continue;
+                    || !declaration_references_any_variable(
+                        rule, declaration_index, affected_variable_set)) continue;
                 const auto mask = css::property_mask(declaration.name);
                 if (mask != 0U && declaration.name != "all"
                     && !css::generated_property_inherits_by_default(
@@ -1255,7 +1333,7 @@
             }
             return result;
         };
-        const auto references_active_variables = [](
+        const auto references_active_variables = [this](
             std::string_view value,
             const std::vector<std::string>& active_variables) {
             if (active_variables.empty()
@@ -1354,11 +1432,15 @@
                     do {
                         grew = false;
                         for (const auto* rule : variable_matching.ordinary) {
-                            for (const auto& declaration :
-                                 rule->declarations()) {
+                            for (size_t declaration_index = 0U;
+                                 declaration_index < rule->declarations().size();
+                                 ++declaration_index) {
+                                const auto& declaration =
+                                    rule->declarations()[declaration_index];
                                 if (!declaration.name.starts_with("--")
-                                    || !references_active_variables(
-                                        declaration.value,
+                                    || !declaration_references_any_variable(
+                                        *rule,
+                                        declaration_index,
                                         active_variables)) continue;
                                 grew = append_variable(
                                     active_variables,
@@ -1375,11 +1457,15 @@
                         }
                     } while (grew);
                     for (const auto* rule : variable_matching.ordinary) {
-                        for (const auto& declaration :
-                             rule->declarations()) {
-                            if (!references_active_variables(
-                                declaration.value,
-                                active_variables)) continue;
+                        for (size_t declaration_index = 0U;
+                             declaration_index < rule->declarations().size();
+                             ++declaration_index) {
+                            const auto& declaration =
+                                rule->declarations()[declaration_index];
+                            if (!declaration_references_any_variable(
+                                    *rule,
+                                    declaration_index,
+                                    active_variables)) continue;
                             has_request = true;
                             ++variable_consumer_subjects;
                             classify_declaration(effect, declaration);
@@ -1388,19 +1474,17 @@
                     if (std::any_of(
                         variable_matching.pseudo.begin(),
                         variable_matching.pseudo.end(),
-                        [&active_variables,
-                         &references_active_variables](const auto& pseudo) {
+                        [this, &active_variables](const auto& pseudo) {
                             const auto* rule = pseudo.second;
-                            return std::any_of(
-                                rule->declarations().begin(),
-                                rule->declarations().end(),
-                                [&active_variables,
-                                 &references_active_variables](
-                                    const css_declaration& declaration) {
-                                    return references_active_variables(
-                                        declaration.value,
-                                        active_variables);
-                                });
+                            for (size_t declaration_index = 0U;
+                                 declaration_index < rule->declarations().size();
+                                 ++declaration_index) {
+                                if (this->declaration_references_any_variable(
+                                        *rule,
+                                        declaration_index,
+                                        active_variables)) return true;
+                            }
+                            return false;
                         })) {
                         has_request = true;
                         full_cascade = true;
@@ -1634,12 +1718,25 @@
                 continue;
             }
             if (applied_nodes.contains(current.root)) continue;
+            const auto previous_targeted_style = current.root->style;
             if (!current.full_cascade
-                && current.inherited_properties == 0U
                 && reapply_css_variable_dependent_rules(
                     *current.root, variable_recascade_plan)) {
                 ++targeted_variable_replays;
                 applied_nodes.insert(current.root);
+                if (current.inherited_properties != 0U) {
+                    const auto changed = inherited_style_changes(
+                        previous_targeted_style,
+                        current.root->style,
+                        current.inherited_properties);
+                    if (changed != 0U) {
+                        ++triggered_inherited_roots;
+                        propagate_inherited(
+                            propagate_inherited,
+                            *current.root,
+                            changed);
+                    }
+                }
                 continue;
             }
             if (current.inherited_properties == 0U) {
@@ -1899,10 +1996,14 @@
                             consumer.compiled_selector().compounds.back(),
                             consumer.compiled_selector().compiled_compounds.back(),
                             rule_change_propagates_to_descendants(consumer));
-                        for (const auto& declaration : consumer.declarations()) {
+                        for (size_t declaration_index = 0U;
+                             declaration_index < consumer.declarations().size();
+                             ++declaration_index) {
+                            const auto& declaration =
+                                consumer.declarations()[declaration_index];
                             if (declaration.name.starts_with("--")
-                                && css_variable_references(
-                                    declaration.value).contains(variable)) {
+                                && declaration_references_variable(
+                                    consumer, declaration_index, variable)) {
                                 pending.push_back(declaration.name);
                             }
                         }

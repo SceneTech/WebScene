@@ -297,6 +297,160 @@ void test_media_query_custom_property_consumer_cascade_work()
         "unrelated descendants amplified media custom-property cascade work");
 }
 
+void test_media_query_variable_reference_metadata_work()
+{
+    bool bounded = true;
+    for (const auto unrelated_rules : {32, 1024}) {
+        auto* engine = webscene_engine_create(0);
+        require(engine != nullptr,
+            "media variable metadata engine creation failed");
+        resize(engine, 800, 600, 1);
+        wait_for_consumed_inputs(
+            engine, 1, "media variable metadata initial viewport failed");
+        auto source = std::string{R"JS((unrelatedRules => {
+          let css=`
+            .metadata-root {--responsive-width:17px}
+            .metadata-consumer {display:block;width:var(--responsive-width);height:3px}
+            @media(max-width:600px) {.metadata-root {--responsive-width:41px}}`;
+          for(let index=0;index<unrelatedRules;++index) {
+            css+=`.metadata-noise-${index}{width:var(--metadata-noise-${index})}`;
+          }
+          const style=document.createElement('style'); style.textContent=css;
+          const root=document.createElement('section'); root.className='metadata-root';
+          const consumer=document.createElement('b'); consumer.className='metadata-consumer';
+          root.appendChild(consumer); document.head.appendChild(style);
+          document.body.appendChild(root);
+          globalThis.metadataWidth=()=>getComputedStyle(consumer).width;
+          return metadataWidth();
+        })(COUNT))JS"};
+        source.replace(
+            source.find("COUNT"), 5, std::to_string(unrelated_rules));
+        require(evaluate(
+                engine, source, "media-variable-metadata-setup.js") == R"("17px")",
+            "media variable metadata setup failed");
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+        std::this_thread::sleep_for(std::chrono::milliseconds(260));
+        execute_and_wait_for_wrapper_retention_scene(engine,
+            "document.body.style.backgroundColor='rgb(1,2,3)'",
+            "media-variable-metadata-before.js");
+        const auto before = runtime_counter_diagnostic(
+            engine, "css-variable-runtime-token-scans");
+#endif
+        resize(engine, 480, 600, 2);
+        wait_for_consumed_inputs(
+            engine, 2, "media variable metadata activation failed");
+        require(evaluate(engine, "metadataWidth()",
+                "media-variable-metadata-narrow.js") == R"("41px")",
+            "media variable metadata activation style failed");
+        resize(engine, 800, 600, 3);
+        wait_for_consumed_inputs(
+            engine, 3, "media variable metadata deactivation failed");
+        require(evaluate(engine, "metadataWidth()",
+                "media-variable-metadata-wide.js") == R"("17px")",
+            "media variable metadata deactivation style failed");
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+        std::this_thread::sleep_for(std::chrono::milliseconds(260));
+        execute_and_wait_for_wrapper_retention_scene(engine,
+            "document.body.style.backgroundColor='rgb(3,2,1)'",
+            "media-variable-metadata-after.js");
+        const auto scans = runtime_counter_diagnostic(
+            engine, "css-variable-runtime-token-scans") - before;
+        std::cout << "media-variable-metadata unrelated-rules="
+            << unrelated_rules << " runtime-token-scans=" << scans << '\n';
+        bounded = bounded && scans == 0U;
+#endif
+        webscene_engine_destroy(engine);
+    }
+    require(bounded,
+        "media transitions reparsed immutable stylesheet var() tokens");
+}
+
+void test_media_query_inherited_variable_consumer_replay_work()
+{
+    bool bounded = true;
+    std::vector<std::array<uint64_t, 2>> observations;
+    for (const auto descendants : {32, 1024}) {
+        auto* engine = webscene_engine_create(0);
+        require(engine != nullptr,
+            "media inherited variable engine creation failed");
+        resize(engine, 800, 600, 1);
+        wait_for_consumed_inputs(
+            engine, 1, "media inherited variable initial viewport failed");
+        auto source = std::string{R"JS((descendants => {
+          const style=document.createElement('style');
+          style.textContent=`
+            .inherited-variable-root {--responsive-color:rgb(17, 18, 19)}
+            .inherited-variable-owner {color:var(--responsive-color)}
+            .inherited-variable-override {color:rgb(31, 32, 33)}
+            @media(max-width:600px) {
+              .inherited-variable-root {--responsive-color:rgb(41, 42, 43)}
+            }`;
+          const root=document.createElement('section');
+          root.className='inherited-variable-root';
+          root.innerHTML=`<div class="inherited-variable-owner">
+            <i class="inherited-variable-child"></i>
+            <i class="inherited-variable-override"></i>
+          </div>`+Array.from({length:descendants},()=>'<span></span>').join('');
+          document.head.appendChild(style); document.body.appendChild(root);
+          const owner=root.querySelector('.inherited-variable-owner');
+          const child=root.querySelector('.inherited-variable-child');
+          const override=root.querySelector('.inherited-variable-override');
+          globalThis.inheritedVariableSnapshot=()=>[owner,child,override]
+            .map(node=>getComputedStyle(node).color);
+          return inheritedVariableSnapshot();
+        })(COUNT))JS"};
+        source.replace(source.find("COUNT"), 5, std::to_string(descendants));
+        require(evaluate(engine, source,
+                "media-inherited-variable-setup.js") ==
+                R"JSON(["rgb(17, 18, 19)","rgb(17, 18, 19)","rgb(31, 32, 33)"])JSON",
+            "media inherited variable setup styles failed");
+        std::array<uint64_t, 2> applications{};
+        for (int transition = 0; transition < 2; ++transition) {
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+            std::this_thread::sleep_for(std::chrono::milliseconds(260));
+            execute_and_wait_for_wrapper_retention_scene(engine,
+                "document.body.style.backgroundColor='rgb(1,2,3)'",
+                "media-inherited-variable-before.js");
+            const auto before = runtime_counter_diagnostic(
+                engine, "css-cascade-applications");
+#endif
+            resize(engine, transition == 0 ? 480 : 800, 600, transition + 2);
+            wait_for_consumed_inputs(engine, transition + 2,
+                "media inherited variable transition failed");
+            const auto expected = transition == 0
+                ? R"JSON(["rgb(41, 42, 43)","rgb(41, 42, 43)","rgb(31, 32, 33)"])JSON"
+                : R"JSON(["rgb(17, 18, 19)","rgb(17, 18, 19)","rgb(31, 32, 33)"])JSON";
+            require(evaluate(engine, "inheritedVariableSnapshot()",
+                    "media-inherited-variable-after.js") == expected,
+                "media inherited variable activation/deactivation failed");
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+            std::this_thread::sleep_for(std::chrono::milliseconds(260));
+            execute_and_wait_for_wrapper_retention_scene(engine,
+                "document.body.style.backgroundColor='rgb(3,2,1)'",
+                "media-inherited-variable-publish.js");
+            applications[transition] = runtime_counter_diagnostic(
+                engine, "css-cascade-applications") - before;
+            std::cout << "media-inherited-variable descendants="
+                << descendants << " transition=" << transition
+                << " css-cascade-applications="
+                << applications[transition] << '\n';
+            // The changed token owner needs one complete cascade. The color
+            // consumer replays only color, then propagation recomputes its two
+            // children while unrelated descendants remain outside the chain.
+            bounded = bounded && applications[transition] <= 3U;
+#endif
+        }
+        observations.push_back(applications);
+        webscene_engine_destroy(engine);
+    }
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+    bounded = bounded && observations.size() == 2U
+        && observations[0] == observations[1];
+#endif
+    require(bounded,
+        "inherited variable replay recascaded unrelated descendants");
+}
+
 void test_media_query_inherited_value_propagation_work()
 {
     bool bounded = true;

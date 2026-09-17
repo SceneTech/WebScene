@@ -198,7 +198,7 @@ check already fails before text mutation: `:invalid` reads the value attribute
 instead of the live textarea value. `:placeholder-shown` is not implemented.
 The regression uses padding to avoid textarea scrollbar adjustments contaminating
 computed-size expectations. These are pre-existing selector/dynamic-state gaps
-for coordinated follow-up under #237/#242, not completed by this optimization;
+for coordinated follow-up under #237/#242 (now explicitly tracked by #257), not completed by this optimization;
 their tests remain in the manifest and block completion of that broader plan item.
 
 Repeated ordinary nonempty text edits cannot change the supported structural
@@ -468,6 +468,28 @@ The native twelve-case scan ceiling fails on the control despite those semantic
 checks passing, preventing correctness-only success from hiding quadratic work.
 Counter reductions are deterministic work evidence, not a repeated wall-clock A/B
 or a demonstrated improvement in live Spotify frame time.
+
+The [retained scan-count report](evidence/css-child-vector-work-20260917.json)
+records the instrumented control and cumulative candidate. The source change is
+`7d2e17a0`; merge `bc163928` integrates main `b81f594c` (anchor-element exposure
+and rounded-icon scene regressions). Its only conflict was the generated exposure
+manifest hash; regeneration from the merged manifest preserves both anchor support
+and the corrected character-data setters.
+
+Post-merge certification and production builds both pass all 140 route cases,
+four stable-text cases, the twelve new vector cases and the original batched
+invalidation fixture. Fourteen related WPT documents pass **410/410 checks** in
+each build, including the new 52-check contract, existing 79-check variadic and
+73-check structural contracts, character data, attribute/ID/nested selectors,
+anchor identity and 118 custom-element checks. Ten focused native groups, parser
+tests and the generated-binding catalog check also pass. The new contract and
+existing variadic contract pass **131/131 in Chrome**.
+
+These are local cumulative gates, not remote CI or full SDK release qualification.
+The exact installed Kestrel parsed/compiled theme probe remains verified only for
+`05aa8f12`; it must be rerun on the integrated head. The earlier `5e9b0d13` AppScene
+Spotify attempt was rejected for empty content and an unsuccessful resize driver,
+as recorded in the resize-stage report. No native browser-speed claim follows.
 
 ### Remaining acceptance work
 

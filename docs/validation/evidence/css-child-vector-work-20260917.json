@@ -1,0 +1,86 @@
+{
+  "schema": "webscene-variadic-child-vector-work-v1",
+  "date": "2026-09-17",
+  "control": "5e9b0d13 with counter and regression only",
+  "candidate": "bc163928",
+  "platform": "macOS ARM64",
+  "build": "Release, certification telemetry enabled, generated DOM bindings",
+  "workload": "One reverse-order move of all 8 or 128 siblings into a separate parent; replaceWith also removes its receiver.",
+  "semantics": "Exact source/destination child order, identity, parent pointers and first/last-child computed styles are asserted.",
+  "counterScope": "Entries examined by variadic source child-vector removal only; excludes other tree walks, allocations, insertion, CSS matching, layout and scene work.",
+  "interpretation": "Deterministic scan-count reduction, not CPU timing, total DOM linearity or end-to-end Spotify evidence.",
+  "rows": [
+    {
+      "method": "append",
+      "children": 8,
+      "controlVisits": 36,
+      "candidateVisits": 8
+    },
+    {
+      "method": "append",
+      "children": 128,
+      "controlVisits": 8256,
+      "candidateVisits": 128
+    },
+    {
+      "method": "prepend",
+      "children": 8,
+      "controlVisits": 36,
+      "candidateVisits": 8
+    },
+    {
+      "method": "prepend",
+      "children": 128,
+      "controlVisits": 8256,
+      "candidateVisits": 128
+    },
+    {
+      "method": "before",
+      "children": 8,
+      "controlVisits": 36,
+      "candidateVisits": 8
+    },
+    {
+      "method": "before",
+      "children": 128,
+      "controlVisits": 8256,
+      "candidateVisits": 128
+    },
+    {
+      "method": "after",
+      "children": 8,
+      "controlVisits": 36,
+      "candidateVisits": 8
+    },
+    {
+      "method": "after",
+      "children": 128,
+      "controlVisits": 8256,
+      "candidateVisits": 128
+    },
+    {
+      "method": "replaceChildren",
+      "children": 8,
+      "controlVisits": 36,
+      "candidateVisits": 8
+    },
+    {
+      "method": "replaceChildren",
+      "children": 128,
+      "controlVisits": 8256,
+      "candidateVisits": 128
+    },
+    {
+      "method": "replaceWith",
+      "children": 8,
+      "controlVisits": 37,
+      "candidateVisits": 9
+    },
+    {
+      "method": "replaceWith",
+      "children": 128,
+      "controlVisits": 8257,
+      "candidateVisits": 129
+    }
+  ]
+}

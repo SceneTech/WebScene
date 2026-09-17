@@ -21,6 +21,10 @@ used.
 - Route `className`, `classList.add/remove/toggle/value`, and class attribute APIs
   through the same targeted path. Only changed class tokens select class-dependent
   rules; raw `[class]` selectors also participate.
+- Route ID property/attribute APIs and `dataset` assignment/deletion through the
+  same transition checkpoints. Reconstructed batch states synchronize both the
+  attribute map and the ID used by matching. Value conversion runs before capturing
+  the previous state, and dataset custom-element reactions follow invalidation.
 - Follow custom-property consumers below affected sibling/descendant subjects, not
   just consumers below the original mutation. The native controlled-switch test
   and a product-neutral sibling-variable contract guard this path.
@@ -63,6 +67,12 @@ combined mutation checkpoints, sibling-chain reordering/reparenting, CSSOM chang
 and matching reuse across recursive selector-cache eviction. Both engines passed
 all ten on September 17.
 
+`contracts/css-id-dataset-checkpoints.html` passes seven checks in WebScene and
+Chrome: ID reflection and attribute APIs, dataset updates/deletion, batched
+conjunction removal, relational ancestors, reentrant custom-element callbacks,
+and value-conversion side effects. All five original correctness checks failed
+against the preceding native implementation, showing stale styles after removal.
+
 `webscene_selector_parser_tests` additionally tests the compiled plans, including
 relative selector-list arms and escaped attribute identifiers. Native filter
 `css-invalidation-scaling` grows
@@ -99,7 +109,7 @@ WEBSCENE_NATIVE_ENGINE_TEST_FILTER=css-invalidation-scaling \
 
 ## Component-size matrix and measured matching bottleneck
 
-The same native filter now runs 20 cases: five component shapes, 8/128 affected
+The same native filter now runs 28 cases: seven component shapes, 8/128 affected
 targets, and 32/1,024 unrelated nodes plus unrelated rules. Each case adds then
 removes selector state and checks every target's computed width. All seven counters
 must be identical at both unrelated sizes; work must stay within a linear
@@ -116,6 +126,8 @@ unrelated sizes):
 | Inherited disabled controls | 258 | 1,028 | 512 | 258 |
 | Sibling custom-property provider and aliases | 2,058 | 1,806 | 770 | 516 |
 | Relational parent/ancestor routes | 1,024 | 3,968 | 512 | 512 |
+| ID following-sibling transition | 256 | 1,028 | 512 | 258 |
+| Dataset following-sibling transition | 256 | 1,028 | 512 | 258 |
 
 The stronger matching counters exposed repeated scans of earlier siblings. In the
 local route-only development build, 8/128 sibling targets took 328/51,328 compound
@@ -132,8 +144,11 @@ end-to-end Spotify result, or a Chrome-speed claim. Timing remains informational
 2. Narrow the remaining conservative structural paths and cover all mutation APIs.
    The compiled nested-selector and inherited-control routes are implemented;
    this does not claim broader selector matching conformance.
-3. Broaden checkpoint consistency to remaining DOM/CSSOM mutation paths. ID,
-   inline-style and several dynamic-state paths retain their existing handling.
+3. Broaden checkpoint consistency to remaining DOM/CSSOM mutation paths. ID and
+   dataset are covered; inline-style and several dynamic-state paths retain their
+   existing handling. Distinguish fragment navigation's designated `:target` from
+   a live ID/hash comparison: Chrome rejected a test that assumed inserting an ID
+   after navigating to a missing fragment automatically made that element a target.
 4. Profile cascade reuse and dependency-aware layout caching, with invalidation
    tests for inheritance, custom properties, fonts and available size. Do not cache
    results solely by viewport size or trade correctness for elastic resizing.

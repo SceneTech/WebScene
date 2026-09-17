@@ -1583,6 +1583,7 @@
                 } else {
                     subject.attributes.erase(std::string(name));
                 }
+                if (name == "id") subject.id_attribute = previous_value.value_or(std::string{});
             },
             [&] {
                 if (current_value.has_value()) {
@@ -1590,6 +1591,7 @@
                 } else {
                     subject.attributes.erase(std::string(name));
                 }
+                if (name == "id") subject.id_attribute = current_value.value_or(std::string{});
             });
         if (trace_invalidation) {
             const auto elapsed = std::chrono::duration<double, std::milli>(
@@ -1865,6 +1867,8 @@
                 else transition.subject->attributes.erase(transition.name);
                 if (transition.name == "class")
                     transition.subject->class_name = value.value_or(std::string{});
+                else if (transition.name == "id")
+                    transition.subject->id_attribute = value.value_or(std::string{});
             };
             // Evaluate a sequence from the complete pre-batch state to the
             // final state. Testing each old attribute against all other final

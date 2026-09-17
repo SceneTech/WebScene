@@ -1,0 +1,148 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>ID and dataset mutation style checkpoints</title>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<style>
+.id-target, .data-target, .conj-target {width:11px}
+#on ~ .id-target {width:41px}
+[data-mode="on"] ~ .data-target {width:43px}
+#on[data-mode="on"] ~ .conj-target {width:47px}
+.card {height:13px}
+.card:has(#ready) {height:53px}
+</style>
+<body>
+<script>
+function fixture(t) {
+  const root = document.createElement('div');
+  root.innerHTML = '<i></i><span class="id-target"></span><span class="data-target"></span><span class="conj-target"></span>';
+  document.body.appendChild(root);
+  t.add_cleanup(() => root.remove());
+  return {root, trigger: root.firstElementChild, targets: root.querySelectorAll('span')};
+}
+function widths(targets) {return Array.from(targets, node => getComputedStyle(node).width).join(',');}
+
+test(t => {
+  const {trigger, targets} = fixture(t);
+  trigger.id = 'on';
+  assert_equals(widths(targets), '41px,11px,11px', 'ID property');
+  trigger.id = 'off';
+  assert_equals(widths(targets), '11px,11px,11px', 'ID property removal');
+  trigger.setAttribute('id', 'on');
+  assert_equals(widths(targets), '41px,11px,11px', 'setAttribute');
+  trigger.removeAttribute('id');
+  assert_equals(widths(targets), '11px,11px,11px', 'removeAttribute');
+  trigger.setAttributeNS(null, 'id', 'on');
+  assert_equals(widths(targets), '41px,11px,11px', 'setAttributeNS');
+  trigger.removeAttributeNS(null, 'id');
+  assert_equals(widths(targets), '11px,11px,11px', 'removeAttributeNS');
+  trigger.id = 'on';
+  trigger.toggleAttribute('id', false);
+  assert_equals(widths(targets), '11px,11px,11px', 'toggleAttribute');
+}, 'ID mutation APIs update following sibling selectors at synchronous style reads');
+
+test(t => {
+  const {trigger, targets} = fixture(t);
+  trigger.dataset.mode = 'on';
+  assert_equals(widths(targets), '11px,43px,11px');
+  trigger.dataset.mode = 'off';
+  assert_equals(widths(targets), '11px,11px,11px');
+  trigger.dataset.mode = 'on';
+  assert_equals(widths(targets), '11px,43px,11px');
+  delete trigger.dataset.mode;
+  assert_equals(widths(targets), '11px,11px,11px');
+}, 'dataset assignment and deletion share attribute-selector checkpoints');
+
+promise_test(t => new Promise(resolve => {
+  const {trigger, targets} = fixture(t);
+  trigger.id = 'on';
+  trigger.dataset.mode = 'on';
+  assert_equals(widths(targets), '41px,43px,47px');
+  requestAnimationFrame(t.step_func(() => {
+    trigger.id = 'off';
+    delete trigger.dataset.mode;
+    assert_equals(widths(targets), '11px,11px,11px', 'conjunctive removal');
+    trigger.dataset.mode = 'on';
+    trigger.id = 'on';
+    assert_equals(widths(targets), '41px,43px,47px', 'conjunctive addition');
+    resolve();
+  }));
+}), 'batched ID and dataset mutations use a coherent pre-batch state');
+
+test(t => {
+  const root = document.createElement('div');
+  root.className = 'card';
+  root.innerHTML = '<i></i>';
+  document.body.appendChild(root);
+  t.add_cleanup(() => root.remove());
+  root.firstElementChild.id = 'ready';
+  assert_equals(getComputedStyle(root).height, '53px');
+  root.firstElementChild.removeAttribute('id');
+  assert_equals(getComputedStyle(root).height, '13px');
+}, 'ID changes update relational ancestors');
+
+test(t => {
+  customElements.define('id-checkpoint-probe', class extends HTMLElement {
+    static get observedAttributes() {return ['id'];}
+    attributeChangedCallback(name, oldValue, newValue) {
+      if (newValue === null && this.nextElementSibling) {
+        this.removalWidth = getComputedStyle(this.nextElementSibling).width;
+        this.id = 'on';
+      }
+    }
+  });
+  const root = document.createElement('div');
+  root.innerHTML = '<id-checkpoint-probe></id-checkpoint-probe><span class="id-target"></span>';
+  document.body.appendChild(root);
+  t.add_cleanup(() => root.remove());
+  const trigger = root.firstElementChild;
+  trigger.id = 'on';
+  assert_equals(getComputedStyle(trigger.nextElementSibling).width, '41px');
+  trigger.removeAttribute('id');
+  assert_equals(trigger.removalWidth, '11px');
+  assert_equals(trigger.id, 'on');
+  assert_equals(getComputedStyle(trigger.nextElementSibling).width, '41px');
+}, 'ID invalidation precedes reentrant custom-element callbacks');
+
+test(t => {
+  customElements.define('data-checkpoint-probe', class extends HTMLElement {
+    static get observedAttributes() {return ['data-mode'];}
+    attributeChangedCallback(name, oldValue, newValue) {
+      if (this.nextElementSibling) {
+        this.observedWidth = getComputedStyle(this.nextElementSibling).width;
+        this.callbackCount = (this.callbackCount || 0) + 1;
+        if (newValue === null) this.dataset.mode = 'on';
+      }
+    }
+  });
+  const root = document.createElement('div');
+  root.innerHTML = '<data-checkpoint-probe></data-checkpoint-probe><span class="data-target"></span>';
+  document.body.appendChild(root);
+  t.add_cleanup(() => root.remove());
+  const trigger = root.firstElementChild;
+  trigger.dataset.mode = 'on';
+  assert_equals(trigger.observedWidth, '43px');
+  assert_equals(trigger.callbackCount, 1);
+  delete trigger.dataset.mode;
+  assert_equals(trigger.callbackCount, 3);
+  assert_equals(trigger.dataset.mode, 'on');
+  assert_equals(getComputedStyle(trigger.nextElementSibling).width, '43px');
+}, 'dataset mutation invokes custom-element callbacks after style invalidation');
+
+test(t => {
+  const {trigger, targets} = fixture(t);
+  trigger.id = {toString() {
+    trigger.id = 'on';
+    assert_equals(widths(targets), '41px,11px,11px');
+    return 'off';
+  }};
+  assert_equals(widths(targets), '11px,11px,11px');
+  trigger.dataset.mode = {toString() {
+    trigger.dataset.mode = 'on';
+    assert_equals(widths(targets), '11px,43px,11px');
+    return 'off';
+  }};
+  assert_equals(widths(targets), '11px,11px,11px');
+}, 'value conversion side effects precede capturing the selector transition state');
+
+</script>

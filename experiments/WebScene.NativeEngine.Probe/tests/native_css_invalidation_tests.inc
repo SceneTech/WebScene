@@ -115,7 +115,7 @@ void test_compiled_css_route_scaling()
 {
     // Two independent axes: grow the affected component and grow unrelated
     // DOM/rules. Actual matching/cascade work must follow only the first axis.
-    for (const auto* shape : {"descendants", "siblings", "disabled", "variables", "relational"}) {
+    for (const auto* shape : {"descendants", "siblings", "disabled", "variables", "relational", "identity", "dataset"}) {
         for (const auto affected_count : {8, 128}) {
             std::vector<std::array<uint64_t, 7>> observations;
             for (const auto unrelated_count : {32, 1024}) {
@@ -137,6 +137,10 @@ void test_compiled_css_route_scaling()
                   } else if (shape === 'disabled') {
                     markup = '<fieldset id="trigger">' + '<input class="matrix-target">'.repeat(count) + '</fieldset>';
                     rule = '.matrix-target:disabled {width:41px}';
+                  } else if (shape === 'identity' || shape === 'dataset') {
+                    markup = '<div><i id="trigger"></i>' + target.repeat(count) + '</div>';
+                    rule = shape === 'identity' ? '#on ~ .matrix-target {width:41px}'
+                      : '[data-mode="on"] ~ .matrix-target {width:41px}';
                   } else if (shape === 'variables') {
                     markup = '<div><i id="trigger"></i><div class="provider">' +
                       ('<div class="alias">' + target + '</div>').repeat(count) + '</div></div>';
@@ -155,6 +159,11 @@ void test_compiled_css_route_scaling()
                   const trigger = document.getElementById('trigger');
                   globalThis.matrixMutation = enabled => {
                     if (shape === 'disabled') trigger.toggleAttribute('disabled', enabled);
+                    else if (shape === 'identity') trigger.id = enabled ? 'on' : 'off';
+                    else if (shape === 'dataset') {
+                      if (enabled) trigger.dataset.mode = 'on';
+                      else delete trigger.dataset.mode;
+                    }
                     else if (shape === 'relational') ready.forEach(node => node.toggleAttribute('data-ready', enabled));
                     else trigger.className = enabled ? 'active' : '';
                     return targets.map(node => getComputedStyle(node).width).join(',');

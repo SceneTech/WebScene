@@ -172,6 +172,13 @@
       "reason": "Product-neutral coverage for nested forward and reverse dependency routes, sibling boundaries, inherited disabled controls, and combined mutation checkpoints."
     },
     {
+      "path": "contracts/css-id-dataset-checkpoints.html",
+      "type": "testharness",
+      "capabilities": ["id-selector-invalidation", "dataset-selector-invalidation", "batched-style-checkpoints"],
+      "evidence": ["general-css-invalidation-workstream"],
+      "reason": "ID and dataset property/attribute mutation APIs must update sibling and relational subjects at synchronous checkpoints, including batched conjunctions and reentrant custom-element callbacks."
+    },
+    {
       "path": "contracts/responsive-toolbar-breakpoint-navigation.html",
       "type": "testharness",
       "capabilities": ["live-toolbar-breakpoint-state", "compact-overflow-navigation", "wide-compact-wide-resize"],

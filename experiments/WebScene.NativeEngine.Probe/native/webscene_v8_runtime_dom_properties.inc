@@ -25,14 +25,15 @@
         if (node != nullptr) {
             self->record_feature(
                 "html", "attribute:id", "supported", {}, "html-attribute");
+            const auto text = to_wtf8(info.GetIsolate(), value);
             const auto previous = node->attributes.find("id");
             const std::optional<std::string> old_value =
                 previous == node->attributes.end()
                     ? std::nullopt
                     : std::optional<std::string>(previous->second);
-            node->id_attribute = to_wtf8(info.GetIsolate(), value);
+            node->id_attribute = text;
             node->attributes["id"] = node->id_attribute;
-            self->recascade_connected_subtree(*node, "className-property");
+            self->recascade_attribute_selector_transition(*node, "id", old_value, node->id_attribute);
             self->notify_custom_element_attribute(
                 *node, "id", old_value, node->id_attribute);
         }
@@ -700,12 +701,17 @@
         if (node == nullptr || property->IsSymbol()) return v8::Intercepted::kNo;
         const auto name = dataset_attribute_name(info.GetIsolate(), property);
         self->record_html_attribute_feature(name, "dataset-binding");
-        node->attributes[name] = to_utf8(info.GetIsolate(), value);
+        const auto text = to_utf8(info.GetIsolate(), value);
+        const auto previous = node->attributes.find(name);
+        const auto old_value = previous == node->attributes.end() ? std::nullopt
+            : std::optional<std::string>(previous->second);
+        node->attributes[name] = text;
         if (self->attribute_requires_recascade(name)) {
-            self->recascade_connected_subtree(*node, "setAttributeNS");
+            self->recascade_attribute_selector_transition(*node, name, old_value, text);
         } else {
             self->document.mark_dirty();
         }
+        self->notify_custom_element_attribute(*node, name, old_value, text);
         return v8::Intercepted::kYes;
     }
 
@@ -730,12 +736,20 @@
         auto* node = unwrap_node(info.Holder());
         if (node == nullptr || property->IsSymbol()) return v8::Intercepted::kNo;
         const auto name = dataset_attribute_name(info.GetIsolate(), property);
+        const auto previous = node->attributes.find(name);
+        if (previous == node->attributes.end()) {
+            info.GetReturnValue().Set(true);
+            return v8::Intercepted::kYes;
+        }
+        const auto old_value = std::optional<std::string>(previous->second);
+        self->detach_attr(*node, name, *old_value);
         node->attributes.erase(name);
         if (self->attribute_requires_recascade(name)) {
-            self->recascade_connected_subtree(*node, "removeAttribute");
+            self->recascade_attribute_selector_transition(*node, name, old_value, std::nullopt);
         } else {
             self->document.mark_dirty();
         }
+        self->notify_custom_element_attribute(*node, name, old_value, std::nullopt);
         info.GetReturnValue().Set(true);
         return v8::Intercepted::kYes;
     }

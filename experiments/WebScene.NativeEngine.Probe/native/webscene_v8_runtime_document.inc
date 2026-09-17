@@ -788,7 +788,7 @@
                 // selector. OverlayScrollbars updates its viewport data
                 // attribute on every resize; treating that subject-only state
                 // as a whole content-tree invalidation dominated the frame.
-                if (name == "style" || name == "id" || name == "dir"
+                if (name == "style" || name == "dir"
                     || name == "lang") {
                     self->recascade_connected_subtree(*node, trace_reason);
                 } else {
@@ -827,6 +827,8 @@
         if (self->attribute_requires_recascade(name)) {
             if (name == "class") {
                 self->recascade_class_selector_transition(*node, old_value, value);
+            } else if (name == "id") {
+                self->recascade_attribute_selector_transition(*node, name, old_value, value);
             } else {
                 self->recascade_connected_subtree(*node, "style.removeProperty-custom");
             }
@@ -865,7 +867,7 @@
         if (self->attribute_requires_recascade(name)) {
             if (name == "class") {
                 self->recascade_class_selector_transition(*node, old_value, std::nullopt);
-            } else if (name == "style" || name == "id" || name == "dir"
+            } else if (name == "style" || name == "dir"
                 || name == "lang") {
                 self->recascade_connected_subtree(*node, "removeAttribute");
             } else {
@@ -940,7 +942,7 @@
         if (self->attribute_requires_recascade(name)) {
             if (name == "class") {
                 self->recascade_class_selector_transition(*node, old_value, std::nullopt);
-            } else if (name == "style" || name == "id" || name == "dir"
+            } else if (name == "style" || name == "dir"
                 || name == "lang") {
                 self->recascade_connected_subtree(*node, "removeAttributeNS");
             } else {
@@ -987,7 +989,7 @@
             if (name == "class") {
                 self->recascade_class_selector_transition(*node, old_value,
                     force_present ? std::optional<std::string>(std::string{}) : std::nullopt);
-            } else if (name == "style" || name == "id" || name == "dir"
+            } else if (name == "style" || name == "dir"
                 || name == "lang") {
                 self->recascade_connected_subtree(*node, "toggleAttribute");
             } else {

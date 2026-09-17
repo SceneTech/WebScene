@@ -2,6 +2,8 @@
 import importlib.util
 from pathlib import Path
 import tempfile
+import shutil
+import subprocess
 import unittest
 from unittest import mock
 
@@ -14,6 +16,40 @@ SPEC.loader.exec_module(MODULE)
 
 
 class MacOSProfileContractTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("cmake"), "CMake is required")
+    def test_custom_macos_compiler_root_is_forwarded_to_try_compile(self):
+        # Exercise the actual macOS branch portably. This tests root propagation,
+        # not binary qualification (covered separately by the locked profile).
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            shutil.copyfile(ROOT / "src/WebScene.Sdk/cmake/WebSceneToolchain.cmake",
+                            root / "WebSceneToolchain.cmake")
+            (root / "WebSceneMacOSProfile.cmake").write_text("""
+function(webscene_validate_macos_compiler compiler)
+  if(NOT compiler STREQUAL "${WEBSCENE_LLVM_ROOT}/bin/clang++")
+    message(FATAL_ERROR "wrong compiler")
+  endif()
+endfunction()
+""")
+            (root / "check.cmake").write_text("""
+cmake_minimum_required(VERSION 3.28)
+set(CMAKE_HOST_SYSTEM_NAME Darwin)
+set(WEBSCENE_LLVM_ROOT "custom-pinned-llvm")
+set(CMAKE_OSX_SYSROOT "test-sdk")
+include("${CMAKE_CURRENT_LIST_DIR}/WebSceneToolchain.cmake")
+if(NOT "WEBSCENE_LLVM_ROOT" IN_LIST CMAKE_TRY_COMPILE_PLATFORM_VARIABLES)
+  message(FATAL_ERROR "custom compiler root would be lost by try_compile")
+endif()
+foreach(compiler CMAKE_C_COMPILER CMAKE_CXX_COMPILER CMAKE_OBJCXX_COMPILER)
+  if(NOT "${${compiler}}" MATCHES "^custom-pinned-llvm/bin/clang")
+    message(FATAL_ERROR "${compiler} ignored the selected root")
+  endif()
+endforeach()
+""")
+            result = subprocess.run(["cmake", "-P", str(root / "check.cmake")],
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_repository_profile_is_complete_and_locked(self):
         profile = MODULE.read_profile(
             ROOT / "src/WebScene.Sdk/cmake/WebSceneMacOSProfile.cmake")

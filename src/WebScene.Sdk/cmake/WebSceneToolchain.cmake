@@ -23,6 +23,9 @@ if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux")
 endif()
 # Pass with -DCMAKE_TOOLCHAIN_FILE=<SDK>/lib/cmake/WebScene/WebSceneToolchain.cmake.
 # Override WEBSCENE_LLVM_ROOT when LLVM is installed outside Homebrew.
+# Compiler ABI checks re-enter this file in a nested try_compile project. Keep
+# the caller's pinned installation instead of falling back to the default root.
+list(APPEND CMAKE_TRY_COMPILE_PLATFORM_VARIABLES WEBSCENE_LLVM_ROOT)
 include("${CMAKE_CURRENT_LIST_DIR}/WebSceneMacOSProfile.cmake")
 set(WEBSCENE_LLVM_ROOT "/opt/homebrew/opt/llvm" CACHE PATH "${WebScene_MACOS_PROFILE_NAME} installation")
 webscene_validate_macos_compiler("${WEBSCENE_LLVM_ROOT}/bin/clang++")

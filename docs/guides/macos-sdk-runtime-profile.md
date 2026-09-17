@@ -16,6 +16,17 @@ outside the qualified profile before CMake enables C++, and
 `WebSceneConfig.cmake` repeats the compiler, architecture, and deployment checks
 for every installed consumer.
 
+## Side-by-side compiler installations
+
+Pass `-DWEBSCENE_LLVM_ROOT=/absolute/path/to/qualified/llvm` when the pinned
+compiler is outside Homebrew's default `opt/llvm` location. The toolchain forwards
+this root into CMake's nested `try_compile` projects as well as the main build.
+Otherwise compiler ABI detection can incorrectly reselect an unrelated default
+Homebrew compiler even after the main configuration verified the intended binary.
+This option does not relax the binary, configuration or header-tree checks. A
+newer rebuild with the same `clang --version` string is not sufficient evidence
+that it belongs to the qualified profile.
+
 ## Installed qualification
 
 Run the installed tool against an SDK produced with the intended source commit:

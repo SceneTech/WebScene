@@ -61,6 +61,11 @@ of that v2 reference. These validate the harness changes, not browser performanc
    exact engine/host identities. At this profile's start the local compiler was
    LLVM 22.1.1, whereas the source SDK requires an exact LLVM 22.1.8 binary/config/
    header closure; its build correctly rejected the old compiler.
+   The original 22.1.8 bottle was subsequently installed side-by-side on the SSD;
+   compiler/configuration/header hashes and a system-runtime C++20 smoke passed.
+   A custom-root propagation bug in the macOS toolchain was fixed with a regression:
+   the full SDK now configures through C/C++/Objective-C++ ABI checks using that root.
+   SDK build/consumer and native-demo presentation qualification remain separate gates.
 2. Qualify equal content and CSS viewport sequences in AppScene and headed Chrome.
    Separate event scheduling, forced layout, final layout, scene generation,
    retained rendering and actual presentation. Include continuous real live-resize,

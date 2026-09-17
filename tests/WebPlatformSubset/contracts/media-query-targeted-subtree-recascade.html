@@ -7,25 +7,37 @@
 <script src="/resources/testdriver-actions.js"></script>
 <script src="/resources/testdriver-vendor.js"></script>
 <style>
-  .media-shell { --leaf-width:17px; padding-left:3px; }
+  .media-shell { --leaf-width:17px; padding-left:3px; color:rgb(17,18,19); }
   .media-leaf { width:var(--leaf-width); height:11px; }
+  .media-sheet-alias { --sheet-leaf-width:var(--leaf-width); }
+  .media-sheet-alias-leaf { width:var(--sheet-leaf-width); }
+  .media-inline-alias-leaf { width:var(--inline-leaf-width); }
   .unaffected-sibling { width:23px; height:5px; }
   .media-direct-shell { padding-left:2px; }
   .media-direct-leaf { height:7px; }
   .media-inherit-shell { width:17px; }
   .media-inherit-leaf { width:inherit; }
+  .media-var-inherit-leaf { width:var(--missing-media-width, inherit); }
   @media (max-width:600px) {
-    .media-shell { --leaf-width:41px; padding-left:13px; }
+    .media-shell { --leaf-width:41px; padding-left:13px; color:rgb(41,42,43); }
     .media-leaf { height:29px; }
     .media-direct-shell { padding-left:19px; }
     .media-direct-leaf { height:31px; }
     .media-inherit-shell { width:43px; }
   }
 </style>
-<section id="viewport-target" class="media-shell"><div class="media-leaf"></div></section>
+<section id="viewport-target" class="media-shell">
+  <div class="media-leaf"></div>
+  <div class="media-sheet-alias"><div class="media-sheet-alias-leaf"></div></div>
+  <div style="--inline-leaf-width:var(--leaf-width)"><div class="media-inline-alias-leaf"></div></div>
+</section>
 <aside class="unaffected-sibling"></aside>
 <section class="media-direct-shell"><div class="media-direct-leaf"></div></section>
-<section class="media-inherit-shell"><div class="media-inherit-leaf"></div></section>
+<section class="media-inherit-shell">
+  <div class="media-inherit-leaf"></div>
+  <div class="media-inline-inherit-leaf" style="width:inherit"></div>
+  <div class="media-var-inherit-leaf"></div>
+</section>
 <script>
   promise_test(async () => {
     const shell = document.querySelector(".media-shell");
@@ -34,6 +46,10 @@
     const directShell = document.querySelector(".media-direct-shell");
     const directLeaf = document.querySelector(".media-direct-leaf");
     const inheritLeaf = document.querySelector(".media-inherit-leaf");
+    const inlineInheritLeaf = document.querySelector(".media-inline-inherit-leaf");
+    const variableInheritLeaf = document.querySelector(".media-var-inherit-leaf");
+    const sheetAliasLeaf = document.querySelector(".media-sheet-alias-leaf");
+    const inlineAliasLeaf = document.querySelector(".media-inline-alias-leaf");
     const snapshot = () => [
       getComputedStyle(shell).paddingLeft,
       getComputedStyle(leaf).width,
@@ -41,16 +57,21 @@
       getComputedStyle(sibling).width,
       getComputedStyle(directShell).paddingLeft,
       getComputedStyle(directLeaf).height,
-      getComputedStyle(inheritLeaf).width
+      getComputedStyle(inheritLeaf).width,
+      getComputedStyle(inlineInheritLeaf).width,
+      getComputedStyle(variableInheritLeaf).width,
+      getComputedStyle(sheetAliasLeaf).width,
+      getComputedStyle(inlineAliasLeaf).width,
+      getComputedStyle(leaf).color
     ];
 
-    assert_array_equals(snapshot(), ["3px", "17px", "11px", "23px", "2px", "7px", "17px"],
+    assert_array_equals(snapshot(), ["3px", "17px", "11px", "23px", "2px", "7px", "17px", "17px", "17px", "17px", "17px", "rgb(17, 18, 19)"],
       "wide base styles are active");
     await test_driver.set_viewport(shell, 480, 400);
-    assert_array_equals(snapshot(), ["13px", "41px", "29px", "23px", "19px", "31px", "43px"],
+    assert_array_equals(snapshot(), ["13px", "41px", "29px", "23px", "19px", "31px", "43px", "43px", "43px", "41px", "41px", "rgb(41, 42, 43)"],
       "activation updates direct matches and inherited descendants");
     await test_driver.set_viewport(shell, 800, 600);
-    assert_array_equals(snapshot(), ["3px", "17px", "11px", "23px", "2px", "7px", "17px"],
+    assert_array_equals(snapshot(), ["3px", "17px", "11px", "23px", "2px", "7px", "17px", "17px", "17px", "17px", "17px", "rgb(17, 18, 19)"],
       "deactivation restores base styles without disturbing the unrelated sibling");
   }, "media-query activation and deactivation recascade matched subtrees");
 </script>

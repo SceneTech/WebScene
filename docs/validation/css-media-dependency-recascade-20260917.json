@@ -1,0 +1,61 @@
+{
+  "date": "2026-09-17",
+  "scope": "viewport media-query dependency-directed recascade",
+  "native": {
+    "focused_filter": "media-query-targeted-recascade",
+    "passed": true,
+    "custom_property_applications": {
+      "32_unrelated": [13, 13],
+      "1024_unrelated": [13, 13]
+    },
+    "inherited_value_applications": {
+      "32_unrelated": [10, 10],
+      "1024_unrelated": [10, 10]
+    },
+    "exact_root_applications": {
+      "32_unrelated": [1, 1],
+      "1024_unrelated": [1, 1]
+    }
+  },
+  "wpt": {
+    "native": {
+      "documents": "1/1",
+      "subtests": "4/4",
+      "result": "/tmp/webscene-media-final-native.HKjBXZ/results/results.json"
+    },
+    "chromium": {
+      "subtests": "4/4",
+      "result": "/tmp/webscene-media-final-chrome.T7KN8M/results/results.json"
+    }
+  },
+  "spotify": {
+    "nodes": 2732,
+    "images": 18,
+    "samples_per_engine": 240,
+    "widths": [800, 700],
+    "control_dispatch_ms": {
+      "median": 92.1278,
+      "mean": 92.99222416666665,
+      "min": 86.947,
+      "max": 104.625
+    },
+    "candidate_dispatch_ms": {
+      "median": 64.8797,
+      "mean": 65.91895583333333,
+      "min": 60.2178,
+      "max": 102.993
+    },
+    "median_reduction_percent": 29.576414502462878,
+    "median_speedup": 1.4199788223435064,
+    "control_log": "/tmp/spotify-media-control-profile-20260917.log",
+    "candidate_log": "/tmp/spotify-media-final-profile-20260917.log",
+    "trace_log": "/tmp/spotify-media-selective-mask-once-20260917.log"
+  },
+  "claims_excluded": [
+    "physical window cadence",
+    "Chrome speed comparison",
+    "release SDK qualification",
+    "completion of issue 235",
+    "completion of issue 238"
+  ]
+}

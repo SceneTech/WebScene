@@ -524,6 +524,26 @@ documented in [the MessagePort report](spotify-messageport-startup-20260917.md).
 It enables populated native profiling but does not resolve the remaining artwork,
 header or matched-resize visual acceptance issues.
 
+Cumulative local validation on `5b57af96`: certification and production pass the
+140 route cases, four stable-text cases, 36 vector cases and original batched
+fixture. Certification WPT coverage passes 438/438 checks in 15 documents;
+production also runs anchor identity, for 443/443 in 16 documents. Eleven focused
+native groups (including main's iframe sandbox gate), parser and generated-binding
+checks pass; the production worker/MessagePort suite passes. A mistaken
+`html-anchor` filter selected zero documents and is excluded: the corrected
+`dom-anchor-element` run supplies its five passing checks.
+
+The exact packaged-SDK/theme gate is **not qualified**. The clean producer attempt
+at WebScene `5b57af96` / AppScene `9f434e0` stops at dependency-profile validation:
+the available cached Skia SDK hashes to `8d2cb51c...`, while the current lock
+requires `bcd81c64...`; its build-argument hash also differs. The cached dependency
+manifest predates the compiler-profile lock. The pinned LLVM compiler and V8
+artifacts themselves match their expected identities, but that is insufficient
+to qualify the whole dependency closure. No lock, hash or manifest was weakened.
+The older local development SDK/demo is not promoted to an exact packaged-SDK
+release result. Obtaining/building the locked Skia input and rerunning the
+read-only installed Kestrel gate remain required.
+
 ### Remaining acceptance work
 
 The [September 17 resize-stage investigation](css-resize-stage-profile.md) records

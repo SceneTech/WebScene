@@ -785,7 +785,7 @@ void test_editor_worker_rpc_and_ui_responsiveness() {
     const std::string module_url = "https://worker.test/editor-worker-rpc.js";
     const std::string module_source = R"JS(
       let workerId = -1;
-      onmessage = event => {
+      globalThis.onmessage = event => {
         const message = event.data;
         if (!message || !message.vsWorker || message.type !== 0) return;
         const reply = (res, err) => postMessage({

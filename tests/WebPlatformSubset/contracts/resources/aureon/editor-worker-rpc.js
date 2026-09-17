@@ -1,6 +1,6 @@
 let workerId = -1;
 
-onmessage = event => {
+globalThis.onmessage = event => {
   const message = event.data;
   if (!message || !message.vsWorker || message.type !== 0) return;
 

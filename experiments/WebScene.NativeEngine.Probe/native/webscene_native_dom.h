@@ -430,6 +430,10 @@ struct node_style final {
         bool border_top_current_color{true};
         bool border_right_current_color{true};
         bool border_bottom_current_color{true};
+        // Empty inherits the originating element's computed family. Generated
+        // icon glyphs commonly override this independently of their host.
+        std::string font_family;
+        bool font_family_important{false};
         std::string content;
         bool generated{false};
         bool display_none{false};

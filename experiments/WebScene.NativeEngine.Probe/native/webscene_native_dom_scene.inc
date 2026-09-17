@@ -925,9 +925,10 @@ void native_document::append_scene(
         if (has_visible_text(pseudo.content)) {
             std::ostringstream resource;
             resource << font_size << '\t' << line_height << '\t'
-                << resolved_font_weight(node) << '\t' << resolved_text_align(node) << '\t'
-                << resolved_font_family(node) << '\t'
-                << resolved_font_smoothing(node) << '\t' << pseudo.content;
+                << resolved_font_weight(node) << '\t' << resolved_text_align(node) << '\t';
+            if (pseudo.font_family.empty()) resource << resolved_font_family(node);
+            else resource << pseudo.font_family;
+            resource << '\t' << resolved_font_smoothing(node) << '\t' << pseudo.content;
             commands.push_back(webscene_scene_command{
                 3U,
                 append_scene_string(resource.str(), strings, string_bytes),

@@ -117,8 +117,17 @@ void apply_pseudo_declaration(dom_node& node,node_style::pseudo_element& pseudo,
         }
         const auto& name = declaration.name;
         on_resolved(contains_variable);
+        if (name == "font-family"
+            && pseudo.font_family_important
+            && !declaration.important) {
+            decision.classification = "supported";
+            return;
+        }
         const auto result = css::apply_pseudo_value(
             pseudo, node.style.foreground_rgba, node.style.border_box, name, value);
+        if (name == "font-family" && result.classification == "supported") {
+            pseudo.font_family_important = declaration.important;
+        }
         decision.classification = result.classification;
         decision.semantic_slice = result.semantic_slice;
 }

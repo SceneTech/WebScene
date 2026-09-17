@@ -1376,17 +1376,13 @@
         info.GetReturnValue().Set(result);
     }
 
-    uint32_t request_window_close()
+    uint32_t request_window_close_in_current_realm(
+        v8::Local<v8::Context> local_context)
     {
-        auto isolate_locker = lock_shared_isolate();
-        v8::Isolate::Scope isolate_scope(isolate);
-        v8::HandleScope handle_scope(isolate);
-        auto local_context = context.Get(isolate);
         if (local_context.IsEmpty()) {
             last_error = "Native window close has no active top-level realm";
             return WEBSCENE_WINDOW_CLOSE_ERROR_V1;
         }
-        v8::Context::Scope context_scope(local_context);
         if (terminal_pagehide_dispatched) {
             return WEBSCENE_WINDOW_CLOSE_ALLOW_V1;
         }
@@ -1443,6 +1439,19 @@
         perform_microtask_checkpoint();
         terminal_pagehide_dispatched = true;
         return WEBSCENE_WINDOW_CLOSE_ALLOW_V1;
+    }
+
+    uint32_t request_window_close()
+    {
+        auto isolate_locker = lock_shared_isolate();
+        v8::Isolate::Scope isolate_scope(isolate);
+        v8::HandleScope handle_scope(isolate);
+        auto local_context = context.Get(isolate);
+        if (local_context.IsEmpty()) {
+            return request_window_close_in_current_realm(local_context);
+        }
+        v8::Context::Scope context_scope(local_context);
+        return request_window_close_in_current_realm(local_context);
     }
 
     bool set_visible(bool visible)

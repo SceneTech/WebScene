@@ -1,0 +1,62 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Live effective base is isolated per document</title>
+<body>
+<script>
+const state = window.__webSceneWptState = {
+  complete: false, harness: null, results: [], errors: [], diagnostics: []
+};
+const record = (name, passed, detail) => state.results.push({
+  name, status: passed ? 'PASS' : 'FAIL', message: passed ? null : JSON.stringify(detail), stack: null
+});
+const exercise = (document, origin) => {
+  const authority = origin === 'null' ? 'https://base.test' : origin;
+  const navigation = document.URL;
+  const baseline = document.baseURI;
+  const first = document.createElement('base');
+  first.setAttribute('href', `${authority}/alpha/`);
+  document.head.appendChild(first);
+  const alpha = [document.baseURI, new URL('asset.js', document.baseURI).href];
+  first.setAttribute('href', `${authority}/beta/`);
+  const beta = document.baseURI;
+  const earlier = document.createElement('base');
+  earlier.setAttribute('href', `${authority}/earlier/`);
+  document.head.insertBefore(earlier, first);
+  const reordered = document.baseURI;
+  earlier.remove();
+  const restored = document.baseURI;
+  first.removeAttribute('href');
+  const removedHref = document.baseURI;
+  first.remove();
+  return { navigation, baseline, alpha, beta, reordered, restored, removedHref,
+    removed: document.baseURI, origin };
+};
+try {
+  const frame = document.createElement('iframe');
+  document.body.appendChild(frame);
+  const top = exercise(document, location.origin);
+  const nested = exercise(frame.contentDocument, location.origin);
+  const expected = value => Boolean(value.navigation)
+    && value.removed === value.baseline
+    && value.removedHref === value.baseline
+    && value.alpha[0].endsWith('/alpha/')
+    && (value.alpha[1].endsWith('/alpha/asset.js')
+      || (value.baseline === '' && value.alpha[1] === 'asset.js'))
+    && value.beta.endsWith('/beta/')
+    && value.reordered.endsWith('/earlier/')
+    && value.restored.endsWith('/beta/');
+  record('top-level base insertion, mutation, reordering and removal are live',
+    expected(top), top);
+  record('nested document base changes remain document-local',
+    expected(nested), nested);
+  record('nested base changes do not leak into the outer document',
+    top.removed === document.baseURI, { top, outer: document.baseURI });
+  state.diagnostics.push(JSON.stringify({ top, nested }));
+  frame.remove();
+} catch (error) {
+  record('live effective base setup', false, String(error));
+}
+const failure = state.results.find(result => result.status !== 'PASS');
+state.harness = { status: failure ? 1 : 0, message: failure?.message || null, stack: null };
+state.complete = true;
+</script>

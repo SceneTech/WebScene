@@ -734,6 +734,9 @@
             return;
         }
         node->attributes[name] = value;
+        if (node->tag == "base" && name == "href") {
+            self->invalidate_document_base(*node);
+        }
         if ((name == "width" || name == "height")) reset_canvas_backing_store(*self, *node);
         if (name == "id") node->id_attribute = value;
         else if (name == "class") node->class_name = value;
@@ -821,6 +824,10 @@
             : std::optional<std::string>(previous->second);
         self->record_html_attribute_feature(name, "setAttributeNS");
         node->attributes[name] = value;
+        if ((!namespace_uri || namespace_uri->empty())
+            && node->tag == "base" && name == "href") {
+            self->invalidate_document_base(*node);
+        }
         if ((!namespace_uri || namespace_uri->empty()) && (name == "width" || name == "height")) reset_canvas_backing_store(*self, *node);
         if (name == "id") node->id_attribute = value;
         else if (name == "class") node->class_name = value;
@@ -853,6 +860,9 @@
         const auto old_value = std::optional<std::string>(node->attributes.at(name));
         self->detach_attr(*node, name, *old_value);
         node->attributes.erase(name);
+        if (node->tag == "base" && name == "href") {
+            self->invalidate_document_base(*node);
+        }
         if ((name == "width" || name == "height")) reset_canvas_backing_store(*self, *node);
         if (name == "id") node->id_attribute.clear();
         else if (name == "class") node->class_name.clear();
@@ -930,6 +940,10 @@
         const auto old_value = std::optional<std::string>(match->second);
         self->detach_attr(*node, name, *old_value);
         node->attributes.erase(name);
+        if ((!namespace_uri || namespace_uri->empty())
+            && node->tag == "base" && name == "href") {
+            self->invalidate_document_base(*node);
+        }
         if ((!namespace_uri || namespace_uri->empty()) && (name == "width" || name == "height")) reset_canvas_backing_store(*self, *node);
         if (name == "id") node->id_attribute.clear();
         else if (name == "class") node->class_name.clear();
@@ -1369,16 +1383,42 @@
         v8::Local<v8::Object> document_value,
         const std::string& href)
     {
-        // Document.URL is the browser-facing serialization used by the hosted
-        // hosted analytics branch. documentURI and baseURI share the
-        // fetched document address in this profile because WebScene does not
-        // currently implement authored <base> mutation.
-        for (const auto* property : {"URL", "documentURI", "baseURI"}) {
+        for (const auto* property : {"URL", "documentURI"}) {
             document_value->Set(
                 local_context,
                 js_string(isolate, property),
                 js_string(isolate, href.c_str())).Check();
         }
+        document_value->SetNativeDataProperty(
+            local_context,
+            js_string(isolate, "baseURI"),
+            get_document_base_uri).Check();
+        auto* root = document_value->InternalFieldCount() > 0
+            ? static_cast<dom_node*>(document_value->GetAlignedPointerFromInternalField(
+                0, v8::kEmbedderDataTypeTagDefault))
+            : nullptr;
+        if (root != nullptr && (!document_base_caches.contains(root)
+            || !frame_base_addresses.contains(root))) {
+            register_document_base(*root, href, href);
+            if (!frame_base_addresses.contains(root)) {
+                invalidate_document_base_root(root);
+            }
+        }
+    }
+
+    static void get_document_base_uri(
+        v8::Local<v8::Name>,
+        const v8::PropertyCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        auto* root = info.Holder()->InternalFieldCount() > 0
+            ? static_cast<dom_node*>(info.Holder()->GetAlignedPointerFromInternalField(
+                0, v8::kEmbedderDataTypeTagDefault))
+            : nullptr;
+        if (self == nullptr) return;
+        info.GetReturnValue().Set(js_dom_string(
+            info.GetIsolate(),
+            self->effective_document_base(root)));
     }
 
     void set_current_script(

@@ -406,10 +406,7 @@
         }
         self->stylesheet_cssom_sources.insert_or_assign(owner->id, source);
         auto* cascade_root = self->css_cascade_root_for_node(*owner);
-        const auto base_address = cascade_root != nullptr
-                && self->frame_base_addresses.contains(cascade_root)
-            ? self->frame_base_addresses.at(cascade_root)
-            : self->document_base_address;
+        const auto base_address = self->effective_document_base(cascade_root);
         self->pending_stylesheet_replacement_bytes += source.size();
         self->pending_stylesheet_replacements.push_back({
             owner->id,
@@ -747,6 +744,85 @@
         return const_cast<dom_node*>(active_css_cascade_root);
     }
 
+    void register_document_base(
+        dom_node& root,
+        std::string navigation_address,
+        std::string effective_address)
+    {
+        document_base_caches.insert_or_assign(
+            &root,
+            document_base_cache{
+                std::move(navigation_address),
+                effective_address,
+                std::move(effective_address),
+                false});
+    }
+
+    void invalidate_document_base_root(dom_node* root)
+    {
+        if (root == nullptr) root = &document.body();
+        auto& cache = document_base_caches[root];
+        if (cache.navigation_address.empty()) {
+            cache.navigation_address = frame_base_addresses.contains(root)
+                ? frame_base_addresses[root]
+                : document_base_address;
+            cache.fallback_address = cache.navigation_address;
+        }
+        cache.dirty = true;
+    }
+
+    void invalidate_document_base(dom_node& node)
+    {
+        invalidate_document_base_root(css_cascade_root_for_node(node));
+    }
+
+    bool subtree_contains_base(const dom_node& node) const
+    {
+        if (node.tag == "base") return true;
+        return std::any_of(node.children.begin(), node.children.end(), [&](const auto* child) {
+            return child != nullptr && subtree_contains_base(*child);
+        });
+    }
+
+    const std::string& effective_document_base(dom_node* root)
+    {
+        if (root == nullptr) root = &document.body();
+        auto [found, inserted] = document_base_caches.try_emplace(root);
+        auto& cache = found->second;
+        if (inserted || cache.navigation_address.empty()) {
+            cache.navigation_address = frame_base_addresses.contains(root)
+                ? frame_base_addresses[root]
+                : document_base_address;
+            cache.fallback_address = cache.navigation_address;
+            cache.effective_address = cache.navigation_address;
+            cache.dirty = true;
+        }
+        if (!cache.dirty) return cache.effective_address;
+        cache.effective_address = cache.fallback_address;
+        for (auto* candidate : document.query_selector_all(*root, "base")) {
+            if (candidate == nullptr || !is_connected(*candidate)) continue;
+            const auto href = candidate->attributes.find("href");
+            if (href == candidate->attributes.end() || href->second.empty()) continue;
+            cache.effective_address = resolve_resource_url(
+                href->second,
+                cache.navigation_address);
+            break;
+        }
+        cache.dirty = false;
+        if (frame_base_addresses.contains(root))
+            frame_base_addresses[root] = cache.effective_address;
+        return cache.effective_address;
+    }
+
+    const std::string& navigation_address_for_root(dom_node* root)
+    {
+        if (root == nullptr) root = &document.body();
+        const auto found = document_base_caches.find(root);
+        return found == document_base_caches.end()
+            ? document_base_address
+            : found->second.navigation_address;
+    }
+
     v8::Local<v8::Context> context_for_node(const dom_node& node)
     {
         for (auto* ancestor = node.parent; ancestor != nullptr; ancestor = ancestor->parent) {
@@ -798,7 +874,7 @@
             && current_context != context.Get(isolate);
     }
 
-    const std::string& current_base_address() const
+    const std::string& current_base_address()
     {
         const auto current_context = isolate->GetCurrentContext();
         if (!current_context.IsEmpty()) {
@@ -806,12 +882,10 @@
                 current_context->GetAlignedPointerFromEmbedderData(
                     1,
                     v8::kEmbedderDataTypeTagDefault));
-            if (const auto found = frame_base_addresses.find(root);
-                found != frame_base_addresses.end()) {
-                return found->second;
-            }
+            if (root != nullptr) return effective_document_base(
+                const_cast<dom_node*>(root));
         }
-        return document_base_address;
+        return effective_document_base(&document.body());
     }
 
     bool is_document_object(v8::Local<v8::Object> candidate) const
@@ -945,6 +1019,7 @@
                         1,
                         v8::kEmbedderDataTypeTagDefault));
                 frame_base_addresses.erase(frame_root);
+                document_base_caches.erase(frame_root);
                 if (active_css_cascade_root == frame_root) {
                     activate_css_cascade(&document.body());
                 }
@@ -1474,6 +1549,9 @@
             return nodes.contains(resource.node);
         });
         std::erase_if(frame_base_addresses, [&](const auto& entry) {
+            return nodes.contains(const_cast<dom_node*>(entry.first));
+        });
+        std::erase_if(document_base_caches, [&](const auto& entry) {
             return nodes.contains(const_cast<dom_node*>(entry.first));
         });
         if (nodes.contains(const_cast<dom_node*>(active_css_cascade_root))) {
@@ -3536,6 +3614,10 @@
             ? std::optional<std::string>(state->owner->attributes.at(state->name))
             : std::nullopt;
         state->owner->attributes[state->name] = text;
+        if (state->namespace_uri.empty()
+            && state->owner->tag == "base" && state->name == "href") {
+            self->invalidate_document_base(*state->owner);
+        }
         if (state->namespace_uri.empty() && (state->name == "width" || state->name == "height"))
             reset_canvas_backing_store(*self, *state->owner);
         if (state->name == "id") state->owner->id_attribute = text;
@@ -3608,6 +3690,10 @@
             ? std::optional<std::string>(owner->attributes.at(state->name))
             : std::nullopt;
         owner->attributes[state->name] = value;
+        if (state->namespace_uri.empty()
+            && owner->tag == "base" && state->name == "href") {
+            self->invalidate_document_base(*owner);
+        }
         if (state->namespace_uri.empty() && (state->name == "width" || state->name == "height"))
             reset_canvas_backing_store(*self, *owner);
         if (state->name == "id") owner->id_attribute = value;
@@ -3647,6 +3733,10 @@
         }
         const auto old_value = owner->attributes.at(state->name);
         owner->attributes.erase(state->name);
+        if (state->namespace_uri.empty()
+            && owner->tag == "base" && state->name == "href") {
+            self->invalidate_document_base(*owner);
+        }
         if (state->namespace_uri.empty() && (state->name == "width" || state->name == "height"))
             reset_canvas_backing_store(*self, *owner);
         if (state->name == "id") owner->id_attribute.clear();
@@ -4798,6 +4888,10 @@
                 return;
             }
             auto children = std::move(child->children);
+            const auto changes_base = std::any_of(
+                children.begin(), children.end(), [&](const auto* candidate) {
+                    return candidate != nullptr && self->subtree_contains_base(*candidate);
+                });
             child->children.clear();
             for (auto* fragment_child : children) {
                 if (fragment_child == nullptr) continue;
@@ -4828,6 +4922,7 @@
                 self->notify_custom_elements_subtree(*fragment_child, "connected");
             }
             synchronize_textarea_value_from_children(*parent);
+            if (changes_base) self->invalidate_document_base(*parent);
             self->document.mark_dirty();
             info.GetReturnValue().Set(info[0]);
             return;
@@ -4837,6 +4932,9 @@
             return;
         }
         auto* previous_parent = child->parent;
+        auto* previous_root = previous_parent != nullptr && self->subtree_contains_base(*child)
+            ? self->css_cascade_root_for_node(*previous_parent)
+            : nullptr;
         if (child != nullptr && child->parent != nullptr) {
             if (self->is_connected(*child)) {
                 self->notify_custom_elements_subtree(*child, "disconnected");
@@ -4864,6 +4962,10 @@
             info.GetIsolate()->GetCurrentContext());
         self->enqueue_iframe_hydration_if_needed(*child);
         self->notify_custom_elements_subtree(*child, "connected");
+        if (self->subtree_contains_base(*child)) {
+            if (previous_root != nullptr) self->invalidate_document_base_root(previous_root);
+            self->invalidate_document_base(*parent);
+        }
         synchronize_textarea_value_from_children(*parent);
         info.GetReturnValue().Set(info[0]);
     }
@@ -4908,10 +5010,12 @@
             self->notify_custom_elements_subtree(*child, "disconnected");
         }
         self->deactivate_connected_stylesheets(*child);
+        const auto changes_base = self->subtree_contains_base(*child);
         std::erase(parent->children, child);
         child->parent = nullptr;
         self->recascade_changed_child_list(*parent);
         self->weaken_detached_subtree_wrappers(*child);
+        if (changes_base) self->invalidate_document_base(*parent);
         synchronize_textarea_value_from_children(*parent);
         self->document.mark_dirty();
         info.GetReturnValue().Set(info[0]);
@@ -5025,11 +5129,13 @@
             self->notify_custom_elements_subtree(*node, "disconnected");
         }
         self->deactivate_connected_stylesheets(*node);
+        const auto changes_base = self->subtree_contains_base(*node);
         std::erase(node->parent->children, node);
         node->parent = nullptr;
         self->recascade_changed_child_list(*parent);
         node->visible = false;
         self->weaken_detached_subtree_wrappers(*node);
+        if (changes_base) self->invalidate_document_base(*parent);
         synchronize_textarea_value_from_children(*parent);
         self->document.mark_dirty();
     }
@@ -5223,6 +5329,10 @@
             }
             auto insertion_index = static_cast<size_t>(position - parent->children.begin());
             auto children = std::move(child->children);
+            const auto changes_base = std::any_of(
+                children.begin(), children.end(), [&](const auto* candidate) {
+                    return candidate != nullptr && self->subtree_contains_base(*candidate);
+                });
             child->children.clear();
             for (auto* fragment_child : children) {
                 if (fragment_child == nullptr) continue;
@@ -5240,6 +5350,7 @@
                     *fragment_child, "connected");
             }
             synchronize_textarea_value_from_children(*parent);
+            if (changes_base) self->invalidate_document_base(*parent);
             self->document.mark_dirty();
             info.GetReturnValue().Set(info[0]);
             return;
@@ -5277,6 +5388,9 @@
             }
         }
         auto* previous_parent = child->parent;
+        auto* previous_root = previous_parent != nullptr && self->subtree_contains_base(*child)
+            ? self->css_cascade_root_for_node(*previous_parent)
+            : nullptr;
         if (child->parent != nullptr) {
             if (self->is_connected(*child)) {
                 self->notify_custom_elements_subtree(*child, "disconnected");
@@ -5293,6 +5407,11 @@
                 self->recascade_changed_child_list(*parent, child);
                 self->activate_connected_stylesheet(*child);
                 self->notify_custom_elements_subtree(*child, "connected");
+                if (self->subtree_contains_base(*child)) {
+                    if (previous_root != nullptr)
+                        self->invalidate_document_base_root(previous_root);
+                    self->invalidate_document_base(*parent);
+                }
                 synchronize_textarea_value_from_children(*parent);
                 info.GetReturnValue().Set(info[0]);
             }
@@ -5310,6 +5429,10 @@
         self->recascade_changed_child_list(*parent, child);
         self->activate_connected_stylesheet(*child);
         self->notify_custom_elements_subtree(*child, "connected");
+        if (self->subtree_contains_base(*child)) {
+            if (previous_root != nullptr) self->invalidate_document_base_root(previous_root);
+            self->invalidate_document_base(*parent);
+        }
         synchronize_textarea_value_from_children(*parent);
         info.GetReturnValue().Set(info[0]);
     }

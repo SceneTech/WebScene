@@ -157,6 +157,13 @@
     std::unordered_map<uint32_t, v8::Global<v8::Context>> actual_frame_contexts;
     std::unordered_map<uint32_t, v8::Global<v8::Object>> actual_frame_documents;
     std::unordered_map<const dom_node*, std::string> frame_base_addresses;
+    struct document_base_cache {
+        std::string navigation_address;
+        std::string fallback_address;
+        std::string effective_address;
+        bool dirty{true};
+    };
+    std::unordered_map<const dom_node*, document_base_cache> document_base_caches;
     session_storage_state outer_session_storage;
     session_storage_state outer_local_storage;
     std::string outer_storage_origin;
@@ -272,7 +279,7 @@
     // download can ask the desktop compositor for the exact PNG pixels.
     std::unordered_map<std::string, uint32_t> object_url_canvas_node_ids;
 
-    std::string current_security_origin() const
+    std::string current_security_origin()
     {
         return inherited_worker_origin.empty()
             ? resource_origin(current_base_address())

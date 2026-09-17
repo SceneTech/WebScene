@@ -27,6 +27,7 @@
 #if defined(WEBSCENE_NATIVE_ENGINE_WITH_V8_INSPECTOR)
         inspector_runtime_.store(nullptr, std::memory_order_release);
 #endif
+        file_panel_broker_v2_.retire();
         // V8 cleanup must stay on its owning worker even after a terminal throw.
         retire_file_runtime();
 #endif
@@ -336,6 +337,7 @@
             failure.stage = "bootstrap";
             failure.message = runtime_->last_error();
             diagnostics_.publish(std::move(failure));
+            file_panel_broker_v2_.retire();
             retire_file_runtime();
         } else {
             { std::lock_guard lock(file_runtime_mutex_); file_runtime_ready_=true; }
@@ -1057,6 +1059,7 @@
                 }
 #endif
                 if (auto* url = std::get_if<url_request>(&request)) {
+                    file_panel_broker_v2_.retire();
                     if (url->initial_viewport) apply(*url->initial_viewport);
                     bool loaded = false;
                     if (runtime_ != nullptr) {
@@ -1444,6 +1447,7 @@
 #if defined(WEBSCENE_NATIVE_ENGINE_ENABLE_GRAPHICS)
         if (runtime_) runtime_->shutdown_graphics();
 #endif
+        file_panel_broker_v2_.retire();
         retire_file_runtime();
 #endif
         frame_trace_.dump();

@@ -5,6 +5,14 @@ include(CTest)
 include(FetchContent)
 
 if(BUILD_TESTING)
+    add_executable(webscene_file_panel_v2_contract_tests
+        tests/file_panel_v2_contract_tests.cpp)
+    target_compile_features(webscene_file_panel_v2_contract_tests PRIVATE cxx_std_20)
+    target_include_directories(webscene_file_panel_v2_contract_tests PRIVATE native)
+    add_test(NAME webscene_file_panel_v2_contract_tests
+        COMMAND webscene_file_panel_v2_contract_tests)
+    set_tests_properties(webscene_file_panel_v2_contract_tests PROPERTIES
+        LABELS "native;file-panel;security;lifecycle;performance" TIMEOUT 20)
     add_executable(webscene_indexeddb_storage_tests
         tests/indexeddb_storage_tests.cpp
         native/webscene_indexeddb_storage.cpp)

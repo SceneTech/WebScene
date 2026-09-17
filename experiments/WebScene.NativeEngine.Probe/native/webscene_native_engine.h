@@ -1471,6 +1471,95 @@ WEBSCENE_API uint8_t webscene_engine_complete_file_request_v1(webscene_engine* e
     uint64_t request_id, uint32_t status, const webscene_file_data_v1* files,
     size_t file_count, const char* error_message);
 
+/* Native file panel transport v2. This queue is independent of the v1
+ * byte-copy service. Requests contain presentation metadata and an optional
+ * opaque initial-location token. Successful results contain only bounded
+ * display metadata and opaque grant identifiers; filesystem paths, bookmark
+ * bytes and platform objects remain owned by the native host.
+ *
+ * Request and nested views remain immutable until release. A completion is
+ * copied before the call returns. Limits: 16 pending requests, 64 selected
+ * entries, 32 filters, 64 total MIME/extension strings, 64 KiB request
+ * metadata, 4 KiB display names/messages, and 1 KiB opaque tokens/grant IDs. */
+enum {
+    WEBSCENE_FILE_PANEL_OPEN_FILE_V2 = 1,
+    WEBSCENE_FILE_PANEL_OPEN_DIRECTORY_V2 = 2,
+    WEBSCENE_FILE_PANEL_SAVE_FILE_V2 = 3
+};
+enum {
+    WEBSCENE_FILE_PANEL_ALLOW_MULTIPLE_V2 = 1U << 0U,
+    WEBSCENE_FILE_PANEL_SHOW_HIDDEN_V2 = 1U << 1U,
+    WEBSCENE_FILE_PANEL_CAN_CREATE_DIRECTORIES_V2 = 1U << 2U,
+    WEBSCENE_FILE_PANEL_CONFIRM_OVERWRITE_V2 = 1U << 3U
+};
+enum {
+    WEBSCENE_FILE_PANEL_SUCCESS_V2 = 0,
+    WEBSCENE_FILE_PANEL_CANCELLED_V2 = 1,
+    WEBSCENE_FILE_PANEL_DENIED_V2 = 2,
+    WEBSCENE_FILE_PANEL_ERROR_V2 = 3
+};
+enum {
+    WEBSCENE_FILE_PANEL_ENTRY_FILE_V2 = 1,
+    WEBSCENE_FILE_PANEL_ENTRY_DIRECTORY_V2 = 2
+};
+enum {
+    WEBSCENE_FILE_PANEL_GRANT_READ_V2 = 1U << 0U,
+    WEBSCENE_FILE_PANEL_GRANT_WRITE_V2 = 1U << 1U,
+    WEBSCENE_FILE_PANEL_GRANT_ENUMERATE_V2 = 1U << 2U,
+    WEBSCENE_FILE_PANEL_GRANT_CREATE_V2 = 1U << 3U,
+    WEBSCENE_FILE_PANEL_GRANT_DELETE_V2 = 1U << 4U
+};
+typedef struct webscene_file_panel_string_v2 {
+    const char* data;
+    size_t byte_count;
+} webscene_file_panel_string_v2;
+typedef struct webscene_file_panel_token_v2 {
+    const uint8_t* data;
+    size_t byte_count;
+} webscene_file_panel_token_v2;
+typedef struct webscene_file_panel_filter_v2 {
+    uint32_t struct_size, version;
+    webscene_file_panel_string_v2 description;
+    const webscene_file_panel_string_v2* mime_types;
+    size_t mime_type_count;
+    const webscene_file_panel_string_v2* extensions;
+    size_t extension_count;
+} webscene_file_panel_filter_v2;
+typedef struct webscene_file_panel_request_v2 {
+    uint32_t struct_size, version;
+    uint64_t request_id;
+    uint32_t kind, flags;
+    uint32_t maximum_selection_count, reserved;
+    webscene_file_panel_string_v2 title;
+    webscene_file_panel_string_v2 prompt;
+    webscene_file_panel_string_v2 suggested_name;
+    webscene_file_panel_token_v2 initial_location_token;
+    const webscene_file_panel_filter_v2* filters;
+    size_t filter_count;
+} webscene_file_panel_request_v2;
+typedef struct webscene_file_panel_entry_v2 {
+    uint32_t struct_size, version;
+    uint32_t kind, capabilities;
+    webscene_file_panel_string_v2 display_name;
+    webscene_file_panel_token_v2 grant_id;
+} webscene_file_panel_entry_v2;
+typedef struct webscene_file_panel_completion_v2 {
+    uint32_t struct_size, version;
+    uint64_t request_id;
+    uint32_t status, reserved;
+    const webscene_file_panel_entry_v2* entries;
+    size_t entry_count;
+    webscene_file_panel_string_v2 error_code;
+    webscene_file_panel_string_v2 error_message;
+} webscene_file_panel_completion_v2;
+WEBSCENE_API const webscene_file_panel_request_v2*
+webscene_engine_take_file_panel_request_v2(webscene_engine* engine);
+WEBSCENE_API void webscene_file_panel_request_release_v2(
+    const webscene_file_panel_request_v2* request);
+WEBSCENE_API uint8_t webscene_engine_complete_file_panel_request_v2(
+    webscene_engine* engine,
+    const webscene_file_panel_completion_v2* completion);
+
 /* Typed native desktop request ABI. Request memory is immutable and remains
  * valid until release. Byte payloads are capped at 16 MiB, strings are UTF-8,
  * and at most 16 completion-bearing operations may be pending per document. */

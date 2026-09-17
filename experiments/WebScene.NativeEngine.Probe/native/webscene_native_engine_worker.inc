@@ -311,7 +311,14 @@
             [this] {
                 signal_worker();
             }, &diagnostics_, storage_directory_, storage_partition_key_,
-            storage_quota_bytes_);
+            storage_quota_bytes_,
+            [this](const webscene_file_panel_request_v2& request) {
+                return queue_file_panel_request_v2(
+                    request,
+                    [this](webscene_native::file_panel_completion_data_v2&& completion) {
+                        complete_file_panel_request_v2(std::move(completion));
+                    });
+            });
         runtime_->set_work_metrics_enabled(
             runtime_work_metrics_enabled_.load(std::memory_order_acquire));
         if (stylesheet_consumed_callback_ != nullptr) {
@@ -1032,6 +1039,12 @@
 #if defined(WEBSCENE_NATIVE_ENGINE_WITH_V8)
                 if (auto* file = std::get_if<webscene_native::native_file_completion>(&request)) {
                     if (runtime_) runtime_->complete_file_request(*file);
+                    changed = true;
+                    continue;
+                }
+                if (auto* panel = std::get_if<
+                        webscene_native::file_panel_completion_data_v2>(&request)) {
+                    if (runtime_) runtime_->complete_file_panel_request(*panel);
                     changed = true;
                     continue;
                 }

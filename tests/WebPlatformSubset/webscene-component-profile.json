@@ -9,6 +9,13 @@
   },
   "required": [
     {
+      "path": "contracts/file-system-access-handle-idl.html",
+      "type": "testharness",
+      "capabilities": ["file-system-access-pickers", "file-system-handle-idl"],
+      "evidence": ["wpt-file-system-access-idl", "vscode-oss-web-file-dialogs"],
+      "reason": "Unchanged browser consumers require the three picker globals and branded file/directory handles. Native companion tests own activation, bounded transport, cancellation, opaque identity, navigation retirement and performance."
+    },
+    {
       "path": "contracts/messageport-scheduler-lifetime.html",
       "type": "testharness",
       "capabilities": ["messageport-local-entanglement-lifetime"],

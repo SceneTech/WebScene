@@ -200,7 +200,15 @@
         v8::Global<v8::Promise::Resolver> resolver;
     };
     std::unordered_map<uint64_t, host_promise_target> host_promise_targets;
+    struct file_panel_promise_target {
+        uint32_t kind{};
+        v8::Global<v8::Context> context;
+        v8::Global<v8::Promise::Resolver> resolver;
+    };
+    std::unordered_map<uint64_t, file_panel_promise_target>
+        file_panel_promise_targets;
     std::function<void()> host_request_available;
+    v8_dom_runtime::file_panel_request_sink_v2 file_panel_request_sink;
     std::function<void()> interop_callback_available;
     v8_dom_runtime::interop_callback_sink_v3 interop_callback_sink;
     std::function<void()> runtime_work_available;

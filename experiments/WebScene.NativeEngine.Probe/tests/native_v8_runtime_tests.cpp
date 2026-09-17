@@ -85,6 +85,7 @@ uint8_t measure_baseline_fixture_text(
 #include "native_v8_runtime_interop_tests.inc"
 #include "native_v8_runtime_input_tests.inc"
 #include "native_file_service_tests.inc"
+#include "native_file_system_access_tests.inc"
 #include "native_table_cell_copy_tests.inc"
 #include "native_v8_runtime_resource_tests.inc"
 #include "native_v8_runtime_service_worker_tests.inc"
@@ -166,6 +167,11 @@ int main()
         }
         if (selected == "iframe-sandbox") {
             test_iframe_sandbox_dom_token_list_security_and_lifecycle_gate();
+            return 0;
+        }
+        if (selected == "file-system-access") {
+            test_native_file_system_access_picker_and_handle_contract();
+            test_native_file_system_access_lifecycle_and_performance();
             return 0;
         }
         if (selected == "service-worker-lifecycle") {

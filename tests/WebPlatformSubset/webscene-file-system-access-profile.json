@@ -1,0 +1,27 @@
+{
+  "profile": "file-system-access-picker-handles",
+  "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+  "runtime": "v8",
+  "viewport": {
+    "width": 800,
+    "height": 600,
+    "deviceScaleFactor": 1
+  },
+  "required": [],
+  "candidate": [
+    {
+      "path": "contracts/file-system-access-handle-idl.html",
+      "type": "testharness",
+      "capabilities": [
+        "file-system-access-pickers",
+        "file-system-handle-idl"
+      ],
+      "evidence": [
+        "wpt-file-system-access-idl",
+        "vscode-oss-web-file-dialogs"
+      ],
+      "reason": "Exercises the standards-shaped picker globals and branded handle prototype surface. Native companion tests own activation, bounded request transport, opaque grant identity, status mapping, navigation retirement and lifecycle budgets."
+    }
+  ],
+  "harnessBlocked": []
+}

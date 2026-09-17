@@ -424,6 +424,7 @@ using script_work_request =
     std::variant<
         script_request,
         webscene_native::native_file_completion,
+        webscene_native::file_panel_completion_data_v2,
         webscene_native::native_host_completion,
         url_request,
         interop_evaluate_work_v3,

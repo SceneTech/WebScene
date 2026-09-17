@@ -4074,6 +4074,7 @@ struct v8_dom_runtime::implementation final {
         install_service_worker_control(local_context, local_context->Global());
         install_worker_constructor(local_context);
         install_clipboard_api(local_context);
+        install_file_system_access_api(local_context);
         install_websocket_globals(local_context);
         install_editor_web_platform_globals(local_context);
         install_message_channel(local_context);
@@ -5120,6 +5121,7 @@ struct v8_dom_runtime::implementation final {
 #include "webscene_v8_runtime_compiled_templates.inc"
 #include "webscene_v8_runtime_style.inc"
 #include "webscene_v8_runtime_browser_apis.inc"
+#include "webscene_v8_runtime_file_system_access.inc"
 #include "webscene_v8_runtime_web_api_compatibility.inc"
     static void promise_rejected(v8::PromiseRejectMessage message)
     {
@@ -5216,7 +5218,8 @@ v8_dom_runtime::v8_dom_runtime(
     runtime_diagnostics* diagnostics,
     std::string storage_directory,
     std::string storage_partition_key,
-    uint64_t storage_quota_bytes)
+    uint64_t storage_quota_bytes,
+    file_panel_request_sink_v2 file_panel_request_sink)
     : impl_(std::make_unique<implementation>(
         document,
         std::move(viewport_provider),
@@ -5228,7 +5231,8 @@ v8_dom_runtime::v8_dom_runtime(
         std::move(runtime_work_available), diagnostics,
         std::move(storage_directory),
         std::move(storage_partition_key),
-        storage_quota_bytes))
+        storage_quota_bytes,
+        std::move(file_panel_request_sink)))
 {
 }
 
@@ -6957,6 +6961,21 @@ void v8_dom_runtime::complete_file_request(native_file_completion& completion) {
         std::lock_guard lock(impl_->console_message_mutex);
         if(impl_->console_messages.size()<1024)
             impl_->console_messages.push_back("error\nNative file completion: "+impl_->last_error);
+    }
+}
+void v8_dom_runtime::complete_file_panel_request(
+    file_panel_completion_data_v2& completion) {
+    v8::Locker locker(impl_->isolate);
+    v8::Isolate::Scope isolate_scope(impl_->isolate);
+    v8::HandleScope handles(impl_->isolate);
+    v8::TryCatch caught(impl_->isolate);
+    impl_->complete_native_file_panel(completion);
+    if(caught.HasCaught()) {
+        impl_->last_error=impl_->describe_reported_exception(caught);
+        std::lock_guard lock(impl_->console_message_mutex);
+        if(impl_->console_messages.size()<1024)
+            impl_->console_messages.push_back(
+                "error\nNative file panel completion: "+impl_->last_error);
     }
 }
 void v8_dom_runtime::complete_host_request(native_host_completion& completion) {

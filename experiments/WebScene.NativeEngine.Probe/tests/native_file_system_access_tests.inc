@@ -1,0 +1,427 @@
+const webscene_file_panel_request_v2* take_file_panel_request(
+    webscene_engine* engine)
+{
+    const webscene_file_panel_request_v2* request = nullptr;
+    for (int attempt = 0; attempt < 250 && request == nullptr; ++attempt) {
+        request = webscene_engine_take_file_panel_request_v2(engine);
+        if (request == nullptr)
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    require(request != nullptr, "native file panel request was not published");
+    return request;
+}
+
+void activate_file_picker(webscene_engine* engine, uint64_t sequence)
+{
+    pointer_button(
+        engine, WEBSCENE_INPUT_POINTER_DOWN, 1, 1, sequence, true);
+    require(evaluate(engine, "true", "file-picker-activation-barrier.js") == "true",
+        "file picker activation barrier did not drain");
+}
+
+bool complete_file_panel_success(
+    webscene_engine* engine,
+    uint64_t request_id,
+    uint32_t kind,
+    uint32_t capabilities,
+    std::string_view name,
+    const std::vector<uint8_t>& grant)
+{
+    const webscene_file_panel_entry_v2 entry{
+        sizeof(entry), 2U, kind, capabilities,
+        {name.data(), name.size()}, {grant.data(), grant.size()}};
+    const webscene_file_panel_completion_v2 completion{
+        sizeof(completion), 2U, request_id,
+        WEBSCENE_FILE_PANEL_SUCCESS_V2, 0U,
+        &entry, 1U, {}, {}};
+    return webscene_engine_complete_file_panel_request_v2(engine, &completion) != 0;
+}
+
+bool complete_file_panel_status(
+    webscene_engine* engine,
+    uint64_t request_id,
+    uint32_t status,
+    std::string_view message = {})
+{
+    const std::string_view code = status == WEBSCENE_FILE_PANEL_CANCELLED_V2
+        ? std::string_view{} : std::string_view{"native-error"};
+    if (status == WEBSCENE_FILE_PANEL_CANCELLED_V2) message = {};
+    const webscene_file_panel_completion_v2 completion{
+        sizeof(completion), 2U, request_id, status, 0U, nullptr, 0U,
+        {code.data(), code.size()}, {message.data(), message.size()}};
+    return webscene_engine_complete_file_panel_request_v2(engine, &completion) != 0;
+}
+
+void test_native_file_system_access_picker_and_handle_contract()
+{
+    std::unique_ptr<webscene_engine, decltype(&webscene_engine_destroy)> engine(
+        webscene_engine_create(0), webscene_engine_destroy);
+    require(engine != nullptr, "file system access engine creation failed");
+    execute(engine.get(), R"JS(
+      globalThis.__pickerState = 'pending';
+      showOpenFilePicker().then(
+        () => { __pickerState = 'unexpected'; },
+        error => { __pickerState = error.name; });
+    )JS", "file-picker-activation-required.js");
+    const auto activation_state = evaluate(engine.get(), "__pickerState",
+        "file-picker-activation-required-result.js");
+    require(activation_state == "\"SecurityError\"",
+        "file picker did not require transient user activation: "
+            + activation_state);
+    require(webscene_engine_take_file_panel_request_v2(engine.get()) == nullptr,
+        "file picker published a request without activation");
+
+    activate_file_picker(engine.get(), 50001U);
+    execute(engine.get(), R"JS(
+      globalThis.__pickerState = 'pending';
+      globalThis.__pickerReplay = 'pending';
+      showOpenFilePicker({
+        multiple: true,
+        startIn: 'documents',
+        excludeAcceptAllOption: true,
+        types: [{
+          description: 'Drawings',
+          accept: {
+            'application/json': ['.json'],
+            'image/*': ['.png', '.jpg']
+          }
+        }]
+      }).then(handles => {
+        globalThis.__openHandles = handles;
+        __pickerState = {
+          length: handles.length,
+          kinds: handles.map(handle => handle.kind),
+          names: handles.map(handle => handle.name),
+          instance: handles.every(handle => handle instanceof FileSystemFileHandle),
+          base: handles.every(handle => handle instanceof FileSystemHandle),
+          tag: Object.prototype.toString.call(handles[0]),
+          read: null
+        };
+        return handles[0].queryPermission().then(value => {
+          __pickerState.read = value;
+        });
+      }, error => { __pickerState = error.name; });
+      showOpenFilePicker().then(
+        () => { __pickerReplay = 'unexpected'; },
+        error => { __pickerReplay = error.name; });
+    )JS", "file-picker-open.js");
+    auto* request = take_file_panel_request(engine.get());
+    require(request->kind == WEBSCENE_FILE_PANEL_OPEN_FILE_V2
+            && (request->flags & WEBSCENE_FILE_PANEL_ALLOW_MULTIPLE_V2) != 0U
+            && (request->flags & WEBSCENE_FILE_PANEL_EXCLUDE_ACCEPT_ALL_V2) != 0U
+            && request->maximum_selection_count == 64U
+            && request->filter_count == 1U
+            && request->filters[0].mime_type_count == 2U
+            && request->filters[0].extension_count == 3U
+            && std::string_view(
+                reinterpret_cast<const char*>(request->initial_location_token.data),
+                request->initial_location_token.byte_count)
+                == "well-known:documents",
+        "open picker options changed in the native request");
+    const auto open_id = request->request_id;
+    webscene_file_panel_request_release_v2(request);
+    const std::vector<uint8_t> first_grant{1U, 0U, 2U, 255U};
+    const std::vector<uint8_t> second_grant{3U, 4U, 0U, 5U};
+    const std::string first_name{"café.json"};
+    const std::string second_name{"empty.json"};
+    const webscene_file_panel_entry_v2 entries[]{
+        {sizeof(webscene_file_panel_entry_v2), 2U,
+            WEBSCENE_FILE_PANEL_ENTRY_FILE_V2,
+            WEBSCENE_FILE_PANEL_GRANT_READ_V2,
+            {first_name.data(), first_name.size()},
+            {first_grant.data(), first_grant.size()}},
+        {sizeof(webscene_file_panel_entry_v2), 2U,
+            WEBSCENE_FILE_PANEL_ENTRY_FILE_V2,
+            WEBSCENE_FILE_PANEL_GRANT_READ_V2,
+            {second_name.data(), second_name.size()},
+            {second_grant.data(), second_grant.size()}}};
+    const webscene_file_panel_completion_v2 opened{
+        sizeof(opened), 2U, open_id, WEBSCENE_FILE_PANEL_SUCCESS_V2, 0U,
+        entries, 2U, {}, {}};
+    require(webscene_engine_complete_file_panel_request_v2(engine.get(), &opened) != 0,
+        "open picker completion was rejected");
+    std::string opened_state;
+    for (int attempt = 0; attempt < 100; ++attempt) {
+        opened_state = evaluate(engine.get(), "__pickerState",
+            "file-picker-open-result.js");
+        if (opened_state.find("café.json") != std::string::npos) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    require(opened_state.find("\"length\":2") != std::string::npos
+            && opened_state.find("\"instance\":true") != std::string::npos
+            && opened_state.find("\"base\":true") != std::string::npos
+            && opened_state.find("[object FileSystemFileHandle]") != std::string::npos
+            && opened_state.find("\"read\":\"granted\"") != std::string::npos,
+        "open picker handle identity or permission contract changed: " + opened_state);
+    require(evaluate(engine.get(), "__pickerReplay",
+                "file-picker-replay-result.js") == "\"SecurityError\"",
+        "file picker user activation was replayed");
+
+    activate_file_picker(engine.get(), 50002U);
+    execute(engine.get(), R"JS(
+      globalThis.__directoryState = 'pending';
+      showDirectoryPicker({ mode: 'readwrite', startIn: __openHandles[0] }).then(
+        handle => {
+          globalThis.__directoryHandle = handle;
+          return Promise.all([
+            handle.queryPermission(),
+            handle.queryPermission({mode:'readwrite'}),
+            handle.isSameEntry(handle)
+          ]).then(values => { __directoryState = {
+            kind: handle.kind, name: handle.name,
+            instance: handle instanceof FileSystemDirectoryHandle,
+            values
+          }; });
+        }, error => { __directoryState = error.name; });
+    )JS", "file-picker-directory.js");
+    request = take_file_panel_request(engine.get());
+    require(request->kind == WEBSCENE_FILE_PANEL_OPEN_DIRECTORY_V2
+            && (request->flags & WEBSCENE_FILE_PANEL_REQUEST_WRITE_V2) != 0U
+            && request->initial_location_token.byte_count == first_grant.size()
+            && std::memcmp(request->initial_location_token.data,
+                first_grant.data(), first_grant.size()) == 0,
+        "directory picker mode or opaque start handle changed");
+    const auto directory_id = request->request_id;
+    webscene_file_panel_request_release_v2(request);
+    const std::vector<uint8_t> directory_grant{7U, 0U, 8U, 9U};
+    require(complete_file_panel_success(
+        engine.get(), directory_id, WEBSCENE_FILE_PANEL_ENTRY_DIRECTORY_V2,
+        WEBSCENE_FILE_PANEL_GRANT_READ_V2
+            | WEBSCENE_FILE_PANEL_GRANT_WRITE_V2
+            | WEBSCENE_FILE_PANEL_GRANT_ENUMERATE_V2,
+        "workspace", directory_grant),
+        "directory picker completion was rejected");
+    std::string directory_state;
+    for (int attempt = 0; attempt < 100; ++attempt) {
+        directory_state = evaluate(engine.get(), "__directoryState",
+            "file-picker-directory-result.js");
+        if (directory_state.find("workspace") != std::string::npos) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    require(directory_state.find("\"instance\":true") != std::string::npos
+            && directory_state.find("[\"granted\",\"granted\",true]")
+                != std::string::npos,
+        "directory picker handle contract changed: " + directory_state);
+
+    activate_file_picker(engine.get(), 50003U);
+    execute(engine.get(), R"JS(
+      globalThis.__saveState = 'pending';
+      showSaveFilePicker({
+        suggestedName: 'drawing.json',
+        startIn: __directoryHandle,
+        excludeAcceptAllOption: true,
+        types: [{description:'JSON', accept:{'application/json':['.json']}}]
+      }).then(handle => {
+        globalThis.__saveHandle = handle;
+        __saveState = `${handle.kind}:${handle.name}:${handle instanceof FileSystemFileHandle}`;
+      }, error => { __saveState = error.name; });
+    )JS", "file-picker-save.js");
+    request = take_file_panel_request(engine.get());
+    require(request->kind == WEBSCENE_FILE_PANEL_SAVE_FILE_V2
+            && (request->flags & WEBSCENE_FILE_PANEL_CONFIRM_OVERWRITE_V2) != 0U
+            && (request->flags & WEBSCENE_FILE_PANEL_CAN_CREATE_DIRECTORIES_V2) != 0U
+            && (request->flags & WEBSCENE_FILE_PANEL_EXCLUDE_ACCEPT_ALL_V2) != 0U
+            && std::string_view(request->suggested_name.data,
+                request->suggested_name.byte_count) == "drawing.json"
+            && request->initial_location_token.byte_count == directory_grant.size()
+            && std::memcmp(request->initial_location_token.data,
+                directory_grant.data(), directory_grant.size()) == 0,
+        "save picker options changed in the native request");
+    const auto save_id = request->request_id;
+    webscene_file_panel_request_release_v2(request);
+    const std::vector<uint8_t> save_grant{10U, 0U, 11U};
+    require(complete_file_panel_success(
+        engine.get(), save_id, WEBSCENE_FILE_PANEL_ENTRY_FILE_V2,
+        WEBSCENE_FILE_PANEL_GRANT_WRITE_V2,
+        "drawing.json", save_grant),
+        "save picker completion was rejected");
+    require(evaluate(engine.get(), "__saveState", "file-picker-save-result.js")
+            == "\"file:drawing.json:true\"",
+        "save picker handle contract changed");
+
+    const auto descriptor_state = evaluate(engine.get(), R"JS((()=>{
+      const kind=Object.getOwnPropertyDescriptor(FileSystemHandle.prototype,'kind');
+      const same=Object.getOwnPropertyDescriptor(FileSystemHandle.prototype,'isSameEntry');
+      return {
+        hiddenBridge: typeof __webSceneRequestFilePanel,
+        illegal: (()=>{try{new FileSystemHandle();return false}catch(e){return e.name==='TypeError'}})(),
+        kindEnumerable: kind.enumerable,
+        kindConfigurable: kind.configurable,
+        sameEnumerable: same.enumerable,
+        sameConfigurable: same.configurable,
+        sameWritable: same.writable,
+        inheritance: Object.getPrototypeOf(FileSystemFileHandle.prototype)===FileSystemHandle.prototype
+      };
+    })())JS", "file-picker-idl-result.js");
+    require(descriptor_state.find("\"hiddenBridge\":\"undefined\"")
+                != std::string::npos
+            && descriptor_state.find("\"illegal\":true") != std::string::npos
+            && descriptor_state.find("\"kindEnumerable\":true") != std::string::npos
+            && descriptor_state.find("\"kindConfigurable\":true") != std::string::npos
+            && descriptor_state.find("\"sameEnumerable\":true") != std::string::npos
+            && descriptor_state.find("\"sameConfigurable\":true") != std::string::npos
+            && descriptor_state.find("\"sameWritable\":true") != std::string::npos
+            && descriptor_state.find("\"inheritance\":true") != std::string::npos,
+        "File System Access IDL descriptors changed: " + descriptor_state);
+
+    execute(engine.get(), R"JS(
+      globalThis.__malformedPicker = { synchronous: false, promise: false, name: 'pending' };
+      try {
+        const invalid = showOpenFilePicker({
+          types: Array.from({length: 33}, () => ({
+            accept: {'application/octet-stream': ['.bin']}
+          }))
+        });
+        __malformedPicker.promise = invalid instanceof Promise;
+        invalid.catch(error => { __malformedPicker.name = error.name; });
+      } catch (error) {
+        __malformedPicker.synchronous = true;
+        __malformedPicker.name = error.name;
+      }
+    )JS", "file-picker-malformed-options.js");
+    const auto malformed_state = evaluate(engine.get(), "__malformedPicker",
+        "file-picker-malformed-options-result.js");
+    require(malformed_state.find("\"synchronous\":false") != std::string::npos
+            && malformed_state.find("\"promise\":true") != std::string::npos
+            && malformed_state.find("\"name\":\"TypeError\"") != std::string::npos,
+        "malformed picker options did not reject a Promise: " + malformed_state);
+    require(webscene_engine_take_file_panel_request_v2(engine.get()) == nullptr,
+        "malformed picker options reached the native broker");
+
+    struct status_case {
+        uint32_t status;
+        const char* expected_name;
+    };
+    constexpr status_case status_cases[] = {
+        {WEBSCENE_FILE_PANEL_CANCELLED_V2, "AbortError"},
+        {WEBSCENE_FILE_PANEL_DENIED_V2, "NotAllowedError"},
+        {WEBSCENE_FILE_PANEL_ERROR_V2, "OperationError"}};
+    for (uint64_t index = 0; index < std::size(status_cases); ++index) {
+        activate_file_picker(engine.get(), 50010U + index);
+        execute(engine.get(), R"JS(
+          globalThis.__pickerFailure='pending';
+          showOpenFilePicker().then(
+            () => { __pickerFailure='unexpected'; },
+            error => { __pickerFailure=error.name; });
+        )JS", "file-picker-status-mapping.js");
+        request = take_file_panel_request(engine.get());
+        const auto request_id = request->request_id;
+        webscene_file_panel_request_release_v2(request);
+        require(complete_file_panel_status(engine.get(), request_id,
+                    status_cases[index].status, "bounded native failure"),
+            "file picker status completion was rejected");
+        require(evaluate(engine.get(), "__pickerFailure",
+                    "file-picker-status-mapping-result.js")
+                == std::string("\"") + status_cases[index].expected_name + "\"",
+            "file picker completion status mapped to the wrong DOMException");
+        require(!complete_file_panel_status(engine.get(), request_id,
+                    status_cases[index].status),
+            "file picker completion settled more than once");
+    }
+}
+
+uint64_t file_system_access_test_peak_rss_bytes()
+{
+#if defined(__APPLE__) || defined(__linux__)
+    rusage usage{};
+    if (getrusage(RUSAGE_SELF, &usage) != 0) return 0U;
+#if defined(__APPLE__)
+    return static_cast<uint64_t>(usage.ru_maxrss);
+#else
+    return static_cast<uint64_t>(usage.ru_maxrss) * 1024U;
+#endif
+#else
+    return 0U;
+#endif
+}
+
+void test_native_file_system_access_lifecycle_and_performance()
+{
+    std::unique_ptr<webscene_engine, decltype(&webscene_engine_destroy)> engine(
+        webscene_engine_create(0), webscene_engine_destroy);
+    require(engine != nullptr, "file picker lifecycle engine creation failed");
+    execute(engine.get(), "globalThis.__pickerCycles=0;globalThis.__stableHandle=null",
+        "file-picker-cycle-setup.js");
+    webscene_engine_memory_metrics before{sizeof(before)};
+    require(webscene_engine_get_memory_metrics(engine.get(), &before) != 0,
+        "file picker baseline memory metrics unavailable");
+    const auto rss_before = file_system_access_test_peak_rss_bytes();
+    const std::vector<uint8_t> stable_grant{42U, 0U, 43U};
+    const auto started = std::chrono::steady_clock::now();
+    for (uint64_t cycle = 0; cycle < 100U; ++cycle) {
+        activate_file_picker(engine.get(), 51000U + cycle);
+        execute(engine.get(), R"JS(
+          showOpenFilePicker().then(handles => {
+            const handle=handles[0];
+            if (__stableHandle === null) __stableHandle=handle;
+            if (__stableHandle !== handle) throw new Error('unstable grant identity');
+            ++__pickerCycles;
+          });
+        )JS", "file-picker-cycle.js");
+        const auto* request = take_file_panel_request(engine.get());
+        const auto request_id = request->request_id;
+        webscene_file_panel_request_release_v2(request);
+        require(complete_file_panel_success(
+            engine.get(), request_id, WEBSCENE_FILE_PANEL_ENTRY_FILE_V2,
+            WEBSCENE_FILE_PANEL_GRANT_READ_V2, "stable.txt", stable_grant),
+            "file picker lifecycle completion was rejected");
+    }
+    require(evaluate(engine.get(), "__pickerCycles",
+                "file-picker-cycle-result.js") == "100",
+        "file picker lifecycle promises did not settle exactly once");
+    const auto elapsed = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - started).count();
+    require(elapsed < 5.0, "100 file picker cycles exceeded five seconds");
+    webscene_engine_memory_metrics after{sizeof(after)};
+    require(webscene_engine_get_memory_metrics(engine.get(), &after) != 0,
+        "file picker final memory metrics unavailable");
+    require(after.v8_used_heap_bytes <= before.v8_used_heap_bytes + 8U * 1024U * 1024U
+            && after.v8_external_bytes <= before.v8_external_bytes + 2U * 1024U * 1024U,
+        "100 stable-grant cycles exceeded the heap/external-memory budget");
+    const auto rss_after = file_system_access_test_peak_rss_bytes();
+    constexpr uint64_t maximum_rss_growth = 64U * 1024U * 1024U;
+    require(rss_before == 0U || rss_after <= rss_before + maximum_rss_growth,
+        "100 stable-grant cycles exceeded the 64 MiB peak RSS budget");
+    require(webscene_engine_take_file_panel_request_v2(engine.get()) == nullptr,
+        "file picker request queue did not drain after 100 cycles");
+
+    activate_file_picker(engine.get(), 52000U);
+    execute(engine.get(), R"JS(
+      globalThis.__retiredPicker='pending';
+      showOpenFilePicker().then(
+        ()=>{__retiredPicker='unexpected'},
+        error=>{__retiredPicker=error.name});
+    )JS", "file-picker-before-navigation.js");
+    const auto* stale = take_file_panel_request(engine.get());
+    const auto stale_id = stale->request_id;
+    webscene_file_panel_request_release_v2(stale);
+    const auto path = std::filesystem::temp_directory_path()
+        / ("webscene-picker-navigation-"
+            + std::to_string(std::chrono::steady_clock::now()
+                .time_since_epoch().count()) + ".html");
+    { std::ofstream file(path); file << "<!doctype html><script>globalThis.navigationReady=true</script>"; }
+    const auto root = path.parent_path().string();
+    webscene_engine_set_resource_root(engine.get(), root.data(), root.size());
+    const auto url = "file://" + path.string();
+    require(webscene_engine_load_url(engine.get(), url.data(), url.size()) != 0,
+        "file picker lifecycle navigation failed");
+    for (int attempt = 0; attempt < 100
+            && evaluate(engine.get(), "globalThis.navigationReady===true",
+                "file-picker-navigation-ready.js") != "true"; ++attempt) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    require(!complete_file_panel_success(
+        engine.get(), stale_id, WEBSCENE_FILE_PANEL_ENTRY_FILE_V2,
+        WEBSCENE_FILE_PANEL_GRANT_READ_V2, "stale.txt", stable_grant),
+        "stale file picker completion survived navigation retirement");
+    std::filesystem::remove(path);
+    std::cout << "File System Access lifecycle gate: cycles=100 elapsedSeconds="
+              << elapsed << " heapDelta="
+              << static_cast<int64_t>(after.v8_used_heap_bytes)
+                    - static_cast<int64_t>(before.v8_used_heap_bytes)
+              << " externalDelta="
+              << static_cast<int64_t>(after.v8_external_bytes)
+                    - static_cast<int64_t>(before.v8_external_bytes)
+              << " rssBefore=" << rss_before << " rssAfter=" << rss_after
+              << " queuedRequests=0" << '\n';
+}

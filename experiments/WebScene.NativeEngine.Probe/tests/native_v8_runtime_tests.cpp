@@ -312,6 +312,14 @@ int main()
             webscene_engine_destroy(focused_engine);
             return 0;
         }
+        if (selected == "html-anchor-element") {
+            auto* focused_engine = webscene_engine_create(0);
+            require(focused_engine != nullptr,
+                "HTMLAnchorElement engine creation failed");
+            test_dom_element_constructor_identity(focused_engine);
+            webscene_engine_destroy(focused_engine);
+            return 0;
+        }
         if (selected == "node-iterator-performance") {
             test_node_iterator_isolated_scaling_and_memory_gate();
             return 0;

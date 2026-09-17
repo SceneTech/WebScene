@@ -75,9 +75,10 @@ The generated source is committed. Regenerate or verify it with the commands in
 `tools/webidl-v8-bindings/README.md`; CMake intentionally has no Node or network
 dependency.
 
-The generated catalog includes distinct `HTMLTableCellElement` branding for HTML
-`td` and `th` elements, including chart iframe realms. This is interface identity
-support, not a claim of complete table-cell IDL coverage.
+The generated catalog includes distinct `HTMLAnchorElement` branding for HTML `a`
+elements and `HTMLTableCellElement` branding for `td` and `th` elements, including
+iframe realms. This is interface identity support, not a claim of complete hyperlink
+or table-cell IDL coverage.
 
 `Document.execCommand` exposes the negative-capability path: legacy editing and
 clipboard commands return `false` without changing content or claiming a copy.

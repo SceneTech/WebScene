@@ -260,6 +260,7 @@
 #if defined(WEBSCENE_NATIVE_ENGINE_GENERATED_DOM_BINDINGS)
         html_element_template.Reset();
         svg_element_template.Reset();
+        html_anchor_element_template.Reset();
         html_table_cell_element_template.Reset();
         html_dialog_element_template.Reset();
         html_form_element_template.Reset();

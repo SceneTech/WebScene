@@ -612,7 +612,7 @@ jobs:
   candidate-evidence:
     name: Verify cross-RID candidate evidence
     needs: [metadata, native]
-    if: always() && needs.metadata.result == 'success'
+    if: always() && needs.metadata.result == 'success' && needs.native.result != 'cancelled'
     runs-on: [self-hosted, Linux, X64]
     steps:
     - uses: actions/checkout@v4

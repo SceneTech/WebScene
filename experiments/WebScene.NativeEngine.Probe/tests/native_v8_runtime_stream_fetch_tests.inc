@@ -410,6 +410,193 @@ void test_cache_storage_and_controlled_fetch_broker()
     webscene_engine_destroy(engine);
 }
 
+void test_controlled_range_cache_headers_and_body_budget()
+{
+    resource_server server{.content = {
+        {"https://range-cache.test/index.html",
+            "<!doctype html><title>range cache broker gate</title>"},
+        {"https://range-cache.test/service-worker.js", R"JS(
+            const observations = [];
+            const bulkBody = new Uint8Array(1024 * 1024);
+            bulkBody[0] = 0x57;
+            bulkBody[bulkBody.length - 1] = 0x53;
+            const warmBody = new Uint8Array(64 * 1024);
+            warmBody[0] = 0x57;
+            self.addEventListener('install', event => event.waitUntil(skipWaiting()));
+            self.addEventListener('activate', event => event.waitUntil(clients.claim()));
+            self.addEventListener('fetch', event => {
+              const url = new URL(event.request.url);
+              observations.push({path:url.pathname, method:event.request.method,
+                range:event.request.headers.get('range'),
+                validator:event.request.headers.get('if-none-match'),
+                token:event.request.headers.get('x-broker-token')});
+              if (url.pathname === '/range') {
+                event.respondWith(new Response('2345', {status:206, headers:{
+                  'content-type':'application/octet-stream',
+                  'content-range':'bytes 2-5/10', 'etag':'"range-v1"',
+                  'last-modified':'Wed, 17 Sep 2025 12:00:00 GMT'
+                }}));
+              } else if (url.pathname === '/conditional') {
+                event.respondWith(new Response(null,
+                  {status:304, headers:{etag:'"cache-v1"'}}));
+              } else if (url.pathname === '/unauthorized') {
+                event.respondWith(new Response(null, {status:401}));
+              } else if (url.pathname === '/missing') {
+                event.respondWith(new Response(null, {status:404}));
+              } else if (url.pathname === '/head') {
+                event.respondWith(new Response(null, {status:200, headers:{
+                  'content-length':'9', 'content-type':'text/plain'
+                }}));
+              } else if (url.pathname === '/method') {
+                event.respondWith(new Response(null,
+                  {status:405, headers:{allow:'GET, HEAD'}}));
+              } else if (url.pathname === '/bulk') {
+                event.respondWith(new Response(bulkBody));
+              } else if (url.pathname === '/warm') {
+                event.respondWith(new Response(warmBody));
+              }
+            });
+            self.addEventListener('message', event => {
+              if (event.data === 'report') event.source.postMessage({observations});
+            });
+        )JS"}
+    }};
+    webscene_engine_options options{};
+    options.struct_size = sizeof(options);
+    options.resource_load_callback = load_test_resource;
+    options.resource_load_user_data = &server;
+    auto* engine = webscene_engine_create_with_options(&options);
+    require(engine != nullptr, "range/cache broker engine creation failed");
+    constexpr std::string_view address{"https://range-cache.test/index.html"};
+    require(webscene_engine_load_url(engine, address.data(), address.size()) != 0U,
+        "range/cache broker navigation failed");
+    require(evaluate_until_equals(engine, "location.href", "range-cache-navigation.js",
+            R"("https://range-cache.test/index.html")", 2'500)
+            == R"("https://range-cache.test/index.html")",
+        "range/cache broker document did not become ready");
+
+    webscene_engine_memory_metrics memory_before{sizeof(webscene_engine_memory_metrics)};
+    require(webscene_engine_get_memory_metrics(engine, &memory_before) != 0,
+        "range/cache broker memory baseline unavailable");
+    const auto rss_before = service_worker_test_peak_rss_bytes();
+    execute(engine, R"JS(
+      globalThis.__rangeCache = {complete:false,error:null,warm:[],bulkMs:0,report:null};
+      (async () => {
+        try {
+          const changed = new Promise(resolve => navigator.serviceWorker.addEventListener(
+            'controllerchange', resolve, {once:true}));
+          const registration = await navigator.serviceWorker.register('service-worker.js');
+          if (!navigator.serviceWorker.controller) await changed;
+          const range = await fetch('/range', {headers:{Range:'bytes=2-5'}});
+          if (range.status !== 206
+              || range.headers.get('content-range') !== 'bytes 2-5/10'
+              || range.headers.get('etag') !== '"range-v1"'
+              || range.headers.get('last-modified')
+                  !== 'Wed, 17 Sep 2025 12:00:00 GMT'
+              || await range.text() !== '2345') throw new Error('range response mismatch');
+          const conditional = await fetch('/conditional', {
+            headers:{'If-None-Match':'"cache-v1"'}});
+          const unauthorized = await fetch('/unauthorized');
+          const missing = await fetch('/missing');
+          if (conditional.status !== 304 || unauthorized.status !== 401
+              || missing.status !== 404) throw new Error('status response mismatch');
+          const head = await fetch('/head', {method:'HEAD'});
+          const method = await fetch('/method', {method:'POST',
+            headers:{'X-Broker-Token':'method-token'}, body:'payload'});
+          if (head.status !== 200 || await head.text() !== ''
+              || head.headers.get('content-length') !== '9'
+              || method.status !== 405 || method.headers.get('allow') !== 'GET, HEAD') {
+            throw new Error('method response mismatch');
+          }
+          let invalidHeaderRejected = false;
+          try { await fetch('/method', {headers:{'X-Bad':'line\r\nbreak'}}); }
+          catch (error) { invalidHeaderRejected = error instanceof TypeError; }
+          if (!invalidHeaderRejected) throw new Error('malformed header was accepted');
+          for (let cycle = 0; cycle < 100; ++cycle) {
+            const started = performance.now();
+            const response = await fetch(`/warm?cycle=${cycle}`);
+            const body = await response.arrayBuffer();
+            if (body.byteLength !== 64 * 1024) throw new Error('warm body size');
+            __rangeCache.warm.push(performance.now() - started);
+          }
+          const bulkStarted = performance.now();
+          const responses = await Promise.all(Array.from({length:32}, (_, index) =>
+            fetch(`/bulk?index=${index}`)));
+          const bodies = await Promise.all(responses.map(response => response.arrayBuffer()));
+          __rangeCache.bulkMs = performance.now() - bulkStarted;
+          if (!bodies.every(body => body.byteLength === 1024 * 1024
+              && new Uint8Array(body)[0] === 0x57
+              && new Uint8Array(body)[body.byteLength - 1] === 0x53)) {
+            throw new Error('bulk body mismatch');
+          }
+          __rangeCache.report = await new Promise(resolve => {
+            const listener = event => {
+              navigator.serviceWorker.removeEventListener('message', listener);
+              resolve(event.data);
+            };
+            navigator.serviceWorker.addEventListener('message', listener);
+            navigator.serviceWorker.controller.postMessage('report');
+          });
+          const observed = suffix => __rangeCache.report.observations.find(
+            value => value.path === `/${suffix}`);
+          if (observed('range')?.range !== 'bytes=2-5'
+              || observed('conditional')?.validator !== '"cache-v1"'
+              || observed('head')?.method !== 'HEAD'
+              || observed('method')?.method !== 'POST'
+              || observed('method')?.token !== 'method-token') {
+            throw new Error(`request metadata mismatch: ${JSON.stringify(__rangeCache.report)}`);
+          }
+          await registration.unregister();
+        } catch (error) {
+          __rangeCache.error = String(error && error.stack || error);
+        } finally { __rangeCache.complete = true; }
+      })();
+    )JS", "range-cache-gate.js");
+    require(evaluate_until_equals(engine, "__rangeCache.complete",
+            "range-cache-complete.js", "true", 30'000) == "true",
+        "range/cache broker gate did not finish");
+    require(evaluate(engine, "__rangeCache.error", "range-cache-error.js") == "null",
+        "range/cache broker gate failed: "
+            + evaluate(engine, "__rangeCache.error", "range-cache-error-detail.js"));
+    const auto p95 = std::stod(evaluate(engine, R"JS((() => {
+      const values = [...__rangeCache.warm].sort((a,b) => a-b);
+      return values[Math.ceil(values.length * .95) - 1];
+    })())JS", "range-cache-p95.js"));
+    const auto bulk_ms = std::stod(evaluate(
+        engine, "__rangeCache.bulkMs", "range-cache-bulk-ms.js"));
+    require(p95 <= 100.0,
+        "warm 64 KiB controlled fetch p95 exceeded 100 ms: "
+            + std::to_string(p95));
+    require(bulk_ms <= 5'000.0,
+        "32 concurrent one-MiB responses exceeded 5 seconds: "
+            + std::to_string(bulk_ms));
+    require(webscene_engine_request_low_memory(engine) != 0,
+        "range/cache broker low-memory request rejected");
+    webscene_engine_memory_metrics memory_after{sizeof(webscene_engine_memory_metrics)};
+    for (auto attempt = 0; attempt < 250; ++attempt) {
+        require(webscene_engine_get_memory_metrics(engine, &memory_after) != 0,
+            "range/cache broker final memory metrics unavailable");
+        if (memory_after.low_memory_notifications
+            > memory_before.low_memory_notifications) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    require(memory_after.low_memory_notifications
+            > memory_before.low_memory_notifications,
+        "range/cache broker low-memory collection did not complete");
+    require(memory_after.v8_used_heap_bytes
+            <= memory_before.v8_used_heap_bytes + 8U * 1024U * 1024U,
+        "range/cache broker retained more than 8 MiB V8 heap");
+    const auto rss_after = service_worker_test_peak_rss_bytes();
+    std::cout << "Range/cache broker gate: warmCycles=100 p95=" << p95
+              << "ms bulk32MiB=" << bulk_ms
+              << "ms heapBefore=" << memory_before.v8_used_heap_bytes
+              << " heapAfter=" << memory_after.v8_used_heap_bytes
+              << " rssBefore=" << rss_before << " rssAfter=" << rss_after << '\n';
+    require(rss_after <= rss_before + 256U * 1024U * 1024U,
+        "range/cache broker exceeded 256 MiB peak RSS growth");
+    webscene_engine_destroy(engine);
+}
+
 void test_controlled_connected_resource_interception()
 {
     resource_server server{.content = {

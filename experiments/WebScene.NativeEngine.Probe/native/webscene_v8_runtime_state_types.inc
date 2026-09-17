@@ -244,6 +244,7 @@
         bool redirected{};
         std::vector<std::pair<std::string, std::string>> headers;
         std::string body;
+        std::shared_ptr<void> body_lease;
         std::string error;
     };
 

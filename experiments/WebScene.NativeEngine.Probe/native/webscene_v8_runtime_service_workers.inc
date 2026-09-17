@@ -11,6 +11,25 @@
     static constexpr size_t maximum_service_worker_fetch_body_bytes =
         64U * 1024U * 1024U;
 
+    struct service_worker_body_lease final {
+        service_worker_body_lease(
+            std::shared_ptr<std::atomic_size_t> value,
+            size_t byte_count)
+            : queued_bytes(std::move(value)), bytes(byte_count)
+        {
+        }
+
+        ~service_worker_body_lease()
+        {
+            if (queued_bytes != nullptr && bytes != 0U) {
+                queued_bytes->fetch_sub(bytes, std::memory_order_acq_rel);
+            }
+        }
+
+        std::shared_ptr<std::atomic_size_t> queued_bytes;
+        size_t bytes{};
+    };
+
     struct service_worker_fetch_request final {
         std::string url;
         std::string method{"GET"};
@@ -1126,10 +1145,34 @@
                                         > maximum_service_worker_fetch_body_bytes) {
                                         result.error = "Service worker response body exceeds 64 MiB";
                                     } else {
-                                        const auto backing = view->Buffer()->GetBackingStore();
-                                        const auto* bytes = static_cast<const char*>(
-                                            backing->Data()) + view->ByteOffset();
-                                        result.body.assign(bytes, view->ByteLength());
+                                        const auto body_bytes = view->ByteLength();
+                                        auto queued = state->queued_response_bytes;
+                                        auto current = queued->load(std::memory_order_acquire);
+                                        while (current <= maximum_service_worker_fetch_body_bytes
+                                            && body_bytes
+                                                <= maximum_service_worker_fetch_body_bytes - current
+                                            && !queued->compare_exchange_weak(
+                                                current,
+                                                current + body_bytes,
+                                                std::memory_order_acq_rel,
+                                                std::memory_order_acquire)) {
+                                        }
+                                        if (current > maximum_service_worker_fetch_body_bytes
+                                            || body_bytes
+                                                > maximum_service_worker_fetch_body_bytes - current) {
+                                            result.error =
+                                                "Service worker aggregate response bodies exceed 64 MiB";
+                                        } else {
+                                            const auto backing =
+                                                view->Buffer()->GetBackingStore();
+                                            const auto* bytes = static_cast<const char*>(
+                                                backing->Data()) + view->ByteOffset();
+                                            auto lease =
+                                                std::make_shared<service_worker_body_lease>(
+                                                    queued, body_bytes);
+                                            result.body.assign(bytes, body_bytes);
+                                            result.body_lease = std::move(lease);
+                                        }
                                     }
                                 }
                                 auto headers = property("headers");
@@ -1697,11 +1740,18 @@
         request->method = request_context.method.empty()
             ? "GET" : request_context.method;
         request->destination = request_context.destination;
-        if (!request_context.content_type.empty()) {
+        request->headers = request_context.headers;
+        const auto contains_header = [&](std::string_view name) {
+            return std::ranges::any_of(request->headers, [&](const auto& header) {
+                return header.first == name;
+            });
+        };
+        if (!request_context.content_type.empty()
+            && !contains_header("content-type")) {
             request->headers.emplace_back(
                 "content-type", request_context.content_type);
         }
-        if (!request_context.cookie.empty()) {
+        if (!request_context.cookie.empty() && !contains_header("cookie")) {
             request->headers.emplace_back("cookie", request_context.cookie);
         }
         request->client_id = client->descriptor.id;
@@ -2129,6 +2179,8 @@
         size_t outgoing_high_water{};
         size_t fetch_high_water{};
         size_t active_fetches{};
+        std::shared_ptr<std::atomic_size_t> queued_response_bytes{
+            std::make_shared<std::atomic_size_t>(0U)};
         std::function<void()> notify_client;
         bool stopped{false};
         bool activated{false};

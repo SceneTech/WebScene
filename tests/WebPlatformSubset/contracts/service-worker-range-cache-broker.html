@@ -1,0 +1,89 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Service Worker range and cache resource broker</title>
+<script>
+  const state = window.__webSceneWptState = {
+    complete:false, harness:null, results:[], errors:[], diagnostics:[]
+  };
+  function record(name, condition, detail = 'Contract failed') {
+    state.results.push({name, status:condition ? 'PASS' : 'FAIL',
+      message:condition ? null : detail, stack:null});
+  }
+  (async () => {
+    const changed = new Promise(resolve => navigator.serviceWorker.addEventListener(
+      'controllerchange', resolve, {once:true}));
+    const registration = await navigator.serviceWorker.register(
+      'service-worker-range-cache-broker-worker.js');
+    if (!navigator.serviceWorker.controller) await changed;
+
+    const range = await fetch('range', {headers:{Range:'bytes=2-5'}});
+    record('range request headers reach the controlled FetchEvent',
+      range.status === 206 && range.headers.get('content-range') === 'bytes 2-5/10'
+        && range.headers.get('etag') === '"range-v1"'
+        && range.headers.get('last-modified') === 'Wed, 17 Sep 2025 12:00:00 GMT'
+        && await range.text() === '2345');
+
+    const conditional = await fetch('conditional', {
+      headers:{'If-None-Match':'"cache-v1"'}
+    });
+    const unauthorized = await fetch('unauthorized');
+    const missing = await fetch('missing');
+    record('controlled cache and error status responses stay observable',
+      conditional.status === 304 && unauthorized.status === 401
+        && missing.status === 404);
+
+    const head = await fetch('head', {method:'HEAD'});
+    const method = await fetch('method', {
+      method:'POST', headers:{'X-Broker-Token':'method-token'}, body:'payload'
+    });
+    record('HEAD and rejected methods preserve method and empty-body semantics',
+      head.status === 200 && await head.text() === ''
+        && head.headers.get('content-length') === '9'
+        && method.status === 405 && method.headers.get('allow') === 'GET, HEAD');
+
+    let invalidHeaderRejected = false;
+    try { await fetch('method', {headers:{'X-Bad':'line\r\nbreak'}}); }
+    catch (error) { invalidHeaderRejected = error instanceof TypeError; }
+    record('malformed request headers fail closed', invalidHeaderRejected);
+
+    const started = performance.now();
+    const responses = await Promise.all(Array.from({length:32}, (_, index) =>
+      fetch(`bulk?index=${index}`)));
+    const bodies = await Promise.all(responses.map(response => response.arrayBuffer()));
+    const bulkDuration = performance.now() - started;
+    record('32 concurrent one-mebibyte responses complete within the body budget',
+      bodies.length === 32 && bodies.every(body => body.byteLength === 1024 * 1024
+        && new Uint8Array(body)[0] === 0x57
+        && new Uint8Array(body)[body.byteLength - 1] === 0x53),
+      `duration=${bulkDuration}`);
+
+    const report = await new Promise(resolve => {
+      const listener = event => {
+        navigator.serviceWorker.removeEventListener('message', listener);
+        resolve(event.data);
+      };
+      navigator.serviceWorker.addEventListener('message', listener);
+      navigator.serviceWorker.controller.postMessage('report');
+    });
+    const observed = suffix => report.observations.find(value =>
+      value.path.endsWith(`/${suffix}`));
+    record('controlled Request exposes range, validator, and custom headers',
+      observed('range')?.range === 'bytes=2-5'
+        && observed('conditional')?.validator === '"cache-v1"'
+        && observed('head')?.method === 'HEAD'
+        && observed('method')?.method === 'POST'
+        && observed('method')?.token === 'method-token',
+      JSON.stringify(report));
+    state.diagnostics.push(`bulk32MiB=${bulkDuration.toFixed(3)}ms`);
+    await registration.unregister();
+  })().catch(error => {
+    state.errors.push(String(error && error.stack || error));
+    record('contract completed', false, state.errors[0]);
+  }).finally(() => {
+    const failure = state.results.find(result => result.status !== 'PASS');
+    state.harness = failure
+      ? {status:1, message:failure.message, stack:failure.stack}
+      : {status:0, message:null, stack:null};
+    state.complete = true;
+  });
+</script>

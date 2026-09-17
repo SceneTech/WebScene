@@ -744,102 +744,24 @@ inline specified_css_value compile_specified_value(css_property_id property, std
         result.valid = std::get<css_color_value>(result.payload).valid;
     };
 
+    switch (generated_property_grammar(property)) {
+    case native_property_grammar::keyword: set_keyword(); return result;
+    case native_property_grammar::component_list: set_component_list(); return result;
+    case native_property_grammar::length: set_length(); return result;
+    case native_property_grammar::length_list_4: set_length_list(4U); return result;
+    case native_property_grammar::length_list_2: set_length_list(2U); return result;
+    case native_property_grammar::color: set_color(); return result;
+    case native_property_grammar::complex: break;
+    case native_property_grammar::special: return result;
+    }
+
     switch (property) {
-    case css_property_id::all:
-    case css_property_id::display:
-    case css_property_id::position:
     case css_property_id::contain:
-    case css_property_id::container:
-    case css_property_id::container_type:
-    case css_property_id::content_visibility:
-    case css_property_id::floating:
-    case css_property_id::flex_direction:
-    case css_property_id::flex_wrap:
-    case css_property_id::align_items:
-    case css_property_id::align_self:
-    case css_property_id::justify_content:
-    case css_property_id::box_sizing:
-    case css_property_id::vertical_align:
-    case css_property_id::grid_auto_flow:
-    case css_property_id::border_collapse:
-    case css_property_id::table_layout:
-    case css_property_id::border_style:
-    case css_property_id::background_repeat:
-    case css_property_id::visibility:
-    case css_property_id::pointer_events:
-    case css_property_id::text_anchor:
     case css_property_id::cursor:
     case css_property_id::font_family:
-    case css_property_id::font_smoothing:
-    case css_property_id::text_align:
-    case css_property_id::text_transform:
-    case css_property_id::white_space:
-    case css_property_id::list_style_position:
-    case css_property_id::list_style_type:
-    case css_property_id::scrollbar_width:
         set_keyword(); break;
     case css_property_id::content:
         result.kind = specified_css_kind::content; result.payload = specified_content(value); result.valid = true; break;
-    case css_property_id::width:
-    case css_property_id::height:
-    case css_property_id::min_width:
-    case css_property_id::min_height:
-    case css_property_id::max_width:
-    case css_property_id::max_height:
-    case css_property_id::left:
-    case css_property_id::top:
-    case css_property_id::right:
-    case css_property_id::bottom:
-    case css_property_id::padding_left:
-    case css_property_id::padding_right:
-    case css_property_id::padding_top:
-    case css_property_id::padding_bottom:
-    case css_property_id::margin_left:
-    case css_property_id::margin_right:
-    case css_property_id::margin_top:
-    case css_property_id::margin_bottom:
-    case css_property_id::row_gap:
-    case css_property_id::column_gap:
-    case css_property_id::flex_basis:
-    case css_property_id::border_top_width:
-    case css_property_id::border_right_width:
-    case css_property_id::border_bottom_width:
-    case css_property_id::border_left_width:
-    case css_property_id::border_inline_width:
-    case css_property_id::border_block_width:
-    case css_property_id::outline_width:
-    case css_property_id::font_size:
-    case css_property_id::letter_spacing:
-    case css_property_id::word_spacing:
-    case css_property_id::line_height:
-    case css_property_id::stroke_width:
-        set_length(); break;
-    case css_property_id::inset:
-    case css_property_id::padding:
-    case css_property_id::margin:
-    case css_property_id::border_radius:
-        set_length_list(4U); break;
-    case css_property_id::padding_inline:
-    case css_property_id::padding_block:
-    case css_property_id::margin_inline:
-    case css_property_id::margin_block:
-    case css_property_id::gap:
-    case css_property_id::border_spacing:
-    case css_property_id::border_top_left_radius:
-    case css_property_id::border_top_right_radius:
-    case css_property_id::border_bottom_right_radius:
-    case css_property_id::border_bottom_left_radius:
-        set_length_list(2U); break;
-    case css_property_id::color:
-    case css_property_id::background_color:
-    case css_property_id::outline_color:
-    case css_property_id::border_top_color:
-    case css_property_id::border_right_color:
-    case css_property_id::border_bottom_color:
-    case css_property_id::border_left_color:
-    case css_property_id::border_inline_color:
-    case css_property_id::border_block_color:
-        set_color(); break;
     case css_property_id::border_color: {
         result.kind = specified_css_kind::color_list;
         css_color_list_value colors;
@@ -853,8 +775,6 @@ inline specified_css_value compile_specified_value(css_property_id property, std
         result.payload = std::move(colors);
         break;
     }
-    case css_property_id::border_width:
-        set_length_list(4U); break;
     case css_property_id::border:
     case css_property_id::border_top:
     case css_property_id::border_right:
@@ -937,24 +857,6 @@ inline specified_css_value compile_specified_value(css_property_id property, std
         }
         break;
     }
-    case css_property_id::background_position:
-    case css_property_id::background_size:
-    case css_property_id::transition:
-    case css_property_id::transition_property:
-    case css_property_id::transition_duration:
-    case css_property_id::transition_delay:
-    case css_property_id::transition_timing_function:
-    case css_property_id::animation:
-    case css_property_id::animation_name:
-    case css_property_id::animation_duration:
-    case css_property_id::animation_delay:
-    case css_property_id::animation_timing_function:
-    case css_property_id::animation_iteration_count:
-    case css_property_id::scrollbar_color:
-    case css_property_id::container_name:
-        set_component_list(); break;
-    case css_property_id::contain_intrinsic_size:
-        set_length(); break;
     case css_property_id::box_shadow:
         result.kind = specified_css_kind::shadow; result.payload = specified_shadow(value); result.valid = true; break;
     case css_property_id::font:
@@ -983,6 +885,8 @@ inline specified_css_value compile_specified_value(css_property_id property, std
     case css_property_id::unknown:
     case css_property_id::custom:
         break;
+    default:
+        break; // Simple families returned through generated metadata above.
     }
     return result;
 }

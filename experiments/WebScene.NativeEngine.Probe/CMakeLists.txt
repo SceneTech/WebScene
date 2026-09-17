@@ -495,13 +495,15 @@ endif()
 
 if(BUILD_TESTING)
     add_executable(webscene_css_property_identity_tests
-        tests/css_property_identity_tests.cpp)
+        tests/css_property_identity_tests.cpp
+        native/webscene_native_dom.cpp)
     target_compile_features(webscene_css_property_identity_tests PRIVATE cxx_std_20)
     target_include_directories(webscene_css_property_identity_tests PRIVATE native)
     add_test(NAME webscene_css_property_identity_tests
         COMMAND webscene_css_property_identity_tests)
     add_executable(webscene_css_legacy_property_identity_tests
-        tests/css_property_identity_tests.cpp)
+        tests/css_property_identity_tests.cpp
+        native/webscene_native_dom.cpp)
     target_compile_features(webscene_css_legacy_property_identity_tests PRIVATE cxx_std_20)
     target_compile_definitions(webscene_css_legacy_property_identity_tests PRIVATE
         WEBSCENE_TEST_LEGACY_SPECIFIED_VALUE=1)
@@ -981,6 +983,11 @@ if(WEBSCENE_NATIVE_ENGINE_BUILD_CSS_PROPERTY_METADATA_BENCHMARK)
         benchmarks/css_property_identity_benchmark.cpp)
     target_compile_features(webscene_css_property_identity_benchmark PRIVATE cxx_std_20)
     target_include_directories(webscene_css_property_identity_benchmark PRIVATE native)
+    add_executable(webscene_css_specified_value_benchmark
+        benchmarks/css_specified_value_benchmark.cpp
+        native/webscene_native_dom.cpp)
+    target_compile_features(webscene_css_specified_value_benchmark PRIVATE cxx_std_20)
+    target_include_directories(webscene_css_specified_value_benchmark PRIVATE native)
 endif()
 
 if(WEBSCENE_NATIVE_ENGINE_BUILD_LAYOUT_SCRATCH_BENCHMARK)

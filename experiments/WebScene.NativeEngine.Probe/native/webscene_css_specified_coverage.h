@@ -54,7 +54,10 @@ inline constexpr auto specified_property_samples = std::to_array<specified_prope
     {"-webkit-font-smoothing","antialiased"},{"font-weight","700"},{"letter-spacing",".2px"},
     {"word-spacing","1px"},{"line-height","1.5"},{"text-align","center"},{"text-transform","uppercase"},
     {"white-space","nowrap"},{"list-style","inside square"},{"list-style-position","outside"},{"list-style-type","decimal"},
-    {"scrollbar-width","thin"},{"scrollbar-color","#777 transparent"}
+    {"scrollbar-width","thin"},{"scrollbar-color","#777 transparent"},
+    {"container","sidebar / inline-size"},{"container-type","inline-size"},
+    {"container-name","sidebar"},{"content-visibility","auto"},
+    {"contain-intrinsic-size","200px"}
 });
 
 inline bool specified_ir_schema_complete()

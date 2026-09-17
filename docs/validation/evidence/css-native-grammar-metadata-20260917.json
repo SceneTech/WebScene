@@ -1,0 +1,53 @@
+{
+  "date": "2026-09-17",
+  "baselineCommit": "486e7931df504a27b0121125ab86a11fed975191",
+  "catalog": {
+    "nativePropertyIdCount": 146,
+    "specialPropertyIdCount": 2,
+    "typedPropertyIdCount": 144,
+    "simpleGrammarPropertyCount": 102,
+    "complexPropertyCount": 42,
+    "familyCounts": {
+      "keyword": 29,
+      "componentList": 15,
+      "length": 34,
+      "lengthList4": 5,
+      "lengthList2": 10,
+      "color": 9,
+      "complex": 42
+    },
+    "grammarSequenceSha256": "e1b6e60b2a079e9b6fb6856cb4ad10b3a51ee8d13610a63f8a6cfcb913a98d06"
+  },
+  "coverage": {
+    "simpleGrammarEntriesExercisedInCurrentHeader": 102,
+    "simpleGrammarEntriesExercisedInRetainedHeader": 102,
+    "typedPropertySamples": 144,
+    "typedPropertySamplesUnique": true,
+    "allSpecifiedKindsRoundTrip": true,
+    "serializationByteStableAfterDecode": true
+  },
+  "benchmark": {
+    "compiler": "AppleClang /usr/bin/c++",
+    "configuration": "Release -O3 arm64 macOS SDK 26.5",
+    "compilationsPerSample": 2400000,
+    "checksum": 1085102592571149948,
+    "baselineMilliseconds": [484.782, 605.985, 565.706, 477.110, 466.196, 502.566, 459.562, 458.701, 521.890, 503.045],
+    "candidateMilliseconds": [544.126, 621.622, 494.087, 481.503, 475.781, 465.705, 472.348, 488.923, 536.271, 506.966],
+    "baselineMedianMilliseconds": 493.674,
+    "candidateMedianMilliseconds": 491.505,
+    "medianReductionPercent": 0.439,
+    "throughputRatio": 1.0044
+  },
+  "validation": {
+    "generatorTests": {"passed": 11, "failed": 0},
+    "generatedOutputCheck": "passed",
+    "currentNativeBuild": "passed",
+    "legacyNativeBuild": "passed",
+    "cssParserCTest": {"passed": 1, "failed": 0},
+    "identityCTestCurrentBuild": {"passed": 2, "failed": 0},
+    "identityCTestLegacyBuild": {"passed": 2, "failed": 0},
+    "cssomInlineDeclarationValidityCurrent": {"passed": 5, "failed": 0},
+    "cssomInlineDeclarationValidityLegacy": {"passed": 5, "failed": 0},
+    "nativeWebSelectedCTest": {"passed": 3, "failed": 0}
+  }
+}

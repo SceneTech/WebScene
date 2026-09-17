@@ -4024,6 +4024,7 @@ struct v8_dom_runtime::implementation final {
             v8::Function::New(local_context, structured_clone, {}, 1).ToLocalChecked()).Check();
         install_indexeddb(local_context);
         install_performance_timeline(local_context);
+        install_service_worker_control(local_context, local_context->Global());
         install_worker_constructor(local_context);
         install_clipboard_api(local_context);
         install_websocket_globals(local_context);
@@ -5051,6 +5052,7 @@ struct v8_dom_runtime::implementation final {
 #include "webscene_v8_runtime_indexeddb.inc"
 #include "webscene_v8_runtime_modules.inc"
 #include "webscene_v8_runtime_workers.inc"
+#include "webscene_v8_runtime_service_workers.inc"
 #include "webscene_v8_runtime_crypto.inc"
 #include "webscene_v8_runtime_media.inc"
 #include "webscene_v8_runtime_navigation.inc"

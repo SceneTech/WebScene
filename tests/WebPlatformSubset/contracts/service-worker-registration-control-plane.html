@@ -1,0 +1,107 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Service worker registration control plane</title>
+<body>
+<script>
+  const state = window.__webSceneWptState = {
+    complete: false, harness: null, results: [], errors: [], diagnostics: []
+  };
+  function assert(condition, message) { if (!condition) throw new Error(message); }
+  async function promiseRejects(name, body, message) {
+    let error = null;
+    try { await body(); } catch (caught) { error = caught; }
+    assert(error && error.name === name,
+      `${message}: expected ${name}, got ${error && error.name}`);
+  }
+  async function test(name, body) {
+    try {
+      await body();
+      state.results.push({ name, status: "PASS", message: null, stack: null });
+    } catch (error) {
+      state.results.push({
+        name, status: "FAIL", message: String(error.message || error),
+        stack: error.stack || null
+      });
+    }
+  }
+  function finish() {
+    const failure = state.results.find(result => result.status !== "PASS");
+    state.harness = failure
+      ? { status: 1, message: failure.message, stack: failure.stack }
+      : { status: 0, message: null, stack: null };
+    state.complete = true;
+  }
+
+  (async () => {
+    await test("secure contexts expose the ServiceWorker IDL shape", async () => {
+      assert("serviceWorker" in navigator, "navigator.serviceWorker missing");
+      assert(navigator instanceof Navigator, "navigator brand mismatch");
+      assert(!Object.hasOwn(navigator, "serviceWorker"),
+        "serviceWorker was installed as an own property");
+      assert(typeof Object.getOwnPropertyDescriptor(
+        Navigator.prototype, "serviceWorker").get === "function",
+      "Navigator.serviceWorker getter missing");
+      assert(navigator.serviceWorker instanceof ServiceWorkerContainer,
+        "container brand mismatch");
+      assert(Object.prototype.toString.call(navigator.serviceWorker) ===
+        "[object ServiceWorkerContainer]", "container toStringTag mismatch");
+      assert(navigator.serviceWorker.controller === null,
+        "control-plane tranche unexpectedly exposed a controller");
+      assert(navigator.serviceWorker.ready === navigator.serviceWorker.ready,
+        "ready promise did not preserve SameObject identity");
+      assert(ServiceWorkerContainer.prototype.register.length === 1,
+        "register arity mismatch");
+    });
+
+    let registration;
+    const clientUrl = new URL("fixtures/client.html", location.href).href;
+    await test("module registration fetches and reflects its default scope", async () => {
+      registration = await navigator.serviceWorker.register(
+        "fixtures/service-worker-control-plane.js",
+        { type: "module", updateViaCache: "none" });
+      assert(registration instanceof ServiceWorkerRegistration,
+        "registration brand mismatch");
+      assert(Object.prototype.toString.call(registration) ===
+        "[object ServiceWorkerRegistration]", "registration toStringTag mismatch");
+      assert(registration.scope ===
+        new URL("fixtures/", location.href).href, `scope was ${registration.scope}`);
+      assert(registration.updateViaCache === "none", "updateViaCache mismatch");
+      if (registration.installing !== null) {
+        assert(registration.installing instanceof ServiceWorker,
+          "installing worker brand mismatch");
+        assert(registration.installing.scriptURL ===
+          new URL("fixtures/service-worker-control-plane.js", location.href).href,
+          "worker scriptURL mismatch");
+      }
+    });
+
+    await test("matching, listing, and update preserve registration identity", async () => {
+      const matched = await navigator.serviceWorker.getRegistration(clientUrl);
+      assert(matched === registration, "getRegistration lost SameObject identity");
+      const registrations = await navigator.serviceWorker.getRegistrations();
+      assert(registrations.includes(registration), "getRegistrations omitted registration");
+      assert(await registration.update() === registration,
+        "update replaced the registration wrapper");
+    });
+
+    await test("script-directory scope is enforced", async () => {
+      await promiseRejects("SecurityError", () => navigator.serviceWorker.register(
+        "fixtures/service-worker-control-plane.js", { scope: "./" }),
+      "over-broad scope");
+    });
+
+    await test("unregister removes the matched registration", async () => {
+      assert(await registration.unregister(), "first unregister returned false");
+      assert(await navigator.serviceWorker.getRegistration(clientUrl) === undefined,
+        "unregistered scope still matched");
+      assert(!(await registration.unregister()), "second unregister returned true");
+    });
+
+    state.diagnostics.push(JSON.stringify({
+      scope: new URL("fixtures/", location.href).href,
+      controller: navigator.serviceWorker.controller
+    }));
+    finish();
+  })();
+</script>
+</body>

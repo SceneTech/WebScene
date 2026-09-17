@@ -134,6 +134,14 @@
       "gap": "Chrome and native pass the bounded four-assertion initial-document contract, and the originating unchanged jQuery assertion passes the native runner. The Wave 0 sandbox slice adds the exact unchanged Code OSS five-token add statement, a live SameObject reflected DOMTokenList, opaque-origin parent document denial, allow-scripts enforcement, and bounded wrapper teardown. Hydrated layout-root replacement is candidate coverage pending all-RID and Chrome evidence. Navigated src/srcdoc fetching, nested browsing-context history, sandbox flags beyond allow-scripts/allow-same-origin, complete WindowProxy cross-origin access control, frame load/error sequencing, repeated navigation teardown, and arbitrary iframe rendering remain outside this bounded promotion."
     },
     {
+      "family": "service-worker-registration-control-plane",
+      "required": [],
+      "candidate": ["secure-context ServiceWorkerContainer exposure", "same-origin script admission", "module registration options", "default and maximum scope enforcement", "longest-scope matching", "stable registration wrappers", "update byte comparison", "unregister"],
+      "productEvidence": ["unchanged Code OSS webview module service-worker registration prelude"],
+      "coverage": ["contracts/service-worker-registration-control-plane.html"],
+      "gap": "The first #265 stack intentionally stops with an installing registration after the admitted script is fetched and hashed. It does not execute the worker, dispatch install/activate, expose a controller, resolve ready, implement Clients or messaging, persist registrations across engine restarts, or intercept fetches. Those lifecycle, navigation-generation, teardown, performance, and unchanged Code OSS webview-ready gates remain in the dependent #265 stacks; resource streaming and CacheStorage integration remain in #266."
+    },
+    {
       "family": "autonomous-custom-elements",
       "required": [],
       "candidate": ["CustomElementRegistry define/get/getName/whenDefined/upgrade", "valid autonomous custom-element names and duplicate-definition errors", "HTMLElement subclass construction through document.createElement and new", "parser-created, innerHTML-created, and cloned element upgrade", "prototype identity", "initial and subsequent observed-attribute reactions through setAttribute, reflected properties and Attr mutation", "light-DOM connected and disconnected callbacks in the main, detached-document and initial-frame realms", "lifecycle-created light-DOM layout and paint", "custom element self-registration as an EventListener object"],

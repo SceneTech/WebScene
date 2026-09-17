@@ -2288,6 +2288,14 @@
       "capabilities": ["html-iframe-element-sandbox-same-object", "sandbox-reflected-live-dom-token-list", "sandbox-supported-token-set", "sandbox-opaque-origin-parent-access-denial", "sandbox-script-execution-gating", "sandbox-wrapper-detach-collection"],
       "evidence": ["wpt-interfaces-html-idl-2c705104", "wpt-domtokenlist-ordered-set-semantics-2c705104", "chromium-153-direct-neutral-contract", "vscode-oss-webview-sandbox-add-statement"],
       "reason": "Candidate Wave 0 contract for WebScene #253. It derives the HTMLIFrameElement [SameObject, PutForwards=value, Reflect] sandbox shape from pinned WPT interfaces/html.idl and combines it with the DOM ordered-set mutation semantics already covered by the DOMTokenList tranche. The direct Chromium oracle and native gate exercise the exact unchanged Code OSS five-token add statement, live reflection, atomic invalid-token errors, supported-token recognition, opaque-origin parent access denial, allow-scripts enforcement, and 100 attach/detach cycles. Broader src/srcdoc navigation, WindowProxy, messaging, resource/service-worker, focus, and rendering behavior remain separately owned by #265-#268."
+    },
+    {
+      "path": "contracts/service-worker-registration-control-plane.html",
+      "type": "contract",
+      "capabilities": ["service-worker-container-idl", "service-worker-registration-matching", "service-worker-script-admission", "service-worker-update-and-unregister"],
+      "evidence": ["service-workers-registration-algorithm-derived", "chromium-153-direct-neutral-contract", "vscode-oss-module-worker-registration-shape"],
+      "reason": "Candidate first stack for WebScene #265. It covers secure-context exposure, same-origin module script fetch, default and maximum scope rules, longest-scope registration matching, stable wrappers, update checks, and unregister. Worker execution, install/activate, controller/Clients messaging, navigation generations, and the unchanged Code OSS webview-ready acceptance remain intentionally pending in the later #265 stacks.",
+      "nativeNavigation": true
     }
   ],
   "harnessBlocked": [],
@@ -2301,8 +2309,8 @@
       "reason": "Not observed in the supported connected-component interaction corpus."
     },
     {
-      "area": "navigation-security-storage-service-workers",
-      "reason": "Outside the local trusted chart-host profile."
+      "area": "broad-navigation-and-origin-transitions",
+      "reason": "Only the bounded same-origin navigation, iframe, and service-worker control slices named by candidate contracts are included."
     },
     {
       "area": "broad-native-form-controls",

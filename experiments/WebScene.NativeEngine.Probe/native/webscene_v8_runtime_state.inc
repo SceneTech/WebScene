@@ -113,6 +113,8 @@
     std::unordered_map<uint64_t, v8::Global<v8::Object>> style_wrappers;
     std::unordered_map<uint64_t, v8::Global<v8::Object>> stylesheet_wrappers;
     std::unordered_map<uint64_t, v8::Global<v8::Object>> computed_style_wrappers;
+    std::unordered_map<std::string, service_worker_registration_state>
+        service_worker_registrations;
     std::unordered_set<uint64_t> detached_document_roots;
     std::unordered_map<uint64_t, v8::Global<v8::Object>> detached_documents;
     // Document.getElementById overwhelmingly targets unique IDs. Cache the

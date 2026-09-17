@@ -156,6 +156,15 @@
         iframe_sandbox
     };
 
+    struct service_worker_registration_state {
+        std::string scope;
+        std::string script_url;
+        std::string worker_type;
+        std::string update_via_cache;
+        std::string source_digest;
+        uint64_t generation{1U};
+    };
+
     using css_declaration = webscene_native::css::css_declaration;
     using compiled_css_pseudo = webscene_native::css::compiled_css_pseudo;
     using compiled_css_compound = webscene_native::css::compiled_css_compound;

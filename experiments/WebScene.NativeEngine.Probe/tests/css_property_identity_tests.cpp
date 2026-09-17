@@ -2,6 +2,8 @@
 #include "webscene_css_specified_value.h"
 #else
 #include "webscene_css_specified_ir.h"
+#include "webscene_css_specified_coverage.h"
+#include "webscene_css_specified_serialization.h"
 #endif
 #include "generated/webscene_css_supported_properties.inc"
 
@@ -127,6 +129,78 @@ int main()
         "custom properties retain their case-sensitive token identity");
     require(property_id("definitely-not-a-property") == css_property_id::unknown,
         "unknown names remain unknown");
+    for (size_t index = 2U; index < native_property_grammar_catalog.size(); ++index) {
+        const auto property = static_cast<css_property_id>(index);
+        const auto grammar = generated_property_grammar(property);
+        std::string_view value;
+        specified_css_kind expected{specified_css_kind::invalid};
+        switch (grammar) {
+        case native_property_grammar::keyword:
+            value = "auto"; expected = specified_css_kind::keyword; break;
+        case native_property_grammar::component_list:
+            value = "auto"; expected = specified_css_kind::component_list; break;
+        case native_property_grammar::length:
+            value = "1px"; expected = specified_css_kind::length; break;
+        case native_property_grammar::length_list_4:
+        case native_property_grammar::length_list_2:
+            value = "1px"; expected = specified_css_kind::length_list; break;
+        case native_property_grammar::color:
+            value = "red"; expected = specified_css_kind::color; break;
+        case native_property_grammar::complex:
+        case native_property_grammar::special:
+            continue;
+        }
+        const auto compiled = compile_specified_value(property, value);
+        require(compiled.fully_typed() && compiled.kind == expected,
+            "generated simple grammar dispatch agrees with specified-value implementation");
+    }
+#if !defined(WEBSCENE_TEST_LEGACY_SPECIFIED_VALUE)
+    static_assert(specified_property_samples.size() == 144U);
+    std::array<bool, 146U> sampled{};
+    for (const auto& sample : specified_property_samples) {
+        const auto property = property_id(sample.name);
+        const auto index = static_cast<size_t>(property);
+        require(index > 1U && index < sampled.size(),
+            "specified-value sample has a typed property", sample.name);
+        require(!sampled[index], "specified-value sample is unique by property id", sample.name);
+        sampled[index] = true;
+        const auto compiled = compile_specified_value(property, sample.value);
+        require(compiled.fully_typed(), "specified-value sample compiles", sample.name);
+        const auto bytes = encode_specified_value(compiled);
+        const auto decoded = decode_specified_value(bytes);
+        require(decoded.fully_typed() && decoded.kind == compiled.kind,
+            "specified-value sample round-trips its serialization kind", sample.name);
+        require(encode_specified_value(decoded) == bytes,
+            "specified-value serialization is byte-stable after decode", sample.name);
+        if (compiled.kind == specified_css_kind::wide_keyword
+            || compiled.kind == specified_css_kind::deferred) continue;
+        switch (generated_property_grammar(property)) {
+        case native_property_grammar::keyword:
+            require(compiled.kind == specified_css_kind::keyword,
+                "keyword metadata agrees with compiled IR", sample.name); break;
+        case native_property_grammar::component_list:
+            require(compiled.kind == specified_css_kind::component_list,
+                "component-list metadata agrees with compiled IR", sample.name); break;
+        case native_property_grammar::length:
+            require(compiled.kind == specified_css_kind::length,
+                "length metadata agrees with compiled IR", sample.name); break;
+        case native_property_grammar::length_list_4:
+        case native_property_grammar::length_list_2:
+            require(compiled.kind == specified_css_kind::length_list,
+                "length-list metadata agrees with compiled IR", sample.name); break;
+        case native_property_grammar::color:
+            require(compiled.kind == specified_css_kind::color,
+                "color metadata agrees with compiled IR", sample.name); break;
+        case native_property_grammar::complex:
+        case native_property_grammar::special:
+            break;
+        }
+    }
+    require(std::ranges::all_of(
+        sampled.begin() + 2U, sampled.end(), [](bool value) { return value; }),
+        "every typed property id has specified-value and serialization coverage");
+    require(specified_ir_schema_complete(), "complete specified-value schema remains valid");
+#endif
     std::cout << "CSS property identity tests passed";
 #if defined(WEBSCENE_TEST_LEGACY_SPECIFIED_VALUE)
     std::cout << " (legacy specified-value header)";

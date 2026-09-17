@@ -25,6 +25,15 @@ class CssPropertyMetadataTests(unittest.TestCase):
                 {"id": "left", "name": "left"},
             ],
             "nativeStorageOnlyProperties": [],
+            "nativeGrammarFamilies": {
+                "keyword": ["left"],
+                "componentList": [],
+                "length": [],
+                "lengthList4": [],
+                "lengthList2": [],
+                "color": [],
+                "complex": [],
+            },
             "managedKnownProperties": known or ["left"],
             "supportedPropertyExtras": extras or [],
             "properties": properties,
@@ -84,6 +93,31 @@ class CssPropertyMetadataTests(unittest.TestCase):
             "8904af7da9f26749568f951c6303bc9f11511897e3dfae88c15c47da37440c94",
             hashlib.sha256("\n".join(
                 catalog.native_storage_only_properties).encode()).hexdigest(),
+        )
+        grammar_by_id = {
+            property_id: family
+            for family, property_ids in catalog.native_grammar_families.items()
+            for property_id in property_ids
+        }
+        grammar_rows = [
+            f'{entry["id"]}:{grammar_by_id.get(entry["id"], "special")}'
+            for entry in catalog.native_property_ids
+        ]
+        self.assertEqual(
+            {
+                "keyword": 29,
+                "componentList": 15,
+                "length": 34,
+                "lengthList4": 5,
+                "lengthList2": 10,
+                "color": 9,
+                "complex": 42,
+            },
+            {family: len(ids) for family, ids in catalog.native_grammar_families.items()},
+        )
+        self.assertEqual(
+            "e1b6e60b2a079e9b6fb6856cb4ad10b3a51ee8d13610a63f8a6cfcb913a98d06",
+            hashlib.sha256("\n".join(grammar_rows).encode()).hexdigest(),
         )
         self.assertEqual("gridGap", GENERATOR.css_idl_name("grid-gap"))
         self.assertEqual("MozTransform", GENERATOR.css_idl_name("-moz-transform"))
@@ -175,6 +209,24 @@ class CssPropertyMetadataTests(unittest.TestCase):
             path = Path(directory) / "metadata.json"
             path.write_text(json.dumps(payload), encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "both typed and storage-only"):
+                GENERATOR.load_catalog(path)
+
+    def test_rejects_duplicate_native_grammar_classification(self):
+        payload = self._payload([{"name": "left", "mask": ["inline_left"]}])
+        payload["nativeGrammarFamilies"]["complex"] = ["left"]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "metadata.json"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "duplicate native grammar classification"):
+                GENERATOR.load_catalog(path)
+
+    def test_rejects_missing_native_grammar_classification(self):
+        payload = self._payload([{"name": "left", "mask": ["inline_left"]}])
+        payload["nativeGrammarFamilies"]["keyword"] = []
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "metadata.json"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "lack grammar classification"):
                 GENERATOR.load_catalog(path)
 
 

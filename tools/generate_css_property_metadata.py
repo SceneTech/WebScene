@@ -23,6 +23,8 @@ ALLOWED_MASKS = {
     "inline_top", "inline_right", "inline_bottom", "inline_left",
     "inline_margin", "inline_padding", "inline_border", "inline_gap", "inline_overflow",
 }
+GRAMMAR_FAMILIES = (
+    "keyword", "componentList", "length", "lengthList4", "lengthList2", "color", "complex")
 
 
 class Catalog:
@@ -33,12 +35,14 @@ class Catalog:
         supported_property_extras: list[str],
         native_property_ids: list[dict[str, object]],
         native_storage_only_properties: list[str],
+        native_grammar_families: dict[str, list[str]],
     ) -> None:
         self.properties = properties
         self.managed_known_properties = managed_known_properties
         self.supported_property_extras = supported_property_extras
         self.native_property_ids = native_property_ids
         self.native_storage_only_properties = native_storage_only_properties
+        self.native_grammar_families = native_grammar_families
 
 
 def _load_name_list(payload: dict[str, object], key: str, *, allow_empty: bool = False) -> list[str]:
@@ -103,6 +107,30 @@ def load_catalog(path: Path) -> Catalog:
             raise ValueError("the first native property id must be unknown")
         if index == 1 and property_id != "custom":
             raise ValueError("the second native property id must be custom")
+    grammar_payload = payload.get("nativeGrammarFamilies")
+    if not isinstance(grammar_payload, dict) or set(grammar_payload) != set(GRAMMAR_FAMILIES):
+        raise ValueError(
+            "nativeGrammarFamilies must define exactly: " + ", ".join(GRAMMAR_FAMILIES))
+    native_grammar_families: dict[str, list[str]] = {}
+    classified_ids: set[str] = set()
+    for family in GRAMMAR_FAMILIES:
+        values = grammar_payload[family]
+        if not isinstance(values, list) or not all(isinstance(value, str) for value in values):
+            raise ValueError(f"native grammar family {family} must be an array of property ids")
+        for property_id in values:
+            if property_id not in native_ids:
+                raise ValueError(f"native grammar family {family} references unknown id: {property_id}")
+            if property_id in ("unknown", "custom"):
+                raise ValueError(f"special native property id cannot have a grammar family: {property_id}")
+            if property_id in classified_ids:
+                raise ValueError(f"duplicate native grammar classification: {property_id}")
+            classified_ids.add(property_id)
+        native_grammar_families[family] = values
+    missing_grammar = native_ids - {"unknown", "custom"} - classified_ids
+    if missing_grammar:
+        raise ValueError(
+            "native property ids lack grammar classification: "
+            + ", ".join(sorted(missing_grammar)))
     entries = payload.get("properties")
     if not isinstance(entries, list) or not entries:
         raise ValueError("properties must be a non-empty array")
@@ -161,6 +189,7 @@ def load_catalog(path: Path) -> Catalog:
         supported_property_extras=supported_property_extras,
         native_property_ids=native_property_ids,
         native_storage_only_properties=native_storage_only_properties,
+        native_grammar_families=native_grammar_families,
     )
 
 
@@ -257,6 +286,39 @@ def generate_native_identity(catalog: Catalog) -> str:
         lines.append(f'    "{name}",')
     lines.extend([
         "};",
+        "",
+        "enum class native_property_grammar : uint8_t {",
+        "    special, keyword, component_list, length, length_list_4, length_list_2, color, complex",
+        "};",
+        "",
+        "inline constexpr std::array native_property_grammar_catalog{",
+    ])
+    grammar_by_id = {
+        property_id: family
+        for family, property_ids in catalog.native_grammar_families.items()
+        for property_id in property_ids
+    }
+    grammar_token = {
+        "componentList": "component_list",
+        "lengthList4": "length_list_4",
+        "lengthList2": "length_list_2",
+    }
+    for entry in catalog.native_property_ids:
+        family = grammar_by_id.get(entry["id"], "special")
+        lines.append(
+            "    native_property_grammar::"
+            + grammar_token.get(family, family) + ",")
+    lines.extend([
+        "};",
+        "",
+        "inline constexpr native_property_grammar generated_property_grammar(",
+        "    css_property_id property) noexcept",
+        "{",
+        "    const auto index = static_cast<size_t>(property);",
+        "    return index < native_property_grammar_catalog.size()",
+        "        ? native_property_grammar_catalog[index]",
+        "        : native_property_grammar::special;",
+        "}",
         "",
         "inline css_property_id generated_property_id_lowercase(std::string_view name) noexcept",
         "{",

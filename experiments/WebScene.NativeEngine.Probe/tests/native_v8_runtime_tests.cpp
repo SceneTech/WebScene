@@ -31,6 +31,8 @@
 #include <unordered_map>
 #include <vector>
 
+#include "generated/webscene_css_supported_properties.inc"
+
 #if defined(__APPLE__) || defined(__linux__)
 #include <sys/resource.h>
 #endif
@@ -367,6 +369,12 @@ int main()
             test_runtime_diagnostics_frame_and_failure();
             return 0;
         }
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+        if (selected == "css-style-template-install") {
+            test_css_style_template_installation_guard();
+            return 0;
+        }
+#endif
         if (selected == "host-pointer-exit") {
             test_host_pointer_exit_clears_tooltip_without_another_move();
             return 0;
@@ -1030,6 +1038,9 @@ int main()
     test_event_listener_exceptions_do_not_abort_document_load();
     test_timer_error_handler_preserves_later_tasks();
     test_host_pointer_exit_clears_tooltip_without_another_move();
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+    test_css_style_template_installation_guard();
+#endif
     test_runtime_diagnostics();
     test_resource_failure_diagnostics();
     test_runtime_diagnostics_frame_and_failure();

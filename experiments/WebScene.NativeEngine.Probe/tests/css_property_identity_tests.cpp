@@ -6,6 +6,9 @@
 #include "webscene_css_specified_serialization.h"
 #endif
 #include "generated/webscene_css_supported_properties.inc"
+#if !defined(WEBSCENE_TEST_LEGACY_SPECIFIED_VALUE)
+#include "webscene_css_property_mask.h"
+#endif
 
 #include <algorithm>
 #include <atomic>
@@ -95,7 +98,8 @@ int main()
     static_assert(static_cast<uint16_t>(css_property_id::contain_intrinsic_size) == 145U);
     static_assert(native_typed_property_identity_catalog.size() == 201U);
     static_assert(native_storage_only_property_catalog.size() == 54U);
-    static_assert(cssom_supported_property_catalog.size() == 214U);
+    static_assert(cssom_supported_property_catalog.size() == 230U);
+    static_assert(cssom_style_template_property_accessor_count == 418U);
 
     for (const auto& entry : native_typed_property_identity_catalog) {
         require(property_id(entry.name) == entry.id, "typed name maps to its generated id", entry.name);
@@ -129,6 +133,34 @@ int main()
         "custom properties retain their case-sensitive token identity");
     require(property_id("definitely-not-a-property") == css_property_id::unknown,
         "unknown names remain unknown");
+#if !defined(WEBSCENE_TEST_LEGACY_SPECIFIED_VALUE)
+    std::array<bool, 146U> audited_mask_ids{};
+    for (const auto& entry : native_typed_property_identity_catalog) {
+        const auto index = static_cast<size_t>(entry.id);
+        if (audited_mask_ids[index]) continue;
+        audited_mask_ids[index] = true;
+        require((property_mask(entry.name) != 0U)
+                == generated_property_has_modeled_mask(entry.id),
+            "native mask coverage agrees with explicit property classification",
+            entry.name);
+    }
+    require(native_inherited_property_catalog.size() == 20U,
+        "native inherited-property classification remains complete");
+    require(generated_property_inherits_by_default("color")
+            && generated_property_inherits_by_default("direction")
+            && generated_property_inherits_by_default("-webkit-font-smoothing")
+            && !generated_property_inherits_by_default("display")
+            && !generated_property_inherits_by_default("width"),
+        "generated inheritance lookup preserves inherited and non-inherited sentinels");
+    for (const auto& entry : effective_property_metadata_catalog) {
+        require(property_mask(entry.name) != 0U,
+            "every effective-property metadata entry has modeled storage", entry.name);
+        require(std::ranges::any_of(
+                cssom_supported_property_catalog,
+                [&](const auto& supported) { return supported.css_name == entry.name; }),
+            "every effective-property metadata entry is CSSOM-exposed", entry.name);
+    }
+#endif
     for (size_t index = 2U; index < native_property_grammar_catalog.size(); ++index) {
         const auto property = static_cast<css_property_id>(index);
         const auto grammar = generated_property_grammar(property);

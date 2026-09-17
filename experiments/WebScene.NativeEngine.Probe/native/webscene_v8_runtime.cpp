@@ -753,6 +753,10 @@ struct v8_dom_runtime::implementation final {
         element_template.Reset(isolate, element);
 #endif
 
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+        const auto style_template_install_started = std::chrono::steady_clock::now();
+        size_t installed_style_property_accessors = 0U;
+#endif
         auto style = v8::ObjectTemplate::New(isolate);
         style->SetInternalFieldCount(2);
         style->SetNativeDataProperty(
@@ -762,11 +766,17 @@ struct v8_dom_runtime::implementation final {
                 js_string(isolate, property.idl_name.data()),
                 get_style_property,
                 set_style_property);
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+            ++installed_style_property_accessors;
+#endif
             if (property.css_name != property.idl_name) {
                 style->SetNativeDataProperty(
                     js_string(isolate, property.css_name.data()),
                     get_style_property,
                     set_style_property);
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+                ++installed_style_property_accessors;
+#endif
             }
         }
         style->Set(
@@ -782,6 +792,12 @@ struct v8_dom_runtime::implementation final {
             js_string(isolate, "removeProperty"),
             v8::FunctionTemplate::New(isolate, style_remove_property));
         style_template.Reset(isolate, style);
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+        css_style_template_install_ns = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now() - style_template_install_started).count());
+        css_style_template_property_accessors = installed_style_property_accessors;
+#endif
 
         auto frame_document = v8::ObjectTemplate::New(isolate);
         frame_document->SetInternalFieldCount(1);
@@ -6404,6 +6420,10 @@ std::string v8_dom_runtime::diagnostics()
     description << " | certification telemetry disabled at compile time";
     return std::move(description).str();
 #else
+    description << " | css-style-template={properties="
+        << cssom_supported_property_catalog.size()
+        << ",accessors=" << impl_->css_style_template_property_accessors
+        << ",install-ns=" << impl_->css_style_template_install_ns << '}';
     description << " | resources=[";
     const auto start = impl_->loaded_resource_names.size() > 24U
         ? impl_->loaded_resource_names.size() - 24U

@@ -279,6 +279,33 @@
         if (connected_resources.empty()) return true;
         prefetch_connected_resources();
         prefer_timer_task = true;
+        auto& pending = connected_resources.front();
+        auto pending_context = pending.context.Get(isolate);
+        if (pending.node == nullptr || pending_context.IsEmpty()) {
+            connected_resources.erase(connected_resources.begin());
+            return true;
+        }
+        activate_css_cascade(pending_context);
+        v8::Context::Scope pending_scope(pending_context);
+        if (!pending.interception_started) {
+            const auto intercepted = begin_connected_resource_interception(pending);
+            if (!intercepted) {
+                const auto attribute_name = pending.node->tag == "link" ? "href" : "src";
+                if (const auto authored = pending.node->attributes.find(attribute_name);
+                    authored != pending.node->attributes.end() && !authored->second.empty()) {
+                    start_resource_prefetch(
+                        authored->second,
+                        current_base_address(),
+                        connected_resource_kind(*pending.node));
+                }
+            }
+        }
+        if (pending.controlled_fetch.valid()
+            && pending.controlled_fetch.wait_for(std::chrono::seconds(0))
+                != std::future_status::ready
+            && std::chrono::steady_clock::now() < pending.controlled_deadline) {
+            return true;
+        }
 #if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
         if (profile_startup) ++startup_connected_resources;
 #endif
@@ -321,7 +348,28 @@
                 resource_name = resource_leaf_name(attribute->second);
             }
         }
-        if (!load_connected_resource(*resource.node, wrapper)) {
+        std::optional<service_worker_fetch_result> controlled;
+        if (resource.controlled_fetch.valid()) {
+            if (resource.controlled_fetch.wait_for(std::chrono::seconds(0))
+                == std::future_status::ready) {
+                try {
+                    controlled = resource.controlled_fetch.get();
+                } catch (const std::exception& error) {
+                    controlled.emplace();
+                    controlled->handled = true;
+                    controlled->error = std::string(
+                        "Service worker connected resource failed: ") + error.what();
+                }
+            } else {
+                controlled.emplace();
+                controlled->handled = true;
+                controlled->error = "Service worker connected resource timed out";
+            }
+        }
+        if (!load_connected_resource(
+                *resource.node,
+                wrapper,
+                controlled.has_value() ? &*controlled : nullptr)) {
             last_error = frame_last_error_value;
             return false;
         }
@@ -630,8 +678,9 @@
 #else
         constexpr auto cooperative_frames = true;
 #endif
+        const auto connected_resource_ready = has_ready_connected_resource_task();
         const auto competing_task_ready = timer_due
-            || !connected_resources.empty()
+            || connected_resource_ready
             || resize_observers_pending;
         if (!pending_frame_hydrations.empty()
             && (!cooperative_frames
@@ -643,7 +692,7 @@
         // Dynamically connected resources and zero-delay timers are separate
         // browser task sources. Do not starve React/datafeed timers behind an
         // entire Webpack resource wave; alternate when both are ready.
-        if (!connected_resources.empty()
+        if (connected_resource_ready
             && (!timer_due || !prefer_timer_task)) {
             // Preparing a large warm-cache resource wave can itself take a few
             // milliseconds. Only do that work once this task source has won

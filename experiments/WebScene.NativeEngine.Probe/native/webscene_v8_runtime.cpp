@@ -4657,6 +4657,7 @@ struct v8_dom_runtime::implementation final {
                 this.credentials = String(options.credentials ?? input?.credentials ?? 'same-origin');
                 this.mode = String(options.mode ?? input?.mode ?? 'cors');
                 this.redirect = String(options.redirect ?? input?.redirect ?? 'follow');
+                this.destination = String(options.destination ?? input?.destination ?? '');
               }
             }
 
@@ -6343,7 +6344,7 @@ bool v8_dom_runtime::has_pending_tasks() const noexcept
         || !impl_->pending_dialog_close_events.empty()
         || !impl_->pending_programmatic_scroll_events.empty()
         || !impl_->pending_frame_hydrations.empty()
-        || !impl_->connected_resources.empty()
+        || impl_->has_ready_connected_resource_task()
         || impl_->resize_observers_pending
         || impl_->has_due_timer();
 }

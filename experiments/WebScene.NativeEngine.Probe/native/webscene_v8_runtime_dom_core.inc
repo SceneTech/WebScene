@@ -1930,7 +1930,8 @@
         connected_resources.push_back(connected_resource_task{
             &node,
             v8::Global<v8::Context>(isolate, resource_context),
-            v8::Global<v8::Object>(isolate, wrapper)});
+            v8::Global<v8::Object>(isolate, wrapper),
+            {}, {}, {}, false});
     }
 
     void enqueue_connected_resources_subtree(

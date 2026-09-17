@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 
 
@@ -13,6 +14,10 @@ DEFAULT_INPUT = ROOT / "experiments/WebScene.NativeEngine.Probe/native/css_prope
 DEFAULT_OUTPUT = ROOT / "experiments/WebScene.NativeEngine.Probe/native/generated/webscene_css_property_metadata.inc"
 DEFAULT_NATIVE_SUPPORTED_OUTPUT = (
     ROOT / "experiments/WebScene.NativeEngine.Probe/native/generated/webscene_css_supported_properties.inc")
+DEFAULT_NATIVE_IDS_OUTPUT = (
+    ROOT / "experiments/WebScene.NativeEngine.Probe/native/generated/webscene_css_property_ids.inc")
+DEFAULT_NATIVE_IDENTITY_OUTPUT = (
+    ROOT / "experiments/WebScene.NativeEngine.Probe/native/generated/webscene_css_property_identity.inc")
 DEFAULT_MANAGED_OUTPUT = ROOT / "src/WebScene.Css/CssPropertyMetadata.Generated.cs"
 ALLOWED_MASKS = {
     "inline_top", "inline_right", "inline_bottom", "inline_left",
@@ -26,10 +31,14 @@ class Catalog:
         properties: list[dict[str, object]],
         managed_known_properties: list[str],
         supported_property_extras: list[str],
+        native_property_ids: list[dict[str, object]],
+        native_storage_only_properties: list[str],
     ) -> None:
         self.properties = properties
         self.managed_known_properties = managed_known_properties
         self.supported_property_extras = supported_property_extras
+        self.native_property_ids = native_property_ids
+        self.native_storage_only_properties = native_storage_only_properties
 
 
 def _load_name_list(payload: dict[str, object], key: str, *, allow_empty: bool = False) -> list[str]:
@@ -59,6 +68,41 @@ def load_catalog(path: Path) -> Catalog:
     managed_known_properties = _load_name_list(payload, "managedKnownProperties")
     supported_property_extras = _load_name_list(
         payload, "supportedPropertyExtras", allow_empty=True)
+    native_storage_only_properties = _load_name_list(
+        payload, "nativeStorageOnlyProperties", allow_empty=True)
+    native_property_ids = payload.get("nativePropertyIds")
+    if not isinstance(native_property_ids, list) or len(native_property_ids) < 3:
+        raise ValueError("nativePropertyIds must contain unknown, custom, and typed properties")
+    native_ids: set[str] = set()
+    native_names: set[str] = set()
+    for index, entry in enumerate(native_property_ids):
+        if not isinstance(entry, dict):
+            raise ValueError("each native property identity must be an object")
+        property_id = entry.get("id")
+        if not isinstance(property_id, str) or re.fullmatch(r"[a-z][a-z0-9_]*", property_id) is None:
+            raise ValueError(f"invalid native property id: {property_id!r}")
+        if property_id in native_ids:
+            raise ValueError(f"duplicate native property id: {property_id}")
+        native_ids.add(property_id)
+        name = entry.get("name")
+        aliases = entry.get("aliases", [])
+        if property_id in ("unknown", "custom"):
+            if name is not None or aliases:
+                raise ValueError(f"special native property id {property_id} cannot have names")
+        elif not isinstance(name, str) or not name or name.lower() != name:
+            raise ValueError(f"native property {property_id} must have a lower-case name")
+        if not isinstance(aliases, list) or not all(isinstance(alias, str) for alias in aliases):
+            raise ValueError(f"aliases for native property {property_id} must be an array of strings")
+        for native_name in ([name] if name is not None else []) + aliases:
+            if not native_name or native_name.lower() != native_name:
+                raise ValueError(f"native property name must be lower-case: {native_name!r}")
+            if native_name in native_names:
+                raise ValueError(f"duplicate native property name or alias: {native_name}")
+            native_names.add(native_name)
+        if index == 0 and property_id != "unknown":
+            raise ValueError("the first native property id must be unknown")
+        if index == 1 and property_id != "custom":
+            raise ValueError("the second native property id must be custom")
     entries = payload.get("properties")
     if not isinstance(entries, list) or not entries:
         raise ValueError("properties must be a non-empty array")
@@ -93,10 +137,30 @@ def load_catalog(path: Path) -> Catalog:
         for target in targets:
             if target not in known_names:
                 raise ValueError(f"{name} references unknown effective property {target!r}")
+    supported = set(managed_known_properties + supported_property_extras) | names
+    storage_only = set(native_storage_only_properties)
+    unknown_storage = storage_only - supported
+    if unknown_storage:
+        raise ValueError(
+            "native storage-only names are not exposed by CSSOM: "
+            + ", ".join(sorted(unknown_storage)))
+    overlaps = storage_only & native_names
+    if overlaps:
+        raise ValueError(
+            "native CSSOM names cannot be both typed and storage-only: "
+            + ", ".join(sorted(overlaps)))
+    missing_classification = supported - native_names - storage_only
+    if missing_classification:
+        raise ValueError(
+            "native CSSOM names lack typed or storage-only classification: "
+            + ", ".join(sorted(missing_classification)))
+
     return Catalog(
         properties=sorted(entries, key=lambda entry: entry["name"]),
         managed_known_properties=managed_known_properties,
         supported_property_extras=supported_property_extras,
+        native_property_ids=native_property_ids,
+        native_storage_only_properties=native_storage_only_properties,
     )
 
 
@@ -151,6 +215,62 @@ def generate_native_supported(catalog: Catalog) -> str:
     return "\n".join(lines)
 
 
+def native_property_names(entry: dict[str, object]) -> list[str]:
+    name = entry.get("name")
+    return ([] if name is None else [name]) + list(entry.get("aliases", []))
+
+
+def generate_native_ids(catalog: Catalog) -> str:
+    lines = ["// Generated by tools/generate_css_property_metadata.py. Do not edit."]
+    for index, entry in enumerate(catalog.native_property_ids):
+        assignment = " = 0" if index == 0 else ""
+        lines.append(f'{entry["id"]}{assignment},')
+    lines.append("")
+    return "\n".join(lines)
+
+
+def generate_native_identity(catalog: Catalog) -> str:
+    typed_rows = [
+        (name, entry["id"])
+        for entry in catalog.native_property_ids
+        for name in native_property_names(entry)
+    ]
+    lines = [
+        "// Generated by tools/generate_css_property_metadata.py. Do not edit.",
+        "struct native_typed_property_identity final {",
+        "    std::string_view name;",
+        "    css_property_id id;",
+        "};",
+        "",
+        "inline constexpr std::array native_typed_property_identity_catalog{",
+    ]
+    for name, property_id in typed_rows:
+        lines.append(
+            f'    native_typed_property_identity{{"{name}", css_property_id::{property_id}}},')
+    lines.extend([
+        "};",
+        "",
+        "inline constexpr std::array<std::string_view, "
+        f"{len(catalog.native_storage_only_properties)}> native_storage_only_property_catalog{{",
+    ])
+    for name in catalog.native_storage_only_properties:
+        lines.append(f'    "{name}",')
+    lines.extend([
+        "};",
+        "",
+        "inline css_property_id generated_property_id_lowercase(std::string_view name) noexcept",
+        "{",
+    ])
+    for name, property_id in typed_rows:
+        lines.append(f'    if (name == "{name}") return css_property_id::{property_id};')
+    lines.extend([
+        "    return css_property_id::unknown;",
+        "}",
+        "",
+    ])
+    return "\n".join(lines)
+
+
 def _append_csharp_array(lines: list[str], name: str, values: list[str]) -> None:
     lines.extend([
         f"    internal static readonly string[] {name} =",
@@ -201,12 +321,17 @@ def main() -> int:
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument(
         "--native-supported-output", type=Path, default=DEFAULT_NATIVE_SUPPORTED_OUTPUT)
+    parser.add_argument("--native-ids-output", type=Path, default=DEFAULT_NATIVE_IDS_OUTPUT)
+    parser.add_argument(
+        "--native-identity-output", type=Path, default=DEFAULT_NATIVE_IDENTITY_OUTPUT)
     parser.add_argument("--managed-output", type=Path, default=DEFAULT_MANAGED_OUTPUT)
     parser.add_argument("--check", action="store_true")
     args = parser.parse_args()
     catalog = load_catalog(args.input)
     rendered_native = generate_native(catalog)
     rendered_native_supported = generate_native_supported(catalog)
+    rendered_native_ids = generate_native_ids(catalog)
+    rendered_native_identity = generate_native_identity(catalog)
     rendered_managed = generate_managed(catalog)
     if args.check:
         stale: list[Path] = []
@@ -216,6 +341,13 @@ def main() -> int:
                 or args.native_supported_output.read_text(encoding="utf-8")
                 != rendered_native_supported):
             stale.append(args.native_supported_output)
+        if (not args.native_ids_output.exists()
+                or args.native_ids_output.read_text(encoding="utf-8") != rendered_native_ids):
+            stale.append(args.native_ids_output)
+        if (not args.native_identity_output.exists()
+                or args.native_identity_output.read_text(encoding="utf-8")
+                != rendered_native_identity):
+            stale.append(args.native_identity_output)
         if (not args.managed_output.exists()
                 or args.managed_output.read_text(encoding="utf-8") != rendered_managed):
             stale.append(args.managed_output)
@@ -227,6 +359,10 @@ def main() -> int:
     args.output.write_text(rendered_native, encoding="utf-8")
     args.native_supported_output.parent.mkdir(parents=True, exist_ok=True)
     args.native_supported_output.write_text(rendered_native_supported, encoding="utf-8")
+    args.native_ids_output.parent.mkdir(parents=True, exist_ok=True)
+    args.native_ids_output.write_text(rendered_native_ids, encoding="utf-8")
+    args.native_identity_output.parent.mkdir(parents=True, exist_ok=True)
+    args.native_identity_output.write_text(rendered_native_identity, encoding="utf-8")
     args.managed_output.parent.mkdir(parents=True, exist_ok=True)
     args.managed_output.write_text(rendered_managed, encoding="utf-8")
     return 0

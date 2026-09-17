@@ -18,42 +18,10 @@
 namespace webscene_native::css {
 
 enum class css_property_id : uint16_t {
-    unknown = 0, custom, all, content,
-    width, height, min_width, min_height, max_width, max_height,
-    left, top, right, bottom, inset,
-    padding, padding_inline, padding_block, padding_left, padding_right, padding_top, padding_bottom,
-    margin, margin_inline, margin_block, margin_left, margin_right, margin_top, margin_bottom,
-    gap, row_gap, column_gap,
-    display, position, contain, floating, z_index,
-    flex_direction, flex_flow, flex_wrap, flex_grow, flex_shrink, flex_basis, flex,
-    align_items, align_self, justify_content, box_sizing, vertical_align,
-    grid_template_columns, grid_template_rows, grid_auto_columns, grid_auto_flow,
-    grid_area, grid_row, grid_row_start, grid_row_end,
-    grid_column, grid_column_start, grid_column_end,
-    border_spacing, border_collapse, table_layout,
-    border, border_top, border_right, border_bottom, border_left, border_inline, border_block,
-    border_width, border_color, border_style,
-    border_top_width, border_right_width, border_bottom_width, border_left_width,
-    border_inline_width, border_block_width,
-    border_top_color, border_right_color, border_bottom_color, border_left_color,
-    border_inline_color, border_block_color,
-    border_radius, border_top_left_radius, border_top_right_radius,
-    border_bottom_right_radius, border_bottom_left_radius,
-    outline, outline_width, outline_color,
-    transform, transform_origin,
-    transition, transition_property, transition_duration, transition_delay, transition_timing_function,
-    animation, animation_name, animation_duration, animation_delay,
-    animation_timing_function, animation_iteration_count,
-    box_shadow,
-    background, background_color, background_image, background_repeat, background_position, background_size,
-    overflow, overflow_x, overflow_y, visibility, pointer_events, opacity,
-    color, fill, stroke, stroke_width, text_anchor, cursor,
-    font, font_size, font_family, font_smoothing, font_weight,
-    letter_spacing, word_spacing, line_height, text_align, text_transform, white_space,
-    list_style, list_style_position, list_style_type,
-    scrollbar_width, scrollbar_color,
-    container, container_type, container_name, content_visibility, contain_intrinsic_size
+#include "generated/webscene_css_property_ids.inc"
 };
+
+#include "generated/webscene_css_property_identity.inc"
 
 enum class css_wide_keyword : uint8_t { none, inherit, initial, unset, revert };
 
@@ -226,30 +194,10 @@ inline std::vector<std::string> css_ir_split(std::string_view value,char delimit
 inline css_wide_keyword css_ir_wide(std::string_view value){const auto v=css_ir_lower(css_ir_trim(value));if(v=="inherit")return css_wide_keyword::inherit;if(v=="initial")return css_wide_keyword::initial;if(v=="unset")return css_wide_keyword::unset;if(v=="revert")return css_wide_keyword::revert;return css_wide_keyword::none;}
 
 inline css_property_id property_id(std::string_view raw) {
-    if(raw.starts_with("--"))return css_property_id::custom;const auto n=css_ir_lower(raw);
-#define W(name,id) if(n==name)return css_property_id::id
-    W("all",all);W("content",content);W("width",width);W("height",height);W("min-width",min_width);W("min-height",min_height);W("max-width",max_width);W("max-height",max_height);
-    W("left",left);W("inset-inline-start",left);W("top",top);W("inset-block-start",top);W("right",right);W("inset-inline-end",right);W("bottom",bottom);W("inset-block-end",bottom);W("inset",inset);
-    W("padding",padding);W("padding-inline",padding_inline);W("padding-block",padding_block);W("padding-left",padding_left);W("padding-inline-start",padding_left);W("padding-right",padding_right);W("padding-inline-end",padding_right);W("padding-top",padding_top);W("padding-block-start",padding_top);W("padding-bottom",padding_bottom);W("padding-block-end",padding_bottom);
-    W("margin",margin);W("margin-inline",margin_inline);W("margin-block",margin_block);W("margin-left",margin_left);W("margin-inline-start",margin_left);W("margin-right",margin_right);W("margin-inline-end",margin_right);W("margin-top",margin_top);W("margin-block-start",margin_top);W("margin-bottom",margin_bottom);W("margin-block-end",margin_bottom);
-    W("gap",gap);W("grid-gap",gap);W("row-gap",row_gap);W("grid-row-gap",row_gap);W("rowgap",row_gap);W("column-gap",column_gap);W("grid-column-gap",column_gap);W("columngap",column_gap);
-    W("display",display);W("position",position);W("contain",contain);W("float",floating);W("cssfloat",floating);W("z-index",z_index);W("zindex",z_index);
-    W("flex-direction",flex_direction);W("flexdirection",flex_direction);W("flex-flow",flex_flow);W("flexflow",flex_flow);W("flex-wrap",flex_wrap);W("flexwrap",flex_wrap);W("flex-grow",flex_grow);W("flex-shrink",flex_shrink);W("flex-basis",flex_basis);W("flex",flex);W("align-items",align_items);W("align-self",align_self);W("justify-content",justify_content);W("box-sizing",box_sizing);W("vertical-align",vertical_align);
-    W("grid-template-columns",grid_template_columns);W("grid-template-rows",grid_template_rows);W("grid-auto-columns",grid_auto_columns);W("grid-auto-flow",grid_auto_flow);W("grid-area",grid_area);W("grid-row",grid_row);W("grid-row-start",grid_row_start);W("grid-row-end",grid_row_end);W("grid-column",grid_column);W("grid-column-start",grid_column_start);W("grid-column-end",grid_column_end);
-    W("border-spacing",border_spacing);W("borderspacing",border_spacing);W("border-collapse",border_collapse);W("bordercollapse",border_collapse);W("table-layout",table_layout);
-    W("border",border);W("border-top",border_top);W("border-block-start",border_top);W("border-right",border_right);W("border-inline-end",border_right);W("border-bottom",border_bottom);W("border-block-end",border_bottom);W("border-left",border_left);W("border-inline-start",border_left);W("border-inline",border_inline);W("border-block",border_block);W("border-width",border_width);W("border-color",border_color);W("border-style",border_style);
-    W("border-top-width",border_top_width);W("border-block-start-width",border_top_width);W("border-right-width",border_right_width);W("border-inline-end-width",border_right_width);W("border-bottom-width",border_bottom_width);W("border-block-end-width",border_bottom_width);W("border-left-width",border_left_width);W("border-inline-start-width",border_left_width);W("border-inline-width",border_inline_width);W("border-block-width",border_block_width);
-    W("border-top-color",border_top_color);W("border-block-start-color",border_top_color);W("border-right-color",border_right_color);W("border-inline-end-color",border_right_color);W("border-bottom-color",border_bottom_color);W("border-block-end-color",border_bottom_color);W("border-left-color",border_left_color);W("border-inline-start-color",border_left_color);W("border-inline-color",border_inline_color);W("border-block-color",border_block_color);
-    W("border-radius",border_radius);W("border-top-left-radius",border_top_left_radius);W("border-start-start-radius",border_top_left_radius);W("border-top-right-radius",border_top_right_radius);W("border-start-end-radius",border_top_right_radius);W("border-bottom-right-radius",border_bottom_right_radius);W("border-end-end-radius",border_bottom_right_radius);W("border-bottom-left-radius",border_bottom_left_radius);W("border-end-start-radius",border_bottom_left_radius);
-    W("outline",outline);W("outline-width",outline_width);W("outline-color",outline_color);W("transform",transform);W("-moz-transform",transform);W("-webkit-transform",transform);W("transform-origin",transform_origin);W("transformorigin",transform_origin);
-    W("transition",transition);W("transition-property",transition_property);W("transition-duration",transition_duration);W("transition-delay",transition_delay);W("transition-timing-function",transition_timing_function);W("animation",animation);W("animation-name",animation_name);W("animation-duration",animation_duration);W("animation-delay",animation_delay);W("animation-timing-function",animation_timing_function);W("animation-iteration-count",animation_iteration_count);
-    W("box-shadow",box_shadow);W("boxshadow",box_shadow);W("background",background);W("background-color",background_color);W("backgroundcolor",background_color);W("background-image",background_image);W("backgroundimage",background_image);W("background-repeat",background_repeat);W("background-position",background_position);W("background-size",background_size);
-    W("overflow",overflow);W("overflow-x",overflow_x);W("overflow-y",overflow_y);W("visibility",visibility);W("pointer-events",pointer_events);W("opacity",opacity);W("color",color);W("fill",fill);W("stroke",stroke);W("stroke-width",stroke_width);W("text-anchor",text_anchor);W("cursor",cursor);
-    W("font",font);W("font-size",font_size);W("fontsize",font_size);W("font-family",font_family);W("fontfamily",font_family);W("-webkit-font-smoothing",font_smoothing);W("webkit-font-smoothing",font_smoothing);W("webkitfontsmoothing",font_smoothing);W("font-weight",font_weight);W("fontweight",font_weight);W("letter-spacing",letter_spacing);W("letterspacing",letter_spacing);W("word-spacing",word_spacing);W("wordspacing",word_spacing);W("line-height",line_height);W("lineheight",line_height);W("text-align",text_align);W("textalign",text_align);W("text-transform",text_transform);W("texttransform",text_transform);W("white-space",white_space);W("whitespace",white_space);
-    W("list-style",list_style);W("list-style-position",list_style_position);W("list-style-type",list_style_type);W("scrollbar-width",scrollbar_width);W("scrollbar-color",scrollbar_color);
-    W("container",container);W("container-type",container_type);W("container-name",container_name);W("content-visibility",content_visibility);W("contain-intrinsic-size",contain_intrinsic_size);
-#undef W
-    return css_property_id::unknown;
+    if(raw.starts_with("--"))return css_property_id::custom;
+    for(const auto character:raw)if(character>='A'&&character<='Z')
+        return generated_property_id_lowercase(css_ir_lower(raw));
+    return generated_property_id_lowercase(raw);
 }
 
 inline std::optional<float> css_ir_number(std::string_view value){const auto t=css_ir_trim(value);if(t.empty())return{};char* end=nullptr;const auto v=std::strtof(t.c_str(),&end);if(end==t.c_str()||*end!='\0'||!std::isfinite(v))return{};return v;}

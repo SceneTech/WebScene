@@ -1,0 +1,36 @@
+{
+  "date": "2026-09-17",
+  "baselineCommit": "b69f931d3a7fe277490451191a9dc520642c7f4c",
+  "catalog": {
+    "nativePropertyIdCount": 146,
+    "typedNameAndAliasCount": 201,
+    "storageOnlyCount": 54,
+    "cssomSupportedCount": 214,
+    "idSequenceSha256": "b17b1cd0520ae5e36fd875ed8226b1818508bbe41be9a32540ef58a1b31da036",
+    "nameToIdSequenceSha256": "10bc777d9724b11b8872131e36b8b6eb4b5ae53becdea23f3f1f3e71302bd7f3",
+    "storageOnlySequenceSha256": "8904af7da9f26749568f951c6303bc9f11511897e3dfae88c15c47da37440c94"
+  },
+  "benchmark": {
+    "compiler": "AppleClang /usr/bin/c++",
+    "configuration": "Release -O3 arm64 macOS SDK 26.5",
+    "lookupsPerSample": 24000000,
+    "checksum": 8878625900673316631,
+    "baselineMilliseconds": [6164.480, 6146.020, 6105.050, 6212.720, 6422.480, 6473.780, 6233.670, 6237.290],
+    "candidateMilliseconds": [340.123, 338.446, 345.610, 342.323, 382.502, 361.756, 351.289, 346.967],
+    "baselineMedianMilliseconds": 6223.195,
+    "candidateMedianMilliseconds": 346.2885,
+    "medianReductionPercent": 94.4355,
+    "throughputRatio": 17.9711
+  },
+  "validation": {
+    "generatorTests": {"passed": 9, "failed": 0},
+    "generatedOutputCheck": "passed",
+    "identityCTestCurrentBuild": {"passed": 2, "failed": 0},
+    "identityCTestLegacyBuild": {"passed": 2, "failed": 0},
+    "currentNativeBuild": "passed",
+    "legacyNativeBuild": "passed",
+    "currentCssParserCTest": {"passed": 1, "failed": 0},
+    "cssomInlineDeclarationValidityCurrent": {"passed": 5, "failed": 0},
+    "cssomInlineDeclarationValidityLegacy": {"passed": 5, "failed": 0}
+  }
+}

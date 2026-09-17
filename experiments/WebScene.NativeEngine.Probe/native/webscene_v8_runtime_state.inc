@@ -182,6 +182,7 @@
         pending_programmatic_scroll_events;
     native_websocket_transport websocket_transport;
     std::unordered_map<uint64_t, websocket_binding> websocket_bindings;
+    uint8_t next_async_message_task_source{0U};
     std::vector<connected_resource_task> connected_resources;
     std::mutex host_request_mutex;
     std::deque<std::string> host_requests;

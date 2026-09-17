@@ -52,26 +52,33 @@ struct native_websocket_transport::state final {
     size_t queued_bytes{0};
     uint64_t next_socket_id{1};
     bool shutting_down{false};
+    std::function<void()> event_available;
 
     bool enqueue(event value, bool priority = false)
     {
-        std::lock_guard lock(mutex);
-        if (shutting_down) return false;
-        if (priority) {
-            while (!events.empty()
-                && (events.size() >= maximum_queued_websocket_events
-                    || value.payload.size()
-                        > maximum_queued_websocket_bytes - queued_bytes)) {
-                queued_bytes -= events.front().payload.size();
-                events.pop_front();
+        std::function<void()> notify;
+        {
+            std::lock_guard lock(mutex);
+            if (shutting_down) return false;
+            if (priority) {
+                while (!events.empty()
+                    && (events.size() >= maximum_queued_websocket_events
+                        || value.payload.size()
+                            > maximum_queued_websocket_bytes - queued_bytes)) {
+                    queued_bytes -= events.front().payload.size();
+                    events.pop_front();
+                }
             }
+            if (events.size() >= maximum_queued_websocket_events
+                || value.payload.size() > maximum_queued_websocket_bytes - queued_bytes) {
+                return false;
+            }
+            const auto was_empty = events.empty();
+            queued_bytes += value.payload.size();
+            events.push_back(std::move(value));
+            if (was_empty) notify = event_available;
         }
-        if (events.size() >= maximum_queued_websocket_events
-            || value.payload.size() > maximum_queued_websocket_bytes - queued_bytes) {
-            return false;
-        }
-        queued_bytes += value.payload.size();
-        events.push_back(std::move(value));
+        if (notify) notify();
         return true;
     }
 };
@@ -244,6 +251,15 @@ size_t native_websocket_transport::buffered_amount(uint64_t socket_id) const
     return record->socket->bufferedAmount();
 }
 
+void native_websocket_transport::set_event_available_callback(
+    std::function<void()> callback)
+{
+    std::lock_guard lock(state_->mutex);
+    if (!state_->shutting_down) {
+        state_->event_available = std::move(callback);
+    }
+}
+
 bool native_websocket_transport::try_pop(event& value)
 {
     std::lock_guard lock(state_->mutex);
@@ -282,6 +298,7 @@ void native_websocket_transport::shutdown()
         std::lock_guard lock(state_->mutex);
         if (state_->shutting_down) return;
         state_->shutting_down = true;
+        state_->event_available = {};
         sockets.swap(state_->sockets);
         state_->events.clear();
         state_->queued_bytes = 0;

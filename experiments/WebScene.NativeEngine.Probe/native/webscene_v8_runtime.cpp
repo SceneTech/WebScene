@@ -342,6 +342,7 @@ struct v8_dom_runtime::implementation final {
             std::lock_guard lock(message_port_wake->mutex);
             message_port_wake->notify = runtime_work_available;
         }
+        websocket_transport.set_event_available_callback(runtime_work_available);
         if (!force_dedicated_isolate && std::getenv("WEBSCENE_V8_SHARED_ISOLATE") != nullptr) {
             try {
                 shared_isolate = acquire_shared_isolate();

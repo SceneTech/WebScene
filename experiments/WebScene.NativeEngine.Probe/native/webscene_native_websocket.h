@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -47,6 +48,7 @@ public:
     bool send(uint64_t socket_id, const uint8_t* data, size_t size, bool binary);
     bool close(uint64_t socket_id, uint16_t code, std::string_view reason);
     size_t buffered_amount(uint64_t socket_id) const;
+    void set_event_available_callback(std::function<void()> callback);
 
     bool try_pop(event& value);
     bool has_pending_events() const noexcept;

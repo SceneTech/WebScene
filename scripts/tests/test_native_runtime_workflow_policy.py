@@ -80,6 +80,24 @@ class NativeRuntimeWorkflowPolicyTests(unittest.TestCase):
         self.assertNotIn("\n    continue-on-error: true", candidate)
         self.assertIn("--advisory-test-failures", candidate)
 
+    def test_candidate_evidence_skips_only_incomplete_prerequisites(self) -> None:
+        package_workflow = self.workflows[
+            ROOT / ".github/workflows/native-runtime-packages.yml"
+        ]
+        candidate = package_workflow.split("\n  candidate-evidence:\n", 1)[1].split(
+            "\n  consumer:\n", 1
+        )[0]
+        condition = next(
+            line.strip()
+            for line in candidate.splitlines()
+            if line.strip().startswith("if:")
+        )
+
+        self.assertIn("always()", condition)
+        self.assertIn("needs.metadata.result == 'success'", condition)
+        self.assertIn("needs.native.result != 'cancelled'", condition)
+        self.assertNotIn("needs.native.result == 'success'", condition)
+
     def test_v8_windows_environment_boundary_is_wired_into_build_and_ci(self) -> None:
         package_workflow = self.workflows[
             ROOT / ".github/workflows/native-runtime-packages.yml"

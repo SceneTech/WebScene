@@ -4104,7 +4104,8 @@ struct v8_dom_runtime::implementation final {
         if constexpr (bootstrap_snapshot_enabled) {
             if (!context.IsEmpty() && context.Get(isolate) == local_context) return;
         }
-        constexpr std::string_view source = R"JS(
+        constexpr std::string_view source_parts[] = {
+            R"JS(
           (() => {
             class WebSceneHeaders {
               constructor(initial = undefined) {
@@ -4305,7 +4306,8 @@ struct v8_dom_runtime::implementation final {
                   locked:false, disturbed:false, closeRequested:false,
                   pulling:false, pull:typeof underlyingSource.pull === 'function'
                     ? underlyingSource.pull.bind(underlyingSource) : undefined,
-                  cancel:typeof underlyingSource.cancel === 'function'
+)JS",
+            R"JS(                  cancel:typeof underlyingSource.cancel === 'function'
                     ? underlyingSource.cancel.bind(underlyingSource) : undefined,
                   controller:undefined, closedResolve:()=>{}, closedReject:()=>{}
                 };
@@ -4493,7 +4495,8 @@ struct v8_dom_runtime::implementation final {
                     const mode = { 'same-origin': 1, cors: 2, 'no-cors': 3 }[request.mode];
                     const redirect = { follow: 0, error: 1, manual: 2 }[request.redirect];
                     if (credentials === undefined || mode === undefined || redirect === undefined) {
-                      throw new TypeError('Invalid fetch mode, credentials, or redirect option');
+)JS",
+            R"JS(                      throw new TypeError('Invalid fetch mode, credentials, or redirect option');
                     }
                     let body = '';
                     if (request.body instanceof FormData) {
@@ -4676,7 +4679,11 @@ struct v8_dom_runtime::implementation final {
               }
             });
           })();
-        )JS";
+        )JS",
+        };
+        std::string source;
+        source.reserve(27687);
+        for (const auto part : source_parts) source.append(part);
         auto script = v8::Script::Compile(
             local_context,
             js_string(isolate, std::string(source).c_str())).ToLocalChecked();

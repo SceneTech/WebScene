@@ -15,8 +15,13 @@ MARKERS = (
     "static constexpr std::string_view intersection_observer_bootstrap_source",
 )
 
+# MSVC rejects string literals larger than 16,380 bytes (C2026). Keep enough
+# headroom for source-encoding differences while retaining byte-for-byte joins.
+MAX_RAW_LITERAL_BYTES = 15_000
 
-def extract(source: str, marker: str) -> str:
+
+def extract_parts(source: str, marker: str) -> list[str]:
+    """Return the ordered raw literals that make up one bootstrap program."""
     start = source.find(marker)
     if start < 0:
         raise RuntimeError(f"bootstrap marker not found: {marker}")
@@ -27,7 +32,18 @@ def extract(source: str, marker: str) -> str:
     matches = re.findall(r'R"JS\((.*?)\)JS"', scope, re.DOTALL)
     if not matches:
         raise RuntimeError(f"raw JavaScript literal not found after: {marker}")
-    return "".join(matches).strip() + "\n"
+    oversized = [len(part.encode("utf-8")) for part in matches
+                 if len(part.encode("utf-8")) > MAX_RAW_LITERAL_BYTES]
+    if oversized:
+        raise RuntimeError(
+            f"raw JavaScript literal after {marker} exceeds "
+            f"{MAX_RAW_LITERAL_BYTES} bytes: {oversized}"
+        )
+    return matches
+
+
+def extract(source: str, marker: str) -> str:
+    return "".join(extract_parts(source, marker)).strip() + "\n"
 
 
 def main() -> int:

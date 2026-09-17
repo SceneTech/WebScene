@@ -1,5 +1,6 @@
 <!doctype html>
 <title>Iframe extension host creates a module Worker</title>
+<body>
 <script>
 window.__webSceneWptState = {complete:false,harness:null,results:[],errors:[],diagnostics:[]};
 window.record = (name, condition) => __webSceneWptState.results.push({
@@ -11,6 +12,23 @@ window.finish = () => {
   s.complete=true;
 };
 
+let bootstrapSource = null;
+let workerReady = false;
+let bridgeStarted = false;
+const startBridge = () => {
+  if (!bootstrapSource || !workerReady || bridgeStarted) return;
+  bridgeStarted = true;
+  const channel = new MessageChannel();
+  channel.port1.onmessage = response => {
+    record('Iframe-created module Worker bridges its transferred port', response.data === 42);
+    channel.port1.close();
+    finish();
+  };
+  bootstrapSource.postMessage(
+    {type:'vscode.init', port:channel.port2}, origin, [channel.port2]);
+  channel.port1.postMessage(41);
+};
+
 addEventListener('message', event => {
   if (event.data && event.data.type === 'worker-error') {
     __webSceneWptState.errors.push(event.data.message);
@@ -20,6 +38,8 @@ addEventListener('message', event => {
   }
   if (event.data && event.data.type === 'worker-started') {
     record('Iframe-created module Worker starts in its isolated realm', true);
+    workerReady = true;
+    startBridge();
     return;
   }
   if (event.data !== 'vscode.bootstrap.nls') return;
@@ -27,15 +47,8 @@ addEventListener('message', event => {
   record('Extension-host iframe preserves source Window identity',
     event.source === frame.contentWindow);
   record('Extension-host iframe uses the parent origin', event.origin === origin);
-  const channel = new MessageChannel();
-  channel.port1.onmessage = response => {
-    record('Iframe-created module Worker bridges its transferred port', response.data === 42);
-    channel.port1.close();
-    finish();
-  };
-  event.source.postMessage(
-    {type:'vscode.init', port:channel.port2}, origin, [channel.port2]);
-  channel.port1.postMessage(41);
+  bootstrapSource = event.source;
+  startBridge();
 });
 
 try {
@@ -45,7 +58,7 @@ try {
   child.open();
   child.write(`<script>
     const workerModuleUrl = new URL(
-      './resources/aureon/iframe-worker-extension-host-module.js', location.href).href;
+      './resources/aureon/iframe-worker-extension-host-module.js', parent.location.href).href;
     const source = \`await import(\${JSON.stringify(workerModuleUrl)});\`;
     const blob = new Blob([source], {type:'application/javascript'});
     const worker = new Worker(URL.createObjectURL(blob), {
@@ -67,6 +80,7 @@ try {
   child.close();
 } catch (error) {
   __webSceneWptState.errors.push(String(error));
+  __webSceneWptState.diagnostics.push(String(error));
   record('Iframe extension-host Worker bootstrap completed', false);
   finish();
 }

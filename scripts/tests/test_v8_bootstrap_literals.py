@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import importlib.util
 import pathlib
+import re
 import unittest
 
 
@@ -16,6 +17,9 @@ RUNTIME_PATH = (
     / "WebScene.NativeEngine.Probe"
     / "native"
     / "webscene_v8_runtime.cpp"
+)
+SERVICE_WORKER_PATH = RUNTIME_PATH.with_name(
+    "webscene_v8_runtime_service_workers.inc"
 )
 
 SPEC = importlib.util.spec_from_file_location("extract_bootstraps", EXTRACTOR_PATH)
@@ -39,6 +43,18 @@ class V8BootstrapLiteralTests(unittest.TestCase):
         self.assertEqual(
             "".join(parts).strip() + "\n",
             EXTRACTOR.extract(source, "void install_fetch_globals"),
+        )
+
+    def test_service_worker_bootstrap_literals_are_portable(self) -> None:
+        source = SERVICE_WORKER_PATH.read_text(encoding="utf-8")
+        parts = re.findall(r'R"JS\((.*?)\)JS"', source, re.DOTALL)
+
+        self.assertGreater(len(parts), 1)
+        self.assertTrue(
+            all(
+                len(part.encode("utf-8")) <= EXTRACTOR.MAX_RAW_LITERAL_BYTES
+                for part in parts
+            )
         )
 
 

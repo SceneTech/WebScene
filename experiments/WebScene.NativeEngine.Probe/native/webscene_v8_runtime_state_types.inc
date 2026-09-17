@@ -26,6 +26,17 @@
         std::vector<std::shared_ptr<message_port_endpoint>> port_transfers;
     };
 
+    struct binary_object_url final {
+        std::string bytes;
+        std::string origin;
+    };
+
+    struct shared_object_url_registry final {
+        std::mutex mutex;
+        size_t binary_bytes{};
+        std::unordered_map<std::string, binary_object_url> binary;
+    };
+
     struct message_port_runtime_wake final {
         std::mutex mutex;
         bool stopped{false};

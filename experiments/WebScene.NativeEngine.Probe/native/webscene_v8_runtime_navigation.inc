@@ -127,7 +127,7 @@
         { std::lock_guard lock(host_request_mutex); host_requests.clear(); }
         { std::lock_guard lock(host_request_mutex); typed_host_requests.clear(); }
         object_url_file_data.clear();
-        object_url_binary.clear();
+        release_owned_binary_object_urls();
         object_urls.clear();
         object_url_download_payloads.clear();
         object_url_canvas_node_ids.clear();

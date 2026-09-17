@@ -74,6 +74,7 @@
         media_initializer_key.Reset();
 #endif
         dedicated_workers.clear();
+        release_owned_binary_object_urls();
 #if defined(WEBSCENE_NATIVE_ENGINE_ENABLE_GRAPHICS)
         // Stop native publication before releasing the dispatcher and isolate.
         // Context disposal discards its JS promises; no late callback may enter it.

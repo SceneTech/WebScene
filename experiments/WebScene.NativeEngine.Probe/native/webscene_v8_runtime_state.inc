@@ -213,18 +213,64 @@
     bool prefer_timer_task{true};
     std::atomic<bool> work_metrics_enabled{false};
     v8_dom_runtime::work_metrics work{};
-    uint32_t next_object_url_id{1};
+    static constexpr size_t maximum_shared_object_urls = 4096U;
+    static constexpr size_t maximum_shared_object_url_bytes = 256U * 1024U * 1024U;
+    static constexpr size_t maximum_shared_object_url_payload_bytes = 64U * 1024U * 1024U;
+    inline static std::atomic<uint64_t> next_object_url_id{1U};
+    std::shared_ptr<shared_object_url_registry> object_url_registry =
+        std::make_shared<shared_object_url_registry>();
+    std::unordered_set<std::string> owned_object_urls;
+    std::string inherited_worker_origin;
     std::unordered_map<std::string, std::string> object_urls;
     // Object URLs serve two browser contracts. Frame/image navigation consumes
     // the authored Blob text, while an <a download> activation needs the exact
     // byte payload and MIME type. Keep both representations under the same URL.
     std::unordered_map<std::string, std::string> object_url_download_payloads;
-    struct binary_object_url {std::string bytes,origin;};
-    std::unordered_map<std::string,binary_object_url> object_url_binary;
     // Canvas.toBlob() intentionally carries no encoded bytes. Preserve its
     // retained canvas identity across URL.createObjectURL() so an anchor
     // download can ask the desktop compositor for the exact PNG pixels.
     std::unordered_map<std::string, uint32_t> object_url_canvas_node_ids;
+
+    std::string current_security_origin() const
+    {
+        return inherited_worker_origin.empty()
+            ? resource_origin(current_base_address())
+            : inherited_worker_origin;
+    }
+
+    std::optional<binary_object_url> find_binary_object_url(
+        const std::string& url, const std::string& origin) const
+    {
+        std::lock_guard lock(object_url_registry->mutex);
+        const auto found = object_url_registry->binary.find(url);
+        if (found == object_url_registry->binary.end()
+            || found->second.origin != origin) return std::nullopt;
+        return found->second;
+    }
+
+    bool revoke_binary_object_url(const std::string& url, const std::string& origin)
+    {
+        std::lock_guard lock(object_url_registry->mutex);
+        const auto found = object_url_registry->binary.find(url);
+        if (found == object_url_registry->binary.end()
+            || found->second.origin != origin) return false;
+        object_url_registry->binary_bytes -= found->second.bytes.size();
+        object_url_registry->binary.erase(found);
+        owned_object_urls.erase(url);
+        return true;
+    }
+
+    void release_owned_binary_object_urls()
+    {
+        std::lock_guard lock(object_url_registry->mutex);
+        for (const auto& url : owned_object_urls) {
+            const auto found = object_url_registry->binary.find(url);
+            if (found == object_url_registry->binary.end()) continue;
+            object_url_registry->binary_bytes -= found->second.bytes.size();
+            object_url_registry->binary.erase(found);
+        }
+        owned_object_urls.clear();
+    }
     std::vector<dom_node*> pending_frame_hydrations;
     std::unordered_map<uint32_t, frame_hydration_state> frame_hydration_states;
     bool prefer_frame_hydration_task{true};

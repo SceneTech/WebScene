@@ -2240,9 +2240,9 @@
 
     static void revoke_object_url(const v8::FunctionCallbackInfo<v8::Value>& info) {
         auto* self=current(info.GetIsolate());if(!self||!info.Length())return;
-        auto url=to_utf8(info.GetIsolate(),info[0]);auto found=self->object_url_binary.find(url);
-        if(found!=self->object_url_binary.end()&&found->second.origin==resource_origin(self->current_base_address())){
-            self->object_url_file_data.erase(url);self->object_url_binary.erase(found);self->object_urls.erase(url);self->object_url_download_payloads.erase(url);self->object_url_canvas_node_ids.erase(url);
+        auto url=to_utf8(info.GetIsolate(),info[0]);
+        if(self->revoke_binary_object_url(url,self->current_security_origin())){
+            self->object_url_file_data.erase(url);self->object_urls.erase(url);self->object_url_download_payloads.erase(url);self->object_url_canvas_node_ids.erase(url);
         }
     }
     static void create_object_url(const v8::FunctionCallbackInfo<v8::Value>& info)
@@ -2300,10 +2300,33 @@
                     + ";base64," + base64_encode_bytes(bytes, view->ByteLength());
             }
         }
-        const auto url = "blob:webscene-native/" + std::to_string(self->next_object_url_id++);
+        std::string url;
+        {
+            std::lock_guard lock(self->object_url_registry->mutex);
+            if (binary_payload.size() > maximum_shared_object_url_payload_bytes
+                || self->object_url_registry->binary.size() >= maximum_shared_object_urls
+                || binary_payload.size() > maximum_shared_object_url_bytes
+                    - self->object_url_registry->binary_bytes) {
+                throw_dom_exception(
+                    info,
+                    "Object URL registry capacity exhausted",
+                    "QuotaExceededError");
+                return;
+            }
+            url = "blob:webscene-native/"
+                + std::to_string(next_object_url_id.fetch_add(
+                    1U,
+                    std::memory_order_relaxed));
+            self->object_url_registry->binary_bytes += binary_payload.size();
+            self->object_url_registry->binary.emplace(
+                url,
+                binary_object_url{
+                    std::move(binary_payload),
+                    self->current_security_origin()});
+            self->owned_object_urls.insert(url);
+        }
         if(has_file_bytes) self->object_url_file_data[url]=std::move(file_bytes);
         self->object_urls[url] = std::move(payload);
-        self->object_url_binary[url]={std::move(binary_payload),resource_origin(self->current_base_address())};
         if (!download_payload.empty()) {
             self->object_url_download_payloads[url] = std::move(download_payload);
         }

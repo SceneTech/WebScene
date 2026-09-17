@@ -91,3 +91,35 @@ dependency targets macOS 26.5; no macOS 26.0 execution claim is made.
 
 CI was not monitored. #257 remains separately owned. Broader CSS plan and
 physical native/Chrome resize acceptance are not complete.
+
+## Exact producer package and manual demo
+
+After committing `09ccb478fccc9f136de4614a06bcbb616191d209`, the normal producer
+built a clean SDK with AppScene `68a9dbd15e6b02e4bec0a76d5190713868b6517a`:
+`/Volumes/SSD/sdks/spotify-css-media-qualified-r2-20260917`.
+All 16 AppScene tests, 2,868-file integrity, and the pinned compiler/runtime
+profile pass. Its engine archive matches the timed development engine exactly.
+SDK archive SHA-256:
+`a339b1baf0eb325cc4f8677c8b2cc29123e95329391962cb7c022b225f8d91a5`.
+
+The first producer attempt is retained at
+`/Volumes/SSD/sdks/spotify-css-media-qualified-20260917`: the existing companion
+test timed out waiting for a process-tree record. An isolated rerun passed
+unchanged, then the complete unchanged producer passed with a fresh output.
+No service code, timeout, or qualification gate was weakened.
+
+All eight relocated, read-only, source-denied consumer checks pass at
+`/Volumes/SSD/builds/spotify-css-media-qualification-20260917/qualification.json`.
+The installed Kestrel smoke passes and its parsed/compiled snapshots retain
+zero differences at 376/376, 298/298 and 311/311 nodes. The optional GPU
+presentation/lifecycle suite was not run.
+
+Fresh manual app:
+`/Volumes/SSD/builds/spotify-media-qualified-demo-20260917/spotify_catalog.app`.
+CUA visual inspection and process-path verification confirmed this exact native
+app (PID 13760), with real album art and circular artist images. The known header
+clipping remains. The user changed the window during the attempted resize check;
+the refreshed screenshot was inspected and further UI actions were left to the
+user. This is startup/content verification, **not** a physical-cadence benchmark.
+
+[Qualification, source identities and retained first-attempt failure](evidence/css-media-sdk-qualification-20260917.json).

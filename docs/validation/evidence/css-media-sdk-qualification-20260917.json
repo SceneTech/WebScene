@@ -1,0 +1,237 @@
+{
+  "schema": "webscene-css-media-sdk-qualification-v1",
+  "date": "2026-09-17",
+  "sources": {
+    "WebScene": "09ccb478fccc9f136de4614a06bcbb616191d209",
+    "AppScene": "68a9dbd15e6b02e4bec0a76d5190713868b6517a"
+  },
+  "sdk": "/Volumes/SSD/sdks/spotify-css-media-qualified-r2-20260917",
+  "archiveSha256": "a339b1baf0eb325cc4f8677c8b2cc29123e95329391962cb7c022b225f8d91a5",
+  "engineArchiveSha256": "ed8f803cdebf79df189cc93be1a118532ede8cd4a51be56339ea9a76f8c08cbd",
+  "manifestFiles": 2868,
+  "appsceneTests": {
+    "passed": 16,
+    "total": 16
+  },
+  "consumer": {
+    "schemaVersion": 1,
+    "checks": [
+      {
+        "name": "Producer manifest integrity",
+        "passed": true
+      },
+      {
+        "name": "Producer source/build trees inaccessible",
+        "passed": true,
+        "paths": [
+          "/private/tmp/webscene-spotify-probe",
+          "/private/tmp/appscene-pr61",
+          "/Volumes/SSD/builds/webscene-css-profile-sdk",
+          "/Volumes/SSD/builds/appscene-spotify-integrated-sdk"
+        ]
+      },
+      {
+        "name": "Concurrent independent hybrid application builds",
+        "passed": true
+      },
+      {
+        "name": "All standalone installed sample builds",
+        "passed": true
+      },
+      {
+        "name": "Runtime HTML configuration and independent WebScene contracts",
+        "passed": true
+      },
+      {
+        "name": "Native dependency isolation: no V8, no Dawn in non-GPU native apps, no Foco",
+        "passed": true
+      },
+      {
+        "name": "Incremental CSS, worker, asset and application C++ outputs",
+        "passed": true
+      },
+      {
+        "name": "Read-only relocated SDK unchanged after all builds",
+        "passed": true
+      }
+    ],
+    "status": "passed",
+    "gpuQualification": false
+  },
+  "kestrelParity": [
+    {
+      "width": 1280,
+      "height": 800,
+      "theme": "dark",
+      "tab": "Home",
+      "parsed_nodes": 376,
+      "compiled_nodes": 376,
+      "differences": []
+    },
+    {
+      "width": 980,
+      "height": 620,
+      "theme": "dark",
+      "tab": "Text",
+      "parsed_nodes": 298,
+      "compiled_nodes": 298,
+      "differences": []
+    },
+    {
+      "width": 1440,
+      "height": 900,
+      "theme": "light",
+      "tab": "Drafting",
+      "parsed_nodes": 311,
+      "compiled_nodes": 311,
+      "differences": []
+    }
+  ],
+  "compilerRuntimeProfile": {
+    "schemaVersion": 1,
+    "result": "passed",
+    "producerRevision": "09ccb478fccc9f136de4614a06bcbb616191d209",
+    "payloadProvenance": "exact-clean-producer",
+    "profile": {
+      "WebScene_MACOS_PROFILE_SCHEMA": "1",
+      "WebScene_MACOS_PROFILE_NAME": "homebrew-llvm-22.1.8-system-libcxx",
+      "WebScene_MACOS_COMPILER_ID": "Clang",
+      "WebScene_MACOS_COMPILER_VERSION": "22.1.8",
+      "WebScene_MACOS_COMPILER_SHA256": "305697d3868243dca6e4aabf4f628df7de135d701eb4fd78f6a5d7528fef4395",
+      "WebScene_MACOS_COMPILER_CONFIG_SHA256": "ac7ed4621b841f2103cf6162dff770b79b202dffe60b37ac6bb5406c5ea0d925",
+      "WebScene_MACOS_LIBCXX_HEADERS_SHA256": "32a3e66e382e98c33bb6f14e2c85bf21f6bbb28c506ac0ac85d2a9d67f026281",
+      "WebScene_MACOS_CLANG_HEADERS_SHA256": "9f58d4913aa8a78e52ce087f689c534c3c8fe524368857460ffb860bb18dffe6",
+      "WebScene_MACOS_ARCHITECTURE": "arm64",
+      "WebScene_MACOS_DEPLOYMENT_TARGET": "26.0",
+      "WebScene_MACOS_CXX_STANDARD": "20",
+      "WebScene_MACOS_CXX_LIBRARY": "libc++",
+      "WebScene_MACOS_CXX_RUNTIME": "/usr/lib/libc++.1.dylib",
+      "WebScene_MACOS_SYSTEM_RUNTIME": "/usr/lib/libSystem.B.dylib"
+    },
+    "profileSha256": "de55a052b628e4c2551a89ebf68243802f233d71796a09d3b07721efb8860ffe",
+    "compiler": {
+      "path": "/Volumes/SSD/tools/webscene-toolchain-22.1.8/llvm/22.1.8/bin/clang++",
+      "sha256": "305697d3868243dca6e4aabf4f628df7de135d701eb4fd78f6a5d7528fef4395",
+      "version": "Homebrew clang version 22.1.8\nTarget: arm64-apple-darwin27.0.0\nThread model: posix\nInstalledDir: /Volumes/SSD/tools/webscene-toolchain-22.1.8/llvm/22.1.8/bin\nConfiguration file: /Volumes/SSD/tools/webscene-toolchain-22.1.8/llvm/22.1.8/bin/clang++.cfg",
+      "configuration": "/Volumes/SSD/tools/webscene-toolchain-22.1.8/llvm/22.1.8/bin/clang++.cfg",
+      "configurationSha256": "ac7ed4621b841f2103cf6162dff770b79b202dffe60b37ac6bb5406c5ea0d925",
+      "libcxxHeaders": {
+        "path": "/Volumes/SSD/tools/webscene-toolchain-22.1.8/llvm/22.1.8/include/c++/v1",
+        "files": 1679,
+        "sha256": "32a3e66e382e98c33bb6f14e2c85bf21f6bbb28c506ac0ac85d2a9d67f026281"
+      },
+      "clangHeaders": {
+        "path": "/Volumes/SSD/tools/webscene-toolchain-22.1.8/llvm/22.1.8/lib/clang/22/include",
+        "files": 303,
+        "sha256": "9f58d4913aa8a78e52ce087f689c534c3c8fe524368857460ffb860bb18dffe6"
+      }
+    },
+    "macOSSDK": {
+      "path": "/Volumes/SSD/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk",
+      "version": "26.5",
+      "buildVersion": "25F70"
+    },
+    "relocation": {
+      "sdkWasReadOnly": true,
+      "consumerSourceOutsideProducer": true,
+      "executionCwdOutsideSDK": true,
+      "output": "macos-profile-pass",
+      "dyldLoadedRelocatedDawn": "/var/folders/75/zbbvxqqn0nq344djj53fzz0h0000gn/T/webscene-macos-profile-i_i61p81/relocated/read-only/sdk/lib/libwebgpu_dawn.dylib"
+    },
+    "sdkManifestSources": {
+      "AppScene": {
+        "revision": "68a9dbd15e6b02e4bec0a76d5190713868b6517a",
+        "developmentWorkingTree": false,
+        "patchSha256": null,
+        "untrackedFiles": {}
+      },
+      "WebScene": {
+        "revision": "09ccb478fccc9f136de4614a06bcbb616191d209",
+        "developmentWorkingTree": false,
+        "patchSha256": null,
+        "untrackedFiles": {}
+      }
+    },
+    "binaries": [
+      {
+        "path": "consumer-build/webscene_macos_profile_consumer",
+        "sha256": "9d4ae807d4d7ec3a47036938c99ca6da0026af2f066ae6937ab6c20bd69f1b1d",
+        "dependencies": [
+          "@rpath/libwebgpu_dawn.dylib",
+          "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
+          "/System/Library/Frameworks/IOSurface.framework/Versions/A/IOSurface",
+          "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+          "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+          "/usr/lib/libc++.1.dylib",
+          "/usr/lib/libSystem.B.dylib"
+        ],
+        "rpaths": [
+          "/var/folders/75/zbbvxqqn0nq344djj53fzz0h0000gn/T/webscene-macos-profile-i_i61p81/relocated/read-only/sdk/lib"
+        ]
+      },
+      {
+        "path": "relocated/read-only/sdk/bin/webscene-uic",
+        "sha256": "68a8f6d196ebf824ed783b1a2d0f994abccf2191310eb9501aaab7bf904af509",
+        "dependencies": [
+          "/usr/lib/libiconv.2.dylib",
+          "/usr/lib/libc++.1.dylib",
+          "/usr/lib/libSystem.B.dylib"
+        ],
+        "rpaths": []
+      },
+      {
+        "path": "relocated/read-only/sdk/bin/webscene-jsc",
+        "sha256": "70049acc5610fc60309b79ad942df30e84572ec73932644989c563ede77506cd",
+        "dependencies": [
+          "/System/Library/Frameworks/AVFoundation.framework/Versions/A/AVFoundation",
+          "/System/Library/Frameworks/CoreMedia.framework/Versions/A/CoreMedia",
+          "@rpath/libwebgpu_dawn.dylib",
+          "/usr/lib/libiconv.2.dylib",
+          "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+          "/System/Library/Frameworks/IOSurface.framework/Versions/A/IOSurface",
+          "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+          "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
+          "/System/Library/Frameworks/Security.framework/Versions/A/Security",
+          "/usr/lib/libz.1.dylib",
+          "/usr/lib/libc++.1.dylib",
+          "/usr/lib/libSystem.B.dylib",
+          "/System/Library/Frameworks/AVFAudio.framework/Versions/A/AVFAudio",
+          "/usr/lib/libobjc.A.dylib"
+        ],
+        "rpaths": [
+          "@loader_path/../lib"
+        ]
+      },
+      {
+        "path": "relocated/read-only/sdk/lib/libwebgpu_dawn.dylib",
+        "sha256": "4e9e816812a81824211c2d9dea7d7962230b1fd1680430b9cea7578f83cd8f24",
+        "dependencies": [
+          "@rpath/libwebgpu_dawn.dylib",
+          "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+          "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
+          "/System/Library/Frameworks/IOSurface.framework/Versions/A/IOSurface",
+          "/System/Library/Frameworks/QuartzCore.framework/Versions/A/QuartzCore",
+          "/System/Library/Frameworks/Cocoa.framework/Versions/A/Cocoa",
+          "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+          "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+          "/usr/lib/libc++.1.dylib",
+          "/usr/lib/libSystem.B.dylib",
+          "/usr/lib/libobjc.A.dylib"
+        ],
+        "rpaths": []
+      }
+    ]
+  },
+  "firstAttempt": {
+    "status": "failed",
+    "output": "/Volumes/SSD/sdks/spotify-css-media-qualified-20260917",
+    "reason": "appscene_companion_service timed out waiting for its process-tree record; isolated unchanged rerun passed, then full unchanged producer passed in a fresh output. Test timeout was not weakened."
+  },
+  "manualDemo": {
+    "path": "/Volumes/SSD/builds/spotify-media-qualified-demo-20260917/spotify_catalog.app",
+    "verifiedPid": 13760,
+    "observation": "Native window renders album artwork and circular artists. Header clipping remains. User changed window during attempted resize; no physical-frame performance claim.",
+    "gpuSuite": false
+  },
+  "ciMonitored": false
+}

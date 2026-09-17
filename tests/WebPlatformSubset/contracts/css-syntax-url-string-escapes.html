@@ -1,0 +1,129 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' data:">
+<base href="/css-url-base/nested/index.html">
+<title>CSS string and url() escape decoding contracts</title>
+<link rel="help" href="https://drafts.csswg.org/css-syntax/#consume-escaped-code-point">
+<link rel="help" href="https://drafts.csswg.org/css-syntax/#consume-string-token">
+<link rel="help" href="https://drafts.csswg.org/css-syntax/#consume-url-token">
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+
+<script>
+  function elementWith(property, value) {
+    const element = document.createElement("div");
+    document.body.appendChild(element);
+    element.style.setProperty(property, value);
+    return element;
+  }
+  function stableSerialization(property, value) {
+    const first = elementWith(property, value).style.getPropertyValue(property);
+    const second = elementWith(property, first).style.getPropertyValue(property);
+    assert_equals(second, first);
+    return first;
+  }
+</script>
+
+<body>
+<script>
+  test(() => {
+    const authored = 'url("http\\:\\/\\/127\\.0\\.0\\.1\\:58410\\/oss-dev\\/vscode-remote-resource")';
+    const element = elementWith("background-image", authored);
+    assert_equals(
+      element.style.backgroundImage,
+      'url("http://127.0.0.1:58410/oss-dev/vscode-remote-resource")');
+    assert_equals(
+      getComputedStyle(element).backgroundImage,
+      'url("http://127.0.0.1:58410/oss-dev/vscode-remote-resource")');
+  }, "quoted url() decodes escaped punctuation before URL parsing");
+
+  test(() => {
+    const element = elementWith(
+      "background-image",
+      'url(http\\:\\/\\/example\\.test\\/a\\(b\\)\\ c.png)');
+    assert_equals(
+      element.style.backgroundImage,
+      'url("http://example.test/a(b) c.png")');
+    assert_equals(
+      getComputedStyle(element).backgroundImage,
+      'url("http://example.test/a(b)%20c.png")');
+  }, "unquoted url() decodes escaped parentheses and whitespace");
+
+  test(() => {
+    const element = elementWith(
+      "background-image",
+      'url("https\\3a //example\\2e test/\\0000E9/\\1F642.png")');
+    assert_equals(
+      element.style.backgroundImage,
+      'url("https://example.test/é/🙂.png")');
+    assert_equals(
+      getComputedStyle(element).backgroundImage,
+      'url("https://example.test/%C3%A9/%F0%9F%99%82.png")');
+  }, "hex escapes consume one to six digits and one optional whitespace character");
+
+  test(() => {
+    const value = '"colon\\: slash\\/ dot\\. quote\\\" backslash\\\\ ' +
+      'paren\\( space\\  hex\\41 \\000042\\43  unicode\\E9 \\1F642 nul\\0 end"';
+    const serialization = stableSerialization("content", value);
+    assert_equals(
+      serialization,
+      '"colon: slash/ dot. quote\\\" backslash\\\\ paren( space  ' +
+        'hexABC unicodeé🙂nul�end"');
+  }, "string tokens decode punctuation, hex, non-ASCII, NUL, quotes, and backslashes");
+
+  test(() => {
+    const element = elementWith(
+      "background-image",
+      'url("relative\\2e png"), url("data\\3a image/svg+xml,%3Csvg/%3E"), ' +
+        'url("#fr\\61 g")');
+    assert_equals(
+      element.style.backgroundImage,
+      'url("relative.png"), url("data:image/svg+xml,%3Csvg/%3E"), url("#frag")');
+    assert_equals(
+      getComputedStyle(element).backgroundImage,
+      'url("' + location.origin + '/css-url-base/nested/relative.png"), ' +
+        'url("data:image/svg+xml,%3Csvg/%3E"), url("#frag")');
+  }, "multiple relative, data, and fragment URLs decode independently");
+
+  test(() => {
+    const once = stableSerialization(
+      "background-image", 'url("data:text/plain,\\5c 31")');
+    assert_equals(once, 'url("data:text/plain,\\\\31")');
+  }, "parse and serialize cycles decode each escape exactly once");
+
+  test(() => {
+    const continued = stableSerialization(
+      "background-image", 'url("data:text/plain,line\\\ncontinued")');
+    assert_equals(continued, 'url("data:text/plain,linecontinued")');
+    assert_equals(
+      elementWith("background-image", "url(bad space.png)").style.backgroundImage,
+      "");
+    assert_equals(
+      elementWith("background-image", 'url("bad\nline")').style.backgroundImage,
+      "");
+    assert_equals(
+      elementWith("background-image", 'url("unterminated)').style.backgroundImage,
+      'url("unterminated)")');
+  }, "line continuations and malformed url() recovery follow token boundaries");
+
+  const blockedJavascript = elementWith(
+    "background-image", 'url("j\\61 vascript:alert(1)")');
+  const blockedCrossOrigin = elementWith(
+    "background-image", 'url("h\\74 tps://blocked.invalid/image.png")');
+  async_test(testCase => {
+    setTimeout(testCase.step_func_done(() => {
+      assert_equals(
+        blockedJavascript.style.backgroundImage,
+        'url("javascript:alert(1)")');
+      assert_equals(
+        blockedCrossOrigin.style.backgroundImage,
+        'url("https://blocked.invalid/image.png")');
+      const forbidden = performance.getEntriesByType("resource").filter(entry =>
+        entry.name.startsWith("javascript:") || entry.name.includes("blocked.invalid"));
+      assert_less_than_equal(forbidden.length, 2);
+      assert_equals(forbidden.every(entry =>
+        entry.transferSize === 0 && entry.encodedBodySize === 0), true);
+    }), 100);
+  }, "escaped schemes are decoded before CSP and resource admission");
+</script>

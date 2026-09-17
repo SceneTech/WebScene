@@ -156,6 +156,35 @@
     void recompute_cascaded_line_height(dom_node& node,const std::vector<const css_rule*>& rules)
     { css::recompute_cascaded_line_height(node,rules,css_variables); }
 
+    std::string current_css_base_address()
+    {
+        auto base = current_base_address();
+        if (base.empty()) {
+            const auto local_context = isolate->GetCurrentContext();
+            if (!local_context.IsEmpty()) {
+                v8::Local<v8::Value> location_value;
+                if (local_context->Global()->Get(
+                        local_context,
+                        js_string(isolate, "location")).ToLocal(&location_value)
+                    && location_value->IsObject()) {
+                    v8::Local<v8::Value> href_value;
+                    if (location_value.As<v8::Object>()->Get(
+                            local_context,
+                            js_string(isolate, "href")).ToLocal(&href_value)) {
+                        base = to_utf8(isolate, href_value);
+                    }
+                }
+            }
+        }
+        for (auto* candidate : document.query_selector_all(active_root(), "base")) {
+            if (candidate == nullptr) continue;
+            const auto href = candidate->attributes.find("href");
+            if (href == candidate->attributes.end() || href->second.empty()) continue;
+            return resolve_resource_url(href->second, base);
+        }
+        return base;
+    }
+
     void apply_css_declaration(dom_node& node, const css_declaration& declaration, bool inline_origin = false)
     {
 #if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
@@ -182,14 +211,20 @@
             record_feature("css","custom-property","supported",{},"style-application");
             return;
         }
+        auto resolved_declaration = declaration;
+        if (name == "background" || name == "background-image") {
+            resolved_declaration.value = resolve_css_resource_urls(
+                declaration.value,
+                current_css_base_address());
+        }
         feature_decision decision(
             *this,
             "css",
             "property:" + name,
             "style-application");
-        css::apply_declaration(document,node,declaration,css_variables,inline_origin,decision,
+        css::apply_declaration(document,node,resolved_declaration,css_variables,inline_origin,decision,
             [this](const std::string& url,std::string& markup,std::string& resolved,std::string& view_box) {
-                if(!load_text_resource(url,current_base_address(),WEBSCENE_RESOURCE_IMAGE,markup,resolved))
+                if(!load_text_resource(url,current_css_base_address(),WEBSCENE_RESOURCE_IMAGE,markup,resolved))
                     return false;
                 view_box=svg_view_box(markup);
                 return true;

@@ -6,6 +6,41 @@
 #include <vector>
 
 namespace webscene_native::resources {
+inline std::string normalize_hierarchical_url_path(std::string value)
+    {
+        const auto scheme_end = value.find("://");
+        if (scheme_end == std::string::npos) return value;
+        const auto path_begin = value.find('/', scheme_end + 3U);
+        if (path_begin == std::string::npos) return value;
+        const auto suffix_begin = value.find_first_of("?#", path_begin);
+        const auto path_end = suffix_begin == std::string::npos
+            ? value.size() : suffix_begin;
+        const auto preserve_trailing_slash = path_end > path_begin
+            && value[path_end - 1U] == '/';
+        std::vector<std::string> segments;
+        for (size_t cursor = path_begin + 1U; cursor <= path_end;) {
+            auto end = value.find('/', cursor);
+            if (end == std::string::npos || end > path_end) end = path_end;
+            const auto segment = value.substr(cursor, end - cursor);
+            if (segment == "..") {
+                if (!segments.empty()) segments.pop_back();
+            } else if (!segment.empty() && segment != ".") {
+                segments.push_back(segment);
+            }
+            if (end == path_end) break;
+            cursor = end + 1U;
+        }
+        std::ostringstream result;
+        result << value.substr(0U, path_begin) << '/';
+        for (size_t index = 0U; index < segments.size(); ++index) {
+            if (index != 0U) result << '/';
+            result << segments[index];
+        }
+        if (preserve_trailing_slash && !segments.empty()) result << '/';
+        if (suffix_begin != std::string::npos) result << value.substr(suffix_begin);
+        return result.str();
+    }
+
 inline std::string resolve_url(std::string value, const std::string& base)
     {
         if (value.empty()) return {};
@@ -22,7 +57,7 @@ inline std::string resolve_url(std::string value, const std::string& base)
                 [](unsigned char character) {
                     return std::isalnum(character) || character == '+' || character == '-' || character == '.';
                 })) {
-            return value;
+            return normalize_hierarchical_url_path(std::move(value));
         }
         const auto base_scheme = base.find("://");
         if (value.starts_with("//")) {

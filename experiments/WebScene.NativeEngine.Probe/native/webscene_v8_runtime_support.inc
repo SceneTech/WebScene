@@ -569,15 +569,18 @@ std::string serialize_cssom_specified_value(
     std::string_view property_name,
     const std::string& value)
 {
+    const auto normalized = css::serialize_css_string_and_url_tokens(value);
+    if (!normalized.has_value()) return {};
+    const auto& serialized_value = *normalized;
     if (!is_css_color_value_property(property_name)
-        || value.empty()
-        || value.front() != '#'
-        || (value.size() != 4U && value.size() != 5U
-            && value.size() != 7U && value.size() != 9U)) {
-        return value;
+        || serialized_value.empty()
+        || serialized_value.front() != '#'
+        || (serialized_value.size() != 4U && serialized_value.size() != 5U
+            && serialized_value.size() != 7U && serialized_value.size() != 9U)) {
+        return serialized_value;
     }
 
-    const auto color = native_document::parse_color(value);
+    const auto color = native_document::parse_color(serialized_value);
     const auto red = static_cast<unsigned>((color >> 24U) & 0xFFU);
     const auto green = static_cast<unsigned>((color >> 16U) & 0xFFU);
     const auto blue = static_cast<unsigned>((color >> 8U) & 0xFFU);
@@ -621,6 +624,7 @@ bool valid_cssom_declaration_value(std::string_view property_name, std::string_v
 {
     if (property_name.starts_with("--") || value.empty()) return true;
 
+    if (!css::serialize_css_string_and_url_tokens(value).has_value()) return false;
     const auto first = value.find_first_not_of(" \t\r\n\f\v");
     if (first == std::string_view::npos) return false;
     const auto last = value.find_last_not_of(" \t\r\n\f\v");

@@ -851,6 +851,19 @@ if(WEBSCENE_NATIVE_ENGINE_ENABLE_V8)
         set_tests_properties(webscene_css_effect_values_tests PROPERTIES
             TIMEOUT 30
             LABELS "native;css;effects;performance;lifecycle")
+        add_executable(webscene_css_url_escape_oracle_tests
+            tests/native_css_url_escape_oracle_tests.cpp
+            native/webscene_css_parser.cpp)
+        target_compile_features(webscene_css_url_escape_oracle_tests PRIVATE cxx_std_20)
+        target_include_directories(webscene_css_url_escape_oracle_tests PRIVATE native)
+        target_link_libraries(webscene_css_url_escape_oracle_tests PRIVATE
+            webscene_native_engine
+            webscene_html_parser)
+        add_test(NAME webscene_css_url_escape_oracle_tests
+            COMMAND webscene_css_url_escape_oracle_tests)
+        set_tests_properties(webscene_css_url_escape_oracle_tests PROPERTIES
+            TIMEOUT 45
+            LABELS "native;css;syntax;resource;security;performance;lifecycle")
         add_test(NAME webscene_native_idle_v8_platform COMMAND webscene_native_engine_tests)
         add_test(NAME webscene_native_dom_punctuation_keyboard COMMAND webscene_native_engine_tests)
         add_test(NAME webscene_native_shortcut_activation COMMAND webscene_native_engine_tests)

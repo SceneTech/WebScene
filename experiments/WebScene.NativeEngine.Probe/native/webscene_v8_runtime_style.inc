@@ -639,6 +639,7 @@
         const auto specified_value = serialize_cssom_specified_value(
             canonical_name,
             value);
+        if (specified_value.empty() && !value.empty()) return;
         const auto existing = authored.declarations.find(canonical_name);
         const auto existing_important =
             authored.important_declarations.contains(canonical_name);
@@ -959,7 +960,7 @@
             const auto retained_inline_mask = node->style.inline_property_mask;
             node->style.inline_property_mask &= ~property_mask;
             self->apply_css_declaration(
-                *node, {canonical_name, value, important}, true);
+                *node, {canonical_name, specified_value, important}, true);
             node->style.inline_property_mask = retained_inline_mask | property_mask;
         } else if (name == "color") {
             node->style.foreground_rgba = native_document::parse_color(value);
@@ -2230,6 +2231,7 @@
         const auto specified_value = serialize_cssom_specified_value(
             canonical_name,
             value);
+        if (specified_value.empty() && !value.empty()) return;
         const auto existing = authored.declarations.find(canonical_name);
         const auto all_has_superseded = canonical_name == "all"
             && std::any_of(
@@ -2519,7 +2521,7 @@
             || canonical_name == "background-size") {
             const auto retained_inline_mask = node->style.inline_property_mask;
             node->style.inline_property_mask &= ~property_mask;
-            self->apply_css_declaration(*node, {canonical_name, value, false});
+            self->apply_css_declaration(*node, {canonical_name, specified_value, false});
             node->style.inline_property_mask = retained_inline_mask | property_mask;
         } else if (name == "overflow") {
             std::istringstream stream(value);

@@ -56,7 +56,7 @@
     {
         std::vector<css_declaration> result;
 #if defined(WEBSCENE_NATIVE_ENGINE_CSSPARSER)
-        return css::parse_declarations(body, preserve_empty_custom_properties);
+        result = css::parse_declarations(body, preserve_empty_custom_properties);
 #else
         size_t cursor = 0;
         while (cursor < body.size()) {
@@ -95,6 +95,12 @@
             cursor = end + 1U;
         }
 #endif
+        for (auto& declaration : result) {
+            if (declaration.name.starts_with("--")) continue;
+            const auto normalized = css::serialize_css_string_and_url_tokens(
+                declaration.value);
+            if (normalized.has_value()) declaration.value = *normalized;
+        }
         return result;
     }
 

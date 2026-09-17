@@ -57,6 +57,18 @@
       assert(message.data.sourceStable && message.data.listedStable,
         "Clients get/matchAll lost stable client id");
       assert(message.data.clientBrand, "Client wrappers lost WindowClient brand");
+      assert(message.data.clientsBrand, "Clients interface brand mismatch");
+      assert(message.data.descriptors, "Clients/Client IDL descriptors mismatch");
+      assert(message.data.incompatibleReceivers.clients,
+        "Clients method accepted an incompatible receiver");
+      assert(message.data.incompatibleReceivers.client,
+        "Client attribute accepted an incompatible receiver");
+      assert(message.data.incompatibleReceivers.windowClient,
+        "WindowClient attribute accepted an incompatible receiver");
+      assert(message.data.incompatibleReceivers.clientMethod,
+        "Client method accepted an incompatible receiver");
+      assert(message.data.incompatibleReceivers.windowClientMethod,
+        "WindowClient method accepted an incompatible receiver");
       assert(message.data.client.type === "window", "Client.type mismatch");
       assert(message.data.client.url === location.href, "Client.url mismatch");
       assert(typeof message.data.client.focused === "boolean",

@@ -352,13 +352,21 @@
                         delete globalThis.__webSceneServiceWorkerGlobalControl;
                         function Client() { throw new TypeError('Illegal constructor'); }
                         function WindowClient() { throw new TypeError('Illegal constructor'); }
+                        function Clients() { throw new TypeError('Illegal constructor'); }
                         Object.setPrototypeOf(WindowClient.prototype, Client.prototype);
                         Object.defineProperty(Client.prototype, Symbol.toStringTag,
                           {value:'Client', configurable:true});
                         Object.defineProperty(WindowClient.prototype, Symbol.toStringTag,
                           {value:'WindowClient', configurable:true});
+                        Object.defineProperty(Clients.prototype, Symbol.toStringTag,
+                          {value:'Clients', configurable:true});
                         const clientState = new WeakMap();
                         const clientWrappers = new Map();
+                        const clientSnapshot = value => {
+                          const snapshot = clientState.get(value);
+                          if (!snapshot) throw new TypeError('Illegal invocation');
+                          return snapshot;
+                        };
                         const hydrateClient = snapshot => {
                           if (!snapshot) return undefined;
                           let value = clientWrappers.get(snapshot.id);
@@ -374,35 +382,66 @@
                           Symbol.for('webscene.internal.serviceWorkerClient'),
                           {value:hydrateClient});
                         Object.defineProperties(Client.prototype, {
-                          id: {get() { return clientState.get(this).id; }},
-                          type: {get() { return clientState.get(this).type; }},
-                          url: {get() { return clientState.get(this).url; }},
+                          id: {get() { return clientSnapshot(this).id; },
+                            enumerable:true, configurable:true},
+                          type: {get() { return clientSnapshot(this).type; },
+                            enumerable:true, configurable:true},
+                          url: {get() { return clientSnapshot(this).url; },
+                            enumerable:true, configurable:true},
                           postMessage: {value(message, options = []) {
-                            control('post', clientState.get(this).id, message, options);
-                          }, writable:true, configurable:true}
+                            control('post', clientSnapshot(this).id, message, options);
+                          }, writable:true, enumerable:true, configurable:true}
                         });
                         Object.defineProperties(WindowClient.prototype, {
-                          focused: {get() { return true; }},
-                          visibilityState: {get() { return 'visible'; }},
-                          frameType: {get() { return clientState.get(this).frameType; }},
-                          focus: {value() { return Promise.resolve(this); },
-                            writable:true, configurable:true}
+                          focused: {get() { clientSnapshot(this); return true; },
+                            enumerable:true, configurable:true},
+                          visibilityState: {get() {
+                            clientSnapshot(this); return 'visible';
+                          }, enumerable:true, configurable:true},
+                          frameType: {get() { return clientSnapshot(this).frameType; },
+                            enumerable:true, configurable:true},
+                          focus: {value() {
+                            return Promise.resolve().then(() => {
+                              clientSnapshot(this);
+                              return this;
+                            });
+                          }, writable:true, enumerable:true, configurable:true}
                         });
-                        const clients = Object.freeze({
-                          get(id) {
-                            return Promise.resolve(hydrateClient(control('get', String(id))));
-                          },
-                          matchAll(options = {}) {
-                            const type = options.type === undefined
-                              ? 'all' : String(options.type);
-                            return Promise.resolve(control('list', type).map(hydrateClient));
-                          },
-                          claim() { control('claim'); return Promise.resolve(); }
+                        const clientsState = new WeakSet();
+                        const requireClients = value => {
+                          if (!clientsState.has(value)) {
+                            throw new TypeError('Illegal invocation');
+                          }
+                        };
+                        Object.defineProperties(Clients.prototype, {
+                          get: {value:function(id) {
+                            return Promise.resolve().then(() => {
+                              requireClients(this);
+                              return hydrateClient(control('get', String(id)));
+                            });
+                          }, writable:true, enumerable:true, configurable:true},
+                          matchAll: {value:function(options = {}) {
+                            return Promise.resolve().then(() => {
+                              requireClients(this);
+                              const type = options.type === undefined
+                                ? 'all' : String(options.type);
+                              return control('list', type).map(hydrateClient);
+                            });
+                          }, writable:true, enumerable:true, configurable:true},
+                          claim: {value:function() {
+                            return Promise.resolve().then(() => {
+                              requireClients(this);
+                              control('claim');
+                            });
+                          }, writable:true, enumerable:true, configurable:true}
                         });
+                        const clients = Object.create(Clients.prototype);
+                        clientsState.add(clients);
                         Object.defineProperties(globalThis, {
                           Client: {value:Client, writable:true, configurable:true},
                           WindowClient: {value:WindowClient, writable:true, configurable:true},
-                          clients: {value:clients, enumerable:true},
+                          Clients: {value:Clients, writable:true, configurable:true},
+                          clients: {value:clients, enumerable:true, configurable:true},
                           skipWaiting: {
                             value() { return Promise.resolve(); },
                             writable:true, configurable:true

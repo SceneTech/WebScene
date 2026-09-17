@@ -521,8 +521,8 @@ sandbox DOMTokenList and capability/API ledgers. Regenerating bindings from the
 combined exposure manifest resolves the generated hash conflict (24 interfaces,
 185 members). The separate native Spotify startup correction `94171a32` is
 documented in [the MessagePort report](spotify-messageport-startup-20260917.md).
-It enables populated native profiling but does not resolve the remaining artwork,
-header or matched-resize visual acceptance issues.
+It enables populated native profiling. The later AppScene integration correction
+below resolves artwork; header and matched-resize visual acceptance remain open.
 
 Cumulative local validation on `5b57af96`: certification and production pass the
 140 route cases, four stable-text cases, 36 vector cases and original batched
@@ -533,7 +533,7 @@ checks pass; the production worker/MessagePort suite passes. A mistaken
 `html-anchor` filter selected zero documents and is excluded: the corrected
 `dom-anchor-element` run supplies its five passing checks.
 
-The exact packaged-SDK/theme gate is **not qualified**. The clean producer attempt
+The initial clean producer attempt
 at WebScene `5b57af96` / AppScene `9f434e0` stops at dependency-profile validation:
 the available cached Skia SDK hashes to `8d2cb51c...`, while the current lock
 requires `bcd81c64...`; its build-argument hash also differs. The cached dependency
@@ -541,8 +541,23 @@ manifest predates the compiler-profile lock. The pinned LLVM compiler and V8
 artifacts themselves match their expected identities, but that is insufficient
 to qualify the whole dependency closure. No lock, hash or manifest was weakened.
 The older local development SDK/demo is not promoted to an exact packaged-SDK
-release result. Obtaining/building the locked Skia input and rerunning the
-read-only installed Kestrel gate remain required.
+release result.
+
+Follow-up: this attempt used AppScene main without the raster renderer still on
+PR #84. Merging main into that existing feature branch yields AppScene `3b00e895`
+with its original codec-enabled Skia lock, matching the available artifact.
+The normal producer now passes with WebScene `6da8c56c`, without weakening any
+hash/profile check. All 16 native AppScene tests and the relocated, read-only,
+source-denied SDK consumer build/incremental gates pass. The optional GPU
+presentation suite was not run. The corrected native Spotify window shows real
+album and circular artist artwork; the header remains clipped. The installed
+Kestrel smoke and existing parsed/compiled DOM/style/layout parity scripts both
+pass inside that source-denial sandbox: 376/376 nodes at 1280×800 dark/Home,
+298/298 at 980×620 dark/Text, and 311/311 at 1440×900 light/Drafting, with zero
+differences. Theme switching uses `applyTheme()` and the root dataset attribute.
+This is the existing three-snapshot gate, not a claim that every earlier bespoke
+theme probe was rerun. Reports are under
+`/Volumes/SSD/builds/spotify-css-qualification-20260917/`.
 
 ### Remaining acceptance work
 

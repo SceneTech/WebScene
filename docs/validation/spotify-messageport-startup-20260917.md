@@ -59,3 +59,25 @@ its peer.
 Local evidence: `/tmp/css-messageport-{tests,spotify-probe}-20260917.log`,
 `/tmp/css-messageport-native-20260917/results.json`, and
 `/tmp/css-messageport-chrome-20260917/results.json`.
+
+## Follow-up: correct AppScene renderer integration
+
+The placeholder observation above used AppScene main `9f434e0`, which does not
+yet include PR #84's `webscene-raster-v1` renderer. It was an integration error,
+not evidence that the image decode path in this WebScene revision was broken.
+The existing AppScene raster pixel regression fails against that main-only SDK
+(exit 4), and passes after merging main into the Spotify renderer branch.
+
+The corrected installed SDK combines WebScene `6da8c56c` with AppScene
+`3b00e895`, pinned LLVM 22.1.8 and PR #84's existing codec-enabled Skia lock.
+Its normal producer passes manifest integrity, the compiler/runtime profile and
+all 16 AppScene native tests. Source-denied, relocated, read-only consumer
+qualification also passes (without the optional GPU presentation suite).
+Installed Kestrel smoke and parsed/compiled parity pass in the same source-denial
+sandbox: dark/Home, dark/Text and light/Drafting have 376, 298 and 311 matching
+nodes respectively, with zero DOM/style/layout differences.
+
+The native Spotify window now visibly renders album covers and circular artist
+artwork. The header is still clipped; layout and physical resize performance
+remain unaccepted. The manual app is
+`/Volumes/SSD/builds/spotify-qualified-demo-20260917/spotify_catalog.app`.

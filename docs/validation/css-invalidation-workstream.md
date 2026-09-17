@@ -50,6 +50,12 @@ used.
   parent/ancestor anchors; nested/sibling routes reach affected final subjects.
   Candidate projection ignores pseudos while retaining tag/class/ID/attribute
   filters, so subjects that stopped matching after removal still get recascaded.
+- Group structural rules by compiled route and mandatory outer ID/class/tag/
+  attribute key. Traverse each distinct route once to select candidate rule IDs,
+  then reuse the existing invalidation path. Functional pseudo arms are not keys;
+  compounds without a mandatory feature remain universal candidates. Indexes move
+  with their browsing-context cascade, rebuild on stylesheet changes, and are
+  included in CSS index memory accounting.
 - Use completed child lists for insertion/removal/replacement/reparenting APIs,
   including fragments, HTML and text setters. Refresh source and destination
   structural subjects, then inserted subtrees for ancestry/inheritance. Connected
@@ -122,9 +128,11 @@ WEBSCENE_NATIVE_ENGINE_TEST_FILTER=css-invalidation-scaling \
 
 ## Component-size matrix and measured matching bottleneck
 
-The same native filter now runs 48 cases: twelve component shapes, 8/128 affected
-targets, and 32/1,024 unrelated nodes plus unrelated rules. Each case adds then
-removes selector state and checks every target's computed width. All seven counters
+The same native filter now runs 76 cases: thirteen component shapes with ordinary
+unrelated rules (52 cases), plus six structural shapes with unrelated structural
+rules (24 cases); both use 8/128 affected targets and 32/1,024 unrelated nodes/rule
+families. Each case adds then removes selector state and checks every target's
+computed width. All eight counters
 must be identical at both unrelated sizes; work must stay within a linear
 component-size ceiling and avoid document fallback. Inputs are block-level so this
 is a style/invalidation fixture rather than an inline wrapping benchmark.
@@ -175,7 +183,7 @@ positions/counts per parent only for the current immutable matching pass, and is
 discarded/reset with the existing relationship memo before changed states.
 Calls outside such a pass keep the uncached matcher. This preserves the existing
 matching semantics rather than claiming new namespace or `nth-child(... of S)`
-support. Unrelated *structural* rule scaling remains to be measured. Operation
+support. The later route-index stage below adds unrelated structural-rule scaling. Operation
 counts are not a timing or end-to-end browser-speed claim.
 
 The certification build passes all 48 cases with identical eight-counter vectors
@@ -224,15 +232,49 @@ character-data/CSSOM mutation paths still need the browser-referenced audit.
 The rest of the optimization plan remains open; no Chrome-speed advantage follows
 from the structural operation counts.
 
+### Keyed structural-rule scaling
+
+The original matrix grew ordinary unrelated rules, so it missed scanning the
+entire structural-rule list on every mutation. A new mode gives each unrelated
+node a rule family containing `:empty`, `:has(.irrelevant)`, and `:nth-child(2n)`.
+With eight affected siblings, growing unrelated families from 32 to 1,024 made the
+pre-index path grow from **198 to 6,150 plan lookups**, **689 to 21,521 candidate
+visits**, and **866 to 25,666 compound checks**. Rule checks, cascades, and computed
+widths were unchanged; the new bounded-work regression failed.
+
+Per-route mandatory-feature indexes now keep those figures at **31 lookups,
+54 candidate visits, and 66 compound checks** at both unrelated sizes. The
+lookup/candidate counters include the new route selection and feature-index work;
+the result is not achieved by hiding the scan outside instrumentation. Distinct
+routes are traversed once for candidate selection, not once per unrelated rule.
+Only selected rule IDs are copied across cascade work, not the entire index.
+
+All 24 structural-noise cases and the 52 ordinary-noise cases pass certification
+semantic checks and exact eight-counter equality across unrelated sizes, with zero
+document fallback and bounded linear component work. The new mode is included in
+the normal native suite and `css-invalidation-scaling` filter; the focused
+`css-structural-rule-scaling` filter runs only these 24 cases.
+
+The contract passes **73/73 in Chrome and WebScene**. Additions cover escaped ID,
+class and attribute keys, HTML attribute case folding, tag keys, universal/nested
+functional selectors, and index freshness after rule delete/insert, stylesheet
+replacement and owner reattachment. Compiler tests cover key decoding, route
+deduplication, universal fallback and relational parent/ancestor buckets. Seven
+adjacent native groups and seven adjacent WPT contracts (**48 checks**) also pass.
+The production build passes all 76 semantic cases and the 73-check structural
+contract; additional iframe dynamic-recascade and shared-shadow-value native
+groups pass after rebuilding without certification telemetry.
+These are operation-count and correctness results; timing and total synchronous
+style-read/layout cost remain separate, and no browser-speed advantage is claimed.
+
 ### Remaining acceptance work
 
 1. Extend the implemented descendant/sibling/custom-property/disabled/relational
    matrix to structural mutations, media/container queries, and additional dynamic
    state. Continue measuring matching and cascade work, not just plan traversal.
-2. Finish the structural checkpoint audit above and profile
-   unrelated structural-rule growth. Compiled child-list, nested-selector and
-   inherited-control routes are implemented; this does not claim broader selector
-   matching conformance.
+2. Finish the structural checkpoint audit above. Compiled child-list,
+   mandatory-feature structural-rule indexes, nested-selector and inherited-control
+   routes are implemented; this does not claim broader selector matching conformance.
 3. Broaden checkpoint consistency to remaining DOM/CSSOM mutation paths. ID and
    dataset are covered; inline-style and several dynamic-state paths retain their
    existing handling. Distinguish fragment navigation's designated `:target` from

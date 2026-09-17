@@ -6799,6 +6799,18 @@ v8_dom_runtime::memory_metrics v8_dom_runtime::read_memory_metrics() const noexc
         }
         return bytes;
     };
+    const auto child_list_index_storage = [&](const auto& buckets) {
+        uint64_t bytes = buckets.capacity() * sizeof(css::css_child_list_bucket);
+        for (const auto& bucket : buckets) {
+            bytes += bucket.route.capacity() * sizeof(css::css_invalidation_step)
+                + bucket.universal.capacity() * sizeof(size_t)
+                + indexed_rule_storage(bucket.by_id)
+                + indexed_rule_storage(bucket.by_class)
+                + indexed_rule_storage(bucket.by_tag)
+                + indexed_rule_storage(bucket.by_attribute);
+        }
+        return bytes;
+    };
     result.native_css_index_storage_bytes =
         indexed_rule_storage(impl_->css_rules_by_class)
         + indexed_rule_storage(impl_->css_rules_by_id)
@@ -6808,7 +6820,7 @@ v8_dom_runtime::memory_metrics v8_dom_runtime::read_memory_metrics() const noexc
         + indexed_rule_storage(impl_->css_invalidation_rules_by_attribute)
         + indexed_rule_storage(impl_->css_invalidation_rules_by_class)
         + impl_->css_focus_rules.capacity() * sizeof(size_t)
-        + impl_->css_child_list_rules.capacity() * sizeof(size_t)
+        + child_list_index_storage(impl_->css_child_list_index)
         + impl_->unindexed_css_rules.capacity() * sizeof(size_t)
         + impl_->hover_selector_dependencies.capacity()
             * sizeof(implementation::hover_selector_dependency);
@@ -6874,7 +6886,7 @@ v8_dom_runtime::memory_metrics v8_dom_runtime::read_memory_metrics() const noexc
             + indexed_rule_storage(cascade.rules_by_attribute)
             + indexed_rule_storage(cascade.rules_by_variable_reference)
             + cascade.focus_rules.capacity() * sizeof(size_t)
-            + cascade.child_list_rules.capacity() * sizeof(size_t)
+            + child_list_index_storage(cascade.child_list_index)
             + cascade.unindexed_rules.capacity() * sizeof(size_t)
             + cascade.hover_dependencies.capacity()
                 * sizeof(implementation::hover_selector_dependency);

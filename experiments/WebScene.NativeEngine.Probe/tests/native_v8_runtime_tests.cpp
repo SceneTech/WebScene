@@ -266,10 +266,15 @@ int main()
         if (selected == "css-invalidation-scaling") {
             test_compiled_css_invalidation_scaling();
             test_compiled_css_route_scaling();
+            test_compiled_css_route_scaling(true, true);
             return 0;
         }
         if (selected == "css-structural-scaling") {
             test_compiled_css_route_scaling(true);
+            return 0;
+        }
+        if (selected == "css-structural-rule-scaling") {
+            test_compiled_css_route_scaling(true, true);
             return 0;
         }
         if (selected == "custom-element-checkpoints") {
@@ -929,6 +934,7 @@ int main()
     test_attribute_invalidation_scopes_subject_and_descendant_rules();
     test_compiled_css_invalidation_scaling();
     test_compiled_css_route_scaling();
+    test_compiled_css_route_scaling(true, true);
     test_concurrent_input_producers_remain_consumable();
     test_dom_implementation_create_html_document();
     test_mixed_continuous_input_backlog_is_coalesced();

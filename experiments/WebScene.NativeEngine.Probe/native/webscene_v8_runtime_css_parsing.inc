@@ -455,10 +455,11 @@
             auto& rules = feature_index[std::string(feature)];
             if (rules.empty() || rules.back() != index) rules.push_back(index);
         };
+        css::index_child_list_rule(index,
+            rule.payload->compiled_pseudo_origin.compounds.empty()
+                ? rule.compiled_selector() : rule.payload->compiled_pseudo_origin,
+            rule.payload->invalidation, css_child_list_index);
         for (const auto& component : rule.payload->invalidation) {
-            if (component.child_list.scope != 0U
-                && (css_child_list_rules.empty() || css_child_list_rules.back() != index))
-                css_child_list_rules.push_back(index);
             for (const auto& [name, scope] : component.attributes) {
                 static_cast<void>(scope);
                 css_attribute_dependencies.emplace(name);

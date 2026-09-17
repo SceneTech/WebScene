@@ -314,4 +314,43 @@ test(t=>{
   stage.appendChild(child);connectionObserver=null;disconnectionObserver=null;
   assert_array_equals(events,['disconnected','connected'],'nested and subsequent operations drain their own queues');
 }, 'throwing argument conversion preserves nested mutation reactions and exception identity');
+
+for (const anchor of ['#route\\2d parent:empty', '.route\\:class:empty', 'section:empty',
+  '[data\\2d state]:empty', '[DATA-STATE="on"]:empty', ':not(:has(.marker))',
+  ':is(.route-a,.route-b):empty', ':not(.missing):empty', 'section[data-state="on"]:empty']) {
+  test(t=>{
+    const stage=document.createElement('div');
+    stage.innerHTML='<section id="route-parent" class="route:class route-a" data-state="on"><i class="marker"></i></section><div id="route-out"></div>';
+    const style=document.createElement('style');
+    style.textContent='#route-out {width:11px} '+anchor+' + #route-out {width:41px}';
+    document.head.appendChild(style);document.body.appendChild(stage);
+    t.add_cleanup(()=>{stage.remove();style.remove();});
+    const parent=stage.firstElementChild,target=stage.lastElementChild,child=parent.firstChild;
+    assert_equals(getComputedStyle(target).width,'11px');
+    child.remove();assert_equals(getComputedStyle(target).width,'41px','required anchor feature reaches the changed rule');
+    parent.appendChild(child);assert_equals(getComputedStyle(target).width,'11px','old pseudo match is invalidated too');
+  }, 'structural route candidate keys preserve '+anchor);
+}
+
+test(t=>{
+  const stage=document.createElement('div'),style=document.createElement('style');
+  stage.innerHTML='<section class="route-old"><i></i></section><div id="route-refresh"></div>';
+  style.textContent='#route-refresh {width:11px} .route-old:empty + #route-refresh {width:41px}';
+  document.head.appendChild(style);document.body.appendChild(stage);
+  t.add_cleanup(()=>{stage.remove();style.remove();});
+  const parent=stage.firstElementChild,target=stage.lastElementChild,child=parent.firstChild;
+  const check=(value)=>{
+    if(child.parentNode)child.remove();
+    assert_equals(getComputedStyle(target).width,value,'empty checkpoint');
+    parent.appendChild(child);assert_equals(getComputedStyle(target).width,'11px','nonempty checkpoint');
+  };
+  check('41px');
+  style.sheet.deleteRule(1);check('11px');
+  parent.className='route-new';
+  style.sheet.insertRule('.route-new:empty + #route-refresh {width:53px}',1);check('53px');
+  style.textContent='#route-refresh {width:11px} [data-new]:empty + #route-refresh {width:67px}';
+  parent.setAttribute('data-new','yes');check('67px');
+  style.remove();parent.appendChild(child);child.remove();
+  document.head.appendChild(style);check('67px');
+}, 'structural route indexes follow rule deletion insertion replacement and stylesheet reattachment');
 </script>

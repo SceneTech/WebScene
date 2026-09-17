@@ -111,7 +111,7 @@ void test_compiled_css_invalidation_scaling()
 #endif
 }
 
-void test_compiled_css_route_scaling(bool structural_only = false)
+void test_compiled_css_route_scaling(bool structural_only = false, bool structural_noise = false)
 {
     // Two independent axes: grow the affected component and grow unrelated
     // DOM/rules. Actual matching/cascade work must follow only the first axis.
@@ -170,7 +170,9 @@ void test_compiled_css_route_scaling(bool structural_only = false)
                   document.body.innerHTML = '<main>' + markup + '</main><aside>' +
                     Array.from({length:unrelated}, (_, i) => '<div class="noise-' + i + '"></div>').join('') + '</aside>';
                   style.textContent = '.matrix-target {display:block;width:11px}' + rule +
-                    Array.from({length:unrelated}, (_, i) => '.noise-' + i + ' {height:1px}').join('');
+                    Array.from({length:unrelated}, (_, i) => STRUCTURAL_NOISE
+                      ? '.noise-' + i + ':empty, .noise-' + i + ':has(.irrelevant), .noise-' + i + ':nth-child(2n) {height:1px}'
+                      : '.noise-' + i + ' {height:1px}').join('');
                   document.head.appendChild(style);
                   const targets = Array.from(document.querySelectorAll('.matrix-target'));
                   const ready = Array.from(document.querySelectorAll('.ready'));
@@ -216,6 +218,7 @@ void test_compiled_css_route_scaling(bool structural_only = false)
                   return targets.map(node => getComputedStyle(node).width).join(',');
                 })(SHAPE,COUNT,UNRELATED))JS"};
                 source.replace(source.find("SHAPE"), 5, "'" + std::string(shape) + "'");
+                source.replace(source.find("STRUCTURAL_NOISE"), 16, structural_noise ? "true" : "false");
                 source.replace(source.find("COUNT"), 5, std::to_string(affected_count));
                 source.replace(source.find("UNRELATED"), 9, std::to_string(unrelated_count));
                 const auto expected = [&](const char* value) {
@@ -248,7 +251,8 @@ void test_compiled_css_route_scaling(bool structural_only = false)
                 require(evaluate(engine, "matrixMutation(false)", "css-route-remove.js") == expected("11px"),
                     std::string("CSS route removal failed: ") + shape);
                 std::cout << "css-route-scaling shape=" << shape << " affected=" << affected_count
-                    << " unrelated=" << unrelated_count << " mutation-and-check-ms="
+                    << " unrelated=" << unrelated_count << " structural-noise=" << structural_noise
+                    << " mutation-and-check-ms="
                     << std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
 #if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
                 std::this_thread::sleep_for(std::chrono::milliseconds(260));

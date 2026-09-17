@@ -590,8 +590,8 @@
         state.invalidation_rules_by_attribute =
             std::move(css_invalidation_rules_by_attribute);
         state.invalidation_rules_by_class = std::move(css_invalidation_rules_by_class);
-        state.child_list_rules = std::move(css_child_list_rules);
-        css_child_list_rules.clear();
+        state.child_list_index = std::move(css_child_list_index);
+        css_child_list_index.clear();
         state.focus_rules = std::move(css_focus_rules);
         state.unindexed_rules = std::move(unindexed_css_rules);
         state.attribute_dependencies = std::move(css_attribute_dependencies);
@@ -622,7 +622,7 @@
             std::move(state.invalidation_rules_by_attribute);
         css_invalidation_rules_by_class =
             std::move(state.invalidation_rules_by_class);
-        css_child_list_rules = std::move(state.child_list_rules);
+        css_child_list_index = std::move(state.child_list_index);
         css_focus_rules = std::move(state.focus_rules);
         unindexed_css_rules = std::move(state.unindexed_rules);
         css_attribute_dependencies = std::move(state.attribute_dependencies);

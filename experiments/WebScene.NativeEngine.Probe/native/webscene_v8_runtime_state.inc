@@ -334,7 +334,7 @@
     // rules without rescanning the complete stylesheet.
     css_index_string_map<std::vector<size_t>> css_invalidation_rules_by_attribute;
     css_index_string_map<std::vector<size_t>> css_invalidation_rules_by_class;
-    std::vector<size_t> css_child_list_rules;
+    std::vector<css::css_child_list_bucket> css_child_list_index;
     std::vector<size_t> css_focus_rules;
     std::vector<size_t> unindexed_css_rules;
     css_index_string_set css_attribute_dependencies;

@@ -1,0 +1,63 @@
+{
+  "schema": "webscene-css-subject-index-integration-v1",
+  "date": "2026-09-17",
+  "implementation": "9cf764f5",
+  "integration": "4e9cfd0fbd0c438f7a33dbc2789fd9fa68fe51a1",
+  "main": "ee6efa9f",
+  "nativeContracts": {
+    "documents": 10,
+    "passed": 79,
+    "failed": 0
+  },
+  "portableCss": {
+    "net8": {
+      "passed": 364,
+      "failed": 0
+    },
+    "net10": {
+      "passed": 364,
+      "failed": 0
+    }
+  },
+  "certificationScaling": {
+    "subject-index-runtime": 8,
+    "variadic-child-vector": 36,
+    "character-data-stable": 4,
+    "css-invalidation-scaling": 2,
+    "css-route-scaling": 140
+  },
+  "nativeSharedCss": "pass",
+  "focusedNativeGroups": [
+    "media-query-targeted-recascade",
+    "media-query-reentrant",
+    "media-query-list",
+    "attribute-invalidation-scope",
+    "stylesheet-cssom",
+    "dimension-variable-compatibility"
+  ],
+  "containmentLifecycle": {
+    "descendants": 4096,
+    "cycles": 100,
+    "elapsedMs": 1244.02,
+    "peakAdditionalNodes": 4101,
+    "retainedAdditionalNodes": 0
+  },
+  "preferencesLifecycle": {
+    "controls": 4096,
+    "cycles": 100,
+    "states": 200,
+    "elapsedMs": 6892.5,
+    "retainedNodesUpperBound": 1,
+    "postCleanupHeapGrowthUpperBoundBytes": 33554432
+  },
+  "productionSdkBuild": "pass",
+  "packagedSdkQualification": "not rerun at merged head",
+  "nativePresentation": "not rerun at merged head",
+  "ci": "not monitored",
+  "timingBoundary": "Spotify A/B/B/A evidence belongs to pre-merge 9cf764f5 change; no speedup established",
+  "logs": [
+    "/tmp/css-subject-index-merged-scaling-20260917.log",
+    "/tmp/css-subject-index-merged-sdk-build-20260917.log",
+    "/tmp/css-subject-index-merged-*-20260917/results.json"
+  ]
+}

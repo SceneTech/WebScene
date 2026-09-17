@@ -586,6 +586,15 @@ median breakpoint dispatch 227→196 ms (13.7%). This is another partial reducti
 not a resolved breakpoint stall; see the same report for exact evidence and the
 separate unsupported pseudo-element `getComputedStyle` API discovered by testing.
 
+The next [compiled subject-index stage](css-compiled-subject-index-20260917.md)
+fixes escaped-name misses and prevents unrelated pseudo-prefixed rules from
+amplifying candidate work. Its Spotify A/B/B/A is timing-neutral (about 195 ms),
+so it is not counted as another real-site speedup. Merge `4e9cfd0f` integrates
+main `ee6efa9f`, including the other agents' container-query and accessibility
+preference work. The combined native contract slice passes 79/79 and portable
+CSS tests 364/364 on both frameworks. Fresh packaged SDK and populated native
+Spotify/Chrome qualification remain required at this combined baseline.
+
 The [September 17 resize-stage investigation](css-resize-stage-profile.md) records
 fresh production profiles and fixes the mismatched native/Chrome benchmark waveform.
 It does not qualify physical presentation or end-to-end browser parity.

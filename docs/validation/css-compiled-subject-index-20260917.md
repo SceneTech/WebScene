@@ -90,3 +90,28 @@ are **194.801 / 195.292 ms**, means **193.622 / 193.615 ms**. This establishes
 correctness improvements are the accepted results. Both variants precede the
 next main integration. Complete values/hashes:
 [Spotify index A/B/B/A](evidence/spotify-subject-index-abba-20260917.json).
+
+## Main integration
+
+Implementation `9cf764f5` is followed by merge `4e9cfd0f`, integrating main
+`ee6efa9f` without conflicts. This retains the other agents' #254 containment /
+container-query and #255 accessibility-preference implementations, plus navigation
+and evidence-ledger changes. The shared matcher retains both container-condition
+evaluation and our immutable pseudo/host classification and compiled origins.
+
+On this merged head, all 79 checks in ten focused native contract documents pass,
+including both new ten-check profiles. Six focused native media/attribute/CSSOM/
+dimension groups and the shared CSS service pass. The dedicated containment gate
+passes 4,096 descendants × 100 cycles (1,244.02 ms; 4,101 peak additional nodes,
+zero retained nodes); the preference gate passes 4,096 controls × 100 cycles /
+200 states (6,892.5 ms, within its retained-node/heap bounds). These gates ran
+serially after compilation. Portable CSS tests pass 364/364 on each of net8.0
+and net10.0; the initial no-restore attempt lacked this worktree's assets file
+and is excluded. The full production SDK build succeeds. The merged certification
+suite also passes all eight subject-index transitions, 140 route cases, four
+stable-text cases, 36 vector cases and the two-size batched fixture. See the
+[integration summary](evidence/css-subject-index-integration-20260917.json).
+
+These are merged-source gates, not a freshly packaged/source-denied SDK or a
+manual Spotify presentation qualification. The recorded Spotify A/B/B/A belongs
+to the pre-merge change and must not be attributed to the merged engine.

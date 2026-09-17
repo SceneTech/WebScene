@@ -2374,6 +2374,14 @@
       "evidence": ["service-workers-clients-derived", "webmessaging-structured-clone-derived", "chromium-direct-neutral-contract", "vscode-oss-service-worker-message-shape"],
       "reason": "Candidate third stack for WebScene #265. It proves stable Client/WindowClient identity through Clients.get and matchAll, scope-bound controller source identity, bounded bidirectional structured clone, ArrayBuffer ownership transfer, and MessagePort transfer across the Window and isolated service-worker realms. Focused native gates additionally retire stale generations across controlled navigation, enforce the 256-message/16 MiB queue, and bound 100 transferred round trips to p95 <= 250 ms, retained V8 heap to 8 MiB, and peak-RSS growth to 64 MiB. Exact unchanged Code OSS acceptance and exported task/queue telemetry remain cumulative gates.",
       "nativeNavigation": true
+    },
+    {
+      "path": "contracts/readable-stream-fetch-event.html",
+      "type": "contract",
+      "capabilities": ["readable-stream-default-reader-controller", "response-stream-body-clone", "fetch-event-idl"],
+      "evidence": ["streams-readable-stream-derived", "service-workers-fetch-event-derived", "chromium-153-direct-neutral-contract", "vscode-oss-service-worker-response-shape"],
+      "reason": "Candidate first resource-plane stack for WebScene #266. It covers ReadableStream/default reader/controller brands and selected WebIDL descriptors, byte-chunk Response body clone/tee/bodyUsed behavior, and FetchEvent/ExtendableEvent identity in a real isolated service-worker realm. The native companion gate adds active-dispatch respondWith/waitUntil/handled behavior, duplicate and late response rejection, a streamed synthetic 206 response, top-level plus iframe realms, 100 body ownership cycles, p95 <= 50 ms, and <= 8 MiB retained heap. CacheStorage, controlled resource routing, TransformStream fallback, the Code client broker, and unchanged Markdown remain later #266 stack entries.",
+      "nativeNavigation": true
     }
   ],
   "harnessBlocked": [],

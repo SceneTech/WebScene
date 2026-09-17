@@ -423,6 +423,34 @@ int main(int argc,char** argv) {
     if(!released.expired()) return 72;
     red_payload=payload_for(".base","red");
     if(!red_payload || red_payload->declarations[0].value!="red") return 73;
+    // Classification belongs to the interned selector, not to each match.
+    const std::pair<const char*,uint8_t> classified_selectors[] = {
+        {".base",0},{".base::before",1},{".base:before",1},
+        {".base::after",2},{".base:after",2},
+        {".base::-webkit-scrollbar",3},{".base::-webkit-scrollbar-thumb",4},
+        {".base::-webkit-scrollbar-track",5},{".base::-webkit-scrollbar-corner",6},
+        {".base::backdrop",7},{".base[data-label='::before']",0}
+    };
+    for(const auto& [selector,kind]:classified_selectors) {
+        const auto payload=payload_for(selector,"red");
+        if(payload->pseudo_kind!=kind || payload->host_selector ||
+           (kind!=0 && payload->compiled_pseudo_origin.compounds!=std::vector<std::string>{".base"}) ||
+           (kind==0 && !payload->compiled_pseudo_origin.compounds.empty()) ||
+           payload_for(selector,"red")!=payload) return 166;
+    }
+    const auto host_payload=payload_for(" :host ","red");
+    if(!host_payload->host_selector || host_payload->pseudo_kind!=0 ||
+       payload_for(":host(.base)","red")->host_selector) return 167;
+    size_t compile_count=0;
+    const auto counted_payload=[&] {
+        return webscene_native::css::intern_rule_payload(payload_mutex,payload_cache,
+            [&](const auto& selector) { ++compile_count; return webscene_native::css::compile_selector(selector); },
+            ".compiled-once::before",{{"content","'x'",false}},{});
+    };
+    const auto compiled_once=counted_payload();
+    for(int iteration=0;iteration<128;++iteration)
+        if(counted_payload()!=compiled_once) return 168;
+    if(compile_count!=2) return 169; // full selector and pseudo origin, only once
     const std::string css_base="asset://kestrel/css/theme/main.css";
     const auto resolved_css=webscene_native::css::resolve_resource_urls(
         R"CSS(url('../../images/grid.png?v=2'), url("../fonts/ui.woff2"), url(#mask))CSS",css_base);
@@ -742,7 +770,7 @@ int main(int argc,char** argv) {
     webscene_native::css::query_host match_query(ordered_document);
     const auto collect=[&] {
         return webscene_native::css::match_candidates(ordered_document,ordered_node,match_rules,match_indices,
-            [&](const auto& node,const auto&,const auto& selector) { return match_query.css_selector_matches(node,selector); },
+            [&](const auto& node,const auto&,const auto& selector) { return match_query.matches_prepared(node,selector); },
             [&](const auto& node,const auto& rule) { return match_query.matches_prepared(node,rule.compiled_selector()); });
     };
     auto collected_matches=collect();

@@ -65,6 +65,28 @@
       "descendant retained a selector whose ancestor style attribute stopped matching");
   });
 
+  test("stylesheet replacement reclassifies ordinary and pseudo-element rules", () => {
+    const sheet = document.createElement("style");
+    document.head.appendChild(sheet);
+    const pseudo = document.createElement("div");
+    pseudo.className = "classification-probe";
+    document.body.appendChild(pseudo);
+    try {
+      for (let iteration = 0; iteration < 3; ++iteration) {
+        // Inspect generated geometry, not getComputedStyle's pseudo argument
+        // (that separate CSSOM API is not yet supported by WebScene).
+        sheet.textContent = ".classification-probe { display: flex; width: 200px; } .classification-probe::before { content: ''; width: 10px; height: 61px; }";
+        assert(pseudo.getBoundingClientRect().height === 61, "before rule did not generate its box");
+        sheet.textContent = ".classification-probe { display: flex; width: 131px; } .classification-probe:after { content: ''; width: 10px; height: 23px; }";
+        assert(pseudo.getBoundingClientRect().width === 131, "ordinary replacement not classified");
+        assert(pseudo.getBoundingClientRect().height === 23, "after box missing or removed taller before box survived replacement");
+      }
+    } finally {
+      sheet.remove();
+      pseudo.remove();
+    }
+  });
+
   state.diagnostics.push(JSON.stringify({
     display: getComputedStyle(target).display,
     width: target.getBoundingClientRect().width,

@@ -85,7 +85,10 @@ std::shared_ptr<const css_rule_payload> intern_rule_payload(
         payload->selector = std::move(selector);
         payload->compiled_selector = compile(payload->selector);
         std::string pseudo_origin;
-        if (split_pseudo_element_selector(payload->selector, pseudo_origin) != 0 && !pseudo_origin.empty())
+        payload->pseudo_kind = static_cast<uint8_t>(
+            split_pseudo_element_selector(payload->selector, pseudo_origin));
+        payload->host_selector = trim_css_view(payload->selector) == ":host";
+        if (payload->pseudo_kind != 0 && !pseudo_origin.empty())
             payload->compiled_pseudo_origin = compile(pseudo_origin);
         payload->invalidation = compile_invalidation_plan(
             payload->compiled_pseudo_origin.compounds.empty()

@@ -81,3 +81,56 @@ Local evidence: `/tmp/spotify-breakpoint-{baseline-r2,candidate}-20260917.log`,
 Candidate development SDK: `/Volumes/SSD/sdks/spotify-media-candidate-dev-20260917`.
 It overlays the engine only and is not an integrity-qualified release artifact.
 The earlier qualified SDK and manual demo are left unchanged.
+
+## Follow-up: classify immutable selectors once
+
+A new sample of the production `c7859bec` candidate still identifies selector
+matching as a major cost. Pseudo-suffix splitting appears as 232 top-of-stack
+samples (193 in its suffix helper, 39 in the splitter itself). This is attribution,
+not a timing comparison: the sampler substantially increases dispatch duration.
+
+The shared candidate matcher classified each rule as ordinary/pseudo and tested
+the exact `:host` spelling for each candidate on each element. That interpretation
+does not change over the lifetime of an interned rule payload. Store the pseudo
+kind and exact-host flag at preparation; match pseudo origins with the payload's
+already-compiled selector instead of looking their strings up again. CSSOM
+replacement still prepares a different payload. No winning declarations or
+computed styles are retained across mutations, and no resize is deferred.
+
+The V8-free CSS service checks every supported pseudo suffix, legacy single-colon
+before/after, an ordinary selector containing pseudo-looking attribute text, exact
+host classification, and payload reuse. A counted compiler verifies 128 repeated
+intern requests compile only the full selector and pseudo origin once each.
+Chrome and native pass the expanded CSSOM barrier (5 checks) and shadow DOM
+(10 checks) contracts; generated-box geometry verifies before→after replacement
+and restoration of the original host rule. Native media contracts pass 3/3;
+targeted media scaling, reentrant listeners, attribute invalidation, stylesheet
+CSSOM, dimensions and shadow geometry groups also pass.
+The cumulative certification scaling gate also passes (140 route cases, four
+stable-text cases, 36 vector cases and the original batched fixture). Adjacent
+attribute/nested-selector WPT contracts pass 29/29. These are local results;
+CI was not monitored and the full release SDK gate has not been repeated here.
+
+The first regression attempt used `getComputedStyle(element, pseudo)`. WebScene
+currently ignores the second argument, so that assertion failed independently
+of this optimization. The geometry oracle replaces the unsupported API oracle;
+it does not claim to implement pseudo-element computed-style reflection. This
+separate gap is recorded in #238. An initial shadow test run selected only
+required tests and ran zero documents; the accepted run uses `--selection all`.
+
+Local tests: `/tmp/css-rule-classification-{cssom-native-r2,shadow-native-r2,chrome-r2}-20260917/results.json`.
+Attribution: `/tmp/spotify-breakpoint-current-sample-20260917.txt`.
+Development SDK: `/Volumes/SSD/sdks/spotify-rule-classification-dev-20260917`;
+this remains an unqualified development overlay, not a new release SDK.
+
+A second serial A/B/B/A comparison uses the previous `c7859bec` optimization as
+control, not the original baseline. Each variant has 24 measured crossings after
+settling, with all 48 retaining 2,723 elements and 15 images. Median dispatch
+falls **226.868→195.708 ms (13.7%)**; means **226.796→192.122 ms**, p95
+**233.976→205.888 ms**. Narrowing medians are 226.483→195.107 ms; widening
+226.903→195.708 ms. Both candidate runs improve on both control runs. No
+compilation or sampling ran concurrently. This still leaves a perceptible pause;
+it does not establish a presentation frame budget or a Chrome-speed advantage.
+The earlier 303→235 ms result is a separate experiment, not a simultaneous
+three-way comparison. Archive/source hashes and all per-transition values are in
+[classification A/B/B/A evidence](evidence/spotify-classification-abba-20260917.json).

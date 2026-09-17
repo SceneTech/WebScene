@@ -570,6 +570,15 @@ passes; serial production-engine A/B/B/A lowers median breakpoint dispatch
 physical presentation is unqualified, and the currently open manual demo has
 not been replaced with this development build.
 
+A follow-up production profile removes per-element pseudo/host rule classification
+from the shared candidate loop. Immutable payloads now own the pseudo kind and
+exact-host flag; pseudo origins use their existing compiled selector directly.
+The shared CSS service and Chrome/native generated-box/stylesheet-replacement
+contracts pass. A fresh serial A/B/B/A against the previous optimization lowers
+median breakpoint dispatch 227→196 ms (13.7%). This is another partial reduction,
+not a resolved breakpoint stall; see the same report for exact evidence and the
+separate unsupported pseudo-element `getComputedStyle` API discovered by testing.
+
 The [September 17 resize-stage investigation](css-resize-stage-profile.md) records
 fresh production profiles and fixes the mismatched native/Chrome benchmark waveform.
 It does not qualify physical presentation or end-to-end browser parity.

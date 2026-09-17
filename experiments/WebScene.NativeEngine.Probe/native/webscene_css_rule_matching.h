@@ -21,8 +21,7 @@ rule_matches match_candidates(native_document& document,const dom_node& node,
             auto* scope_root = document.find_by_native_id(rule.shadow_scope_root_id);
             if (scope_root == nullptr) return false;
             const auto* scope = document.shadow_dom(*scope_root);
-            const auto host_selector = trim_css_view(rule.selector()) == ":host";
-            if (host_selector) return scope != nullptr && scope->host == &node;
+            if (rule.payload->host_selector) return scope != nullptr && scope->host == &node;
             if (scope != nullptr && scope->host == &node) return false;
             return node_shadow_root == scope_root;
         };
@@ -31,15 +30,15 @@ rule_matches match_candidates(native_document& document,const dom_node& node,
             const auto& rule = rules[index];
             if (active_media_only && !rule.media_matches) continue;
             if (!rule_is_in_scope(rule)) continue;
-            std::string pseudo_origin;
-            const auto pseudo_kind = split_pseudo_element_selector(rule.selector(), pseudo_origin);
+            const auto pseudo_kind = rule.payload->pseudo_kind;
             if (pseudo_kind != 0) {
-                if (!pseudo_origin.empty() && match_selector(node,rule,pseudo_origin)) {
+                const auto& origin = rule.payload->compiled_pseudo_origin;
+                if (!origin.compounds.empty() && match_selector(node,rule,origin)) {
                     result.pseudo.emplace_back(pseudo_kind, &rule);
                 }
                 continue;
             }
-            if (trim_css_view(rule.selector()) != ":host"
+            if (!rule.payload->host_selector
                 && !match_rule(node,rule)) continue;
             result.ordinary.push_back(&rule);
         }

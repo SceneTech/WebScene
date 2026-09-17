@@ -154,6 +154,10 @@ using css_class_index_map = std::unordered_map<
         std::vector<css_declaration> declarations;
         std::vector<std::string> media_queries;
         uint32_t specificity{0};
+        // Selector interpretation is immutable; do not resplit it for each
+        // element considered by the cascade.
+        uint8_t pseudo_kind{0};
+        bool host_selector{false};
     };
 
     struct css_rule final {

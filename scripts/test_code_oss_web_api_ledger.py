@@ -51,6 +51,33 @@ class CodeOssWebApiLedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(ledger_module.LedgerError, "extra=.*silentSkip"):
             ledger_module.validate_ledger(self.catalog, self.snapshot, ledger)
 
+    def test_evidence_requires_exact_digest_counts_platform_and_run(self) -> None:
+        ledger = copy.deepcopy(self.ledger)
+        claim = next(item for item in ledger["claims"] if item["id"] == "iframe")
+        evidence = claim["evidence"][0]
+        for name, value, pattern in (
+            ("sha256", "0" * 64, "digest is stale"),
+            ("platforms", ["linux-x64", "linux-x64"], "platform scope"),
+            ("counts", {"pass": 5, "fail": 0, "skipped": 0, "unavailable": 0, "total": 6}, "counts"),
+            ("run", "https://example.test/run", "SceneTech GitHub URL"),
+        ):
+            changed = copy.deepcopy(ledger)
+            target = next(item for item in changed["claims"] if item["id"] == "iframe")["evidence"][0]
+            target[name] = value
+            with self.assertRaisesRegex(ledger_module.LedgerError, pattern, msg=name):
+                ledger_module.validate_ledger(self.catalog, self.snapshot, changed)
+
+    def test_partial_claim_requires_native_and_product_on_every_platform(self) -> None:
+        ledger = copy.deepcopy(self.ledger)
+        claim = next(item for item in ledger["claims"] if item["id"] == "iframe")
+        template = copy.deepcopy(claim["evidence"][0])
+        template["kind"] = "product"
+        template["platforms"] = ["linux-x64"]
+        claim["evidence"].append(template)
+        claim["state"] = "partial"
+        with self.assertRaisesRegex(ledger_module.LedgerError, "native evidence does not cover"):
+            ledger_module.validate_ledger(self.catalog, self.snapshot, ledger)
+
     def test_css_digest_drift_is_rejected(self) -> None:
         ledger = copy.deepcopy(self.ledger)
         ledger["cssSlice"]["sha256"] = "0" * 64

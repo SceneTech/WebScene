@@ -1,0 +1,26 @@
+{
+  "profile": "webscene-css-syntax-url-string-escapes-1",
+  "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+  "runtime": "v8",
+  "viewport": {
+    "width": 800,
+    "height": 600,
+    "deviceScaleFactor": 1
+  },
+  "required": [
+    {
+      "path": "contracts/css-syntax-url-string-escapes.html",
+      "type": "testharness",
+      "capabilities": [
+        "css-escaped-string-token",
+        "css-escaped-url-token",
+        "css-url-decode-once",
+        "css-url-security-admission"
+      ],
+      "evidence": ["css-url-string-escapes-286"],
+      "reason": "Chromium authority and native candidate oracle for decoding CSS string and url() escapes exactly once before URL resolution and resource admission."
+    }
+  ],
+  "harnessBlocked": [],
+  "excluded": []
+}

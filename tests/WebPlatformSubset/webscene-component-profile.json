@@ -2296,6 +2296,14 @@
       "evidence": ["service-workers-registration-algorithm-derived", "chromium-153-direct-neutral-contract", "vscode-oss-module-worker-registration-shape"],
       "reason": "Candidate first stack for WebScene #265. It covers secure-context exposure, same-origin module script fetch, default and maximum scope rules, longest-scope registration matching, stable wrappers, update checks, and unregister. Worker execution, install/activate, controller/Clients messaging, navigation generations, and the unchanged Code OSS webview-ready acceptance remain intentionally pending in the later #265 stacks.",
       "nativeNavigation": true
+    },
+    {
+      "path": "contracts/fixtures/service-worker-lifecycle-client.html",
+      "type": "contract",
+      "capabilities": ["service-worker-global-scope", "service-worker-install-activate", "extendable-event-wait-until", "service-worker-skip-waiting", "service-worker-clients-claim", "service-worker-controller-change", "service-worker-ready"],
+      "evidence": ["service-workers-lifecycle-derived", "chromium-153-direct-neutral-contract", "vscode-oss-controllerchange-prelude-shape"],
+      "reason": "Candidate second stack for WebScene #265. It executes an admitted module in an isolated ServiceWorkerGlobalScope, waits for install and activate lifetime promises, applies skipWaiting and clients.claim, selects a scope-matched controller, resolves the stable ready promise, rejects module evaluation failures, and tears down the registration-owned runtime. A focused native gate adds 100 register/control/update/unregister cycles, a one-registration high-water bound, a one-second p95 bound, and an 8 MiB retained-heap bound. Client enumeration/messaging, navigation generations, worker-runtime/queue telemetry, warm-navigation timing, and exact Code OSS acceptance remain in later cumulative stacks.",
+      "nativeNavigation": true
     }
   ],
   "harnessBlocked": [],

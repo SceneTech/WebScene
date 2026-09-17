@@ -136,10 +136,10 @@
     {
       "family": "service-worker-registration-control-plane",
       "required": [],
-      "candidate": ["secure-context ServiceWorkerContainer exposure", "same-origin script admission", "module registration options", "default and maximum scope enforcement", "longest-scope matching", "stable registration wrappers", "update byte comparison", "unregister"],
+      "candidate": ["secure-context ServiceWorkerContainer exposure", "same-origin script admission", "module registration options", "default and maximum scope enforcement", "longest-scope matching", "stable registration wrappers", "update byte comparison", "unregister", "isolated ServiceWorkerGlobalScope", "install and activate lifetime promises", "skipWaiting", "clients.claim", "scope-matched controllerchange", "stable ready resolution", "failed-module cleanup"],
       "productEvidence": ["unchanged Code OSS webview module service-worker registration prelude"],
-      "coverage": ["contracts/service-worker-registration-control-plane.html"],
-      "gap": "The first #265 stack intentionally stops with an installing registration after the admitted script is fetched and hashed. It does not execute the worker, dispatch install/activate, expose a controller, resolve ready, implement Clients or messaging, persist registrations across engine restarts, or intercept fetches. Those lifecycle, navigation-generation, teardown, performance, and unchanged Code OSS webview-ready gates remain in the dependent #265 stacks; resource streaming and CacheStorage integration remain in #266."
+      "coverage": ["contracts/service-worker-registration-control-plane.html", "contracts/fixtures/service-worker-lifecycle-client.html", "test_service_worker_lifecycle_performance_and_teardown_gate"],
+      "gap": "The cumulative #265 stack executes the admitted worker in an isolated realm, completes install/activate waitUntil work, applies skipWaiting and clients.claim, and controls only a scope-matched client. The focused native gate completes 100 register/control/update/unregister cycles with registration high-water one, zero final registrations, p95 under one second, and no more than 8 MiB retained main-realm V8 heap after collection. Clients get/matchAll identities, WindowClient fields, structured-clone postMessage, persistence across engine restarts, stale navigation-generation rejection, worker-runtime/queue telemetry, warm controlled-navigation timing, and unchanged Code OSS webview-ready evidence remain pending; resource interception, streaming, and CacheStorage integration remain in #266."
     },
     {
       "family": "autonomous-custom-elements",

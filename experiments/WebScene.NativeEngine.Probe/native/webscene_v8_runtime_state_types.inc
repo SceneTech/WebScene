@@ -156,6 +156,8 @@
         iframe_sandbox
     };
 
+    struct service_worker_runtime_state;
+
     struct service_worker_registration_state {
         std::string scope;
         std::string script_url;
@@ -163,6 +165,7 @@
         std::string update_via_cache;
         std::string source_digest;
         uint64_t generation{1U};
+        std::shared_ptr<service_worker_runtime_state> runtime;
     };
 
     using css_declaration = webscene_native::css::css_declaration;

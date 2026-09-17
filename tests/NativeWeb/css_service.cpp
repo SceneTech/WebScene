@@ -579,7 +579,14 @@ int main(int argc,char** argv) {
        !generated.elliptical_border_radius || generated.border_top_left_radius.value!=4 ||
        generated.border_top_left_radius_y.value!=8) return 65;
     if(apply_generated("unknown-property","x").classification!="unsupported" ||
-       apply_generated("line-height","inherit").classification!="partially-supported") return 66;
+       apply_generated("line-height","inherit").classification!="supported" ||
+       generated.line_height!=-1) return 66;
+    if(apply_generated("line-height","1").classification!="supported" ||
+       generated.line_height!=-4 ||
+       apply_generated("line-height","5").classification!="supported" ||
+       generated.line_height!=-8 ||
+       apply_generated("line-height","2px").classification!="supported" ||
+       generated.line_height!=2) return 168;
     apply_generated("content","none");
     apply_generated("border","none");
     if(generated.generated || !generated.content.empty() || generated.border_left_width.value!=0) return 67;

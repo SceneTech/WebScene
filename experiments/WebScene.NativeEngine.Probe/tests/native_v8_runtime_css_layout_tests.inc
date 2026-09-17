@@ -1601,20 +1601,146 @@ void test_inline_relative_line_height_uses_cascaded_font_size(webscene_engine* e
     const auto result = evaluate(engine, R"JS(
         (() => {
           document.body.innerHTML = `
-            <style>div { font-size: 16px; }</style>
+            <style>
+              div { font-size: 16px; }
+              .pseudo-line { display:flex; font-size:10px; line-height:1.5 }
+              .pseudo-line::before { content:'x'; font-size:40px }
+              .pseudo-line.own::before { line-height:1 }
+              .pseudo-line.large::before { line-height:5 }
+              .pseudo-line.length::before { line-height:2px }
+            </style>
             <div style="line-height: normal"></div>
             <div style="line-height: 1"></div>
             <div style="line-height: 10px"></div>
-            <div style="line-height: 10%"></div>`;
-          const elements = Array.from(document.querySelectorAll('div'));
+            <div style="line-height: 10%"></div>
+            <div class="pseudo-line"></div>
+            <div class="pseudo-line own"></div>
+            <div class="pseudo-line large"></div>
+            <div class="pseudo-line length"></div>`;
+          const elements = Array.from(document.querySelectorAll('div')).slice(0, 4);
           const initial = elements.map(element => getComputedStyle(element).lineHeight);
           elements[1].style.fontSize = '20px';
-          return { initial, updated: getComputedStyle(elements[1]).lineHeight };
+          const pseudo = Array.from(document.querySelectorAll('.pseudo-line'));
+          const pseudoInitial = pseudo.map(element => element.getBoundingClientRect().height);
+          pseudo[1].classList.remove('own');
+          const pseudoInherited = pseudo[1].getBoundingClientRect().height;
+          pseudo[1].classList.add('large');
+          const pseudoUpdated = pseudo[1].getBoundingClientRect().height;
+          pseudo[1].classList.remove('large');
+          pseudo[1].classList.add('own');
+          return {
+            initial,
+            updated: getComputedStyle(elements[1]).lineHeight,
+            pseudoInitial,
+            pseudoInherited,
+            pseudoUpdated,
+            pseudoRestored: pseudo[1].getBoundingClientRect().height
+          };
         })()
     )JS", "native-inline-relative-line-height.js");
     require(
-        result == R"JSON({"initial":["normal","16px","10px","1.6px"],"updated":"20px"})JSON",
+        result == R"JSON({"initial":["normal","16px","10px","1.6px"],"updated":"20px","pseudoInitial":[60,40,200,2],"pseudoInherited":60,"pseudoUpdated":200,"pseudoRestored":40})JSON",
         "relative line-height did not follow the winning font-size: " + result);
+
+    execute_and_wait(
+        engine,
+        "document.body.style.opacity='0.999'",
+        "native-pseudo-line-height-scene.js");
+    auto saw_inherited = false, saw_own = false, saw_large = false, saw_length = false;
+    for (auto attempt = 0; attempt < 100; ++attempt) {
+        const auto* scene = webscene_engine_acquire_latest_scene(engine);
+        if (scene != nullptr) {
+            for (uint32_t index = 0; index < scene->header.command_count; ++index) {
+                const auto& command = scene->commands[index];
+                if (command.kind != 3U || command.flags >= scene->string_count) continue;
+                const auto value = scene->strings[command.flags];
+                const std::string_view resource(
+                    scene->string_bytes + value.byte_offset,
+                    value.byte_length);
+                if (!resource.ends_with("\tx")) continue;
+                saw_inherited |= resource.starts_with("40\t60\t");
+                saw_own |= resource.starts_with("40\t40\t");
+                saw_large |= resource.starts_with("40\t200\t");
+                saw_length |= resource.starts_with("40\t2\t");
+            }
+            webscene_scene_acknowledge(scene);
+            webscene_scene_release(scene);
+        }
+        if (saw_inherited && saw_own && saw_large && saw_length) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    require(saw_inherited && saw_own && saw_large && saw_length,
+        "generated-content line-height did not reach retained text resources");
+
+    execute_and_wait(
+        engine,
+        "document.body.replaceChildren()",
+        "native-pseudo-line-height-clear.js");
+    require(webscene_engine_request_low_memory(engine) != 0,
+        "pseudo line-height baseline low-memory request failed");
+    webscene_engine_memory_metrics memory_before{sizeof(webscene_engine_memory_metrics)};
+    for (auto attempt = 0; attempt < 500; ++attempt) {
+        require(webscene_engine_get_memory_metrics(engine, &memory_before) != 0,
+            "pseudo line-height baseline memory metrics unavailable");
+        if (memory_before.low_memory_notifications > 0U
+            && memory_before.v8_used_heap_bytes > 0U) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    const auto rss_before = file_system_access_test_peak_rss_bytes();
+    const auto profile = evaluate(engine, R"JS((() => {
+      const style = document.createElement('style');
+      style.textContent = `
+        .pseudo-profile { display:flex; font-size:10px; line-height:1.5 }
+        .pseudo-profile::before { content:'x'; font-size:40px; line-height:1 }
+        .large .pseudo-profile::before { line-height:5 }`;
+      const root = document.createElement('main');
+      root.innerHTML = '<div class="pseudo-profile"></div>'.repeat(4096);
+      document.head.append(style);
+      document.body.append(root);
+      const durations = [];
+      let checksum = 0;
+      for (let cycle = 0; cycle < 20; cycle++) {
+        const started = performance.now();
+        root.classList.toggle('large', (cycle & 1) !== 0);
+        checksum += root.getBoundingClientRect().height;
+        durations.push(performance.now() - started);
+      }
+      const ordered = durations.slice().sort((left, right) => left - right);
+      const result = {
+        nodes: 4096, cycles: 20, p95: ordered[18], max: ordered[19], checksum
+      };
+      style.remove();
+      root.remove();
+      if (!(checksum > 0) || result.p95 > 750 || result.max > 1500)
+        throw new Error(`pseudo line-height profile exceeded bounds ${JSON.stringify(result)}`);
+      return result;
+    })())JS", "native-pseudo-line-height-profile.js");
+    require(webscene_engine_request_low_memory(engine) != 0,
+        "pseudo line-height final low-memory request failed");
+    webscene_engine_memory_metrics memory_after{sizeof(webscene_engine_memory_metrics)};
+    for (auto attempt = 0; attempt < 500; ++attempt) {
+        require(webscene_engine_get_memory_metrics(engine, &memory_after) != 0,
+            "pseudo line-height final memory metrics unavailable");
+        if (memory_after.low_memory_notifications > memory_before.low_memory_notifications
+            && memory_after.native_dom_node_count <= memory_before.native_dom_node_count + 8U
+            && memory_after.native_dom_pseudo_storage_bytes
+                <= memory_before.native_dom_pseudo_storage_bytes + 4096U) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    const auto rss_after = file_system_access_test_peak_rss_bytes();
+    require(memory_after.low_memory_notifications > memory_before.low_memory_notifications
+            && memory_after.v8_used_heap_bytes
+                <= memory_before.v8_used_heap_bytes + 8U * 1024U * 1024U
+            && memory_after.native_dom_node_count <= memory_before.native_dom_node_count + 8U
+            && memory_after.native_dom_pseudo_storage_bytes
+                <= memory_before.native_dom_pseudo_storage_bytes + 4096U,
+        "pseudo line-height profile retained heap, DOM nodes, or pseudo storage");
+    require(rss_before == 0U || rss_after <= rss_before + 64U * 1024U * 1024U,
+        "pseudo line-height profile exceeded the 64 MiB peak RSS budget");
+    std::cout << "pseudo-line-height-profile=" << profile
+              << " heapBefore=" << memory_before.v8_used_heap_bytes
+              << " heapAfter=" << memory_after.v8_used_heap_bytes
+              << " rssBefore=" << rss_before << " rssAfter=" << rss_after << '\n';
 }
 
 void test_empty_inline_element_does_not_stretch_cross_size(webscene_engine* engine)

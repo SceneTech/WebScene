@@ -109,32 +109,92 @@
         auto isolate_locker = lock_shared_isolate();
         v8::Isolate::Scope isolate_scope(isolate);
         v8::HandleScope handle_scope(isolate);
-        auto local_context = context.Get(isolate);
-        v8::Context::Scope context_scope(local_context);
-        cancel_crypto_tasks_for_context(local_context);
+        const auto previous_context = context.Get(isolate);
+        {
+            v8::Context::Scope context_scope(previous_context);
+            cancel_crypto_tasks_for_context(previous_context);
 #if defined(WEBSCENE_NATIVE_ENGINE_ENABLE_GRAPHICS)
-        retire_document_graphics();
+            retire_document_graphics();
 #endif
-        stop_workers();
-        dedicated_workers.clear();
-        reset_message_ports_for_navigation();
-        terminal_pagehide_dispatched = false;
-        file_targets.clear();
-        { std::lock_guard lock(file_requests_mutex); file_requests.clear(); }
-        cancel_native_host_promises("The document navigated before the native host completed the request");
-        fullscreen_element = nullptr;
-        document_fullscreen = false;
-        { std::lock_guard lock(host_request_mutex); host_requests.clear(); }
-        { std::lock_guard lock(host_request_mutex); typed_host_requests.clear(); }
-        object_url_file_data.clear();
-        release_owned_binary_object_urls();
-        object_urls.clear();
-        object_url_download_payloads.clear();
-        object_url_canvas_node_ids.clear();
+            stop_workers();
+            dedicated_workers.clear();
+            reset_message_ports_for_navigation();
+            terminal_pagehide_dispatched = false;
+            file_targets.clear();
+            { std::lock_guard lock(file_requests_mutex); file_requests.clear(); }
+            cancel_native_host_promises(
+                "The document navigated before the native host completed the request");
+            fullscreen_element = nullptr;
+            document_fullscreen = false;
+            { std::lock_guard lock(host_request_mutex); host_requests.clear(); }
+            { std::lock_guard lock(host_request_mutex); typed_host_requests.clear(); }
+            object_url_file_data.clear();
+            release_owned_binary_object_urls();
+            object_urls.clear();
+            object_url_download_payloads.clear();
+            object_url_canvas_node_ids.clear();
 #if defined(WEBSCENE_NATIVE_ENGINE_ENABLE_MEDIA)
-        clear_media_bindings();
+            clear_media_bindings();
 #endif
-        module_map.clear();
+            module_map.clear();
+        }
+
+        // A navigation creates a fresh Window realm. Reusing the old V8
+        // Context leaves top-level lexical declarations and Window listeners
+        // alive, so a normal reload can fail while redeclaring a page `const`.
+        // Preserve browsing-session state (cookies and both Storage backing
+        // maps), while releasing every handle owned by the retired realm.
+        for (auto& fetch : pending_fetches) {
+            if (fetch.context.Get(isolate) != previous_context) continue;
+            fetch.context.Reset();
+            fetch.resolver.Reset();
+        }
+        resize_listeners.clear();
+        media_query_lists.clear();
+        timers.clear();
+        pending_window_messages.clear();
+        pending_window_message_bytes = 0U;
+        pending_dialog_close_events.clear();
+        pending_programmatic_scroll_events.clear();
+        pending_promise_rejections.clear();
+        pending_interop_promises.clear();
+        pending_callback_promises.clear();
+        interop_handles.clear();
+        resize_observers.clear();
+        resize_observers_pending = false;
+        frame_load_listeners.clear();
+        frame_event_listeners.clear();
+        frame_documents.clear();
+        frame_windows.clear();
+        frame_window_scroll_offsets.clear();
+        actual_frame_windows.clear();
+        actual_frame_contexts.clear();
+        actual_frame_documents.clear();
+        frame_base_addresses.clear();
+        provisional_frame_bodies.clear();
+        frame_session_storage.clear();
+        canvas_contexts.clear();
+        canvas_states.clear();
+        computed_style_wrappers.clear();
+        class_list_wrappers.clear();
+        style_wrappers.clear();
+        stylesheet_wrappers.clear();
+        detached_documents.clear();
+        detached_document_roots.clear();
+        node_wrappers.clear();
+        attr_wrappers.clear();
+        attached_attributes.clear();
+        attr_states.clear();
+        element_id_indexes.clear();
+        element_named_indexes.clear();
+        document_named_form_indexes.clear();
+        dom_implementation_object.Reset();
+        document_object.Reset();
+        frame_context.Reset();
+        context.Reset();
+
+        auto local_context = create_main_context();
+        v8::Context::Scope context_scope(local_context);
         set_context_location(local_context, local_context->Global(), resolved_url);
 #if defined(WEBSCENE_NATIVE_ENGINE_ENABLE_GRAPHICS)
         if(webgpu_document_policy)webgpu_document_policy(resolved_url);

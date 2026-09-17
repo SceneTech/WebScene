@@ -305,6 +305,35 @@ struct v8_dom_runtime::implementation final {
 #include "webscene_v8_runtime_inspector.inc"
 #endif
 #include "webscene_v8_runtime_lifecycle.inc"
+    v8::Local<v8::Context> create_main_context()
+    {
+        auto global_template = v8::ObjectTemplate::New(isolate);
+        global_template->SetHandler(v8::NamedPropertyHandlerConfiguration(
+            get_window_named_property,
+            nullptr,
+            nullptr,
+            nullptr,
+            nullptr,
+            {},
+            v8::PropertyHandlerFlags::kNonMasking));
+        auto local_context = v8::Context::New(isolate, nullptr, global_template);
+        local_context->SetSecurityToken(
+            js_string(isolate, "webscene-native-origin"));
+        local_context->SetAlignedPointerInEmbedderData(
+            runtime_context_embedder_slot,
+            this,
+            v8::kEmbedderDataTypeTagDefault);
+        local_context->SetAlignedPointerInEmbedderData(
+            1,
+            &document.body(),
+            v8::kEmbedderDataTypeTagDefault);
+        context.Reset(isolate, local_context);
+        v8::Context::Scope context_scope(local_context);
+        install_templates(local_context);
+        install_globals(local_context);
+        return local_context;
+    }
+
     bool initialize()
     {
         prune_persistent_compilation_cache();
@@ -368,29 +397,7 @@ struct v8_dom_runtime::implementation final {
 
         v8::Isolate::Scope isolate_scope(isolate);
         v8::HandleScope handle_scope(isolate);
-        auto global_template = v8::ObjectTemplate::New(isolate);
-        global_template->SetHandler(v8::NamedPropertyHandlerConfiguration(
-            get_window_named_property,
-            nullptr,
-            nullptr,
-            nullptr,
-            nullptr,
-            {},
-            v8::PropertyHandlerFlags::kNonMasking));
-        auto local_context = v8::Context::New(isolate, nullptr, global_template);
-        local_context->SetSecurityToken(js_string(isolate, "webscene-native-origin"));
-        local_context->SetAlignedPointerInEmbedderData(
-            runtime_context_embedder_slot,
-            this,
-            v8::kEmbedderDataTypeTagDefault);
-        local_context->SetAlignedPointerInEmbedderData(
-            1,
-            &document.body(),
-            v8::kEmbedderDataTypeTagDefault);
-        context.Reset(isolate, local_context);
-        v8::Context::Scope context_scope(local_context);
-        install_templates(local_context);
-        install_globals(local_context);
+        static_cast<void>(create_main_context());
 #if defined(WEBSCENE_NATIVE_ENGINE_WITH_V8_INSPECTOR)
         // Advertise the compiled capability once the isolate and its default
         // context are ready. The V8Inspector object and context registrations

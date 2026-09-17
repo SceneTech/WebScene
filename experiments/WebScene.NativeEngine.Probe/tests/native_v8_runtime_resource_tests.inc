@@ -1275,6 +1275,103 @@ void test_inspector_navigation_resets_context_group()
 }
 #endif
 
+void test_navigation_replaces_top_level_realm()
+{
+    constexpr std::string_view page = R"HTML(<!doctype html><html><body><script>
+      const baseUrl = location.href;
+      const loadNumber = Number(sessionStorage.getItem('reload-count') || 0) + 1;
+      const staleGlobal = '__retiredRealmMarker' in globalThis;
+      if (loadNumber === 1) {
+        globalThis.__retiredRealmMarker = true;
+        localStorage.setItem('reload-local', 'preserved');
+        document.cookie = 'reload-cookie=preserved; Path=/';
+        addEventListener('retired-realm-probe', () =>
+          localStorage.setItem('retired-listener-fired', 'yes'));
+      } else {
+        dispatchEvent(new Event('retired-realm-probe'));
+        globalThis.__reloadRealmResult = JSON.stringify({
+          baseUrl,
+          loadNumber,
+          staleGlobal,
+          staleListener: localStorage.getItem('retired-listener-fired'),
+          local: localStorage.getItem('reload-local'),
+          cookie: document.cookie.includes('reload-cookie=preserved')
+        });
+      }
+      sessionStorage.setItem('reload-count', String(loadNumber));
+    </script></body></html>)HTML";
+    resource_server server{
+        .content = {{"https://reload-realm.test/index.html", std::string(page)}}};
+    const webscene_engine_options options{
+        sizeof(webscene_engine_options),
+        64U,
+        nullptr,
+        0U,
+        load_test_resource,
+        &server};
+    auto* engine = webscene_engine_create_with_options(&options);
+    require(engine != nullptr, "Reload realm engine creation failed");
+    const std::string url = "https://reload-realm.test/index.html";
+    require(
+        webscene_engine_load_url(engine, url.data(), url.size()) != 0,
+        "Initial reload realm document load was rejected");
+    require(evaluate(engine, "true", "initial-reload-realm-barrier.js") == "true",
+        "Initial reload realm document did not finish");
+    webscene_engine_memory_metrics initial_memory{
+        sizeof(webscene_engine_memory_metrics)};
+    require(webscene_engine_get_memory_metrics(engine, &initial_memory) != 0,
+        "Initial reload realm memory metrics were unavailable");
+    constexpr unsigned load_count = 32U;
+    const auto started = std::chrono::steady_clock::now();
+    for (unsigned load = 1U; load < load_count; ++load) {
+        require(
+            webscene_engine_load_url(engine, url.data(), url.size()) != 0,
+            "Replacement reload realm document load #"
+                + std::to_string(load + 1U) + " was rejected: "
+                + last_error(engine));
+        require(evaluate(engine, "true", "reload-realm-barrier.js") == "true",
+            "Replacement reload realm document did not finish");
+    }
+    const auto elapsed = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - started).count();
+    require(elapsed < 10.0,
+        "31 replacement realms exceeded the ten-second lifecycle budget");
+    const auto result = evaluate(engine, "globalThis.__reloadRealmResult",
+        "reload-realm-result.js");
+    require(
+        result
+            == R"JSON("{\"baseUrl\":\"https://reload-realm.test/index.html\",\"loadNumber\":32,\"staleGlobal\":false,\"staleListener\":null,\"local\":\"preserved\",\"cookie\":true}")JSON",
+        "Navigation reused top-level lexical/global/listener state or lost browsing-session state: "
+            + result);
+    require(webscene_engine_request_low_memory(engine) != 0,
+        "Reload realm low-memory request was rejected");
+    webscene_engine_memory_metrics final_memory{
+        sizeof(webscene_engine_memory_metrics)};
+    for (auto attempt = 0; attempt < 500; ++attempt) {
+        require(webscene_engine_get_memory_metrics(engine, &final_memory) != 0,
+            "Reload realm final memory metrics were unavailable");
+        if (final_memory.low_memory_notifications
+            > initial_memory.low_memory_notifications) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    require(
+        final_memory.low_memory_notifications
+            > initial_memory.low_memory_notifications,
+        "Reload realm low-memory collection did not complete");
+    require(
+        final_memory.v8_used_heap_bytes
+            <= initial_memory.v8_used_heap_bytes + 32U * 1024U * 1024U,
+        "Repeated realm replacement retained more than 32 MiB of V8 heap");
+    std::cout << "Navigation realm gate: reloads=" << load_count - 1U
+              << " elapsed=" << elapsed << "s heapBefore="
+              << initial_memory.v8_used_heap_bytes << " heapAfter="
+              << final_memory.v8_used_heap_bytes << " listenersBefore="
+              << initial_memory.native_event_listener_count
+              << " listenersAfter=" << final_memory.native_event_listener_count
+              << "\n";
+    webscene_engine_destroy(engine);
+}
+
 void test_document_script_failure_remains_diagnostic()
 {
     resource_server server{

@@ -493,6 +493,23 @@ else()
     message(STATUS "WebScene native engine: legacy HTML parser selected")
 endif()
 
+if(BUILD_TESTING)
+    add_executable(webscene_css_property_identity_tests
+        tests/css_property_identity_tests.cpp)
+    target_compile_features(webscene_css_property_identity_tests PRIVATE cxx_std_20)
+    target_include_directories(webscene_css_property_identity_tests PRIVATE native)
+    add_test(NAME webscene_css_property_identity_tests
+        COMMAND webscene_css_property_identity_tests)
+    add_executable(webscene_css_legacy_property_identity_tests
+        tests/css_property_identity_tests.cpp)
+    target_compile_features(webscene_css_legacy_property_identity_tests PRIVATE cxx_std_20)
+    target_compile_definitions(webscene_css_legacy_property_identity_tests PRIVATE
+        WEBSCENE_TEST_LEGACY_SPECIFIED_VALUE=1)
+    target_include_directories(webscene_css_legacy_property_identity_tests PRIVATE native)
+    add_test(NAME webscene_css_legacy_property_identity_tests
+        COMMAND webscene_css_legacy_property_identity_tests)
+endif()
+
 if(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
     target_compile_definitions(webscene_native_engine PUBLIC
         WEBSCENE_NATIVE_ENGINE_CERTIFICATION=1)
@@ -960,6 +977,10 @@ if(WEBSCENE_NATIVE_ENGINE_BUILD_CSS_PROPERTY_METADATA_BENCHMARK)
         benchmarks/css_property_metadata_benchmark.cpp)
     target_compile_features(webscene_css_property_metadata_benchmark PRIVATE cxx_std_20)
     target_include_directories(webscene_css_property_metadata_benchmark PRIVATE native)
+    add_executable(webscene_css_property_identity_benchmark
+        benchmarks/css_property_identity_benchmark.cpp)
+    target_compile_features(webscene_css_property_identity_benchmark PRIVATE cxx_std_20)
+    target_include_directories(webscene_css_property_identity_benchmark PRIVATE native)
 endif()
 
 if(WEBSCENE_NATIVE_ENGINE_BUILD_LAYOUT_SCRATCH_BENCHMARK)

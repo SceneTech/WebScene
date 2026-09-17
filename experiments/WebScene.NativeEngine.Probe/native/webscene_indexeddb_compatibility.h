@@ -216,7 +216,8 @@ inline constexpr std::string_view indexeddb_compatibility_source = R"JS(
     deleteIndex() { throw failure('Indexes are not implemented', 'NotSupportedError'); }
   }
 
-  class IDBTransaction extends EventTarget {
+)JS"
+R"JS(  class IDBTransaction extends EventTarget {
     constructor(database, storeNames, mode, state, revision, versionchange = false) {
       super();
       this.db = database;

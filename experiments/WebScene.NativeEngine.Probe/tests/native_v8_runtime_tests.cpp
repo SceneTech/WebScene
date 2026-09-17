@@ -277,11 +277,16 @@ int main()
             return 0;
         }
         if (selected == "css-invalidation-scaling") {
+            test_compiled_subject_index_scaling();
             test_variadic_child_vector_scaling();
             test_character_data_stable_style_scaling();
             test_compiled_css_invalidation_scaling();
             test_compiled_css_route_scaling();
             test_compiled_css_route_scaling(true, true);
+            return 0;
+        }
+        if (selected == "css-subject-index-scaling") {
+            test_compiled_subject_index_scaling();
             return 0;
         }
         if (selected == "css-structural-scaling") {
@@ -964,6 +969,7 @@ int main()
     test_media_query_resize_recascades_only_affected_subtrees();
     test_media_query_matching_scales_linearly();
     test_attribute_invalidation_scopes_subject_and_descendant_rules();
+    test_compiled_subject_index_scaling();
     test_compiled_css_invalidation_scaling();
     test_character_data_stable_style_scaling();
     test_variadic_child_vector_scaling();

@@ -61,6 +61,31 @@ struct stylesheet_test_host {
     }
 
 };
+
+bool test_subject_candidate_index_scaling() {
+    bool bounded=true;
+    for(const auto targets:{8,128}) for(const auto unrelated:{32,1024}) {
+        webscene_native::native_document document;
+        webscene_native::css::stylesheet_owner sheets;
+        std::string source=".target {width:31px}";
+        for(int i=0;i<unrelated;++i)
+            source+=":not([data-disabled]).unused-"+std::to_string(i)+" {width:7px}";
+        auto sheet=webscene_native::css::prepare_stylesheet(source,"",[](const auto&) {return true;});
+        if(!sheet) return false;
+        sheets.replace(1,std::move(*sheet));
+        size_t candidates=0;
+        for(int i=0;i<targets;++i) {
+            auto& node=document.create_element("div");node.class_name="target";
+            document.append_child(document.body(),node);
+            candidates+=sheets.candidates(node).size();
+        }
+        std::cout<<"subject-index targets="<<targets<<" unrelated="<<unrelated
+            <<" candidates="<<candidates<<'\n';
+        bounded=bounded && candidates==static_cast<size_t>(targets);
+    }
+    return bounded;
+}
+
 int main(int argc,char** argv) {
     if(argc==2) {
         std::ifstream input(argv[1]);
@@ -82,6 +107,7 @@ int main(int argc,char** argv) {
                 <<" ("<<diagnostic.detail<<")\n";
         return 0;
     }
+    if(!test_subject_candidate_index_scaling()) return 170;
     using webscene_native::css::parse_declarations;
     const auto values=parse_declarations(R"CSS(
       COLOR: red !important; --Theme: blue; --theme: green;
@@ -800,7 +826,7 @@ int main(int argc,char** argv) {
     if(webscene_native::css::computed_layout_style_equal(ordered_node.style,geometry_style)) return 139;
     webscene_native::css::css_cascade_state indexed;
     const auto index_selector_test=[&](size_t index,const std::string& selector) {
-        webscene_native::css::index_selector(index,selector,indexed.rules_by_id,
+        webscene_native::css::index_selector(index,selector,webscene_native::css::compile_selector(selector),indexed.rules_by_id,
             indexed.rules_by_class,indexed.rules_by_tag,indexed.rules_by_attribute,
             indexed.focus_rules,indexed.unindexed_rules,indexed.descendant_attribute_dependencies);
     };
@@ -834,6 +860,45 @@ int main(int argc,char** argv) {
         });
     std::sort(candidate_indices.begin(),candidate_indices.end());
     if(candidate_indices!=std::vector<size_t>{0,0,1,2,3,4,6}) return 141;
+    index_selector_test(7,":not(.skip).after-pseudo");
+    index_selector_test(8,".escaped\\:token");
+    index_selector_test(9,".other#index\\:id");
+    index_selector_test(10,"Widget");
+    index_selector_test(11,"[DaTa-Thing]");
+    index_selector_test(12,":is(.a,.b)");
+    index_selector_test(13,":not(.excluded)");
+    if(indexed.rules_by_class["after-pseudo"]!=std::vector<size_t>{7} ||
+       indexed.rules_by_class["escaped:token"]!=std::vector<size_t>{8} ||
+       indexed.rules_by_id["index:id"]!=std::vector<size_t>{9} ||
+       indexed.rules_by_tag["Widget"]!=std::vector<size_t>{10} ||
+       indexed.rules_by_tag["widget"]!=std::vector<size_t>{10} ||
+       indexed.rules_by_attribute["DaTa-Thing"]!=std::vector<size_t>{11} ||
+       indexed.rules_by_attribute["data-thing"]!=std::vector<size_t>{11} ||
+       indexed.unindexed_rules!=std::vector<size_t>{6,12,13}) return 171;
+    // Folded name buckets must not change XML's case-sensitive matching.
+    auto name_sheet=webscene_native::css::prepare_stylesheet(
+        "Widget {width:23px} [DaTa-Thing] {height:17px}","",[](const auto&) {return true;});
+    if(!name_sheet) return 172;
+    webscene_native::css::stylesheet_owner name_sheets;
+    name_sheets.replace(1,std::move(*name_sheet));
+    for(const auto xml:{false,true}) for(const auto mixed_case:{false,true}) {
+        webscene_native::native_document names_document;
+        auto& node=names_document.create_element("div");
+        node.xml_mode=xml;
+        node.tag=mixed_case?"Widget":"widget";
+        node.attributes[mixed_case?"DaTa-Thing":"data-thing"]="yes";
+        names_document.append_child(names_document.body(),node);
+        webscene_native::css::query_host query(names_document);
+        auto indices=name_sheets.candidates(node);
+        std::vector<size_t> indexed_matches,full_matches;
+        const auto& rules=name_sheets.state().rules;
+        for(const auto index:indices)
+            if(query.matches_prepared(node,rules[index].compiled_selector())) indexed_matches.push_back(index);
+        for(size_t index=0;index<rules.size();++index)
+            if(query.matches_prepared(node,rules[index].compiled_selector())) full_matches.push_back(index);
+        if(indexed_matches!=full_matches) return 173;
+        if(xml && full_matches.size()!=(mixed_case?2U:0U)) return 174;
+    }
     webscene_native::css::stylesheet_owner sheets;
     auto responsive=std::make_shared<webscene_native::css::css_rule_payload>();
     responsive->selector=".item";

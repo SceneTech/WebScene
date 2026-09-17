@@ -62,6 +62,61 @@ void test_variadic_child_vector_scaling()
     require(bounded, "variadic sibling removal rescanned the child vector instead of compacting once");
 }
 
+void test_compiled_subject_index_scaling()
+{
+    for(const auto targets:{8,128}) {
+        std::vector<uint64_t> observations;
+        for(const auto unrelated:{32,1024}) {
+            auto* engine=webscene_engine_create(0);
+            require(engine!=nullptr,"subject index engine creation failed");
+            resize(engine,800,600,1);
+            wait_for_consumed_inputs(engine,1,"subject index initial viewport failed");
+            auto source=std::string{R"JS((([count,noise]) => {
+              document.body.innerHTML='<section class="subject-list">'+
+                Array.from({length:count},()=>'<div class="target"></div>').join('')+'</section>';
+              const style=document.createElement('style');
+              style.textContent='.subject-list {--width:31px}.target {width:var(--width);height:1px}'+
+                '@media(max-width:600px){.subject-list {--width:47px}}'+
+                Array.from({length:noise},(_,i)=>':not([data-disabled]).unused-'+i+' {width:7px}').join('');
+              document.head.appendChild(style);
+              globalThis.subjectSnapshot=()=>Array.from(document.querySelectorAll('.target')).every(n=>
+                getComputedStyle(n).width === (innerWidth<=600?'47px':'31px'));
+              return subjectSnapshot();
+            })(COUNTS))JS"};
+            source.replace(source.find("COUNTS"),6,"["+std::to_string(targets)+","+std::to_string(unrelated)+"]");
+            require(evaluate(engine,source,"subject-index-setup.js")=="true","subject index initial style mismatch");
+            for(int transition=0;transition<2;++transition) {
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+                std::this_thread::sleep_for(std::chrono::milliseconds(260));
+                execute_and_wait_for_wrapper_retention_scene(engine,
+                    "document.body.style.backgroundColor='rgb(1,2,3)'","subject-index-before.js");
+                const auto before=runtime_counter_diagnostic(engine,"css-cascade-candidate-checks");
+#endif
+                resize(engine,transition?800:480,600,transition+2);
+                wait_for_consumed_inputs(engine,transition+2,"subject index transition failed");
+                require(evaluate(engine,"subjectSnapshot()","subject-index-after.js")=="true",
+                    "subject index media activation/deactivation style mismatch");
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+                std::this_thread::sleep_for(std::chrono::milliseconds(260));
+                execute_and_wait_for_wrapper_retention_scene(engine,
+                    "document.body.style.backgroundColor='rgb(3,2,1)'","subject-index-publication.js");
+                const auto visits=runtime_counter_diagnostic(engine,"css-cascade-candidate-checks")-before;
+                std::cout<<"subject-index-runtime targets="<<targets<<" unrelated="<<unrelated
+                    <<" transition="<<transition<<" candidates="<<visits<<'\n';
+                require(visits>0 && visits<=static_cast<uint64_t>(targets+4),
+                    "unrelated pseudo-prefixed rules reached subject candidate matching");
+                observations.push_back(visits);
+#endif
+            }
+            webscene_engine_destroy(engine);
+        }
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+        require(observations[0]==observations[2] && observations[1]==observations[3],
+            "unrelated rule growth amplified subject candidate work");
+#endif
+    }
+}
+
 void test_compiled_css_invalidation_scaling()
 {
     std::vector<std::array<uint64_t, 7>> observations;

@@ -18,6 +18,13 @@ used.
 - Share the plans with immutable rule payloads and account for their storage in
   process CSS memory diagnostics. Mutation handling looks up feature indexes; it
   no longer rescans selector text to discover class/attribute dependencies.
+- Build stylesheet candidate buckets from the already-compiled outer subject,
+  preserving mandatory features after pseudos and decoded escaped names. Do not
+  promote optional functional arms to mandatory keys. The shared service's
+  128-target fixture drops from 131,200 to 128 candidate visits with 1,024 unrelated
+  pseudo-prefixed rules; native media recascade checks stay at 130 including the
+  two provider rules. See [compiled subject indexing](css-compiled-subject-index-20260917.md)
+  for browser/native regressions, HTML/XML matching checks and real-site limits.
 - Route `className`, `classList.add/remove/toggle/value`, and class attribute APIs
   through the same targeted path. Only changed class tokens select class-dependent
   rules; raw `[class]` selectors also participate.

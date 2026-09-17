@@ -470,7 +470,10 @@
                 index_invalidation_rule(css_invalidation_rules_by_class, name);
             }
         }
-        css::index_selector(index, selector, css_rules_by_id, css_rules_by_class,
+        css::index_selector(index, selector,
+            rule.payload->compiled_pseudo_origin.compounds.empty()
+                ? rule.compiled_selector() : rule.payload->compiled_pseudo_origin,
+            css_rules_by_id, css_rules_by_class,
             css_rules_by_tag, css_rules_by_attribute, css_focus_rules,
             unindexed_css_rules, css_descendant_attribute_dependencies);
     }

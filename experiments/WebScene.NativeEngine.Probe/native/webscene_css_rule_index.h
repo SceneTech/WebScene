@@ -1,10 +1,12 @@
 #pragma once
 #include "webscene_css_selectors.h"
+#include "webscene_css_declarations.h"
 
 namespace webscene_native::css {
 // Index a selector by a necessary subject key. Matching still verifies the full
 // selector. The caller owns storage and must rebuild it when rules are removed.
 inline void index_selector(size_t index, const std::string& selector,
+    const compiled_css_selector& prepared,
     css_index_string_map<std::vector<size_t>>& css_rules_by_id,
     css_class_index_map<std::vector<size_t>>& css_rules_by_class,
     css_index_string_map<std::vector<size_t>>& css_rules_by_tag,
@@ -54,72 +56,36 @@ inline void index_selector(size_t index, const std::string& selector,
             }
             open = cursor;
         }
-        auto compound = std::string_view(selector).substr(compound_begin);
-        while (!compound.empty()
-            && std::isspace(static_cast<unsigned char>(compound.front()))) {
-            compound.remove_prefix(1U);
-        }
-
-        size_t pseudo = compound.size();
-        bracket_depth = 0;
-        for (size_t position = 0; position < compound.size(); ++position) {
-            if (compound[position] == '[') ++bracket_depth;
-            else if (compound[position] == ']') --bracket_depth;
-            else if (compound[position] == ':' && bracket_depth == 0) {
-                pseudo = position;
-                break;
-            }
-        }
-        compound = compound.substr(0, pseudo);
-
-        const auto token_end = [&](size_t start) {
-            auto end = start;
-            while (end < compound.size()
-                && compound[end] != '.' && compound[end] != '#'
-                && compound[end] != '[' && compound[end] != ':') ++end;
-            return end;
-        };
-        bracket_depth = 0;
-        for (size_t position = 0; position < compound.size(); ++position) {
-            if (compound[position] == '[') ++bracket_depth;
-            else if (compound[position] == ']') --bracket_depth;
-            else if (bracket_depth == 0
-                && (compound[position] == '#' || compound[position] == '.')) {
-                const auto end = token_end(position + 1U);
-                const auto key = std::string(compound.substr(position + 1U, end - position - 1U));
-                if (!key.empty()) {
-                    auto& target = compound[position] == '#'
-                        ? css_rules_by_id[key]
-                        : css_rules_by_class[key];
-                    target.push_back(index);
+        // Use mandatory features of the *subject's outer compound*. The text
+        // before its first pseudo is not the compound: :not(.x).target still
+        // requires .target, and escaped punctuation is part of an identifier.
+        // Never pick a feature from a functional arm (:is(.a,.b), :not(.x),
+        // :has(.child)), nor from an ancestor/sibling compound.
+        if (!prepared.compiled_compounds.empty()) {
+            const auto& compound = prepared.compiled_compounds.back();
+            if (compound.valid) {
+                for (const auto& [marker, key] : compound.identities) {
+                    if (marker == '#') { css_rules_by_id[key].push_back(index); return; }
+                }
+                for (const auto& [marker, key] : compound.identities) {
+                    if (marker == '.') { css_rules_by_class[key].push_back(index); return; }
+                }
+                // HTML matching folds names, XML matching does not. Both keys
+                // are conservative candidates; the matcher checks the mode.
+                const auto append_name = [&](auto& names, const std::string& name) {
+                    names[name].push_back(index);
+                    const auto folded = ascii_lower(name);
+                    if (folded != name) names[folded].push_back(index);
+                };
+                if (!compound.tag.empty() && compound.tag != "*") {
+                    append_name(css_rules_by_tag, compound.tag);
                     return;
                 }
-            }
-        }
-        if (!compound.empty() && std::isalpha(static_cast<unsigned char>(compound.front()))) {
-            size_t end = 1U;
-            while (end < compound.size()
-                && (std::isalnum(static_cast<unsigned char>(compound[end]))
-                    || compound[end] == '-')) ++end;
-            css_rules_by_tag[std::string(compound.substr(0, end))].push_back(index);
-            return;
-        }
-        if (const auto open = compound.find('['); open != std::string_view::npos) {
-            auto cursor = open + 1U;
-            while (cursor < compound.size()
-                && std::isspace(static_cast<unsigned char>(compound[cursor]))) {
-                ++cursor;
-            }
-            const auto start = cursor;
-            while (cursor < compound.size()
-                && (std::isalnum(static_cast<unsigned char>(compound[cursor]))
-                    || compound[cursor] == '-' || compound[cursor] == '_')) {
-                ++cursor;
-            }
-            if (cursor > start) {
-                css_rules_by_attribute[
-                    std::string(compound.substr(start, cursor - start))].push_back(index);
-                return;
+                for (const auto& attribute : compound.attributes) {
+                    size_t cursor = 0;
+                    const auto name = read_css_identifier(trim_css_view(attribute), cursor);
+                    if (!name.empty()) { append_name(css_rules_by_attribute, name); return; }
+                }
             }
         }
         if (trim_css_view(selector) == ":root") {

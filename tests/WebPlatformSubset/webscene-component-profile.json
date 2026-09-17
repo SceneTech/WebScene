@@ -1222,6 +1222,13 @@
       "capabilities": ["selector-node-identity", "selector-result-uniqueness", "element-collection-node-identity", "parent-element-node-identity"],
       "evidence": ["hosted-component-duplicate-raw-locator-reduction", "direct-chrome-neutral-contract", "managed-and-native-neutral-contract"],
       "reason": "Required after unchanged bytes pass all 4/4 assertions in Chrome and the native runner. The product-neutral contract requires selector APIs, element collections, and parentElement to return the same JavaScript object for one DOM node, with selector results unique and tree ordered across a deep id-less tree. It rules out a general core node-identity defect as the source of duplicate raw interaction paths, allowing the private inventory to reject transient unlocatable targets without weakening the DOM contract. Evidence: artifacts/web-platform-selector-identity-chrome-v2-20260726/results.json and artifacts/web-platform-selector-identity-webscene-v2-20260726/{managed,native}/results.json."
+    },
+    {
+      "path": "contracts/css-class-index-cascade-mutation.html",
+      "type": "contract",
+      "capabilities": ["css-class-index-lookup", "multi-class-compound-cascade", "class-mutation-invalidation", "compiled-subject-index", "escaped-selector-identifiers"],
+      "evidence": ["direct-chrome-neutral-contract", "native-neutral-contract", "bounded-class-lookup-allocation-benchmark", "native-subject-candidate-scaling"],
+      "reason": "Required after all four checks pass in Chrome and native. Covers long class-token lookup, className/classList mutation, mandatory subject features after functional pseudos, escaped class/ID/attribute/tag identifiers, selector alternatives, stylesheet replacement and removal. Native gates separately bound class lookup allocation and prove candidate work does not grow with unrelated pseudo-prefixed rules. This does not claim general functional-selector indexing or complete selector grammar support."
     }
   ],
   "candidate": [
@@ -2308,21 +2315,6 @@
       ],
       "reason": "Candidate passes through native document navigation, preserving parser raw-text/comment/template semantics. Prepared-markup regex loading cannot qualify this parsing regression.",
       "nativeNavigation": true
-    },
-    {
-      "path": "contracts/css-class-index-cascade-mutation.html",
-      "type": "contract",
-      "capabilities": [
-        "css-class-index-lookup",
-        "multi-class-compound-cascade",
-        "class-mutation-invalidation"
-      ],
-      "evidence": [
-        "direct-chrome-neutral-contract",
-        "native-neutral-contract",
-        "bounded-class-lookup-allocation-benchmark"
-      ],
-      "reason": "Product-neutral regression for non-owning class-index lookup. Multiple class names longer than the common small-string capacity must resolve independent and compound stylesheet rules, then invalidate and recascade after className and classList mutations. The paired native benchmark requires identical cascade work and checksums while bounding temporary owned class lookup keys and bytes at zero."
     },
     {
       "path": "contracts/iframe-sandbox-dom-token-list.html",

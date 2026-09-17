@@ -67,6 +67,48 @@
     assertEquals(style.backgroundColor, "rgb(12, 34, 56)", "restored compound selector color");
   });
 
+  test("compiled subject keys preserve features after pseudos and escaped identifiers", () => {
+    const parent = document.createElement("section");
+    parent.className = "index-scope";
+    const target = document.createElement("div");
+    target.id = "index:id";
+    target.className = "index-probe target escaped:token foo+bar 123";
+    target.setAttribute("data-ready", "yes");
+    target.setAttribute("data-label", "a:b]c");
+    target.innerHTML = '<span class="child"></span>';
+    parent.appendChild(target);
+    document.body.appendChild(parent);
+    const sheet = document.createElement("style");
+    document.head.appendChild(sheet);
+    try {
+      const selectors = [
+        ":not(.absent).target", ":is(.absent,.target).target",
+        ":where(.target,.absent).target", ":has(> .child).target",
+        ".index-scope > :not(.absent).target", ":not(.absent)[data-ready]",
+        ":not(.absent)#index\\:id", ".escaped\\:token", ".foo\\+bar", ".\\31 23",
+        "[data\\2d ready]", "[DATA-READY]", "D\\49 V",
+        ".target[data-label='a:b]c']",
+        ":is(.absent,.target)", ":where(.target,.absent)", ":not(.absent)",
+        ".index-scope > :is(.absent,.target)"
+      ];
+      for (const selector of selectors) {
+        sheet.textContent = `:where(.index-probe) {display:block;width:11px;height:1px} ${selector} {width:37px}`;
+        assertEquals(getComputedStyle(target).width, "37px", `candidate missing for ${selector}`);
+      }
+      sheet.textContent = ".index-probe {display:block;width:11px;height:1px} :not(.target) {width:43px} :is(.absent,.another) {width:47px}";
+      assertEquals(getComputedStyle(target).width, "11px", "functional arms are not mandatory subject keys");
+      sheet.textContent = ".index-probe {display:block;width:11px;height:1px} :not(.absent).target {width:31px} :is(.different,.else).different {width:47px}";
+      assertEquals(getComputedStyle(target).width, "31px", "initial indexed subject");
+      target.className = "index-probe different";
+      assertEquals(getComputedStyle(target).width, "47px", "mutated indexed subject");
+      sheet.remove();
+      assertEquals(getComputedStyle(target).width === "47px", false, "removed sheet retained candidates");
+    } finally {
+      sheet.remove();
+      parent.remove();
+    }
+  });
+
   const failure = state.results.find(result => result.status !== "PASS");
   state.harness = failure
     ? { status: 1, message: failure.message, stack: failure.stack }

@@ -100,6 +100,19 @@
             node.style.contain_stacking_context = false;
             node.style.mutable_textual().contain_value = "none";
             node.style.inline_property_mask &= ~inline_contain;
+        } else if (name == "containerType" || name == "container-type") {
+            node.style.mutable_textual().container_type = "normal";
+            node.style.inline_property_mask &= ~inline_containment_features;
+        } else if (name == "containerName" || name == "container-name") {
+            node.style.mutable_textual().container_name = "none";
+            node.style.inline_property_mask &= ~inline_containment_features;
+        } else if (name == "contentVisibility" || name == "content-visibility") {
+            node.style.mutable_textual().content_visibility = "visible";
+            node.style.content_visibility_hidden = false;
+            node.style.inline_property_mask &= ~inline_containment_features;
+        } else if (name == "containIntrinsicSize" || name == "contain-intrinsic-size") {
+            node.style.mutable_textual().contain_intrinsic_size = {};
+            node.style.inline_property_mask &= ~inline_containment_features;
         } else if (name == "cssFloat" || name == "float") {
             node.style.floating = float_mode::none;
             node.style.inline_property_mask &= ~inline_float;
@@ -263,6 +276,12 @@
                 textual->cursor.clear();
             }
             node.style.inline_property_mask &= ~inline_cursor;
+        } else if (name == "color-scheme" || name == "accent-color") {
+            if (auto* textual = node.style.mutable_textual_if_present()) {
+                if (name == "color-scheme") textual->color_scheme.clear();
+                else textual->accent_color.clear();
+            }
+            node.style.inline_property_mask &= ~inline_accessibility_colors;
         } else if (name == "color") {
             node.style.foreground_rgba = 0;
             node.style.inline_property_mask &= ~inline_color;
@@ -361,7 +380,11 @@
                 : length.unit == length_unit::em ? "em"
                 : length.unit == length_unit::rem ? "rem"
                 : length.unit == length_unit::viewport_width ? "vw"
-                : length.unit == length_unit::viewport_height ? "vh" : "px";
+                : length.unit == length_unit::viewport_height ? "vh"
+                : length.unit == length_unit::container_inline ? "cqi"
+                : length.unit == length_unit::container_block ? "cqb"
+                : length.unit == length_unit::container_min ? "cqmin"
+                : length.unit == length_unit::container_max ? "cqmax" : "px";
             return serialize_css_number(length.value) + suffix;
         };
         const auto has = [&](uint64_t mask) {
@@ -674,6 +697,24 @@
                 || (" " + computed + " ").find(" layout ") != std::string::npos
                 || (" " + computed + " ").find(" paint ") != std::string::npos;
             node->style.inline_property_mask |= inline_contain;
+        } else if (name == "container-type" || name == "containerType") {
+            auto type = lower_html_name(value);
+            if (type != "inline-size" && type != "size") type = "normal";
+            node->style.mutable_textual().container_type = std::move(type);
+            node->style.inline_property_mask |= inline_containment_features;
+        } else if (name == "container-name" || name == "containerName") {
+            node->style.mutable_textual().container_name = lower_html_name(value);
+            node->style.inline_property_mask |= inline_containment_features;
+        } else if (name == "content-visibility" || name == "contentVisibility") {
+            auto visibility = lower_html_name(value);
+            if (visibility != "hidden" && visibility != "auto") visibility = "visible";
+            node->style.mutable_textual().content_visibility = visibility;
+            node->style.content_visibility_hidden = visibility == "hidden";
+            node->style.inline_property_mask |= inline_containment_features;
+        } else if (name == "contain-intrinsic-size" || name == "containIntrinsicSize") {
+            node->style.mutable_textual().contain_intrinsic_size =
+                native_document::parse_length(value);
+            node->style.inline_property_mask |= inline_containment_features;
         } else if (name == "float" || name == "cssFloat") {
             node->style.floating = value == "left" ? float_mode::left
                 : value == "right" ? float_mode::right
@@ -832,6 +873,17 @@
             node->style.mutable_textual().cursor = value;
             node->style.inline_property_mask |= inline_cursor;
         }
+        else if (name == "color-scheme" || name == "accent-color") {
+            auto& textual = node->style.mutable_textual();
+            if (name == "color-scheme") {
+                textual.color_scheme = value.empty() || value == "initial"
+                    ? "normal" : value;
+            } else {
+                textual.accent_color = value.empty() || value == "initial"
+                    ? "auto" : value;
+            }
+            node->style.inline_property_mask |= inline_accessibility_colors;
+        }
         else if (canonical_name == "background"
             || canonical_name == "background-color"
             || canonical_name == "background-image"
@@ -919,6 +971,14 @@
             *node, "style", old_value, node->attributes.at("style"));
         if (canonical_name == "font-size" || canonical_name == "font") {
             self->recascade_connected_subtree(*node, "font-metrics");
+            self->document.mark_dirty();
+            return;
+        }
+        if (canonical_name == "width" || canonical_name == "height"
+            || canonical_name == "container" || canonical_name == "container-type"
+            || canonical_name == "container-name" || canonical_name == "content-visibility"
+            || canonical_name == "contain-intrinsic-size") {
+            self->recascade_connected_subtree(*node, "container-dependent-style");
             self->document.mark_dirty();
             return;
         }
@@ -1048,6 +1108,16 @@
             } else if (name == "contain") {
                 value = node->style.textual().contain_value.empty()
                     ? "none" : node->style.textual().contain_value;
+            } else if (name == "container-type") {
+                value = node->style.textual().container_type;
+            } else if (name == "container-name") {
+                value = node->style.textual().container_name;
+            } else if (name == "content-visibility") {
+                value = node->style.textual().content_visibility;
+            } else if (name == "contain-intrinsic-size") {
+                const auto intrinsic = node->style.textual().contain_intrinsic_size;
+                value = intrinsic.unit == length_unit::automatic
+                    ? "none" : format_pixels(resolve_connected_css_length(*node, intrinsic, 0));
             } else if (name == "float") {
                 value = node->style.floating == float_mode::left ? "left"
                     : node->style.floating == float_mode::right ? "right" : "none";
@@ -1277,6 +1347,31 @@
                         << std::setprecision(6) << static_cast<double>(alpha) / 255.0 << ')';
                 }
                 value = stream.str();
+            } else if (name == "color-scheme") {
+                value = "normal";
+                for (auto* current = node; current != nullptr; current = current->parent) {
+                    if (!current->style.textual().color_scheme.empty()) {
+                        value = current->style.textual().color_scheme;
+                        break;
+                    }
+                }
+            } else if (name == "accent-color") {
+                auto accent = std::string{};
+                for (auto* current = node; current != nullptr; current = current->parent) {
+                    if (!current->style.textual().accent_color.empty()) {
+                        accent = current->style.textual().accent_color;
+                        break;
+                    }
+                }
+                if (accent.empty() || accent == "auto") value = "auto";
+                else {
+                    const auto color = native_document::parse_color(accent);
+                    std::ostringstream stream;
+                    stream << "rgb(" << ((color >> 24U) & 0xFFU) << ", "
+                        << ((color >> 16U) & 0xFFU) << ", "
+                        << ((color >> 8U) & 0xFFU) << ')';
+                    value = stream.str();
+                }
             } else if (name == "white-space") {
                 value = node->style.textual().white_space;
             } else if (name == "cursor") {
@@ -1448,7 +1543,11 @@
                 || length.unit == length_unit::viewport_width_capped
                 || length.unit == length_unit::viewport_height_capped
                 || length.unit == length_unit::viewport_width_floored
-                || length.unit == length_unit::viewport_height_floored) {
+                || length.unit == length_unit::viewport_height_floored
+                || length.unit == length_unit::container_inline
+                || length.unit == length_unit::container_block
+                || length.unit == length_unit::container_min
+                || length.unit == length_unit::container_max) {
                 return format_pixels(resolve_connected_css_length(
                     *node, length, reference));
             }
@@ -1548,6 +1647,19 @@
                 : node->style.position == position_mode::sticky ? "sticky"
                 : node->style.position == position_mode::relative ? "relative"
                 : "static";
+        } else if (name == "contain") {
+            value = node->style.textual().contain_value.empty()
+                ? "none" : node->style.textual().contain_value;
+        } else if (name == "containerType") {
+            value = node->style.textual().container_type;
+        } else if (name == "containerName") {
+            value = node->style.textual().container_name;
+        } else if (name == "contentVisibility") {
+            value = node->style.textual().content_visibility;
+        } else if (name == "containIntrinsicSize") {
+            const auto intrinsic = node->style.textual().contain_intrinsic_size;
+            value = intrinsic.unit == length_unit::automatic
+                ? "none" : format_pixels(resolve_connected_css_length(*node, intrinsic, 0));
         } else if (name == "cssFloat") {
             value = node->style.floating == float_mode::left ? "left"
                 : node->style.floating == float_mode::right ? "right" : "none";
@@ -1861,6 +1973,24 @@
             }
             if ((color & 0xFFU) == 0U) color = 0x000000FFU;
             value = serialize_color(color);
+        } else if (name == "colorScheme") {
+            value = "normal";
+            for (auto* current = node; current != nullptr; current = current->parent) {
+                if (!current->style.textual().color_scheme.empty()) {
+                    value = current->style.textual().color_scheme;
+                    break;
+                }
+            }
+        } else if (name == "accentColor") {
+            auto accent = std::string{};
+            for (auto* current = node; current != nullptr; current = current->parent) {
+                if (!current->style.textual().accent_color.empty()) {
+                    accent = current->style.textual().accent_color;
+                    break;
+                }
+            }
+            value = accent.empty() || accent == "auto"
+                ? "auto" : serialize_color(native_document::parse_color(accent));
         } else if (name == "fontSize") {
             value = serialize_css_number(node->style.font_size >= 0
                 ? node->style.font_size : inherited_font_size(*node)) + "px";
@@ -2068,6 +2198,34 @@
                 : value == "relative" ? position_mode::relative
                 : position_mode::normal;
             node->style.inline_property_mask |= inline_position;
+        } else if (name == "contain") {
+            auto contain = lower_html_name(value);
+            if (contain == "initial" || contain == "unset" || contain == "revert") {
+                contain = "none";
+            }
+            node->style.mutable_textual().contain_value = contain;
+            node->style.contain_stacking_context = contain == "content" || contain == "strict"
+                || (" " + contain + " ").find(" layout ") != std::string::npos
+                || (" " + contain + " ").find(" paint ") != std::string::npos;
+            node->style.inline_property_mask |= inline_contain;
+        } else if (name == "containerType") {
+            auto type = lower_html_name(value);
+            if (type != "inline-size" && type != "size") type = "normal";
+            node->style.mutable_textual().container_type = std::move(type);
+            node->style.inline_property_mask |= inline_containment_features;
+        } else if (name == "containerName") {
+            node->style.mutable_textual().container_name = lower_html_name(value);
+            node->style.inline_property_mask |= inline_containment_features;
+        } else if (name == "contentVisibility") {
+            auto visibility = lower_html_name(value);
+            if (visibility != "hidden" && visibility != "auto") visibility = "visible";
+            node->style.mutable_textual().content_visibility = visibility;
+            node->style.content_visibility_hidden = visibility == "hidden";
+            node->style.inline_property_mask |= inline_containment_features;
+        } else if (name == "containIntrinsicSize") {
+            node->style.mutable_textual().contain_intrinsic_size =
+                native_document::parse_length(value);
+            node->style.inline_property_mask |= inline_containment_features;
         } else if (name == "cssFloat") {
             node->style.floating = value == "left" ? float_mode::left
                 : value == "right" ? float_mode::right
@@ -2258,6 +2416,16 @@
         } else if (name == "cursor") {
             node->style.mutable_textual().cursor = value;
             node->style.inline_property_mask |= inline_cursor;
+        } else if (name == "colorScheme" || name == "accentColor") {
+            auto& textual = node->style.mutable_textual();
+            if (name == "colorScheme") {
+                textual.color_scheme = value.empty() || value == "initial"
+                    ? "normal" : value;
+            } else {
+                textual.accent_color = value.empty() || value == "initial"
+                    ? "auto" : value;
+            }
+            node->style.inline_property_mask |= inline_accessibility_colors;
         } else if (name == "color") {
             node->style.foreground_rgba = native_document::parse_color(value);
             node->style.inline_property_mask |= inline_color;
@@ -2334,6 +2502,14 @@
             *node, "style", old_value, node->attributes.at("style"));
         if (canonical_name == "font-size" || canonical_name == "font") {
             self->recascade_connected_subtree(*node, "font-metrics");
+            self->document.mark_dirty();
+            return;
+        }
+        if (canonical_name == "width" || canonical_name == "height"
+            || canonical_name == "container" || canonical_name == "container-type"
+            || canonical_name == "container-name" || canonical_name == "content-visibility"
+            || canonical_name == "contain-intrinsic-size") {
+            self->recascade_connected_subtree(*node, "container-dependent-style");
             self->document.mark_dirty();
             return;
         }

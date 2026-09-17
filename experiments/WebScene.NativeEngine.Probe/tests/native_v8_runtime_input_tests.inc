@@ -1954,6 +1954,55 @@ void test_pointer_cursor_and_external_anchor_host_handoff(webscene_engine* engin
     require(reload_request.kind == WEBSCENE_HOST_REQUEST_WINDOW_RELOAD_V1,
         "Location.reload did not emit a typed native reload request");
 
+    require(evaluate(engine,
+                "location.href='?folder=/private/tmp/webscene-247-fixture/beta'; true",
+                "native-window-navigate-href.js") == "true",
+        "Location.href assignment did not drain through the engine worker");
+    const auto href_navigation = take_typed_host_request(engine);
+    require(
+        href_navigation.kind == WEBSCENE_HOST_REQUEST_WINDOW_NAVIGATE_V1
+            && href_navigation.flags == 0U
+            && href_navigation.url
+                == "http://127.0.0.1/?folder=/private/tmp/webscene-247-fixture/beta",
+        std::string("Location.href assignment did not retain the resolved same-window target: ")
+            + href_navigation.url + " from " + location_before);
+    require(evaluate(engine, "location.href", "native-window-navigate-pending.js")
+                == location_before,
+        "Location.href changed before the native host admitted navigation");
+
+    require(evaluate(engine,
+                "location.replace('/replacement?workspace=one'); true",
+                "native-window-navigate-replace.js") == "true",
+        "Location.replace did not drain through the engine worker");
+    const auto replace_navigation = take_typed_host_request(engine);
+    require(
+        replace_navigation.kind == WEBSCENE_HOST_REQUEST_WINDOW_NAVIGATE_V1
+            && replace_navigation.flags
+                == WEBSCENE_HOST_REQUEST_NAVIGATION_REPLACE_V1
+            && replace_navigation.url
+                == "http://127.0.0.1/replacement?workspace=one",
+        "Location.replace did not retain its target and history decision");
+
+    require(evaluate(engine,
+                "(() => { try { location.assign('https://example.com/cross-origin'); return false; } catch { return true; } })()",
+                "native-window-navigate-cross-origin.js") == "true"
+            && !take_typed_host_request(engine),
+        "cross-origin Location navigation escaped the native admission policy");
+
+    const auto oversized_navigation = std::string("http://127.0.0.1/")
+        + std::string(8192U, 'x');
+    execute(
+        engine,
+        "try { location.assign('" + oversized_navigation
+            + "'); globalThis.oversizedNavigationAccepted = true; } "
+              "catch { globalThis.oversizedNavigationAccepted = false; }",
+        "native-window-navigate-oversized.js");
+    require(
+        evaluate(engine, "oversizedNavigationAccepted",
+            "native-window-navigate-oversized-result.js") == "false"
+            && !take_typed_host_request(engine),
+        "oversized same-window URL reached the bounded host request queue");
+
     const auto oversized_url = std::string("https://example.com/")
         + std::string(8192U, 'x');
     execute(
@@ -2235,6 +2284,33 @@ void test_typed_window_host_request_performance(webscene_engine* engine)
         "10,000 typed window host requests exceeded five seconds");
     std::cout << "Typed window host request gate: operations="
               << operation_count << " elapsed=" << elapsed << "s\n";
+
+    const auto navigation_started = std::chrono::steady_clock::now();
+    for (unsigned offset = 0; offset < operation_count; offset += batch_size) {
+        require(evaluate(engine, R"JS(
+            for (let index = 0; index < 1000; ++index) {
+              location.assign('/?scene-navigation-performance=' + index);
+            }
+            true
+        )JS", "native-window-navigation-performance.js") == "true",
+            "typed navigation batch did not drain through the engine worker");
+        for (unsigned index = 0; index < batch_size; ++index) {
+            const auto request = take_typed_host_request(engine);
+            require(
+                request.kind == WEBSCENE_HOST_REQUEST_WINDOW_NAVIGATE_V1
+                    && request.flags == 0U
+                    && request.url == "http://127.0.0.1/?scene-navigation-performance="
+                        + std::to_string(index),
+                "typed navigation target or order changed under load");
+        }
+    }
+    const auto navigation_elapsed = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - navigation_started).count();
+    require(navigation_elapsed < 5.0,
+        "10,000 typed same-window navigation requests exceeded five seconds");
+    std::cout << "Typed navigation host request gate: operations="
+              << operation_count << " queueHighWater=" << batch_size
+              << " elapsed=" << navigation_elapsed << "s\n";
 }
 
 void test_script_window_close_lifecycle(webscene_engine* engine)

@@ -312,6 +312,7 @@
     std::deque<pending_promise_rejection> pending_promise_rejections;
     std::filesystem::path resource_root;
     std::string document_base_address;
+    std::string top_level_location_address{"http://127.0.0.1/"};
     std::string frame_base_address;
     std::vector<css_rule> css_rules;
     static constexpr size_t maximum_compiled_css_selector_lists = 512U;

@@ -3710,24 +3710,7 @@ struct v8_dom_runtime::implementation final {
         global->Set(local_context, js_string(isolate, "DOMRect"), rect_constructor).Check();
         global->Set(local_context, js_string(isolate, "DOMRectReadOnly"), rect_constructor).Check();
 
-        auto location = v8::Object::New(isolate);
-        location->Set(
-            local_context,
-            js_string(isolate, "href"),
-            js_string(isolate, "http://127.0.0.1/")).Check();
-        location->Set(local_context, js_string(isolate, "protocol"), js_string(isolate, "http:")).Check();
-        location->Set(local_context, js_string(isolate, "pathname"), js_string(isolate, "/")).Check();
-        location->Set(local_context, js_string(isolate, "search"), js_string(isolate, "")).Check();
-        location->Set(local_context, js_string(isolate, "hash"), js_string(isolate, "")).Check();
-        location->Set(
-            local_context,
-            js_string(isolate, "toString"),
-            v8::Function::New(local_context, location_to_string).ToLocalChecked()).Check();
-        location->Set(
-            local_context,
-            js_string(isolate, "reload"),
-            v8::Function::New(local_context, location_reload).ToLocalChecked()).Check();
-        global->Set(local_context, js_string(isolate, "location"), location).Check();
+        set_context_location(local_context, global, "http://127.0.0.1/");
         auto history = v8::Object::New(isolate);
         history->Set(local_context, js_string(isolate, "length"),
             v8::Integer::New(isolate, 1)).Check();
@@ -4937,6 +4920,39 @@ struct v8_dom_runtime::implementation final {
         if (local_context != context.Get(isolate)) return true;
         auto request = std::make_unique<native_host_request>();
         request->view.kind = kind;
+        return enqueue_typed_host_request(std::move(request));
+    }
+
+    bool queue_top_level_navigation(
+        v8::Local<v8::Context> local_context,
+        std::string authored,
+        bool replace)
+    {
+        if (local_context != context.Get(isolate)) return true;
+        constexpr size_t maximum_navigation_url_bytes = 8192U;
+        if (authored.empty() || authored.size() > maximum_navigation_url_bytes
+            || authored.find_first_of("\r\n\0", 0U, 3U) != std::string::npos) {
+            return false;
+        }
+        const auto& base = top_level_location_address;
+        const auto resolved = resolve_resource_url(std::move(authored), base);
+        if (resolved.empty() || resolved.size() > maximum_navigation_url_bytes
+            || resource_origin(resolved) != resource_origin(base)) {
+            return false;
+        }
+        const auto scheme = resource_scheme(resolved);
+        if (scheme != "http" && scheme != "https") return false;
+        auto request = std::make_unique<native_host_request>();
+        request->view.kind = WEBSCENE_HOST_REQUEST_WINDOW_NAVIGATE_V1;
+        request->view.flags = replace
+            ? WEBSCENE_HOST_REQUEST_NAVIGATION_REPLACE_V1 : 0U;
+        request->url = resolved;
+        record_feature(
+            "web-api",
+            replace ? "Location.replace" : "Location.assign",
+            "supported",
+            "same-origin top-level navigation through the bounded native host request queue",
+            "web-api-binding");
         return enqueue_typed_host_request(std::move(request));
     }
 

@@ -70,9 +70,13 @@ output directories. A source match establishes reachability only; it does not pr
 runtime support claim.
 
 `code-oss-web-api-ledger.json` reconciles every catalog entry with an explicit state,
-owner issue, evidence, and known boundary. CSS claims are composed from the separately
-versioned CSS matrix by SHA-256, schema, matrix version, evidence-profile digest, and
-full native/browser denominators. The generated report is
+owner issue, evidence, and known boundary. Each evidence entry pins its source digest,
+source revision, exact platform scope, pass/fail/skipped/unavailable denominator, and
+SceneTech run or review URL. Partial or supported claims require passing native and
+unchanged-product evidence on every declared release platform plus WPT or browser
+evidence. CSS claims are composed from the separately versioned CSS matrix by SHA-256,
+schema, matrix version, evidence-profile digest, and full native/browser denominators.
+The generated report is
 `docs/validation/code-oss-web-api-ledger.md`.
 
 Validate the committed snapshot, claims, CSS slice, and report with:

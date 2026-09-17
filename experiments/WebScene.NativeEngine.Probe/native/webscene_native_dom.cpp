@@ -359,7 +359,8 @@ bool display_tree_allows_render(
 {
     for (auto* current = &node; current != nullptr;
         current = document.composed_parent(*current)) {
-        if (current->style.display == display_mode::none) return false;
+        if (current->style.display == display_mode::none
+            || (current != &node && current->style.content_visibility_hidden)) return false;
     }
     return true;
 }
@@ -383,7 +384,8 @@ bool stacking_ancestors_allow_hit(
     if (ancestors.empty() || ancestors.back() != &root) return false;
     for (auto iterator = ancestors.rbegin(); iterator != ancestors.rend(); ++iterator) {
         const auto& ancestor = **iterator;
-        if (ancestor.style.display == display_mode::none) return false;
+        if (ancestor.style.display == display_mode::none
+            || ancestor.style.content_visibility_hidden) return false;
         visibility_hidden = ancestor.style.visibility_specified
             ? ancestor.style.visibility_hidden
             : visibility_hidden;

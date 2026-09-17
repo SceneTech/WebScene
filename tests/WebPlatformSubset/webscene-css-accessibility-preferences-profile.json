@@ -1,0 +1,29 @@
+{
+  "profile": "webscene-css-accessibility-preferences-1",
+  "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+  "runtime": "v8",
+  "viewport": {
+    "width": 800,
+    "height": 600,
+    "deviceScaleFactor": 1
+  },
+  "required": [
+    {
+      "path": "contracts/css-accessibility-preferences.html",
+      "type": "testharness",
+      "capabilities": [
+        "forced-colors-media",
+        "preferred-contrast-media",
+        "reduced-motion-media",
+        "system-colors",
+        "color-scheme",
+        "accent-color",
+        "focus-visual"
+      ],
+      "evidence": ["css-accessibility-preferences-255"],
+      "reason": "Product-neutral coverage for preference media, system color computation, inherited control theming, inactive branches, and visible keyboard focus."
+    }
+  ],
+  "harnessBlocked": [],
+  "excluded": []
+}

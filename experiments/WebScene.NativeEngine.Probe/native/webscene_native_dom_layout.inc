@@ -356,6 +356,23 @@ void native_document::layout_children(dom_node& parent)
         parent.style.mutable_after_pseudo().layout = {};
     }
     parent.list_marker_layout = {};
+    if (parent.style.content_visibility_hidden) {
+        const auto clear_skipped_layout = [&](const auto& self, dom_node& node) -> void {
+            node.layout = {};
+            node.text_layout_fragments.clear();
+            node.scroll_content_width = 0;
+            node.scroll_content_height = 0;
+            node.scroll_viewport_width = 0;
+            node.scroll_viewport_height = 0;
+            for (auto* child : composed_children(node)) self(self, *child);
+        };
+        for (auto* child : composed_children(parent)) clear_skipped_layout(clear_skipped_layout, *child);
+        parent.scroll_content_width = parent.layout.width;
+        parent.scroll_content_height = parent.layout.height;
+        parent.scroll_viewport_width = parent.layout.width;
+        parent.scroll_viewport_height = parent.layout.height;
+        return;
+    }
     const auto has_before = pseudo_generates_box(parent.style.before_pseudo());
     const auto has_after = pseudo_generates_box(parent.style.after_pseudo());
     const auto marker_text = list_marker_text(parent);
@@ -4878,6 +4895,14 @@ void native_document::layout_child(
             && (child.style.height.unit != length_unit::percent
                 || (parent != nullptr && parent->used_height_is_definite)));
     const auto automatic_height = !is_specified(child.style.height);
+    if (automatic_height && child.style.content_visibility_hidden
+        && child.style.textual().contain_intrinsic_size.unit != length_unit::automatic) {
+        child.layout.height = resolve_length(
+            child,
+            child.style.textual().contain_intrinsic_size,
+            containing_block.height,
+            child.layout.height);
+    }
     if (automatic_height && child.tag == "#text" && has_visible_text(child.text_content)) {
         const auto font_size = resolved_font_size(child);
         const auto line_height = resolved_line_height(child, font_size);
@@ -4908,7 +4933,8 @@ void native_document::layout_child(
     const auto table_track_sized = is_table_row_group(child.style.display)
         || child.style.display == display_mode::table_row
         || child.style.display == display_mode::table_cell;
-    if (automatic_height && !constrained_overflow_height && !constrained_column_flex_item
+    if (automatic_height && !child.style.content_visibility_hidden
+        && !constrained_overflow_height && !constrained_column_flex_item
         && !table_track_sized && !composed_children(child).empty()) {
         auto content_bottom = child.layout.y;
         for (const auto* descendant : composed_children(child)) {

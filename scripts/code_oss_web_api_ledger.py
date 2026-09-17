@@ -26,6 +26,8 @@ SOURCE_SUFFIXES = {".ts", ".tsx", ".js", ".mjs", ".html"}
 EXCLUDED_PARTS = {"node_modules", "out", ".git", "test", "tests", "fixtures"}
 MAX_INPUT_BYTES = 131_072
 MAX_REPORT_BYTES = 131_072
+EVIDENCE_KINDS = {"wpt", "browser", "native", "product", "performance", "security"}
+EVIDENCE_COUNT_KEYS = {"pass", "fail", "skipped", "unavailable", "total"}
 API_HINTS = {
     "abort": ("AbortController", "AbortSignal"),
     "animation-frame": ("requestAnimationFrame", "cancelAnimationFrame"),
@@ -300,8 +302,8 @@ def validate_css_slice(ledger: dict) -> dict:
 def validate_ledger(catalog: dict, snapshot: dict, ledger: dict, verify_css: bool = True) -> None:
     require_keys(ledger, {"schemaVersion", "revisions", "cssSlice", "claims"}, "ledger")
     snapshot_by_id = validate_snapshot(catalog, snapshot)
-    if ledger.get("schemaVersion") != 1:
-        raise LedgerError("ledger schemaVersion must be 1")
+    if ledger.get("schemaVersion") != 2:
+        raise LedgerError("ledger schemaVersion must be 2")
     revisions = ledger.get("revisions", {})
     require_keys(revisions, {"codeOss", "webScene", "appScene", "wpt"}, "ledger revisions")
     for name, revision in revisions.items():
@@ -342,19 +344,59 @@ def validate_ledger(catalog: dict, snapshot: dict, ledger: dict, verify_css: boo
         for item in evidence:
             if not isinstance(item, dict):
                 raise LedgerError(f"{api_id}: evidence entries must be objects")
-            require_keys(item, {"kind", "path"}, f"{api_id} evidence")
-            if item["kind"] not in {"wpt", "browser", "native", "product", "performance", "security"}:
+            require_keys(
+                item,
+                {"kind", "path", "platforms", "revision", "sha256", "counts", "run"},
+                f"{api_id} evidence",
+            )
+            if item["kind"] not in EVIDENCE_KINDS:
                 raise LedgerError(f"{api_id}: invalid evidence kind")
             identity = (item["kind"], item["path"])
             if identity in seen_evidence:
                 raise LedgerError(f"{api_id}: duplicate evidence {identity}")
             seen_evidence.add(identity)
-            if not item["path"].startswith(("https://", "http://")) and not (ROOT / item["path"]).exists():
+            evidence_platforms = item.get("platforms")
+            if not isinstance(evidence_platforms, list) or not evidence_platforms \
+                    or len(evidence_platforms) != len(set(evidence_platforms)) \
+                    or not set(evidence_platforms) <= set(platforms):
+                raise LedgerError(f"{api_id}: evidence platform scope is invalid")
+            if not re.fullmatch(r"[0-9a-f]{40}", item.get("revision", "")):
+                raise LedgerError(f"{api_id}: evidence revision is invalid")
+            digest = item.get("sha256")
+            if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+                raise LedgerError(f"{api_id}: evidence digest is invalid")
+            path = ROOT / item["path"]
+            if not path.is_file():
                 raise LedgerError(f"{api_id}: evidence path does not exist: {item['path']}")
+            if sha256(path) != digest:
+                raise LedgerError(f"{api_id}: evidence digest is stale: {item['path']}")
+            counts = item.get("counts")
+            if not isinstance(counts, dict) or set(counts) != EVIDENCE_COUNT_KEYS \
+                    or any(not isinstance(value, int) or isinstance(value, bool) or value < 0
+                           for value in counts.values()) \
+                    or counts["total"] <= 0 \
+                    or counts["total"] != sum(counts[name] for name in EVIDENCE_COUNT_KEYS - {"total"}):
+                raise LedgerError(f"{api_id}: evidence counts are invalid")
+            if not isinstance(item.get("run"), str) \
+                    or not item["run"].startswith("https://github.com/SceneTech/"):
+                raise LedgerError(f"{api_id}: evidence run must be a SceneTech GitHub URL")
         if state in {"supported", "partial"}:
             kinds = {item.get("kind") for item in evidence if isinstance(item, dict)}
             if not {"native", "product"}.issubset(kinds) or not ({"wpt", "browser"} & kinds):
                 raise LedgerError(f"{api_id}: {state} claims require native, product, and WPT/browser evidence")
+            for required_kind in ("native", "product"):
+                covered = {
+                    platform
+                    for item in evidence if item.get("kind") == required_kind
+                    for platform in item.get("platforms", [])
+                    if item.get("counts", {}).get("fail", 1) == 0
+                    and item.get("counts", {}).get("unavailable", 1) == 0
+                    and item.get("counts", {}).get("pass", 0) > 0
+                }
+                if covered != set(platforms):
+                    raise LedgerError(
+                        f"{api_id}: {state} {required_kind} evidence does not cover every claimed platform"
+                    )
         if state in {"blocked", "intentionally-absent", "consumer-unreachable"} and not claim.get("reason"):
             raise LedgerError(f"{api_id}: {state} claim requires a reason")
         limits = claim.get("limits")
@@ -388,10 +430,22 @@ def render_report(catalog: dict, snapshot: dict, ledger: dict) -> str:
         "|---|---:|---|---|---|---:|---|",
     ]
     for claim in claims:
-        detail = "; ".join(claim.get("limits", [])) or claim.get("reason", "")
+        detail = " ".join(claim.get("limits", [])) or claim.get("reason", "")
+        evidence = claim["evidence"]
+        evidence_counts = Counter()
+        for item in evidence:
+            evidence_counts.update(item["counts"])
+        evidence_summary = str(len(evidence))
+        if evidence:
+            evidence_summary += (
+                f" ({evidence_counts['pass']} pass, {evidence_counts['fail']} fail, "
+                f"{evidence_counts['skipped']} skipped, "
+                f"{evidence_counts['unavailable']} unavailable, "
+                f"{evidence_counts['total']} total)"
+            )
         lines.append(
             f"| `{claim['id']}` | {'yes' if claim['reachable'] else 'no'} | {claim['state']} | "
-            f"{', '.join(claim['platforms'])} | {', '.join(claim['issues'])} | {len(claim['evidence'])} | {detail} |"
+            f"{', '.join(claim['platforms'])} | {', '.join(claim['issues'])} | {evidence_summary} | {detail} |"
         )
     css = ledger["cssSlice"]
     d = css["denominators"]
@@ -422,7 +476,7 @@ def main() -> int:
             if path.exists() and path.stat().st_size > MAX_INPUT_BYTES:
                 raise LedgerError(f"input exceeds {MAX_INPUT_BYTES} bytes: {path}")
         schema = load_json(SCHEMA_PATH)
-        if schema.get("$id") != "https://webscene.dev/schemas/code-oss-web-api-ledger-v1.json":
+        if schema.get("$id") != "https://webscene.dev/schemas/code-oss-web-api-ledger-v2.json":
             raise LedgerError("ledger schema identity changed")
         catalog = load_json(CATALOG_PATH)
         validate_catalog(catalog)

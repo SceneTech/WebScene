@@ -78,6 +78,39 @@ bool apply_visibility_value(native_document& document,dom_node& node,
                 || contain == "strict"
                 || (" " + contain + " ").find(" layout ") != std::string::npos
                 || (" " + contain + " ").find(" paint ") != std::string::npos;
+        } else if (name == "container" && !is_inline(inline_containment_features)) {
+            const auto slash = value.find('/');
+            auto names = ascii_lower(value.substr(0, slash));
+            names.erase(0, names.find_first_not_of(" \t\r\n"));
+            if (const auto last = names.find_last_not_of(" \t\r\n"); last != std::string::npos) {
+                names.erase(last + 1U);
+            }
+            auto type = slash == std::string::npos ? std::string{"normal"}
+                : ascii_lower(value.substr(slash + 1U));
+            type.erase(0, type.find_first_not_of(" \t\r\n"));
+            if (const auto last = type.find_last_not_of(" \t\r\n"); last != std::string::npos) {
+                type.erase(last + 1U);
+            }
+            if (type != "inline-size" && type != "size") type = "normal";
+            node.style.mutable_textual().container_name = names.empty() ? "none" : std::move(names);
+            node.style.mutable_textual().container_type = std::move(type);
+        } else if (name == "container-type" && !is_inline(inline_containment_features)) {
+            auto type = ascii_lower(value);
+            if (type != "inline-size" && type != "size") type = "normal";
+            node.style.mutable_textual().container_type = std::move(type);
+        } else if (name == "container-name" && !is_inline(inline_containment_features)) {
+            auto names = ascii_lower(value);
+            if (names.empty() || names == "initial" || names == "unset"
+                || names == "revert") names = "none";
+            node.style.mutable_textual().container_name = std::move(names);
+        } else if (name == "content-visibility" && !is_inline(inline_containment_features)) {
+            auto visibility = ascii_lower(value);
+            if (visibility != "hidden" && visibility != "auto") visibility = "visible";
+            node.style.mutable_textual().content_visibility = visibility;
+            node.style.content_visibility_hidden = visibility == "hidden";
+        } else if (name == "contain-intrinsic-size" && !is_inline(inline_containment_features)) {
+            node.style.mutable_textual().contain_intrinsic_size =
+                native_document::parse_length(value);
         } else if (name == "visibility" && !is_inline(inline_visibility)) {
             node.style.visibility_specified = value != "inherit" && value != "unset";
             node.style.visibility_hidden = value == "hidden" || value == "collapse";

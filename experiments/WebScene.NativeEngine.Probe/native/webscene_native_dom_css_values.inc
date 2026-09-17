@@ -40,7 +40,19 @@ css_length native_document::parse_length(const std::string& value)
     auto length = value.size();
     auto unit = length_unit::pixels;
     auto multiplier = 1.0F;
-    if (length >= 3 && value.ends_with("rem")) {
+    if (length >= 5 && value.ends_with("cqmin")) {
+        length -= 5;
+        unit = length_unit::container_min;
+    } else if (length >= 5 && value.ends_with("cqmax")) {
+        length -= 5;
+        unit = length_unit::container_max;
+    } else if (length >= 3 && (value.ends_with("cqw") || value.ends_with("cqi"))) {
+        length -= 3;
+        unit = length_unit::container_inline;
+    } else if (length >= 3 && (value.ends_with("cqh") || value.ends_with("cqb"))) {
+        length -= 3;
+        unit = length_unit::container_block;
+    } else if (length >= 3 && value.ends_with("rem")) {
         length -= 3;
         unit = length_unit::rem;
     } else if (length >= 2 && value.ends_with("em")) {
@@ -242,6 +254,7 @@ uint32_t native_document::parse_color(const std::string& value)
             return static_cast<char>(std::tolower(character));
         });
 
+    if (const auto system = css::system_color_rgba(normalized)) return *system;
     if (const auto named = named_color_rgba(normalized)) return *named;
     if ((normalized.starts_with("hsl(") || normalized.starts_with("hsla("))
         && normalized.ends_with(')')) {
@@ -497,6 +510,38 @@ float native_document::resolve_length(
     if (value.unit == length_unit::rem) {
         return value.value * document_root_font_size(context);
     }
+    if (value.unit == length_unit::container_inline
+        || value.unit == length_unit::container_block
+        || value.unit == length_unit::container_min
+        || value.unit == length_unit::container_max) {
+        const auto* container = composed_parent(context);
+        while (container != nullptr
+            && container->style.textual().container_type != "size"
+            && container->style.textual().container_type != "inline-size") {
+            container = composed_parent(*container);
+        }
+        if (container == nullptr) {
+            const auto viewport = value.unit == length_unit::container_block
+                ? viewport_height_ : value.unit == length_unit::container_min
+                    ? std::min(viewport_width_, viewport_height_)
+                    : value.unit == length_unit::container_max
+                        ? std::max(viewport_width_, viewport_height_)
+                        : viewport_width_;
+            return viewport * value.value / 100.0F;
+        }
+        const auto width = container->layout.width > 0
+            ? container->layout.width
+            : container->style.width.unit == length_unit::pixels
+                ? container->style.width.value : viewport_width_;
+        const auto height = container->layout.height > 0
+            ? container->layout.height
+            : container->style.height.unit == length_unit::pixels
+                ? container->style.height.value : viewport_height_;
+        const auto basis = value.unit == length_unit::container_block ? height
+            : value.unit == length_unit::container_min ? std::min(width, height)
+            : value.unit == length_unit::container_max ? std::max(width, height) : width;
+        return basis * value.value / 100.0F;
+    }
     return resolve_length(value, available, fallback);
 }
 
@@ -546,6 +591,14 @@ float native_document::resolve_length(css_length value, float available, float f
         return std::max(viewport_width_ * value.value / 100.0F, value.pixel_offset);
     case length_unit::viewport_height_floored:
         return std::max(viewport_height_ * value.value / 100.0F, value.pixel_offset);
+    case length_unit::container_inline:
+        return viewport_width_ * value.value / 100.0F;
+    case length_unit::container_block:
+        return viewport_height_ * value.value / 100.0F;
+    case length_unit::container_min:
+        return std::min(viewport_width_, viewport_height_) * value.value / 100.0F;
+    case length_unit::container_max:
+        return std::max(viewport_width_, viewport_height_) * value.value / 100.0F;
     case length_unit::max_content:
     case length_unit::min_content:
     case length_unit::fit_content:

@@ -2002,6 +2002,13 @@ public static unsafe partial class NativeWebSceneApi
         IntPtr engine,
         NativePreferredColorScheme preferredColorScheme);
 
+    [DllImport(
+        LibraryName,
+        EntryPoint = "webscene_engine_set_accessibility_preferences_v1")]
+    internal static extern byte EngineSetAccessibilityPreferences(
+        IntPtr engine,
+        NativeAccessibilityPreferences preferences);
+
     [DllImport(LibraryName, EntryPoint = "webscene_scene_release")]
     public static extern void SceneRelease(IntPtr scene);
 

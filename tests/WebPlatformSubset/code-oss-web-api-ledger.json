@@ -1,8 +1,8 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "revisions": {
     "codeOss": "645f29cc3176500b4b5762ba887cf2a7f0ffdf2c",
-    "webScene": "b81f594cfe0effe742942b8ccf643c2e1f42bc6a",
+    "webScene": "45d7f522e3d0f1abec60a50227f80e9575aa2882",
     "appScene": "9f434e0deea632fe28962ce32e2f4ddede4aa14c",
     "wpt": "2c705104a295c48053eeddf7fe0170d790a4e853"
   },
@@ -269,11 +269,54 @@
       "state": "blocked",
       "issues": [
         "WebScene#253",
-        "WebScene#264"
+        "WebScene#264",
+        "WebScene#265",
+        "WebScene#266",
+        "WebScene#267",
+        "WebScene#268"
       ],
-      "evidence": [],
-      "limits": [],
-      "reason": "Sandbox work is active; origin, policy, navigation, teardown, and interaction layers remain scheduled.",
+      "evidence": [
+        {
+          "kind": "browser",
+          "path": "tests/WebPlatformSubset/contracts/iframe-sandbox-dom-token-list.html",
+          "platforms": [
+            "macos-arm64"
+          ],
+          "revision": "16080105cbd6e88e347510c47c99e5b9dc45ab83",
+          "sha256": "fc088f2f5987d226f4d46df949da84ddcb4fa1c571a3f0327effb924a577dd6d",
+          "counts": {
+            "pass": 6,
+            "fail": 0,
+            "skipped": 0,
+            "unavailable": 0,
+            "total": 6
+          },
+          "run": "https://github.com/SceneTech/WebScene/pull/273"
+        },
+        {
+          "kind": "native",
+          "path": "tests/WebPlatformSubset/contracts/iframe-sandbox-dom-token-list.html",
+          "platforms": [
+            "linux-x64"
+          ],
+          "revision": "16080105cbd6e88e347510c47c99e5b9dc45ab83",
+          "sha256": "fc088f2f5987d226f4d46df949da84ddcb4fa1c571a3f0327effb924a577dd6d",
+          "counts": {
+            "pass": 6,
+            "fail": 0,
+            "skipped": 0,
+            "unavailable": 0,
+            "total": 6
+          },
+          "run": "https://github.com/SceneTech/WebScene/actions/runs/35218825214/job/105193678855"
+        }
+      ],
+      "limits": [
+        "Wave 0 proves sandbox token reflection, script gating, opaque-origin parent denial, and wrapper cleanup only.",
+        "Browser evidence is macOS Chromium 153; native runner evidence is Linux x64.",
+        "ServiceWorker control, resources/cache/streams, nested navigation, interaction, and packaged Markdown remain blocked."
+      ],
+      "reason": "Sandbox Wave 0 is evidenced, while #265-#268 and accepted packaged webview scenarios remain incomplete.",
       "platforms": [
         "linux-x64",
         "macos-arm64",

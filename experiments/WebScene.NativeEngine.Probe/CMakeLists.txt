@@ -785,6 +785,25 @@ if(WEBSCENE_NATIVE_ENGINE_ENABLE_V8)
             webscene_native_engine
             ixwebsocket)
         add_test(NAME webscene_native_engine_tests COMMAND webscene_native_engine_tests)
+        add_executable(webscene_css_containment_tests
+            tests/native_css_containment_tests.cpp)
+        target_compile_features(webscene_css_containment_tests PRIVATE cxx_std_20)
+        target_link_libraries(webscene_css_containment_tests PRIVATE
+            webscene_native_engine)
+        add_test(NAME webscene_css_containment_tests COMMAND webscene_css_containment_tests)
+        set_tests_properties(webscene_css_containment_tests PROPERTIES
+            TIMEOUT 30
+            LABELS "native;css;containment;performance;lifecycle")
+        add_executable(webscene_css_accessibility_preferences_tests
+            tests/native_css_accessibility_preferences_tests.cpp)
+        target_compile_features(webscene_css_accessibility_preferences_tests PRIVATE cxx_std_20)
+        target_link_libraries(webscene_css_accessibility_preferences_tests PRIVATE
+            webscene_native_engine)
+        add_test(NAME webscene_css_accessibility_preferences_tests
+            COMMAND webscene_css_accessibility_preferences_tests)
+        set_tests_properties(webscene_css_accessibility_preferences_tests PROPERTIES
+            TIMEOUT 30
+            LABELS "native;css;accessibility;performance;lifecycle")
         add_test(NAME webscene_native_idle_v8_platform COMMAND webscene_native_engine_tests)
         add_test(NAME webscene_native_dom_punctuation_keyboard COMMAND webscene_native_engine_tests)
         add_test(NAME webscene_native_shortcut_activation COMMAND webscene_native_engine_tests)

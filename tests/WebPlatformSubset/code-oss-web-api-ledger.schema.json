@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://webscene.dev/schemas/code-oss-web-api-ledger-v1.json",
+  "$id": "https://webscene.dev/schemas/code-oss-web-api-ledger-v2.json",
   "title": "Code OSS Web API capability ledger",
   "type": "object",
   "additionalProperties": false,
   "required": ["schemaVersion", "revisions", "cssSlice", "claims"],
   "properties": {
-    "schemaVersion": {"const": 1},
+    "schemaVersion": {"const": 2},
     "revisions": {
       "type": "object",
       "additionalProperties": false,
@@ -65,10 +65,31 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["kind", "path"],
+            "required": ["kind", "path", "platforms", "revision", "sha256", "counts", "run"],
             "properties": {
               "kind": {"enum": ["wpt", "browser", "native", "product", "performance", "security"]},
-              "path": {"type": "string", "minLength": 1}
+              "path": {"type": "string", "minLength": 1},
+              "platforms": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {"enum": ["linux-x64", "macos-arm64", "windows-x64"]}
+              },
+              "revision": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+              "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+              "counts": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["pass", "fail", "skipped", "unavailable", "total"],
+                "properties": {
+                  "pass": {"type": "integer", "minimum": 0},
+                  "fail": {"type": "integer", "minimum": 0},
+                  "skipped": {"type": "integer", "minimum": 0},
+                  "unavailable": {"type": "integer", "minimum": 0},
+                  "total": {"type": "integer", "minimum": 1}
+                }
+              },
+              "run": {"type": "string", "pattern": "^https://github\\.com/SceneTech/"}
             }
           }
         },

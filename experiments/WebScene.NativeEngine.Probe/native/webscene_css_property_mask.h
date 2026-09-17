@@ -67,6 +67,8 @@ enum inline_style_property : uint64_t {
     inline_scrollbar_color = 1ULL << 59U,
     inline_svg_stroke_width = 1ULL << 60U,
     inline_align_content = 1ULL << 61U,
+    inline_accessibility_colors = 1ULL << 62U,
+    inline_containment_features = 1ULL << 63U,
     inline_transition = inline_transition_property | inline_transition_duration
         | inline_transition_delay | inline_transition_timing
 };
@@ -91,6 +93,9 @@ inline uint64_t property_mask(std::string_view name)
         if (name == "display") return inline_display;
         if (name == "position") return inline_position;
         if (name == "contain") return inline_contain;
+        if (name == "container-type" || name == "container-name"
+            || name == "container" || name == "content-visibility"
+            || name == "contain-intrinsic-size") return inline_containment_features;
         if (name == "float" || name == "cssFloat") return inline_float;
         if (name == "z-index" || name == "zIndex") return inline_z_index;
         if (name == "flex-direction" || name == "flexDirection") {
@@ -130,6 +135,9 @@ inline uint64_t property_mask(std::string_view name)
         if (name == "visibility") return inline_visibility;
         if (name == "pointer-events") return inline_pointer_events;
         if (name == "color") return inline_color;
+        if (name == "color-scheme" || name == "accent-color") {
+            return inline_accessibility_colors;
+        }
         if (name == "fill") return inline_svg_fill;
         if (name == "stroke") return inline_svg_stroke;
         if (name == "text-anchor") return inline_svg_text_anchor;

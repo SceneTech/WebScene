@@ -1,0 +1,88 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Accessibility media preferences, system colors, and focus visuals</title>
+<link rel="help" href="https://drafts.csswg.org/mediaqueries-5/#forced-colors">
+<link rel="help" href="https://drafts.csswg.org/css-color-adjust-1/#color-scheme-prop">
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<style>
+  #surface {
+    color: CanvasText;
+    background-color: Canvas;
+    color-scheme: light dark;
+    accent-color: AccentColor;
+    transition: opacity 2s linear;
+    width: 160px;
+    height: 40px;
+  }
+  #surface button { outline: 1px solid transparent; }
+  #surface button:focus { outline: 3px solid Highlight; }
+  #surface button.focus-visual { outline: 3px solid Highlight; }
+  @media (forced-colors: active) { #surface { border-left: 7px solid Highlight; } }
+  @media (prefers-contrast: more) { #surface { border-right: 9px solid CanvasText; } }
+  @media (prefers-reduced-motion: reduce) { #surface { padding-top: 11px; transition-duration: 0s; } }
+</style>
+<div id="surface"><button id="control">Open</button></div>
+<script>
+  const surface = document.getElementById('surface');
+  const control = document.getElementById('control');
+  const pixels = value => Math.round(parseFloat(value));
+
+  test(() => {
+    assert_true(matchMedia('(forced-colors: none)').matches);
+    assert_false(matchMedia('(forced-colors: active)').matches);
+  }, 'forced-colors publishes the default host state');
+
+  test(() => {
+    assert_true(matchMedia('(prefers-contrast: no-preference)').matches);
+    assert_false(matchMedia('(prefers-contrast: more)').matches);
+  }, 'prefers-contrast publishes the default host state');
+
+  test(() => {
+    assert_true(matchMedia('(prefers-reduced-motion: no-preference)').matches);
+    assert_false(matchMedia('(prefers-reduced-motion: reduce)').matches);
+    assert_equals(getComputedStyle(surface).transitionDuration, '2s');
+  }, 'reduced-motion publishes the default host state');
+
+  test(() => {
+    assert_true(matchMedia('(prefers-color-scheme: light)').matches);
+    assert_false(matchMedia('(prefers-color-scheme: dark)').matches);
+  }, 'preferred color scheme remains coherent with accessibility preferences');
+
+  test(() => {
+    const style = getComputedStyle(surface);
+    assert_regexp_match(style.color, /^rgb/);
+    assert_regexp_match(style.backgroundColor, /^rgb/);
+    assert_not_equals(style.color, style.backgroundColor);
+  }, 'Canvas and CanvasText resolve to contrasting computed colors');
+
+  test(() => {
+    const style = getComputedStyle(surface);
+    assert_equals(style.getPropertyValue('color-scheme'), 'light dark');
+  }, 'color-scheme has a computed CSSOM value');
+
+  test(() => {
+    const style = getComputedStyle(surface);
+    assert_regexp_match(style.getPropertyValue('accent-color'), /^(auto|rgb)/);
+  }, 'accent-color accepts a system color and exposes a computed value');
+
+  test(() => {
+    const child = document.createElement('span');
+    surface.appendChild(child);
+    assert_equals(getComputedStyle(child).getPropertyValue('color-scheme'), 'light dark');
+    assert_regexp_match(getComputedStyle(child).getPropertyValue('accent-color'), /^(auto|rgb)/);
+  }, 'color-scheme and accent-color inherit through control surfaces');
+
+  test(() => {
+    const style = getComputedStyle(surface);
+    assert_equals(pixels(style.borderLeftWidth), 0);
+    assert_equals(pixels(style.borderRightWidth), 0);
+    assert_equals(pixels(style.paddingTop), 0);
+  }, 'inactive preference branches do not affect layout');
+
+  test(() => {
+    control.classList.add('focus-visual');
+    assert_equals(pixels(getComputedStyle(control).outlineWidth), 3);
+    assert_regexp_match(getComputedStyle(control).outlineColor, /^rgb/);
+  }, 'focus visual resolves the system highlight color');
+</script>

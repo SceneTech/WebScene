@@ -1,5 +1,6 @@
 #pragma once
 #include "webscene_css_pseudo_application.h"
+#include "webscene_css_container_queries.h"
 #include <span>
 
 namespace webscene_native::css {
@@ -29,6 +30,12 @@ rule_matches match_candidates(native_document& document,const dom_node& node,
         for (const auto index : candidates) {
             const auto& rule = rules[index];
             if (active_media_only && !rule.media_matches) continue;
+            if (active_media_only && !std::all_of(
+                    rule.media_queries().begin(), rule.media_queries().end(),
+                    [&](const auto& query) {
+                        return !is_container_query(query)
+                            || container_query_matches(document, node, query);
+                    })) continue;
             if (!rule_is_in_scope(rule)) continue;
             const auto pseudo_kind = rule.payload->pseudo_kind;
             if (pseudo_kind != 0) {

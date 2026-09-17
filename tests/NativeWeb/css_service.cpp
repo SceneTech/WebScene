@@ -408,15 +408,18 @@ int main(int argc,char** argv) {
         > .content { min-width: 0; }
       }
     )CSS",stylesheet_sink);
-    if(!stylesheet_parsed || !stylesheet_sink.complete() || stylesheet_host.rules.size()!=9 ||
+    if(!stylesheet_parsed || !stylesheet_sink.complete() || stylesheet_host.rules.size()!=10 ||
        stylesheet_host.rules[1].media.size()!=2 || !stylesheet_host.rules[1].declarations[0].important ||
-       stylesheet_host.rules[3].selector!=".last" || stylesheet_host.rules[3].address!=stylesheet_address ||
-       stylesheet_host.rules[4].selector!=".modal" || stylesheet_host.rules[5].selector!=".panel" ||
-       stylesheet_host.rules[6].selector!=":is(.modal, .panel) .resizable" ||
-       stylesheet_host.rules[7].selector!=":is(.modal, .panel).wide" ||
-       stylesheet_host.rules[8].selector!=":is(.modal, .panel) > .content" ||
+       stylesheet_host.rules[3].selector!=".excluded" || stylesheet_host.rules[3].media.size()!=1 ||
+       !webscene_native::css::is_container_query(stylesheet_host.rules[3].media[0]) ||
+       webscene_native::css::container_query_text(stylesheet_host.rules[3].media[0])!="card (width > 10px)" ||
+       stylesheet_host.rules[4].selector!=".last" || stylesheet_host.rules[4].address!=stylesheet_address ||
+       stylesheet_host.rules[5].selector!=".modal" || stylesheet_host.rules[6].selector!=".panel" ||
+       stylesheet_host.rules[7].selector!=":is(.modal, .panel) .resizable" ||
+       stylesheet_host.rules[8].selector!=":is(.modal, .panel).wide" ||
+       stylesheet_host.rules[9].selector!=":is(.modal, .panel) > .content" ||
        stylesheet_sink.keyframes().size()!=1 || stylesheet_sink.keyframes()[0].second.opacity_stops.size()!=2 ||
-       stylesheet_sink.keyframes()[0].first!="pulse" || stylesheet_host.unsupported.size()!=1) return 68;
+       stylesheet_sink.keyframes()[0].first!="pulse" || !stylesheet_host.unsupported.empty()) return 68;
     std::unordered_map<std::string,webscene_native::css::css_opacity_keyframes> parsed_keyframes;
     for(auto& [name,definition]:stylesheet_sink.keyframes()) {
         webscene_native::css::finish_keyframes(parsed_keyframes,name,std::move(definition));

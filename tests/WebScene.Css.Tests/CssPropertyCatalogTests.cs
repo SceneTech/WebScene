@@ -36,6 +36,8 @@ public sealed class CssPropertyCatalogTests
     [InlineData("borderStartEndRadius")]
     [InlineData("transitionTimingFunction")]
     [InlineData("transform-origin")]
+    [InlineData("color-scheme")]
+    [InlineData("accentColor")]
     public void ExposesSupportedCssomProperties(string name)
         => Assert.True(CssPropertyCatalog.IsSupported(name));
 
@@ -56,6 +58,9 @@ public sealed class CssPropertyCatalogTests
     [InlineData("font-size", "0", true)]
     [InlineData("letter-spacing", "normal", true)]
     [InlineData("letter-spacing", "3", false)]
+    [InlineData("color-scheme", "light dark", true)]
+    [InlineData("color-scheme", "sepia", false)]
+    [InlineData("accent-color", "auto", true)]
     public void ValidatesCssomValuesWithoutFrameworkKnowledge(string name, string value, bool expected)
         => Assert.Equal(expected, CssPropertyCatalog.IsValidCssomValue(name, value));
 }

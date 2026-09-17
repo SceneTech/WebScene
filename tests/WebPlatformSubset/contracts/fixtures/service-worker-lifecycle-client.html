@@ -1,0 +1,127 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Service worker lifecycle and controller</title>
+<body>
+<script>
+  const state = window.__webSceneWptState = {
+    complete: false, harness: null, results: [], errors: [], diagnostics: []
+  };
+  function assert(condition, message) { if (!condition) throw new Error(message); }
+  async function test(name, body) {
+    try {
+      await body();
+      state.results.push({ name, status: "PASS", message: null, stack: null });
+    } catch (error) {
+      state.results.push({
+        name, status: "FAIL", message: String(error.message || error),
+        stack: error.stack || null
+      });
+    }
+  }
+  function finish() {
+    const failure = state.results.find(result => result.status !== "PASS");
+    state.harness = failure
+      ? { status: 1, message: failure.message, stack: failure.stack }
+      : { status: 0, message: null, stack: null };
+    state.complete = true;
+  }
+  async function activeWorker(registration) {
+    if (registration.active) return registration.active;
+    const worker = registration.installing || registration.waiting;
+    if (!worker) throw new Error("registration exposed no lifecycle worker");
+    await new Promise((resolve, reject) => {
+      const changed = () => {
+        if (worker.state === "activated") resolve();
+        else if (worker.state === "redundant") {
+          reject(new Error("worker became redundant before activation"));
+        }
+      };
+      worker.addEventListener("statechange", changed);
+      changed();
+    });
+    return registration.active;
+  }
+
+  (async () => {
+    let registration;
+    let controllerChanges = 0;
+    const controllerChanged = new Promise(resolve => {
+      navigator.serviceWorker.addEventListener("controllerchange", () => {
+        ++controllerChanges;
+        resolve();
+      }, { once: true });
+    });
+
+    await test("module worker installs, activates, and claims the matching client", async () => {
+      registration = await navigator.serviceWorker.register(
+        "service-worker-control-plane.js",
+        { type: "module", updateViaCache: "none" });
+      if (!navigator.serviceWorker.controller) await controllerChanged;
+      const ready = await navigator.serviceWorker.ready;
+      assert(ready === registration, "ready resolved with another registration");
+      assert(registration.installing === null, "installing worker remained after activation");
+      assert(registration.waiting === null, "unexpected waiting worker");
+      assert(registration.active instanceof ServiceWorker, "active worker missing");
+      assert(registration.active.state === "activated", "active state mismatch");
+      assert(navigator.serviceWorker.controller === registration.active,
+        "active worker did not control the matching client");
+    });
+
+    await test("controller and ready identities are stable", async () => {
+      assert(navigator.serviceWorker.ready === navigator.serviceWorker.ready,
+        "ready promise identity changed");
+      const controller = navigator.serviceWorker.controller;
+      assert(await registration.update() === registration,
+        "same-byte update replaced registration");
+      assert(navigator.serviceWorker.controller === controller,
+        "same-byte update replaced controller");
+      assert(controllerChanges <= 1, `controllerchange fired ${controllerChanges} times`);
+    });
+
+    await test("worker-only globals do not leak to Window", async () => {
+      assert(!("ServiceWorkerGlobalScope" in window),
+        "ServiceWorkerGlobalScope leaked to Window");
+      assert(!("clients" in window), "clients leaked to Window");
+      assert(!("skipWaiting" in window), "skipWaiting leaked to Window");
+    });
+
+    await test("activation without claim does not replace the current controller", async () => {
+      const controller = navigator.serviceWorker.controller;
+      const unclaimed = await navigator.serviceWorker.register(
+        "service-worker-no-claim.js", {
+          type: "module", scope: "unclaimed-scope/"
+        });
+      assert(await activeWorker(unclaimed) instanceof ServiceWorker,
+        "unclaimed worker did not activate");
+      assert(navigator.serviceWorker.controller === controller,
+        "unclaimed worker replaced the current controller");
+      assert(await unclaimed.unregister(), "unclaimed worker did not unregister");
+    });
+
+    await test("module evaluation failures reject and leave no registration", async () => {
+      let error = null;
+      try {
+        await navigator.serviceWorker.register("service-worker-module-error.js", {
+          type: "module", scope: "error-scope/"
+        });
+      } catch (caught) { error = caught; }
+      assert(error instanceof TypeError, `registration rejected with ${error}`);
+      const registrations = await navigator.serviceWorker.getRegistrations();
+      assert(registrations.length === 1 && registrations[0] === registration,
+        "failed module left a registration");
+    });
+
+    await test("unregister tears down registration ownership", async () => {
+      assert(await registration.unregister(), "unregister returned false");
+      assert((await navigator.serviceWorker.getRegistrations()).length === 0,
+        "registration remained after unregister");
+    });
+
+    state.diagnostics.push(JSON.stringify({
+      controllerChanges,
+      controllerState: navigator.serviceWorker.controller?.state ?? null
+    }));
+    finish();
+  })();
+</script>
+</body>

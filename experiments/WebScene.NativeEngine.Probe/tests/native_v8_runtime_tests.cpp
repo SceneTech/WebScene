@@ -83,6 +83,7 @@ uint8_t measure_baseline_fixture_text(
 #include "native_file_service_tests.inc"
 #include "native_table_cell_copy_tests.inc"
 #include "native_v8_runtime_resource_tests.inc"
+#include "native_v8_runtime_service_worker_tests.inc"
 #include "native_v8_runtime_response_cookie_tests.inc"
 #include "native_v8_runtime_diagnostics_tests.inc"
 #include "native_resource_failure_diagnostics_tests.inc"
@@ -161,6 +162,10 @@ int main()
         }
         if (selected == "iframe-sandbox") {
             test_iframe_sandbox_dom_token_list_security_and_lifecycle_gate();
+            return 0;
+        }
+        if (selected == "service-worker-lifecycle") {
+            test_service_worker_lifecycle_performance_and_teardown_gate();
             return 0;
         }
         if (selected == "rounded-icon-surfaces") {

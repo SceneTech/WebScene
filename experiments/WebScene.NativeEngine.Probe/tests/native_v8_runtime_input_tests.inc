@@ -384,6 +384,308 @@ void keyboard_input(
     require(webscene_engine_enqueue(engine, &input) != 0, "keyboard input was rejected");
 }
 
+void test_text_control_select_all_default_action(webscene_engine* engine)
+{
+#if defined(__APPLE__) || defined(__linux__)
+    const auto peak_rss_bytes = [] {
+        rusage usage{};
+        if (getrusage(RUSAGE_SELF, &usage) != 0) return uint64_t{0};
+#if defined(__APPLE__)
+        return static_cast<uint64_t>(usage.ru_maxrss);
+#else
+        return static_cast<uint64_t>(usage.ru_maxrss) * 1024U;
+#endif
+    };
+#else
+    const auto peak_rss_bytes = [] { return uint64_t{0}; };
+#endif
+    resize(engine, 640, 360, 97700U);
+    execute_and_wait(engine, R"JS(
+      (() => {
+        document.body.innerHTML = `
+          <input id="path" value="/private/tmp/Unicode β/./../link/">
+          <textarea id="notes">folder path</textarea>
+          <input id="cancelled" value="unchanged">
+          <input id="disabled" value="disabled" disabled>
+          <input id="inert" value="inert" inert>
+          <input id="empty" value="">
+          <button id="button">button</button>
+          <input id="performance" value="x">`;
+        const cancelled = document.getElementById('cancelled');
+        cancelled.addEventListener('keydown', event => {
+          if ((event.metaKey || event.ctrlKey) && event.key === 'A') {
+            event.preventDefault();
+          }
+        });
+        const performance = document.getElementById('performance');
+        globalThis.__selectAllPerformanceEvents = 0;
+        performance.addEventListener('keydown', event => {
+          ++__selectAllPerformanceEvents;
+          if ((__selectAllPerformanceEvents % 10) === 0) event.preventDefault();
+        });
+        document.getElementById('path').focus();
+      })()
+    )JS", "text-control-select-all-setup.js");
+
+    uint64_t sequence = 97701U;
+    const auto send_and_wait = [&](uint32_t kind, uint32_t value, uint32_t flags) {
+        const auto consumed_before = consumed_input_count(engine);
+        keyboard_input(engine, kind, value, sequence++, flags);
+        wait_for_consumed_inputs(
+            engine, consumed_before + 1U,
+            "text-control select-all input was not consumed");
+    };
+    send_and_wait(
+        WEBSCENE_INPUT_KEY_DOWN, 'A', WEBSCENE_INPUT_MODIFIER_META);
+    auto result = evaluate(engine, R"JS((() => {
+      const input = document.getElementById('path');
+      return {
+        start: input.selectionStart,
+        end: input.selectionEnd,
+        length: input.value.length
+      };
+    })())JS", "text-control-select-all-meta-result.js");
+    require(
+        result == R"JSON({"start":0,"end":33,"length":33})JSON",
+        "Meta+A did not select the complete Unicode path value: " + result);
+    send_and_wait(WEBSCENE_INPUT_TEXT, 'Z', 0U);
+    require(
+        evaluate(engine, "({value: document.getElementById('path').value})",
+            "text-control-select-all-meta-replacement.js")
+            == R"JSON({"value":"Z"})JSON",
+        "text after Meta+A did not replace the complete path value");
+
+    execute_and_wait(engine, R"JS((() => {
+      const input = document.getElementById('path');
+      input.value = 'Aβ🙂Z';
+      input.focus();
+      input.setSelectionRange(2, 4);
+    })())JS", "text-control-select-all-unicode-range.js");
+    result = evaluate(engine, R"JS((() => {
+      const input = document.getElementById('path');
+      return {selection: [input.selectionStart, input.selectionEnd],
+        length: input.value.length};
+    })())JS", "text-control-select-all-unicode-range-result.js");
+    require(
+        result == R"JSON({"selection":[2,4],"length":5})JSON",
+        "UTF-16 selection indices diverged from Chromium: " + result);
+    send_and_wait(WEBSCENE_INPUT_TEXT, 'R', 0U);
+    require(
+        evaluate(engine, "({value: document.getElementById('path').value})",
+            "text-control-select-all-unicode-range-replacement.js")
+            == R"JSON({"value":"AβRZ"})JSON",
+        "UTF-16 selection did not map to safe UTF-8 replacement boundaries");
+
+    execute_and_wait(engine, R"JS((() => {
+      const input = document.getElementById('path');
+      input.value = 'A🙂Z';
+      input.focus();
+      input.setSelectionRange(2, 2);
+    })())JS", "text-control-mid-surrogate-range.js");
+    result = evaluate(engine, R"JS((() => {
+      const input = document.getElementById('path');
+      return {selection: [input.selectionStart, input.selectionEnd],
+        length: input.value.length};
+    })())JS", "text-control-mid-surrogate-range-result.js");
+    require(
+        result == R"JSON({"selection":[2,2],"length":4})JSON",
+        "mid-surrogate UTF-16 caret was clamped: " + result);
+    result = evaluate(engine, R"JS((() => {
+      const input = document.getElementById('path');
+      input.setRangeText('R', input.selectionStart, input.selectionEnd, 'end');
+      return {selection: [input.selectionStart, input.selectionEnd],
+        length: input.value.length,
+        units: Array.from({length: input.value.length},
+          (_, index) => input.value.charCodeAt(index))};
+    })())JS", "text-control-mid-surrogate-replacement.js");
+    require(
+        result == R"JSON({"selection":[3,3],"length":5,"units":[65,55357,82,56898,90]})JSON",
+        "mid-surrogate replacement diverged from Chromium: " + result);
+
+    execute_and_wait(engine, R"JS((() => {
+      const textarea = document.getElementById('notes');
+      textarea.focus();
+      textarea.setSelectionRange(4, 4);
+    })())JS", "text-control-select-all-textarea-focus.js");
+    send_and_wait(
+        WEBSCENE_INPUT_KEY_DOWN, 'A', WEBSCENE_INPUT_MODIFIER_CONTROL);
+    send_and_wait(WEBSCENE_INPUT_TEXT, 'Y', 0U);
+    require(
+        evaluate(engine, "({value: document.getElementById('notes').value})",
+            "text-control-select-all-control-replacement.js")
+            == R"JSON({"value":"Y"})JSON",
+        "text after Ctrl+A did not replace the complete textarea value");
+
+    execute_and_wait(engine, R"JS((() => {
+      const input = document.getElementById('cancelled');
+      input.focus();
+      input.setSelectionRange(2, 4);
+    })())JS", "text-control-select-all-cancel-focus.js");
+    send_and_wait(
+        WEBSCENE_INPUT_KEY_DOWN, 'A', WEBSCENE_INPUT_MODIFIER_META);
+    result = evaluate(engine, R"JS([
+      document.getElementById('cancelled').selectionStart,
+      document.getElementById('cancelled').selectionEnd
+    ])JS", "text-control-select-all-cancel-result.js");
+    require(result == "[2,4]", "preventDefault did not cancel select-all: " + result);
+
+    execute_and_wait(engine, R"JS((() => {
+      const input = document.getElementById('path');
+      input.value = 'plain';
+      input.focus();
+      input.setSelectionRange(1, 2);
+    })())JS", "text-control-select-all-negative-focus.js");
+    send_and_wait(
+        WEBSCENE_INPUT_KEY_DOWN, 'A',
+        WEBSCENE_INPUT_MODIFIER_CONTROL | WEBSCENE_INPUT_MODIFIER_ALT);
+    result = evaluate(engine, R"JS((() => {
+      const input = document.getElementById('path');
+      return [input.selectionStart, input.selectionEnd];
+    })())JS", "text-control-select-all-alt-result.js");
+    require(result == "[1,2]", "Alt-modified A widened the selection: " + result);
+    send_and_wait(WEBSCENE_INPUT_KEY_DOWN, 'A', 0U);
+    result = evaluate(engine, R"JS((() => {
+      const input = document.getElementById('path');
+      return [input.selectionStart, input.selectionEnd];
+    })())JS", "text-control-select-all-plain-result.js");
+    require(result == "[1,2]", "plain A widened the selection: " + result);
+
+    execute_and_wait(engine, R"JS((() => {
+      const path = document.getElementById('path');
+      const disabled = document.getElementById('disabled');
+      disabled.setSelectionRange(1, 3);
+      path.focus();
+      disabled.focus();
+    })())JS", "text-control-select-all-negative-targets.js");
+    send_and_wait(
+        WEBSCENE_INPUT_KEY_DOWN, 'A', WEBSCENE_INPUT_MODIFIER_META);
+    result = evaluate(engine, R"JS((() => {
+      const disabled = document.getElementById('disabled');
+      return {selection: [disabled.selectionStart, disabled.selectionEnd],
+        active: document.activeElement.id};
+    })())JS", "text-control-select-all-disabled-result.js");
+    require(
+        result == R"JSON({"selection":[1,3],"active":"path"})JSON",
+        "disabled input accepted focus or select-all: " + result);
+
+    execute_and_wait(engine, R"JS((() => {
+      const path = document.getElementById('path');
+      const inert = document.getElementById('inert');
+      inert.setSelectionRange(1, 3);
+      path.focus();
+      inert.focus();
+    })())JS", "text-control-select-all-inert-target.js");
+    send_and_wait(
+        WEBSCENE_INPUT_KEY_DOWN, 'A', WEBSCENE_INPUT_MODIFIER_META);
+    result = evaluate(engine, R"JS((() => {
+      const inert = document.getElementById('inert');
+      return {selection: [inert.selectionStart, inert.selectionEnd],
+        active: document.activeElement.id};
+    })())JS", "text-control-select-all-inert-result.js");
+    require(
+        result == R"JSON({"selection":[1,3],"active":"path"})JSON",
+        "inert input accepted focus or select-all: " + result);
+
+    execute_and_wait(engine,
+        "document.getElementById('button').focus()",
+        "text-control-select-all-button-target.js");
+    send_and_wait(
+        WEBSCENE_INPUT_KEY_DOWN, 'A', WEBSCENE_INPUT_MODIFIER_META);
+    result = evaluate(engine, "document.activeElement.id",
+        "text-control-select-all-button-result.js");
+    require(result == R"JSON("button")JSON",
+        "non-text button did not retain focus after Meta+A: " + result);
+
+    execute_and_wait(engine,
+        "document.getElementById('empty').focus()",
+        "text-control-select-all-empty-target.js");
+    send_and_wait(
+        WEBSCENE_INPUT_KEY_DOWN, 'A', WEBSCENE_INPUT_MODIFIER_CONTROL);
+    result = evaluate(engine, R"JS((() => {
+      const empty = document.getElementById('empty');
+      return [empty.selectionStart, empty.selectionEnd];
+    })())JS", "text-control-select-all-empty-result.js");
+    require(result == "[0,0]", "empty select-all changed selection: " + result);
+
+    execute_and_wait(engine, R"JS((() => {
+      const input = document.getElementById('performance');
+      input.value = 'x';
+      input.focus();
+      input.setSelectionRange(1, 1);
+    })())JS", "text-control-select-all-performance-setup.js");
+    webscene_engine_memory_metrics memory_before{
+        sizeof(webscene_engine_memory_metrics)};
+    require(webscene_engine_get_memory_metrics(engine, &memory_before) != 0,
+        "select-all memory baseline was unavailable");
+    const auto rss_before = peak_rss_bytes();
+    constexpr uint64_t cycles = 10000U;
+    const auto consumed_before = consumed_input_count(engine);
+    const auto started = std::chrono::steady_clock::now();
+    constexpr uint64_t batch_cycles = 256U;
+    for (uint64_t offset = 0; offset < cycles; offset += batch_cycles) {
+        const auto count = std::min(batch_cycles, cycles - offset);
+        const auto batch_consumed_before = consumed_input_count(engine);
+        for (uint64_t index = 0; index < count; ++index) {
+            keyboard_input(
+                engine, WEBSCENE_INPUT_KEY_DOWN, 'A', sequence++,
+                ((offset + index) & 1U) == 0U
+                    ? WEBSCENE_INPUT_MODIFIER_META
+                    : WEBSCENE_INPUT_MODIFIER_CONTROL);
+            keyboard_input(engine, WEBSCENE_INPUT_TEXT, 'x', sequence++);
+        }
+        wait_for_consumed_inputs(
+            engine, batch_consumed_before + count * 2U,
+            "select/replace/cancel batch was not consumed");
+    }
+    wait_for_consumed_inputs(
+        engine, consumed_before + cycles * 2U,
+        "10,000 select/replace/cancel cycles were not consumed");
+    const auto elapsed = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - started).count();
+    require(elapsed < 1.0,
+        "10,000 select/replace/cancel cycles exceeded one second");
+    result = evaluate(engine, R"JS(({
+      value: document.getElementById('performance').value,
+      events: __selectAllPerformanceEvents,
+      nodes: document.querySelectorAll('*').length
+    }))JS", "text-control-select-all-performance-result.js");
+    require(
+        result == R"JSON({"value":"xx","events":10000,"nodes":9})JSON",
+        "select-all lifecycle state was not bounded after 10,000 cycles: " + result);
+
+    require(webscene_engine_request_low_memory(engine) != 0,
+        "select-all low-memory request was rejected");
+    webscene_engine_memory_metrics memory_after{
+        sizeof(webscene_engine_memory_metrics)};
+    for (auto attempt = 0; attempt < 250; ++attempt) {
+        require(webscene_engine_get_memory_metrics(engine, &memory_after) != 0,
+            "select-all final memory metrics were unavailable");
+        if (memory_after.low_memory_notifications
+            > memory_before.low_memory_notifications) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    require(
+        memory_after.low_memory_notifications
+            > memory_before.low_memory_notifications
+            && memory_after.v8_used_heap_bytes
+                <= memory_before.v8_used_heap_bytes + 8U * 1024U * 1024U
+            && memory_after.native_dom_node_count
+                <= memory_before.native_dom_node_count + 4U,
+        "select-all 10,000-cycle heap/DOM lifecycle gate exceeded its bound");
+    const auto rss_after = peak_rss_bytes();
+    require(
+        rss_before == 0U || rss_after <= rss_before + 64U * 1024U * 1024U,
+        "select-all 10,000-cycle RSS growth exceeded 64 MiB");
+    std::cout << "Text-control select-all gate: cycles=" << cycles
+              << " seconds=" << elapsed
+              << " heapBefore=" << memory_before.v8_used_heap_bytes
+              << " heapAfter=" << memory_after.v8_used_heap_bytes
+              << " nodesBefore=" << memory_before.native_dom_node_count
+              << " nodesAfter=" << memory_after.native_dom_node_count
+              << " rssBefore=" << rss_before
+              << " rssAfter=" << rss_after << '\n';
+}
+
 void test_dom_punctuation_keyboard_event_identity(webscene_engine* engine)
 {
     constexpr std::array<uint32_t, 11> punctuation_codes{

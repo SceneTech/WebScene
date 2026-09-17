@@ -1137,6 +1137,8 @@ struct dom_node final {
         std::string value;
         size_t selection_start{0};
         size_t selection_end{0};
+        uint8_t selection_start_utf16_suboffset{0};
+        uint8_t selection_end_utf16_suboffset{0};
         text_selection_direction selection_direction{text_selection_direction::none};
         bool selection_explicitly_set{false};
         bool selectedness_initialized{false};

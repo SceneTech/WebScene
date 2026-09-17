@@ -315,6 +315,7 @@
         { "name": "blur", "callback": "element_blur", "length": 0 },
         { "name": "select", "callback": "element_select", "length": 0 },
         { "name": "setSelectionRange", "callback": "element_set_selection_range", "length": 2 },
+        { "name": "setRangeText", "callback": "element_set_range_text", "length": 1 },
         { "name": "click", "callback": "element_click", "length": 0 },
         { "name": "reset", "callback": "form_reset", "length": 0 }
       ],

@@ -182,6 +182,8 @@
         control.dirty_value = false;
         control.selection_start = control.value.size();
         control.selection_end = control.value.size();
+        control.selection_start_utf16_suboffset = 0U;
+        control.selection_end_utf16_suboffset = 0U;
         control.selection_direction = text_selection_direction::none;
     }
 
@@ -3129,10 +3131,14 @@
                 node->mutable_form_control().value_initialized = true;
                 node->mutable_form_control().selection_start = node->mutable_form_control().value.size();
                 node->mutable_form_control().selection_end = node->mutable_form_control().value.size();
+                node->mutable_form_control().selection_start_utf16_suboffset = 0U;
+                node->mutable_form_control().selection_end_utf16_suboffset = 0U;
                 node->mutable_form_control().selection_direction = text_selection_direction::none;
             }
         }
-        info.GetReturnValue().Set(js_string(info.GetIsolate(), node->mutable_form_control().value.c_str()));
+        info.GetReturnValue().Set(forms::supports_text_selection(node)
+            ? js_dom_string(info.GetIsolate(), node->mutable_form_control().value)
+            : js_string(info.GetIsolate(), node->mutable_form_control().value.c_str()));
     }
 
     static void get_form_owner(
@@ -3204,13 +3210,17 @@
         }
         node->mutable_form_control().value = value->IsNullOrUndefined()
             ? std::string{}
-            : to_utf8(info.GetIsolate(), value);
+            : forms::supports_text_selection(node)
+                ? to_wtf8(info.GetIsolate(), value)
+                : to_utf8(info.GetIsolate(), value);
         node->mutable_form_control().value_initialized = true;
         if (node->tag == "textarea") {
             node->mutable_form_control().dirty_value = true;
         }
         node->mutable_form_control().selection_start = std::min(node->mutable_form_control().selection_start, node->mutable_form_control().value.size());
         node->mutable_form_control().selection_end = std::min(node->mutable_form_control().selection_end, node->mutable_form_control().value.size());
+        node->mutable_form_control().selection_start_utf16_suboffset = 0U;
+        node->mutable_form_control().selection_end_utf16_suboffset = 0U;
         if (node->mutable_form_control().selection_start == node->mutable_form_control().selection_end) {
             node->mutable_form_control().selection_direction = text_selection_direction::none;
         }
@@ -3224,7 +3234,11 @@
         auto* node = unwrap_node(info.Holder());
         if (node != nullptr) {
             info.GetReturnValue().Set(v8::Integer::New(
-                info.GetIsolate(), static_cast<int32_t>(node->mutable_form_control().selection_start)));
+                info.GetIsolate(), static_cast<int32_t>(
+                    forms::utf16_offset_from_utf8_selection(
+                        node->mutable_form_control().value,
+                        {node->mutable_form_control().selection_start,
+                         node->mutable_form_control().selection_start_utf16_suboffset}))));
         }
     }
 
@@ -3236,10 +3250,26 @@
         auto* node = unwrap_node(info.Holder());
         if (node == nullptr) return;
         const auto index = value->Int32Value(info.GetIsolate()->GetCurrentContext()).FromMaybe(0);
-        node->mutable_form_control().selection_start = std::min<size_t>(std::max(0, index), node->mutable_form_control().value.size());
-        node->mutable_form_control().selection_end = std::max(node->mutable_form_control().selection_end, node->mutable_form_control().selection_start);
+        const auto selection=forms::utf8_selection_from_utf16_offset(
+            node->mutable_form_control().value,
+            static_cast<size_t>(std::max(0, index)));
+        node->mutable_form_control().selection_start=selection.byte_offset;
+        node->mutable_form_control().selection_start_utf16_suboffset=
+            selection.utf16_suboffset;
+        const forms::utf8_selection_offset end{
+            node->mutable_form_control().selection_end,
+            node->mutable_form_control().selection_end_utf16_suboffset};
+        if(forms::selection_offset_less(end,selection)) {
+            node->mutable_form_control().selection_end=selection.byte_offset;
+            node->mutable_form_control().selection_end_utf16_suboffset=
+                selection.utf16_suboffset;
+        }
         node->mutable_form_control().selection_explicitly_set = true;
-        if (node->mutable_form_control().selection_start == node->mutable_form_control().selection_end) {
+        if (forms::selection_offset_equal(
+            {node->mutable_form_control().selection_start,
+             node->mutable_form_control().selection_start_utf16_suboffset},
+            {node->mutable_form_control().selection_end,
+             node->mutable_form_control().selection_end_utf16_suboffset})) {
             node->mutable_form_control().selection_direction = text_selection_direction::none;
         }
     }
@@ -3251,7 +3281,11 @@
         auto* node = unwrap_node(info.Holder());
         if (node != nullptr) {
             info.GetReturnValue().Set(v8::Integer::New(
-                info.GetIsolate(), static_cast<int32_t>(node->mutable_form_control().selection_end)));
+                info.GetIsolate(), static_cast<int32_t>(
+                    forms::utf16_offset_from_utf8_selection(
+                        node->mutable_form_control().value,
+                        {node->mutable_form_control().selection_end,
+                         node->mutable_form_control().selection_end_utf16_suboffset}))));
         }
     }
 
@@ -3263,10 +3297,26 @@
         auto* node = unwrap_node(info.Holder());
         if (node == nullptr) return;
         const auto index = value->Int32Value(info.GetIsolate()->GetCurrentContext()).FromMaybe(0);
-        node->mutable_form_control().selection_end = std::min<size_t>(std::max(0, index), node->mutable_form_control().value.size());
-        node->mutable_form_control().selection_start = std::min(node->mutable_form_control().selection_start, node->mutable_form_control().selection_end);
+        const auto selection=forms::utf8_selection_from_utf16_offset(
+            node->mutable_form_control().value,
+            static_cast<size_t>(std::max(0, index)));
+        node->mutable_form_control().selection_end=selection.byte_offset;
+        node->mutable_form_control().selection_end_utf16_suboffset=
+            selection.utf16_suboffset;
+        const forms::utf8_selection_offset start{
+            node->mutable_form_control().selection_start,
+            node->mutable_form_control().selection_start_utf16_suboffset};
+        if(forms::selection_offset_less(selection,start)) {
+            node->mutable_form_control().selection_start=selection.byte_offset;
+            node->mutable_form_control().selection_start_utf16_suboffset=
+                selection.utf16_suboffset;
+        }
         node->mutable_form_control().selection_explicitly_set = true;
-        if (node->mutable_form_control().selection_start == node->mutable_form_control().selection_end) {
+        if (forms::selection_offset_equal(
+            {node->mutable_form_control().selection_start,
+             node->mutable_form_control().selection_start_utf16_suboffset},
+            {node->mutable_form_control().selection_end,
+             node->mutable_form_control().selection_end_utf16_suboffset})) {
             node->mutable_form_control().selection_direction = text_selection_direction::none;
         }
     }
@@ -3302,7 +3352,11 @@
                 ? text_selection_direction::backward
                 : text_selection_direction::none;
         node->mutable_form_control().selection_explicitly_set = true;
-        if (node->mutable_form_control().selection_start == node->mutable_form_control().selection_end) {
+        if (forms::selection_offset_equal(
+            {node->mutable_form_control().selection_start,
+             node->mutable_form_control().selection_start_utf16_suboffset},
+            {node->mutable_form_control().selection_end,
+             node->mutable_form_control().selection_end_utf16_suboffset})) {
             node->mutable_form_control().selection_direction = text_selection_direction::none;
         }
     }

@@ -316,6 +316,8 @@
                         form.dirty_value = false;
                         form.selection_start = form.value.size();
                         form.selection_end = form.value.size();
+                        form.selection_start_utf16_suboffset = 0U;
+                        form.selection_end_utf16_suboffset = 0U;
                         form.selection_direction = text_selection_direction::none;
                     }
                 } else if (node.tag == "textarea") {
@@ -568,6 +570,8 @@
                     node.mutable_form_control().dirty_value = false;
                     node.mutable_form_control().selection_start = node.mutable_form_control().value.size();
                     node.mutable_form_control().selection_end = node.mutable_form_control().value.size();
+                    node.mutable_form_control().selection_start_utf16_suboffset = 0U;
+                    node.mutable_form_control().selection_end_utf16_suboffset = 0U;
                     node.mutable_form_control().selection_direction = text_selection_direction::none;
                 }
             }

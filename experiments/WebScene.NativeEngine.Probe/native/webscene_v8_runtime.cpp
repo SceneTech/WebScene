@@ -742,6 +742,9 @@ struct v8_dom_runtime::implementation final {
             js_string(isolate, "setSelectionRange"),
             v8::FunctionTemplate::New(isolate, element_set_selection_range));
         element->PrototypeTemplate()->Set(
+            js_string(isolate, "setRangeText"),
+            v8::FunctionTemplate::New(isolate, element_set_range_text));
+        element->PrototypeTemplate()->Set(
             js_string(isolate, "click"),
             v8::FunctionTemplate::New(isolate, element_click));
         element->PrototypeTemplate()->Set(

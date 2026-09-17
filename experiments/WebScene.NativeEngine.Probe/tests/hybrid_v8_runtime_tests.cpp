@@ -873,8 +873,14 @@ void test_editor_worker_rpc_and_ui_responsiveness() {
               catch (error) { rejection = error.message; }
               clearInterval(ticker);
               worker.terminate();
+              const failures = [];
+              if (applied !== modified) failures.push('computed edit did not apply');
+              if (received !== 4) failures.push(`received ${received} responses`);
+              if (!rejection.includes('Missing method $missingMethod'))
+                failures.push(`rejection was '${rejection}'`);
+              if (uiTicks === 0) failures.push('document task queue was starved');
               document.createCompiledTemplate('editor-worker-result',
-                JSON.stringify({applied,received,rejection,uiTicks}));
+                failures.length ? failures.join('; ') : 1);
             } catch (error) {
               document.createCompiledTemplate(
                 'editor-worker-result', `error:${error.message}`);
@@ -897,15 +903,7 @@ void test_editor_worker_rpc_and_ui_responsiveness() {
         std::this_thread::yield();
     }
     require(completed, "Editor worker RPC exceeded five seconds");
-    require(result.find("\"applied\":\"const value = 2;\\nconsole.log(value);\\n\"")
-            != std::string::npos,
-        result.c_str());
-    require(result.find("\"received\":4") != std::string::npos,
-        "Editor worker did not publish ready, initialize, RPC, and rejection replies");
-    require(result.find("Missing method $missingMethod") != std::string::npos,
-        "Editor worker rejection was not observable");
-    require(result.find("\"uiTicks\":0") == std::string::npos,
-        "Editor worker RPC starved the document task queue");
+    require(result == "1", result.c_str());
 }
 
 void test_nested_worker_blob_url_identity() {

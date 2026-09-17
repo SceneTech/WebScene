@@ -107,9 +107,16 @@
       "constructor": "illegal_dom_constructor",
       "parent": "Node",
       "attributes": [
-        { "name": "data", "getter": "get_text_content", "setter": "set_character_data" }
+        { "name": "data", "getter": "get_text_content", "setter": "set_character_data" },
+        { "name": "length", "getter": "get_character_data_length" }
       ],
-      "methods": [],
+      "methods": [
+        { "name": "substringData", "callback": "substring_character_data", "length": 2 },
+        { "name": "appendData", "callback": "append_character_data", "length": 1 },
+        { "name": "insertData", "callback": "insert_character_data", "length": 2 },
+        { "name": "deleteData", "callback": "delete_character_data", "length": 2 },
+        { "name": "replaceData", "callback": "replace_character_data", "length": 3 }
+      ],
       "constants": []
     },
     {

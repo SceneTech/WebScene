@@ -8,6 +8,11 @@ used.
 
 ## Implemented
 
+Latest structural checkpoint follow-up: [CharacterData editing methods](css-character-data-methods-20260917.md)
+share the existing targeted setter path, with UTF-16/conversion/reentrancy contracts
+and stable/nonempty CSS work-counter gates. `splitText`, `normalize` and broader
+DOM lifecycle conformance remain open; this does not supersede the other CSS owners.
+
 - Compile class and attribute dependencies from parsed compounds, decoding escaped
   identifiers and recursively visiting `:is()`, `:where()`, `:not()` and `:has()`.
 - Compile subject/ancestor dependencies and forward/reverse relationship routes.

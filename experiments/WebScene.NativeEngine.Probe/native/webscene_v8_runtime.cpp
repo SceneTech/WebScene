@@ -444,6 +444,14 @@ struct v8_dom_runtime::implementation final {
         element->InstanceTemplate()->SetNativeDataProperty(js_string(isolate, "innerText"), get_inner_text, set_text_content);
         element->InstanceTemplate()->SetNativeDataProperty(js_string(isolate, "text"), get_option_or_script_text, set_option_or_script_text);
         element->InstanceTemplate()->SetNativeDataProperty(js_string(isolate, "data"), get_text_content, set_character_data);
+        for (const auto& method : std::initializer_list<std::tuple<const char*, v8::FunctionCallback, int>>{
+                {"substringData", substring_character_data, 2}, {"appendData", append_character_data, 1},
+                {"insertData", insert_character_data, 2}, {"deleteData", delete_character_data, 2},
+                {"replaceData", replace_character_data, 3}}) {
+            element->PrototypeTemplate()->Set(js_string(isolate, std::get<0>(method)),
+                v8::FunctionTemplate::New(isolate, std::get<1>(method), v8::Local<v8::Value>(),
+                    v8::Local<v8::Signature>(), std::get<2>(method), v8::ConstructorBehavior::kThrow));
+        }
         element->InstanceTemplate()->SetNativeDataProperty(js_string(isolate, "namespaceURI"), get_namespace_uri);
         element->InstanceTemplate()->SetNativeDataProperty(js_string(isolate, "children"), get_children);
         element->InstanceTemplate()->SetNativeDataProperty(js_string(isolate, "childNodes"), get_children);
@@ -511,7 +519,7 @@ struct v8_dom_runtime::implementation final {
             js_string(isolate, "readOnly"), get_read_only, set_read_only);
         element->InstanceTemplate()->SetNativeDataProperty(js_string(isolate, "options"), get_select_options);
         element->InstanceTemplate()->SetNativeDataProperty(js_string(isolate, "elements"), get_form_elements);
-        element->InstanceTemplate()->SetNativeDataProperty(js_string(isolate, "length"), get_form_or_select_length);
+        element->InstanceTemplate()->SetNativeDataProperty(js_string(isolate, "length"), get_legacy_node_length);
         element->InstanceTemplate()->SetNativeDataProperty(
             js_string(isolate, "selectedIndex"), get_selected_index, set_selected_index);
         element->InstanceTemplate()->SetNativeDataProperty(

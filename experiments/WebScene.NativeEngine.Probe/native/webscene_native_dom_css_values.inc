@@ -254,6 +254,7 @@ uint32_t native_document::parse_color(const std::string& value)
             return static_cast<char>(std::tolower(character));
         });
 
+    if (const auto system = css::system_color_rgba(normalized)) return *system;
     if (const auto named = named_color_rgba(normalized)) return *named;
     if ((normalized.starts_with("hsl(") || normalized.starts_with("hsla("))
         && normalized.ends_with(')')) {

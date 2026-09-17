@@ -28,6 +28,7 @@ public sealed partial class NativeWebSceneView : ContentControl, IAsyncDisposabl
     private long _contextId;
     private NativeInteropInvoker? _interop;
     private int _performanceMonitoringEnabled;
+    private uint _accessibilityPreferences;
     private JavaScriptCallbackSignal? _interopCallbackSignal;
     private CancellationTokenSource? _navigationCancellation;
     private readonly SemaphoreSlim _hostRequestGate = new(1, 1);
@@ -59,6 +60,36 @@ public sealed partial class NativeWebSceneView : ContentControl, IAsyncDisposabl
     }
 
     public string? Source { get; private set; }
+
+    /// <summary>
+    /// Gets or sets the host preferences used by forced-colors, reduced-motion,
+    /// and preferred-contrast media queries. Changes are coalesced by the native worker.
+    /// </summary>
+    public WebSceneAccessibilityPreferences AccessibilityPreferences
+    {
+        get => (WebSceneAccessibilityPreferences)Volatile.Read(
+            ref _accessibilityPreferences);
+        set
+        {
+            const WebSceneAccessibilityPreferences supported =
+                WebSceneAccessibilityPreferences.ForcedColors
+                | WebSceneAccessibilityPreferences.ReducedMotion
+                | WebSceneAccessibilityPreferences.MoreContrast;
+            if ((value & ~supported) != 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(value));
+            }
+
+            Volatile.Write(ref _accessibilityPreferences, (uint)value);
+            var engine = Volatile.Read(ref _engine);
+            if (engine != IntPtr.Zero)
+            {
+                NativeWebSceneApi.EngineSetAccessibilityPreferences(
+                    engine,
+                    (NativeAccessibilityPreferences)value);
+            }
+        }
+    }
 
     public INativeWebSceneRenderDiagnostics RenderDiagnostics => _surface;
 
@@ -478,6 +509,10 @@ public sealed partial class NativeWebSceneView : ContentControl, IAsyncDisposabl
                     NativeWebSceneApi.EngineSetPreferredColorScheme(
                         engine,
                         ResolvePreferredColorScheme(ActualThemeVariant));
+                    NativeWebSceneApi.EngineSetAccessibilityPreferences(
+                        engine,
+                        (NativeAccessibilityPreferences)Volatile.Read(
+                            ref _accessibilityPreferences));
                     _surface.SetEngine(engine);
                     Content = _surface;
                 },

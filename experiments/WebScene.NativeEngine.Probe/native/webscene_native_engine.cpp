@@ -454,6 +454,9 @@ private:
     std::atomic<uint32_t> preferred_color_scheme_{
         WEBSCENE_PREFERRED_COLOR_SCHEME_LIGHT};
     std::atomic<bool> preferred_color_scheme_changed_{false};
+    std::atomic<uint32_t> accessibility_preference_flags_{
+        WEBSCENE_ACCESSIBILITY_PREFERENCE_NONE_V1};
+    std::atomic<bool> accessibility_preferences_changed_{false};
     std::atomic<uint8_t> host_animation_frame_requested_{0U};
     std::atomic<uint64_t> observed_host_timestamp_microseconds_{0U};
     std::atomic<uint64_t> observed_compositor_timestamp_microseconds_{0U};
@@ -1530,6 +1533,16 @@ uint8_t webscene_engine_set_preferred_color_scheme(
 {
     return engine != nullptr
         && engine->set_preferred_color_scheme(preferred_color_scheme)
+        ? 1U
+        : 0U;
+}
+
+uint8_t webscene_engine_set_accessibility_preferences_v1(
+    webscene_engine* engine,
+    uint32_t preference_flags)
+{
+    return engine != nullptr
+        && engine->set_accessibility_preferences(preference_flags)
         ? 1U
         : 0U;
 }

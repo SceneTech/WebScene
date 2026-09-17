@@ -1,0 +1,77 @@
+{
+  "schema": "webscene-css-accessibility-preferences-qualification-v1",
+  "recordedAt": "2026-09-17",
+  "baseCommit": "28d1d649e927c665ff05844197af44f223edf952",
+  "issue": 255,
+  "gates": {
+    "nativeWpt": {
+      "engineIdentity": "abi=3;sha256=524b39d85d81d84a2a05519b1d6ecfaeb64ee582237137bdd99172bd36ff02de",
+      "profileSha256": "c66cd93274676da6182295676a30780bae138c48e1fa402d3813e4973048fd74",
+      "documentsPassed": 1,
+      "documentsTotal": 1,
+      "subtestsPassed": 10,
+      "subtestsTotal": 10,
+      "durationSeconds": 0.091843,
+      "reportBytes": 2767,
+      "reportMaximumBytes": 65536,
+      "reportSha256": "ee64c9ff3fc8b847154c3709af914100cda909843883108a17c2a1a3a7abacb2"
+    },
+    "chromeOracle": {
+      "identity": "Google Chrome 153.0.8010.48",
+      "documentsPassed": 1,
+      "documentsTotal": 1,
+      "subtestsPassed": 10,
+      "subtestsTotal": 10,
+      "durationMilliseconds": 78,
+      "reportBytes": 2420,
+      "reportMaximumBytes": 65536,
+      "reportSha256": "762fca67035a191c38ff2102f36eff1284d5788ab06f4d3936a8dcebd164494e"
+    },
+    "nativeLifecycle": {
+      "controls": 4096,
+      "cycles": 100,
+      "states": 200,
+      "elapsedMilliseconds": 8394.38,
+      "maximumMilliseconds": 15000,
+      "minimumFixtureNodeDelta": 8194,
+      "maximumFixtureNodeDelta": 8198,
+      "maximumRetainedNodeDelta": 1,
+      "settledAnimationFrameDemand": 0,
+      "maximumPostCleanupHeapGrowthBytes": 33554432,
+      "unknownFlagSetsAccepted": 0
+    },
+    "portableCss": {
+      "net8TestsPassed": 364,
+      "net8TestsTotal": 364,
+      "net10TestsPassed": 364,
+      "net10TestsTotal": 364
+    },
+    "managedHostBuild": {
+      "targetsPassed": 1,
+      "targetsTotal": 1,
+      "warnings": 0,
+      "errors": 0
+    },
+    "portableNativeBuild": {
+      "targetsPassed": 1,
+      "targetsTotal": 1
+    },
+    "v8Native": {
+      "targetsBuilt": 1,
+      "targetsTotal": 1,
+      "ctestsPassed": 1,
+      "ctestsTotal": 1
+    }
+  },
+  "ownership": {
+    "pullRequest245Head": "c7859becc0f6799d206f0974534c0db3a589f950",
+    "pullRequest245Files": 52,
+    "overlappingFiles": 0
+  },
+  "knownBaselineFailure": {
+    "gate": "webscene_native_engine_tests",
+    "message": "identical resources (including warmup) were loaded more than once across four engines",
+    "changeRelated": false,
+    "excludedFromFocusedGate": true
+  }
+}

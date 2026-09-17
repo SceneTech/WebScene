@@ -2,6 +2,7 @@
 
 #include "webscene_native_engine.h"
 #include "webscene_named_colors.h"
+#include "webscene_accessibility_preferences.h"
 #include "graphics/canvas_backing.h"
 #include "graphics/image_lease_abi.h"
 
@@ -575,6 +576,9 @@ struct node_style final {
         std::string container_name{"none"};
         std::string content_visibility{"visible"};
         css_length contain_intrinsic_size{};
+        // Empty means inherit; computed CSSOM supplies the initial root value.
+        std::string color_scheme;
+        std::string accent_color;
         // Authored cursor token. Cursor is inherited, so an empty value means
         // the host projection resolves the nearest declaration or `auto`.
         std::string cursor;

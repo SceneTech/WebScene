@@ -276,6 +276,12 @@
                 textual->cursor.clear();
             }
             node.style.inline_property_mask &= ~inline_cursor;
+        } else if (name == "color-scheme" || name == "accent-color") {
+            if (auto* textual = node.style.mutable_textual_if_present()) {
+                if (name == "color-scheme") textual->color_scheme.clear();
+                else textual->accent_color.clear();
+            }
+            node.style.inline_property_mask &= ~inline_accessibility_colors;
         } else if (name == "color") {
             node.style.foreground_rgba = 0;
             node.style.inline_property_mask &= ~inline_color;
@@ -867,6 +873,17 @@
             node->style.mutable_textual().cursor = value;
             node->style.inline_property_mask |= inline_cursor;
         }
+        else if (name == "color-scheme" || name == "accent-color") {
+            auto& textual = node->style.mutable_textual();
+            if (name == "color-scheme") {
+                textual.color_scheme = value.empty() || value == "initial"
+                    ? "normal" : value;
+            } else {
+                textual.accent_color = value.empty() || value == "initial"
+                    ? "auto" : value;
+            }
+            node->style.inline_property_mask |= inline_accessibility_colors;
+        }
         else if (canonical_name == "background"
             || canonical_name == "background-color"
             || canonical_name == "background-image"
@@ -1330,6 +1347,31 @@
                         << std::setprecision(6) << static_cast<double>(alpha) / 255.0 << ')';
                 }
                 value = stream.str();
+            } else if (name == "color-scheme") {
+                value = "normal";
+                for (auto* current = node; current != nullptr; current = current->parent) {
+                    if (!current->style.textual().color_scheme.empty()) {
+                        value = current->style.textual().color_scheme;
+                        break;
+                    }
+                }
+            } else if (name == "accent-color") {
+                auto accent = std::string{};
+                for (auto* current = node; current != nullptr; current = current->parent) {
+                    if (!current->style.textual().accent_color.empty()) {
+                        accent = current->style.textual().accent_color;
+                        break;
+                    }
+                }
+                if (accent.empty() || accent == "auto") value = "auto";
+                else {
+                    const auto color = native_document::parse_color(accent);
+                    std::ostringstream stream;
+                    stream << "rgb(" << ((color >> 24U) & 0xFFU) << ", "
+                        << ((color >> 16U) & 0xFFU) << ", "
+                        << ((color >> 8U) & 0xFFU) << ')';
+                    value = stream.str();
+                }
             } else if (name == "white-space") {
                 value = node->style.textual().white_space;
             } else if (name == "cursor") {
@@ -1931,6 +1973,24 @@
             }
             if ((color & 0xFFU) == 0U) color = 0x000000FFU;
             value = serialize_color(color);
+        } else if (name == "colorScheme") {
+            value = "normal";
+            for (auto* current = node; current != nullptr; current = current->parent) {
+                if (!current->style.textual().color_scheme.empty()) {
+                    value = current->style.textual().color_scheme;
+                    break;
+                }
+            }
+        } else if (name == "accentColor") {
+            auto accent = std::string{};
+            for (auto* current = node; current != nullptr; current = current->parent) {
+                if (!current->style.textual().accent_color.empty()) {
+                    accent = current->style.textual().accent_color;
+                    break;
+                }
+            }
+            value = accent.empty() || accent == "auto"
+                ? "auto" : serialize_color(native_document::parse_color(accent));
         } else if (name == "fontSize") {
             value = serialize_css_number(node->style.font_size >= 0
                 ? node->style.font_size : inherited_font_size(*node)) + "px";
@@ -2356,6 +2416,16 @@
         } else if (name == "cursor") {
             node->style.mutable_textual().cursor = value;
             node->style.inline_property_mask |= inline_cursor;
+        } else if (name == "colorScheme" || name == "accentColor") {
+            auto& textual = node->style.mutable_textual();
+            if (name == "colorScheme") {
+                textual.color_scheme = value.empty() || value == "initial"
+                    ? "normal" : value;
+            } else {
+                textual.accent_color = value.empty() || value == "initial"
+                    ? "auto" : value;
+            }
+            node->style.inline_property_mask |= inline_accessibility_colors;
         } else if (name == "color") {
             node->style.foreground_rgba = native_document::parse_color(value);
             node->style.inline_property_mask |= inline_color;

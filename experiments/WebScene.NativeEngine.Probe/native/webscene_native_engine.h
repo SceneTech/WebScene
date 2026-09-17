@@ -89,6 +89,13 @@ typedef enum webscene_preferred_color_scheme {
     WEBSCENE_PREFERRED_COLOR_SCHEME_DARK = 1
 } webscene_preferred_color_scheme;
 
+typedef enum webscene_accessibility_preference_flags_v1 {
+    WEBSCENE_ACCESSIBILITY_PREFERENCE_NONE_V1 = 0,
+    WEBSCENE_ACCESSIBILITY_PREFERENCE_FORCED_COLORS_V1 = 1U << 0U,
+    WEBSCENE_ACCESSIBILITY_PREFERENCE_REDUCED_MOTION_V1 = 1U << 1U,
+    WEBSCENE_ACCESSIBILITY_PREFERENCE_MORE_CONTRAST_V1 = 1U << 2U
+} webscene_accessibility_preference_flags_v1;
+
 enum {
     WEBSCENE_INPUT_MODIFIER_SHIFT = 1U << 0U,
     WEBSCENE_INPUT_MODIFIER_CONTROL = 1U << 1U,
@@ -1314,6 +1321,10 @@ WEBSCENE_API uint32_t webscene_engine_request_window_close_v1(
 WEBSCENE_API uint8_t webscene_engine_set_preferred_color_scheme(
     webscene_engine* engine,
     uint32_t preferred_color_scheme);
+/* Publishes accessibility preferences as one coalesced host snapshot. */
+WEBSCENE_API uint8_t webscene_engine_set_accessibility_preferences_v1(
+    webscene_engine* engine,
+    uint32_t preference_flags);
 /* Returns the CSS cursor resolved at the latest hit-tested pointer position. */
 WEBSCENE_API uint32_t webscene_engine_get_cursor(const webscene_engine* engine);
 /*

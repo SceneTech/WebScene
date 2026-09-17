@@ -1,0 +1,50 @@
+<!doctype html>
+<meta charset="utf-8">
+<link rel="stylesheet" href="controlled-parser-style.css">
+<link rel="stylesheet" href="controlled-parser-denied.css">
+<body>
+<div id="styled-target">controlled</div>
+<script>
+  globalThis.__parserTrace = [];
+  globalThis.__parserImageLoads = 0;
+  globalThis.__parserImageErrors = 0;
+  globalThis.__reportControlledParserFrame = () => {
+    if (globalThis.__parserFrameReported) return;
+    globalThis.__parserFrameReported = true;
+    const image = document.getElementById('controlled-image');
+    parent.__controlledParserFrameFinished({
+      trace:[...__parserTrace],
+      color:getComputedStyle(document.getElementById('styled-target')).color,
+      fallback:globalThis.__controlledParserFallback,
+      deniedBypass:globalThis.__controlledParserDeniedBypass === true,
+      deniedStyleBypass:getComputedStyle(
+        document.getElementById('styled-target')).backgroundColor
+          === 'rgb(222, 1, 2)',
+      imageLoads:__parserImageLoads,
+      imageErrors:__parserImageErrors,
+      width:image.naturalWidth,
+      height:image.naturalHeight
+    });
+  };
+</script>
+<script src="controlled-parser-script.js"></script>
+<script src="controlled-parser-fallback.js"></script>
+<script src="controlled-parser-denied.js"></script>
+<img id="controlled-image" src="controlled-parser-image.svg">
+<script>
+  __parserTrace.push('inline');
+  const image = document.getElementById('controlled-image');
+  image.addEventListener('load', () => {
+    ++__parserImageLoads;
+    __reportControlledParserFrame();
+  });
+  image.addEventListener('error', () => {
+    ++__parserImageErrors;
+    __reportControlledParserFrame();
+  });
+  if (image.complete) queueMicrotask(() => {
+    if (image.naturalWidth) ++__parserImageLoads;
+    else ++__parserImageErrors;
+    __reportControlledParserFrame();
+  });
+</script>

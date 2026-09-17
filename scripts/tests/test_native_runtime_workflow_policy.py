@@ -31,6 +31,13 @@ class NativeRuntimeWorkflowPolicyTests(unittest.TestCase):
             self.assertEqual(len(setup_indices), expected_count, path)
 
             for index in setup_indices:
+                preceding_step = "\n".join(lines[max(0, index - 7) : index])
+                self.assertIn("Repair incomplete .NET install", preceding_step, path)
+                self.assertIn(
+                    'python3 scripts/prepare_dotnet_install.py "$DOTNET_INSTALL_DIR"',
+                    preceding_step,
+                    path,
+                )
                 step = "\n".join(lines[index : index + 7])
                 self.assertIn("env:", step, path)
                 self.assertIn(

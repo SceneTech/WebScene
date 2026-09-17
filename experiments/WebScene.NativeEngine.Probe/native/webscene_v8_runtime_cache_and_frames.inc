@@ -1902,6 +1902,11 @@
 
     void start_frame_preparation(dom_node& frame, const std::string& source)
     {
+        std::erase_if(retired_frame_preparations, [](const auto& future) {
+            return !future.valid()
+                || future.wait_for(std::chrono::seconds(0))
+                    == std::future_status::ready;
+        });
         for (auto iterator = pending_frame_preparations.begin();
              iterator != pending_frame_preparations.end();) {
             auto* candidate = document.find_by_native_id(iterator->first);
@@ -1923,7 +1928,9 @@
         if (!prepare_iframe_subresources
             || !prefetch_iframe_documents
             || source.empty()
-            || pending_frame_preparations.size() >= maximum_frame_preparations
+            || pending_frame_preparations.size()
+                    + retired_frame_preparations.size()
+                >= maximum_frame_preparations
             || pending_frame_preparations.contains(frame.id)) {
             return;
         }
@@ -1939,16 +1946,19 @@
         }
         if (!document_future.valid()) return;
         const auto outer_base_address = document_base_address;
+        const auto generation = document_generation.load(std::memory_order_acquire);
 
         pending_frame_preparation preparation;
         preparation.source = source;
         preparation.future = std::async(
             std::launch::async,
-            [this, source, outer_base_address, document_future]()
+            [this, source, outer_base_address, document_future, generation]()
                 -> std::shared_ptr<const prepared_frame> {
                 const auto started = std::chrono::steady_clock::now();
                 try {
                     const auto& document = document_future.get();
+                    if (document_generation.load(std::memory_order_acquire)
+                        != generation) return {};
                     const immutable_text_source* content = nullptr;
                     if (document.from_fresh_cache && document.cached.content != nullptr) {
                         content = document.cached.content.get();
@@ -1958,7 +1968,12 @@
                         result->source = source;
                         result->html = document.response->content;
                         result->started = started;
-                        prepare_frame_resource_plan(*result, outer_base_address);
+                        {
+                            std::lock_guard lock(document_generation_mutex);
+                            if (document_generation.load(std::memory_order_acquire)
+                                != generation) return {};
+                            prepare_frame_resource_plan(*result, outer_base_address);
+                        }
                         result->completed = std::chrono::steady_clock::now();
                         return result;
                     } else if (document.has_cached && document.cached.content != nullptr) {
@@ -1969,7 +1984,12 @@
                     result->source = source;
                     result->html.assign(content->data(), content->size());
                     result->started = started;
-                    prepare_frame_resource_plan(*result, outer_base_address);
+                    {
+                        std::lock_guard lock(document_generation_mutex);
+                        if (document_generation.load(std::memory_order_acquire)
+                            != generation) return {};
+                        prepare_frame_resource_plan(*result, outer_base_address);
+                    }
                     result->completed = std::chrono::steady_clock::now();
                     return result;
                 } catch (...) {

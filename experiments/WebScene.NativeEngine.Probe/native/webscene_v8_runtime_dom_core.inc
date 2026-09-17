@@ -844,6 +844,7 @@
                 iterator->first,
                 1001U,
                 "Frame browsing context was discarded"));
+            websocket_transport.release(iterator->first);
             iterator = websocket_bindings.erase(iterator);
         }
     }

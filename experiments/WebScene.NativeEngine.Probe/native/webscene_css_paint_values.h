@@ -1,4 +1,5 @@
 #pragma once
+#include "webscene_css_escapes.h"
 #include "webscene_css_property_mask.h"
 #include "webscene_shadow_value.h"
 
@@ -64,18 +65,7 @@ inline bool apply_box_shadow_value(
 
 inline std::optional<std::string> first_css_url(const std::string& value)
     {
-        const auto lower = ascii_lower(value);
-        const auto start = lower.find("url(");
-        if (start == std::string::npos) return std::nullopt;
-        const auto end = value.find(')', start + 4U);
-        if (end == std::string::npos) return std::nullopt;
-        auto url = trim_value(value.substr(start + 4U, end - start - 4U));
-        if (url.size() >= 2U
-            && ((url.front() == '\'' && url.back() == '\'')
-                || (url.front() == '"' && url.back() == '"'))) {
-            url = url.substr(1U, url.size() - 2U);
-        }
-        return url.empty() ? std::nullopt : std::optional<std::string>{std::move(url)};
+        return first_decoded_css_url(value);
     }
 
 inline void apply_background_position(node_style& style, const std::string& value)

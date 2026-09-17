@@ -1,4 +1,5 @@
 #include "webscene_css_parser.h"
+#include "webscene_css_resources.h"
 #include "webscene_native_engine.h"
 
 #include <algorithm>
@@ -229,6 +230,31 @@ struct parse_sample final {
     size_t input_bytes{};
 };
 
+struct resolve_sample final {
+    double milliseconds{};
+    size_t input_bytes{};
+    size_t output_bytes{};
+};
+
+resolve_sample resolve_tokens(size_t token_count)
+{
+    const auto fixture = token_fixture(token_count);
+    const auto started = std::chrono::steady_clock::now();
+    const auto resolved = css::resolve_resource_urls(
+        fixture,
+        "https://css-escape.test/app/theme.css");
+    const auto elapsed = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - started).count();
+    require(resolved.find("https\\3a ") == std::string::npos,
+        "bounded resolution retained CSS escape bytes");
+    require(resolved.find("https://assets.test/a.svg#0") != std::string::npos,
+        "bounded resolution did not decode and resolve its first URL");
+    require(resolved.find("#" + std::to_string(token_count - 1U) + "\")")
+            != std::string::npos,
+        "bounded resolution did not retain its final URL");
+    return {elapsed, fixture.size(), resolved.size()};
+}
+
 parse_sample parse_tokens(size_t token_count)
 {
     clear_css_syntax_process_cache();
@@ -262,8 +288,20 @@ bool contains_address(
 
 int main()
 {
+    require(css::resolve_resource_urls(
+            "url(\"relative\\2e png\"), url(\"data\\3a image/svg+xml,%3Csvg/%3E\"), url(\"#fr\\61 g\")",
+            "http://127.0.0.1/css-url-base/nested/index.html")
+            == "url(\"http://127.0.0.1/css-url-base/nested/relative.png\"), url(\"data:image/svg+xml,%3Csvg/%3E\"), url(\"#frag\")",
+        "multiple CSS URLs were not independently decoded and resolved");
+    require(css::resolve_resource_urls(
+            "url(\"https\\3a //assets.test/safe/..\\2f secret.svg\")",
+            "https://css-escape.test/app/theme.css")
+            == "url(\"https://assets.test/secret.svg\")",
+        "escaped traversal segments were not normalized after decoding");
     const auto fifty_thousand = parse_tokens(50'000U);
     const auto one_hundred_thousand = parse_tokens(100'000U);
+    const auto resolved_fifty_thousand = resolve_tokens(50'000U);
+    const auto resolved_one_hundred_thousand = resolve_tokens(100'000U);
     require(one_hundred_thousand.milliseconds < 30'000.0,
         "100,000-token parse exceeded 30 seconds");
     require(one_hundred_thousand.milliseconds
@@ -271,6 +309,11 @@ int main()
         "100,000-token parse exceeded the bounded linear-work ratio");
     require(one_hundred_thousand.metrics.parser_retained_bytes == 0U,
         "streaming parser retained its Rust output");
+    require(resolved_one_hundred_thousand.milliseconds < 5'000.0,
+        "100,000-token resolve exceeded five seconds");
+    require(resolved_one_hundred_thousand.milliseconds
+            <= std::max(100.0, resolved_fifty_thousand.milliseconds * 3.5),
+        "100,000-token resolve exceeded the bounded linear-work ratio");
 
     require(webscene_engine_prewarm() != 0U, "V8 prewarm failed");
     resource_probe probe;
@@ -323,6 +366,8 @@ int main()
         "stylesheet fixture did not reach the resource callback");
     require(contains_address(requests, "https://assets.test/ordinary.svg"),
         "ordinary CSS URL control did not reach the resource callback");
+    require(contains_address(requests, "https://assets.test/secret.svg"),
+        "escaped traversal URL was not decoded and normalized before loading");
 
     const auto decoded_requests = static_cast<size_t>(std::count_if(
         requests.begin(), requests.end(), [](const auto& request) {
@@ -339,6 +384,12 @@ int main()
         }));
     require(decoded_requests + escaped_requests > 0U,
         "escaped URL fixture produced neither a decoded nor escaped host request");
+    require(decoded_requests == 1U,
+        "escaped loopback URL was not decoded exactly once before loading");
+    require(escaped_requests == 0U,
+        "CSS escape bytes reached the resource callback");
+    require(forbidden_requests == 0U,
+        "an escaped script URL bypassed CSS resource admission");
 
     std::this_thread::sleep_for(std::chrono::milliseconds(250));
     webscene_engine_metrics lifecycle_before{};
@@ -387,6 +438,10 @@ int main()
               << one_hundred_thousand.input_bytes
               << " parse-50k-ms=" << fifty_thousand.milliseconds
               << " parse-100k-ms=" << one_hundred_thousand.milliseconds
+              << " resolve-50k-ms=" << resolved_fifty_thousand.milliseconds
+              << " resolve-100k-ms=" << resolved_one_hundred_thousand.milliseconds
+              << " resolved-output-bytes="
+              << resolved_one_hundred_thousand.output_bytes
               << " parser-allocations="
               << one_hundred_thousand.metrics.parser_allocation_count
               << " parser-peak-bytes="

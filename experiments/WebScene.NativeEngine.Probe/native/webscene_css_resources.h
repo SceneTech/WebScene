@@ -1,4 +1,5 @@
 #pragma once
+#include "webscene_css_escapes.h"
 #include "webscene_css_matching.h"
 #include "webscene_native_resource_url.h"
 
@@ -9,56 +10,44 @@ inline std::string resolve_resource_urls(
     {
         if (value.empty() || stylesheet_address.empty()) return value;
 
-        auto lowercase = ascii_lower(value);
-        size_t search = 0U;
-        while ((search = lowercase.find("url(", search)) != std::string::npos) {
-            const auto argument_begin = search + 4U;
-            auto argument_end = argument_begin;
-            char quote = 0;
-            for (; argument_end < value.size(); ++argument_end) {
-                const auto character = value[argument_end];
-                if (quote != 0) {
-                    if (character == quote
-                        && (argument_end == argument_begin
-                            || value[argument_end - 1U] != '\\')) {
-                        quote = 0;
-                    }
-                    continue;
-                }
-                if (character == '\'' || character == '"') {
-                    quote = character;
-                } else if (character == ')') {
-                    break;
-                }
-            }
-            if (argument_end >= value.size()) break;
-
-            auto address = trim_value(std::string_view(value).substr(
-                argument_begin,
-                argument_end - argument_begin));
-            if (address.size() >= 2U
-                && ((address.front() == '\'' && address.back() == '\'')
-                    || (address.front() == '"' && address.back() == '"'))) {
-                address = address.substr(1U, address.size() - 2U);
-            }
-            if (address.empty() || address.starts_with('#')) {
-                search = argument_end + 1U;
+        const auto url_at = [&](size_t offset) {
+            if (offset + 4U > value.size() || value[offset + 3U] != '(') return false;
+            const auto lower = [](char character) {
+                return static_cast<char>(std::tolower(static_cast<unsigned char>(character)));
+            };
+            return lower(value[offset]) == 'u'
+                && lower(value[offset + 1U]) == 'r'
+                && lower(value[offset + 2U]) == 'l';
+        };
+        std::string result;
+        result.reserve(value.size());
+        size_t copied = 0U;
+        for (size_t search = 0U; search + 4U <= value.size();) {
+            if (!url_at(search)) {
+                ++search;
                 continue;
             }
-
-            auto resolved = resources::resolve_url(address, stylesheet_address);
-            std::string escaped;
-            escaped.reserve(resolved.size());
-            for (const auto character : resolved) {
-                if (character == '\\' || character == '"') escaped.push_back('\\');
-                escaped.push_back(character);
+            const auto token = consume_css_url_token(value, search);
+            if (!token.has_value()) {
+                search += 4U;
+                continue;
             }
-            const auto replacement = "url(\"" + escaped + "\")";
-            value.replace(search, argument_end - search + 1U, replacement);
-            lowercase = ascii_lower(value);
-            search += replacement.size();
+            result.append(value, copied, search - copied);
+            if (token->value.empty()) {
+                result.append(value, search, token->end - search);
+            } else {
+                const auto resolved = percent_encode_css_url(
+                    token->value.starts_with('#')
+                        ? token->value
+                        : resources::resolve_url(token->value, stylesheet_address));
+                detail::append_css_quoted(result, resolved);
+            }
+            copied = token->end;
+            search = token->end;
         }
-        return value;
+        if (copied == 0U) return value;
+        result.append(value, copied, value.size() - copied);
+        return result;
     }
 
 } // namespace webscene_native::css

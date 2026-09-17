@@ -4249,10 +4249,32 @@ struct v8_dom_runtime::implementation final {
               if (!state) throw new TypeError('Illegal invocation');
               return state;
             };
+            const maximumReadableStreamQueueBytes = 64 * 1024 * 1024;
+            const maximumWritableStreamQueueBytes = 16 * 1024 * 1024;
+            const streamChunkBytes = value => value instanceof ArrayBuffer
+              ? value.byteLength
+              : ArrayBuffer.isView(value) ? value.byteLength : 0;
+            const streamQueueSize = (value, size) => {
+              const result = size ? Number(size(value)) : 1;
+              if (!Number.isFinite(result) || result < 0) {
+                throw new RangeError('Stream chunk size must be finite and non-negative');
+              }
+              return result;
+            };
+            const notifyReadableQueueChanged = state => state.queueChanged?.();
+            const clearReadableQueue = state => {
+              state.queue.length = 0;
+              state.queueSize = 0;
+              state.queueBytes = 0;
+              notifyReadableQueueChanged(state);
+            };
             const settleReadableStream = state => {
               while (state.reads.length && state.queue.length) {
                 state.disturbed = true;
-                state.reads.shift().resolve({value:state.queue.shift(), done:false});
+                const entry = state.queue.shift();
+                state.queueSize -= entry.size;
+                state.queueBytes -= entry.bytes;
+                state.reads.shift().resolve({value:entry.value, done:false});
               }
               if (state.status === 'readable' && state.closeRequested
                   && state.queue.length === 0) state.status = 'closed';
@@ -4265,6 +4287,7 @@ struct v8_dom_runtime::implementation final {
                 while (state.reads.length) state.reads.shift().reject(state.error);
                 state.closedReject(state.error);
               }
+              notifyReadableQueueChanged(state);
             };
             const pullReadableStream = state => {
               if (state.status !== 'readable' || state.pulling || !state.pull
@@ -4283,7 +4306,7 @@ struct v8_dom_runtime::implementation final {
               if (state.status === 'closed') return Promise.resolve();
               if (state.status === 'errored') return Promise.reject(state.error);
               state.disturbed = true;
-              state.queue.length = 0;
+              clearReadableQueue(state);
               state.status = 'closed';
               settleReadableStream(state);
               try {
@@ -4295,14 +4318,25 @@ struct v8_dom_runtime::implementation final {
               get desiredSize() {
                 const state = requireReadableStreamController(this);
                 return state.status === 'errored' ? null
-                  : state.status === 'closed' ? 0 : 1 - state.queue.length;
+                  : state.status === 'closed' ? 0
+                  : state.highWaterMark - state.queueSize;
               }
               enqueue(chunk) {
                 const state = requireReadableStreamController(this);
                 if (state.status !== 'readable' || state.closeRequested) {
                   throw new TypeError('ReadableStream is not readable');
                 }
-                state.queue.push(chunk);
+                const size = streamQueueSize(chunk, state.size);
+                const bytes = streamChunkBytes(chunk);
+                if (bytes > maximumReadableStreamQueueBytes - state.queueBytes) {
+                  const error = new DOMException(
+                    'ReadableStream queue exceeds 64 MiB', 'QuotaExceededError');
+                  this.error(error);
+                  throw error;
+                }
+                state.queue.push({value:chunk, size, bytes});
+                state.queueSize += size;
+                state.queueBytes += bytes;
                 settleReadableStream(state);
               }
               close() {
@@ -4316,7 +4350,7 @@ struct v8_dom_runtime::implementation final {
               error(reason = undefined) {
                 const state = requireReadableStreamController(this);
                 if (state.status !== 'readable') return;
-                state.queue.length = 0;
+                clearReadableQueue(state);
                 state.status = 'errored';
                 state.error = reason;
                 settleReadableStream(state);
@@ -4347,10 +4381,12 @@ struct v8_dom_runtime::implementation final {
                 const state = reader.state;
                 state.disturbed = true;
                 if (state.queue.length) {
-                  const value = state.queue.shift();
+                  const entry = state.queue.shift();
+                  state.queueSize -= entry.size;
+                  state.queueBytes -= entry.bytes;
                   settleReadableStream(state);
                   pullReadableStream(state);
-                  return Promise.resolve({value, done:false});
+                  return Promise.resolve({value:entry.value, done:false});
                 }
                 if (state.status === 'closed') {
                   return Promise.resolve({value:undefined, done:true});
@@ -4378,16 +4414,29 @@ struct v8_dom_runtime::implementation final {
               }
             }
             class ReadableStream {
-              constructor(underlyingSource = {}) {
+              constructor(underlyingSource = {}, strategy = {}) {
                 if (underlyingSource === null || typeof underlyingSource !== 'object') {
                   throw new TypeError('underlyingSource must be an object');
+                }
+                if (strategy === null || typeof strategy !== 'object') {
+                  throw new TypeError('strategy must be an object');
                 }
                 if (underlyingSource.type !== undefined && underlyingSource.type !== 'bytes') {
                   throw new RangeError('Unsupported ReadableStream type');
                 }
+                const highWaterMark = Number(strategy.highWaterMark ?? 1);
+                if (!Number.isFinite(highWaterMark) || highWaterMark < 0) {
+                  throw new RangeError('highWaterMark must be finite and non-negative');
+                }
+                const size = strategy.size === undefined ? undefined : strategy.size;
+                if (size !== undefined && typeof size !== 'function') {
+                  throw new TypeError('strategy.size must be a function');
+                }
                 const state = {
-                  queue:[], reads:[], status:'readable', error:undefined,
+                  queue:[], queueSize:0, queueBytes:0, reads:[],
+                  status:'readable', error:undefined,
                   locked:false, disturbed:false, closeRequested:false,
+                  highWaterMark, size, queueChanged:undefined,
                   pulling:false, pull:typeof underlyingSource.pull === 'function'
                     ? underlyingSource.pull.bind(underlyingSource) : undefined,
 )JS",
@@ -4484,6 +4533,34 @@ struct v8_dom_runtime::implementation final {
               if (!state) throw new TypeError('Illegal invocation');
               return state;
             };
+            const makeWritableReadyPromise = state => {
+              state.ready = new Promise((resolve, reject) => {
+                state.readyResolve = resolve;
+                state.readyReject = reject;
+              });
+              state.ready.catch(() => {});
+            };
+            const updateWritableBackpressure = state => {
+              const backpressured = state.status === 'writable'
+                && state.queueSize >= state.highWaterMark;
+              if (backpressured && !state.backpressured) {
+                state.backpressured = true;
+                makeWritableReadyPromise(state);
+              } else if (!backpressured && state.backpressured) {
+                state.backpressured = false;
+                state.readyResolve?.();
+                state.ready = Promise.resolve();
+                state.readyResolve = undefined;
+                state.readyReject = undefined;
+              }
+            };
+            const errorWritableStream = (state, reason) => {
+              if (state.status === 'closed' || state.status === 'errored') return;
+              state.status = 'errored';
+              state.error = reason;
+              state.readyReject?.(reason);
+              state.closedReject(reason);
+            };
             class WritableStreamDefaultWriter {
               constructor(stream) {
                 const state = requireWritableStream(stream);
@@ -4496,7 +4573,8 @@ struct v8_dom_runtime::implementation final {
               get desiredSize() {
                 const state = requireWritableStreamWriter(this).state;
                 return state.status === 'errored' ? null
-                  : state.status === 'closed' ? 0 : 1;
+                  : state.status === 'closed' ? 0
+                  : state.highWaterMark - state.queueSize;
               }
               write(chunk) {
                 const {stream, state} = requireWritableStreamWriter(this);
@@ -4504,11 +4582,34 @@ struct v8_dom_runtime::implementation final {
                 if (state.status !== 'writable') {
                   return Promise.reject(state.error ?? new TypeError('WritableStream is closed'));
                 }
-                const operation = state.chain.then(() => state.write?.(chunk));
-                state.chain = operation.catch(error => {
-                  state.status = 'errored'; state.error = error;
-                  state.closedReject(error); throw error;
+                let size;
+                try { size = streamQueueSize(chunk, state.size); }
+                catch (error) { errorWritableStream(state, error); return Promise.reject(error); }
+                const bytes = streamChunkBytes(chunk);
+                if (bytes > maximumWritableStreamQueueBytes - state.queueBytes) {
+                  const error = new DOMException(
+                    'WritableStream queue exceeds 16 MiB', 'QuotaExceededError');
+                  errorWritableStream(state, error);
+                  try { state.abort?.(error); } catch {}
+                  return Promise.reject(error);
+                }
+                state.queueSize += size;
+                state.queueBytes += bytes;
+                updateWritableBackpressure(state);
+                const release = () => {
+                  state.queueSize = Math.max(0, state.queueSize - size);
+                  state.queueBytes = Math.max(0, state.queueBytes - bytes);
+                  updateWritableBackpressure(state);
+                };
+                const operation = state.chain.then(() => {
+                  if (state.status === 'errored') throw state.error;
+                  return state.write?.(chunk);
+                }).then(value => { release(); return value; }, error => {
+                  release();
+                  errorWritableStream(state, error);
+                  throw error;
                 });
+                state.chain = operation;
                 state.chain.catch(() => {});
                 return operation;
               }
@@ -4523,18 +4624,16 @@ struct v8_dom_runtime::implementation final {
                 state.chain = operation.then(() => {
                   state.status = 'closed'; state.closedResolve();
                 }, error => {
-                  state.status = 'errored'; state.error = error;
-                  state.closedReject(error); throw error;
+                  errorWritableStream(state, error); throw error;
                 });
                 state.chain.catch(() => {});
-                return operation;
+                return state.chain;
               }
               abort(reason = undefined) {
                 const {stream, state} = requireWritableStreamWriter(this);
                 if (!stream) return Promise.reject(new TypeError('Writer released'));
                 if (state.status === 'closed') return Promise.resolve();
-                state.status = 'errored'; state.error = reason;
-                state.closedReject(reason);
+                errorWritableStream(state, reason);
                 try { return Promise.resolve(state.abort?.(reason)); }
                 catch (error) { return Promise.reject(error); }
               }
@@ -4546,9 +4645,20 @@ struct v8_dom_runtime::implementation final {
               }
             }
             class WritableStream {
-              constructor(underlyingSink = {}) {
+              constructor(underlyingSink = {}, strategy = {}) {
                 if (underlyingSink === null || typeof underlyingSink !== 'object') {
                   throw new TypeError('underlyingSink must be an object');
+                }
+                if (strategy === null || typeof strategy !== 'object') {
+                  throw new TypeError('strategy must be an object');
+                }
+                const highWaterMark = Number(strategy.highWaterMark ?? 1);
+                if (!Number.isFinite(highWaterMark) || highWaterMark < 0) {
+                  throw new RangeError('highWaterMark must be finite and non-negative');
+                }
+                const size = strategy.size === undefined ? undefined : strategy.size;
+                if (size !== undefined && typeof size !== 'function') {
+                  throw new TypeError('strategy.size must be a function');
                 }
                 let closedResolve;
                 let closedReject;
@@ -4558,6 +4668,9 @@ struct v8_dom_runtime::implementation final {
                 closed.catch(() => {});
                 const state = {
                   locked:false, status:'writable', error:undefined,
+                  queueSize:0, queueBytes:0, highWaterMark, size,
+                  backpressured:false, readyResolve:undefined,
+                  readyReject:undefined,
                   write:typeof underlyingSink.write === 'function'
                     ? underlyingSink.write.bind(underlyingSink) : undefined,
                   close:typeof underlyingSink.close === 'function'
@@ -4569,12 +4682,13 @@ struct v8_dom_runtime::implementation final {
             R"JS(                  closed, closedResolve, closedReject
                 };
                 writableStreamState.set(this, state);
+                updateWritableBackpressure(state);
                 if (typeof underlyingSink.start === 'function') {
                   try { state.chain = Promise.resolve(underlyingSink.start()); }
                   catch (error) { state.chain = Promise.reject(error); }
                 }
                 state.chain.catch(error => {
-                  state.status = 'errored'; state.error = error; state.closedReject(error);
+                  errorWritableStream(state, error);
                 });
               }
               get locked() { return requireWritableStream(this).locked; }
@@ -4598,21 +4712,79 @@ struct v8_dom_runtime::implementation final {
             }
             const transformStreamState = new WeakMap();
             class TransformStream {
-              constructor(transformer = {}) {
+              constructor(transformer = {}, writableStrategy = {}, readableStrategy = {}) {
+                if (transformer === null || typeof transformer !== 'object') {
+                  throw new TypeError('transformer must be an object');
+                }
                 let controller;
-                const readable = new ReadableStream({start(value) { controller = value; }});
+                let writable;
+                let backpressurePromise;
+                let backpressureResolve;
+                let backpressureReject;
+                const readable = new ReadableStream({
+                  start(value) { controller = value; },
+                  cancel(reason) {
+                    const state = writable && writableStreamState.get(writable);
+                    if (state) {
+                      errorWritableStream(state, reason);
+                      try { return Promise.resolve(state.abort?.(reason)); }
+                      catch (error) { return Promise.reject(error); }
+                    }
+                  }
+                }, {...readableStrategy,
+                  highWaterMark:readableStrategy.highWaterMark ?? 1});
+                const readableState = requireReadableStream(readable);
+                const updateTransformBackpressure = () => {
+                  if (!backpressurePromise) return;
+                  if (readableState.status === 'errored') {
+                    const reject = backpressureReject;
+                    backpressurePromise = undefined;
+                    backpressureResolve = undefined;
+                    backpressureReject = undefined;
+                    reject(readableState.error);
+                  } else if (readableState.status !== 'readable'
+                      || controller.desiredSize > 0) {
+                    const resolve = backpressureResolve;
+                    backpressurePromise = undefined;
+                    backpressureResolve = undefined;
+                    backpressureReject = undefined;
+                    resolve();
+                  }
+                };
+                readableState.queueChanged = updateTransformBackpressure;
+                const waitForReadableDemand = () => {
+                  if (readableState.status === 'errored') {
+                    return Promise.reject(readableState.error);
+                  }
+                  if (readableState.status !== 'readable'
+                      || controller.desiredSize > 0) return Promise.resolve();
+                  if (!backpressurePromise) {
+                    backpressurePromise = new Promise((resolve, reject) => {
+                      backpressureResolve = resolve;
+                      backpressureReject = reject;
+                    });
+                    backpressurePromise.catch(() => {});
+                  }
+                  return backpressurePromise;
+                };
                 const transform = typeof transformer.transform === 'function'
                   ? transformer.transform.bind(transformer) : undefined;
                 const flush = typeof transformer.flush === 'function'
                   ? transformer.flush.bind(transformer) : undefined;
-                const writable = new WritableStream({
+                writable = new WritableStream({
                   async write(chunk) {
-                    if (transform) await transform(chunk, controller);
-                    else controller.enqueue(chunk);
+                    try {
+                      if (transform) await transform(chunk, controller);
+                      else controller.enqueue(chunk);
+                      await waitForReadableDemand();
+                    } catch (error) {
+                      controller.error(error);
+                      throw error;
+                    }
                   },
                   async close() { if (flush) await flush(controller); controller.close(); },
                   abort(reason) { controller.error(reason); }
-                });
+                }, writableStrategy);
                 transformStreamState.set(this, {readable, writable});
               }
               get readable() {

@@ -36,6 +36,11 @@
 #if defined(__APPLE__) || defined(__linux__)
 #include <sys/resource.h>
 #endif
+#if defined(__APPLE__)
+#include <mach/mach.h>
+#elif defined(__linux__)
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -196,6 +201,10 @@ int main()
         }
         if (selected == "service-worker-resource-plane") {
             test_cache_storage_and_controlled_fetch_broker();
+            return 0;
+        }
+        if (selected == "service-worker-host-stream") {
+            test_service_worker_host_message_streaming();
             return 0;
         }
         if (selected == "service-worker-range-cache") {

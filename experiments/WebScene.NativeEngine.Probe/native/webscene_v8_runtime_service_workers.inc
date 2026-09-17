@@ -512,8 +512,13 @@
                             for (;;) {
                               const {value, done} = await reader.read();
                               if (done) break;
-                              const bytes = value instanceof Uint8Array
-                                ? value : new Uint8Array(value);
+                              if (!(value instanceof Uint8Array)) {
+                                await reader.cancel(
+                                  'Service worker response body requires Uint8Array chunks');
+                                throw new TypeError(
+                                  'Service worker response body requires Uint8Array chunks');
+                              }
+                              const bytes = value;
                               bodyLength += bytes.byteLength;
                               if (bodyLength > 64 * 1024 * 1024) {
                                 await reader.cancel('Service worker response body limit');
@@ -1589,7 +1594,9 @@
             }
             if (operation == "unregister") {
                 const auto scope = matched->scope;
+                auto runtime = matched->runtime;
                 self->service_worker_registrations.erase(scope);
+                if (runtime != nullptr) runtime->stop();
                 info.GetReturnValue().Set(v8::True(isolate));
                 return;
             }

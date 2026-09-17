@@ -90,6 +90,18 @@
       "nativeNavigation": true
     },
     {
+      "path": "contracts/editor-worker-rpc.html",
+      "type": "contract",
+      "capabilities": [
+        "module-workers",
+        "structured-clone",
+        "worker-request-reply",
+        "worker-error-observability"
+      ],
+      "reason": "Code OSS editor-worker regression matching its queued pre-ready message, module-ready handshake, initialize reply, compute request/reply, and user-visible rejected-RPC state.",
+      "nativeNavigation": true
+    },
+    {
       "path": "contracts/worker-termination-queue-messageerror.html",
       "type": "contract",
       "capabilities": [

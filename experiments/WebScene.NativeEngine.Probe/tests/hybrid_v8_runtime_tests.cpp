@@ -779,6 +779,135 @@ void test_iframe_worker_extension_host_port_bootstrap() {
     require(completed, "Code OSS-shaped iframe MessagePort bootstrap did not complete");
 }
 
+void test_editor_worker_rpc_and_ui_responsiveness() {
+    webscene_native::native_document document;
+    const std::string root_url = "https://worker.test/index.html";
+    const std::string module_url = "https://worker.test/editor-worker-rpc.js";
+    const std::string module_source = R"JS(
+      let workerId = -1;
+      onmessage = event => {
+        const message = event.data;
+        if (!message || !message.vsWorker || message.type !== 0) return;
+        const reply = (res, err) => postMessage({
+          vsWorker: workerId < 0 ? message.vsWorker : workerId,
+          seq: message.req, res, err, type: 1
+        });
+        if (message.method === '$initialize') {
+          workerId = message.args[0];
+          reply(undefined, undefined);
+        } else if (message.method === '$computeStringDiff') {
+          const [original, modified] = message.args;
+          const deadline = performance.now() + 25;
+          while (performance.now() < deadline) {}
+          reply({edits:[{start:0,end:original.length,text:modified}]}, undefined);
+        } else {
+          reply(undefined, {$isError:true,name:'Error',
+            message:`Missing method ${message.method} on worker thread`});
+        }
+      };
+    )JS";
+    bool completed = false;
+    std::string result;
+    webscene_native::v8_dom_runtime runtime(document,
+        []{return webscene_native::v8_dom_runtime::viewport_metrics{640,480,1,0};}, {},
+        [&](uint32_t kind, const std::string& url, const auto&, const std::string&, int64_t,
+            webscene_native::v8_dom_runtime::resource_response& response) {
+            if (kind == WEBSCENE_RESOURCE_DOCUMENT && url == root_url) {
+                response.content = "<!doctype html>";
+                return true;
+            }
+            if (kind == WEBSCENE_RESOURCE_SCRIPT && url == module_url) {
+                response.content = module_source;
+                return true;
+            }
+            return false;
+        });
+    runtime.register_compiled_template("editor-worker-result",
+        [&](auto& dom, const std::string& value) -> auto& {
+            result = value;
+            completed = true;
+            return dom.create_element("span");
+        });
+    require(runtime.initialize(), "editor worker RPC runtime failed");
+    require(runtime.load_url(root_url), runtime.last_error().c_str());
+    require(runtime.execute(R"JS(
+      (() => {
+        const source = `
+          await import('https://worker.test/editor-worker-rpc.js');
+          globalThis.postMessage({type:'vscode-worker-ready'});
+        `;
+        const url = URL.createObjectURL(new Blob([source],
+          {type:'application/javascript'}));
+        const worker = new Worker(url,
+          {name:'editorWorkerService',type:'module'});
+        URL.revokeObjectURL(url);
+        let received = 0;
+        let nextRequest = 0;
+        let uiTicks = 0;
+        const ticker = setInterval(() => ++uiTicks, 1);
+        const pending = new Map();
+        const send = (method, args) => new Promise((resolve, reject) => {
+          const req = String(++nextRequest);
+          pending.set(req, {resolve, reject});
+          worker.postMessage({
+            vsWorker:1,req,channel:'default',method,args,type:0
+          });
+        });
+        worker.onerror = event => document.createCompiledTemplate(
+          'editor-worker-result', `error:${event.message}`);
+        worker.onmessage = async event => {
+          ++received;
+          if (event.data?.type === 'vscode-worker-ready') {
+            try {
+              await send('$initialize', [1]);
+              const original = 'const value = 1;\n';
+              const modified = 'const value = 2;\nconsole.log(value);\n';
+              const response = await send('$computeStringDiff', [
+                original,modified,{maxComputationTimeMs:5000},'advanced'
+              ]);
+              const edit = response.edits[0];
+              const applied = original.slice(0,edit.start)
+                + edit.text + original.slice(edit.end);
+              let rejection = '';
+              try { await send('$missingMethod', []); }
+              catch (error) { rejection = error.message; }
+              clearInterval(ticker);
+              worker.terminate();
+              document.createCompiledTemplate('editor-worker-result',
+                JSON.stringify({applied,received,rejection,uiTicks}));
+            } catch (error) {
+              document.createCompiledTemplate(
+                'editor-worker-result', `error:${error.message}`);
+            }
+            return;
+          }
+          const reply = pending.get(event.data?.seq);
+          if (!reply) return;
+          pending.delete(event.data.seq);
+          if (event.data.err) reply.reject(Error(event.data.err.message));
+          else reply.resolve(event.data.res);
+        };
+        worker.postMessage('-please-ignore-');
+      })();
+    )JS", "editor-worker-rpc"), runtime.last_error().c_str());
+    const auto started = std::chrono::steady_clock::now();
+    while (!completed
+        && std::chrono::steady_clock::now() - started < std::chrono::seconds(5)) {
+        require(runtime.pump_task(), runtime.last_error().c_str());
+        std::this_thread::yield();
+    }
+    require(completed, "Editor worker RPC exceeded five seconds");
+    require(result.find("\"applied\":\"const value = 2;\\nconsole.log(value);\\n\"")
+            != std::string::npos,
+        result.c_str());
+    require(result.find("\"received\":4") != std::string::npos,
+        "Editor worker did not publish ready, initialize, RPC, and rejection replies");
+    require(result.find("Missing method $missingMethod") != std::string::npos,
+        "Editor worker rejection was not observable");
+    require(result.find("\"uiTicks\":0") == std::string::npos,
+        "Editor worker RPC starved the document task queue");
+}
+
 void test_nested_worker_blob_url_identity() {
     webscene_native::native_document document;
     bool finished = false;
@@ -1181,6 +1310,7 @@ void test_worker_message_port_contracts() {
     test_message_port_clone_and_queue_bounds();
     test_message_port_binding_memory_is_bounded();
     test_iframe_worker_extension_host_port_bootstrap();
+    test_editor_worker_rpc_and_ui_responsiveness();
     test_worker_termination_race();
     test_worker_error_delivery();
     test_worker_and_port_navigation_shutdown();

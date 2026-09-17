@@ -1,0 +1,75 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Class-index cascade lookup and mutation</title>
+<style>
+  .class-name-that-exceeds-small-string-capacity-alpha { width: 31px; }
+  .class-name-that-exceeds-small-string-capacity-beta { height: 17px; }
+  .class-name-that-exceeds-small-string-capacity-alpha.class-name-that-exceeds-small-string-capacity-beta {
+    background-color: rgb(12, 34, 56);
+  }
+  .class-name-that-exceeds-small-string-capacity-gamma { width: 47px; }
+</style>
+<div id="fixture" class="class-name-that-exceeds-small-string-capacity-alpha class-name-that-exceeds-small-string-capacity-beta"></div>
+<script>
+  const state = window.__webSceneWptState = {
+    complete: false,
+    harness: null,
+    results: [],
+    errors: [],
+    diagnostics: []
+  };
+
+  function assertEquals(actual, expected, message) {
+    if (actual !== expected) {
+      throw new Error(`${message}: expected ${expected}, got ${actual}`);
+    }
+  }
+
+  function test(name, body) {
+    try {
+      body();
+      state.results.push({ name, status: "PASS", message: null, stack: null });
+    } catch (error) {
+      state.results.push({
+        name,
+        status: "FAIL",
+        message: String(error && error.message || error),
+        stack: error && error.stack ? String(error.stack) : null
+      });
+    }
+  }
+
+  const fixture = document.getElementById("fixture");
+
+  test("multiple long class tokens resolve through the stylesheet index", () => {
+    const style = getComputedStyle(fixture);
+    assertEquals(style.width, "31px", "width from first class");
+    assertEquals(style.height, "17px", "height from second class");
+    assertEquals(style.backgroundColor, "rgb(12, 34, 56)", "compound selector color");
+  });
+
+  test("class replacement invalidates the indexed cascade", () => {
+    fixture.className = "class-name-that-exceeds-small-string-capacity-gamma";
+    const style = getComputedStyle(fixture);
+    assertEquals(style.width, "47px", "replacement class width");
+    assertEquals(style.height, "0px", "removed class no longer supplies height");
+    assertEquals(style.backgroundColor, "rgba(0, 0, 0, 0)", "compound selector no longer matches");
+  });
+
+  test("classList mutation restores independent and compound rules", () => {
+    fixture.classList.add(
+      "class-name-that-exceeds-small-string-capacity-alpha",
+      "class-name-that-exceeds-small-string-capacity-beta"
+    );
+    const style = getComputedStyle(fixture);
+    assertEquals(style.width, "47px", "later gamma rule retains precedence");
+    assertEquals(style.height, "17px", "restored beta height");
+    assertEquals(style.backgroundColor, "rgb(12, 34, 56)", "restored compound selector color");
+  });
+
+  const failure = state.results.find(result => result.status !== "PASS");
+  state.harness = failure
+    ? { status: 1, message: failure.message, stack: failure.stack }
+    : { status: 0, message: null, stack: null };
+  state.complete = true;
+</script>

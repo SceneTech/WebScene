@@ -1480,9 +1480,13 @@ individual change.
     +5.14%), RSS -0.07% (-1.29% to +1.17%), and physical footprint -0.25%
     (-1.21% to +0.71%). Work is equivalent, but presentation-interval p95
     regresses 9.00% (95% CI +0.66% to +17.90%), violating the cadence gate.
-    Production retains owning lookup keys and the original map types; the view
-    path remains only behind the off-by-default
-    `WEBSCENE_NATIVE_ENGINE_CSS_CLASS_LOOKUP_VIEW_EXPERIMENT` switch.
+    Production retained owning lookup keys and the original map types at this
+    checkpoint. A later implementation narrows heterogeneous lookup to the class
+    index and leaves id, tag, attribute, variable-reference, and dependency maps
+    unchanged. Its four-long-token fixture preserves 52,600 index operations and
+    checksum 8,100 while eliminating 800 temporary owned keys and 46,200 copied
+    bytes. The owning class path remains available as the
+    `WEBSCENE_NATIVE_ENGINE_CSS_OWNED_CLASS_LOOKUP_CONTROL` benchmark control.
 48. Accepted after proof: express the recursive inline-box bounds walker as a
     generic self-recursive lambda instead of allocating `std::function`. The
     1,013-node exact fixture preserves checksum 377,393, the 1,024-byte node

@@ -64,7 +64,11 @@ public:
         auto result=collect_candidates(node,focused,state_.rules_by_tag,state_.rules_by_id,
             state_.rules_by_attribute,state_.focus_rules,state_.unindexed_rules,
             [&](auto& output,std::string_view name) {
+#if defined(WEBSCENE_NATIVE_ENGINE_CSS_OWNED_CLASS_LOOKUP_CONTROL)
                 auto found=state_.rules_by_class.find(std::string(name));
+#else
+                auto found=state_.rules_by_class.find(name);
+#endif
                 if(found!=state_.rules_by_class.end())
                     output.insert(output.end(),found->second.begin(),found->second.end());
             });

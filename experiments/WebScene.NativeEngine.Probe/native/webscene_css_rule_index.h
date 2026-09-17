@@ -6,7 +6,7 @@ namespace webscene_native::css {
 // selector. The caller owns storage and must rebuild it when rules are removed.
 inline void index_selector(size_t index, const std::string& selector,
     css_index_string_map<std::vector<size_t>>& css_rules_by_id,
-    css_index_string_map<std::vector<size_t>>& css_rules_by_class,
+    css_class_index_map<std::vector<size_t>>& css_rules_by_class,
     css_index_string_map<std::vector<size_t>>& css_rules_by_tag,
     css_index_string_map<std::vector<size_t>>& css_rules_by_attribute,
     std::vector<size_t>& css_focus_rules,

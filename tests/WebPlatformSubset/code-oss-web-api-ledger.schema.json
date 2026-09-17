@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://webscene.dev/schemas/code-oss-web-api-ledger-v1.json",
+  "title": "Code OSS Web API capability ledger",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "revisions", "cssSlice", "claims"],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "revisions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["codeOss", "webScene", "appScene", "wpt"],
+      "properties": {
+        "codeOss": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "webScene": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "appScene": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "wpt": {"type": "string", "pattern": "^[0-9a-f]{40}$"}
+      }
+    },
+    "cssSlice": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "schema", "matrixVersion", "profileSha256", "denominators"],
+      "properties": {
+        "path": {"type": "string"},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "schema": {"type": "string"},
+        "matrixVersion": {"type": "string"},
+        "profileSha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "denominators": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["capabilities", "native", "browser"],
+          "properties": {
+            "capabilities": {"$ref": "#/$defs/counts"},
+            "native": {"$ref": "#/$defs/counts"},
+            "browser": {"$ref": "#/$defs/counts"}
+          }
+        }
+      }
+    },
+    "claims": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/claim"}
+    }
+  },
+  "$defs": {
+    "counts": {
+      "type": "object",
+      "additionalProperties": {"type": "integer", "minimum": 0}
+    },
+    "claim": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "reachable", "state", "platforms", "issues", "evidence", "limits", "reason"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-z0-9-]+$"},
+        "reachable": {"type": "boolean"},
+        "state": {"enum": ["supported", "partial", "blocked", "intentionally-absent", "consumer-unreachable"]},
+        "platforms": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["linux-x64", "macos-arm64", "windows-x64"]}},
+        "issues": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "pattern": "^(WebScene|AppScene)#[0-9]+$"}},
+        "evidence": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "path"],
+            "properties": {
+              "kind": {"enum": ["wpt", "browser", "native", "product", "performance", "security"]},
+              "path": {"type": "string", "minLength": 1}
+            }
+          }
+        },
+        "limits": {"type": "array", "items": {"type": "string"}},
+        "reason": {"type": "string"}
+      }
+    }
+  }
+}

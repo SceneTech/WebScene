@@ -26,7 +26,7 @@ public:
 
     bool begin_rule(
         uint32_t kind,
-        bool,
+        bool has_block,
         size_t parent_index,
         std::string_view raw_name,
         std::string_view prelude,
@@ -43,6 +43,10 @@ public:
         current.kind = kind;
         current.active = stack_.empty() || stack_.back().children_active;
         current.children_active = current.active;
+        if (!stack_.empty()) {
+            current.cascade_layer = stack_.back().cascade_layer;
+            current.layer_path = stack_.back().layer_path;
+        }
 
         if (!stack_.empty() && stack_.back().keyframes
             && kind != css_syntax_style_rule) {
@@ -109,9 +113,33 @@ public:
                 "stylesheet-parser");
             current.children_active = supported != negated;
         } else if (name == "layer") {
+            const auto qualify = [&](std::string_view local_name) {
+                const auto local = trim_value(local_name);
+                if (local.empty() || current.layer_path.empty()) return local;
+                return current.layer_path + "." + local;
+            };
+            if (has_block) {
+                current.layer_path = qualify(prelude);
+                current.cascade_layer = owner_.register_cascade_layer(
+                    current.layer_path);
+            } else {
+                size_t start = 0U;
+                while (start <= prelude.size()) {
+                    auto comma = prelude.find(',', start);
+                    if (comma == std::string_view::npos) comma = prelude.size();
+                    const auto layer_name = qualify(
+                        prelude.substr(start, comma - start));
+                    if (!layer_name.empty()) {
+                        owner_.register_cascade_layer(layer_name);
+                    }
+                    if (comma == prelude.size()) break;
+                    start = comma + 1U;
+                }
+                current.children_active = false;
+            }
             owner_.record_feature(
-                "css", "at-rule:@layer", "partially-supported",
-                "nested rules are parsed without cascade-layer ordering",
+                "css", "at-rule:@layer", "supported",
+                "named, anonymous, statement, nested, normal and important author layers",
                 "stylesheet-parser");
         } else if (name == "container") {
             current.media_query = encode_container_query(trim_value(prelude));
@@ -175,7 +203,8 @@ public:
                 completed.push_back({
                     std::move(current.prelude),
                     std::move(current.declarations),
-                    std::move(inherited_media)});
+                    std::move(inherited_media),
+                    current.cascade_layer});
             }
             completed.insert(
                 completed.end(),
@@ -194,7 +223,8 @@ public:
                     std::move(rule.selector),
                     std::move(rule.declarations),
                     rule.media_queries,
-                    stylesheet_address_);
+                    stylesheet_address_,
+                    rule.cascade_layer);
             }
         } else if (current.keyframes) {
             completed_keyframes_.emplace_back(
@@ -216,6 +246,7 @@ private:
         std::string selector;
         std::vector<css_declaration> declarations;
         std::vector<std::string> media_queries;
+        uint32_t cascade_layer{0U};
     };
 
     struct frame final {
@@ -223,10 +254,12 @@ private:
         uint32_t kind{css_syntax_style_rule};
         std::string prelude;
         std::string media_query;
+        std::string layer_path;
         std::vector<css_declaration> declarations;
         std::vector<completed_style_rule> nested_rules;
         css_opacity_keyframes keyframe_definition;
         size_t observed_declarations{0U};
+        uint32_t cascade_layer{0U};
         bool active{false};
         bool children_active{false};
         bool keyframes{false};

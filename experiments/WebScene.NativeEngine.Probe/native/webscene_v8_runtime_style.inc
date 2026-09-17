@@ -567,7 +567,13 @@
             (node->style.important_property_mask & property_mask) != 0U
             || (node->style.important_margin_sides & margin_sides(name)) != 0U;
         const auto value = to_utf8(info.GetIsolate(), info[1]);
+        const auto priority = info.Length() > 2
+            ? to_utf8(info.GetIsolate(), info[2])
+            : std::string{};
+        const auto important = copy_ascii_lower(priority) == "important";
+        const auto valid_priority = priority.empty() || important;
         self->inventory_css_value_functions(value, "cssom-style");
+        if (!valid_priority) return;
         if (name.starts_with("--")) {
             if (!valid_custom_property_name(name)) return;
             if (value.empty()) {
@@ -577,15 +583,21 @@
 #endif
                     return;
                 }
-                node->style.mutable_custom_properties().values.erase(name);
+                auto& custom = node->style.mutable_custom_properties();
+                custom.values.erase(name);
+                custom.important.erase(name);
                 auto& authored = node->mutable_authored_style();
                 authored.declarations.erase(name);
                 authored.important_declarations.erase(name);
             } else {
-                node->style.mutable_custom_properties().values[name] = value;
+                auto& custom = node->style.mutable_custom_properties();
+                custom.values[name] = value;
+                if (important) custom.important.insert(name);
+                else custom.important.erase(name);
                 auto& authored = node->mutable_authored_style();
                 authored.declarations[name] = value;
-                authored.important_declarations.erase(name);
+                if (important) authored.important_declarations.insert(name);
+                else authored.important_declarations.erase(name);
             }
             sync_style_attribute(*node);
             self->recascade_custom_property(*node, name);
@@ -620,9 +632,11 @@
             canonical_name,
             value);
         const auto existing = authored.declarations.find(canonical_name);
+        const auto existing_important =
+            authored.important_declarations.contains(canonical_name);
         if (existing != authored.declarations.end()
             && existing->second == specified_value
-            && !authored.important_declarations.contains(canonical_name)) {
+            && existing_important == important) {
 #if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
             if (self->resize_profile_active) {
                 ++self->last_resize_redundant_style_writes;
@@ -633,7 +647,8 @@
             return;
         }
         authored.declarations[canonical_name] = specified_value;
-        authored.important_declarations.erase(canonical_name);
+        if (important) authored.important_declarations.insert(canonical_name);
+        else authored.important_declarations.erase(canonical_name);
         if (value.find("var(") != std::string::npos && property_mask != 0U) {
             // A CSSOM write is observable immediately. Resolve variable-backed
             // declarations through the same computed-value path used during a
@@ -643,7 +658,7 @@
             const auto retained_inline_mask = node->style.inline_property_mask;
             node->style.inline_property_mask &= ~property_mask;
             self->apply_css_declaration(
-                *node, {canonical_name, specified_value, false}, true);
+                *node, {canonical_name, specified_value, important}, true);
             node->style.inline_property_mask = retained_inline_mask | property_mask;
         } else if (canonical_name == "grid-template-areas") {
             css::apply_grid_template_areas(node->style, value);
@@ -914,7 +929,8 @@
             || canonical_name == "background-size") {
             const auto retained_inline_mask = node->style.inline_property_mask;
             node->style.inline_property_mask &= ~property_mask;
-            self->apply_css_declaration(*node, {canonical_name, value, false});
+            self->apply_css_declaration(
+                *node, {canonical_name, value, important}, true);
             node->style.inline_property_mask = retained_inline_mask | property_mask;
         } else if (name == "color") {
             node->style.foreground_rgba = native_document::parse_color(value);
@@ -1449,6 +1465,30 @@
         info.GetReturnValue().Set(js_string(info.GetIsolate(), value.c_str()));
     }
 
+    static void style_get_property_priority(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        if (info.Length() < 1) {
+            info.GetReturnValue().Set(js_string(info.GetIsolate(), ""));
+            return;
+        }
+        auto* node = unwrap_node(info.This());
+        if (node == nullptr) {
+            info.GetReturnValue().Set(js_string(info.GetIsolate(), ""));
+            return;
+        }
+        const auto computed = info.This()->InternalFieldCount() > 1
+            && info.This()->GetInternalField(1).As<v8::Value>()
+                ->BooleanValue(info.GetIsolate());
+        const auto name = canonical_css_property_name(
+            to_utf8(info.GetIsolate(), info[0]));
+        const auto important = !computed
+            && (!name.starts_with("--") || valid_custom_property_name(name))
+            && node->authored_style().important_declarations.contains(name);
+        info.GetReturnValue().Set(js_string(
+            info.GetIsolate(), important ? "important" : ""));
+    }
+
     static void style_remove_property(const v8::FunctionCallbackInfo<v8::Value>& info)
     {
         if (info.Length() < 1) return;
@@ -1470,7 +1510,9 @@
                 info.GetReturnValue().Set(js_string(info.GetIsolate(), ""));
                 return;
             }
-            node->style.mutable_custom_properties().values.erase(name);
+            auto& custom = node->style.mutable_custom_properties();
+            custom.values.erase(name);
+            custom.important.erase(name);
             auto& authored = node->mutable_authored_style();
             authored.declarations.erase(name);
             authored.important_declarations.erase(name);

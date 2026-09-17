@@ -19,6 +19,18 @@ std::optional<prepared_stylesheet> prepare_stylesheet(std::string_view text,
         rule_payload_cache cache;
 
         bool inventory_media_query(const std::string& query) { return inventory(query); }
+        uint32_t register_cascade_layer(const std::string& name) {
+            if (!name.empty()) {
+                const auto known = std::find(
+                    output.cascade_layers.begin(), output.cascade_layers.end(), name);
+                if (known != output.cascade_layers.end()) {
+                    return static_cast<uint32_t>(
+                        std::distance(output.cascade_layers.begin(), known) + 1);
+                }
+            }
+            output.cascade_layers.push_back(name);
+            return static_cast<uint32_t>(output.cascade_layers.size());
+        }
         void record_feature(std::string_view, const std::string& feature,
             std::string_view classification, const std::string& detail, std::string_view) {
             // Font bytes/registration are handled by a resource host, which this
@@ -32,13 +44,14 @@ std::optional<prepared_stylesheet> prepare_stylesheet(std::string_view text,
         }
         void append_parsed_css_style_rule(std::string selector,
             std::vector<css_declaration> declarations,
-            const std::vector<std::string>& media,const std::string& source) {
+            const std::vector<std::string>& media,const std::string& source,
+            uint32_t cascade_layer) {
             const auto previous_count=output.rules.size();
             prepare_style_rule(selector,std::move(declarations),media,source,
                 [](const css_declaration&) {},
                 [&](const std::string& prepared,const auto& values,const auto& conditions) {
                     output.rules.push_back(intern_rule_payload(cache_mutex,cache,
-                        compile_selector,prepared,values,conditions));
+                        compile_selector,prepared,values,conditions,cascade_layer));
                 });
             if(previous_count==output.rules.size())
                 output.diagnostics.push_back({"selector:"+selector,"unsupported",

@@ -1,5 +1,6 @@
 #pragma once
 #include "webscene_css_property_mask.h"
+#include "webscene_css_rule_operations.h"
 #include <array>
 #include <span>
 
@@ -8,26 +9,20 @@ namespace webscene_native::css {
 // Preserve runtime ordering: custom properties, ordinary values, dependent inline
 // values, then inline transitions. The callback applies one declaration and origin.
 template<typename Apply>
-void apply_matched_declarations(dom_node& node,std::span<const css_rule* const> matched_rules,
+void apply_matched_declarations(dom_node& node,const cascaded_rule_order& order,
     Apply&& apply)
 {
-        // CSS custom properties are cascaded before dependent declarations are
-        // computed. Applying each rule eagerly made a base button height resolve
-        // with the default medium size before its later `.small-*` rule set the
-        // size token.
-        for (const auto* rule : matched_rules) {
-            for (const auto& declaration : rule->declarations()) {
-                if (declaration.name.starts_with("--")) {
-                    apply(declaration,false);
-                }
-            }
-        }
-        for (const auto* rule : matched_rules) {
-            for (const auto& declaration : rule->declarations()) {
-                if (declaration.name.starts_with("--")) continue;
-                apply(declaration,false);
-            }
-        }
+        // CSS custom properties are cascaded before dependent declarations
+        // are computed. Applying each rule eagerly made a base button height
+        // resolve before a later size token was available.
+        for_each_cascaded_declaration(
+            order,
+            true,
+            [&](const css_declaration& declaration) { apply(declaration, false); });
+        for_each_cascaded_declaration(
+            order,
+            false,
+            [&](const css_declaration& declaration) { apply(declaration, false); });
         // An inline declaration can be authored before the stylesheet that
         // defines one of its var() references is connected. Its first
         // computed-value attempt is then invalid, but the authored tokens must
@@ -38,16 +33,16 @@ void apply_matched_declarations(dom_node& node,std::span<const css_rule* const> 
         // computed value while the important-origin mask still prevents a
         // normal inline declaration from overriding an author !important rule.
         for (const auto& [name, value] : node.authored_style().declarations) {
+            const auto inline_important =
+                node.authored_style().important_declarations.contains(name);
             const auto inherited_dimension = (name == "width" || name == "height")
                 && trim_css_view(value) == "inherit";
-            if (name.starts_with("--")
+            if (name.starts_with("--") || inline_important
                 || (value.find("var(") == std::string::npos && !inherited_dimension)) continue;
             const auto property_mask = css::property_mask(name);
             const auto retained_inline_mask = node.style.inline_property_mask;
             node.style.inline_property_mask &= ~property_mask;
-            apply(
-                {name, value,
-                    node.authored_style().important_declarations.contains(name)}, true);
+            apply({name, value, false}, true);
             node.style.inline_property_mask = retained_inline_mask;
         }
         // Inline transition declarations are stored separately from the hot
@@ -66,10 +61,35 @@ void apply_matched_declarations(dom_node& node,std::span<const css_rule* const> 
             if (authored == node.authored_style().declarations.end()) continue;
             const auto inline_important =
                 node.authored_style().important_declarations.contains(property);
+            if (inline_important) continue;
             const auto property_mask = css::property_mask(property);
-            if (!inline_important
-                && (node.style.important_property_mask & property_mask) != 0U) continue;
-            apply({property, authored->second, inline_important},false);
+            if ((node.style.important_property_mask & property_mask) != 0U) continue;
+            apply({property, authored->second, false},false);
         }
+        // Inline !important is the highest author-origin tier. The hot style
+        // fields retain ordinary inline declarations between cascades, but an
+        // author !important rule is allowed to replace those fields while the
+        // rule list is applied. Replaying only the authored important tier
+        // restores the CSS cascade order without reapplying every ordinary
+        // inline declaration or adding a mutation-lived winner cache.
+        for (const auto& [name, value] : node.authored_style().declarations) {
+            if (name.starts_with("--")
+                || !node.authored_style().important_declarations.contains(name)) {
+                continue;
+            }
+            const auto property_mask = css::property_mask(name);
+            const auto retained_inline_mask = node.style.inline_property_mask;
+            node.style.inline_property_mask &= ~property_mask;
+            apply({name, value, true}, true);
+            node.style.inline_property_mask = retained_inline_mask;
+        }
+}
+
+template<typename Apply>
+void apply_matched_declarations(dom_node& node,std::span<const css_rule* const> matched_rules,
+    Apply&& apply)
+{
+        const cascaded_rule_order order(matched_rules);
+        apply_matched_declarations(node,order,std::forward<Apply>(apply));
 }
 } // namespace webscene_native::css

@@ -1,6 +1,7 @@
 #pragma once
 #include "webscene_css_pseudo_application.h"
 #include "webscene_css_container_queries.h"
+#include "webscene_css_rule_operations.h"
 #include <span>
 
 namespace webscene_native::css {
@@ -51,10 +52,9 @@ rule_matches match_candidates(native_document& document,const dom_node& node,
             result.ordinary.push_back(&rule);
         }
         const auto precedes = [](const css_rule* left, const css_rule* right) {
-            const auto a = left->specificity(), b = right->specificity();
             // Both pointers belong to the same contiguous rule span: address
             // order is original stylesheet/source order, not discovery order.
-            return a != b ? a < b : left < right;
+            return cascade_rule_precedes(left, right, false);
         };
         if (result.ordinary.size() > 1U)
             std::sort(result.ordinary.begin(), result.ordinary.end(), precedes);

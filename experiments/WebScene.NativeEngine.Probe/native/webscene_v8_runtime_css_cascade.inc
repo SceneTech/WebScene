@@ -284,14 +284,15 @@
             ? std::chrono::steady_clock::now()
             : std::chrono::steady_clock::time_point{};
 #endif
-        css::apply_matched_declarations(node,matched_rules,
+        const css::cascaded_rule_order cascade_order(matched_rules);
+        css::apply_matched_declarations(node,cascade_order,
             [&](const css_declaration& declaration,bool inline_origin) {
                 apply_css_declaration(node,declaration,inline_origin);
             });
         // Inline relative line-height is authored at a higher origin, but its
         // computed pixel value depends on the winning font-size. Re-resolve it
         // only after stylesheet declarations have completed their cascade.
-        recompute_cascaded_line_height(node, matched_rules);
+        css::recompute_cascaded_line_height(node, cascade_order, css_variables);
         recompute_inline_font_relative_metrics(node);
         // Pseudo-elements inherit the originating element's completed
         // computed style. Apply them only after its custom and ordinary
@@ -299,25 +300,23 @@
         // the state variable authored on the active element.
         bool backdrop_important=false;
         if(node.dialog_state)node.dialog_state->backdrop_rgba=0;
-        for (const auto& [pseudo_kind, rule] : matched_pseudo_rules) {
+        css::for_each_cascaded_pseudo_declaration(
+            matched_pseudo_rules,
+            [&](int pseudo_kind, const css_declaration& declaration) {
             if(pseudo_kind==7) {
-                for(const auto& declaration:rule->declarations())
-                    (void)css::apply_backdrop_declaration(node,declaration,css_variables,backdrop_important);
-                continue;
+                (void)css::apply_backdrop_declaration(
+                    node,declaration,css_variables,backdrop_important);
+                return;
             }
             if (pseudo_kind >= 3 && pseudo_kind <= 6) {
-                for (const auto& declaration : rule->declarations()) {
-                    apply_scrollbar_css_declaration(node, pseudo_kind, declaration);
-                }
-                continue;
+                apply_scrollbar_css_declaration(node, pseudo_kind, declaration);
+                return;
             }
             auto& pseudo = pseudo_kind == 1
                 ? node.style.mutable_before_pseudo()
                 : node.style.mutable_after_pseudo();
-            for (const auto& declaration : rule->declarations()) {
-                apply_pseudo_css_declaration(node, pseudo, declaration);
-            }
-        }
+            apply_pseudo_css_declaration(node, pseudo, declaration);
+        });
         // The pseudo-element's used rectangle is layout state, not computed
         // style. A paint-only recascade rebuilds the computed pseudo style but
         // does not schedule layout, so retain the last used rectangle until a
@@ -516,25 +515,23 @@
         recompute_inline_font_relative_metrics(node);
         bool backdrop_important=false;
         if(node.dialog_state)node.dialog_state->backdrop_rgba=0;
-        for (const auto& [pseudo_kind, rule] : matched_pseudo_rules) {
+        css::for_each_cascaded_pseudo_declaration(
+            matched_pseudo_rules,
+            [&](int pseudo_kind, const css_declaration& declaration) {
             if(pseudo_kind==7) {
-                for(const auto& declaration:rule->declarations())
-                    (void)css::apply_backdrop_declaration(node,declaration,css_variables,backdrop_important);
-                continue;
+                (void)css::apply_backdrop_declaration(
+                    node,declaration,css_variables,backdrop_important);
+                return;
             }
             if (pseudo_kind >= 3 && pseudo_kind <= 6) {
-                for (const auto& declaration : rule->declarations()) {
-                    apply_scrollbar_css_declaration(node, pseudo_kind, declaration);
-                }
-                continue;
+                apply_scrollbar_css_declaration(node, pseudo_kind, declaration);
+                return;
             }
             auto& pseudo = pseudo_kind == 1
                 ? node.style.mutable_before_pseudo()
                 : node.style.mutable_after_pseudo();
-            for (const auto& declaration : rule->declarations()) {
-                apply_pseudo_css_declaration(node, pseudo, declaration);
-            }
-        }
+            apply_pseudo_css_declaration(node, pseudo, declaration);
+        });
         configure_style_keyframe_animation(node);
         document.update_style_animations(node);
         detect_css_compositions(node);

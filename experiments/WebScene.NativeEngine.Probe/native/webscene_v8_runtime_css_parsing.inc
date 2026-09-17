@@ -524,10 +524,22 @@
             std::move(selector),declarations,media_queries);
     }
 
+    uint32_t register_cascade_layer(const std::string& name)
+    {
+        if (!name.empty()) {
+            const auto known = css_cascade_layer_orders.find(name);
+            if (known != css_cascade_layer_orders.end()) return known->second;
+        }
+        const auto order = next_css_cascade_layer_order++;
+        if (!name.empty()) css_cascade_layer_orders.emplace(name, order);
+        return order;
+    }
+
     void append_css_rule(
         std::string selector,
         const std::vector<css_declaration>& declarations,
-        const std::vector<std::string>& media_queries
+        const std::vector<std::string>& media_queries,
+        uint32_t cascade_layer_order = 0U
 #if defined(WEBSCENE_NATIVE_ENGINE_SERVO_SELECTORS)
         , const selector_syntax_selector* parsed_selector = nullptr
 #endif
@@ -546,6 +558,7 @@
 #endif
             );
         rule.media_matches = css_rule_media_matches(rule);
+        rule.cascade_layer_order = cascade_layer_order;
         css_rules.push_back(std::move(rule));
         index_css_rule(index);
     }
@@ -1106,7 +1119,8 @@
         std::string prelude,
         std::vector<css_declaration> declarations,
         const std::vector<std::string>& inherited_media,
-        const std::string& stylesheet_address)
+        const std::string& stylesheet_address,
+        uint32_t cascade_layer_order = 0U)
     {
 #if defined(WEBSCENE_NATIVE_ENGINE_SERVO_SELECTORS)
         css::prepare_style_rule(prelude,std::move(declarations),inherited_media,stylesheet_address,
@@ -1117,10 +1131,10 @@
                         start_resource_prefetch(*url,{},WEBSCENE_RESOURCE_IMAGE);
                 }
             },
-            [this](const std::string& selector,const std::vector<css_declaration>& values,
+            [this, cascade_layer_order](const std::string& selector,const std::vector<css_declaration>& values,
                    const std::vector<std::string>& media) {
                 inventory_css_selector(selector);
-                append_css_rule(selector,values,media);
+                append_css_rule(selector,values,media,cascade_layer_order);
             });
 #else
         for (auto& declaration : declarations) {
@@ -1141,7 +1155,7 @@
         // selector matching or leaks into the document tree.
         if (trim_css_view(prelude) == ":host") {
             inventory_css_selector(":host");
-            append_css_rule(":host", declarations, inherited_media);
+            append_css_rule(":host", declarations, inherited_media, cascade_layer_order);
             return;
         }
         size_t selector_cursor = 0U;
@@ -1169,7 +1183,9 @@
                     selector_cursor, index - selector_cursor));
                 if (!selector.empty()) {
                     inventory_css_selector(selector);
-                    append_css_rule(std::move(selector), declarations, inherited_media);
+                    append_css_rule(
+                        std::move(selector), declarations, inherited_media,
+                        cascade_layer_order);
                 }
                 selector_cursor = index + 1U;
             }
@@ -1183,12 +1199,77 @@
         size_t begin,
         size_t end,
         const std::vector<std::string>& inherited_media = {},
-        const std::string& stylesheet_address = {})
+        const std::string& stylesheet_address = {},
+        const std::string& inherited_layer_path = {},
+        uint32_t inherited_layer_order = 0U)
     {
+        const auto qualify_layer = [&](std::string_view local_name) {
+            const auto local = trim_css(local_name);
+            if (local.empty() || inherited_layer_path.empty()) return local;
+            return inherited_layer_path + "." + local;
+        };
+        const auto register_layer_statement = [&](std::string_view prelude) {
+            size_t start = 0U;
+            while (start <= prelude.size()) {
+                auto comma = prelude.find(',', start);
+                if (comma == std::string_view::npos) comma = prelude.size();
+                const auto name = qualify_layer(
+                    prelude.substr(start, comma - start));
+                if (!name.empty()) register_cascade_layer(name);
+                if (comma == prelude.size()) break;
+                start = comma + 1U;
+            }
+            record_feature(
+                "css", "at-rule:@layer", "supported",
+                "named, anonymous, statement, nested, normal and important author layers",
+                "stylesheet-parser");
+        };
+        const auto next_boundary = [&](size_t start) {
+            char quote = 0;
+            int bracket_depth = 0;
+            int parenthesis_depth = 0;
+            for (size_t index = start; index < end; ++index) {
+                const auto character = css[index];
+                if (quote != 0) {
+                    if (character == quote
+                        && (index == start || css[index - 1U] != '\\')) quote = 0;
+                    continue;
+                }
+                if (character == '\'' || character == '"') {
+                    quote = character;
+                    continue;
+                }
+                if (character == '[') ++bracket_depth;
+                else if (character == ']') --bracket_depth;
+                else if (character == '(') ++parenthesis_depth;
+                else if (character == ')') --parenthesis_depth;
+                else if (bracket_depth == 0 && parenthesis_depth == 0
+                    && (character == ';' || character == '{')) return index;
+            }
+            return std::string::npos;
+        };
         size_t cursor = begin;
         while (cursor < end) {
-            const auto open = css.find('{', cursor);
-            if (open == std::string::npos || open >= end) break;
+            const auto boundary = next_boundary(cursor);
+            if (boundary == std::string::npos || boundary >= end) break;
+            if (css[boundary] == ';') {
+                const auto statement = trim_css(
+                    std::string_view(css).substr(cursor, boundary - cursor));
+                if (statement.starts_with("@layer")) {
+                    register_layer_statement(
+                        std::string_view(statement).substr(6U));
+                } else if (!statement.empty() && statement.front() == '@') {
+                    auto name_end = statement.find_first_of(" (\t\r\n");
+                    if (name_end == std::string::npos) name_end = statement.size();
+                    record_feature(
+                        "css",
+                        "at-rule:" + lower_html_name(statement.substr(0U, name_end)),
+                        "unsupported", {}, "stylesheet-parser");
+                }
+                cursor = boundary + 1U;
+                continue;
+            }
+            const auto open = boundary;
             const auto close = matching_css_brace(css, open, end);
             if (close == std::string::npos) break;
             const auto prelude = trim_css(std::string_view(css).substr(cursor, open - cursor));
@@ -1223,7 +1304,8 @@
                     supported ? std::string{} : "unsupported media type or condition",
                     "stylesheet-parser");
                 nested_media.push_back(std::move(query));
-                parse_css_rules(css, open + 1U, close, nested_media, stylesheet_address);
+                parse_css_rules(css, open + 1U, close, nested_media,
+                    stylesheet_address, inherited_layer_path, inherited_layer_order);
             } else if (prelude.starts_with("@supports")) {
                 auto condition = trim_css(std::string_view(prelude).substr(9U));
                 auto negated = false;
@@ -1243,16 +1325,30 @@
                     supported ? "selector(:focus-visible)" : "condition is not evaluated",
                     "stylesheet-parser");
                 if (supported != negated) {
-                    parse_css_rules(css, open + 1U, close, inherited_media, stylesheet_address);
+                    parse_css_rules(css, open + 1U, close, inherited_media,
+                        stylesheet_address, inherited_layer_path, inherited_layer_order);
                 }
             } else if (prelude.starts_with("@layer")) {
+                const auto local_name = trim_css(
+                    std::string_view(prelude).substr(6U));
+                auto layer_path = qualify_layer(local_name);
+                const auto layer_order = register_cascade_layer(layer_path);
+                if (layer_path.empty()) {
+                    // Preserve a unique internal scope for named sublayers of
+                    // an anonymous layer without turning that anonymous layer
+                    // into a globally reusable name.
+                    layer_path = inherited_layer_path;
+                    if (!layer_path.empty()) layer_path += ".";
+                    layer_path += "\x1f" "anonymous-" + std::to_string(layer_order);
+                }
                 record_feature(
                     "css",
                     "at-rule:@layer",
-                    "partially-supported",
-                    "nested rules are parsed without cascade-layer ordering",
+                    "supported",
+                    "named, anonymous, statement, nested, normal and important author layers",
                     "stylesheet-parser");
-                parse_css_rules(css, open + 1U, close, inherited_media, stylesheet_address);
+                parse_css_rules(css, open + 1U, close, inherited_media,
+                    stylesheet_address, layer_path, layer_order);
             } else if (prelude.starts_with("@container")) {
                 record_feature(
                     "css",
@@ -1269,7 +1365,8 @@
                     prelude,
                     std::move(declarations),
                     inherited_media,
-                    stylesheet_address);
+                    stylesheet_address,
+                    inherited_layer_order);
             } else if (!prelude.empty() && prelude.front() == '@') {
                 auto name_end = prelude.find_first_of(" (\t\r\n");
                 if (name_end == std::string::npos) name_end = prelude.size();
@@ -1312,28 +1409,28 @@
 
     void add_prepared_stylesheet(const css::prepared_stylesheet& sheet)
     {
-        const auto first_prepared_rule = css_rules.size();
+        std::vector<uint32_t> layer_orders(sheet.cascade_layers.size() + 1U, 0U);
+        for (size_t index = 0; index < sheet.cascade_layers.size(); ++index) {
+            layer_orders[index + 1U] = register_cascade_layer(
+                sheet.cascade_layers[index]);
+        }
         for (const auto& payload : sheet.rules) {
             css_rule rule;
             rule.payload = payload;
             rule.media_matches = css_rule_media_matches(rule);
+            if (payload->cascade_layer_index < layer_orders.size()) {
+                rule.cascade_layer_order =
+                    layer_orders[payload->cascade_layer_index];
+            }
             const auto index = css_rules.size();
             css_rules.push_back(std::move(rule));
             index_css_rule(index);
         }
-        for (auto index = first_prepared_rule; index < css_rules.size(); ++index) {
-            const auto& rule = css_rules[index];
-            if (!rule.media_matches || rule.shadow_scope_root_id != 0U) continue;
-            if (rule.selector() != ":root" && rule.selector() != "html") continue;
-            for (const auto& declaration : rule.declarations()) {
-                if (!declaration.name.starts_with("--")) continue;
-                if (!declaration.important
-                    && important_css_variables.contains(declaration.name)) continue;
-                css_variables[declaration.name] = declaration.value;
-                if (declaration.important) important_css_variables.insert(declaration.name);
-                else important_css_variables.erase(declaration.name);
-            }
-        }
+        // A prepared sheet can introduce an earlier named layer after later
+        // sheets are already connected. Rebuild from the complete rule set so
+        // document-global layer order, importance and rollback all participate.
+        css::rebuild_root_variables(
+            css_rules, css_variables, important_css_variables);
         for (const auto& [name, frames] : sheet.keyframes) opacity_keyframes[name] = frames;
         for (const auto& diagnostic : sheet.diagnostics)
             record_feature("css", diagnostic.feature, diagnostic.classification,
@@ -1385,19 +1482,8 @@
         active_stylesheet_owner_id = previous_owner_id;
         active_stylesheet_shadow_scope_root_id = previous_shadow_scope_root_id;
 #endif
-        for (auto index = first_new_rule; index < css_rules.size(); ++index) {
-            const auto& rule = css_rules[index];
-            if (!rule.media_matches || rule.shadow_scope_root_id != 0U) continue;
-            if (rule.selector() != ":root" && rule.selector() != "html") continue;
-            for (const auto& declaration : rule.declarations()) {
-                if (!declaration.name.starts_with("--")) continue;
-                if (!declaration.important
-                    && important_css_variables.contains(declaration.name)) continue;
-                css_variables[declaration.name] = declaration.value;
-                if (declaration.important) important_css_variables.insert(declaration.name);
-                else important_css_variables.erase(declaration.name);
-            }
-        }
+        css::rebuild_root_variables(
+            css_rules, css_variables, important_css_variables);
         return first_new_rule;
     }
 

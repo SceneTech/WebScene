@@ -1872,9 +1872,12 @@ static void emit_prepared_selector(std::ostream& out, std::string_view target,
 }
 static void emit_prepared_sheet(std::ostream& out,const css::prepared_stylesheet& sheet) {
   out << "webscene_native::css::prepared_stylesheet sheet;\nsheet.source_address=" << quote(sheet.source_address) << ";\n";
+  for(const auto& layer:sheet.cascade_layers)
+    out << "sheet.cascade_layers.push_back(" << quote(layer) << ");\n";
   for(const auto& rule:sheet.rules) {
     out << "{auto r=std::make_shared<webscene_native::css::css_rule_payload>();\nr->selector="
         << quote(rule->selector) << ";r->specificity=" << rule->specificity << "u;\n"
+        << "r->cascade_layer_index=" << rule->cascade_layer_index << "u;\n"
         << "r->pseudo_kind=" << unsigned(rule->pseudo_kind) << ";\n"
         << "r->host_selector=" << rule->host_selector << ";\n";
     emit_prepared_selector(out,"r->compiled_selector",rule->compiled_selector);

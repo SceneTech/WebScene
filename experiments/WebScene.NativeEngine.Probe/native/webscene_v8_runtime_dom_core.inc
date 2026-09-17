@@ -600,6 +600,9 @@
         state.hover_dependencies = std::move(hover_selector_dependencies);
         state.variables = std::move(css_variables);
         state.important_variables = std::move(important_css_variables);
+        state.cascade_layer_orders = std::move(css_cascade_layer_orders);
+        state.next_cascade_layer_order = next_css_cascade_layer_order;
+        next_css_cascade_layer_order = 1U;
         active_stylesheet_owner_id = 0U;
         active_stylesheet_shadow_scope_root_id = 0U;
         return state;
@@ -631,6 +634,8 @@
         hover_selector_dependencies = std::move(state.hover_dependencies);
         css_variables = std::move(state.variables);
         important_css_variables = std::move(state.important_variables);
+        css_cascade_layer_orders = std::move(state.cascade_layer_orders);
+        next_css_cascade_layer_order = state.next_cascade_layer_order;
     }
 
     void activate_css_cascade(dom_node* root)

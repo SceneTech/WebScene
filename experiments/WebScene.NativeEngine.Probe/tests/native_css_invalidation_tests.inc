@@ -228,6 +228,99 @@ void test_compiled_css_invalidation_scaling()
 #endif
 }
 
+void test_cascade_layer_mutation_scaling()
+{
+    for (const auto affected_count : {8, 128}) {
+        std::vector<std::array<uint64_t, 5>> observations;
+        for (const auto unrelated_count : {32, 1024}) {
+            auto* engine = webscene_engine_create(0);
+            require(engine != nullptr, "cascade layer scaling engine creation failed");
+            resize(engine, 800, 600, 1);
+            wait_for_consumed_inputs(engine, 1, "cascade layer scaling viewport not applied");
+            auto source = std::string{R"JS((() => {
+              document.body.innerHTML='<main id="layer-scope">'+
+                '<div class="layer-target"></div>'.repeat(AFFECTED)+'</main><aside>'+
+                Array.from({length:UNRELATED},(_,i)=>'<div class="layer-noise-'+i+'"></div>').join('')+'</aside>';
+              const style=document.createElement('style');
+              style.textContent='@layer reset, components;'+
+                '@layer reset {.layer-target {display:block;width:11px;height:13px!important}}'+
+                '@layer components {#layer-scope.active .layer-target {width:41px;height:43px!important}}'+
+                Array.from({length:UNRELATED},(_,i)=>
+                  '@layer noise-'+i+' {.layer-noise-'+i+' {width:7px}}').join('');
+              document.head.appendChild(style);
+              const scope=document.getElementById('layer-scope');
+              const targets=Array.from(document.querySelectorAll('.layer-target'));
+              const snapshot=width=>targets.every(node=>
+                getComputedStyle(node).width===width && getComputedStyle(node).height==='13px');
+              globalThis.mutateLayerScope=enabled=>{
+                scope.classList.toggle('active',enabled);
+                return snapshot(enabled?'41px':'11px');
+              };
+              return snapshot('11px');
+            })())JS"};
+            source.replace(source.find("AFFECTED"), 8, std::to_string(affected_count));
+            for (size_t at = source.find("UNRELATED"); at != std::string::npos;
+                 at = source.find("UNRELATED")) {
+                source.replace(at, 9, std::to_string(unrelated_count));
+            }
+            require(evaluate(engine, source, "cascade-layer-scaling-setup.js") == "true",
+                "cascade layer scaling initial winner mismatch");
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+            const std::array<std::string_view, 5> names{
+                "selector-invalidation-candidate-visits",
+                "selector-invalidation-fallback-visits",
+                "css-rule-match-checks",
+                "css-cascade-applications",
+                "css-cascade-candidate-checks"};
+            std::this_thread::sleep_for(std::chrono::milliseconds(260));
+            execute_and_wait_for_wrapper_retention_scene(engine,
+                "document.body.style.backgroundColor='rgb(1,2,3)'",
+                "cascade-layer-scaling-before.js");
+            std::array<uint64_t, 5> before{};
+            for (size_t i = 0; i < names.size(); ++i)
+                before[i] = runtime_counter_diagnostic(engine, names[i]);
+#endif
+            const auto started = std::chrono::steady_clock::now();
+            require(evaluate(engine, "mutateLayerScope(true)",
+                "cascade-layer-scaling-enable.js") == "true",
+                "cascade layer activation chose the wrong normal/important winners");
+            require(evaluate(engine, "mutateLayerScope(false)",
+                "cascade-layer-scaling-disable.js") == "true",
+                "cascade layer deactivation left stale winners");
+            std::cout << "cascade-layer-scaling affected=" << affected_count
+                << " unrelated=" << unrelated_count << " mutation-and-check-ms="
+                << std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - started).count();
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+            std::this_thread::sleep_for(std::chrono::milliseconds(260));
+            execute_and_wait_for_wrapper_retention_scene(engine,
+                "document.body.style.backgroundColor='rgb(3,2,1)'",
+                "cascade-layer-scaling-after.js");
+            std::array<uint64_t, 5> delta{};
+            for (size_t i = 0; i < names.size(); ++i) {
+                delta[i] = runtime_counter_diagnostic(engine, names[i]) - before[i];
+                std::cout << ' ' << names[i] << '=' << delta[i];
+            }
+            require(delta[1] == 0,
+                "layer mutation unexpectedly used document-wide selector fallback");
+            require(delta[3] >= static_cast<uint64_t>(2 * affected_count)
+                && delta[3] <= static_cast<uint64_t>(2 * affected_count + 8),
+                "layer mutation did not stay bounded to the affected subtree");
+            for (const auto value : delta)
+                require(value <= static_cast<uint64_t>(16 * affected_count + 64),
+                    "layer mutation exceeded its linear cascade-work budget");
+            observations.push_back(delta);
+#endif
+            std::cout << '\n';
+            webscene_engine_destroy(engine);
+        }
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+        require(observations[0] == observations[1],
+            "unrelated layered rules/nodes amplified targeted cascade work");
+#endif
+    }
+}
+
 void test_character_data_stable_style_scaling()
 {
     for (const bool methods : {false, true})

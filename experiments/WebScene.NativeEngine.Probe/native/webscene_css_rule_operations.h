@@ -1,8 +1,258 @@
 #pragma once
 #include "webscene_css_state.h"
+#include <array>
 #include <span>
 
 namespace webscene_native::css {
+inline bool cascade_layer_precedes(
+    const css_rule& left, const css_rule& right, bool important) noexcept
+{
+    const auto left_layer = left.cascade_layer_order;
+    const auto right_layer = right.cascade_layer_order;
+    if (left_layer == right_layer) return false;
+    if (important) {
+        // Important layer order is reversed, and every layered important
+        // declaration outranks the unlayered important tier.
+        if (left_layer == 0U) return true;
+        if (right_layer == 0U) return false;
+        return left_layer > right_layer;
+    }
+    // Ordinary unlayered declarations outrank every named/anonymous layer.
+    if (left_layer == 0U) return false;
+    if (right_layer == 0U) return true;
+    return left_layer < right_layer;
+}
+
+inline bool cascade_rule_precedes(
+    const css_rule* left, const css_rule* right, bool important) noexcept
+{
+    if (left->cascade_layer_order != right->cascade_layer_order) {
+        return cascade_layer_precedes(*left, *right, important);
+    }
+    const auto left_specificity = left->specificity();
+    const auto right_specificity = right->specificity();
+    return left_specificity != right_specificity
+        ? left_specificity < right_specificity
+        : left < right;
+}
+
+inline bool cascade_keyword_is(std::string_view value, std::string_view keyword) noexcept
+{
+    value = trim_css_view(value);
+    return value.size() == keyword.size()
+        && std::equal(
+            value.begin(), value.end(), keyword.begin(),
+            [](unsigned char left, unsigned char right) {
+                return std::tolower(left) == std::tolower(right);
+            });
+}
+
+struct cascaded_rule_order final {
+    std::span<const css_rule* const> normal;
+    std::vector<const css_rule*> important_storage;
+    bool custom_rollback{};
+    bool ordinary_rollback{};
+
+    explicit cascaded_rule_order(std::span<const css_rule* const> rules)
+        : normal(rules)
+    {
+        bool has_layers = false;
+        for (const auto* rule : rules) {
+            has_layers = has_layers || rule->cascade_layer_order != 0U;
+            for (const auto& declaration : rule->declarations()) {
+                if (!cascade_keyword_is(declaration.value, "revert")
+                    && !cascade_keyword_is(declaration.value, "revert-layer")) continue;
+                if (declaration.name.starts_with("--")) custom_rollback = true;
+                else ordinary_rollback = true;
+            }
+        }
+        if (!has_layers) return;
+        important_storage.assign(rules.begin(), rules.end());
+        std::sort(
+            important_storage.begin(), important_storage.end(),
+            [](const css_rule* left, const css_rule* right) {
+                return cascade_rule_precedes(left, right, true);
+            });
+    }
+
+    std::span<const css_rule* const> important() const noexcept
+    {
+        return important_storage.empty()
+            ? normal
+            : std::span<const css_rule* const>(important_storage);
+    }
+
+    bool has_rollback(bool custom) const noexcept
+    {
+        return custom ? custom_rollback : ordinary_rollback;
+    }
+};
+
+struct cascade_layer_property final {
+    uint32_t layer{};
+    std::string_view property;
+    bool operator==(const cascade_layer_property&) const noexcept = default;
+};
+
+struct cascade_layer_property_hash final {
+    size_t operator()(const cascade_layer_property& value) const noexcept
+    {
+        const auto name_hash = std::hash<std::string_view>{}(value.property);
+        return name_hash ^ (static_cast<size_t>(value.layer) + 0x9e3779b9U
+            + (name_hash << 6U) + (name_hash >> 2U));
+    }
+};
+
+template<typename Apply, typename PropertyKey>
+void for_each_cascaded_declaration(
+    const cascaded_rule_order& order,
+    bool custom,
+    Apply&& apply,
+    PropertyKey&& property_key)
+{
+        const auto apply_declarations = [&](const auto rules, bool important) {
+            for (const auto* rule : rules) {
+                for (const auto& declaration : rule->declarations()) {
+                    if (declaration.name.starts_with("--") == custom
+                        && declaration.important == important) {
+                        apply(declaration);
+                    }
+                }
+            }
+        };
+        if (!order.has_rollback(custom)) {
+            // This is the hot layered path: one rule-order vector is shared by
+            // custom and ordinary replay, with no per-property maps or strings.
+            apply_declarations(order.normal, false);
+            apply_declarations(order.important(), true);
+            return;
+        }
+
+        const auto apply_tier = [&](const auto rules, bool important) {
+            using layer_map = std::unordered_map<
+                cascade_layer_property,
+                const css_declaration*,
+                cascade_layer_property_hash>;
+            layer_map layer_winners;
+            std::unordered_map<std::string_view, const css_declaration*> origin_winners;
+            std::unordered_map<std::string_view, uint32_t> origin_winner_layers;
+            for (const auto* rule : rules) {
+                for (const auto& declaration : rule->declarations()) {
+                    if (declaration.name.starts_with("--") != custom
+                        || declaration.important != important) {
+                        continue;
+                    }
+                    const auto name = std::string_view(property_key(declaration));
+                    layer_winners[{rule->cascade_layer_order, name}] = &declaration;
+                    origin_winners[name] = &declaration;
+                    origin_winner_layers[name] = rule->cascade_layer_order;
+                }
+            }
+            std::unordered_set<cascade_layer_property, cascade_layer_property_hash>
+                reverted_layers;
+            std::unordered_set<std::string_view> reverted_origins;
+            for (const auto& [layer_property, declaration] : layer_winners) {
+                if (cascade_keyword_is(declaration->value, "revert")
+                    || cascade_keyword_is(declaration->value, "revert-layer"))
+                    reverted_layers.insert(layer_property);
+            }
+            for (const auto& [name, declaration] : origin_winners) {
+                if (cascade_keyword_is(declaration->value, "revert")
+                    || (cascade_keyword_is(declaration->value, "revert-layer")
+                        && origin_winner_layers[name] == 0U)) {
+                    reverted_origins.insert(name);
+                }
+            }
+            for (const auto* rule : rules) {
+                for (const auto& declaration : rule->declarations()) {
+                    if (declaration.name.starts_with("--") != custom
+                        || declaration.important != important) {
+                        continue;
+                    }
+                    const auto name = std::string_view(property_key(declaration));
+                    if (reverted_origins.contains(name)
+                        || reverted_layers.contains({rule->cascade_layer_order, name})) {
+                        continue;
+                    }
+                    apply(declaration);
+                }
+            }
+        };
+        apply_tier(order.normal, false);
+        apply_tier(order.important(), true);
+}
+
+template<typename Apply, typename PropertyKey>
+void for_each_cascaded_declaration(
+    std::span<const css_rule* const> matched_rules,
+    bool custom,
+    Apply&& apply,
+    PropertyKey&& property_key)
+{
+        const cascaded_rule_order order(matched_rules);
+        for_each_cascaded_declaration(
+            order,
+            custom,
+            std::forward<Apply>(apply),
+            std::forward<PropertyKey>(property_key));
+}
+
+template<typename Apply>
+void for_each_cascaded_declaration(
+    const cascaded_rule_order& order,
+    bool custom,
+    Apply&& apply)
+{
+        for_each_cascaded_declaration(
+            order,
+            custom,
+            std::forward<Apply>(apply),
+            [](const css_declaration& declaration) -> std::string_view {
+                return declaration.name;
+            });
+}
+
+template<typename Apply>
+void for_each_cascaded_declaration(
+    std::span<const css_rule* const> matched_rules,
+    bool custom,
+    Apply&& apply)
+{
+        for_each_cascaded_declaration(
+            matched_rules,
+            custom,
+            std::forward<Apply>(apply),
+            [](const css_declaration& declaration) -> std::string_view {
+                return declaration.name;
+            });
+}
+
+template<typename Apply>
+void for_each_cascaded_pseudo_declaration(
+    std::span<const std::pair<int, const css_rule*>> matched_rules,
+    Apply&& apply)
+{
+        // Each pseudo-element establishes an independent cascade. Grouping by
+        // kind prevents a high-priority ::before declaration from affecting
+        // ::after while reusing the same layer/importance/rollback machinery
+        // as the originating element.
+        std::array<std::vector<const css_rule*>, 8> rules_by_kind;
+        for (const auto& [kind, rule] : matched_rules) {
+            if (kind > 0 && static_cast<size_t>(kind) < rules_by_kind.size())
+                rules_by_kind[static_cast<size_t>(kind)].push_back(rule);
+        }
+        for (size_t kind = 1; kind < rules_by_kind.size(); ++kind) {
+            const auto& rules = rules_by_kind[kind];
+            if (rules.empty()) continue;
+            for_each_cascaded_declaration(
+                std::span<const css_rule* const>(rules),
+                false,
+                [&](const css_declaration& declaration) {
+                    apply(static_cast<int>(kind), declaration);
+                });
+        }
+}
+
 // Candidate identity is enough to deduplicate index buckets. Do not chase rule
 // payloads for precedence until selector/media/scope checks have rejected misses.
 inline void deduplicate_candidates(std::vector<size_t>& candidates) {
@@ -18,6 +268,11 @@ inline void sort_candidates(std::span<const css_rule> rules,std::vector<size_t>&
             candidates.begin(),
             candidates.end(),
             [&rules](size_t left, size_t right) {
+                if (rules[left].cascade_layer_order
+                    != rules[right].cascade_layer_order) {
+                    return cascade_layer_precedes(
+                        rules[left], rules[right], false);
+                }
                 const auto left_specificity = rules[left].specificity();
                 const auto right_specificity = rules[right].specificity();
                 return left_specificity != right_specificity
@@ -34,17 +289,24 @@ inline void rebuild_root_variables(std::span<const css_rule> rules,
     std::unordered_set<std::string>& important) {
         variables.clear();
         important.clear();
+        std::vector<const css_rule*> root_rules;
         for (const auto& rule : rules) {
             if (!rule.media_matches || rule.shadow_scope_root_id != 0U
                 || (rule.selector() != ":root" && rule.selector() != "html")) continue;
-            for (const auto& declaration : rule.declarations()) {
-                if (!declaration.name.starts_with("--")) continue;
-                if (!declaration.important
-                    && important.contains(declaration.name)) continue;
+            root_rules.push_back(&rule);
+        }
+        std::sort(
+            root_rules.begin(), root_rules.end(),
+            [](const css_rule* left, const css_rule* right) {
+                return cascade_rule_precedes(left, right, false);
+            });
+        for_each_cascaded_declaration(
+            std::span<const css_rule* const>(root_rules),
+            true,
+            [&](const css_declaration& declaration) {
                 variables[declaration.name] = declaration.value;
                 if (declaration.important) important.insert(declaration.name);
                 else important.erase(declaration.name);
-            }
-        }
+            });
 }
 } // namespace webscene_native::css

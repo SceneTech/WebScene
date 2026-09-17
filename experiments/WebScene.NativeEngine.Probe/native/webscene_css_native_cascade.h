@@ -43,7 +43,8 @@ bool apply_native_cascade(native_document& document,dom_node& node,
         auto matched=match_candidates(document,node,sheets.state().rules,indices,
             [&](const auto& subject,const auto& rule,const auto&) { return query.matches_prepared(subject,rule.payload->compiled_pseudo_origin); },
             [&](const auto& subject,const auto& rule) { return query.matches_prepared(subject,rule.compiled_selector()); });
-        apply_matched_declarations(node,matched.ordinary,[&](const css_declaration& declaration,bool inline_origin) {
+        const cascaded_rule_order cascade_order(matched.ordinary);
+        apply_matched_declarations(node,cascade_order,[&](const css_declaration& declaration,bool inline_origin) {
             property_result result;
             apply_declaration(document,node,declaration,variables,inline_origin,result,load_svg,[](bool) {});
             observe(declaration,result);
@@ -56,11 +57,12 @@ bool apply_native_cascade(native_document& document,dom_node& node,
                 observe(declaration,result);
             }
         }
-        recompute_cascaded_line_height(node,matched.ordinary,variables);
+        recompute_cascaded_line_height(node,cascade_order,variables);
         recompute_inline_font_relative_metrics(node);
         bool backdrop_important=false;
-        for(const auto& [kind,rule]:matched.pseudo) {
-            for(const auto& declaration:rule->declarations()) {
+        for_each_cascaded_pseudo_declaration(
+            matched.pseudo,
+            [&](int kind, const css_declaration& declaration) {
                 if(kind==7) {
                     const auto result=apply_backdrop_declaration(node,declaration,variables,backdrop_important);
                     observe(declaration,result);
@@ -72,8 +74,7 @@ bool apply_native_cascade(native_document& document,dom_node& node,
                     apply_pseudo_declaration(node,pseudo,declaration,variables,result,[](bool) {});
                     observe(declaration,result);
                 }
-            }
-        }
+            });
         if(node.style.before_pseudo().generated && previous.before_pseudo().generated)
             node.style.mutable_before_pseudo().layout=previous.before_pseudo().layout;
         if(node.style.after_pseudo().generated && previous.after_pseudo().generated)

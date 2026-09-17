@@ -20,10 +20,26 @@ class stylesheet_owner {
     void rebuild() {
         state_=css_cascade_state{};
         for(const auto& entry:sheets_) {
+            std::vector<uint32_t> layer_orders(entry.sheet.cascade_layers.size()+1U,0U);
+            for(size_t layer=0;layer<entry.sheet.cascade_layers.size();++layer) {
+                const auto& name=entry.sheet.cascade_layers[layer];
+                uint32_t order{};
+                if(!name.empty()) {
+                    const auto known=state_.cascade_layer_orders.find(name);
+                    if(known!=state_.cascade_layer_orders.end()) order=known->second;
+                    else {
+                        order=state_.next_cascade_layer_order++;
+                        state_.cascade_layer_orders.emplace(name,order);
+                    }
+                } else order=state_.next_cascade_layer_order++;
+                layer_orders[layer+1U]=order;
+            }
             for(const auto& payload:entry.sheet.rules) {
                 auto index=state_.rules.size();
                 state_.rules.push_back({payload,entry.id,0,true});
                 auto& rule=state_.rules.back();
+                if(payload->cascade_layer_index<layer_orders.size())
+                    rule.cascade_layer_order=layer_orders[payload->cascade_layer_index];
                 rule.media_matches=rule_media_matches(rule);
                 if(rule.selector().find("::selection")==std::string::npos)
                     index_selector(index,rule.selector(),

@@ -44,6 +44,15 @@ compiled_document compiled_application(std::string_view name, std::string base_u
 }
 #endif
 
+#if !defined(WEBSCENE_NATIVE_ENGINE_CSSPARSER)
+extern "C" WEBSCENE_API void webscene_css_set_compilation_cache_directory_v1(
+    const char*, size_t)
+{
+    // The legacy parser has no compiled syntax units. Keep the stable SDK ABI
+    // available so hosts do not need parser-specific lifecycle branches.
+}
+#endif
+
 namespace {
 
 constexpr uint32_t input_capacity = 8192;

@@ -86,6 +86,130 @@ bool test_subject_candidate_index_scaling() {
     return bounded;
 }
 
+bool test_absent_ancestor_matching_work() {
+    using namespace webscene_native;
+    for(const auto depth:{8,64}) {
+        native_document document;
+        auto* parent=&document.body();
+        for(int i=0;i<depth;++i) {
+            auto& ancestor=document.create_element("section");
+            ancestor.class_name="present";
+            document.append_child(*parent,ancestor);parent=&ancestor;
+        }
+        auto& subject=document.create_element("div");subject.class_name="target";
+        document.append_child(*parent,subject);
+        auto selector=css::compile_selector(".absent .target");
+        css::query_host query(document);
+        css::selector_match_context context;
+        css::selector_match_context prefix_only;
+        prefix_only.ancestor_filter.capacity=0;
+        size_t checks=0, baseline_checks=0, prefix_checks=0;
+        const auto run=[&](css::selector_match_context* cache,size_t& count) {
+            return css::selector_matches(document,subject,selector,
+                selector.compounds.size()-1,nullptr,
+                [&](const auto& node,const auto& compound,const auto* scope) {
+                    ++count;return css::compound_matches(query,node,compound,scope);
+                },cache);
+        };
+        bool matched=false;
+        for(int i=0;i<128;++i) {
+            matched=run(&context,checks) || matched;
+            matched=run(nullptr,baseline_checks) || matched;
+            matched=run(&prefix_only,prefix_checks) || matched;
+        }
+        std::cout<<"absent-ancestor depth="<<depth<<" compound-checks="<<checks<<'\n';
+        // Summary construction is real work: each ancestor is indexed once,
+        // not once per repeated match. Do not report zero total work.
+        std::cout<<" ancestor-summaries="<<context.ancestor_filter.inclusive_ancestors.size()
+            <<" uncached-compound-checks="<<baseline_checks
+            <<" prefix-cache-only-compound-checks="<<prefix_checks<<'\n';
+        if(matched || checks!=0 || baseline_checks!=128U*(depth+2U)
+            || prefix_checks!=128U+depth+1U
+            || context.ancestor_filter.inclusive_ancestors.size()!=depth+1U) return false;
+    }
+    return true;
+}
+
+bool test_ancestor_filter_parity() {
+    using namespace webscene_native;
+    native_document document;
+    auto& outer=document.create_element("section");outer.class_name="outer";
+    auto& sibling=document.create_element("aside");sibling.class_name="sibling";
+    auto& parent=document.create_element("article");
+    parent.class_name="parent\tTabbed\nline\fform\rcarriage escaped:name";
+    parent.id_attribute="Parent";parent.attributes["id"]="Parent";
+    auto& target=document.create_element("div");target.class_name="target";
+    document.append_child(document.body(),outer);
+    document.append_child(outer,sibling);document.append_child(outer,parent);
+    document.append_child(parent,target);
+    css::query_host query(document);
+    const std::vector<std::pair<std::string,bool>> cases{
+        {".outer .target",true},{".parent > .target",true},
+        {".absent .target",false},{"#Parent .target",true},{"#parent .target",false},
+        {"ARTICLE .target",true},{"html .target",true},{"body .target",true},
+        {".sibling + .parent .target",true},{".sibling ~ .parent > .target",true},
+        {".outer > .sibling + .parent .target",true},{".absent + .parent .target",false},
+        {".sibling .target",false},{".Tabbed .target",true},{".tabbed .target",false},
+        {".line .target",true},{".form .target",true},{".carriage .target",true},
+        {".escaped\\:name .target",true},{":is(.absent,.parent) .target",true},
+        {":where(.parent,.absent) .target",true},{":not(.absent) .target",true},
+        {".parent:has(> .target) .target",true},{":scope > .target",true},
+        {".parent:not(.parent) .target",false},{"[id=Parent] .target",true}
+    };
+    std::vector<css::compiled_css_selector> selectors;
+    for(const auto& [text,expected]:cases) selectors.push_back(css::compile_selector(text));
+    for(const auto capacity:{size_t{0},size_t{1},size_t{2},size_t{16384}}) {
+        css::selector_match_context context;context.ancestor_filter.capacity=capacity;
+        for(int repeat=0;repeat<3;++repeat) for(size_t i=0;i<selectors.size();++i) {
+            const auto& selector=selectors[i];
+            const auto actual=css::selector_matches(document,target,selector,
+                selector.compounds.size()-1,&parent,
+                [&](const auto& node,const auto& compound,const auto* scope) {
+                    return css::compound_matches(query,node,compound,scope);
+                },&context);
+            if(actual!=cases[i].second || actual!=query.matches_prepared(target,selector,&parent)) {
+                std::cerr<<"ancestor parity: "<<cases[i].first<<" capacity="<<capacity<<'\n';
+                return false;
+            }
+        }
+        if(context.ancestor_filter.inclusive_ancestors.size()>capacity
+            || context.ancestor_filter.requirement_entries>capacity) return false;
+    }
+    // Deliberate hash collision: the filter must defer to full matching.
+    css::selector_ancestor_filter::mask present;present.add('.',"parent");
+    std::string collision;
+    for(int i=0;i<10000 && collision.empty();++i) {
+        const auto name="collision-"+std::to_string(i);
+        css::selector_ancestor_filter::mask candidate;candidate.add('.',name);
+        if(candidate.words==present.words) collision=name;
+    }
+    if(collision.empty()) {std::cerr<<"no deliberate collision\n";return false;}
+    auto colliding=css::compile_selector("."+collision+" .target");
+    css::selector_match_context context;
+    if(!context.ancestor_filter.may_match(document,target,colliding,1)) {std::cerr<<"collision rejected\n";return false;}
+    const auto match=[&](const auto& selector) {
+        return css::selector_matches(document,target,selector,selector.compounds.size()-1,nullptr,
+            [&](const auto& node,const auto& compound,const auto* scope) {
+                return css::compound_matches(query,node,compound,scope);
+            },&context);
+    };
+    if(match(colliding)) {std::cerr<<"collision matched\n";return false;}
+    // An immutable pass ends before mutation. A fresh pass must see new ancestry,
+    // classes and IDs, including values that previously produced a rejection.
+    auto changed=css::compile_selector("#Changed.changed .target");
+    if(match(changed)) {std::cerr<<"premature mutation match\n";return false;}
+    parent.class_name="changed";parent.id_attribute="Changed";context={};
+    if(!match(changed)) {std::cerr<<"mutation not matched\n";return false;}
+    if(!document.parser_append_child(sibling,target)) return false;
+    context={};
+    if(match(changed)) {std::cerr<<"reparent still matched\n";return false;}
+    sibling.tag="Widget";sibling.xml_mode=true;
+    auto exact=css::compile_selector("Widget .target");
+    auto folded=css::compile_selector("widget .target");context={};
+    if(!match(exact) || match(folded)) {std::cerr<<"XML parity failed\n";return false;}
+    return true;
+}
+
 bool test_match_before_precedence_sorting() {
     using namespace webscene_native;
     for(const auto unrelated:{32,1024}) {
@@ -168,6 +292,8 @@ int main(int argc,char** argv) {
         return 0;
     }
     if(!test_subject_candidate_index_scaling()) return 170;
+    if(!test_absent_ancestor_matching_work()) return 174;
+    if(!test_ancestor_filter_parity()) return 175;
     if(!test_match_before_precedence_sorting()) return 173;
     using webscene_native::css::parse_declarations;
     const auto values=parse_declarations(R"CSS(

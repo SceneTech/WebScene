@@ -109,6 +109,67 @@
     }
   });
 
+  test("ancestor rejection remains conservative across siblings and functional pseudos", () => {
+    const root = document.createElement("section");
+    root.className = "filter-root";
+    root.innerHTML = '<aside class="filter-sibling"></aside><article id="filter-parent" class="filter-parent"><div class="filter-target"></div></article>';
+    document.body.appendChild(root);
+    const target = root.querySelector(".filter-target");
+    const sheet = document.createElement("style");
+    document.head.appendChild(sheet);
+    try {
+      for (const selector of [
+        ".filter-parent .filter-target", "#filter-parent > .filter-target",
+        ".filter-sibling + .filter-parent .filter-target",
+        ".filter-root > .filter-sibling ~ .filter-parent > .filter-target",
+        ":is(.absent,.filter-parent) .filter-target",
+        ":where(.absent,.filter-parent) .filter-target",
+        ".filter-parent:not(.absent) .filter-target",
+        ".filter-parent:has(> .filter-target) .filter-target"
+      ]) {
+        sheet.textContent = `.filter-target {width:11px} ${selector} {width:37px}`;
+        assertEquals(getComputedStyle(target).width, "37px", selector);
+      }
+      sheet.textContent = ".filter-target {width:11px} .filter-sibling .filter-target {width:37px} .absent .filter-target {width:41px}";
+      assertEquals(getComputedStyle(target).width, "11px", "unrelated sibling is not an ancestor");
+    } finally { sheet.remove(); root.remove(); }
+  });
+
+  test("ancestor summaries do not survive class, ID and reparent mutations", () => {
+    const root = document.createElement("section");
+    root.innerHTML = '<article class="filter-old"><div class="filter-live"></div></article><aside></aside>';
+    const parent = root.firstElementChild, other = root.lastElementChild;
+    const target = parent.firstElementChild;
+    const sheet = document.createElement("style");
+    sheet.textContent = '.filter-live {width:11px} .filter-new .filter-live {width:37px} #filter-changed .filter-live {width:43px}';
+    document.head.appendChild(sheet); document.body.appendChild(root);
+    try {
+      assertEquals(getComputedStyle(target).width, "11px", "initial absent ancestors");
+      parent.className = "filter-new";
+      assertEquals(getComputedStyle(target).width, "37px", "ancestor gained class");
+      parent.id = "filter-changed";
+      assertEquals(getComputedStyle(target).width, "43px", "ancestor gained ID");
+      other.appendChild(target);
+      assertEquals(getComputedStyle(target).width, "11px", "reparent away from matching ancestors");
+      parent.appendChild(target);
+      assertEquals(getComputedStyle(target).width, "43px", "reparent back");
+      parent.removeAttribute("id"); parent.className = "filter-old";
+      assertEquals(getComputedStyle(target).width, "11px", "ancestor lost features");
+    } finally { sheet.remove(); root.remove(); }
+  });
+
+  test("ancestor matching stops at a shadow boundary", () => {
+    const host = document.createElement("section"); host.className = "filter-outside";
+    document.body.appendChild(host);
+    try {
+      const shadow = host.attachShadow({mode:"open"});
+      shadow.innerHTML = '<style>.filter-inside {width:11px} .filter-outside .filter-inside {width:43px} .filter-local .filter-inside {height:17px}</style><article class="filter-local"><div class="filter-inside"></div></article>';
+      const target = shadow.querySelector(".filter-inside");
+      assertEquals(getComputedStyle(target).width, "11px", "outside feature cannot cross shadow root");
+      assertEquals(getComputedStyle(target).height, "17px", "local ancestor remains visible");
+    } finally { host.remove(); }
+  });
+
   const failure = state.results.find(result => result.status !== "PASS");
   state.harness = failure
     ? { status: 1, message: failure.message, stack: failure.stack }

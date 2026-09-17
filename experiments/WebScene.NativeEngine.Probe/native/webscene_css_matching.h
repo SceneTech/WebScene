@@ -2,6 +2,7 @@
 #include "webscene_css_selectors.h"
 #include "webscene_native_form_state.h"
 #include "webscene_css_declarations.h"
+#include "webscene_css_ancestor_filter.h"
 #include <charconv>
 #include <sstream>
 
@@ -260,6 +261,7 @@ struct positional_sibling_summary final {
 };
 
 struct selector_match_context final {
+    selector_ancestor_filter ancestor_filter;
     struct key final {
         const dom_node* node;
         const compiled_css_selector* selector;
@@ -337,6 +339,8 @@ inline bool selector_matches(const native_document& document,const dom_node& nod
         if (selector.compounds.empty()
             || selector.compiled_compounds.size() != selector.compounds.size()
             || component >= selector.compiled_compounds.size()
+            || (context != nullptr && component != 0U
+                && !context->ancestor_filter.may_match(document,node,selector,component))
             || !match_compound(
                 node,
                 selector.compiled_compounds[component],

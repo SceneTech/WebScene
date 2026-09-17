@@ -565,6 +565,7 @@
         css_rules_by_tag.clear();
         css_rules_by_attribute.clear();
         css_rules_by_variable_reference.clear();
+        css_inheritance_candidate_rules.clear();
         css_invalidation_rules_by_attribute.clear();
         css_invalidation_rules_by_class.clear();
         css_child_list_index.clear();

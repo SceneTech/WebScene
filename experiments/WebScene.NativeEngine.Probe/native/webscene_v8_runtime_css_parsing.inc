@@ -448,6 +448,29 @@
                 css_rules_by_variable_reference[reference].push_back(index);
             }
         }
+        uint64_t inheritance_candidate_mask =
+            rule.payload->inheritance_candidate_mask;
+        if (rule.payload->declaration_variable_references.size()
+            != rule.declarations().size()) {
+            for (const auto& declaration : rule.declarations()) {
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+                ++css_inheritance_candidate_runtime_declaration_scans;
+#endif
+                if (declaration.name.starts_with("--")) continue;
+                const auto mask = css::property_mask(declaration.name);
+                if (mask != 0U
+                    && (css::cascade_keyword_is(
+                            declaration.value, "inherit")
+                        || declaration.value.find("var(")
+                            != std::string::npos)) {
+                    inheritance_candidate_mask |= mask;
+                }
+            }
+        }
+        if (inheritance_candidate_mask != 0U) {
+            css_inheritance_candidate_rules.push_back(
+                {index, inheritance_candidate_mask});
+        }
         index_hover_selector_dependencies(rule);
         const auto index_invalidation_rule = [&](auto& feature_index,
                                                   std::string_view feature) {

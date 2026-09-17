@@ -1,5 +1,7 @@
 #pragma once
 #include "webscene_css_pseudo_application.h"
+#include "webscene_css_property_mask.h"
+#include "webscene_css_rule_operations.h"
 #include "webscene_css_state.h"
 #include "webscene_css_invalidation.h"
 #include <algorithm>
@@ -138,6 +140,15 @@ std::shared_ptr<const css_rule_payload> intern_rule_payload(
         payload->declaration_variable_references.reserve(declarations.size());
         for (const auto& declaration : declarations) {
             auto references = referenced_custom_properties(declaration.value);
+            if (!declaration.name.starts_with("--")) {
+                const auto mask = property_mask(declaration.name);
+                if (mask != 0U
+                    && (cascade_keyword_is(declaration.value, "inherit")
+                        || declaration.value.find("var(")
+                            != std::string::npos)) {
+                    payload->inheritance_candidate_mask |= mask;
+                }
+            }
             aggregate_references.insert(references.begin(), references.end());
             payload->declaration_variable_references.push_back(
                 std::move(references));

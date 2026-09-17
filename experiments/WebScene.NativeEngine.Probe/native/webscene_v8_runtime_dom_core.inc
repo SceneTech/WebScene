@@ -648,6 +648,8 @@
         state.rules_by_tag = std::move(css_rules_by_tag);
         state.rules_by_attribute = std::move(css_rules_by_attribute);
         state.rules_by_variable_reference = std::move(css_rules_by_variable_reference);
+        state.inheritance_candidate_rules =
+            std::move(css_inheritance_candidate_rules);
         state.invalidation_rules_by_attribute =
             std::move(css_invalidation_rules_by_attribute);
         state.invalidation_rules_by_class = std::move(css_invalidation_rules_by_class);
@@ -682,6 +684,8 @@
         css_rules_by_attribute = std::move(state.rules_by_attribute);
         css_rules_by_variable_reference =
             std::move(state.rules_by_variable_reference);
+        css_inheritance_candidate_rules =
+            std::move(state.inheritance_candidate_rules);
         css_invalidation_rules_by_attribute =
             std::move(state.invalidation_rules_by_attribute);
         css_invalidation_rules_by_class =

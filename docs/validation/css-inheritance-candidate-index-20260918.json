@@ -1,0 +1,96 @@
+{
+  "date": "2026-09-18",
+  "scope": "stylesheet-lifecycle CSS inheritance-candidate index",
+  "base_commit": "317d2e2fb9b7b7233b59e0cf370a3df0c40aa755",
+  "native": {
+    "focused_filter": "media-query-targeted-recascade",
+    "passed": true,
+    "inheritance_candidate_work": {
+      "32_unrelated_rules": {
+        "index_visits": 2,
+        "transition_declaration_scans": 0
+      },
+      "1024_unrelated_rules": {
+        "index_visits": 2,
+        "transition_declaration_scans": 0
+      }
+    },
+    "adjacent_filters": [
+      "attribute-invalidation-scope",
+      "stylesheet-cssom",
+      "dimension-variable-compatibility",
+      "css-invalidation-scaling"
+    ],
+    "generated_stylesheet_parity": true
+  },
+  "wpt": {
+    "native": {
+      "documents": "1/1",
+      "subtests": "5/5",
+      "result": "/tmp/webscene-inheritance-index-native.OBHpDU/results/results.json",
+      "sha256": "47f17bb5f57603f9469c83c77c4b7139c394899f9968ae71afd25e2b44dcdfd3"
+    },
+    "chromium": {
+      "subtests": "5/5",
+      "result": "/tmp/webscene-inheritance-index-chrome.sW6tGB/results/results.json",
+      "sha256": "6c8ab03cd3ab492dd3024e4ccac5c6af1e0bcd235c821d0e895a6280cffc9ef0"
+    }
+  },
+  "spotify": {
+    "nodes": 2732,
+    "images": 18,
+    "samples": 240,
+    "widths": [800, 700],
+    "merged_326_control_median_ms": 92.1278,
+    "pr_338_baseline": {
+      "median": 55.21825,
+      "mean": 55.337479583333334,
+      "p95": 56.3241,
+      "min": 54.0232,
+      "max": 70.7105
+    },
+    "accepted_candidate": {
+      "median": 53.00025,
+      "mean": 53.272919166666654,
+      "p95": 54.1071,
+      "min": 51.6053,
+      "max": 92.4725,
+      "width_medians": {
+        "800": 52.76835,
+        "700": 53.17355
+      }
+    },
+    "median_reduction_from_pr_338_percent": 4.016787927904264,
+    "median_reduction_from_326_percent": 42.4709479657606,
+    "median_speedup_from_326": 1.7382521780557638,
+    "profile_log": "/tmp/spotify-inheritance-candidate-index-profile-20260918.log",
+    "trace_log": "/tmp/spotify-inheritance-candidate-index-trace-20260918.log",
+    "representative_narrow_transition": {
+      "plan_ms": 11.387,
+      "apply_ms": 23.2315,
+      "inheritance_rules": 1751,
+      "requests": 785,
+      "conditional_inherited": 431,
+      "triggered_inherited": 137,
+      "targeted_variable_replays": 690
+    }
+  },
+  "rejected_experiments": {
+    "per_request_property_name_vectors": {
+      "median": 56.0747,
+      "mean": 57.03391125000004,
+      "p95": 61.6147,
+      "median_regression_percent": 1.5510270607996495,
+      "p95_regression_percent": 9.393137218348802,
+      "log": "/tmp/spotify-planned-variable-properties-profile-20260918.log",
+      "decision": "reject"
+    }
+  },
+  "claims_excluded": [
+    "physical window cadence",
+    "Chrome speed comparison",
+    "release SDK qualification",
+    "completion of issue 235",
+    "completion of issue 238"
+  ]
+}

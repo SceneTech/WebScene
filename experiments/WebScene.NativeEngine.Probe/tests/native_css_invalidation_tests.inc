@@ -115,7 +115,8 @@ void test_compiled_css_route_scaling()
 {
     // Two independent axes: grow the affected component and grow unrelated
     // DOM/rules. Actual matching/cascade work must follow only the first axis.
-    for (const auto* shape : {"descendants", "siblings", "disabled", "variables", "relational", "identity", "dataset"}) {
+    for (const auto* shape : {"descendants", "siblings", "disabled", "variables", "relational", "identity", "dataset",
+            "tree-position", "tree-siblings", "tree-relational", "tree-empty"}) {
         for (const auto affected_count : {8, 128}) {
             std::vector<std::array<uint64_t, 7>> observations;
             for (const auto unrelated_count : {32, 1024}) {
@@ -145,6 +146,18 @@ void test_compiled_css_route_scaling()
                     markup = '<div><i id="trigger"></i><div class="provider">' +
                       ('<div class="alias">' + target + '</div>').repeat(count) + '</div></div>';
                     rule = '.active + .provider {--base:41px} .alias {--alias:var(--base, 11px)} .matrix-target {width:var(--alias)}';
+                  } else if (shape === 'tree-position') {
+                    markup = ('<div class="tree-list">' + target + '</div>').repeat(count);
+                    rule = '.matrix-target:nth-child(2) {width:41px}';
+                  } else if (shape === 'tree-siblings') {
+                    markup = '<div class="tree-list">' + target.repeat(count) + '</div>';
+                    rule = '.marker ~ .matrix-target {width:41px}';
+                  } else if (shape === 'tree-relational') {
+                    markup = '<div class="tree-list"></div>' + target.repeat(count);
+                    rule = '.tree-list:has(.marker) ~ .matrix-target {width:41px}';
+                  } else if (shape === 'tree-empty') {
+                    markup = ('<div class="tree-list"><i class="marker"></i></div>' + target).repeat(count);
+                    rule = '.tree-list:empty + .matrix-target {width:41px}';
                   } else {
                     markup = ('<div class="matrix-target"><div class="branch"><i class="ready"></i></div></div>').repeat(count);
                     rule = '.matrix-target:has(.branch > [data-ready]) {width:41px}';
@@ -157,8 +170,15 @@ void test_compiled_css_route_scaling()
                   const targets = Array.from(document.querySelectorAll('.matrix-target'));
                   const ready = Array.from(document.querySelectorAll('.ready'));
                   const trigger = document.getElementById('trigger');
+                  const lists = Array.from(document.querySelectorAll('.tree-list'));
                   globalThis.matrixMutation = enabled => {
-                    if (shape === 'disabled') trigger.toggleAttribute('disabled', enabled);
+                    if (shape.startsWith('tree-')) lists.forEach(list => {
+                      if (enabled !== (shape === 'tree-empty')) {
+                        const marker = document.createElement('i'); marker.className = 'marker';
+                        list.insertBefore(marker, list.firstChild);
+                      } else list.removeChild(list.firstChild);
+                    });
+                    else if (shape === 'disabled') trigger.toggleAttribute('disabled', enabled);
                     else if (shape === 'identity') trigger.id = enabled ? 'on' : 'off';
                     else if (shape === 'dataset') {
                       if (enabled) trigger.dataset.mode = 'on';

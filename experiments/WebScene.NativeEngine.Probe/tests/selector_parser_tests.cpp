@@ -138,6 +138,18 @@ void test_compiled_css_invalidation_plans()
         "nested structural pseudo must record child-list sensitivity");
     require(!compile(".parent > .target")[0].child_list_sensitive,
         "ordinary child matching does not require restyling existing siblings");
+    require(compile(".target:not(:last-child)")[0].child_list.routes
+        == std::vector<css_invalidation_route>{{css_invalidation_step::children}},
+        "positional invalidation starts at the changed parent's children");
+    require(compile(".parent:empty + .target")[0].child_list.scope == invalidation_subject,
+        "empty invalidation starts at the changed parent");
+    require((compile(".outer:has(.marker)")[0].child_list.scope
+        & (invalidation_subject | invalidation_ancestors))
+        == (invalidation_subject | invalidation_ancestors),
+        "relational tree mutations must reach both parent and ancestor anchors");
+    require(compile(".left + .right > .target")[1].child_list.routes
+        == std::vector<css_invalidation_route>{{css_invalidation_step::children}},
+        "sibling mutations must start at the right-hand compound");
 }
 
 } // namespace

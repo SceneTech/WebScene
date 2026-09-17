@@ -179,6 +179,13 @@
       "reason": "ID and dataset property/attribute mutation APIs must update sibling and relational subjects at synchronous checkpoints, including batched conjunctions and reentrant custom-element callbacks."
     },
     {
+      "path": "contracts/css-child-list-invalidation.html",
+      "type": "testharness",
+      "capabilities": ["structural-selector-invalidation", "relational-tree-invalidation", "dom-mutation-style-checkpoints"],
+      "evidence": ["general-css-invalidation-workstream"],
+      "reason": "Child-list APIs, fragments, reparenting and character-data changes must update structural selectors and relational ancestors without stale inherited custom properties."
+    },
+    {
       "path": "contracts/responsive-toolbar-breakpoint-navigation.html",
       "type": "testharness",
       "capabilities": ["live-toolbar-breakpoint-state", "compact-overflow-navigation", "wide-compact-wide-resize"],

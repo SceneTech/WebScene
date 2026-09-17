@@ -407,6 +407,7 @@
         }
         activate_html5ever_subtree(parent);
         recascade_connected_subtree(parent);
+        recascade_changed_child_list(parent);
         if (is_connected(parent)) {
             enqueue_connected_image_resources_subtree(
                 parent,
@@ -612,6 +613,7 @@
         // `.dot:not(:last-child)` remain stale even though Element.matches()
         // observes the finished tree.
         recascade_connected_subtree(parent);
+        recascade_changed_child_list(parent);
         if (is_connected(parent)) {
             enqueue_connected_image_resources_subtree(
                 parent,
@@ -649,7 +651,10 @@
         self->detach_all_children(*output);
         output->text_content.clear();
         if (!html.empty()) self->parse_inner_html(*output, html, parent);
-        else synchronize_textarea_value_from_children(*output);
+        else {
+            synchronize_textarea_value_from_children(*output);
+            self->recascade_changed_child_list(*output);
+        }
     }
 
     static void get_content_window(

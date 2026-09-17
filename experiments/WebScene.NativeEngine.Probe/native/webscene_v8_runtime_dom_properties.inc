@@ -262,13 +262,14 @@
         const auto is_character_data = node->kind == dom_node_kind::text
             || node->kind == dom_node_kind::comment
             || node->kind == dom_node_kind::processing_instruction;
+        // Author conversion can mutate the DOM; finish it before detaching.
+        const auto text = raw_value->IsNullOrUndefined()
+            ? std::string{}
+            : to_wtf8(info.GetIsolate(), raw_value);
         if (!is_character_data) {
             if (!self->blur_active_descendant_before_replacing_children(*node)) return;
             self->detach_all_children(*node);
         }
-        const auto text = raw_value->IsNullOrUndefined()
-            ? std::string{}
-            : to_wtf8(info.GetIsolate(), raw_value);
         if (is_character_data) {
             node->text_content = text;
             if (node->parent != nullptr) {
@@ -285,6 +286,9 @@
             if (node->tag == "textarea") synchronize_textarea_value_from_children(*node);
         }
         self->activate_connected_stylesheet(*node);
+        if (!is_character_data) self->recascade_changed_child_list(*node);
+        else if (node->kind == dom_node_kind::text && node->parent != nullptr)
+            self->recascade_changed_child_list(*node->parent);
         self->document.mark_dirty();
     }
 

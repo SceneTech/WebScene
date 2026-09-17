@@ -1069,7 +1069,8 @@
         std::span<const size_t> changed_rules,
         DependencyScope&& dependency_scope,
         UsePreviousState&& use_previous_state,
-        RestoreCurrentState&& restore_current_state)
+        RestoreCurrentState&& restore_current_state,
+        bool structural_change = false)
     {
         selector_match_batch_scope matching_scope(*this);
         const auto trace_transition =
@@ -1213,7 +1214,7 @@
                     if (candidate == nullptr
                         || candidate->kind != dom_node_kind::element
                         || !css_compound_selector_matches(
-                            *candidate, compiled_affected)) return;
+                            *candidate, compiled_affected, nullptr, structural_change)) return;
                     if (std::find(next.begin(), next.end(), candidate) == next.end()) {
                         next.push_back(candidate);
                     }
@@ -1371,12 +1372,13 @@
                 for (const auto* route : targets.routes)
                     for (auto* anchor : route_targets(*route)) append(anchor);
                 for (auto* anchor : transition.anchors)
-                    transition.current.push_back(css_compound_selector_matches(*anchor, *selector));
+                    transition.current.push_back(css_compound_selector_matches(
+                        *anchor, *selector, nullptr, structural_change));
                 transition.previous.resize(transition.anchors.size());
                 transitions.emplace(selector, std::move(transition));
             }
         }
-        if (!transitions.empty()) {
+        if (!transitions.empty() && !structural_change) {
             use_previous_state();
             matching_scope.reset();
             for (auto& [selector, transition] : transitions) {
@@ -1987,16 +1989,35 @@
         auto* previous_root = const_cast<dom_node*>(active_css_cascade_root);
         auto* root = css_cascade_root_for_node(parent);
         if (root != nullptr) activate_css_cascade(root);
-        const bool sensitive = css_child_list_sensitive;
-        if (previous_root != nullptr && previous_root != root) activate_css_cascade(previous_root);
-        if (sensitive) {
-            // Conservative parent-local fallback for structural selectors.
-            // Further narrowing belongs to the structural-invalidation stage.
-            recascade_connected_subtree(parent, "child-list-change");
-        } else {
-            if (inserted != nullptr) recascade_connected_subtree(*inserted, "inserted-child");
-            recascade_connected_node(parent);
+        // Copy the index: callbacks and cascade-root exchanges must not leave
+        // a span referring to a different browsing context's vector.
+        const auto rules = css_child_list_rules;
+        if (!rules.empty()) {
+            recascade_selector_transition(parent, rules,
+                [](const css::css_compound_dependencies& component) {
+                    css::css_invalidation_targets targets;
+                    targets.include(component.child_list);
+                    return targets;
+                }, [] {}, [] {}, true);
         }
+        if (previous_root != nullptr && previous_root != root) activate_css_cascade(previous_root);
+        if (inserted != nullptr) recascade_connected_subtree(*inserted, "inserted-child");
+        // The transition collector already includes its subject.
+        if (rules.empty()) recascade_connected_node(parent);
+    }
+
+    void recascade_completed_child_list(dom_node& parent,
+        const std::vector<dom_node*>& inserted,
+        const std::vector<dom_node*>& previous_parents = {})
+    {
+        std::unordered_set<dom_node*> seen{&parent};
+        for (auto* previous : previous_parents)
+            if (previous != nullptr && seen.insert(previous).second)
+                recascade_changed_child_list(*previous);
+        recascade_changed_child_list(parent);
+        for (auto* child : inserted)
+            if (child != nullptr && child->parent == &parent)
+                recascade_connected_subtree(*child, "inserted-child");
     }
 
     void recascade_hover_transition(
@@ -2178,7 +2199,7 @@
         css_rules_by_variable_reference.clear();
         css_invalidation_rules_by_attribute.clear();
         css_invalidation_rules_by_class.clear();
-        css_child_list_sensitive = false;
+        css_child_list_rules.clear();
         css_focus_rules.clear();
         unindexed_css_rules.clear();
         css_attribute_dependencies.clear();

@@ -116,6 +116,7 @@ using css_index_string_set = std::unordered_set<std::string>;
 
     struct css_compound_dependencies final {
         bool child_list_sensitive{false};
+        css_feature_dependency child_list;
         std::unordered_map<std::string, css_feature_dependency> attributes;
         std::unordered_map<std::string, css_feature_dependency> classes;
     };
@@ -194,7 +195,7 @@ using css_index_string_set = std::unordered_set<std::string>;
         css_index_string_map<std::vector<size_t>> rules_by_variable_reference;
         css_index_string_map<std::vector<size_t>> invalidation_rules_by_attribute;
         css_index_string_map<std::vector<size_t>> invalidation_rules_by_class;
-        bool child_list_sensitive{false};
+        std::vector<size_t> child_list_rules;
         std::vector<size_t> focus_rules;
         std::vector<size_t> unindexed_rules;
         css_index_string_set attribute_dependencies;

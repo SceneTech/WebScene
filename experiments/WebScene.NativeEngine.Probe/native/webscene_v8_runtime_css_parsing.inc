@@ -456,7 +456,9 @@
             if (rules.empty() || rules.back() != index) rules.push_back(index);
         };
         for (const auto& component : rule.payload->invalidation) {
-            css_child_list_sensitive = css_child_list_sensitive || component.child_list_sensitive;
+            if (component.child_list.scope != 0U
+                && (css_child_list_rules.empty() || css_child_list_rules.back() != index))
+                css_child_list_rules.push_back(index);
             for (const auto& [name, scope] : component.attributes) {
                 static_cast<void>(scope);
                 css_attribute_dependencies.emplace(name);
@@ -1437,12 +1439,12 @@
                 return hash;
     }
     bool css_compound_selector_matches(const dom_node& node,const compiled_css_compound& selector,
-        const dom_node* scope_root = nullptr) const
+        const dom_node* scope_root = nullptr, bool stable_features_only = false) const
     {
 #if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
         ++css_compound_match_checks;
 #endif
-        return css::compound_matches(*this,node,selector,scope_root);
+        return css::compound_matches(*this,node,selector,scope_root,stable_features_only);
     }
 
     bool css_compound_selector_matches(

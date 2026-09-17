@@ -590,8 +590,8 @@
         state.invalidation_rules_by_attribute =
             std::move(css_invalidation_rules_by_attribute);
         state.invalidation_rules_by_class = std::move(css_invalidation_rules_by_class);
-        state.child_list_sensitive = css_child_list_sensitive;
-        css_child_list_sensitive = false;
+        state.child_list_rules = std::move(css_child_list_rules);
+        css_child_list_rules.clear();
         state.focus_rules = std::move(css_focus_rules);
         state.unindexed_rules = std::move(unindexed_css_rules);
         state.attribute_dependencies = std::move(css_attribute_dependencies);
@@ -622,7 +622,7 @@
             std::move(state.invalidation_rules_by_attribute);
         css_invalidation_rules_by_class =
             std::move(state.invalidation_rules_by_class);
-        css_child_list_sensitive = state.child_list_sensitive;
+        css_child_list_rules = std::move(state.child_list_rules);
         css_focus_rules = std::move(state.focus_rules);
         unindexed_css_rules = std::move(state.unindexed_rules);
         css_attribute_dependencies = std::move(state.attribute_dependencies);
@@ -4520,7 +4520,7 @@
             // affected parent subtree once. Styling every child and parent as
             // it is transferred repeats selector matching and leaves earlier
             // siblings with transient :last-child/:nth-child results.
-            self->recascade_connected_subtree(*parent, "appendChild.fragment");
+            self->recascade_completed_child_list(*parent, children);
 #endif
             for (auto* fragment_child : children) {
                 if (fragment_child == nullptr || fragment_child->parent != parent) continue;
@@ -4594,6 +4594,7 @@
         auto* parent = unwrap_node(info.This());
         if (parent == nullptr) return;
 
+        std::vector<dom_node*> previous_parents;
         std::vector<dom_node*> candidates;
         candidates.reserve(static_cast<size_t>(info.Length()));
         for (int index = 0; index < info.Length(); ++index) {
@@ -4639,6 +4640,7 @@
                     self->notify_custom_elements_subtree(*candidate, "disconnected");
                 }
                 auto* old_parent = candidate->parent;
+                previous_parents.push_back(old_parent);
                 std::erase(old_parent->children, candidate);
                 synchronize_textarea_value_from_children(*old_parent);
                 candidate->parent = nullptr;
@@ -4647,9 +4649,9 @@
             if (self->document.append_child(*parent, *candidate)) inserted.push_back(candidate);
         }
 
+        self->recascade_completed_child_list(*parent, inserted, previous_parents);
         for (auto* child : inserted) {
             if (child == nullptr) continue;
-            self->recascade_connected_subtree(*child);
             self->enqueue_connected_resources_subtree(
                 *child,
                 self->wrap_node(*child),
@@ -4657,7 +4659,6 @@
             self->enqueue_iframe_hydration_if_needed(*child);
             self->notify_custom_elements_subtree(*child, "connected");
         }
-        self->recascade_connected_node(*parent);
         self->activate_connected_stylesheet(*parent);
         synchronize_textarea_value_from_children(*parent);
         self->document.mark_dirty();
@@ -4685,6 +4686,7 @@
         self->deactivate_connected_stylesheets(*child);
         std::erase(parent->children, child);
         child->parent = nullptr;
+        self->recascade_changed_child_list(*parent);
         self->weaken_detached_subtree_wrappers(*child);
         synchronize_textarea_value_from_children(*parent);
         self->document.mark_dirty();
@@ -4711,6 +4713,7 @@
             info.GetReturnValue().Set(info[1]);
             return;
         }
+        std::vector<dom_node*> previous_parents;
         std::vector<dom_node*> replacements;
         if (replacement->tag == "#document-fragment") {
             replacements = replacement->children;
@@ -4734,6 +4737,7 @@
                     self->notify_custom_elements_subtree(*candidate, "disconnected");
                 }
                 auto* old_parent = candidate->parent;
+                previous_parents.push_back(old_parent);
                 std::erase(old_parent->children, candidate);
                 synchronize_textarea_value_from_children(*old_parent);
                 candidate->parent = nullptr;
@@ -4762,7 +4766,10 @@
                 parent->children.begin()
                     + static_cast<std::ptrdiff_t>(next_index++),
                 candidate);
-            self->recascade_connected_subtree(*candidate);
+        }
+        self->recascade_completed_child_list(*parent, replacements, previous_parents);
+        for (auto* candidate : replacements) {
+            if (candidate == nullptr || candidate->parent != parent) continue;
             self->activate_connected_stylesheet(*candidate);
             self->enqueue_connected_resources_subtree(
                 *candidate,
@@ -4781,6 +4788,7 @@
         auto* self = current(info.GetIsolate());
         auto* parent = unwrap_node(info.This());
         if (parent == nullptr) return;
+        std::vector<dom_node*> previous_parents;
         std::vector<dom_node*> children;
         const auto collect = [&](dom_node* node) {
             if (insertion_would_create_cycle(parent, node)) {
@@ -4811,6 +4819,7 @@
             if (child->parent != nullptr) {
                 if (self->is_connected(*child)) self->notify_custom_elements_subtree(*child, "disconnected");
                 auto* old_parent = child->parent;
+                previous_parents.push_back(old_parent);
                 std::erase(old_parent->children, child);
                 synchronize_textarea_value_from_children(*old_parent);
                 child->parent = nullptr;
@@ -4820,7 +4829,7 @@
         }
         // Match structural selectors against the completed sibling list. Styling
         // each inserted child early makes every child temporarily :last-child.
-        self->recascade_connected_subtree(*parent);
+        self->recascade_completed_child_list(*parent, children, previous_parents);
         for (auto* child : children) {
             self->activate_connected_stylesheet(*child);
             self->enqueue_connected_resources_subtree(*child, self->wrap_node(*child), info.GetIsolate()->GetCurrentContext());
@@ -4844,6 +4853,7 @@
         self->deactivate_connected_stylesheets(*node);
         std::erase(node->parent->children, node);
         node->parent = nullptr;
+        self->recascade_changed_child_list(*parent);
         node->visible = false;
         self->weaken_detached_subtree_wrappers(*node);
         synchronize_textarea_value_from_children(*parent);
@@ -4860,6 +4870,7 @@
         if (replaced == nullptr || replaced->parent == nullptr) return;
         auto* parent = replaced->parent;
 
+        std::vector<dom_node*> previous_parents;
         std::vector<dom_node*> replacements;
         for (int argument = 0; argument < info.Length(); ++argument) {
             dom_node* replacement = nullptr;
@@ -4913,6 +4924,7 @@
                         *replacement, "disconnected");
                 }
                 auto* old_parent = replacement->parent;
+                previous_parents.push_back(old_parent);
                 std::erase(old_parent->children, replacement);
                 synchronize_textarea_value_from_children(*old_parent);
                 replacement->parent = nullptr;
@@ -4941,7 +4953,10 @@
                 parent->children.begin()
                     + static_cast<std::ptrdiff_t>(insertion_index++),
                 replacement);
-            self->recascade_connected_subtree(*replacement);
+        }
+        self->recascade_completed_child_list(*parent, flattened, previous_parents);
+        for (auto* replacement : flattened) {
+            if (replacement == nullptr || replacement->parent != parent) continue;
             self->activate_connected_stylesheet(*replacement);
             self->enqueue_connected_resources_subtree(
                 *replacement,
@@ -5000,7 +5015,10 @@
                 parent->children.begin()
                     + static_cast<std::ptrdiff_t>(insertion_index++),
                 child);
-            self->recascade_connected_subtree(*child);
+        }
+        self->recascade_completed_child_list(*parent, children);
+        for (auto* child : children) {
+            if (child == nullptr || child->parent != parent) continue;
             self->activate_connected_stylesheet(*child);
             self->enqueue_connected_resources_subtree(
                 *child,
@@ -5044,6 +5062,7 @@
             throw_hierarchy_request(info.GetIsolate(), "insertAdjacentElement");
             return;
         }
+        auto* previous_parent = child->parent;
         if (child->parent != nullptr) {
             if (self->is_connected(*child)) {
                 self->notify_custom_elements_subtree(*child, "disconnected");
@@ -5062,7 +5081,9 @@
         child->parent = parent;
         parent->children.insert(parent->children.begin() + static_cast<std::ptrdiff_t>(index), child);
         self->document.mark_dirty();
-        self->recascade_connected_subtree(*child);
+        if (previous_parent != nullptr && previous_parent != parent)
+            self->recascade_changed_child_list(*previous_parent);
+        self->recascade_changed_child_list(*parent, child);
         self->activate_connected_stylesheet(*child);
         self->notify_custom_elements_subtree(*child, "connected");
         synchronize_textarea_value_from_children(*parent);
@@ -5080,6 +5101,7 @@
             throw_hierarchy_request(info.GetIsolate(), "prepend");
             return;
         }
+        auto* previous_parent = child->parent;
         if (child->parent != nullptr) {
             if (self->is_connected(*child)) {
                 self->notify_custom_elements_subtree(*child, "disconnected");
@@ -5092,7 +5114,9 @@
         child->parent = parent;
         parent->children.insert(parent->children.begin(), child);
         self->document.mark_dirty();
-        self->recascade_connected_subtree(*child);
+        if (previous_parent != nullptr && previous_parent != parent)
+            self->recascade_changed_child_list(*previous_parent);
+        self->recascade_changed_child_list(*parent, child);
         self->activate_connected_stylesheet(*child);
         self->notify_custom_elements_subtree(*child, "connected");
         synchronize_textarea_value_from_children(*parent);
@@ -5114,6 +5138,7 @@
             throw_hierarchy_request(info.GetIsolate(), after ? "after" : "before");
             return;
         }
+        auto* previous_parent = child->parent;
         if (child->parent != nullptr) {
             if (self->is_connected(*child)) {
                 self->notify_custom_elements_subtree(*child, "disconnected");
@@ -5128,7 +5153,9 @@
         child->parent = parent;
         parent->children.insert(position + (after ? 1 : 0), child);
         self->document.mark_dirty();
-        self->recascade_connected_subtree(*child);
+        if (previous_parent != nullptr && previous_parent != parent)
+            self->recascade_changed_child_list(*previous_parent);
+        self->recascade_changed_child_list(*parent, child);
         self->activate_connected_stylesheet(*child);
         self->notify_custom_elements_subtree(*child, "connected");
         synchronize_textarea_value_from_children(*parent);
@@ -5192,7 +5219,10 @@
                 parent->children.insert(
                     parent->children.begin() + static_cast<std::ptrdiff_t>(insertion_index++),
                     fragment_child);
-                self->recascade_connected_subtree(*fragment_child);
+            }
+            self->recascade_completed_child_list(*parent, children);
+            for (auto* fragment_child : children) {
+                if (fragment_child == nullptr || fragment_child->parent != parent) continue;
                 self->activate_connected_stylesheet(*fragment_child);
                 self->notify_custom_elements_subtree(
                     *fragment_child, "connected");

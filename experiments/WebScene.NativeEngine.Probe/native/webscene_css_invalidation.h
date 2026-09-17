@@ -83,12 +83,27 @@ inline std::vector<css_compound_dependencies> compile_invalidation_plan(
                 || pseudo.name == "first-child" || pseudo.name == "last-child"
                 || pseudo.name == "only-child" || pseudo.name == "first-of-type"
                 || pseudo.name == "last-of-type" || pseudo.name == "only-of-type"
-                || pseudo.name.starts_with("nth-")) output.child_list_sensitive = true;
+                || pseudo.name.starts_with("nth-")) {
+                output.child_list_sensitive = true;
+                auto structural_route = route;
+                if (pseudo.name == "has") {
+                    // Removing a descendant can change both the parent anchor
+                    // and any ancestor anchor, even when no current match remains.
+                    add(output.child_list, route);
+                    structural_route.insert(structural_route.begin(), css_invalidation_step::ancestors);
+                } else if (pseudo.name != "empty") {
+                    structural_route.insert(structural_route.begin(), css_invalidation_step::children);
+                }
+                add(output.child_list, structural_route);
+            }
             if (pseudo.name == "disabled" || pseudo.name == "enabled") {
                 auto inherited_route = css_invalidation_route{
                     css_invalidation_step::inclusive_descendants};
                 inherited_route.insert(inherited_route.end(), route.begin(), route.end());
                 add(output.attributes["disabled"], inherited_route);
+                // Moving the first legend changes inherited disabled state.
+                output.child_list_sensitive = true;
+                add(output.child_list, inherited_route);
             } else if (pseudo.name == "checked") {
                 for (const auto* name : {"checked", "selected", "type"})
                     add(output.attributes[name], route);
@@ -122,6 +137,12 @@ inline std::vector<css_compound_dependencies> compile_invalidation_plan(
                             nested_route.push_back(forward(arm.combinators[j]));
                     }
                     nested_route.insert(nested_route.end(), route.begin(), route.end());
+                    if (i > 0 && (arm.combinators[i - 1U] == '+'
+                        || arm.combinators[i - 1U] == '~')) {
+                        auto structural_route = nested_route;
+                        structural_route.insert(structural_route.begin(), css_invalidation_step::children);
+                        add(output.child_list, structural_route);
+                    }
                     self(self, arm.compiled_compounds[i], output, nested_route);
                 }
             }
@@ -129,9 +150,11 @@ inline std::vector<css_compound_dependencies> compile_invalidation_plan(
     };
     for (size_t i = 0; i < result.size(); ++i)
         collect(collect, selector.compiled_compounds[i], result[i], {});
-    if (!result.empty() && std::any_of(selector.combinators.begin(), selector.combinators.end(),
-            [](char value) { return value == '+' || value == '~'; }))
-        result.front().child_list_sensitive = true;
+    for (size_t i = 0; i < selector.combinators.size(); ++i) {
+        if (selector.combinators[i] != '+' && selector.combinators[i] != '~') continue;
+        result[i + 1U].child_list_sensitive = true;
+        add(result[i + 1U].child_list, {css_invalidation_step::children});
+    }
     return result;
 }
 } // namespace webscene_native::css

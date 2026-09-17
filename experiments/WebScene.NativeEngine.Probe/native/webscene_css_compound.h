@@ -13,7 +13,8 @@ inline std::atomic<uint64_t> selector_sibling_pointer_copies{0U};
 // a plain URL hash. Compound evaluation itself has no V8 dependency.
 template<typename Host>
 inline bool compound_matches(const Host& host,const dom_node& node,
-    const compiled_css_compound& selector,const dom_node* scope_root=nullptr)
+    const compiled_css_compound& selector,const dom_node* scope_root=nullptr,
+    bool stable_features_only=false)
     {
         const auto& document=host.document;
         if (!selector.valid) return false;
@@ -57,6 +58,10 @@ inline bool compound_matches(const Host& host,const dom_node& node,
         for (const auto& attribute : selector.attributes) {
             if (!attribute_matches(node, attribute)) return false;
         }
+        // Structural invalidation must also visit subjects that stopped
+        // matching a pseudo after a removal. Identity/attribute tests remain
+        // useful filters, but testing current pseudos would lose old matches.
+        if (stable_features_only) return true;
 
         const auto is_element = [](const dom_node* candidate) {
             return candidate != nullptr && !candidate->tag.starts_with('#');
@@ -254,11 +259,11 @@ inline bool compound_matches(const Host& host,const dom_node& node,
                 if (name == "only-of-type" && values.count != 1U) return false;
 #endif
             } else if (name == "empty") {
-                const auto has_text = std::any_of(
-                    node.text_content.begin(),
-                    node.text_content.end(),
-                    [](unsigned char character) { return !std::isspace(character); });
-                if (!node.children.empty() || has_text) return false;
+                if (!node.text_content.empty() || std::any_of(
+                        node.children.begin(), node.children.end(), [](const dom_node* child) {
+                            return child != nullptr && (child->kind == dom_node_kind::element
+                                || (child->kind == dom_node_kind::text && !child->text_content.empty()));
+                        })) return false;
             } else if (name == "enabled") {
                 if (!form_control || css::is_actually_disabled(document,node)) return false;
             } else if (name == "disabled") {

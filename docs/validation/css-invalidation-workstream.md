@@ -45,10 +45,17 @@ used.
   even when the separate 512-entry parser cache evicts them. Relation entries have
   a 16,384-entry soft cap; sibling indexes and pinned selectors are transient,
   proportional to the pass's visited work.
-- Compile child-list sensitivity and refresh source/destination sibling subtrees
-  for single-node `appendChild`/`insertBefore` moves when required. This fixes stale
-  nested sibling matches. It is a conservative parent-local correctness path,
-  not completion of structural invalidation optimization across all DOM APIs.
+- Compile child-list routes and a per-cascade structural-rule index. Positional
+  selectors reach children; `:empty` reaches the changed parent; `:has()` reaches
+  parent/ancestor anchors; nested/sibling routes reach affected final subjects.
+  Candidate projection ignores pseudos while retaining tag/class/ID/attribute
+  filters, so subjects that stopped matching after removal still get recascaded.
+- Use completed child lists for insertion/removal/replacement/reparenting APIs,
+  including fragments, HTML and text setters. Refresh source and destination
+  structural subjects, then inserted subtrees for ancestry/inheritance. Connected
+  custom-element callbacks observe final sibling styles, including ancestor
+  `:has()` and inherited variables. This replaces the former parent-subtree fallback.
+- Fix `:empty` matching to ignore comments and empty text, but not whitespace text.
 
 ## Correctness and scaling gates
 
@@ -109,7 +116,7 @@ WEBSCENE_NATIVE_ENGINE_TEST_FILTER=css-invalidation-scaling \
 
 ## Component-size matrix and measured matching bottleneck
 
-The same native filter now runs 28 cases: seven component shapes, 8/128 affected
+The same native filter now runs 44 cases: eleven component shapes, 8/128 affected
 targets, and 32/1,024 unrelated nodes plus unrelated rules. Each case adds then
 removes selector state and checks every target's computed width. All seven counters
 must be identical at both unrelated sizes; work must stay within a linear
@@ -138,12 +145,39 @@ end-to-end Spotify result, or a Chrome-speed claim. Timing remains informational
 
 ## Remaining stages
 
+### Structural follow-up after #148 merged
+
+`css-child-list-invalidation.html` is a required-profile WPT-style contract,
+not an upstream WPT submission. Its initial 19 tests passed Chrome but exposed
+16 native failures on the preceding build. The expanded contract now passes
+**40/40 in WebScene and Chrome**: removal/replacement/reorder APIs, both sides of
+reparenting, `:empty` character data, fragment/HTML connection checkpoints,
+nested negated positional selectors, inherited custom properties, and first-legend
+disabled-state changes. Callback observations are captured and asserted outside
+the callback, so swallowed custom-element exceptions cannot masquerade as passes.
+
+Four additional native scaling shapes exercise positional insertion/removal,
+general-sibling insertion/removal, relational-ancestor sibling targets, and empty
+state. All 44 cases pass with bounded counters, zero document fallback, and exact
+counter equality as unrelated DOM/rules grow from 32 to 1,024. These fixtures do
+not yet count the internal cost of every positional sibling scan or prove scaling
+with unrelated *structural* rules; those remain important profiling extensions.
+
+This stage does not complete every DOM checkpoint: disconnected custom-element
+reactions, variadic/fragment forms of `prepend`/`before`/`after`, and further
+character-data/CSSOM mutation paths still need the browser-referenced audit.
+The rest of the optimization plan remains open; no Chrome-speed advantage follows
+from the structural operation counts.
+
+### Remaining acceptance work
+
 1. Extend the implemented descendant/sibling/custom-property/disabled/relational
    matrix to structural mutations, media/container queries, and additional dynamic
    state. Continue measuring matching and cascade work, not just plan traversal.
-2. Narrow the remaining conservative structural paths and cover all mutation APIs.
-   The compiled nested-selector and inherited-control routes are implemented;
-   this does not claim broader selector matching conformance.
+2. Finish the structural checkpoint audit above and profile positional scans and
+   unrelated structural-rule growth. Compiled child-list, nested-selector and
+   inherited-control routes are implemented; this does not claim broader selector
+   matching conformance.
 3. Broaden checkpoint consistency to remaining DOM/CSSOM mutation paths. ID and
    dataset are covered; inline-style and several dynamic-state paths retain their
    existing handling. Distinguish fragment navigation's designated `:target` from

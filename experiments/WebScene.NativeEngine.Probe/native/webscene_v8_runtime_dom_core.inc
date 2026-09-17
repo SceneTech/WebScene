@@ -1073,9 +1073,67 @@
         return true;
     }
 
+    class custom_element_reaction_scope final {
+        implementation& owner_;
+        custom_element_reaction_scope* previous_;
+        v8::TryCatch operation_exception_;
+        v8::Local<v8::Context> context_;
+        v8::Local<v8::Function> end_;
+    public:
+        explicit custom_element_reaction_scope(implementation& owner)
+            : owner_(owner), previous_(owner.active_custom_element_reaction_scope),
+              operation_exception_(owner.isolate)
+        {
+            owner_.active_custom_element_reaction_scope = this;
+            ensure_started();
+        }
+        void ensure_started()
+        {
+            if (!owner_.custom_elements_active || !end_.IsEmpty()) return;
+            // The first registry definition may happen during argument
+            // conversion. Lazily start every enclosing operation then, while
+            // cold documents make no JS reaction calls at all.
+            if (previous_ != nullptr) previous_->ensure_started();
+            auto* isolate = owner_.isolate;
+            context_ = isolate->GetCurrentContext();
+            v8::Local<v8::Value> begin, end;
+            if (!context_->Global()->Get(context_, js_string(isolate,
+                    "__webSceneCustomElementsBeginReactions")).ToLocal(&begin)
+                || !begin->IsFunction()
+                || !context_->Global()->Get(context_, js_string(isolate,
+                    "__webSceneCustomElementsEndReactions")).ToLocal(&end)
+                || !end->IsFunction()) return;
+            v8::Local<v8::Value> result;
+            if (begin.As<v8::Function>()->Call(context_, context_->Global(),
+                    0, nullptr).ToLocal(&result)) end_ = end.As<v8::Function>();
+        }
+        ~custom_element_reaction_scope()
+        {
+            owner_.active_custom_element_reaction_scope = previous_;
+            // A rejected native operation must still pop its reaction queue,
+            // without swallowing the exception or entering JS with it pending.
+            auto exception = operation_exception_.Exception();
+            const bool failed = operation_exception_.HasCaught();
+            if (failed) operation_exception_.Reset();
+            if (!end_.IsEmpty()) {
+                v8::TryCatch try_catch(owner_.isolate);
+                static_cast<void>(end_->Call(context_, context_->Global(), 0, nullptr));
+                if (try_catch.HasCaught()) owner_.last_error =
+                    "Custom element reaction checkpoint failed: "
+                    + owner_.describe_reported_exception(try_catch, context_);
+            }
+            if (failed && !exception.IsEmpty()) {
+                owner_.isolate->ThrowException(exception);
+                static_cast<void>(operation_exception_.ReThrow());
+            }
+        }
+    };
+
     void notify_custom_elements_subtree(dom_node& root, const char* phase)
     {
         if (!custom_elements_active) return;
+        if (active_custom_element_reaction_scope != nullptr)
+            active_custom_element_reaction_scope->ensure_started();
         auto local_context = isolate->GetCurrentContext();
         v8::Local<v8::Value> raw_callback;
         if (!local_context->Global()->Get(
@@ -1118,6 +1176,8 @@
         const std::optional<std::string>& namespace_uri = std::nullopt)
     {
         if (!custom_elements_active) return;
+        if (active_custom_element_reaction_scope != nullptr)
+            active_custom_element_reaction_scope->ensure_started();
         auto local_context = isolate->GetCurrentContext();
         v8::Local<v8::Value> raw_callback;
         if (!local_context->Global()->Get(
@@ -4480,6 +4540,7 @@
     static void append_child(const v8::FunctionCallbackInfo<v8::Value>& info)
     {
         auto* self = current(info.GetIsolate());
+        custom_element_reaction_scope reactions(*self);
         binding_callback_timer binding_timer(
             self->profile(binding_category::dom_mutation),
             self->profile_named("Node.appendChild"));
@@ -4588,6 +4649,7 @@
     static void append_nodes(const v8::FunctionCallbackInfo<v8::Value>& info)
     {
         auto* self = current(info.GetIsolate());
+        custom_element_reaction_scope reactions(*self);
         binding_callback_timer binding_timer(
             self->profile(binding_category::dom_mutation),
             self->profile_named("ParentNode.append"));
@@ -4667,6 +4729,7 @@
     static void remove_child(const v8::FunctionCallbackInfo<v8::Value>& info)
     {
         auto* self = current(info.GetIsolate());
+        custom_element_reaction_scope reactions(*self);
         binding_callback_timer binding_timer(
             self->profile(binding_category::dom_mutation),
             self->profile_named("Node.removeChild"));
@@ -4696,6 +4759,7 @@
     static void replace_child(const v8::FunctionCallbackInfo<v8::Value>& info)
     {
         auto* self = current(info.GetIsolate());
+        custom_element_reaction_scope reactions(*self);
         auto* parent = unwrap_node(info.This());
         auto* replacement = info.Length() > 0 && info[0]->IsObject()
             ? unwrap_node(info[0].As<v8::Object>())
@@ -4786,6 +4850,7 @@
     static void replace_children(const v8::FunctionCallbackInfo<v8::Value>& info)
     {
         auto* self = current(info.GetIsolate());
+        custom_element_reaction_scope reactions(*self);
         auto* parent = unwrap_node(info.This());
         if (parent == nullptr) return;
         std::vector<dom_node*> previous_parents;
@@ -4843,6 +4908,7 @@
     static void remove_element(const v8::FunctionCallbackInfo<v8::Value>& info)
     {
         auto* self = current(info.GetIsolate());
+        custom_element_reaction_scope reactions(*self);
         auto* node = unwrap_node(info.This());
         if (node == nullptr || node->parent == nullptr) return;
         auto* parent = node->parent;
@@ -4863,6 +4929,7 @@
     static void replace_with(const v8::FunctionCallbackInfo<v8::Value>& info)
     {
         auto* self = current(info.GetIsolate());
+        custom_element_reaction_scope reactions(*self);
         binding_callback_timer binding_timer(
             self->profile(binding_category::dom_mutation),
             self->profile_named("ChildNode.replaceWith"));
@@ -4972,6 +5039,7 @@
     static void insert_adjacent_html(const v8::FunctionCallbackInfo<v8::Value>& info)
     {
         auto* self = current(info.GetIsolate());
+        custom_element_reaction_scope reactions(*self);
         binding_callback_timer binding_timer(
             self->profile(binding_category::dom_mutation),
             self->profile_named("Element.insertAdjacentHTML"));
@@ -5034,6 +5102,7 @@
     static void insert_adjacent_element(const v8::FunctionCallbackInfo<v8::Value>& info)
     {
         auto* self = current(info.GetIsolate());
+        custom_element_reaction_scope reactions(*self);
         binding_callback_timer binding_timer(
             self->profile(binding_category::dom_mutation),
             self->profile_named("Element.insertAdjacentElement"));
@@ -5093,6 +5162,7 @@
     static void prepend_child(const v8::FunctionCallbackInfo<v8::Value>& info)
     {
         auto* self = current(info.GetIsolate());
+        custom_element_reaction_scope reactions(*self);
         auto* parent = unwrap_node(info.This());
         auto* child = info.Length() > 0 && info[0]->IsObject()
             ? unwrap_node(info[0].As<v8::Object>()) : nullptr;
@@ -5128,6 +5198,7 @@
         bool after)
     {
         auto* self = current(info.GetIsolate());
+        custom_element_reaction_scope reactions(*self);
         auto* reference = unwrap_node(info.This());
         auto* child = info.Length() > 0 && info[0]->IsObject()
             ? unwrap_node(info[0].As<v8::Object>()) : nullptr;
@@ -5174,6 +5245,7 @@
     static void insert_before(const v8::FunctionCallbackInfo<v8::Value>& info)
     {
         auto* self = current(info.GetIsolate());
+        custom_element_reaction_scope reactions(*self);
         binding_callback_timer binding_timer(
             self->profile(binding_category::dom_mutation),
             self->profile_named("Node.insertBefore"));

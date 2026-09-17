@@ -123,9 +123,24 @@ for (const property of ['textContent','nodeValue','data']) test(t => {
   assert_equals(getComputedStyle(f.empty).height,'47px','empty text does not prevent :empty');
 }, property + ' updates empty-state sibling styles');
 
-let connectionObserver=null;
+test(t=>{
+  const stage=document.createElement('div');stage.innerHTML='<cold-checkpoint></cold-checkpoint>';
+  document.body.appendChild(stage);t.add_cleanup(()=>stage.remove());
+  const events=[];
+  stage.textContent={toString(){
+    customElements.define('cold-checkpoint',class extends HTMLElement {
+      connectedCallback(){events.push('connected');}
+      disconnectedCallback(){events.push('disconnected:'+this.isConnected);}
+    });
+    events.push('converted');return '';
+  }};
+  assert_array_equals(events,['connected','converted','disconnected:false']);
+}, 'first registry activation during argument conversion still establishes a structural reaction checkpoint');
+
+let connectionObserver=null, disconnectionObserver=null;
 customElements.define('tree-checkpoint', class extends HTMLElement {
   connectedCallback() { if(connectionObserver) connectionObserver(this); }
+  disconnectedCallback() { if(disconnectionObserver) disconnectionObserver(this); }
 });
 for (const operation of ['appendChild','insertBefore','replaceChild','replaceWith','replaceChildren','innerHTML','insertAdjacentHTML']) test(t => {
   const f=fixture(t); const fragment=document.createDocumentFragment();
@@ -206,4 +221,97 @@ for (const [pseudo, ofType, predicate] of [
   stage.insertBefore(stage.lastChild,stage.firstChild);verifyPositions();
   stage.replaceChildren(stage.children[1]);verifyPositions();
 }, pseudo+' stays correct across matching passes, reorders, removals and non-element siblings');
+
+for (const [name, mutate] of [
+  ['removeChild',(f,n)=>f.list.removeChild(n)], ['remove',(f,n)=>n.remove()],
+  ['replaceChild',(f,n)=>f.list.replaceChild(document.createElement('div'),n)],
+  ['replaceWith',(f,n)=>n.replaceWith(document.createElement('div'))],
+  ['replaceChildren',(f,n)=>f.list.replaceChildren()],
+  ['innerHTML',(f,n)=>{f.list.innerHTML='';}], ['textContent',(f,n)=>{f.list.textContent='';}]
+]) test(t=>{
+  const f=fixture(t), node=document.createElement('tree-checkpoint');
+  node.className='tree-item tree-marker';f.list.replaceChild(node,f.list.firstChild);
+  const observations=[];
+  disconnectionObserver=n=>observations.push([n.isConnected,n.parentNode===null,
+    getComputedStyle(f.has).width,getComputedStyle(f.consumer).width,
+    f.list.children.length?getComputedStyle(f.list.firstElementChild).width:'empty']);
+  t.add_cleanup(()=>{disconnectionObserver=null;});
+  mutate(f,node);disconnectionObserver=null;
+  assert_equals(observations.length,1);
+  const first=f.list.firstElementChild;
+  assert_array_equals(observations[0],[false,true,'23px','29px',first?getComputedStyle(first).width:'empty']);
+}, name+' disconnected callback observes final tree and structural styles');
+
+test(t=>{
+  const from=fixture(t),to=fixture(t),node=document.createElement('tree-checkpoint');
+  node.className='tree-item tree-marker';from.list.replaceChild(node,from.list.firstChild);
+  to.list.replaceChildren();
+  const observations=[];
+  const snapshot=phase=>observations.push([phase,node.isConnected,node.parentNode===to.list,
+    getComputedStyle(from.has).width,getComputedStyle(to.has).width,
+    getComputedStyle(from.consumer).width,getComputedStyle(to.consumer).width]);
+  disconnectionObserver=()=>snapshot('disconnected');connectionObserver=()=>snapshot('connected');
+  t.add_cleanup(()=>{disconnectionObserver=null;connectionObserver=null;});
+  to.list.appendChild(node);disconnectionObserver=null;connectionObserver=null;
+  assert_equals(observations.length,2);
+  assert_array_equals(observations[0],['disconnected',true,true,'23px','59px','29px','61px']);
+  assert_array_equals(observations[1],['connected',true,true,'23px','59px','29px','61px']);
+}, 'reparent callbacks observe final destination and both sides of structural invalidation');
+
+test(t=>{
+  const f=fixture(t),node=document.createElement('tree-checkpoint');
+  node.className='tree-item tree-marker';f.list.replaceChild(node,f.list.firstChild);
+  const events=[];
+  disconnectionObserver=()=>{
+    events.push('disconnected:'+getComputedStyle(f.has).width);
+    f.list.appendChild(node);
+    events.push('returned:'+getComputedStyle(f.has).width);
+  };
+  connectionObserver=()=>events.push('connected:'+getComputedStyle(f.has).width);
+  t.add_cleanup(()=>{disconnectionObserver=null;connectionObserver=null;});
+  f.list.removeChild(node);disconnectionObserver=null;connectionObserver=null;
+  assert_array_equals(events,['disconnected:23px','connected:59px','returned:59px']);
+  assert_equals(node.parentNode,f.list,'callback insertion must not be overwritten by outer removal');
+  verify(f,true);
+}, 'reentrant insertion during disconnected callback keeps its final tree and style');
+
+test(t=>{
+  const stage=document.createElement('div');document.body.appendChild(stage);t.add_cleanup(()=>stage.remove());
+  const a=document.createElement('tree-checkpoint'),b=document.createElement('tree-checkpoint');
+  const fragment=document.createDocumentFragment();fragment.append(a,b);
+  const events=[];
+  connectionObserver=n=>{
+    if(n===a) {events.push('a:start');b.remove();events.push('a:end');}
+    else events.push('b:connected:'+b.isConnected);
+  };
+  disconnectionObserver=n=>events.push('b:disconnected:'+b.isConnected);
+  t.add_cleanup(()=>{disconnectionObserver=null;connectionObserver=null;});
+  stage.appendChild(fragment);connectionObserver=null;disconnectionObserver=null;
+  assert_array_equals(events,['a:start','b:connected:false','b:disconnected:false','a:end']);
+}, 'nested removal drains an element pending connected reaction before its disconnected reaction');
+
+test(t=>{
+  const stage=document.createElement('div');document.body.appendChild(stage);t.add_cleanup(()=>stage.remove());
+  const child=document.createElement('tree-checkpoint');stage.appendChild(child);
+  const events=[];disconnectionObserver=()=>events.push('removed');
+  t.add_cleanup(()=>{disconnectionObserver=null;});
+  let threw=false;try {child.appendChild(stage);}catch(e){threw=true;}
+  assert_true(threw,'invalid hierarchy throws');
+  child.remove();disconnectionObserver=null;
+  assert_array_equals(events,['removed'],'rejected operation must not retain the next reaction');
+}, 'failed tree mutation unwinds its reaction boundary and preserves the exception');
+
+test(t=>{
+  const stage=document.createElement('div');document.body.appendChild(stage);t.add_cleanup(()=>stage.remove());
+  const child=document.createElement('tree-checkpoint');stage.appendChild(child);
+  const events=[],sentinel={conversionFailure:true};let caught;
+  disconnectionObserver=()=>events.push('disconnected');
+  connectionObserver=()=>events.push('connected');
+  t.add_cleanup(()=>{disconnectionObserver=null;connectionObserver=null;});
+  try {stage.textContent={toString(){child.remove();throw sentinel;}};}catch(error){caught=error;}
+  assert_equals(caught,sentinel,'conversion must preserve the original thrown value');
+  assert_equals(child.parentNode,null,'conversion side effects remain observable');
+  stage.appendChild(child);connectionObserver=null;disconnectionObserver=null;
+  assert_array_equals(events,['disconnected','connected'],'nested and subsequent operations drain their own queues');
+}, 'throwing argument conversion preserves nested mutation reactions and exception identity');
 </script>

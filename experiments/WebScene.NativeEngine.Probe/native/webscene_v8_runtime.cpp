@@ -2865,6 +2865,35 @@ struct v8_dom_runtime::implementation final {
                 reportReactionError(error);
               }
             };
+            const reactionStack = [];
+            const elementReactions = new WeakMap();
+            const invokeElementReactions = queue => {
+              for (const element of queue) {
+                const reactions = elementReactions.get(element);
+                // Nested CEReactions operations can drain an element already
+                // present in an outer queue. Keep one FIFO per element so its
+                // pending connected reaction precedes a reentrant disconnect.
+                while (reactions && reactions.cursor < reactions.items.length) {
+                  const reaction = reactions.items[reactions.cursor++];
+                  invokeReaction(element, reaction.callback, reaction.args);
+                }
+                if (reactions) { reactions.items = []; reactions.cursor = 0; }
+              }
+            };
+            const beginReactions = () => reactionStack.push([]);
+            const endReactions = () => {
+              const queue = reactionStack.pop();
+              if (queue) invokeElementReactions(queue);
+            };
+            const enqueueReaction = (element, callback, args) => {
+              if (typeof callback !== 'function') return;
+              let reactions = elementReactions.get(element);
+              if (!reactions) elementReactions.set(element, reactions = {items: [], cursor: 0});
+              reactions.items.push({callback, args});
+              const queue = reactionStack[reactionStack.length - 1];
+              if (queue) queue.push(element);
+              else invokeElementReactions([element]);
+            };
 
             function WebSceneHTMLElement() {
               if (!new.target) {
@@ -2947,7 +2976,7 @@ struct v8_dom_runtime::implementation final {
               if (definition.attributeChangedCallback) {
                 for (const name of definition.observedAttributes) {
                   if (!element.hasAttribute(name)) continue;
-                  invokeReaction(
+                  enqueueReaction(
                     element,
                     definition.attributeChangedCallback,
                     [name, null, element.getAttribute(name), null]);
@@ -2962,14 +2991,14 @@ struct v8_dom_runtime::implementation final {
               if (!upgraded || !state || state.state !== 'custom'
                   || state.connected || !element.isConnected) return;
               state.connected = true;
-              invokeReaction(
+              enqueueReaction(
                 element, state.definition.connectedCallback, []);
             };
             const disconnectElement = element => {
               const state = elementStates.get(element);
               if (!state || state.state !== 'custom' || !state.connected) return;
               state.connected = false;
-              invokeReaction(
+              enqueueReaction(
                 element, state.definition.disconnectedCallback, []);
             };
             const notifySubtree = (root, phase) => {
@@ -2989,10 +3018,14 @@ struct v8_dom_runtime::implementation final {
               const definition = state.definition;
               if (!definition.attributeChangedCallback
                   || !definition.observedAttributeSet.has(name)) return;
-              invokeReaction(
-                element,
-                definition.attributeChangedCallback,
-                [name, oldValue, newValue, namespace]);
+              // Attribute APIs already notify after their style checkpoint.
+              // Give them a nested reaction boundary even inside a structural
+              // operation's argument conversion or custom-element callback.
+              beginReactions();
+              try {
+                enqueueReaction(element, definition.attributeChangedCallback,
+                  [name, oldValue, newValue, namespace]);
+              } finally { endReactions(); }
             };
 
             function WebSceneCustomElementRegistry() {
@@ -3107,6 +3140,12 @@ struct v8_dom_runtime::implementation final {
               }, writable: true, configurable: true
             });
             Object.defineProperties(globalThis, {
+              __webSceneCustomElementsBeginReactions: {
+                value: beginReactions, configurable: true
+              },
+              __webSceneCustomElementsEndReactions: {
+                value: endReactions, configurable: true
+              },
               __webSceneCustomElementsNotifySubtree: {
                 value: notifySubtree, configurable: true
               },

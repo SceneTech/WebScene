@@ -215,6 +215,7 @@
     // first custom element. Once activated, the flag remains enabled for this
     // runtime so reactions in any outer or frame realm cannot be skipped.
     bool custom_elements_active{false};
+    custom_element_reaction_scope* active_custom_element_reaction_scope{nullptr};
     std::vector<std::string> loaded_resource_names;
     uint32_t next_timer_id{1};
     uint32_t active_timer_id{0};

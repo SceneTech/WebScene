@@ -272,6 +272,14 @@ int main()
             test_compiled_css_route_scaling(true);
             return 0;
         }
+        if (selected == "custom-element-checkpoints") {
+            auto* focused_engine = webscene_engine_create(0);
+            require(focused_engine != nullptr, "custom-element checkpoint engine creation failed");
+            test_custom_element_mutation_reactions_are_pay_for_use(focused_engine);
+            test_autonomous_custom_element_lifecycle(focused_engine);
+            webscene_engine_destroy(focused_engine);
+            return 0;
+        }
         if (selected == "runtime-diagnostics") {
             test_runtime_diagnostics();
             test_runtime_diagnostics_frame_and_failure();

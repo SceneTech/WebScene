@@ -257,6 +257,7 @@
         const v8::PropertyCallbackInfo<void>& info)
     {
         auto* self = current(info.GetIsolate());
+        custom_element_reaction_scope reactions(*self);
         auto* node = unwrap_node(info.Holder());
         if (node == nullptr) return;
         const auto is_character_data = node->kind == dom_node_kind::text

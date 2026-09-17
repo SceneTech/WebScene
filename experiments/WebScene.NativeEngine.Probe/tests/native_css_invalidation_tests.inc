@@ -116,7 +116,7 @@ void test_compiled_css_route_scaling(bool structural_only = false)
     // Two independent axes: grow the affected component and grow unrelated
     // DOM/rules. Actual matching/cascade work must follow only the first axis.
     for (const auto* shape : {"descendants", "siblings", "disabled", "variables", "relational", "identity", "dataset",
-            "tree-wide-position", "tree-position", "tree-siblings", "tree-relational", "tree-empty"}) {
+            "tree-wide-position", "tree-position", "tree-siblings", "tree-relational", "tree-empty", "tree-reactions"}) {
         if (structural_only && !std::string_view(shape).starts_with("tree-")) continue;
         for (const auto affected_count : {8, 128}) {
             std::vector<std::array<uint64_t, 8>> observations;
@@ -158,8 +158,10 @@ void test_compiled_css_route_scaling(bool structural_only = false)
                   } else if (shape === 'tree-relational') {
                     markup = '<div class="tree-list"></div>' + target.repeat(count);
                     rule = '.tree-list:has(.marker) ~ .matrix-target {width:41px}';
-                  } else if (shape === 'tree-empty') {
-                    markup = ('<div class="tree-list"><i class="marker"></i></div>' + target).repeat(count);
+                  } else if (shape === 'tree-empty' || shape === 'tree-reactions') {
+                    const marker = shape === 'tree-reactions'
+                      ? '<matrix-checkpoint class="marker"></matrix-checkpoint>' : '<i class="marker"></i>';
+                    markup = ('<div class="tree-list">' + marker + '</div>' + target).repeat(count);
                     rule = '.tree-list:empty + .matrix-target {width:41px}';
                   } else {
                     markup = ('<div class="matrix-target"><div class="branch"><i class="ready"></i></div></div>').repeat(count);
@@ -174,10 +176,25 @@ void test_compiled_css_route_scaling(bool structural_only = false)
                   const ready = Array.from(document.querySelectorAll('.ready'));
                   const trigger = document.getElementById('trigger');
                   const lists = Array.from(document.querySelectorAll('.tree-list'));
+                  const reactions = [];
+                  if (shape === 'tree-reactions') {
+                    customElements.define('matrix-checkpoint', class extends HTMLElement {
+                      connectedCallback() {
+                        if (this.target) reactions.push('connected:' + getComputedStyle(this.target).width);
+                      }
+                      disconnectedCallback() {
+                        reactions.push('disconnected:' + getComputedStyle(this.target).width);
+                      }
+                    });
+                    lists.forEach(list => { list.firstChild.target = list.nextElementSibling; });
+                  }
                   globalThis.matrixMutation = enabled => {
+                    reactions.length = 0;
                     if (shape.startsWith('tree-')) lists.forEach(list => {
-                      if (enabled !== (shape === 'tree-empty')) {
-                        const marker = document.createElement('i'); marker.className = 'marker';
+                      if (enabled !== (shape === 'tree-empty' || shape === 'tree-reactions')) {
+                        const marker = document.createElement(shape === 'tree-reactions' ? 'matrix-checkpoint' : 'i');
+                        marker.className = 'marker';
+                        if (shape === 'tree-reactions') marker.target = list.nextElementSibling;
                         list.insertBefore(marker, list.firstChild);
                       } else list.removeChild(list.firstChild);
                     });
@@ -189,6 +206,11 @@ void test_compiled_css_route_scaling(bool structural_only = false)
                     }
                     else if (shape === 'relational') ready.forEach(node => node.toggleAttribute('data-ready', enabled));
                     else trigger.className = enabled ? 'active' : '';
+                    // Assert outside callbacks: reported reaction exceptions
+                    // must not masquerade as a passing native regression.
+                    if (shape === 'tree-reactions' && (reactions.length !== count ||
+                        reactions.some(value => value !== (enabled ? 'disconnected:41px' : 'connected:11px'))))
+                      throw new Error('Structural reaction checkpoint mismatch: ' + reactions.join(','));
                     return targets.map(node => getComputedStyle(node).width).join(',');
                   };
                   return targets.map(node => getComputedStyle(node).width).join(',');

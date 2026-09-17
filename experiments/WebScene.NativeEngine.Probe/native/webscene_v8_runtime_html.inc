@@ -634,6 +634,7 @@
         const v8::PropertyCallbackInfo<void>& info)
     {
         auto* self = current(info.GetIsolate());
+        custom_element_reaction_scope reactions(*self);
         binding_callback_timer binding_timer(
             self->profile(binding_category::dom_mutation),
             self->profile_named("Element.innerHTML.set"));

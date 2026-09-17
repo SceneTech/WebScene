@@ -55,6 +55,12 @@ used.
   structural subjects, then inserted subtrees for ancestry/inheritance. Connected
   custom-element callbacks observe final sibling styles, including ancestor
   `:has()` and inherited variables. This replaces the former parent-subtree fallback.
+- Deliver structural custom-element reactions after the native mutation and style
+  invalidation finish. Nested boundaries use one FIFO per element, preserving
+  pending connected/disconnected ordering during reentrant operations. Failed
+  operations unwind their boundary without losing the original exception.
+  Documents with no valid custom-element definition make no reaction-bridge calls;
+  first definition during argument conversion lazily activates enclosing boundaries.
 - Fix `:empty` matching to ignore comments and empty text, but not whitespace text.
 
 ## Correctness and scaling gates
@@ -149,7 +155,7 @@ end-to-end Spotify result, or a Chrome-speed claim. Timing remains informational
 
 `css-child-list-invalidation.html` is a required-profile WPT-style contract,
 not an upstream WPT submission. Its initial 19 tests passed Chrome but exposed
-16 native failures on the preceding build. The expanded contract now passes
+16 native failures on the preceding build. The positional-index stage passes
 **50/50 in WebScene and Chrome**: removal/replacement/reorder APIs, both sides of
 reparenting, `:empty` character data, fragment/HTML connection checkpoints,
 nested negated positional selectors, inherited custom properties, and first-legend
@@ -179,8 +185,41 @@ the positional-index change. The structural contract passes Chrome 50/50.
 The production build also passes the 48-case semantic matrix and 50-check
 structural contract without certification telemetry.
 
-This stage does not complete every DOM checkpoint: disconnected custom-element
-reactions, variadic/fragment forms of `prepend`/`before`/`after`, and further
+### Disconnected reaction checkpoints
+
+The subsequent contract first reproduced eight failures: seven removal/replacement
+APIs delivered disconnected callbacks before detaching the element, and reparenting
+delivered them before destination attachment and both sides' style invalidation.
+All eight passed Chrome. Native reaction boundaries now defer callback delivery
+until the final mutation checkpoint, while keeping per-element FIFO ordering across
+nested operations. The expanded contract passes **63/63 in WebScene and Chrome**,
+including reentrant reinsertion, pending connection followed by nested removal,
+first registry activation during conversion, invalid hierarchy, and throwing
+argument conversion with exact exception identity. Six adjacent custom-element
+contracts (including upstream lifecycle tests) pass **118/118** checks.
+
+The native matrix adds a `tree-reactions` shape: 8/128 custom elements are removed
+and inserted beside `:empty`-dependent targets. Each callback reads and records its
+target's computed width; observations are asserted outside callbacks. The expanded
+**52-case production and certification matrix** passes. All eight CSS work counters
+remain identical with unrelated growth and stay within the linear component budget.
+For 128 reaction targets at both unrelated sizes: 512 plan lookups, 384 candidate
+visits, zero fallback visits, 1,408 compound checks, 512 rule checks, 896 cascades,
+512 cascade candidates, and zero positional sibling scans. Parser tests also pass.
+A native cold-document regression
+also checks zero begin/end reaction-bridge calls until the first valid definition.
+Seven adjacent native groups and five adjacent structural/attribute WPT contracts
+(35 checks) pass. These are local checks, not a remote CI or full custom-element
+conformance claim.
+
+Informational production timing for the new shape still grows with unrelated
+content (one 128-target sample: approximately 26 ms with 32 unrelated nodes/rules,
+77 ms with 1,024). This workload forces synchronous style reads after each mutation;
+the residual cost needs attribution, not a claim of end-to-end improvement. Broader
+cascade/layout profiling remains coordinated with #238/#240/#243.
+
+This stage does not complete every DOM checkpoint: variadic/fragment forms of
+`prepend`/`before`/`after`, and further
 character-data/CSSOM mutation paths still need the browser-referenced audit.
 The rest of the optimization plan remains open; no Chrome-speed advantage follows
 from the structural operation counts.

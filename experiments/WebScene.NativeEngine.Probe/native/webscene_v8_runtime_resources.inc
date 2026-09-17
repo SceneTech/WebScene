@@ -914,17 +914,15 @@
 
     void prefetch_connected_resources()
     {
-        if (!load_resource_callback || connected_resources.empty()) return;
+        if (connected_resources.empty()) return;
         for (auto& task : connected_resources) {
-            {
-                std::lock_guard lock(resource_prefetch_mutex);
-                if (prefetched_resources.size() >= maximum_resource_prefetches) return;
-            }
             if (task.node == nullptr) continue;
             auto task_context = task.context.Get(isolate);
             if (task_context.IsEmpty()) continue;
             activate_css_cascade(task_context);
             v8::Context::Scope task_context_scope(task_context);
+            if (begin_connected_resource_interception(task)) continue;
+            if (!load_resource_callback) continue;
             const auto& base = current_base_address();
             if (task.node->tag == "link") {
                 const auto href = task.node->attributes.find("href");
@@ -984,7 +982,99 @@
         return resource_root / relative;
     }
 
-    bool load_connected_resource(dom_node& node, v8::Local<v8::Object> wrapper)
+    static uint32_t connected_resource_kind(const dom_node& node)
+    {
+        return node.tag == "script" ? WEBSCENE_RESOURCE_SCRIPT
+            : node.tag == "link" ? WEBSCENE_RESOURCE_STYLESHEET
+            : node.tag == "img" ? WEBSCENE_RESOURCE_IMAGE
+            : WEBSCENE_RESOURCE_DATA;
+    }
+
+    static uint32_t connected_resource_destination(const dom_node& node)
+    {
+        return node.tag == "script" ? WEBSCENE_REQUEST_DESTINATION_SCRIPT
+            : node.tag == "link" ? WEBSCENE_REQUEST_DESTINATION_STYLE
+            : node.tag == "img" ? WEBSCENE_REQUEST_DESTINATION_IMAGE
+            : WEBSCENE_REQUEST_DESTINATION_NONE;
+    }
+
+    bool begin_connected_resource_interception(connected_resource_task& task)
+    {
+        if (task.interception_started) return task.controlled_fetch.valid();
+        task.interception_started = true;
+        if (task.node == nullptr) return false;
+        const auto attribute_name = task.node->tag == "link" ? "href" : "src";
+        const auto authored = task.node->attributes.find(attribute_name);
+        if (authored == task.node->attributes.end() || authored->second.empty()
+            || authored->second.starts_with("data:")
+            || authored->second.starts_with("blob:")
+            || object_urls.contains(authored->second)) {
+            return false;
+        }
+        const auto& base = current_base_address();
+        task.controlled_url = resolve_resource_url(authored->second, base);
+        resource_request_context request_context{
+            WEBSCENE_RESOURCE_INITIATOR_SUBRESOURCE,
+            current_security_origin(),
+            base,
+            WEBSCENE_FETCH_MODE_NONE,
+            connected_resource_destination(*task.node),
+            "GET", {}, {}, WEBSCENE_FETCH_CREDENTIALS_INCLUDE, {}};
+        request_context.cookie = cookie_header_for(
+            task.controlled_url, request_context);
+        task.controlled_fetch = enqueue_controlled_service_worker_fetch(
+            task.controlled_url, request_context);
+        if (task.controlled_fetch.valid()) {
+            task.controlled_deadline = std::chrono::steady_clock::now()
+                + std::chrono::seconds(30);
+        }
+        return task.controlled_fetch.valid();
+    }
+
+    bool has_ready_connected_resource_task() const
+    {
+        if (connected_resources.empty()) return false;
+        const auto now = std::chrono::steady_clock::now();
+        const auto& task = connected_resources.front();
+        return !task.interception_started || !task.controlled_fetch.valid()
+            || task.controlled_fetch.wait_for(std::chrono::seconds(0))
+                == std::future_status::ready
+            || (task.controlled_deadline != std::chrono::steady_clock::time_point{}
+                && now >= task.controlled_deadline);
+    }
+
+    bool load_connected_text_resource(
+        const std::string& value,
+        const std::string& base,
+        uint32_t kind,
+        std::string& content,
+        std::string& resolved_name,
+        std::shared_ptr<const immutable_text_source>* immutable_content,
+        const service_worker_fetch_result* controlled)
+    {
+        if (controlled == nullptr || !controlled->handled) {
+            return load_text_resource(
+                value, base, kind, content, resolved_name, immutable_content);
+        }
+        if (!controlled->error.empty() || controlled->status < 200U
+            || controlled->status >= 300U) {
+            return false;
+        }
+        if (immutable_content != nullptr) immutable_content->reset();
+        content = controlled->body;
+        resolved_name = controlled->url.empty()
+            ? resolve_resource_url(value, base)
+            : controlled->url;
+        record_feature(
+            "resource", "service-worker:intercepted-" + resource_kind_name(kind),
+            "supported", {}, "service-worker-fetch");
+        return true;
+    }
+
+    bool load_connected_resource(
+        dom_node& node,
+        v8::Local<v8::Object> wrapper,
+        const service_worker_fetch_result* controlled = nullptr)
     {
         auto local_context = isolate->GetCurrentContext();
         const auto dispatch_resource_event = [&](const char* type) {
@@ -1033,12 +1123,14 @@
                     ? (stylesheet = object_url->second,
                         stylesheet_name = href_iterator->second,
                         true)
-                    : load_text_resource(
+                    : load_connected_text_resource(
                         href_iterator->second,
                         base,
                         WEBSCENE_RESOURCE_STYLESHEET,
                         stylesheet,
-                        stylesheet_name);
+                        stylesheet_name,
+                        nullptr,
+                        controlled);
                 if (loaded) {
                     const auto first_new_rule = add_stylesheet(
                         std::move(stylesheet),
@@ -1084,7 +1176,9 @@
                 } else {
                     frame_last_error_value = "Unable to load connected stylesheet: " + href_iterator->second;
                     ++frame_script_error_count;
-                    return false;
+                    const auto dispatched = dispatch_resource_event("error");
+                    if (dispatched) frame_last_error_value.clear();
+                    return dispatched;
                 }
             }
         } else if (node.tag == "script") {
@@ -1094,16 +1188,19 @@
             std::shared_ptr<const immutable_text_source> immutable_source;
             std::string script_name;
             const auto& base = current_base_address();
-            if (!load_text_resource(
+            if (!load_connected_text_resource(
                     source_iterator->second,
                     base,
                     WEBSCENE_RESOURCE_SCRIPT,
                     source,
                     script_name,
-                    &immutable_source)) {
+                    &immutable_source,
+                    controlled)) {
                 frame_last_error_value = "Unable to load connected script: " + source_iterator->second;
                 ++frame_script_error_count;
-                return false;
+                const auto dispatched = dispatch_resource_event("error");
+                if (dispatched) frame_last_error_value.clear();
+                return dispatched;
             }
             std::string error;
             // A dynamically inserted external script and its load event are one
@@ -1119,7 +1216,7 @@
                 : execute_in_context(local_context,script_source,script_name,error,false,std::move(immutable_source)))) {
                 frame_last_error_value = "Connected script failed: " + error;
                 ++frame_script_error_count;
-                return false;
+                return dispatch_resource_event("error");
             }
             loaded_resource_names.push_back(resource_leaf_name(script_name));
             ++frame_script_execution_count;
@@ -1191,12 +1288,14 @@
                         true)
                     : decode_base64_data_url(source->second, markup)
                     ? (resolved_source = source->second, true)
-                    : load_text_resource(
+                    : load_connected_text_resource(
                         source->second,
                         base,
                         WEBSCENE_RESOURCE_IMAGE,
                         markup,
-                        resolved_source);
+                        resolved_source,
+                        nullptr,
+                        controlled);
                 if (!loaded) {
                     return mark_broken_image();
                 }

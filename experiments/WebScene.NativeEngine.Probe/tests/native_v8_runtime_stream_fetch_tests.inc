@@ -409,3 +409,215 @@ void test_cache_storage_and_controlled_fetch_broker()
               << " rssBefore=" << rss_before << " rssAfter=" << rss_after << '\n';
     webscene_engine_destroy(engine);
 }
+
+void test_controlled_connected_resource_interception()
+{
+    resource_server server{.content = {
+        {"https://connected-resource.test/index.html",
+            "<!doctype html><title>connected resource interception</title>"
+            "<div id='styled'>controlled</div>"},
+        {"https://connected-resource.test/next.html",
+            "<!doctype html><title>retired connected resource</title>"},
+        {"https://connected-resource.test/service-worker.js", R"JS(
+            const destinations = {};
+            self.addEventListener('install', event => event.waitUntil(skipWaiting()));
+            self.addEventListener('activate', event => event.waitUntil(clients.claim()));
+            self.addEventListener('fetch', event => {
+              const url = new URL(event.request.url);
+              destinations[url.pathname] = event.request.destination;
+              if (url.pathname === '/fallback.js') return;
+              if (url.pathname === '/denied.js') {
+                event.respondWith(Promise.reject(new Error('denied by controller')));
+                return;
+              }
+              if (url.pathname === '/pending.svg') {
+                event.respondWith(new Promise(() => {}));
+                return;
+              }
+              if (url.pathname === '/controlled.js' || url.pathname === '/cycle.js') {
+                event.respondWith(new Response(
+                  'globalThis.__controlledScript=(globalThis.__controlledScript||0)+1;',
+                  {headers:{'content-type':'text/javascript'}}));
+                return;
+              }
+              if (url.pathname === '/controlled.css' || url.pathname === '/cycle.css') {
+                event.respondWith(new Response('#styled{color:rgb(12, 34, 56)}',
+                  {headers:{'content-type':'text/css'}}));
+                return;
+              }
+              if (url.pathname === '/controlled.svg' || url.pathname === '/cycle.svg') {
+                event.respondWith(new Response(
+                  '<svg xmlns="http://www.w3.org/2000/svg" width="4" height="3" viewBox="0 0 4 3"><rect width="4" height="3"/></svg>',
+                  {headers:{'content-type':'image/svg+xml'}}));
+              }
+            });
+            self.addEventListener('message', event => {
+              if (event.data === 'destinations') event.source.postMessage(destinations);
+            });
+        )JS"},
+        {"https://connected-resource.test/fallback.js",
+            "globalThis.__hostFallback=(globalThis.__hostFallback||0)+1;"},
+        {"https://connected-resource.test/denied.js",
+            "globalThis.__deniedBypass=true;"}
+    }};
+    webscene_engine_options options{};
+    options.struct_size = sizeof(options);
+    options.resource_load_callback = load_test_resource;
+    options.resource_load_user_data = &server;
+    auto* engine = webscene_engine_create_with_options(&options);
+    require(engine != nullptr, "connected resource engine creation failed");
+    constexpr std::string_view address{"https://connected-resource.test/index.html"};
+    require(webscene_engine_load_url(engine, address.data(), address.size()) != 0U,
+        "connected resource navigation failed");
+    require(evaluate_until_equals(engine, "location.href", "connected-nav.js",
+            R"("https://connected-resource.test/index.html")", 2'500)
+            == R"("https://connected-resource.test/index.html")",
+        "connected resource document did not become ready");
+
+    webscene_engine_memory_metrics memory_before{sizeof(webscene_engine_memory_metrics)};
+    require(webscene_engine_get_memory_metrics(engine, &memory_before) != 0,
+        "connected resource memory baseline unavailable");
+    const auto rss_before = service_worker_test_peak_rss_bytes();
+    execute(engine, R"JS(
+      globalThis.__connectedGate = {complete:false,error:null,phase:'register',durations:[],destinations:null};
+      (async () => {
+        try {
+          const changed = new Promise(resolve => navigator.serviceWorker.addEventListener(
+            'controllerchange', resolve, {once:true}));
+          await navigator.serviceWorker.register('service-worker.js', {type:'module'});
+          if (!navigator.serviceWorker.controller) await changed;
+          __connectedGate.phase = 'controlled-script';
+          const load = (element, expectError = false) => new Promise((resolve, reject) => {
+            element.onload = () => expectError
+              ? reject(new Error('resource unexpectedly loaded')) : resolve('load');
+            element.onerror = () => expectError
+              ? resolve('error') : reject(new Error('resource failed'));
+            document.body.append(element);
+          });
+          const script = document.createElement('script');
+          script.src = 'controlled.js';
+          await load(script); script.remove();
+          if (__controlledScript !== 1) throw new Error('controlled script body not executed');
+
+          __connectedGate.phase = 'controlled-style';
+          const link = document.createElement('link');
+          link.rel = 'stylesheet'; link.href = 'controlled.css';
+          await load(link);
+          if (getComputedStyle(document.getElementById('styled')).color !== 'rgb(12, 34, 56)') {
+            throw new Error('controlled stylesheet body not applied');
+          }
+          link.remove();
+
+          __connectedGate.phase = 'controlled-image';
+          const image = document.createElement('img');
+          image.src = 'controlled.svg';
+          await load(image);
+          if (image.naturalWidth !== 4 || image.naturalHeight !== 3) {
+            throw new Error(`controlled image dimensions ${image.naturalWidth}x${image.naturalHeight}`);
+          }
+          image.remove();
+
+          __connectedGate.phase = 'fallback';
+          const fallback = document.createElement('script');
+          fallback.src = 'fallback.js';
+          await load(fallback); fallback.remove();
+          if (__hostFallback !== 1) throw new Error('unhandled request did not fall through');
+
+          __connectedGate.phase = 'denied';
+          const denied = document.createElement('script');
+          denied.src = 'denied.js';
+          await load(denied, true); denied.remove();
+          if (globalThis.__deniedBypass === true) {
+            throw new Error('handled rejection bypassed controller admission');
+          }
+
+          __connectedGate.phase = 'cycles';
+          for (let cycle = 0; cycle < 100; ++cycle) {
+            const started = performance.now();
+            const kind = cycle % 3;
+            const element = document.createElement(kind === 0 ? 'script' : kind === 1 ? 'link' : 'img');
+            if (kind === 0) element.src = `cycle.js?cycle=${cycle}`;
+            else if (kind === 1) {
+              element.rel = 'stylesheet'; element.href = `cycle.css?cycle=${cycle}`;
+            } else element.src = `cycle.svg?cycle=${cycle}`;
+            await load(element);
+            element.remove();
+            __connectedGate.durations.push(performance.now() - started);
+          }
+          __connectedGate.destinations = await new Promise(resolve => {
+            const listener = event => {
+              navigator.serviceWorker.removeEventListener('message', listener);
+              resolve(event.data);
+            };
+            navigator.serviceWorker.addEventListener('message', listener);
+            navigator.serviceWorker.controller.postMessage('destinations');
+          });
+          if (__connectedGate.destinations['/controlled.js'] !== 'script'
+              || __connectedGate.destinations['/controlled.css'] !== 'style'
+              || __connectedGate.destinations['/controlled.svg'] !== 'image') {
+            throw new Error(`resource destinations ${JSON.stringify(__connectedGate.destinations)}`);
+          }
+          __connectedGate.phase = 'done';
+        } catch (error) {
+          __connectedGate.error = String(error && error.stack || error);
+        } finally { __connectedGate.complete = true; }
+      })();
+    )JS", "connected-resource-gate.js");
+    const auto completed = evaluate_until_equals(engine, "__connectedGate.complete",
+        "connected-complete.js", "true", 5'000);
+    require(completed == "true",
+        "controlled connected resources did not complete at phase "
+            + evaluate(engine, "__connectedGate.phase", "connected-phase.js"));
+    require(evaluate(engine, "__connectedGate.error", "connected-error.js") == "null",
+        "connected resource gate failed: "
+            + evaluate(engine, "__connectedGate.error", "connected-error-detail.js"));
+    const auto p95 = std::stod(evaluate(engine, R"JS((() => {
+      const values = [...__connectedGate.durations].sort((a,b) => a-b);
+      return values[Math.ceil(values.length * .95) - 1];
+    })())JS", "connected-p95.js"));
+    require(p95 <= 100.0,
+        "connected resource 100-cycle p95 exceeded 100 ms: " + std::to_string(p95));
+    require(webscene_engine_request_low_memory(engine) != 0,
+        "connected resource low-memory request rejected");
+    webscene_engine_memory_metrics memory_after{sizeof(webscene_engine_memory_metrics)};
+    for (auto attempt = 0; attempt < 250; ++attempt) {
+        require(webscene_engine_get_memory_metrics(engine, &memory_after) != 0,
+            "connected resource final memory metrics unavailable");
+        if (memory_after.low_memory_notifications > memory_before.low_memory_notifications) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    require(memory_after.low_memory_notifications > memory_before.low_memory_notifications,
+        "connected resource low-memory collection did not complete");
+    require(memory_after.v8_used_heap_bytes
+            <= memory_before.v8_used_heap_bytes + 8U * 1024U * 1024U,
+        "connected resource cycles retained more than 8 MiB V8 heap");
+    const auto rss_after = service_worker_test_peak_rss_bytes();
+    require(rss_after <= rss_before + 64U * 1024U * 1024U,
+        "connected resource cycles exceeded 64 MiB RSS growth");
+    execute(engine, R"JS((() => {
+      const image = document.createElement('img');
+      image.src = 'pending.svg';
+      image.onload = () => { globalThis.__retiredResourceLoaded = true; };
+      document.body.append(image);
+    })())JS", "connected-pending-navigation.js");
+    const auto navigation_started = std::chrono::steady_clock::now();
+    constexpr std::string_view next_address{"https://connected-resource.test/next.html"};
+    require(webscene_engine_load_url(
+            engine, next_address.data(), next_address.size()) != 0U,
+        "navigation did not retire the pending connected resource");
+    require(evaluate_until_equals(engine, "location.href", "connected-retired-nav.js",
+            R"("https://connected-resource.test/next.html")", 2'500)
+            == R"("https://connected-resource.test/next.html")",
+        "navigation after pending connected resource did not complete");
+    const auto navigation_ms = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - navigation_started).count();
+    require(navigation_ms <= 500.0,
+        "pending connected resource retirement exceeded 500 ms");
+    std::cout << "Connected resource gate: cycles=100 p95=" << p95
+              << "ms heapBefore=" << memory_before.v8_used_heap_bytes
+              << " heapAfter=" << memory_after.v8_used_heap_bytes
+              << " rssBefore=" << rss_before
+              << " rssAfter=" << rss_after
+              << " retireNavigation=" << navigation_ms << "ms\n";
+    webscene_engine_destroy(engine);
+}

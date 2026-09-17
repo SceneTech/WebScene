@@ -235,10 +235,26 @@
         failed
     };
 
+    struct service_worker_fetch_result final {
+        bool handled{};
+        uint32_t status{200U};
+        std::string status_text{"OK"};
+        std::string url;
+        std::string response_type{"basic"};
+        bool redirected{};
+        std::vector<std::pair<std::string, std::string>> headers;
+        std::string body;
+        std::string error;
+    };
+
     struct connected_resource_task final {
         dom_node* node;
         v8::Global<v8::Context> context;
         v8::Global<v8::Object> wrapper;
+        std::shared_future<service_worker_fetch_result> controlled_fetch;
+        std::string controlled_url;
+        std::chrono::steady_clock::time_point controlled_deadline{};
+        bool interception_started{};
     };
 
     enum class resize_observer_box { content, border, device_pixel_content };

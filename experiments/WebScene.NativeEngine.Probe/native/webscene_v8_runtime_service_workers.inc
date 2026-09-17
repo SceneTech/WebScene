@@ -11,25 +11,21 @@
     static constexpr size_t maximum_service_worker_fetch_body_bytes =
         64U * 1024U * 1024U;
 
-    struct service_worker_fetch_result final {
-        bool handled{};
-        uint32_t status{200U};
-        std::string status_text{"OK"};
-        std::string url;
-        std::string response_type{"basic"};
-        bool redirected{};
-        std::vector<std::pair<std::string, std::string>> headers;
-        std::string body;
-        std::string error;
-    };
-
     struct service_worker_fetch_request final {
         std::string url;
         std::string method{"GET"};
+        uint32_t destination{WEBSCENE_REQUEST_DESTINATION_NONE};
         std::vector<std::pair<std::string, std::string>> headers;
         std::string client_id;
         uint64_t client_generation{};
         std::promise<service_worker_fetch_result> promise;
+        std::function<void()> notify_client;
+
+        void settle(service_worker_fetch_result result)
+        {
+            promise.set_value(std::move(result));
+            if (notify_client) notify_client();
+        }
     };
 
     static void set_service_worker_client_properties(
@@ -887,7 +883,7 @@
                                 .ToLocal(&request_constructor_value)
                             || !request_constructor_value->IsFunction()) {
                             failure.error = "Service worker fetch dispatcher is unavailable";
-                            fetch_request->promise.set_value(std::move(failure));
+                            fetch_request->settle(std::move(failure));
                             std::lock_guard lock(state->mutex);
                             if (state->active_fetches > 0U) --state->active_fetches;
                         } else {
@@ -896,6 +892,21 @@
                                 realm,
                                 js_string(child->isolate, "method"),
                                 js_dom_string(child->isolate, fetch_request->method)).Check();
+                            const auto destination = fetch_request->destination
+                                    == WEBSCENE_REQUEST_DESTINATION_SCRIPT ? "script"
+                                : fetch_request->destination
+                                    == WEBSCENE_REQUEST_DESTINATION_STYLE ? "style"
+                                : fetch_request->destination
+                                    == WEBSCENE_REQUEST_DESTINATION_IMAGE ? "image"
+                                : fetch_request->destination
+                                    == WEBSCENE_REQUEST_DESTINATION_DOCUMENT ? "document"
+                                : fetch_request->destination
+                                    == WEBSCENE_REQUEST_DESTINATION_FONT ? "font"
+                                : "";
+                            options->Set(
+                                realm,
+                                js_string(child->isolate, "destination"),
+                                js_string(child->isolate, destination)).Check();
                             auto headers = v8::Array::New(
                                 child->isolate,
                                 static_cast<int>(fetch_request->headers.size()));
@@ -920,7 +931,7 @@
                             if (!request_constructor_value.As<v8::Function>()->NewInstance(
                                     realm, 2, request_arguments).ToLocal(&request_value)) {
                                 failure.error = child->describe_reported_exception(caught, realm);
-                                fetch_request->promise.set_value(std::move(failure));
+                                fetch_request->settle(std::move(failure));
                                 std::lock_guard lock(state->mutex);
                                 if (state->active_fetches > 0U) --state->active_fetches;
                             } else {
@@ -946,7 +957,7 @@
                                     || !dispatched->IsPromise()) {
                                     failure.error = child->describe_reported_exception(
                                         caught, realm);
-                                    fetch_request->promise.set_value(std::move(failure));
+                                    fetch_request->settle(std::move(failure));
                                     std::lock_guard lock(state->mutex);
                                     if (state->active_fetches > 0U) --state->active_fetches;
                                 } else {
@@ -1053,6 +1064,27 @@
                     for (auto iterator = pending_fetches.begin();
                          iterator != pending_fetches.end();) {
                         auto promise = iterator->promise.Get(child->isolate);
+                        auto client_retired = false;
+                        {
+                            std::lock_guard lock(state->mutex);
+                            const auto client = state->clients.find(
+                                iterator->request->client_id);
+                            client_retired = client == state->clients.end()
+                                || client->second.generation
+                                    != iterator->request->client_generation;
+                            if (client_retired && state->active_fetches > 0U) {
+                                --state->active_fetches;
+                            }
+                        }
+                        if (client_retired) {
+                            service_worker_fetch_result retired;
+                            retired.handled = true;
+                            retired.error = "Service worker fetch client was retired";
+                            iterator->request->settle(std::move(retired));
+                            iterator->promise.Reset();
+                            iterator = pending_fetches.erase(iterator);
+                            continue;
+                        }
                         if (promise->State() == v8::Promise::kPending) {
                             ++iterator;
                             continue;
@@ -1123,17 +1155,9 @@
                         }
                         {
                             std::lock_guard lock(state->mutex);
-                            const auto client = state->clients.find(
-                                iterator->request->client_id);
-                            if (client == state->clients.end()
-                                || client->second.generation
-                                    != iterator->request->client_generation) {
-                                result.handled = true;
-                                result.error = "Service worker fetch client was retired";
-                            }
                             if (state->active_fetches > 0U) --state->active_fetches;
                         }
-                        iterator->request->promise.set_value(std::move(result));
+                        iterator->request->settle(std::move(result));
                         iterator->promise.Reset();
                         iterator = pending_fetches.erase(iterator);
                     }
@@ -1653,6 +1677,7 @@
         request->url = url;
         request->method = request_context.method.empty()
             ? "GET" : request_context.method;
+        request->destination = request_context.destination;
         if (!request_context.content_type.empty()) {
             request->headers.emplace_back(
                 "content-type", request_context.content_type);
@@ -1662,6 +1687,7 @@
         }
         request->client_id = client->descriptor.id;
         request->client_generation = client->descriptor.generation;
+        request->notify_client = runtime_work_available;
         auto future = request->promise.get_future().share();
         {
             std::lock_guard lock(runtime->mutex);
@@ -1672,14 +1698,14 @@
                 service_worker_fetch_result result;
                 result.handled = true;
                 result.error = "Service worker fetch client was retired";
-                request->promise.set_value(std::move(result));
+                request->settle(std::move(result));
                 return future;
             }
             if (runtime->active_fetches >= maximum_service_worker_fetches) {
                 service_worker_fetch_result result;
                 result.handled = true;
                 result.error = "Service worker fetch queue capacity exhausted";
-                request->promise.set_value(std::move(result));
+                request->settle(std::move(result));
                 return future;
             }
             ++runtime->active_fetches;

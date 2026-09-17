@@ -1,0 +1,80 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Controlled connected resource interception</title>
+<div id="styled">controlled</div>
+<script>
+  const state = window.__webSceneWptState = {
+    complete:false, harness:null, results:[], errors:[], diagnostics:[]
+  };
+  function record(name, condition, detail = 'Contract failed') {
+    state.results.push({name, status:condition ? 'PASS' : 'FAIL',
+      message:condition ? null : detail, stack:null});
+  }
+  const load = (element, expectError = false) => new Promise((resolve, reject) => {
+    element.onload = () => expectError
+      ? reject(new Error('resource unexpectedly loaded')) : resolve('load');
+    element.onerror = () => expectError
+      ? resolve('error') : reject(new Error('resource failed'));
+    document.body.append(element);
+  });
+  (async () => {
+    const changed = new Promise(resolve => navigator.serviceWorker.addEventListener(
+      'controllerchange', resolve, {once:true}));
+    const registration = await navigator.serviceWorker.register(
+      'controlled-connected-resources-worker.js');
+    if (!navigator.serviceWorker.controller) await changed;
+
+    const script = document.createElement('script');
+    script.src = 'connected-script.js';
+    await load(script); script.remove();
+    const link = document.createElement('link');
+    link.rel = 'stylesheet'; link.href = 'connected-style.css';
+    await load(link);
+    const image = document.createElement('img');
+    image.src = 'connected-image.svg';
+    await load(image);
+    const destinations = await new Promise(resolve => {
+      const listener = event => {
+        navigator.serviceWorker.removeEventListener('message', listener);
+        resolve(event.data);
+      };
+      navigator.serviceWorker.addEventListener('message', listener);
+      navigator.serviceWorker.controller.postMessage('destinations');
+    });
+    record('controller supplies connected script, stylesheet, and image bodies',
+      __connectedScript === 1
+        && getComputedStyle(document.getElementById('styled')).color === 'rgb(12, 34, 56)'
+        && image.naturalWidth === 4 && image.naturalHeight === 3,
+      JSON.stringify({script:globalThis.__connectedScript,
+        color:getComputedStyle(document.getElementById('styled')).color,
+        width:image.naturalWidth,height:image.naturalHeight}));
+    link.remove();
+    image.remove();
+    record('FetchEvent Request carries element destinations',
+      destinations[new URL('connected-script.js', location.href).pathname] === 'script'
+        && destinations[new URL('connected-style.css', location.href).pathname] === 'style'
+        && destinations[new URL('connected-image.svg', location.href).pathname] === 'image',
+      JSON.stringify(destinations));
+
+    const fallback = document.createElement('script');
+    fallback.src = 'controlled-connected-fallback.js';
+    await load(fallback); fallback.remove();
+    const denied = document.createElement('script');
+    denied.src = 'controlled-connected-denied.js';
+    await load(denied, true); denied.remove();
+    record('unhandled requests fall through while handled failures stay closed',
+      __connectedHostFallback === 1 && globalThis.__connectedDeniedBypass !== true,
+      JSON.stringify({fallback:globalThis.__connectedHostFallback,
+        denied:globalThis.__connectedDeniedBypass}));
+    await registration.unregister();
+  })().catch(error => {
+    state.errors.push(String(error && error.stack || error));
+    record('contract completed', false, state.errors[0]);
+  }).finally(() => {
+    const failure = state.results.find(result => result.status !== 'PASS');
+    state.harness = failure
+      ? {status:1, message:failure.message, stack:failure.stack}
+      : {status:0, message:null, stack:null};
+    state.complete = true;
+  });
+</script>

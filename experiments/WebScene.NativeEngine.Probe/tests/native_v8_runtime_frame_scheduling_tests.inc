@@ -552,13 +552,33 @@ void test_dom_element_constructor_identity(webscene_engine* engine)
         (() => {
           document.body.innerHTML = '';
           const outer = document.createElement('div');
+          const anchor = document.createElement('a');
           outer.style.borderLeft = '3px solid black';
           outer.style.borderTop = '5px solid black';
           document.body.appendChild(outer);
+          outer.appendChild(anchor);
+          let stableAnchorChecks = 0;
+          for (let index = 0; index < 4096; ++index) {
+            stableAnchorChecks += outer.firstChild === anchor
+              && anchor instanceof HTMLAnchorElement;
+          }
+          let illegalAnchorConstruction = false;
+          try { new HTMLAnchorElement(); }
+          catch (error) { illegalAnchorConstruction = error instanceof TypeError; }
           globalThis.__outerElementIdentity = {
             node: outer instanceof Node,
             element: outer instanceof Element,
             htmlElement: outer instanceof HTMLElement,
+            anchorConstructor: typeof HTMLAnchorElement,
+            anchor: anchor instanceof HTMLAnchorElement,
+            anchorHtmlElement: anchor instanceof HTMLElement,
+            nonAnchor: outer instanceof HTMLAnchorElement,
+            ownerAnchor:
+              anchor instanceof anchor.ownerDocument.defaultView.HTMLAnchorElement,
+            anchorPrototype:
+              Object.getPrototypeOf(HTMLAnchorElement.prototype) === HTMLElement.prototype,
+            stableAnchorChecks,
+            illegalAnchorConstruction,
             ownerElement: outer instanceof outer.ownerDocument.defaultView.Element,
             ownerHtmlElement:
               outer instanceof outer.ownerDocument.defaultView.HTMLElement,
@@ -572,11 +592,18 @@ void test_dom_element_constructor_identity(webscene_engine* engine)
           frameDocument.write(
             '<html><body><script>'
             + 'const element = document.createElement("div");'
+            + 'const anchor = document.createElement("a");'
             + 'document.body.appendChild(element);'
+            + 'document.body.appendChild(anchor);'
             + 'globalThis.__elementIdentity = {'
             + 'node: element instanceof Node,'
             + 'element: element instanceof Element,'
             + 'htmlElement: element instanceof HTMLElement,'
+            + 'anchorConstructor: typeof HTMLAnchorElement,'
+            + 'anchor: anchor instanceof HTMLAnchorElement,'
+            + 'anchorHtmlElement: anchor instanceof HTMLElement,'
+            + 'nonAnchor: element instanceof HTMLAnchorElement,'
+            + 'ownerAnchor: anchor instanceof document.defaultView.HTMLAnchorElement,'
             + 'ownerElement: element instanceof document.defaultView.Element,'
             + 'ownerHtmlElement: element instanceof document.defaultView.HTMLElement'
             + '};'
@@ -592,7 +619,7 @@ void test_dom_element_constructor_identity(webscene_engine* engine)
         })
     )JS", "native-dom-element-constructor-identity-result.js");
     require(
-        result == R"({"outer":{"node":true,"element":true,"htmlElement":true,"ownerElement":true,"ownerHtmlElement":true,"clientLeft":3,"clientTop":5},"frame":{"node":true,"element":true,"htmlElement":true,"ownerElement":true,"ownerHtmlElement":true}})",
+        result == R"({"outer":{"node":true,"element":true,"htmlElement":true,"anchorConstructor":"function","anchor":true,"anchorHtmlElement":true,"nonAnchor":false,"ownerAnchor":true,"anchorPrototype":true,"stableAnchorChecks":4096,"illegalAnchorConstruction":true,"ownerElement":true,"ownerHtmlElement":true,"clientLeft":3,"clientTop":5},"frame":{"node":true,"element":true,"htmlElement":true,"anchorConstructor":"function","anchor":true,"anchorHtmlElement":true,"nonAnchor":false,"ownerAnchor":true,"ownerElement":true,"ownerHtmlElement":true}})",
         "DOM wrappers did not expose Element identity or client border insets: "
             + result);
 }

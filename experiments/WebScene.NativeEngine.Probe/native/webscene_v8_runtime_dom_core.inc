@@ -1513,6 +1513,8 @@
             ? (node.namespace_uri() == dom_node::html_namespace_uri
                 ? (node.tag == "slot"
                     ? html_slot_element_template.Get(isolate)
+                    : node.tag == "a"
+                        ? html_anchor_element_template.Get(isolate)
                     : node.tag == "dialog"
                         ? html_dialog_element_template.Get(isolate)
                     : node.tag == "form"

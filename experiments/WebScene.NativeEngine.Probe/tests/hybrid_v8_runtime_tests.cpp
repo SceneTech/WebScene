@@ -362,6 +362,68 @@ void test_web_crypto_aes_gcm_shutdown_is_bounded() {
         "AES-GCM cancellation blocked realm shutdown");
 }
 
+void test_web_crypto_aes_gcm_short_lived_key_reclamation() {
+    webscene_native::native_document document;
+    webscene_native::v8_dom_runtime runtime(document,
+        []{return webscene_native::v8_dom_runtime::viewport_metrics{640,480,1,0};});
+    std::string result;
+    runtime.register_compiled_template("aes-key-reclamation-result", [&](auto& dom, const std::string& value) -> auto& {
+        result = value;
+        return dom.create_element("span");
+    });
+    require(runtime.initialize(), "AES-GCM short-lived key runtime failed");
+    require(runtime.execute(R"JS(
+      (async () => {
+        const serverKey = new Uint8Array(32);
+        for (let index = 0; index < serverKey.length; ++index)
+          serverKey[index] = (index * 17 + 29) & 255;
+        const plain = new TextEncoder().encode('{"scenetech":"server-key-secret"}');
+        const started = performance.now();
+        for (let iteration = 0; iteration < 96; ++iteration) {
+          // Generate and export a client half, derive/import a working key,
+          // then encrypt a persisted secret.
+          const clientKeyObject = await crypto.subtle.generateKey(
+            {name:'AES-GCM',length:256}, true, ['encrypt','decrypt']);
+          const clientKey = new Uint8Array(await crypto.subtle.exportKey('raw', clientKeyObject));
+          const derived = clientKey.map((value, index) => value ^ serverKey[index]);
+          const key = await crypto.subtle.importKey(
+            'raw', derived, {name:'AES-GCM',length:256}, true, ['encrypt','decrypt']);
+          const iv = crypto.getRandomValues(new Uint8Array(12));
+          const cipher = new Uint8Array(await crypto.subtle.encrypt(
+            {name:'AES-GCM',iv}, key, plain));
+
+          // Recover nonzero-offset slices from the persisted
+          // client-key/IV/ciphertext aggregate and import again.
+          const persisted = new Uint8Array(32 + 12 + cipher.byteLength);
+          persisted.set(clientKey, 0); persisted.set(iv, 32); persisted.set(cipher, 44);
+          const storedClientKey = persisted.subarray(0, 32);
+          const storedIv = persisted.subarray(32, 44);
+          const storedCipher = persisted.subarray(44);
+          const reopenedDerived = storedClientKey.map(
+            (value, index) => value ^ serverKey[index]);
+          const reopenedKey = await crypto.subtle.importKey(
+            'raw', reopenedDerived, {name:'AES-GCM',length:256}, true,
+            ['encrypt','decrypt']);
+          const clear = new Uint8Array(await crypto.subtle.decrypt(
+            {name:'AES-GCM',iv:storedIv}, reopenedKey, storedCipher));
+          if (clear.byteLength !== plain.byteLength
+              || !clear.every((value, index) => value === plain[index]))
+            throw Error(`AES-GCM persisted round trip ${iteration} changed`);
+        }
+        if (performance.now() - started >= 8000)
+          throw Error('96 AES-GCM persisted round trips exceeded bound');
+        document.createCompiledTemplate('aes-key-reclamation-result', 1);
+      })().catch(error => document.createCompiledTemplate(
+        'aes-key-reclamation-result', `${error.name}: ${error.message}`));
+    )JS", "webcrypto-aes-gcm-key-reclamation"), runtime.last_error().c_str());
+    for (unsigned index = 0; index < 10000 && result.empty(); ++index) {
+        require(runtime.pump_task(), runtime.last_error().c_str());
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    require(result == "1",
+        result.empty() ? "AES-GCM key reclamation promise did not settle" : result.c_str());
+}
+
 void test_web_crypto_aes_cbc_decrypt_vectors_and_errors() {
     webscene_native::native_document document;
     webscene_native::v8_dom_runtime runtime(document,
@@ -1208,6 +1270,7 @@ int main() {
             if (selected == "webcrypto-aes-gcm") {
                 test_web_crypto_aes_gcm_vectors_realms_and_bounds();
                 test_web_crypto_aes_gcm_shutdown_is_bounded();
+                test_web_crypto_aes_gcm_short_lived_key_reclamation();
                 return 0;
             }
             if (selected == "webcrypto-aes-cbc") {
@@ -1229,6 +1292,7 @@ int main() {
         test_web_crypto_digest_shutdown_is_bounded();
         test_web_crypto_aes_gcm_vectors_realms_and_bounds();
         test_web_crypto_aes_gcm_shutdown_is_bounded();
+        test_web_crypto_aes_gcm_short_lived_key_reclamation();
         test_web_crypto_aes_cbc_decrypt_vectors_and_errors();
         test_web_crypto_hmac_vectors_and_bounds();
         test_blob_worker_source_lifetime();

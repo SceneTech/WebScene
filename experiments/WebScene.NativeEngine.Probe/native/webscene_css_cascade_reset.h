@@ -195,6 +195,7 @@ inline void reset_cascaded_style(dom_node& node,
                 textual->svg_stroke_width.clear();
             textual->list_style_position.clear();
             textual->list_style_type.clear();
+            textual->effect_values.clear();
             if ((node.style.inline_property_mask & inline_text_align) == 0U) {
                 textual->text_align.clear();
             }

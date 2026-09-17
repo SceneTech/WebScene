@@ -1,5 +1,6 @@
 #pragma once
 #include "webscene_css_property_mask.h"
+#include "webscene_css_effect_values.h"
 
 namespace webscene_native::css {
 inline float inherited_font_size(const dom_node& node)
@@ -288,6 +289,17 @@ bool apply_text_value(dom_node& node,const std::string& name,const std::string& 
                     decision.classification = "unsupported";
                     decision.semantic_slice = "auto, CSS colors, system colors, and inheritance";
                 }
+            }
+        } else if (is_effect_property(name)) {
+            const auto normalized = normalize_effect_value(name, value);
+            if (!normalized.has_value()) {
+                decision.classification = "unsupported";
+                decision.semantic_slice = "invalid retained-effect syntax";
+            } else {
+                node.style.mutable_textual().effect_values[name] = *normalized;
+                decision.classification = "partially-supported";
+                decision.semantic_slice =
+                    "syntax and computed value; retained-scene paint is separately qualified";
             }
         } else if (name == "cursor" && !is_inline(inline_cursor)) {
             node.style.mutable_textual().cursor =

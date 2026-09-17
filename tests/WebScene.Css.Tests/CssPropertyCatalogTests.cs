@@ -38,6 +38,11 @@ public sealed class CssPropertyCatalogTests
     [InlineData("transform-origin")]
     [InlineData("color-scheme")]
     [InlineData("accentColor")]
+    [InlineData("maskImage")]
+    [InlineData("mask-size")]
+    [InlineData("clipPath")]
+    [InlineData("filter")]
+    [InlineData("backdropFilter")]
     public void ExposesSupportedCssomProperties(string name)
         => Assert.True(CssPropertyCatalog.IsSupported(name));
 
@@ -61,6 +66,14 @@ public sealed class CssPropertyCatalogTests
     [InlineData("color-scheme", "light dark", true)]
     [InlineData("color-scheme", "sepia", false)]
     [InlineData("accent-color", "auto", true)]
+    [InlineData("mask-image", "linear-gradient(black, transparent)", true)]
+    [InlineData("mask-repeat", "no-repeat", true)]
+    [InlineData("mask-repeat", "bounce", false)]
+    [InlineData("clip-path", "inset(1px 2px)", true)]
+    [InlineData("clip-path", "star(1px)", false)]
+    [InlineData("filter", "brightness(0.5) blur(2px)", true)]
+    [InlineData("filter", "unknown(1)", false)]
+    [InlineData("backdrop-filter", "none", true)]
     public void ValidatesCssomValuesWithoutFrameworkKnowledge(string name, string value, bool expected)
         => Assert.Equal(expected, CssPropertyCatalog.IsValidCssomValue(name, value));
 }

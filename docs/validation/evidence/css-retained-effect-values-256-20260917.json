@@ -1,0 +1,71 @@
+{
+  "schema": "webscene-css-retained-effect-values-qualification-v1",
+  "recordedAt": "2026-09-17",
+  "baseCommit": "de85116adcba2cf231c7a731ae82aebc489cf116",
+  "issue": 256,
+  "scope": {
+    "qualified": "syntax validation, computed values, mutation, allocation, and cleanup",
+    "notQualified": "retained-scene mask, clip, filter, and backdrop painting"
+  },
+  "gates": {
+    "nativeWpt": {
+      "engineIdentity": "abi=3;sha256=e4266ca8cbe372d06a9f886796f4ff106abcde443ed668ea19c2faa95d03c235",
+      "profileSha256": "e1104fcda8ff0722b40b6529cd9f84cde365900d9498c68c38ea00527ce6034c",
+      "documentsPassed": 1,
+      "documentsTotal": 1,
+      "subtestsPassed": 10,
+      "subtestsTotal": 10,
+      "durationSeconds": 0.1545814,
+      "reportBytes": 2746,
+      "reportMaximumBytes": 65536,
+      "reportSha256": "bee13ac7d9376691a655e369c522fb09e4f1ca1a44bb042395e363484dcded1f"
+    },
+    "chromeOracle": {
+      "identity": "Google Chrome 153.0.8010.48",
+      "documentsPassed": 1,
+      "documentsTotal": 1,
+      "subtestsPassed": 10,
+      "subtestsTotal": 10,
+      "durationMilliseconds": 69,
+      "reportBytes": 2403,
+      "reportMaximumBytes": 65536,
+      "reportSha256": "3c928556500ef2e4464641aa755188a3aa9e56028911d4cfeb0984468eb9ee90"
+    },
+    "nativeLifecycle": {
+      "descendants": 4096,
+      "cycles": 100,
+      "states": 200,
+      "elapsedMilliseconds": 11171.1,
+      "maximumMilliseconds": 15000,
+      "minimumFixtureNodeDelta": 4098,
+      "maximumFixtureNodeDelta": 4102,
+      "maximumRetainedNodeDelta": 1,
+      "settledAnimationFrameDemand": 0,
+      "peakTextualStyleCountDelta": 4099,
+      "peakTextualStyleStorageGrowthBytes": 7727735,
+      "maximumTextualStyleStorageGrowthBytes": 33554432,
+      "maximumPostCleanupHeapGrowthBytes": 33554432
+    },
+    "portableCss": {
+      "net8TestsPassed": 377,
+      "net8TestsTotal": 377,
+      "net10TestsPassed": 377,
+      "net10TestsTotal": 377
+    },
+    "portableNativeBuild": {
+      "stepsPassed": 42,
+      "stepsTotal": 42
+    },
+    "v8Native": {
+      "targetsBuilt": 1,
+      "targetsTotal": 1,
+      "ctestsPassed": 1,
+      "ctestsTotal": 1
+    }
+  },
+  "ownership": {
+    "pullRequest245Head": "5c72775651bc56505e0ef4370cb5265afb4c9605",
+    "pullRequest245Files": 64,
+    "overlappingFiles": 0
+  }
+}

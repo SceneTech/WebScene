@@ -579,6 +579,10 @@ struct node_style final {
         // Empty means inherit; computed CSSOM supplies the initial root value.
         std::string color_scheme;
         std::string accent_color;
+        // Syntax/computed-value state for retained-scene effects. Paint support
+        // is qualified independently; keeping the tokens here avoids enlarging
+        // the hot style record for every node.
+        std::unordered_map<std::string, std::string> effect_values;
         // Authored cursor token. Cursor is inherited, so an empty value means
         // the host projection resolves the nearest declaration or `auto`.
         std::string cursor;

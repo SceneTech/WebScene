@@ -323,7 +323,7 @@
     uint32_t active_stylesheet_owner_id{0};
     uint32_t active_stylesheet_shadow_scope_root_id{0};
     std::unordered_map<std::string, css_opacity_keyframes> opacity_keyframes;
-    css_index_string_map<std::vector<size_t>> css_rules_by_class;
+    css_class_index_map<std::vector<size_t>> css_rules_by_class;
     css_index_string_map<std::vector<size_t>> css_rules_by_id;
     css_index_string_map<std::vector<size_t>> css_rules_by_tag;
     css_index_string_map<std::vector<size_t>> css_rules_by_attribute;

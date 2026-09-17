@@ -250,11 +250,7 @@
 #if defined(WEBSCENE_NATIVE_ENGINE_MEDIA_REFRESH_BENCHMARK_COUNTERS)
                 media_refresh_class_lookups.fetch_add(1U, std::memory_order_relaxed);
 #endif
-#if defined(WEBSCENE_NATIVE_ENGINE_CSS_CLASS_LOOKUP_VIEW_EXPERIMENT)
-                append_candidates(
-                    css_rules_by_class,
-                    class_name);
-#else
+#if defined(WEBSCENE_NATIVE_ENGINE_CSS_OWNED_CLASS_LOOKUP_CONTROL)
 #if defined(WEBSCENE_NATIVE_ENGINE_MEDIA_REFRESH_BENCHMARK_COUNTERS)
                 media_refresh_owned_class_lookup_keys.fetch_add(1U, std::memory_order_relaxed);
                 media_refresh_owned_class_lookup_bytes.fetch_add(
@@ -263,6 +259,10 @@
                 append_candidates(
                     css_rules_by_class,
                     std::string(class_name));
+#else
+                append_candidates(
+                    css_rules_by_class,
+                    class_name);
 #endif
             });
         sort_css_candidates(candidates);
@@ -384,7 +384,7 @@
         };
         const auto index_contains_new_rule = [&contains_new_rule](
             const auto& index,
-            const std::string& key) {
+            const auto& key) {
             const auto match = index.find(key);
             return match != index.end() && contains_new_rule(match->second);
         };
@@ -415,7 +415,11 @@
             if (cursor > start
                 && index_contains_new_rule(
                     css_rules_by_class,
+#if defined(WEBSCENE_NATIVE_ENGINE_CSS_OWNED_CLASS_LOOKUP_CONTROL)
                     std::string(classes.substr(start, cursor - start)))) {
+#else
+                    classes.substr(start, cursor - start))) {
+#endif
                 return true;
             }
         }
@@ -437,7 +441,7 @@
             candidates.insert(candidates.end(), first, source.end());
         };
         append_new_candidates(unindexed_css_rules);
-        const auto append_candidates = [&](const auto& index, const std::string& key) {
+        const auto append_candidates = [&](const auto& index, const auto& key) {
             const auto match = index.find(key);
             if (match != index.end()) {
                 append_new_candidates(match->second);
@@ -467,7 +471,11 @@
             if (class_cursor > start) {
                 append_candidates(
                     css_rules_by_class,
+#if defined(WEBSCENE_NATIVE_ENGINE_CSS_OWNED_CLASS_LOOKUP_CONTROL)
                     std::string(classes.substr(start, class_cursor - start)));
+#else
+                    classes.substr(start, class_cursor - start));
+#endif
             }
         }
         sort_css_candidates(candidates);

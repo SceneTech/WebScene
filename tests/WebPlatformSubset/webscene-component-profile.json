@@ -2266,6 +2266,21 @@
       ],
       "reason": "Candidate passes through native document navigation, preserving parser raw-text/comment/template semantics. Prepared-markup regex loading cannot qualify this parsing regression.",
       "nativeNavigation": true
+    },
+    {
+      "path": "contracts/css-class-index-cascade-mutation.html",
+      "type": "contract",
+      "capabilities": [
+        "css-class-index-lookup",
+        "multi-class-compound-cascade",
+        "class-mutation-invalidation"
+      ],
+      "evidence": [
+        "direct-chrome-neutral-contract",
+        "native-neutral-contract",
+        "bounded-class-lookup-allocation-benchmark"
+      ],
+      "reason": "Product-neutral regression for non-owning class-index lookup. Multiple class names longer than the common small-string capacity must resolve independent and compound stylesheet rules, then invalidate and recascade after className and classList mutations. The paired native benchmark requires identical cascade work and checksums while bounding temporary owned class lookup keys and bytes at zero."
     }
   ],
   "harnessBlocked": [],

@@ -47,6 +47,11 @@ struct compiled_css_compound final {
 struct transparent_string_hash final {
     using is_transparent = void;
 
+    size_t operator()(const std::string& value) const noexcept
+    {
+        return std::hash<std::string>{}(value);
+    }
+
     size_t operator()(std::string_view value) const noexcept
     {
         return std::hash<std::string_view>{}(value);
@@ -56,22 +61,28 @@ struct transparent_string_hash final {
 struct transparent_string_equal final {
     using is_transparent = void;
 
+    bool operator()(const std::string& left, const std::string& right) const noexcept
+    {
+        return std::equal_to<std::string>{}(left, right);
+    }
+
     bool operator()(std::string_view left, std::string_view right) const noexcept
     {
         return left == right;
     }
 };
 
-#if defined(WEBSCENE_NATIVE_ENGINE_CSS_CLASS_LOOKUP_VIEW_EXPERIMENT)
-template<typename Value>
-using css_index_string_map = std::unordered_map<
-    std::string, Value, transparent_string_hash, transparent_string_equal>;
-using css_index_string_set = std::unordered_set<
-    std::string, transparent_string_hash, transparent_string_equal>;
-#else
 template<typename Value>
 using css_index_string_map = std::unordered_map<std::string, Value>;
 using css_index_string_set = std::unordered_set<std::string>;
+
+#if defined(WEBSCENE_NATIVE_ENGINE_CSS_OWNED_CLASS_LOOKUP_CONTROL)
+template<typename Value>
+using css_class_index_map = std::unordered_map<std::string, Value>;
+#else
+template<typename Value>
+using css_class_index_map = std::unordered_map<
+    std::string, Value, transparent_string_hash, transparent_string_equal>;
 #endif
 
     struct compiled_css_selector final {
@@ -188,7 +199,7 @@ using css_index_string_set = std::unordered_set<std::string>;
         uint32_t stylesheet_owner_id{0};
         uint32_t stylesheet_shadow_scope_root_id{0};
         std::unordered_map<std::string, css_opacity_keyframes> opacity_keyframes;
-        css_index_string_map<std::vector<size_t>> rules_by_class;
+        css_class_index_map<std::vector<size_t>> rules_by_class;
         css_index_string_map<std::vector<size_t>> rules_by_id;
         css_index_string_map<std::vector<size_t>> rules_by_tag;
         css_index_string_map<std::vector<size_t>> rules_by_attribute;

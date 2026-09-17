@@ -238,6 +238,7 @@
 
         computed_style_wrappers.clear();
         class_list_wrappers.clear();
+        sandbox_token_list_wrappers.clear();
         style_wrappers.clear();
         stylesheet_wrappers.clear();
         detached_documents.clear();

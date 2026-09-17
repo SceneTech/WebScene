@@ -62,6 +62,7 @@
     v8::Global<v8::FunctionTemplate> html_element_template;
     v8::Global<v8::FunctionTemplate> svg_element_template;
     v8::Global<v8::FunctionTemplate> html_anchor_element_template;
+    v8::Global<v8::FunctionTemplate> html_iframe_element_template;
     v8::Global<v8::FunctionTemplate> html_table_cell_element_template;
     v8::Global<v8::FunctionTemplate> html_dialog_element_template;
     v8::Global<v8::FunctionTemplate> html_form_element_template;
@@ -108,6 +109,7 @@
     std::unordered_map<uint32_t, v8::Global<v8::Object>> attr_wrappers;
     std::unordered_map<std::string, attr_state*> attached_attributes;
     std::unordered_map<uint64_t, v8::Global<v8::Object>> class_list_wrappers;
+    std::unordered_map<uint64_t, v8::Global<v8::Object>> sandbox_token_list_wrappers;
     std::unordered_map<uint64_t, v8::Global<v8::Object>> style_wrappers;
     std::unordered_map<uint64_t, v8::Global<v8::Object>> stylesheet_wrappers;
     std::unordered_map<uint64_t, v8::Global<v8::Object>> computed_style_wrappers;

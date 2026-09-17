@@ -36,6 +36,66 @@ Do not import whole WPT directories into the required set. A large pass percenta
 easy tests is less useful than reviewed coverage of the DOM/CSS/input/rendering behavior
 real components depend on.
 
+## Versioned CSS capability matrix
+
+`css-capability-matrix.json` is the machine-readable CSS claim ledger. Its schema is
+`css-capability-matrix.schema.json`; the bounded evidence selection is
+`webscene-css-capability-evidence-profile.json`. The generated human report lives at
+`docs/validation/css-capability-matrix.md`.
+
+The matrix records exact WebScene, WPT, browser, native-library, profile, and evidence
+revisions. Every lane carries explicit pass, fail, skipped, unavailable, and total
+denominators. A supported row cannot contain a non-passing assertion. Partial rows keep
+their failures visible, including harness limitations, rather than reducing the total.
+
+Validate the inputs and confirm that the generated report is current with:
+
+```bash
+python3 -m unittest scripts/test_css_capability_matrix.py -v
+python3 scripts/css_capability_matrix.py --check
+```
+
+Run `python3 scripts/css_capability_matrix.py` after an intentional metadata or evidence
+change. The validator fails on stale profile/WPT digests, unknown Git revisions in a
+complete checkout, result-identity drift, missing or duplicated contracts, denominator
+drift, and configured input/report bounds.
+
+## Code OSS Web API ledger
+
+`code-oss-web-api-catalog.json` defines the non-CSS browser-shaped API probes used by
+unchanged Code OSS. `code-oss-web-api-reachability.json` is the deterministic static
+snapshot from the pinned Code OSS checkout. It scans both authored sources and shipped,
+generated extension bundles while excluding dependencies, tests, fixtures, and build
+output directories. A source match establishes reachability only; it does not promote a
+runtime support claim.
+
+`code-oss-web-api-ledger.json` reconciles every catalog entry with an explicit state,
+owner issue, evidence, and known boundary. CSS claims are composed from the separately
+versioned CSS matrix by SHA-256, schema, matrix version, evidence-profile digest, and
+full native/browser denominators. The generated report is
+`docs/validation/code-oss-web-api-ledger.md`.
+
+Validate the committed snapshot, claims, CSS slice, and report with:
+
+```bash
+python3 -m unittest scripts/test_code_oss_web_api_ledger.py -v
+python3 scripts/code_oss_web_api_ledger.py
+```
+
+After intentionally changing the pinned Code OSS checkout or catalog, regenerate and
+verify the snapshot and report from that exact checkout:
+
+```bash
+python3 scripts/code_oss_web_api_ledger.py \
+  --source-root /absolute/path/to/vscode \
+  --write-snapshot --write-report
+python3 scripts/code_oss_web_api_ledger.py --source-root /absolute/path/to/vscode
+```
+
+The scanner uses `rg` when available and retains a dependency-free Python fallback.
+Validation fails on missing catalog rows, stale reachability, silent metadata, unsupported
+state promotion, stale revisions, missing evidence, or CSS digest/denominator drift.
+
 ## Runner
 
 The runner has one adapter: the native engine. There is no `--engine` option and no

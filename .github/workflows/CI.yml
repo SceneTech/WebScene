@@ -81,6 +81,14 @@ jobs:
       run: python -m unittest discover -s eng/graphics/tests -v
     - name: Graphics reference workload and trace checks
       run: node --test tests/GraphicsCompatibility/reference-tests.mjs
+    - name: CSS capability matrix contracts
+      run: |
+        python -m unittest scripts/test_css_capability_matrix.py -v
+        python scripts/css_capability_matrix.py --check
+    - name: Code OSS Web API ledger contracts
+      run: |
+        python -m unittest scripts/test_code_oss_web_api_ledger.py -v
+        python scripts/code_oss_web_api_ledger.py
     - name: Runtime browser compatibility checks
       run: node --test tests/RuntimeCompatibility/*.test.mjs
     - name: Build Release

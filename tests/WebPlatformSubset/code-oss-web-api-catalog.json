@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "catalogRevision": "2026-09-17",
+  "description": "Static reachability probes for browser-shaped APIs referenced by unchanged Code OSS. Matches are evidence of source reachability, not runtime support.",
+  "apis": [
+    {"id":"abort","category":"lifecycle","patterns":["\\bAbortController\\b","\\bAbortSignal\\b"]},
+    {"id":"animation-frame","category":"timing","patterns":["\\brequestAnimationFrame\\s*\\(","\\bcancelAnimationFrame\\s*\\("]},
+    {"id":"broadcast-channel","category":"messaging","patterns":["\\bBroadcastChannel\\b"]},
+    {"id":"cache-storage","category":"resource","patterns":["\\bcaches\\.(?:open|match|delete|keys)\\s*\\(","\\bCacheStorage\\b"]},
+    {"id":"canvas-2d","category":"graphics","patterns":["getContext\\s*\\(\\s*['\"]2d['\"]","\\bCanvasRenderingContext2D\\b"]},
+    {"id":"clipboard","category":"integration","patterns":["navigator\\.clipboard","\\bClipboardEvent\\b"]},
+    {"id":"crypto","category":"security","patterns":["\\bcrypto\\.(?:subtle|getRandomValues|randomUUID)","\\bSubtleCrypto\\b"]},
+    {"id":"dom-core","category":"dom","patterns":["document\\.(?:createElement|createTextNode|querySelector|querySelectorAll|getElementById)\\s*\\(","\\bMutationObserver\\b"]},
+    {"id":"drag-drop","category":"integration","patterns":["\\bDataTransfer\\b","\\bDragEvent\\b"]},
+    {"id":"fetch","category":"network","patterns":["\\bfetch\\s*\\(","\\b(?:Request|Response|Headers)\\b"]},
+    {"id":"file-api","category":"file","patterns":["\\bFileReader\\b","\\bFileList\\b","\\bBlob\\b"]},
+    {"id":"file-system-access","category":"file","patterns":["\\bshowOpenFilePicker\\b","\\bshowDirectoryPicker\\b","\\bFileSystem(?:File|Directory)?Handle\\b"]},
+    {"id":"focus-selection","category":"interaction","patterns":["document\\.(?:activeElement|hasFocus)","\\bgetSelection\\s*\\(","\\bSelection\\b"]},
+    {"id":"form-data","category":"network","patterns":["\\bFormData\\b"]},
+    {"id":"iframe","category":"realm","patterns":["\\bHTMLIFrameElement\\b","\\.contentWindow\\b","\\.contentDocument\\b","\\.sandbox\\b"]},
+    {"id":"indexeddb","category":"storage","patterns":["\\bindexedDB\\b","\\bIDB(?:Database|Transaction|ObjectStore|Request|KeyRange)\\b"]},
+    {"id":"message-port","category":"messaging","patterns":["\\bMessageChannel\\b","\\bMessagePort\\b"]},
+    {"id":"observers","category":"dom","patterns":["\\b(?:Resize|Intersection|Performance)Observer\\b"]},
+    {"id":"performance-timing","category":"timing","patterns":["performance\\.(?:now|mark|measure|getEntries)","\\bPerformanceEntry\\b"]},
+    {"id":"service-worker","category":"realm","patterns":["navigator\\.serviceWorker","\\bServiceWorker(?:Registration|Container)?\\b"]},
+    {"id":"storage","category":"storage","patterns":["\\b(?:localStorage|sessionStorage)\\b","navigator\\.storage"]},
+    {"id":"streams","category":"resource","patterns":["\\b(?:Readable|Writable|Transform)Stream\\b"]},
+    {"id":"url","category":"resource","patterns":["\\bURLSearchParams\\b","\\bURL\\.(?:createObjectURL|revokeObjectURL)\\s*\\("]},
+    {"id":"websocket","category":"network","patterns":["\\bWebSocket\\b"]},
+    {"id":"worker","category":"realm","patterns":["\\b(?:Worker|SharedWorker)\\s*\\(","\\bWorkerGlobalScope\\b"]}
+  ]
+}

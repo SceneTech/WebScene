@@ -1,0 +1,355 @@
+{
+  "schema": "webscene-css-capability-matrix-v1",
+  "matrixVersion": "1.0.0",
+  "provenance": {
+    "webSceneBaseline": "b81f594cfe0effe742942b8ccf643c2e1f42bc6a",
+    "wptRepository": "https://github.com/web-platform-tests/wpt",
+    "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+    "wptRevisionFile": "tests/WebPlatformSubset/upstream-revision.txt",
+    "wptFiles": "tests/WebPlatformSubset/upstream-files.json",
+    "wptFilesSha256": "5ff51c65e8325daccff6a47590d6c4eefdbecd58ddd9048dafb6e19d51114094",
+    "profile": "tests/WebPlatformSubset/webscene-css-capability-evidence-profile.json",
+    "profileSha256": "6729c7c53e35f61dfbf9db278244693a6ff46571a34bbeed14e9683e61720c4a"
+  },
+  "limits": {
+    "maxCapabilities": 64,
+    "maxEvidenceFiles": 8,
+    "maxInputBytes": 262144,
+    "maxReportBytes": 131072
+  },
+  "capabilities": [
+    {
+      "id": "syntax-declaration-recovery",
+      "area": "parsing",
+      "status": "partial",
+      "boundary": "Delimiter-aware declarations, comments, case folding, important tokens, recovery, and dynamic reparsing pass natively. Chromium resolves a nested var() fallback before serialization, so the local serialization assertion is not cross-engine compatible.",
+      "issues": [236],
+      "contracts": [
+        {
+          "path": "contracts/css-syntax-parser-recovery.html",
+          "capabilityTokens": ["css-syntax-component-values", "declaration-recovery", "dynamic-style-reparse"]
+        }
+      ],
+      "evidence": [
+        {
+          "lane": "native",
+          "resultFile": "docs/validation/evidence/css-capability-matrix/native-b81f594c.json",
+          "resultPath": "contracts/css-syntax-parser-recovery.html",
+          "provenance": {
+            "webSceneRevision": "b81f594cfe0effe742942b8ccf643c2e1f42bc6a",
+            "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+            "engineIdentity": "abi=3;sha256=64c100b8fe1f1b81248b4850db59239d141e4d80d2ab2553891776977eac78ba"
+          },
+          "counts": { "pass": 11, "fail": 0, "skipped": 0, "unavailable": 0, "total": 11 }
+        },
+        {
+          "lane": "browser",
+          "resultFile": "docs/validation/evidence/css-capability-matrix/chromium-153.json",
+          "resultPath": "contracts/css-syntax-parser-recovery.html",
+          "provenance": {
+            "webSceneRevision": "b81f594cfe0effe742942b8ccf643c2e1f42bc6a",
+            "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+            "engineIdentity": "Google Chrome 153.0.8010.48"
+          },
+          "counts": { "pass": 10, "fail": 1, "skipped": 0, "unavailable": 0, "total": 11 }
+        }
+      ]
+    },
+    {
+      "id": "dynamic-hover-invalidation",
+      "area": "selectors",
+      "status": "partial",
+      "boundary": "Native pointer movement passes the two pinned hover assertions, including a display:contents descendant. The standalone Chromium runner lacks WPT test_driver injection, so both browser assertions time out and remain explicit failures.",
+      "issues": [237],
+      "contracts": [
+        {
+          "path": "css/selectors/hover-002.html",
+          "capabilityTokens": ["hover-invalidation", "pointer-boundary-events"]
+        }
+      ],
+      "evidence": [
+        {
+          "lane": "native",
+          "resultFile": "docs/validation/evidence/css-capability-matrix/native-b81f594c.json",
+          "resultPath": "css/selectors/hover-002.html",
+          "provenance": {
+            "webSceneRevision": "b81f594cfe0effe742942b8ccf643c2e1f42bc6a",
+            "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+            "engineIdentity": "abi=3;sha256=64c100b8fe1f1b81248b4850db59239d141e4d80d2ab2553891776977eac78ba"
+          },
+          "counts": { "pass": 2, "fail": 0, "skipped": 0, "unavailable": 0, "total": 2 }
+        },
+        {
+          "lane": "browser",
+          "resultFile": "docs/validation/evidence/css-capability-matrix/chromium-153.json",
+          "resultPath": "upstream/css/selectors/hover-002.html",
+          "provenance": {
+            "webSceneRevision": "b81f594cfe0effe742942b8ccf643c2e1f42bc6a",
+            "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+            "engineIdentity": "Google Chrome 153.0.8010.48"
+          },
+          "counts": { "pass": 0, "fail": 2, "skipped": 0, "unavailable": 0, "total": 2 }
+        }
+      ]
+    },
+    {
+      "id": "root-theme-interaction-recascade",
+      "area": "cascade",
+      "status": "partial",
+      "boundary": "Native attribute, custom-property, focus, and hover recascade passes the bounded contract. Chromium fails its programmatic focus expectation and lacks test_driver for the pointer step, so this local reduction is not a browser parity claim.",
+      "issues": [237, 238],
+      "contracts": [
+        {
+          "path": "contracts/css-root-theme-interaction-recascade.html",
+          "capabilityTokens": ["css-custom-properties", "attribute-selector", "focus-pseudo-class"]
+        }
+      ],
+      "evidence": [
+        {
+          "lane": "native",
+          "resultFile": "docs/validation/evidence/css-capability-matrix/native-b81f594c.json",
+          "resultPath": "contracts/css-root-theme-interaction-recascade.html",
+          "provenance": {
+            "webSceneRevision": "b81f594cfe0effe742942b8ccf643c2e1f42bc6a",
+            "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+            "engineIdentity": "abi=3;sha256=64c100b8fe1f1b81248b4850db59239d141e4d80d2ab2553891776977eac78ba"
+          },
+          "counts": { "pass": 2, "fail": 0, "skipped": 0, "unavailable": 0, "total": 2 }
+        },
+        {
+          "lane": "browser",
+          "resultFile": "docs/validation/evidence/css-capability-matrix/chromium-153.json",
+          "resultPath": "contracts/css-root-theme-interaction-recascade.html",
+          "provenance": {
+            "webSceneRevision": "b81f594cfe0effe742942b8ccf643c2e1f42bc6a",
+            "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+            "engineIdentity": "Google Chrome 153.0.8010.48"
+          },
+          "counts": { "pass": 0, "fail": 2, "skipped": 0, "unavailable": 0, "total": 2 }
+        }
+      ]
+    },
+    {
+      "id": "synchronous-cssom-recalculation-barrier",
+      "area": "cssom",
+      "status": "supported",
+      "boundary": "Within the bounded contract, computed style and geometry synchronously observe inline declaration removal, restored stylesheet values, inherited values, and ancestor style-attribute selector invalidation.",
+      "issues": [239],
+      "contracts": [
+        {
+          "path": "contracts/cssom-style-recalculation-barrier.html",
+          "capabilityTokens": ["cssom-synchronous-style-recalculation", "cssom-synchronous-geometry-recalculation", "inherited-style-recalculation"]
+        }
+      ],
+      "evidence": [
+        {
+          "lane": "native",
+          "resultFile": "docs/validation/evidence/css-capability-matrix/native-b81f594c.json",
+          "resultPath": "contracts/cssom-style-recalculation-barrier.html",
+          "provenance": {
+            "webSceneRevision": "b81f594cfe0effe742942b8ccf643c2e1f42bc6a",
+            "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+            "engineIdentity": "abi=3;sha256=64c100b8fe1f1b81248b4850db59239d141e4d80d2ab2553891776977eac78ba"
+          },
+          "counts": { "pass": 4, "fail": 0, "skipped": 0, "unavailable": 0, "total": 4 }
+        },
+        {
+          "lane": "browser",
+          "resultFile": "docs/validation/evidence/css-capability-matrix/chromium-153.json",
+          "resultPath": "contracts/cssom-style-recalculation-barrier.html",
+          "provenance": {
+            "webSceneRevision": "b81f594cfe0effe742942b8ccf643c2e1f42bc6a",
+            "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+            "engineIdentity": "Google Chrome 153.0.8010.48"
+          },
+          "counts": { "pass": 4, "fail": 0, "skipped": 0, "unavailable": 0, "total": 4 }
+        }
+      ]
+    },
+    {
+      "id": "functional-color-border-shorthand",
+      "area": "values",
+      "status": "supported",
+      "boundary": "The bounded color-mix border shorthand case preserves the authored one-pixel width while parsing the percentage inside the functional color in native and Chromium.",
+      "issues": [238],
+      "contracts": [
+        {
+          "path": "contracts/css-border-functional-color-width.html",
+          "capabilityTokens": ["border-shorthand", "functional-color"]
+        }
+      ],
+      "evidence": [
+        {
+          "lane": "native",
+          "resultFile": "docs/validation/evidence/css-capability-matrix/native-b81f594c.json",
+          "resultPath": "contracts/css-border-functional-color-width.html",
+          "provenance": {
+            "webSceneRevision": "b81f594cfe0effe742942b8ccf643c2e1f42bc6a",
+            "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+            "engineIdentity": "abi=3;sha256=64c100b8fe1f1b81248b4850db59239d141e4d80d2ab2553891776977eac78ba"
+          },
+          "counts": { "pass": 1, "fail": 0, "skipped": 0, "unavailable": 0, "total": 1 }
+        },
+        {
+          "lane": "browser",
+          "resultFile": "docs/validation/evidence/css-capability-matrix/chromium-153.json",
+          "resultPath": "contracts/css-border-functional-color-width.html",
+          "provenance": {
+            "webSceneRevision": "b81f594cfe0effe742942b8ccf643c2e1f42bc6a",
+            "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+            "engineIdentity": "Google Chrome 153.0.8010.48"
+          },
+          "counts": { "pass": 1, "fail": 0, "skipped": 0, "unavailable": 0, "total": 1 }
+        }
+      ]
+    },
+    {
+      "id": "named-grid-template-areas",
+      "area": "layout",
+      "status": "supported",
+      "boundary": "The bounded horizontal-writing-mode contract covers normalized serialization, named lines, sparse rectangular areas, definite overlap, invalid-template rejection, mutation/restoration, and 500 repeated mutations.",
+      "issues": [240],
+      "contracts": [
+        {
+          "path": "contracts/css-grid-template-areas.html",
+          "capabilityTokens": ["grid-template-areas", "named-grid-area-placement", "template-area-mutation-invalidation"]
+        }
+      ],
+      "evidence": [
+        {
+          "lane": "native",
+          "resultFile": "docs/validation/evidence/css-capability-matrix/native-b81f594c.json",
+          "resultPath": "contracts/css-grid-template-areas.html",
+          "provenance": {
+            "webSceneRevision": "b81f594cfe0effe742942b8ccf643c2e1f42bc6a",
+            "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+            "engineIdentity": "abi=3;sha256=64c100b8fe1f1b81248b4850db59239d141e4d80d2ab2553891776977eac78ba"
+          },
+          "counts": { "pass": 8, "fail": 0, "skipped": 0, "unavailable": 0, "total": 8 }
+        },
+        {
+          "lane": "browser",
+          "resultFile": "docs/validation/evidence/css-capability-matrix/chromium-153.json",
+          "resultPath": "contracts/css-grid-template-areas.html",
+          "provenance": {
+            "webSceneRevision": "b81f594cfe0effe742942b8ccf643c2e1f42bc6a",
+            "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+            "engineIdentity": "Google Chrome 153.0.8010.48"
+          },
+          "counts": { "pass": 8, "fail": 0, "skipped": 0, "unavailable": 0, "total": 8 }
+        }
+      ]
+    },
+    {
+      "id": "svg-background-image-longhands",
+      "area": "paint",
+      "status": "supported",
+      "boundary": "The bounded contract covers a URL-backed SVG background with no-repeat, two-axis position, length/auto sizing, and unchanged principal-box geometry. It does not claim all background layers or image functions.",
+      "issues": [241, 246],
+      "contracts": [
+        {
+          "path": "contracts/css-background-image-primitives.html",
+          "capabilityTokens": ["url-backed-svg-background-image", "background-repeat-no-repeat", "background-content-layout-independence"]
+        }
+      ],
+      "evidence": [
+        {
+          "lane": "native",
+          "resultFile": "docs/validation/evidence/css-capability-matrix/native-b81f594c.json",
+          "resultPath": "contracts/css-background-image-primitives.html",
+          "provenance": {
+            "webSceneRevision": "b81f594cfe0effe742942b8ccf643c2e1f42bc6a",
+            "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+            "engineIdentity": "abi=3;sha256=64c100b8fe1f1b81248b4850db59239d141e4d80d2ab2553891776977eac78ba"
+          },
+          "counts": { "pass": 2, "fail": 0, "skipped": 0, "unavailable": 0, "total": 2 }
+        },
+        {
+          "lane": "browser",
+          "resultFile": "docs/validation/evidence/css-capability-matrix/chromium-153.json",
+          "resultPath": "contracts/css-background-image-primitives.html",
+          "provenance": {
+            "webSceneRevision": "b81f594cfe0effe742942b8ccf643c2e1f42bc6a",
+            "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+            "engineIdentity": "Google Chrome 153.0.8010.48"
+          },
+          "counts": { "pass": 2, "fail": 0, "skipped": 0, "unavailable": 0, "total": 2 }
+        }
+      ]
+    },
+    {
+      "id": "live-viewport-media-query-list",
+      "area": "responsive",
+      "status": "partial",
+      "boundary": "Native passes the retained MediaQueryList breakpoint transition contract. The standalone Chromium evidence cannot inject the required resize action because test_driver is absent, so browser parity remains unqualified.",
+      "issues": [242],
+      "contracts": [
+        {
+          "path": "contracts/media-query-list-dynamic-viewport.html",
+          "capabilityTokens": ["live-media-query-list-matches", "viewport-breakpoint-crossing", "breakpoint-change-idempotence"]
+        }
+      ],
+      "evidence": [
+        {
+          "lane": "native",
+          "resultFile": "docs/validation/evidence/css-capability-matrix/native-b81f594c.json",
+          "resultPath": "contracts/media-query-list-dynamic-viewport.html",
+          "provenance": {
+            "webSceneRevision": "b81f594cfe0effe742942b8ccf643c2e1f42bc6a",
+            "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+            "engineIdentity": "abi=3;sha256=64c100b8fe1f1b81248b4850db59239d141e4d80d2ab2553891776977eac78ba"
+          },
+          "counts": { "pass": 1, "fail": 0, "skipped": 0, "unavailable": 0, "total": 1 }
+        },
+        {
+          "lane": "browser",
+          "resultFile": "docs/validation/evidence/css-capability-matrix/chromium-153.json",
+          "resultPath": "contracts/media-query-list-dynamic-viewport.html",
+          "provenance": {
+            "webSceneRevision": "b81f594cfe0effe742942b8ccf643c2e1f42bc6a",
+            "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+            "engineIdentity": "Google Chrome 153.0.8010.48"
+          },
+          "counts": { "pass": 0, "fail": 1, "skipped": 0, "unavailable": 0, "total": 1 }
+        }
+      ]
+    },
+    {
+      "id": "finite-animation-end-cleanup",
+      "area": "animation",
+      "status": "partial",
+      "boundary": "Native dispatches one terminal animationend and permits class cleanup after an unrelated recascade. Chromium reports cancelable=true where the local contract expects false, so exact event-data parity remains unresolved.",
+      "issues": [242],
+      "contracts": [
+        {
+          "path": "contracts/css-animation-end-class-removal.html",
+          "capabilityTokens": ["finite-keyframe-animation", "animationend-event", "recascade-stability"]
+        }
+      ],
+      "evidence": [
+        {
+          "lane": "native",
+          "resultFile": "docs/validation/evidence/css-capability-matrix/native-b81f594c.json",
+          "resultPath": "contracts/css-animation-end-class-removal.html",
+          "provenance": {
+            "webSceneRevision": "b81f594cfe0effe742942b8ccf643c2e1f42bc6a",
+            "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+            "engineIdentity": "abi=3;sha256=64c100b8fe1f1b81248b4850db59239d141e4d80d2ab2553891776977eac78ba"
+          },
+          "counts": { "pass": 1, "fail": 0, "skipped": 0, "unavailable": 0, "total": 1 }
+        },
+        {
+          "lane": "browser",
+          "resultFile": "docs/validation/evidence/css-capability-matrix/chromium-153.json",
+          "resultPath": "contracts/css-animation-end-class-removal.html",
+          "provenance": {
+            "webSceneRevision": "b81f594cfe0effe742942b8ccf643c2e1f42bc6a",
+            "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+            "engineIdentity": "Google Chrome 153.0.8010.48"
+          },
+          "counts": { "pass": 0, "fail": 1, "skipped": 0, "unavailable": 0, "total": 1 }
+        }
+      ]
+    }
+  ]
+}

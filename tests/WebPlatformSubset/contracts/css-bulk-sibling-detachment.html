@@ -62,6 +62,37 @@ for(const method of methods){
   },method+' preserves order across multiple runs from different source parents');
 
   test(t=>{
+    const f=fixture(t),sources=[f.source];
+    for(let i=1;i<4;++i){const p=document.createElement('div');p.className='bulk-list';f.stage.appendChild(p);sources.push(p);}
+    const groups=sources.map(p=>make(p,7));
+    const moving=[5,1,4].flatMap(i=>groups.map(nodes=>nodes[i]));
+    invoke(method,f,...moving);
+    sources.forEach((p,i)=>verify(p,[groups[i][0],groups[i][2],groups[i][3],groups[i][6]]));
+    verify(f.destination,expected(method,f,moving));
+  },method+' compacts interleaved sparse moves from four source parents');
+
+  for(const ancestorFirst of [true,false])test(t=>{
+    const f=fixture(t),[outer,other]=make(f.source,2),children=make(outer,4),peers=make(other,4);
+    outer.className=other.className='bulk-list';
+    const interleaved=[children[2],peers[3],children[0],peers[1]];
+    const moving=ancestorFirst?[outer,...interleaved,other]:[...interleaved,other,outer];
+    invoke(method,f,...moving);
+    verify(f.source,[]);verify(outer,[children[1],children[3]]);verify(other,[peers[0],peers[2]]);
+    verify(f.destination,expected(method,f,moving));
+  },method+' preserves nested mixed-parent detachment, ancestor first='+ancestorFirst);
+
+  test(t=>{
+    const f=fixture(t),areas=[document.createElement('textarea'),document.createElement('textarea')];
+    f.stage.append(...areas);
+    const texts=areas.map(area=>{const nodes=['a','b','c','d'].map(s=>document.createTextNode(s));area.append(...nodes);return nodes;});
+    const moving=[texts[0][3],texts[1][1],texts[0][0],texts[1][2]];
+    invoke(method,f,...moving);
+    assert_array_equals(areas.map(a=>a.value),['bc','ad']);
+    assert_array_equals(areas.map(a=>a.defaultValue),['bc','ad']);
+    verify(f.destination,expected(method,f,moving));
+  },method+' synchronizes interleaved textarea source removals');
+
+  test(t=>{
     const f=fixture(t),[a,b,c]=make(f.source,3),child=document.createElement('i');a.appendChild(child);
     f.destination=a;f.anchor=child;
     assert_throws_dom('HierarchyRequestError',()=>invoke(method,f,a,b));

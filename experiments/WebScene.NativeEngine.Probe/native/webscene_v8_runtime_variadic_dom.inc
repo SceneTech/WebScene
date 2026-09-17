@@ -117,37 +117,31 @@
                 }
                 else entry->second = i;
             }
-            for (size_t begin = 0; begin < first_occurrences.size();) {
-                auto* old_parent = first_occurrences[begin]->parent;
-                size_t end = begin + 1;
-                // Compact a run of direct siblings once, not once per node.
-                // Do not delay the visible child-list update across a possible
-                // JS reaction bridge or focus recascade. Those paths keep the
-                // sequential algorithm; nested source nodes also split runs.
-                if (old_parent != nullptr) {
-                    while (end < first_occurrences.size() && first_occurrences[end]->parent == old_parent) ++end;
-                }
-                if (end == begin + 1) {
-                    detach(first_occurrences[begin]);
-                } else {
-                    remember_parent(old_parent);
-                    for (size_t i = begin; i < end; ++i) {
-                        auto* node = first_occurrences[i];
-                        if (replace_all || replace_self) clear_replacement_focus(*node);
-                        node->parent = nullptr;
-                    }
+            // No author callback or focus recascade can observe this interval.
+            // Preserve first-removal order in parent links (including nested
+            // inputs), then compact each affected parent once. Restricting this
+            // to adjacent same-parent runs makes alternating parents quadratic.
+            for (auto* node : first_occurrences) {
+                auto* old_parent = node->parent;
+                if (old_parent == nullptr) continue;
+                if (replace_all || replace_self) clear_replacement_focus(*node);
+                remember_parent(old_parent);
+                node->parent = nullptr;
+            }
+            if (can_batch_detachment) {
+                for (auto* old_parent : previous_parents) {
 #if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
                     self->dom_variadic_detach_child_visits += old_parent->children.size();
 #endif
-                    // Parent links identify precisely this run's removed
-                    // children; all other entries still name old_parent.
-                    // No author code or style read can see this transient state.
+                    // Only removed entries have null parents. Other children
+                    // retain their parent even when that parent is also moved.
                     std::erase_if(old_parent->children, [](auto* node) {
                         return node != nullptr && node->parent == nullptr;
                     });
-                    synchronize_textarea_value_from_children(*old_parent);
                 }
-                begin = end;
+                // All child lists must be final before reading source text.
+                for (auto* old_parent : previous_parents)
+                    synchronize_textarea_value_from_children(*old_parent);
             }
             size_t output = 0;
             for (size_t i = 0; i < nodes.size(); ++i)

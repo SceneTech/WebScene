@@ -491,6 +491,39 @@ The exact installed Kestrel parsed/compiled theme probe remains verified only fo
 Spotify attempt was rejected for empty content and an unsuccessful resize driver,
 as recorded in the resize-stage report. No native browser-speed claim follows.
 
+### Interleaved source-parent compaction
+
+The next gate extends native child-vector accounting to alternating inputs from
+1, 2, and 8 source parents, at 8/128 total nodes, for all six variadic methods
+(36 cases). The preceding sibling-run optimization fails 18 cases: at 128 nodes,
+two alternating parents require 4,160 visits and eight require 1,088. Single-parent
+work is already 128. `replaceWith` adds one receiver-removal visit in each case.
+
+On the ordinary no-callback path, detach parent links in first-occurrence order,
+then compact each distinct source parent once. All source vectors are finalized
+before synchronizing textarea values. This preserves nested source order without
+repeated compaction when parents alternate. The existing ordered source-parent
+set doubles as the compaction worklist: no new per-parent maps or persistent
+cache are added. Active custom-element registries and focused replacements still
+use the original sequential path; single-node API costs are unchanged.
+
+All 36 candidate scan gates pass: 128 total visits at 128 nodes for 1, 2 or 8
+source parents (`replaceWith`: 129). This is scanned-work evidence, not total DOM
+CPU linearity or a browser-speed claim. Expanded WPT-style coverage passes 76/76
+in Chrome and native: 24 added cases cover sparse four-parent alternation, nested
+mixed-parent moves in both ancestor orders, and alternating textarea sources.
+Chrome rejected the first draft's nested width assertion because the nested
+parents lacked the fixture's `.bulk-list` class; the fixture was corrected in
+both engines before accepting these results.
+
+Integration baseline `e0a55048` merges main `45d7f522`, preserving the new iframe
+sandbox DOMTokenList and capability/API ledgers. Regenerating bindings from the
+combined exposure manifest resolves the generated hash conflict (24 interfaces,
+185 members). The separate native Spotify startup correction `94171a32` is
+documented in [the MessagePort report](spotify-messageport-startup-20260917.md).
+It enables populated native profiling but does not resolve the remaining artwork,
+header or matched-resize visual acceptance issues.
+
 ### Remaining acceptance work
 
 The [September 17 resize-stage investigation](css-resize-stage-profile.md) records

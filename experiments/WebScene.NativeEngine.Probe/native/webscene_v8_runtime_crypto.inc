@@ -141,6 +141,24 @@
         binding->released = true;
     }
 
+    bool reserve_crypto_key_slot()
+    {
+        const auto remove_released = [this] {
+            std::erase_if(crypto_key_bindings,
+                [](const auto& binding) { return binding == nullptr || binding->released; });
+        };
+        remove_released();
+        if (crypto_keys.size() < maximum_crypto_keys) return true;
+
+        // CryptoKey material lives outside V8's heap. A consumer can therefore
+        // create many short-lived keys without giving V8 enough heap pressure to
+        // run the weak callbacks that zeroize and remove the native records.
+        // Collect unreachable wrappers before reporting bounded-capacity failure.
+        isolate->LowMemoryNotification();
+        remove_released();
+        return crypto_keys.size() < maximum_crypto_keys;
+    }
+
     v8::MaybeLocal<v8::Object> create_crypto_key_wrapper(
         v8::Local<v8::Context> local_context,
         crypto_key_store::handle key,
@@ -518,9 +536,7 @@
             reject("AES-GCM key usages must contain encrypt or decrypt", "SyntaxError");
             return;
         }
-        std::erase_if(self->crypto_key_bindings,
-            [](const auto& binding) { return binding == nullptr || binding->released; });
-        if (self->crypto_keys.size() >= maximum_crypto_keys) {
+        if (!self->reserve_crypto_key_slot()) {
             reject("CryptoKey capacity is exhausted", "OperationError");
             return;
         }
@@ -650,9 +666,7 @@
                 return;
             }
         }
-        std::erase_if(self->crypto_key_bindings,
-            [](const auto& binding) { return binding == nullptr || binding->released; });
-        if (self->crypto_keys.size() >= maximum_crypto_keys) {
+        if (!self->reserve_crypto_key_slot()) {
             dom_reject("CryptoKey capacity is exhausted", "OperationError");
             return;
         }
@@ -767,9 +781,7 @@
             reject("AES keyData must contain 128, 192, or 256 bits", "DataError");
             return;
         }
-        std::erase_if(self->crypto_key_bindings,
-            [](const auto& binding) { return binding == nullptr || binding->released; });
-        if (self->crypto_keys.size() >= maximum_crypto_keys) {
+        if (!self->reserve_crypto_key_slot()) {
             reject("CryptoKey capacity is exhausted", "OperationError");
             return;
         }

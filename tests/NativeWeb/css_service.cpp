@@ -32,6 +32,7 @@
 #include "webscene_css_pseudo_application.h"
 #include "webscene_css_rule_matching.h"
 #include "webscene_css_cascade_finalization.h"
+#include <array>
 #include <iostream>
 #include <fstream>
 #include <iterator>
@@ -168,7 +169,19 @@ bool test_ancestor_filter_parity() {
         {".parent:not(.parent) .target",false},{"[id=Parent] .target",true}
     };
     std::vector<css::compiled_css_selector> selectors;
-    for(const auto& [text,expected]:cases) selectors.push_back(css::compile_selector(text));
+    std::vector<std::vector<std::array<uint64_t,4>>> requirement_snapshots;
+    for(const auto& [text,expected]:cases) {
+        auto selector=css::compile_selector(text);
+        if(selector.ancestor_requirements.size()!=selector.compiled_compounds.size()) {
+            std::cerr<<"ancestor metadata alignment: "<<text<<'\n';
+            return false;
+        }
+        std::vector<std::array<uint64_t,4>> snapshot;
+        for(const auto& requirement:selector.ancestor_requirements)
+            snapshot.push_back(requirement.words);
+        requirement_snapshots.push_back(std::move(snapshot));
+        selectors.push_back(std::move(selector));
+    }
     for(const auto capacity:{size_t{0},size_t{1},size_t{2},size_t{16384}}) {
         css::selector_match_context context;context.ancestor_filter.capacity=capacity;
         for(int repeat=0;repeat<3;++repeat) for(size_t i=0;i<selectors.size();++i) {
@@ -183,8 +196,23 @@ bool test_ancestor_filter_parity() {
                 return false;
             }
         }
-        if(context.ancestor_filter.inclusive_ancestors.size()>capacity
-            || context.ancestor_filter.requirement_entries>capacity) return false;
+        if(context.ancestor_filter.inclusive_ancestors.size()>capacity) return false;
+        for(size_t i=0;i<selectors.size();++i) {
+            if(selectors[i].ancestor_requirements.size()!=requirement_snapshots[i].size())
+                return false;
+            for(size_t component=0;component<requirement_snapshots[i].size();++component)
+                if(selectors[i].ancestor_requirements[component].words
+                    !=requirement_snapshots[i][component]) {
+                    std::cerr<<"ancestor metadata mutated: "<<cases[i].first<<'\n';
+                    return false;
+                }
+        }
+    }
+    auto sibling_chain=css::compile_selector(".sibling + .parent .target");
+    css::selector_ancestor_filter::mask parent_only;parent_only.add('.',"parent");
+    if(sibling_chain.ancestor_requirements.back().words!=parent_only.words) {
+        std::cerr<<"sibling feature leaked into ancestor requirement\n";
+        return false;
     }
     // Deliberate hash collision: the filter must defer to full matching.
     css::selector_ancestor_filter::mask present;present.add('.',"parent");

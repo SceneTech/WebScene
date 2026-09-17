@@ -230,9 +230,28 @@ inline compiled_css_selector_list compile_selector_list(std::string_view text) {
     const auto parsed=parse_selector_syntax(text);
     if(!parsed) return result;
     for(const auto& source:parsed.selectors) {
-        compiled_css_selector selector{source.compounds,source.combinators,source.specificity,{}};
+        compiled_css_selector selector;
+        selector.compounds=source.compounds;
+        selector.combinators=source.combinators;
+        selector.specificity=source.specificity;
         for(const auto& part:selector.compounds)
             selector.compiled_compounds.push_back(compile_css_compound_selector(part));
+        selector.ancestor_requirements.resize(selector.compiled_compounds.size());
+        for(size_t i=1;i<selector.compiled_compounds.size()
+            && i<=selector.combinators.size();++i) {
+            const auto relation=selector.combinators[i-1U];
+            // A sibling's features need not occur in the subject's ancestors.
+            // Stop collecting to the left of that relation. Functional arms
+            // likewise contribute no mandatory outer-compound identities here.
+            if(relation!=' ' && relation!='>') continue;
+            selector.ancestor_requirements[i]=selector.ancestor_requirements[i-1U];
+            const auto& compound=selector.compiled_compounds[i-1U];
+            if(!compound.valid) continue;
+            if(!compound.tag.empty() && compound.tag!="*")
+                selector.ancestor_requirements[i].add('t',compound.tag);
+            for(const auto& [kind,name]:compound.identities)
+                selector.ancestor_requirements[i].add(kind,name);
+        }
         result.selectors.push_back(std::move(selector));
     }
     return result;

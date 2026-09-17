@@ -21,8 +21,9 @@ _ws_static(Core libwebscene_core.a)
 _ws_static(NativeWeb libwebscene_native_web.a)
 set_property(TARGET WebScene::NativeWeb PROPERTY INTERFACE_LINK_LIBRARIES WebScene::Core)
 _ws_static(_Parser libwebscene_html_parser.a)
+_ws_static(_CSSParser libwebscene_css_selector_parser.a)
 _ws_static(SharedCSS libwebscene_native_web_shared_css.a)
-set_property(TARGET WebScene::SharedCSS PROPERTY INTERFACE_LINK_LIBRARIES "WebScene::NativeWeb;WebScene::_Parser;iconv")
+set_property(TARGET WebScene::SharedCSS PROPERTY INTERFACE_LINK_LIBRARIES "WebScene::NativeWeb;WebScene::_CSSParser;iconv")
 add_library(WebScene::_Dawn SHARED IMPORTED GLOBAL)
 set_target_properties(WebScene::_Dawn PROPERTIES
   IMPORTED_LOCATION "${_ws_prefix}/lib/libwebgpu_dawn.dylib"

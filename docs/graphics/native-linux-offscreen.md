@@ -4,7 +4,7 @@ This adds the WebScene half of AppScene's selectable `headless` platform. It is 
 
 ## Profiles and selection
 
-`src/WebScene.Sdk` selects the Linux producer without enabling Objective-C++. It installs Core, NativeWeb, SharedCSS, Compiler and, by default, WebGPU. Runtime/V8 is not built or installed. `WEBSCENE_SDK_ENABLE_WEBGPU=OFF` produces the independent non-GPU native SDK. Native consumers compile HTML/templates at build time, explicitly select `CSS_BACKEND shared`, and link `WebScene::SharedCSS`. Function/data sections plus native link garbage collection exclude runtime HTML parser code; shared CSS parsing is allowed.
+`src/WebScene.Sdk` selects the Linux producer without enabling Objective-C++. It installs Core, NativeWeb, SharedCSS, Compiler and, by default, WebGPU. Runtime/V8 is not built or installed. `WEBSCENE_SDK_ENABLE_WEBGPU=OFF` produces the independent non-GPU native SDK. Native consumers compile HTML/templates at build time, explicitly select `CSS_BACKEND shared`, and link `WebScene::SharedCSS`. Shared CSS uses a dedicated CSS/selector-only Rust archive; the SDK gate verifies that it exports CSS and selector entry points, contains no runtime HTML entry points or `html5ever` symbols, and remains at most 85% of the full parser archive size. Function/data sections and native link garbage collection remain enabled for the rest of the application.
 
 On Linux `native_webgpu_surface` selects `native_webgpu_offscreen_surface`. Existing macOS Metal/IOSurface and Windows D3D12 surface selection remains unchanged. `WEBSCENE_NATIVE_WEBGPU_OFFSCREEN` can explicitly select the offscreen surface at compile time, but only the Linux profile is qualified by this work.
 

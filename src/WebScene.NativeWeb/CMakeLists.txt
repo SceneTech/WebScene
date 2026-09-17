@@ -16,15 +16,32 @@ add_library(webscene_native_web STATIC src/native_web.cpp)
 target_link_libraries(webscene_native_web PUBLIC webscene_core)
 target_include_directories(webscene_native_web PUBLIC include "${NATIVE}")
 find_program(CARGO cargo REQUIRED)
-set(PARSER "${CMAKE_CURRENT_BINARY_DIR}/parser/release/${CMAKE_STATIC_LIBRARY_PREFIX}webscene_html_parser${CMAKE_STATIC_LIBRARY_SUFFIX}")
+set(FULL_PARSER "${CMAKE_CURRENT_BINARY_DIR}/parser-full/release/${CMAKE_STATIC_LIBRARY_PREFIX}webscene_html_parser${CMAKE_STATIC_LIBRARY_SUFFIX}")
+set(CSS_PARSER "${CMAKE_CURRENT_BINARY_DIR}/parser-css/release/${CMAKE_STATIC_LIBRARY_PREFIX}webscene_html_parser${CMAKE_STATIC_LIBRARY_SUFFIX}")
 file(GLOB_RECURSE PARSER_SOURCES CONFIGURE_DEPENDS "${NATIVE}/html_parser/src/*.rs")
-add_custom_command(OUTPUT "${PARSER}"
-  COMMAND ${CMAKE_COMMAND} -E env "CARGO_TARGET_DIR=${CMAKE_CURRENT_BINARY_DIR}/parser" ${CARGO} build --manifest-path "${NATIVE}/html_parser/Cargo.toml" --release --locked --features cssparser,selectors
+add_custom_command(OUTPUT "${FULL_PARSER}"
+  COMMAND ${CMAKE_COMMAND} -E env "CARGO_TARGET_DIR=${CMAKE_CURRENT_BINARY_DIR}/parser-full" ${CARGO} build --manifest-path "${NATIVE}/html_parser/Cargo.toml" --release --locked --features html,cssparser,selectors
   DEPENDS ${PARSER_SOURCES} "${NATIVE}/html_parser/Cargo.toml" "${NATIVE}/html_parser/Cargo.lock" VERBATIM)
-add_custom_target(native_web_parser_build DEPENDS "${PARSER}")
+add_custom_command(OUTPUT "${CSS_PARSER}"
+  COMMAND ${CMAKE_COMMAND} -E env "CARGO_TARGET_DIR=${CMAKE_CURRENT_BINARY_DIR}/parser-css" ${CARGO} build --manifest-path "${NATIVE}/html_parser/Cargo.toml" --release --locked --no-default-features --features cssparser,selectors
+  DEPENDS ${PARSER_SOURCES} "${NATIVE}/html_parser/Cargo.toml" "${NATIVE}/html_parser/Cargo.lock" VERBATIM)
+add_custom_target(native_web_parser_build DEPENDS "${FULL_PARSER}")
+add_custom_target(native_web_css_parser_build DEPENDS "${CSS_PARSER}")
 add_library(native_web_parser STATIC IMPORTED)
-set_target_properties(native_web_parser PROPERTIES IMPORTED_LOCATION "${PARSER}")
+set_target_properties(native_web_parser PROPERTIES IMPORTED_LOCATION "${FULL_PARSER}")
 add_dependencies(native_web_parser native_web_parser_build)
+add_library(native_web_css_parser STATIC IMPORTED)
+set_target_properties(native_web_css_parser PROPERTIES IMPORTED_LOCATION "${CSS_PARSER}")
+add_dependencies(native_web_css_parser native_web_css_parser_build)
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+set(PARSER_COMPONENT_REPORT "${CMAKE_CURRENT_BINARY_DIR}/parser-components.json")
+add_custom_command(OUTPUT "${PARSER_COMPONENT_REPORT}"
+  COMMAND "${Python3_EXECUTABLE}" "${WEBSCENE_ROOT}/eng/sdk/verify-parser-components.py"
+    --nm "${CMAKE_NM}" --full "${FULL_PARSER}" --css "${CSS_PARSER}"
+    --output "${PARSER_COMPONENT_REPORT}"
+  DEPENDS "${FULL_PARSER}" "${CSS_PARSER}" "${WEBSCENE_ROOT}/eng/sdk/verify-parser-components.py"
+  VERBATIM)
+add_custom_target(native_web_parser_component_contract ALL DEPENDS "${PARSER_COMPONENT_REPORT}")
 add_executable(webscene-uic "${WEBSCENE_ROOT}/tooling/webscene-uic/main.cpp" "${NATIVE}/webscene_html_parser.cpp" "${NATIVE}/webscene_css_parser.cpp" "${NATIVE}/webscene_selector_parser.cpp")
 target_link_libraries(webscene-uic PRIVATE webscene_native_web native_web_parser)
 if(APPLE)
@@ -34,14 +51,14 @@ endif()
 # these parser-bearing objects unless it explicitly selects this target.
 add_library(webscene_native_web_shared_css STATIC src/shared_css.cpp
  "${NATIVE}/webscene_css_parser.cpp" "${NATIVE}/webscene_selector_parser.cpp")
-target_link_libraries(webscene_native_web_shared_css PUBLIC webscene_native_web PRIVATE native_web_parser)
+target_link_libraries(webscene_native_web_shared_css PUBLIC webscene_native_web PRIVATE native_web_css_parser)
 if(APPLE)
  target_link_libraries(webscene_native_web_shared_css PRIVATE iconv)
 endif()
 if(BUILD_TESTING)
  add_executable(native_web_css_service "${WEBSCENE_ROOT}/tests/NativeWeb/css_service.cpp" "${NATIVE}/webscene_css_parser.cpp" "${NATIVE}/webscene_selector_parser.cpp")
  target_include_directories(native_web_css_service PRIVATE "${NATIVE}")
- target_link_libraries(native_web_css_service PRIVATE native_web_parser webscene_native_web)
+ target_link_libraries(native_web_css_service PRIVATE native_web_css_parser webscene_native_web)
  if(APPLE)
   target_link_libraries(native_web_css_service PRIVATE iconv)
  endif()

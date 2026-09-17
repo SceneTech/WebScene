@@ -38,12 +38,15 @@ include(GNUInstallDirs)
 install(TARGETS webscene_core webscene_native_web webscene_native_web_shared_css
   webscene_native_engine webscene_media ixwebsocket ARCHIVE DESTINATION lib)
 install(TARGETS webscene-uic RUNTIME DESTINATION bin)
+install(FILES "${CMAKE_BINARY_DIR}/native-web/parser-components.json" DESTINATION share/webscene/dependencies)
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 execute_process(COMMAND "${Python3_EXECUTABLE}" "${WEBSCENE_ROOT}/eng/sdk/header-closure.py" "${WEBSCENE_ROOT}"
   OUTPUT_FILE "${CMAKE_BINARY_DIR}/sdk-headers.cmake" COMMAND_ERROR_IS_FATAL ANY)
 include("${CMAKE_BINARY_DIR}/sdk-headers.cmake")
-install(FILES "${CMAKE_BINARY_DIR}/native-web/parser/release/libwebscene_html_parser.a"
+install(FILES "${CMAKE_BINARY_DIR}/native-web/parser-full/release/libwebscene_html_parser.a"
   "${WEBSCENE_V8_OUTPUT_ROOT}/obj/libv8_monolith.a" DESTINATION lib)
+install(FILES "${CMAKE_BINARY_DIR}/native-web/parser-css/release/libwebscene_html_parser.a"
+  DESTINATION lib RENAME libwebscene_css_selector_parser.a)
 install(DIRECTORY "${WEBSCENE_GRAPHICS_SDK_ROOT}/dawn/include/" DESTINATION include)
 install(FILES "${WEBSCENE_GRAPHICS_SDK_ROOT}/dawn/lib/libwebgpu_dawn.dylib" DESTINATION lib)
 install(FILES "${WEBSCENE_V8_OUTPUT_ROOT}/icudtl.dat"

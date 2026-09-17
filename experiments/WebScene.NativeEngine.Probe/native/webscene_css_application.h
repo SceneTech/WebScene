@@ -18,6 +18,37 @@ void apply_resolved_declaration(native_document& document,dom_node& node,
     bool inline_origin,Decision& decision,LoadSvg&& load_svg)
 {
     const auto& name=declaration.name;
+    const auto may_require_application_expansion =
+        name.starts_with("border-") || name.starts_with("inset-");
+    const auto* effective_metadata = may_require_application_expansion
+        ? find_effective_property_metadata(name) : nullptr;
+    if (effective_metadata != nullptr && effective_metadata->apply_expansion) {
+        std::array<std::pair<std::string_view, std::string_view>, 4> components{};
+        size_t component_count = 0U;
+        const auto expanded = for_each_effective_property_component(
+            name,
+            value,
+            [&](std::string_view component_name, std::string_view component_value) {
+                components[component_count++] = {component_name, component_value};
+            });
+        if (expanded) {
+            for (size_t index = 0; index < component_count; ++index) {
+                const css_declaration component{
+                    std::string(components[index].first),
+                    std::string(components[index].second),
+                    declaration.important};
+                apply_resolved_declaration(
+                    document,
+                    node,
+                    component,
+                    component.value,
+                    inline_origin,
+                    decision,
+                    load_svg);
+            }
+            return;
+        }
+    }
     if(name=="stroke-width") {
         apply_text_value(node,name,value,decision,[&](uint64_t mask) {
             return !declaration.important && ((node.style.inline_property_mask|node.style.important_property_mask)&mask)!=0;

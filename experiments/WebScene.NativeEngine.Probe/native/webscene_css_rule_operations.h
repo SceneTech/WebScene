@@ -108,173 +108,18 @@ struct cascade_layer_property_hash final {
 // zero-expansion declaration replay, while a sheet containing revert keywords
 // pays the small amount of parsing needed to distinguish shorthand components.
 template<typename Apply>
-void for_each_effective_box_declaration(
+void for_each_effective_declaration(
     const css_declaration& declaration,
     Apply&& apply)
 {
-    const auto emit = [&](std::string_view name, std::string_view value) {
-        css_declaration effective{
-            std::string(name), std::string(value), declaration.important};
-        apply(effective, name);
-    };
-    const auto& name = declaration.name;
-    if (name == "margin-inline-start") {
-        emit("margin-left", declaration.value);
-        return;
-    }
-    if (name == "margin-inline-end") {
-        emit("margin-right", declaration.value);
-        return;
-    }
-    if (name == "margin-block-start") {
-        emit("margin-top", declaration.value);
-        return;
-    }
-    if (name == "margin-block-end") {
-        emit("margin-bottom", declaration.value);
-        return;
-    }
-    if (name == "padding-inline-start") {
-        emit("padding-left", declaration.value);
-        return;
-    }
-    if (name == "padding-inline-end") {
-        emit("padding-right", declaration.value);
-        return;
-    }
-    if (name == "padding-block-start") {
-        emit("padding-top", declaration.value);
-        return;
-    }
-    if (name == "padding-block-end") {
-        emit("padding-bottom", declaration.value);
-        return;
-    }
-    if (name == "inset-inline-start") {
-        emit("left", declaration.value);
-        return;
-    }
-    if (name == "inset-inline-end") {
-        emit("right", declaration.value);
-        return;
-    }
-    if (name == "inset-block-start") {
-        emit("top", declaration.value);
-        return;
-    }
-    if (name == "inset-block-end") {
-        emit("bottom", declaration.value);
-        return;
-    }
-    if (name == "border-inline-start-width") {
-        emit("border-left-width", declaration.value);
-        return;
-    }
-    if (name == "border-inline-end-width") {
-        emit("border-right-width", declaration.value);
-        return;
-    }
-    if (name == "border-block-start-width") {
-        emit("border-top-width", declaration.value);
-        return;
-    }
-    if (name == "border-block-end-width") {
-        emit("border-bottom-width", declaration.value);
-        return;
-    }
-    if (name == "border-inline-start-color") {
-        emit("border-left-color", declaration.value);
-        return;
-    }
-    if (name == "border-inline-end-color") {
-        emit("border-right-color", declaration.value);
-        return;
-    }
-    if (name == "border-block-start-color") {
-        emit("border-top-color", declaration.value);
-        return;
-    }
-    if (name == "border-block-end-color") {
-        emit("border-bottom-color", declaration.value);
-        return;
-    }
-    const auto expands_four = name == "margin" || name == "padding"
-        || name == "inset" || name == "border-width"
-        || name == "border-color";
-    const auto expands_two = name == "margin-block" || name == "margin-inline"
-        || name == "padding-block" || name == "padding-inline"
-        || name == "gap" || name == "overflow";
-    if (!expands_four && !expands_two) {
-        apply(declaration, std::string_view(declaration.name));
-        return;
-    }
-    const auto tokens = [&]() {
-        std::array<std::string_view, 4> result{};
-        size_t count = 0;
-        size_t start = std::string_view::npos;
-        int depth = 0;
-        const auto value = std::string_view(declaration.value);
-        for (size_t index = 0; index <= value.size(); ++index) {
-            const auto character = index < value.size() ? value[index] : ' ';
-            if (character == '(') ++depth;
-            else if (character == ')' && depth > 0) --depth;
-            if (std::isspace(static_cast<unsigned char>(character)) && depth == 0) {
-                if (start == std::string_view::npos) continue;
-                if (count == result.size()) return std::pair{result, size_t{0}};
-                result[count++] = value.substr(start, index - start);
-                start = std::string_view::npos;
-            } else if (start == std::string_view::npos) {
-                start = index;
-            }
-        }
-        return std::pair{result, count};
-    }();
-    const auto& values = tokens.first;
-    const auto count = tokens.second;
-    const auto four_sides = [&](std::string_view top, std::string_view right,
-                                std::string_view bottom, std::string_view left) {
-        if (count == 0U || count > 4U) {
-            apply(declaration, std::string_view(declaration.name));
-            return;
-        }
-        emit(top, values[0]);
-        emit(right, count > 1U ? values[1] : values[0]);
-        emit(bottom, count > 2U ? values[2] : values[0]);
-        emit(left, count > 3U ? values[3] : count > 1U ? values[1] : values[0]);
-    };
-    const auto two_sides = [&](std::string_view start, std::string_view end) {
-        if (count == 0U || count > 2U) {
-            apply(declaration, std::string_view(declaration.name));
-            return;
-        }
-        emit(start, values[0]);
-        emit(end, count > 1U ? values[1] : values[0]);
-    };
-    if (name == "margin") {
-        four_sides("margin-top", "margin-right", "margin-bottom", "margin-left");
-    } else if (name == "margin-block") {
-        two_sides("margin-top", "margin-bottom");
-    } else if (name == "margin-inline") {
-        two_sides("margin-left", "margin-right");
-    } else if (name == "padding") {
-        four_sides("padding-top", "padding-right", "padding-bottom", "padding-left");
-    } else if (name == "padding-block") {
-        two_sides("padding-top", "padding-bottom");
-    } else if (name == "padding-inline") {
-        two_sides("padding-left", "padding-right");
-    } else if (name == "inset") {
-        four_sides("top", "right", "bottom", "left");
-    } else if (name == "border-width") {
-        four_sides("border-top-width", "border-right-width",
-            "border-bottom-width", "border-left-width");
-    } else if (name == "border-color") {
-        four_sides("border-top-color", "border-right-color",
-            "border-bottom-color", "border-left-color");
-    } else if (name == "gap") {
-        two_sides("row-gap", "column-gap");
-    } else if (name == "overflow") {
-        two_sides("overflow-x", "overflow-y");
-    }
+    for_each_effective_property_component(
+        declaration.name,
+        declaration.value,
+        [&](std::string_view name, std::string_view value) {
+            css_declaration effective{
+                std::string(name), std::string(value), declaration.important};
+            apply(effective, name);
+        });
 }
 
 struct cascade_rollback_winner final {
@@ -324,7 +169,7 @@ void for_each_cascaded_declaration(
                         || declaration.important != important) {
                         continue;
                     }
-                    for_each_effective_box_declaration(
+                    for_each_effective_declaration(
                         declaration,
                         [&](const css_declaration& effective,
                             std::string_view effective_name) {
@@ -379,7 +224,7 @@ void for_each_cascaded_declaration(
                         || declaration.important != important) {
                         continue;
                     }
-                    for_each_effective_box_declaration(
+                    for_each_effective_declaration(
                         declaration,
                         [&](const css_declaration& effective,
                             std::string_view effective_name) {

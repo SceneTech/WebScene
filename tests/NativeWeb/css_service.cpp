@@ -741,6 +741,38 @@ int main(int argc,char** argv) {
        property_mask("inset-inline-start")!=property_mask("left") ||
        property_mask("borderTopColor")!=property_mask("border") ||
        property_mask("--custom")!=0 || property_mask("text-anchor")<=0xFFFFFFFFULL) return 89;
+    const auto& property_catalog=webscene_native::css::effective_property_metadata_catalog;
+    for(size_t index=0;index<property_catalog.size();++index) {
+        const auto& metadata=property_catalog[index];
+        if(metadata.mask==0 || property_mask(metadata.name)!=metadata.mask ||
+           (index>0 && property_catalog[index-1].name>=metadata.name)) return 179;
+        for(uint8_t longhand=0;longhand<metadata.longhand_count;++longhand) {
+            const auto* target=webscene_native::css::find_effective_property_metadata(
+                metadata.longhands[longhand]);
+            if(target==nullptr || target->longhand_count!=0U) return 179;
+        }
+    }
+    std::vector<webscene_native::css::css_declaration> effective_declarations;
+    webscene_native::css::for_each_effective_declaration(
+        {"border-inline-color","red blue",false},
+        [&](const auto& declaration,std::string_view) {
+            effective_declarations.push_back(declaration);
+        });
+    webscene_native::css::for_each_effective_declaration(
+        {"inset-block","3px 7px",true},
+        [&](const auto& declaration,std::string_view) {
+            effective_declarations.push_back(declaration);
+        });
+    if(effective_declarations.size()!=4 ||
+       effective_declarations[0].name!="border-left-color" ||
+       effective_declarations[0].value!="red" ||
+       effective_declarations[1].name!="border-right-color" ||
+       effective_declarations[1].value!="blue" ||
+       effective_declarations[2].name!="top" ||
+       effective_declarations[2].value!="3px" ||
+       !effective_declarations[2].important ||
+       effective_declarations[3].name!="bottom" ||
+       effective_declarations[3].value!="7px") return 180;
     auto& reset_node=animated_document.create_element("button");
     reset_node.style.width={90,webscene_native::length_unit::pixels};
     reset_node.style.height={70,webscene_native::length_unit::pixels};

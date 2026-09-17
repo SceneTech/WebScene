@@ -43,6 +43,18 @@
       overflow-x: hidden;
       overflow-y: scroll;
     }
+    #logical-inset-rollback {
+      position: absolute;
+      inset-block: 3px 4px;
+      inset-inline: 5px 6px;
+    }
+    #logical-border-rollback {
+      border-style: solid;
+      border-block-width: 1px 2px;
+      border-inline-width: 3px 4px;
+      border-block-color: rgb(1, 2, 3) rgb(4, 5, 6);
+      border-inline-color: rgb(7, 8, 9) rgb(10, 11, 12);
+    }
   }
 
   @layer effective-theme {
@@ -88,6 +100,20 @@
       overflow: auto;
       overflow-y: revert-layer;
     }
+    #logical-inset-rollback {
+      inset-block: 30px 40px;
+      inset-inline: 50px 60px;
+      inset-block-start: revert-layer;
+      inset-inline-end: revert-layer;
+    }
+    #logical-border-rollback {
+      border-block-width: 10px 20px;
+      border-inline-width: 30px 40px;
+      border-block-color: rgb(21, 22, 23) rgb(24, 25, 26);
+      border-inline-color: rgb(27, 28, 29) rgb(30, 31, 32);
+      border-block-end-width: revert-layer;
+      border-inline-start-color: revert-layer;
+    }
   }
 
   #all-important-parent { color: rgb(61, 62, 63); }
@@ -110,9 +136,12 @@
 <div id="border-longhand-rollback"></div>
 <div id="gap-longhand-rollback"></div>
 <div id="overflow-longhand-rollback"></div>
+<div id="logical-inset-rollback"></div>
+<div id="logical-border-rollback"></div>
 <div id="all-important-parent"><div id="all-important"></div></div>
 <div id="inline-order"></div>
 <div id="inline-all-parent"><div id="inline-all"></div></div>
+<div id="logical-inline-order"></div>
 
 <script>
 const computed = id => getComputedStyle(document.getElementById(id));
@@ -185,6 +214,26 @@ test(() => {
 }, 'overflow shorthand rollback compares each axis independently');
 
 test(() => {
+  const style = computed('logical-inset-rollback');
+  assert_equals(style.top, '3px');
+  assert_equals(style.right, '6px');
+  assert_equals(style.bottom, '40px');
+  assert_equals(style.left, '50px');
+}, 'logical inset shorthands share effective physical longhands with rollback');
+
+test(() => {
+  const style = computed('logical-border-rollback');
+  assert_equals(style.borderTopWidth, '10px');
+  assert_equals(style.borderRightWidth, '40px');
+  assert_equals(style.borderBottomWidth, '2px');
+  assert_equals(style.borderLeftWidth, '30px');
+  assert_equals(style.borderTopColor, 'rgb(21, 22, 23)');
+  assert_equals(style.borderRightColor, 'rgb(30, 31, 32)');
+  assert_equals(style.borderBottomColor, 'rgb(24, 25, 26)');
+  assert_equals(style.borderLeftColor, 'rgb(7, 8, 9)');
+}, 'logical border shorthands share effective physical longhands with rollback');
+
+test(() => {
   const style = computed('all-important');
   assert_equals(style.color, 'rgb(61, 62, 63)');
   assert_equals(style.display, 'inline');
@@ -230,4 +279,30 @@ test(() => {
   assert_equals(style.display, 'block');
   assert_equals(style.width, getComputedStyle(document.body).width);
 }, 'inline CSSOM all participates in declaration order across recascade');
+
+test(() => {
+  const target = document.getElementById('logical-inline-order');
+  target.style.setProperty('position', 'absolute');
+  target.style.setProperty('border-style', 'solid');
+  target.style.setProperty('inset-block', '7px 9px');
+  target.style.setProperty('inset-inline', '11px 13px');
+  target.style.setProperty('border-block-width', '2px 4px');
+  target.style.setProperty('border-inline-width', '6px 8px');
+  target.style.setProperty('border-block-color', 'rgb(31, 32, 33) rgb(34, 35, 36)');
+  target.style.setProperty('border-inline-color', 'rgb(37, 38, 39) rgb(40, 41, 42)');
+  target.classList.add('logical-inline-recascade');
+  const style = computed('logical-inline-order');
+  assert_equals(style.top, '7px');
+  assert_equals(style.right, '13px');
+  assert_equals(style.bottom, '9px');
+  assert_equals(style.left, '11px');
+  assert_equals(style.borderTopWidth, '2px');
+  assert_equals(style.borderRightWidth, '8px');
+  assert_equals(style.borderBottomWidth, '4px');
+  assert_equals(style.borderLeftWidth, '6px');
+  assert_equals(style.borderTopColor, 'rgb(31, 32, 33)');
+  assert_equals(style.borderRightColor, 'rgb(40, 41, 42)');
+  assert_equals(style.borderBottomColor, 'rgb(34, 35, 36)');
+  assert_equals(style.borderLeftColor, 'rgb(37, 38, 39)');
+}, 'inline logical shorthands preserve two-value component order across recascade');
 </script>

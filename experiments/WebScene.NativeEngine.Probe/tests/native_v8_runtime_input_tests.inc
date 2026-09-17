@@ -2376,6 +2376,82 @@ void test_script_window_close_lifecycle(webscene_engine* engine)
         "script close did not recover after host-request queue pressure");
     webscene_engine_destroy(overflow_engine);
 
+    const auto verify_listener_queue_pressure = [](
+        std::string_view event_type,
+        bool legacy_requests) {
+        auto* pressure_engine = webscene_engine_create(0);
+        require(pressure_engine != nullptr,
+            "script close listener-pressure engine creation failed");
+        const auto producer = legacy_requests
+            ? "dotnetBridge.GetBars('TEST', '1', 0, 1)"
+            : "focus()";
+        const auto setup = std::string(R"JS(
+            globalThis.__listenerPressure = { accepted: 0, rejected: 0 };
+            addEventListener(')JS") + std::string(event_type) + R"JS(', () => {
+              for (let index = 0; index < 1024; ++index) {
+                try {
+                  )JS" + producer + R"JS(;
+                  ++__listenerPressure.accepted;
+                } catch {
+                  ++__listenerPressure.rejected;
+                }
+              }
+            });
+            close();
+        )JS";
+        execute_and_wait(pressure_engine, setup,
+            "script-close-listener-queue-pressure.js");
+        require(
+            evaluate(pressure_engine, "__listenerPressure",
+                "script-close-listener-queue-pressure-result.js")
+                == R"({"accepted":1023,"rejected":1})",
+            "a lifecycle listener consumed the reserved close-request slot");
+        for (auto index = 0; index < 1023; ++index) {
+            if (legacy_requests) {
+                require(
+                    take_host_request(pressure_engine).find(R"("kind":"getBars")")
+                        != std::string::npos,
+                    "listener queue pressure changed legacy request ordering");
+            } else {
+                require(
+                    take_typed_host_request(pressure_engine).kind
+                        == WEBSCENE_HOST_REQUEST_WINDOW_FOCUS_V1,
+                    "listener queue pressure changed focus request ordering");
+            }
+        }
+        require(
+            take_typed_host_request(pressure_engine).kind
+                    == WEBSCENE_HOST_REQUEST_WINDOW_CLOSE_V1
+                && !take_typed_host_request(pressure_engine),
+            "listener queue pressure displaced the terminal close request");
+        webscene_engine_destroy(pressure_engine);
+    };
+    verify_listener_queue_pressure("beforeunload", false);
+    verify_listener_queue_pressure("pagehide", false);
+    verify_listener_queue_pressure("pagehide", true);
+
+    auto* recursive_engine = webscene_engine_create(0);
+    require(recursive_engine != nullptr,
+        "recursive script close engine creation failed");
+    execute_and_wait(recursive_engine, R"JS(
+        globalThis.__recursiveClose = { beforeunload: 0, pagehide: 0 };
+        addEventListener('beforeunload', () => {
+          ++__recursiveClose.beforeunload;
+          close();
+        }, { once: true });
+        addEventListener('pagehide', () => ++__recursiveClose.pagehide);
+        close();
+    )JS", "script-close-recursive-listener.js");
+    require(
+        take_typed_host_request(recursive_engine).kind
+                == WEBSCENE_HOST_REQUEST_WINDOW_CLOSE_V1
+            && !take_typed_host_request(recursive_engine)
+            && evaluate(recursive_engine, "__recursiveClose",
+                "script-close-recursive-listener-result.js")
+                == R"({"beforeunload":1,"pagehide":1})",
+        "recursive script close duplicated lifecycle or host handoff");
+    webscene_engine_destroy(recursive_engine);
+
     auto* error_engine = webscene_engine_create(0);
     require(error_engine != nullptr,
         "script close error recovery engine creation failed");

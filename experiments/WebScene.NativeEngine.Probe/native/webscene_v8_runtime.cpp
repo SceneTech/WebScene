@@ -4572,12 +4572,22 @@ struct v8_dom_runtime::implementation final {
     }
 
     static constexpr size_t maximum_host_request_count = 1024U;
+    size_t reserved_host_request_count{0U};
 
-    bool typed_host_request_capacity_available()
+    bool reserve_typed_host_request_capacity()
     {
         std::lock_guard lock(host_request_mutex);
-        return host_requests.size() + typed_host_requests.size()
-            < maximum_host_request_count;
+        if (host_requests.size() + typed_host_requests.size()
+                + reserved_host_request_count
+            >= maximum_host_request_count) return false;
+        ++reserved_host_request_count;
+        return true;
+    }
+
+    void release_typed_host_request_capacity()
+    {
+        std::lock_guard lock(host_request_mutex);
+        if (reserved_host_request_count != 0U) --reserved_host_request_count;
     }
 
     bool enqueue_typed_host_request(std::unique_ptr<native_host_request> request)
@@ -4586,7 +4596,22 @@ struct v8_dom_runtime::implementation final {
         {
             std::lock_guard lock(host_request_mutex);
             if (host_requests.size() + typed_host_requests.size()
+                    + reserved_host_request_count
                 >= maximum_host_request_count) return false;
+            typed_host_requests.push_back(std::move(request));
+        }
+        if (host_request_available) host_request_available();
+        return true;
+    }
+
+    bool enqueue_reserved_typed_host_request(
+        std::unique_ptr<native_host_request> request)
+    {
+        if (!request) return false;
+        {
+            std::lock_guard lock(host_request_mutex);
+            if (reserved_host_request_count == 0U) return false;
+            --reserved_host_request_count;
             typed_host_requests.push_back(std::move(request));
         }
         if (host_request_available) host_request_available();
@@ -4624,8 +4649,9 @@ struct v8_dom_runtime::implementation final {
         if (!v8::JSON::Stringify(local_context, request).ToLocal(&json)) return false;
         {
             std::lock_guard lock(host_request_mutex);
-            constexpr size_t maximum_host_requests = 1024U;
-            if (host_requests.size() >= maximum_host_requests) return false;
+            if (host_requests.size() + typed_host_requests.size()
+                    + reserved_host_request_count
+                >= maximum_host_request_count) return false;
             host_requests.push_back(to_utf8(isolate, json));
         }
         // Notify after releasing the queue lock: the host may immediately call
@@ -4788,28 +4814,43 @@ struct v8_dom_runtime::implementation final {
         auto local_context = info.GetIsolate()->GetCurrentContext();
         if (self == nullptr || local_context != self->context.Get(info.GetIsolate()))
             return;
+        // A beforeunload/pagehide listener can call close() recursively. The
+        // outer request owns the lifecycle and host handoff; coalesce nested
+        // calls so pagehide cannot run or reach the host ahead of it.
+        if (self->window_close_lifecycle_dispatching) return;
         // All producers run on this engine's worker. Check capacity before
         // dispatching the terminal lifecycle so a rejected handoff cannot
         // leave the document page-hidden while its native window remains open.
-        if (!self->typed_host_request_capacity_available()) {
+        if (!self->reserve_typed_host_request_capacity()) {
             info.GetIsolate()->ThrowException(v8::Exception::Error(
                 js_string(info.GetIsolate(), "WebScene rejected the close-window request")));
             return;
         }
+        struct lifecycle_dispatch_guard final {
+            bool& dispatching;
+            explicit lifecycle_dispatch_guard(bool& value) : dispatching(value)
+            {
+                dispatching = true;
+            }
+            ~lifecycle_dispatch_guard() { dispatching = false; }
+        } dispatch_guard(self->window_close_lifecycle_dispatching);
         const auto decision =
             self->request_window_close_in_current_realm(local_context);
         if (decision == WEBSCENE_WINDOW_CLOSE_VETO_V1) {
+            self->release_typed_host_request_capacity();
             return;
         }
         if (decision != WEBSCENE_WINDOW_CLOSE_ALLOW_V1) {
+            self->release_typed_host_request_capacity();
             const auto message = "WebScene rejected the close-window lifecycle: "
                 + self->last_error;
             info.GetIsolate()->ThrowException(v8::Exception::Error(
                 js_string(info.GetIsolate(), message.c_str())));
             return;
         }
-        if (!self->queue_top_level_window_action(
-                local_context, WEBSCENE_HOST_REQUEST_WINDOW_CLOSE_V1)) {
+        auto request = std::make_unique<native_host_request>();
+        request->view.kind = WEBSCENE_HOST_REQUEST_WINDOW_CLOSE_V1;
+        if (!self->enqueue_reserved_typed_host_request(std::move(request))) {
             info.GetIsolate()->ThrowException(v8::Exception::Error(
                 js_string(info.GetIsolate(), "WebScene rejected the close-window request")));
         }

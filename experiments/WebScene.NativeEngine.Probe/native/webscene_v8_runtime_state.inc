@@ -480,6 +480,7 @@
     bool document_visible{true};
     bool document_focused{true};
     bool terminal_pagehide_dispatched{false};
+    bool window_close_lifecycle_dispatching{false};
     double last_animation_frame_timestamp_ms{0};
     double caret_blink_epoch_ms{0};
     std::string frame_last_error_value;

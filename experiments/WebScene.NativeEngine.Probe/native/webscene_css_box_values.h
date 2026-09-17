@@ -191,7 +191,31 @@ inline bool apply_margin(dom_node& node,const css_declaration& declaration,
                 }
             }
             const auto allowed = static_cast<uint8_t>(sides & ~protected_sides);
-            apply_margin_declaration(node.style, name, value, allowed);
+            const auto keyword = ascii_lower(trim_value(value));
+            if (keyword == "inherit") {
+                const auto* source = node.parent == nullptr ? nullptr : &node.parent->style;
+                const auto copy_side = [&](uint8_t side, css_length& target, bool& target_auto,
+                                           const css_length& inherited, bool inherited_auto) {
+                    if ((allowed & side) == 0U) return;
+                    target = source == nullptr ? css_length{} : inherited;
+                    target_auto = source != nullptr && inherited_auto;
+                };
+                const node_style initial;
+                const auto& inherited = source == nullptr ? initial : *source;
+                copy_side(1U, node.style.margin_left, node.style.margin_left_auto,
+                    inherited.margin_left, inherited.margin_left_auto);
+                copy_side(2U, node.style.margin_top, node.style.margin_top_auto,
+                    inherited.margin_top, inherited.margin_top_auto);
+                copy_side(4U, node.style.margin_right, node.style.margin_right_auto,
+                    inherited.margin_right, inherited.margin_right_auto);
+                copy_side(8U, node.style.margin_bottom, node.style.margin_bottom_auto,
+                    inherited.margin_bottom, inherited.margin_bottom_auto);
+            } else if (keyword == "initial" || keyword == "unset"
+                || keyword == "revert" || keyword == "revert-layer") {
+                apply_margin_declaration(node.style, name, "0", allowed);
+            } else {
+                apply_margin_declaration(node.style, name, value, allowed);
+            }
             if (declaration.important && !inline_origin) node.style.important_margin_sides |= allowed;
             return true;
         }

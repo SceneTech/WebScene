@@ -10,7 +10,8 @@ using rule_payload_cache = std::unordered_map<uint64_t,
 inline uint64_t rule_payload_hash(
         std::string_view selector,
         const std::vector<css_declaration>& declarations,
-        const std::vector<std::string>& media_queries)
+        const std::vector<std::string>& media_queries,
+        uint32_t cascade_layer_index = 0U)
     {
         auto hash = uint64_t{1469598103934665603ULL};
         const auto append = [&](std::string_view value) {
@@ -29,6 +30,8 @@ inline uint64_t rule_payload_hash(
             hash *= 1099511628211ULL;
         }
         for (const auto& query : media_queries) append(query);
+        hash ^= cascade_layer_index;
+        hash *= 1099511628211ULL;
         return hash;
     }
 
@@ -36,11 +39,13 @@ inline bool rule_payload_matches(
         const css_rule_payload& payload,
         std::string_view selector,
         const std::vector<css_declaration>& declarations,
-        const std::vector<std::string>& media_queries)
+        const std::vector<std::string>& media_queries,
+        uint32_t cascade_layer_index = 0U)
     {
         if (payload.selector != selector
             || payload.declarations.size() != declarations.size()
-            || payload.media_queries != media_queries) {
+            || payload.media_queries != media_queries
+            || payload.cascade_layer_index != cascade_layer_index) {
             return false;
         }
         for (size_t index = 0; index < declarations.size(); ++index) {
@@ -58,12 +63,14 @@ template<typename Compile>
 std::shared_ptr<const css_rule_payload> intern_rule_payload(
     std::mutex& mutex, rule_payload_cache& payloads, Compile&& compile,
     std::string selector, const std::vector<css_declaration>& declarations,
-    const std::vector<std::string>& media_queries)
+    const std::vector<std::string>& media_queries,
+    uint32_t cascade_layer_index = 0U)
 {
         const auto hash = rule_payload_hash(
             selector,
             declarations,
-            media_queries);
+            media_queries,
+            cascade_layer_index);
         std::lock_guard lock(mutex);
         auto& candidates = payloads[hash];
         for (auto iterator = candidates.begin(); iterator != candidates.end();) {
@@ -76,7 +83,8 @@ std::shared_ptr<const css_rule_payload> intern_rule_payload(
                     *candidate,
                     selector,
                     declarations,
-                    media_queries)) {
+                    media_queries,
+                    cascade_layer_index)) {
                 return candidate;
             }
             ++iterator;
@@ -94,6 +102,7 @@ std::shared_ptr<const css_rule_payload> intern_rule_payload(
             payload->compiled_pseudo_origin.compounds.empty()
                 ? payload->compiled_selector : payload->compiled_pseudo_origin);
         payload->specificity = payload->compiled_selector.specificity;
+        payload->cascade_layer_index = cascade_layer_index;
         payload->declarations = declarations;
         payload->media_queries = media_queries;
         candidates.emplace_back(payload);

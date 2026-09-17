@@ -45,14 +45,25 @@ struct stylesheet_test_host {
     };
     std::vector<rule> rules;
     std::vector<std::string> unsupported;
+    std::vector<std::string> layers;
     bool inventory_media_query(const std::string&) { return true; }
+    uint32_t register_cascade_layer(const std::string& name) {
+        if(!name.empty()) {
+            const auto known=std::find(layers.begin(),layers.end(),name);
+            if(known!=layers.end()) return static_cast<uint32_t>(
+                std::distance(layers.begin(),known)+1);
+        }
+        layers.push_back(name);
+        return static_cast<uint32_t>(layers.size());
+    }
     void record_feature(std::string_view, const std::string& name,
         std::string_view classification, const std::string&, std::string_view) {
         if(classification=="unsupported") unsupported.push_back(name);
     }
     void append_parsed_css_style_rule(std::string selector,
         std::vector<webscene_native::css::css_declaration> declarations,
-        const std::vector<std::string>& media,const std::string& address) {
+        const std::vector<std::string>& media,const std::string& address,
+        uint32_t = 0U) {
         webscene_native::css::prepare_style_rule(selector,std::move(declarations),media,address,
             [](const auto&) {},
             [&](const auto& prepared_selector,const auto& values,const auto& conditions) {
@@ -1128,6 +1139,58 @@ int main(int argc,char** argv) {
     sheets.remove(7);
     recascade_native();
     if(ordered_node.style.width.value==210) return 151;
+    auto layered_sheet=webscene_native::css::prepare_stylesheet(R"CSS(
+        @layer reset, components;
+        @layer reset {
+          :root { --native-layer-size: 37px !important; }
+          #layered-native {
+            width: var(--native-layer-size);
+            margin-left: 11px !important;
+            font-size: 10px;
+            line-height: 2 !important;
+          }
+          #layered-native::before {
+            content: "";
+            display: block;
+            height: 7px !important;
+          }
+        }
+        @layer components {
+          :root { --native-layer-size: 57px !important; }
+          #layered-native {
+            margin-left: 21px !important;
+            line-height: 3 !important;
+          }
+          #layered-native::before { height: 17px !important; }
+        }
+    )CSS","asset://app/layered.css",[](const auto&) {return true;});
+    if(!layered_sheet || layered_sheet->cascade_layers!=std::vector<std::string>{"reset","components"})
+        return 176;
+    for(const auto& rule:layered_sheet->rules)
+        if(rule->cascade_layer_index==0U || rule->cascade_layer_index>2U) return 177;
+    webscene_native::native_document layered_document;
+    auto& layered_node=layered_document.create_element("div");
+    layered_node.id_attribute="layered-native";
+    layered_document.append_child(layered_document.body(),layered_node);
+    webscene_native::css::query_host layered_query(layered_document);
+    webscene_native::css::stylesheet_owner layered_sheets;
+    layered_sheets.replace(1,std::move(*layered_sheet));
+    webscene_native::css::apply_native_document_cascade(
+        layered_document,layered_sheets,layered_query,
+        [](const auto&,auto&,auto&,auto&) {return false;},
+        [](const auto&,const auto&) {});
+    if(layered_node.style.width.value!=37
+        || layered_node.style.margin_left.value!=11
+        // Unitless line-height is retained as -(3 + multiplier) so it
+        // inherits as a multiplier; -5 therefore represents the winning 2.
+        || layered_node.style.line_height!=-5
+        || layered_node.style.before_pseudo().height.value!=7) {
+        std::cerr<<"layered-cascade width="<<layered_node.style.width.value
+            <<" margin-left="<<layered_node.style.margin_left.value
+            <<" line-height="<<layered_node.style.line_height
+            <<" before-height="<<layered_node.style.before_pseudo().height.value<<'\n';
+        return 178;
+    }
     webscene_native::native_document tree_document;
     auto& tree_parent=tree_document.create_element("div");tree_parent.class_name="parent";
     auto& tree_child=tree_document.create_element("div");tree_child.class_name="child";

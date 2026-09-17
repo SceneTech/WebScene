@@ -355,6 +355,8 @@
     std::vector<hover_selector_dependency> hover_selector_dependencies;
     std::unordered_map<std::string, std::string> css_variables;
     std::unordered_set<std::string> important_css_variables;
+    std::unordered_map<std::string, uint32_t> css_cascade_layer_orders;
+    uint32_t next_css_cascade_layer_order{1U};
     const dom_node* active_css_cascade_root{nullptr};
     std::unordered_map<const dom_node*, css_cascade_state> inactive_css_cascades;
 #if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)

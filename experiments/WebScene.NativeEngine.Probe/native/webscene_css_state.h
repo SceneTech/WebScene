@@ -154,6 +154,9 @@ using css_class_index_map = std::unordered_map<
         std::vector<css_declaration> declarations;
         std::vector<std::string> media_queries;
         uint32_t specificity{0};
+        // One-based index into prepared_stylesheet::cascade_layers. Runtime
+        // cascades resolve that sheet-local identity to document layer order.
+        uint32_t cascade_layer_index{0};
         // Selector interpretation is immutable; do not resplit it for each
         // element considered by the cascade.
         uint8_t pseudo_kind{0};
@@ -165,6 +168,9 @@ using css_class_index_map = std::unordered_map<
         uint32_t stylesheet_owner_id{0};
         uint32_t shadow_scope_root_id{0};
         bool media_matches{true};
+        // Zero is the unlayered author tier; positive values are first-appearance
+        // order within this document cascade.
+        uint32_t cascade_layer_order{0};
 
         const std::string& selector() const noexcept { return payload->selector; }
         const compiled_css_selector& compiled_selector() const noexcept
@@ -230,6 +236,8 @@ using css_class_index_map = std::unordered_map<
         std::vector<hover_selector_dependency> hover_dependencies;
         std::unordered_map<std::string, std::string> variables;
         std::unordered_set<std::string> important_variables;
+        std::unordered_map<std::string, uint32_t> cascade_layer_orders;
+        uint32_t next_cascade_layer_order{1U};
     };
 
 

@@ -136,6 +136,7 @@ void compare_sheet(const webscene_native::css::prepared_stylesheet& a,
   require(a.rules.size()==b.rules.size());
   require(a.keyframes.size()==b.keyframes.size());
   require(a.diagnostics.size()==b.diagnostics.size());
+  require(a.cascade_layers==b.cascade_layers);
   for(size_t i=0;i<a.diagnostics.size();++i) {
     require(a.diagnostics[i].feature==b.diagnostics[i].feature &&
         a.diagnostics[i].classification==b.diagnostics[i].classification &&
@@ -143,7 +144,9 @@ void compare_sheet(const webscene_native::css::prepared_stylesheet& a,
   }
   for(size_t i=0;i<a.rules.size();++i) {
     const auto& x=*a.rules[i];const auto& y=*b.rules[i];
-    require(x.selector==y.selector && x.specificity==y.specificity && x.media_queries==y.media_queries);
+    require(x.selector==y.selector && x.specificity==y.specificity &&
+        x.media_queries==y.media_queries &&
+        x.cascade_layer_index==y.cascade_layer_index);
     require(x.pseudo_kind==y.pseudo_kind && x.host_selector==y.host_selector);
     compare_selector(x.compiled_selector,y.compiled_selector);
     compare_selector(x.compiled_pseudo_origin,y.compiled_pseudo_origin);

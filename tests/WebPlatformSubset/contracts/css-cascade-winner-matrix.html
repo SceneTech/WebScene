@@ -1,0 +1,285 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Cascade winner, global keyword, layer, and custom-property matrix</title>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<style>
+  body { margin: 0; }
+  .winner { color: rgb(10, 20, 30); width: 40px; }
+  div.winner { color: rgb(20, 30, 40); }
+  #winner { color: rgb(30, 40, 50); }
+  .winner { color: rgb(40, 50, 60) !important; }
+  .winner.changed { color: rgb(70, 80, 90) !important; }
+
+  #keyword-parent { color: rgb(11, 22, 33); width: 123px; margin-left: 17px; visibility: hidden; }
+  #keyword-inherit { color: inherit; width: inherit; margin-left: inherit; visibility: initial; opacity: initial; }
+  #keyword-unset { color: unset; width: unset; margin-left: unset; visibility: unset; opacity: unset; }
+
+  #shorthand {
+    margin: 1px 2px 3px 4px;
+    margin-left: 9px;
+    margin: 5px !important;
+    margin-left: 11px;
+  }
+
+  #custom-cycle {
+    --a: var(--b);
+    --b: var(--a);
+    width: var(--a, 37px);
+    height: var(--missing, 23px);
+  }
+
+  @layer reset, theme, components;
+  @layer reset {
+    :root { --root-layer-size: 13px !important; }
+    #layer-normal { color: rgb(101, 0, 0); }
+    #layer-important { color: rgb(101, 0, 0) !important; }
+    #layer-unlayered { color: rgb(101, 0, 0) !important; }
+    #layer-normal-unlayered { color: rgb(101, 0, 0); }
+    #layer-specificity { color: rgb(101, 0, 0); }
+    :where(#layer-important-specificity) { color: rgb(101, 0, 0) !important; }
+    #layer-revert { color: rgb(101, 0, 0); width: 41px; }
+    #layer-values {
+      --layer-size: 19px !important;
+      width: var(--layer-size);
+      margin-left: 19px !important;
+      font-size: 10px;
+      line-height: 2 !important;
+    }
+    #layer-pseudo::before {
+      content: "";
+      display: block;
+      height: 11px !important;
+    }
+  }
+  @layer theme {
+    #layer-normal { color: rgb(0, 102, 0); }
+    #layer-important { color: rgb(0, 102, 0) !important; }
+  }
+  @layer components {
+    :root { --root-layer-size: 27px !important; }
+    #layer-normal { color: rgb(0, 0, 103); }
+    #layer-important { color: rgb(0, 0, 103) !important; }
+    :where(#layer-specificity) { color: rgb(0, 0, 103); }
+    #layer-important-specificity { color: rgb(0, 0, 103) !important; }
+    #layer-revert {
+      color: rgb(0, 0, 103);
+      width: 63px;
+      color: revert-layer;
+      width: revert-layer;
+    }
+    #layer-values {
+      --layer-size: 29px !important;
+      margin-left: 29px !important;
+      line-height: 3 !important;
+    }
+    #layer-pseudo::before { height: 22px !important; }
+  }
+  #layer-unlayered { color: rgb(0, 0, 103) !important; }
+  #layer-normal-unlayered { color: rgb(0, 0, 103); }
+
+  @layer outer {
+    @layer first {
+      #layer-nested-normal { color: rgb(111, 0, 0); }
+      #layer-nested-important { color: rgb(111, 0, 0) !important; }
+    }
+    @layer second {
+      #layer-nested-normal { color: rgb(0, 0, 112); }
+      #layer-nested-important { color: rgb(0, 0, 112) !important; }
+    }
+  }
+
+  @layer {
+    #layer-anonymous-normal { color: rgb(121, 0, 0); }
+    #layer-anonymous-important { color: rgb(121, 0, 0) !important; }
+  }
+  @layer {
+    #layer-anonymous-normal { color: rgb(0, 0, 122); }
+    #layer-anonymous-important { color: rgb(0, 0, 122) !important; }
+  }
+
+  #origin-revert {
+    color: rgb(131, 0, 0);
+    width: 73px;
+    color: revert;
+    width: revert;
+  }
+
+  #root-layer-value { width: var(--root-layer-size); }
+
+  #dynamic-host { --dynamic-size: 31px; }
+  #dynamic-host.active { --dynamic-size: 47px; }
+  #dynamic-target { width: var(--dynamic-size); color: rgb(7, 8, 9); }
+  #dynamic-target.selected { color: rgb(17, 18, 19); }
+</style>
+<div id="winner" class="winner" style="color:rgb(50, 60, 70)"></div>
+<div id="keyword-parent">
+  <div id="keyword-inherit"></div>
+  <div id="keyword-unset"></div>
+</div>
+<div id="shorthand"></div>
+<div id="custom-cycle"></div>
+<div id="layer-normal"></div>
+<div id="layer-important"></div>
+<div id="layer-unlayered"></div>
+<div id="layer-normal-unlayered"></div>
+<div id="layer-specificity"></div>
+<div id="layer-important-specificity"></div>
+<div id="layer-revert"></div>
+<div id="layer-values"></div>
+<div id="layer-pseudo"></div>
+<div id="layer-nested-normal"></div>
+<div id="layer-nested-important"></div>
+<div id="layer-anonymous-normal"></div>
+<div id="layer-anonymous-important"></div>
+<div id="layer-cross-sheet"></div>
+<div id="layer-cross-sheet-important"></div>
+<div id="origin-revert"></div>
+<div id="root-layer-value"></div>
+<div id="dynamic-host"><div id="dynamic-target"></div></div>
+<div id="cssom-target"></div>
+<script>
+const computed = id => getComputedStyle(document.getElementById(id));
+
+test(() => {
+  assert_equals(computed('winner').color, 'rgb(40, 50, 60)');
+  winner.style.setProperty('color', 'rgb(60, 70, 80)', 'important');
+  assert_equals(computed('winner').color, 'rgb(60, 70, 80)');
+  winner.classList.add('changed');
+  assert_equals(computed('winner').color, 'rgb(60, 70, 80)');
+  winner.style.setProperty('color', 'rgb(80, 90, 100)', 'not-important');
+  assert_equals(computed('winner').color, 'rgb(60, 70, 80)');
+  winner.style.setProperty('color', 'rgb(80, 90, 100)', 'IMPORTANT');
+  assert_equals(computed('winner').color, 'rgb(80, 90, 100)');
+  winner.style.setProperty('color', '', 'not-important');
+  assert_equals(computed('winner').color, 'rgb(80, 90, 100)');
+  winner.style.removeProperty('color');
+  assert_equals(computed('winner').color, 'rgb(70, 80, 90)');
+}, 'importance outranks inline normal while inline important wins its origin');
+
+for (const [property, inheritedValue, unsetValue] of [
+  ['color', 'rgb(11, 22, 33)', 'rgb(11, 22, 33)'],
+  ['width', '123px', '123px'],
+  ['marginLeft', '17px', '0px'],
+  ['visibility', 'visible', 'hidden'],
+  ['opacity', '1', '1'],
+]) {
+  test(() => {
+    assert_equals(computed('keyword-inherit')[property], inheritedValue);
+    assert_equals(computed('keyword-unset')[property], unsetValue);
+  }, `${property}: inherit, initial, and unset distinguish inherited and non-inherited properties`);
+}
+
+test(() => {
+  const style = computed('shorthand');
+  assert_equals(style.marginTop, '5px');
+  assert_equals(style.marginRight, '5px');
+  assert_equals(style.marginBottom, '5px');
+  assert_equals(style.marginLeft, '5px');
+}, 'important shorthand longhands outrank later ordinary longhands');
+
+test(() => {
+  const style = computed('custom-cycle');
+  assert_equals(style.width, '37px');
+  assert_equals(style.height, '23px');
+}, 'custom-property cycles become invalid and select the consuming var fallback');
+
+test(() => {
+  assert_equals(computed('layer-normal').color, 'rgb(0, 0, 103)');
+  assert_equals(computed('layer-important').color, 'rgb(101, 0, 0)');
+  assert_equals(computed('layer-unlayered').color, 'rgb(101, 0, 0)');
+  assert_equals(computed('layer-normal-unlayered').color, 'rgb(0, 0, 103)');
+}, 'normal and important declarations use forward and reversed cascade-layer order');
+
+test(() => {
+  assert_equals(computed('layer-specificity').color, 'rgb(0, 0, 103)');
+  assert_equals(computed('layer-important-specificity').color, 'rgb(101, 0, 0)');
+}, 'cascade-layer order precedes selector specificity in both importance tiers');
+
+test(() => {
+  assert_equals(computed('layer-nested-normal').color, 'rgb(0, 0, 112)');
+  assert_equals(computed('layer-nested-important').color, 'rgb(111, 0, 0)');
+  assert_equals(computed('layer-anonymous-normal').color, 'rgb(0, 0, 122)');
+  assert_equals(computed('layer-anonymous-important').color, 'rgb(121, 0, 0)');
+}, 'nested and anonymous layers retain first-appearance order');
+
+test(() => {
+  assert_equals(computed('layer-revert').color, 'rgb(101, 0, 0)');
+  assert_equals(computed('layer-revert').width, '41px');
+  assert_equals(computed('origin-revert').color, 'rgb(0, 0, 0)');
+  assert_equals(computed('origin-revert').width, getComputedStyle(document.body).width);
+}, 'revert-layer exposes the prior layer while revert exposes the lower origin');
+
+test(() => {
+  const values = computed('layer-values');
+  assert_equals(values.width, '19px');
+  assert_equals(values.marginLeft, '19px');
+  assert_equals(values.lineHeight, '20px');
+  assert_equals(document.getElementById('layer-pseudo').getBoundingClientRect().height, 11);
+}, 'important layer reversal covers custom properties, shorthands, text metrics, and pseudo boxes');
+
+test(() => {
+  assert_equals(computed('root-layer-value').width, '13px');
+}, 'root custom properties use reversed important layer order');
+
+test(() => {
+  const first = document.createElement('style');
+  first.textContent = `@layer cross-first {
+    :root { --cross-root-size: 43px !important; }
+    #layer-cross-sheet { color: rgb(141, 0, 0); }
+    #layer-cross-sheet-important { color: rgb(141, 0, 0) !important; }
+  }`;
+  document.head.append(first);
+  const second = document.createElement('style');
+  second.textContent = `@layer cross-second, cross-first;
+  @layer cross-second {
+    :root { --cross-root-size: 57px !important; }
+    #layer-cross-sheet { color: rgb(0, 0, 142); }
+    #layer-cross-sheet-important { color: rgb(0, 0, 142) !important; }
+  }`;
+  document.head.append(second);
+  document.getElementById('layer-cross-sheet').style.width = 'var(--cross-root-size)';
+  assert_equals(computed('layer-cross-sheet').color, 'rgb(0, 0, 142)');
+  assert_equals(computed('layer-cross-sheet-important').color, 'rgb(141, 0, 0)');
+  assert_equals(computed('layer-cross-sheet').width, '43px');
+  second.remove();
+  assert_equals(computed('layer-cross-sheet').color, 'rgb(141, 0, 0)');
+}, 'layer order is document-global across dynamically added stylesheets');
+
+test(() => {
+  assert_equals(computed('dynamic-target').width, '31px');
+  dynamicHost = document.getElementById('dynamic-host');
+  dynamicTarget = document.getElementById('dynamic-target');
+  dynamicHost.classList.add('active');
+  dynamicTarget.classList.add('selected');
+  assert_equals(computed('dynamic-target').width, '47px');
+  assert_equals(computed('dynamic-target').color, 'rgb(17, 18, 19)');
+  dynamicHost.style.setProperty('--dynamic-size', '59px');
+  assert_equals(computed('dynamic-target').width, '59px');
+  dynamicHost.style.removeProperty('--dynamic-size');
+  dynamicHost.classList.remove('active');
+  dynamicTarget.classList.remove('selected');
+  assert_equals(computed('dynamic-target').width, '31px');
+  assert_equals(computed('dynamic-target').color, 'rgb(7, 8, 9)');
+}, 'class, ancestor custom-property, and inline custom-property mutations recascade immediately');
+
+test(() => {
+  const target = document.getElementById('cssom-target');
+  target.style.setProperty('width', '41px');
+  target.style.setProperty('width', '53px', 'important');
+  assert_equals(computed('cssom-target').width, '53px');
+  assert_equals(target.style.getPropertyPriority('width'), 'important');
+  assert_equals(getComputedStyle(target).getPropertyPriority('width'), '');
+  target.style.setProperty('width', '67px');
+  assert_equals(computed('cssom-target').width, '67px');
+  assert_equals(target.style.getPropertyPriority('width'), '');
+  target.style.setProperty('--priority-token', '11px', 'important');
+  assert_equals(target.style.getPropertyValue('--priority-token'), '11px');
+  assert_equals(target.style.getPropertyPriority('--priority-token'), 'important');
+  target.style.setProperty('--priority-token', '12px', 'not-important');
+  assert_equals(target.style.getPropertyValue('--priority-token'), '11px');
+  target.style.removeProperty('width');
+  assert_equals(target.style.getPropertyValue('width'), '');
+  assert_equals(computed('cssom-target').width, getComputedStyle(document.body).width);
+}, 'CSSStyleDeclaration priority and removal preserve the winning inline declaration');
+</script>

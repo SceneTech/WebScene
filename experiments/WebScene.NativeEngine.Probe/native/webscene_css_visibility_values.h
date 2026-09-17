@@ -118,7 +118,15 @@ bool apply_visibility_value(native_document& document,dom_node& node,
             node.style.pointer_events_specified = value != "inherit" && value != "unset";
             node.style.pointer_events_none = value == "none";
         } else if (name == "opacity" && !is_inline(inline_opacity)) {
-            node.style.opacity = std::clamp(std::strtof(value.c_str(), nullptr), 0.0F, 1.0F);
+            if (value == "inherit" && node.parent != nullptr) {
+                node.style.opacity = node.parent->style.opacity;
+            } else if (value == "initial" || value == "unset"
+                || value == "revert" || value == "revert-layer") {
+                node.style.opacity = 1.0F;
+            } else {
+                node.style.opacity = std::clamp(
+                    std::strtof(value.c_str(), nullptr), 0.0F, 1.0F);
+            }
         } else { return false; }
         return true;
 }

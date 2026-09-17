@@ -1,4 +1,5 @@
 #pragma once
+#include "webscene_css_cascade_application.h"
 #include "webscene_css_text_values.h"
 #include "webscene_css_variables.h"
 #include <array>
@@ -194,17 +195,15 @@ inline bool computed_layout_style_equal(
             && pseudo_layout_equal(left.after_pseudo(), right.after_pseudo());
     }
 
-inline void recompute_cascaded_line_height(dom_node& node, std::span<const css_rule* const> rules,
+inline void recompute_cascaded_line_height(dom_node& node, const cascaded_rule_order& order,
     const std::unordered_map<std::string,std::string>& variables)
     {
         // Relative lengths compute against the final font-size, irrespective
         // of declaration order. Unlike a number, an em/% value then inherits
         // as a length. Include font shorthands because they reset line-height.
         std::optional<std::string> winning_value;
-        bool winning_important = false;
         const auto consider = [&](const css_declaration& declaration) {
             if (declaration.name != "line-height" && declaration.name != "font") return;
-            if (winning_important && !declaration.important) return;
             auto value = resolve_value(node,declaration.value,variables);
             if (value.empty()) return;
             if (declaration.name == "font") {
@@ -214,17 +213,37 @@ inline void recompute_cascaded_line_height(dom_node& node, std::span<const css_r
                 else return;
             }
             winning_value = std::move(value);
-            winning_important = declaration.important;
         };
-        for (const auto* rule : rules)
-            for (const auto& declaration : rule->declarations()) consider(declaration);
-        for (const auto& [name, value] : node.authored_style().declarations)
-            consider({name, value, node.authored_style().important_declarations.contains(name)});
+        for_each_cascaded_declaration(
+            order,
+            false,
+            consider,
+            [](const css_declaration& declaration) -> std::string_view {
+                // The font shorthand resets line-height, so both declarations
+                // compete for the same effective longhand winner.
+                if (declaration.name == "font" || declaration.name == "line-height")
+                    return "line-height";
+                return declaration.name;
+            });
+        for (const auto important : {false, true}) {
+            for (const auto& [name, value] : node.authored_style().declarations) {
+                if (node.authored_style().important_declarations.contains(name) != important)
+                    continue;
+                consider({name, value, important});
+            }
+        }
         if (winning_value.has_value()) {
             const auto font_size = node.style.font_size >= 0
                 ? node.style.font_size : inherited_font_size(node);
             node.style.line_height = resolved_declared_line_height(node, *winning_value, font_size);
         }
+    }
+
+inline void recompute_cascaded_line_height(dom_node& node, std::span<const css_rule* const> rules,
+    const std::unordered_map<std::string,std::string>& variables)
+    {
+        const cascaded_rule_order order(rules);
+        recompute_cascaded_line_height(node,order,variables);
     }
 
 inline void recompute_inline_font_relative_metrics(dom_node& node)

@@ -812,6 +812,9 @@ struct v8_dom_runtime::implementation final {
             js_string(isolate, "getPropertyValue"),
             v8::FunctionTemplate::New(isolate, style_get_property));
         style->Set(
+            js_string(isolate, "getPropertyPriority"),
+            v8::FunctionTemplate::New(isolate, style_get_property_priority));
+        style->Set(
             js_string(isolate, "removeProperty"),
             v8::FunctionTemplate::New(isolate, style_remove_property));
         style_template.Reset(isolate, style);

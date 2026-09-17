@@ -921,6 +921,13 @@
       "reason": "Browser-referenced splitText/normalize semantics plus CSS, layout, stylesheet, textarea, identity and conversion checkpoints."
     },
     {
+      "path": "contracts/css-cascade-winner-matrix.html",
+      "type": "testharness",
+      "capabilities": ["cascade-precedence", "global-keywords", "cascade-layers", "custom-property-cycles", "shorthand-priority", "dynamic-recascade"],
+      "evidence": ["css-cascade-matrix-audit"],
+      "reason": "Table-driven browser/native cascade winner and computed-value checkpoints for #238."
+    },
+    {
       "path": "contracts/css-character-data-checkpoints.html",
       "type": "testharness",
       "capabilities": ["character-data-style-checkpoints", "dom-string-conversion-order", "structural-selector-invalidation"],

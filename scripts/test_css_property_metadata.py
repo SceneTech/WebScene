@@ -34,6 +34,8 @@ class CssPropertyMetadataTests(unittest.TestCase):
                 "color": [],
                 "complex": [],
             },
+            "nativeInheritedProperties": [],
+            "nativeMasklessPropertyIds": [],
             "managedKnownProperties": known or ["left"],
             "supportedPropertyExtras": extras or [],
             "properties": properties,
@@ -71,7 +73,12 @@ class CssPropertyMetadataTests(unittest.TestCase):
             "fc4d77c515998b6df1f119ff7e09b0b82cc812744c34f1c44c6fd142067b1fb2",
             hashlib.sha256("\n".join(catalog.managed_known_properties).encode()).hexdigest(),
         )
-        self.assertEqual(214, len(GENERATOR.supported_names(catalog)))
+        self.assertEqual(230, len(GENERATOR.supported_names(catalog)))
+        self.assertEqual(
+            "942b33d7fac2d56ecd448b0d5a5a3d2f34dee6f65cd471251fde7473c1494dd2",
+            hashlib.sha256("\n".join(
+                GENERATOR.supported_names(catalog)).encode()).hexdigest(),
+        )
         self.assertEqual(146, len(catalog.native_property_ids))
         self.assertEqual(54, len(catalog.native_storage_only_properties))
         self.assertEqual(
@@ -119,9 +126,20 @@ class CssPropertyMetadataTests(unittest.TestCase):
             "e1b6e60b2a079e9b6fb6856cb4ad10b3a51ee8d13610a63f8a6cfcb913a98d06",
             hashlib.sha256("\n".join(grammar_rows).encode()).hexdigest(),
         )
+        self.assertEqual(20, len(catalog.native_inherited_properties))
+        self.assertEqual(24, len(catalog.native_maskless_property_ids))
+        self.assertEqual(
+            "ba22ffe33da3f7535acb7993d24b1b79232089eaf50b2782d47d1d12ccc4b37c",
+            hashlib.sha256("\n".join(
+                catalog.native_maskless_property_ids).encode()).hexdigest(),
+        )
         self.assertEqual("gridGap", GENERATOR.css_idl_name("grid-gap"))
         self.assertEqual("MozTransform", GENERATOR.css_idl_name("-moz-transform"))
         self.assertEqual("cssFloat", GENERATOR.css_idl_name("float"))
+        self.assertIn(
+            "cssom_style_template_property_accessor_count = 418U",
+            GENERATOR.generate_native_supported(catalog),
+        )
 
         rendered = GENERATOR.generate_managed(catalog)
         for name in ("inset-block-end", "border-block-width", "padding-block-start"):
@@ -227,6 +245,34 @@ class CssPropertyMetadataTests(unittest.TestCase):
             path = Path(directory) / "metadata.json"
             path.write_text(json.dumps(payload), encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "lack grammar classification"):
+                GENERATOR.load_catalog(path)
+
+    def test_rejects_unknown_native_inherited_property(self):
+        payload = self._payload([{"name": "left", "mask": ["inline_left"]}])
+        payload["nativeInheritedProperties"] = ["unknown-property"]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "metadata.json"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "not CSSOM-supported"):
+                GENERATOR.load_catalog(path)
+
+    def test_rejects_unexposed_native_canonical_property(self):
+        payload = self._payload([{"name": "left", "mask": ["inline_left"]}])
+        payload["nativePropertyIds"][2]["name"] = "right"
+        payload["nativePropertyIds"][2]["aliases"] = ["left"]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "metadata.json"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "not CSSOM-supported"):
+                GENERATOR.load_catalog(path)
+
+    def test_rejects_unknown_native_maskless_property_id(self):
+        payload = self._payload([{"name": "left", "mask": ["inline_left"]}])
+        payload["nativeMasklessPropertyIds"] = ["not_an_id"]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "metadata.json"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "reference unknown id"):
                 GENERATOR.load_catalog(path)
 
 

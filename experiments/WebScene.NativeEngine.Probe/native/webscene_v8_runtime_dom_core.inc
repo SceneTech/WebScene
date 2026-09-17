@@ -899,14 +899,16 @@
         }
         for (auto& [type, listeners] : frame_event_listeners) {
             static_cast<void>(type);
-            std::erase_if(listeners, [&](const auto& listener) {
+            std::erase_if(listeners, [&](auto& listener) {
                 const auto listener_context = listener.context.Get(isolate);
-                return std::any_of(
+                const auto detached = std::any_of(
                     detached_contexts.begin(),
                     detached_contexts.end(),
                     [&](const auto context) {
                         return listener_context == context;
                     });
+                if (detached) clear_event_listener(listener);
+                return detached;
             });
         }
     }
@@ -1074,6 +1076,9 @@
                 || (is_connected(*candidate)
                     && (candidate == &root || subtree_contains(root, candidate)));
         });
+        detached_dom_root_ids.clear();
+        detached_dom_root_ids.insert(
+            detached_dom_roots.begin(), detached_dom_roots.end());
         return true;
     }
 
@@ -1270,13 +1275,37 @@
     void register_detached_subtree(dom_node& root)
     {
         if (&root == &document.body() || root.parent != nullptr) return;
+        // Detached leaves are the common text/topology case. A leaf cannot
+        // contain an existing root and, after unlinking, cannot still be
+        // contained by one. Index it directly so repeated split/normalize
+        // cycles do not compare every new leaf with every historical leaf.
+        if (root.children.empty()) {
+            if (!detached_dom_root_ids.insert(root.id).second) return;
+            detached_dom_roots.push_back(root.id);
+            ++detached_nodes_since_gc;
+            if (detached_nodes_since_gc >= detached_dom_gc_threshold) {
+                if (!detached_dom_gc_requested
+                    && detached_dom_gc_scan_index >= detached_dom_gc_scan_roots.size()) {
+                    detached_dom_gc_retry_count = 0U;
+                }
+                detached_dom_gc_requested = true;
+            }
+            return;
+        }
+        if (detached_dom_root_ids.contains(root.id)) return;
         for (const auto known_id : detached_dom_roots) {
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+            ++detached_dom_root_containment_checks;
+#endif
             const auto* known = document.find_by_native_id(known_id);
             if (known != nullptr && subtree_contains(*known, &root)) return;
         }
         std::vector<uint32_t> retained_roots;
         retained_roots.reserve(detached_dom_roots.size() + 1U);
         for (const auto known_id : detached_dom_roots) {
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+            ++detached_dom_root_containment_checks;
+#endif
             const auto* known = document.find_by_native_id(known_id);
             if (known != nullptr && !subtree_contains(root, known)) {
                 retained_roots.push_back(known_id);
@@ -1286,6 +1315,9 @@
         visit_subtree(root, [&](const dom_node&) { ++count; });
         retained_roots.push_back(root.id);
         detached_dom_roots = std::move(retained_roots);
+        detached_dom_root_ids.clear();
+        detached_dom_root_ids.insert(
+            detached_dom_roots.begin(), detached_dom_roots.end());
         detached_nodes_since_gc += count;
         if (detached_nodes_since_gc >= detached_dom_gc_threshold) {
             if (!detached_dom_gc_requested
@@ -1415,8 +1447,10 @@
         }
         for (auto& [type, listeners] : frame_event_listeners) {
             static_cast<void>(type);
-            std::erase_if(listeners, [&](const auto& listener) {
-                return node_ids.contains(listener.target);
+            std::erase_if(listeners, [&](auto& listener) {
+                if (!node_ids.contains(listener.target)) return false;
+                clear_event_listener(listener);
+                return true;
             });
         }
         if (nodes.contains(active_element)) active_element = nullptr;
@@ -1532,6 +1566,8 @@
                     removed_root_ids.end(),
                     root_id) != removed_root_ids.end();
             });
+            for (const auto root_id : removed_root_ids)
+                detached_dom_root_ids.erase(root_id);
         }
 #if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
         ++detached_dom_release_slices;

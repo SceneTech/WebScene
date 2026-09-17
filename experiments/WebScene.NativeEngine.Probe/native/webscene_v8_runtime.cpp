@@ -448,7 +448,8 @@ struct v8_dom_runtime::implementation final {
         for (const auto& method : std::initializer_list<std::tuple<const char*, v8::FunctionCallback, int>>{
                 {"substringData", substring_character_data, 2}, {"appendData", append_character_data, 1},
                 {"insertData", insert_character_data, 2}, {"deleteData", delete_character_data, 2},
-                {"replaceData", replace_character_data, 3}}) {
+                {"replaceData", replace_character_data, 3}, {"splitText", split_text, 1},
+                {"normalize", normalize_node, 0}}) {
             element->PrototypeTemplate()->Set(js_string(isolate, std::get<0>(method)),
                 v8::FunctionTemplate::New(isolate, std::get<1>(method), v8::Local<v8::Value>(),
                     v8::Local<v8::Signature>(), std::get<2>(method), v8::ConstructorBehavior::kThrow));
@@ -6201,6 +6202,8 @@ std::string v8_dom_runtime::event_diagnostics() const
         << impl_->detached_dom_release_max_roots_per_slice;
     result << ", detached-dom-idle-gc-notifications="
         << impl_->detached_dom_idle_gc_notifications;
+    result << ", detached-dom-root-containment-checks="
+        << impl_->detached_dom_root_containment_checks;
     result << ", attribute-transition-schedule-requests="
         << impl_->attribute_transition_schedule_requests;
     result << ", attribute-transition-coalesced-requests="

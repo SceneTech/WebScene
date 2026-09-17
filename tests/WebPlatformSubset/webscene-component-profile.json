@@ -348,6 +348,13 @@
       "evidence": ["nested-component-activation", "toolbar-and-menu-event-delegation"]
     },
     {
+      "path": "contracts/dom-detached-listener-lifecycle.html",
+      "type": "testharness",
+      "capabilities": ["detached-dom-listeners", "listener-identity", "event-once", "event-abort-signal", "reentrant-event-dispatch"],
+      "evidence": ["panel-reclamation-listener-ownership"],
+      "reason": "Browser-referenced listener behavior accompanies native forced-GC ownership and callback-retirement regressions."
+    },
+    {
       "path": "css/css-position/position-absolute-chrome-bug-001.html",
       "type": "testharness",
       "capabilities": ["absolute-positioning", "percentage-insets", "dynamic-class-relayout", "resize-back-stability"],
@@ -905,6 +912,13 @@
       "capabilities": ["character-data-methods", "character-data-style-checkpoints", "dom-string-conversion-order", "structural-selector-invalidation"],
       "evidence": ["css-structural-mutation-audit"],
       "reason": "Browser-referenced UTF-16 editing methods, conversion/reentrancy, empty/relational selector, stylesheet text and textarea checkpoints."
+    },
+    {
+      "path": "contracts/css-text-split-normalize.html",
+      "type": "testharness",
+      "capabilities": ["text-split", "node-normalize", "text-structural-checkpoints", "utf-16-offsets", "stylesheet-text", "textarea-default-value"],
+      "evidence": ["css-structural-mutation-audit"],
+      "reason": "Browser-referenced splitText/normalize semantics plus CSS, layout, stylesheet, textarea, identity and conversion checkpoints."
     },
     {
       "path": "contracts/css-character-data-checkpoints.html",

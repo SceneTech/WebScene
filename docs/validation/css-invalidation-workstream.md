@@ -8,6 +8,11 @@ used.
 
 ## Implemented
 
+Post-merge lifecycle follow-up: [DOM listener ownership](dom-listener-ownership-20260917.md)
+removes strong native callback roots that retained unreachable reconnected panels.
+Native forced-GC and browser-referenced event contracts preserve reachable behavior;
+the original #258 workload and wider product/performance acceptance remain open.
+
 Latest structural checkpoint follow-up: [CharacterData editing methods](css-character-data-methods-20260917.md)
 share the existing targeted setter path, with UTF-16/conversion/reentrancy contracts
 and stable/nonempty CSS work-counter gates. `splitText`, `normalize` and broader

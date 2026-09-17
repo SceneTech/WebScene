@@ -66,9 +66,11 @@ The counters measure CSS work, not allocations, total frame cost or presentation
 
 ## Boundaries and remaining work
 
-This does not implement `splitText`, `normalize`, complete live Range adjustment,
-MutationObserver delivery, or processing-instruction pseudo-attribute semantics.
-It qualifies the listed text/CSS checkpoints, not complete DOM conformance. Text
+This stage did not implement `splitText` or `normalize`; those are now qualified by
+[the follow-up text-topology stage](css-text-topology-20260917.md). Complete live
+Range adjustment, MutationObserver delivery, and processing-instruction
+pseudo-attribute semantics remain outstanding. It qualifies the listed text/CSS
+checkpoints, not complete DOM conformance. Text
 conversion/copying and layout costs remain; this is not a zero-allocation or
 constant-time text-editing claim. The existing detached-DOM regression passing
 does **not** resolve the distinct #258 retained-subtree failure.

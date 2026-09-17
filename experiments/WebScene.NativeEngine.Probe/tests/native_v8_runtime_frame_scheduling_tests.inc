@@ -696,6 +696,187 @@ void test_initial_frame_document_write_and_hidden_style(webscene_engine* engine)
         "initial iframe document replacement or hidden computed style regressed: " + result);
 }
 
+void collect_dom_listener_test_memory(webscene_engine* engine)
+{
+    webscene_engine_memory_metrics before{sizeof(webscene_engine_memory_metrics)};
+    webscene_engine_get_memory_metrics(engine, &before);
+    require(webscene_engine_request_low_memory(engine) != 0,
+        "DOM listener low-memory request failed");
+    webscene_engine_memory_metrics after{sizeof(webscene_engine_memory_metrics)};
+    for (auto attempt = 0; attempt < 500; ++attempt) {
+        webscene_engine_get_memory_metrics(engine, &after);
+        if (after.low_memory_notifications > before.low_memory_notifications) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    require(after.low_memory_notifications > before.low_memory_notifications,
+        "DOM listener test did not observe requested V8 collection");
+}
+
+void test_dom_listener_callback_retirement()
+{
+    auto* engine = webscene_engine_create(0);
+    require(engine != nullptr, "listener retirement engine creation failed");
+    for (const auto route : {"remove", "object-remove", "once", "abort"}) {
+        execute_and_wait(engine, "globalThis.listenerRetirementRoute='"
+            + std::string(route) + "'", "listener-retirement-route.js");
+        require(evaluate(engine, R"JS((() => {
+          const target = document.createElement('button');
+          document.body.appendChild(target);
+          const state = {target, weak: [], controller: new AbortController(), calls: 0};
+          for (let i = 0; i < 128; i++) {
+            const callback = listenerRetirementRoute === 'object-remove'
+              ? {handleEvent() { state.calls++; }} : () => state.calls++;
+            target.addEventListener('listener-retire', callback, {
+              once: listenerRetirementRoute === 'once', signal: state.controller.signal
+            });
+            state.weak.push(new WeakRef(callback));
+          }
+          globalThis.listenerRetirementState = state;
+          return state.weak.length === 128;
+        })())JS", "listener-retirement-setup.js") == "true",
+            "listener retirement setup failed");
+        collect_dom_listener_test_memory(engine);
+        require(evaluate(engine,
+            "listenerRetirementState.weak.every(ref => ref.deref() !== undefined)",
+            "listener-retirement-live.js") == "true",
+            "connected target did not retain a registered callback");
+        execute_and_wait(engine, R"JS(
+          (() => {
+            const state = listenerRetirementState;
+            if (listenerRetirementRoute === 'abort') state.controller.abort();
+            else if (listenerRetirementRoute === 'once')
+              state.target.dispatchEvent(new Event('listener-retire'));
+            else for (const ref of state.weak)
+              state.target.removeEventListener('listener-retire', ref.deref());
+          })()
+        )JS", "listener-retirement-clear.js");
+        collect_dom_listener_test_memory(engine);
+        collect_dom_listener_test_memory(engine);
+        require(evaluate(engine,
+            "listenerRetirementState.weak.every(ref => ref.deref() === undefined)",
+            "listener-retirement-collected.js") == "true",
+            "retired callback remained rooted on a connected target: " + std::string(route));
+        execute_and_wait(engine,
+            "listenerRetirementState.target.remove();delete globalThis.listenerRetirementState",
+            "listener-retirement-cleanup.js");
+    }
+    webscene_engine_destroy(engine);
+    std::cout << "DOM listener retirement gate: routes=4 callbacks-per-route=128\n";
+}
+
+void test_reconnected_panel_subtree_reclamation(bool unregister_before_cleanup = false)
+{
+    auto* engine = webscene_engine_create(0);
+    require(engine != nullptr, "panel reclamation engine creation failed");
+    resize(engine, 800, 600, 1U);
+    execute_and_wait(engine,
+        "document.body.textContent=''", "panel-reclamation-init.js");
+    webscene_engine_metrics baseline{};
+    for (auto attempt = 0; attempt < 500; ++attempt) {
+        webscene_engine_get_metrics(engine, &baseline);
+        if (baseline.dom_nodes > 0U) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    require(baseline.dom_nodes > 0U, "panel reclamation baseline unavailable");
+    const auto collect = [&] { collect_dom_listener_test_memory(engine); };
+    require(evaluate(engine, R"JS((() => {
+      const surface = document.createElement('main'), panel = document.createElement('section');
+      const style = document.createElement('style');
+      style.textContent = '.churn-row {display:flex;height:20px}.churn-row span {width:100px}';
+      document.head.appendChild(style);
+      document.body.appendChild(surface);
+      panel.innerHTML = '<div class="churn-row"><span>Label</span><button>Action</button></div>'.repeat(512);
+      surface.appendChild(panel);
+      const rows = Array.from(panel.children);
+      const state = {surface, panel, style, rows, calls: 0};
+      for (const row of rows) {
+        row.__state = {owner: panel, style: row.style, tokens: row.classList};
+        void getComputedStyle(row).height;
+        row.__state.listener = () => state.calls++;
+        row.lastElementChild.addEventListener('panel-action', row.__state.listener);
+      }
+      for (let cycle = 0; cycle < 100; cycle++) {
+        panel.remove();
+        surface.appendChild(panel);
+      }
+      globalThis.panelReclamationState = state;
+      return rows.length === 512 && rows.every(row =>
+        row.parentNode === panel && getComputedStyle(row).height === '20px');
+    })())JS", "panel-reclamation-build.js") == "true", "panel reattach changed identity/styles");
+    // Observe a populated publication before cleanup: a stale baseline snapshot
+    // must never make the eventual reclamation assertion pass vacuously.
+    webscene_engine_metrics populated{};
+    for (auto attempt = 0; attempt < 500; ++attempt) {
+        webscene_engine_get_metrics(engine, &populated);
+        if (populated.dom_nodes >= baseline.dom_nodes + 512U * 5U) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    require(populated.dom_nodes >= baseline.dom_nodes + 512U * 5U,
+        "panel reclamation did not observe the populated node snapshot");
+    execute_and_wait(engine, R"JS(
+        panelReclamationState.panel.remove();
+        (() => {
+          const state = panelReclamationState;
+          state.detachedListener = {handleEvent() { state.calls++; }};
+          state.rows[0].lastElementChild.addEventListener('panel-action', state.detachedListener);
+        })();
+    )JS",
+        "panel-reclamation-retained-detach.js");
+    collect();
+    require(evaluate(engine, R"JS((() => {
+      const {surface, panel, rows} = panelReclamationState;
+      if (panel.isConnected || rows.length !== 512 || !rows.every((row, index) =>
+          row === panel.children[index] && row.parentNode === panel &&
+          row.__state.owner === panel && row.__state.style === row.style &&
+          row.__state.tokens === row.classList && row.firstElementChild.textContent === 'Label')) {
+        return false;
+      }
+      for (const row of rows) row.lastElementChild.dispatchEvent(new Event('panel-action'));
+      surface.appendChild(panel);
+      return panelReclamationState.calls === 513 && panel.isConnected &&
+        rows.every(row => getComputedStyle(row).height === '20px');
+    })())JS", "panel-reclamation-retained-restore.js") == "true",
+        "reachable reconnected panel lost wrappers, listeners, expandos, or styles across GC");
+    // Await this script, not an arbitrary publication: a pending earlier scene
+    // may publish while the final JavaScript root is still keeping the panel alive.
+    if (unregister_before_cleanup) {
+        execute_and_wait(engine,
+            "for (const row of panelReclamationState.rows) "
+            "row.lastElementChild.removeEventListener('panel-action', row.__state.listener);"
+            "panelReclamationState.rows[0].lastElementChild.removeEventListener("
+            "'panel-action', panelReclamationState.detachedListener)",
+            "panel-reclamation-unregister-control.js");
+    }
+    execute_and_wait(engine,
+        "panelReclamationState.panel.remove();panelReclamationState.surface.remove();"
+        "panelReclamationState.style.remove();delete globalThis.panelReclamationState;",
+        "panel-reclamation-cleanup.js");
+    collect();
+    collect();
+    webscene_engine_metrics after{};
+    for (auto attempt = 0; attempt < 1000; ++attempt) {
+        webscene_engine_get_metrics(engine, &after);
+        if (after.dom_nodes <= baseline.dom_nodes) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    require(after.dom_nodes <= baseline.dom_nodes,
+        "detached reconnected panel was not reclaimed while idle (baseline="
+            + std::to_string(baseline.dom_nodes) + ", after="
+            + std::to_string(after.dom_nodes) + ")");
+    std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    webscene_engine_metrics idle{};
+    webscene_engine_get_metrics(engine, &idle);
+    require(idle.dom_nodes == after.dom_nodes
+            && idle.published_scenes == after.published_scenes
+            && idle.layout_passes == after.layout_passes,
+        "reclaimed panel produced unnecessary idle layout/publication");
+    std::cout << "Panel reclamation gate: unregister-control=" << unregister_before_cleanup
+              << " rows=512 cycles=100 baseline="
+              << baseline.dom_nodes << " populated=" << populated.dom_nodes
+              << " idle-after=" << idle.dom_nodes << " idle-publications=0\n";
+    webscene_engine_destroy(engine);
+}
+
 void test_low_memory_reclaims_small_detached_dom_batches()
 {
     auto* engine = webscene_engine_create(0);

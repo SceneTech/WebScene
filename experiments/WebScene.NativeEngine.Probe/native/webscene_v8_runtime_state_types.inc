@@ -331,6 +331,10 @@
         bool once{false};
         bool passive{false};
         v8::Global<v8::Object> signal;
+        // DOM targets own callbacks through their JS wrapper graph. Native
+        // dispatch indexes must not turn callback -> target cycles into roots.
+        v8::Global<v8::Object> node_owner;
+        v8::Global<v8::Object> node_entry;
     };
 
     struct media_query_list_state final {

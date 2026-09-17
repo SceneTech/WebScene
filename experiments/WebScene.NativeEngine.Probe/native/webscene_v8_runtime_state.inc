@@ -297,6 +297,7 @@
     static constexpr size_t detached_dom_gc_threshold = 512U;
     static constexpr size_t maximum_detached_dom_release_roots_per_slice = 16U;
     std::vector<uint32_t> detached_dom_roots;
+    std::unordered_set<uint32_t> detached_dom_root_ids;
     std::vector<uint32_t> detached_dom_gc_scan_roots;
     size_t detached_dom_gc_scan_index{0U};
     size_t detached_nodes_since_gc{0U};
@@ -314,6 +315,7 @@
     uint64_t detached_dom_release_slices{0U};
     uint64_t detached_dom_release_max_roots_per_slice{0U};
     uint64_t detached_dom_idle_gc_notifications{0U};
+    uint64_t detached_dom_root_containment_checks{0U};
 #endif
     std::string last_error;
     std::deque<pending_promise_rejection> pending_promise_rejections;

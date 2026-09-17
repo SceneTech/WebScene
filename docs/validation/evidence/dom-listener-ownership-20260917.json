@@ -1,0 +1,110 @@
+{
+  "schema": "webscene-dom-listener-ownership-v1",
+  "base": "4040058e74d76b4485961d65dad74a77c46072fb",
+  "date": "2026-09-17",
+  "before": {
+    "runtime": "unmodified base",
+    "baselineNodes": 1,
+    "retainedNodes": 2565,
+    "registeredFailures": 2,
+    "explicitUnregisterControlPasses": 3
+  },
+  "after": {
+    "ctest": "webscene_native_panel_listener_lifecycle",
+    "repeatedPasses": 5,
+    "rows": 512,
+    "attachDetachCycles": 100,
+    "baselineNodes": 1,
+    "populatedNodes": 2565,
+    "reclaimedNodes": 1,
+    "idleWindowMs": 250,
+    "idlePublications": 0,
+    "idleLayouts": 0,
+    "callbackRetirementRoutes": [
+      "remove",
+      "object-remove",
+      "once",
+      "abort"
+    ],
+    "callbacksPerRoute": 128
+  },
+  "reports": [
+    {
+      "path": "/tmp/css-listener-lifecycle-chrome-final-20260917/results.json",
+      "sha256": "c3a3eb9fc52656b9b088ae5844165931029936bed21f8b39e7b5a3f8b0fe1508",
+      "identity": "Google Chrome 153.0.8010.48",
+      "summary": {
+        "tests": 1,
+        "passed": 1,
+        "failed": 0,
+        "timedOut": 0,
+        "subtests": 5,
+        "subtestsPassed": 5,
+        "subtestsFailed": 0
+      }
+    },
+    {
+      "path": "/tmp/css-listener-lifecycle-native-qualified-20260917/results.json",
+      "sha256": "bb0620770ee9477dd93f182edf955b1ecbcac86f7e33cc31e355fcdc975c588a",
+      "summary": {
+        "tests": 1,
+        "passed": 1,
+        "failed": 0,
+        "timedOut": 0,
+        "harnessErrors": 0,
+        "subtests": 5,
+        "subtestsPassed": 5,
+        "subtestsFailed": 0
+      }
+    },
+    {
+      "path": "/tmp/css-listener-adjacent-chrome-20260917/results.json",
+      "sha256": "f16806e9b195481e1b58891b5ec668da2ecf80e3fa5cc914bd5c8c0a2b8febef",
+      "identity": "Google Chrome 153.0.8010.48",
+      "summary": {
+        "tests": 3,
+        "passed": 3,
+        "failed": 0,
+        "timedOut": 0,
+        "subtests": 5,
+        "subtestsPassed": 5,
+        "subtestsFailed": 0
+      }
+    },
+    {
+      "path": "/tmp/css-listener-adjacent-native-20260917/results.json",
+      "sha256": "8bf1b133b167fe4b35794f48bddc08ea6537fccff97173b625dc43e132375b9e",
+      "summary": {
+        "tests": 8,
+        "passed": 8,
+        "failed": 0,
+        "timedOut": 0,
+        "harnessErrors": 0,
+        "subtests": 20,
+        "subtestsPassed": 20,
+        "subtestsFailed": 0
+      }
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "/Volumes/SSD/builds/webscene-spotify-tests/libwebscene_native_engine.dylib",
+      "sha256": "74cfff45e6d60ec0e685d295cf6744ce9f4cd96f7c99d49efe0db22395513c58"
+    },
+    {
+      "path": "/Volumes/SSD/builds/webscene-spotify-tests/webscene_native_engine_tests",
+      "sha256": "cf995e500481bcaf4197a49acfb7180c2dc12dade1f7d5c0a56882b39a767d12"
+    },
+    {
+      "path": "/Volumes/SSD/builds/webscene-css-profile-sdk/runtime/libwebscene_native_engine.a",
+      "sha256": "70e0e66c8f04389b416d3bf65205f5920c4f4dbd7d94c072b77aeba5e5fd0d18"
+    }
+  ],
+  "limits": [
+    "Original issue 258 oracle unavailable; not qualified",
+    "No RSS, idle CPU, physical resize or Chrome speed claim",
+    "Local native test binary contains an unrelated uncommitted IndexedDB fixture edit, not executed by these focused tests",
+    "No installed SDK or manual demo update",
+    "No CI monitoring or cross-RID/package qualification"
+  ]
+}

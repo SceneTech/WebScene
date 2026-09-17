@@ -59,6 +59,7 @@
         { "name": "append", "callback": "append_nodes", "length": 0 },
         { "name": "prepend", "callback": "prepend_child", "length": 0 },
         { "name": "replaceChildren", "callback": "replace_children", "length": 0 },
+        { "name": "normalize", "callback": "normalize_node", "length": 0 },
         { "name": "getRootNode", "callback": "get_root_node", "length": 0 },
         { "name": "getBoundingClientRect", "callback": "get_bounding_client_rect", "length": 0 },
         { "name": "getClientRects", "callback": "get_client_rects", "length": 0 }
@@ -125,7 +126,9 @@
       "constructor": "text_constructor",
       "parent": "CharacterData",
       "attributes": [],
-      "methods": [],
+      "methods": [
+        { "name": "splitText", "callback": "split_text", "length": 1 }
+      ],
       "constants": []
     },
     {

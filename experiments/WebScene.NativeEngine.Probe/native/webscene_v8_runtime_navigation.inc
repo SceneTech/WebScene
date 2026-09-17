@@ -263,6 +263,7 @@
         }
         release_detached_subtrees(retired_roots);
         detached_dom_roots.clear();
+        detached_dom_root_ids.clear();
         detached_dom_gc_scan_roots.clear();
         detached_dom_gc_scan_index = 0U;
         detached_nodes_since_gc = 0U;

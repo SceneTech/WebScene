@@ -1,0 +1,90 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Detached DOM listeners preserve identity and retire registrations</title>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<body>
+<script>
+function fixture(t) {
+  const panel = document.createElement('section');
+  const button = document.createElement('button');
+  panel.appendChild(button);
+  document.body.appendChild(panel);
+  t.add_cleanup(() => panel.remove());
+  return {panel, button};
+}
+test(t => {
+  const {panel, button} = fixture(t), order = [];
+  panel.addEventListener('action', e => {
+    assert_equals(e.target, button);
+    assert_equals(e.currentTarget, panel);
+    order.push('capture');
+  }, true);
+  button.addEventListener('action', () => order.push('target'));
+  panel.addEventListener('action', () => order.push('bubble'));
+  for (let i = 0; i < 100; i++) {
+    panel.remove();
+    button.dispatchEvent(new Event('action', {bubbles: true}));
+    document.body.appendChild(panel);
+    button.dispatchEvent(new Event('action', {bubbles: true}));
+  }
+  assert_equals(order.length, 600);
+  assert_equals(order.join(','), Array(200).fill('capture,target,bubble').join(','));
+}, 'Listeners on retained detached subtrees survive 100 detach and restore cycles');
+test(t => {
+  const {panel, button} = fixture(t);
+  let calls = 0;
+  function listener() { calls++; }
+  button.addEventListener('action', listener);
+  button.addEventListener('action', listener, true);
+  panel.remove();
+  button.removeEventListener('action', listener);
+  button.dispatchEvent(new Event('action'));
+  assert_equals(calls, 1);
+  button.removeEventListener('action', listener, true);
+  document.body.appendChild(panel);
+  button.dispatchEvent(new Event('action'));
+  assert_equals(calls, 1);
+}, 'Removing one capture variant does not retire another registration of the callback');
+test(t => {
+  const {panel, button} = fixture(t), controller = new AbortController();
+  let once = 0, aborted = 0;
+  button.addEventListener('action', () => once++, {once: true});
+  button.addEventListener('action', () => aborted++, {signal: controller.signal});
+  panel.remove();
+  controller.abort();
+  button.dispatchEvent(new Event('action'));
+  document.body.appendChild(panel);
+  button.dispatchEvent(new Event('action'));
+  assert_equals(once, 1);
+  assert_equals(aborted, 0);
+}, 'Once and AbortSignal retirement survive detached-target reattachment');
+test(t => {
+  const {panel, button} = fixture(t);
+  let calls = 0;
+  const listener = {handleEvent() { assert_unreached('old method'); }};
+  button.addEventListener('action', listener);
+  panel.remove();
+  listener.handleEvent = function(e) {
+    assert_equals(this, listener);
+    assert_equals(e.currentTarget, button);
+    calls++;
+    button.removeEventListener('action', listener);
+    document.body.appendChild(panel);
+    button.dispatchEvent(new Event('action'));
+  };
+  button.dispatchEvent(new Event('action'));
+  assert_equals(calls, 1);
+}, 'Object listener identity and removal remain correct during reentrant reattachment');
+test(t => {
+  const {panel, button} = fixture(t);
+  panel.remove();
+  let calls = 0;
+  const listener = {handleEvent() { calls++; }};
+  button.addEventListener('action', listener);
+  button.dispatchEvent(new Event('action'));
+  document.body.appendChild(panel);
+  button.dispatchEvent(new Event('action'));
+  assert_equals(calls, 2);
+}, 'Listeners installed after detachment remain active after reattachment');
+</script>

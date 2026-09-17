@@ -688,6 +688,8 @@ int main()
             return 0;
         }
         if (selected == "detached-dom-gc") {
+            test_dom_listener_callback_retirement();
+            test_reconnected_panel_subtree_reclamation();
             test_low_memory_reclaims_small_detached_dom_batches();
             auto* focused_engine = webscene_engine_create(0);
             require(focused_engine != nullptr, "focused engine creation failed");
@@ -695,6 +697,15 @@ int main()
             test_detached_dom_wrappers_do_not_permanently_root_nodes(
                 focused_engine);
             webscene_engine_destroy(focused_engine);
+            return 0;
+        }
+        if (selected == "panel-subtree-reclamation") {
+            test_dom_listener_callback_retirement();
+            test_reconnected_panel_subtree_reclamation();
+            return 0;
+        }
+        if (selected == "panel-subtree-reclamation-unregister-control") {
+            test_reconnected_panel_subtree_reclamation(true);
             return 0;
         }
         if (selected == "tradingview-svg-checker") {
@@ -1276,6 +1287,8 @@ int main()
     test_dom_element_constructor_identity(engine);
     test_provisional_frame_focus_and_document_event_identity(engine);
     test_initial_frame_document_write_and_hidden_style(engine);
+    test_reconnected_panel_subtree_reclamation();
+    test_dom_listener_callback_retirement();
     test_low_memory_reclaims_small_detached_dom_batches();
     test_detached_dom_wrappers_do_not_permanently_root_nodes(engine);
     test_connected_style_recascade_skips_detached_wrapper_retention(engine);

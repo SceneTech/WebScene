@@ -348,6 +348,13 @@
       "evidence": ["nested-component-activation", "toolbar-and-menu-event-delegation"]
     },
     {
+      "path": "contracts/dom-detached-listener-lifecycle.html",
+      "type": "testharness",
+      "capabilities": ["detached-dom-listeners", "listener-identity", "event-once", "event-abort-signal", "reentrant-event-dispatch"],
+      "evidence": ["panel-reclamation-listener-ownership"],
+      "reason": "Browser-referenced listener behavior accompanies native forced-GC ownership and callback-retirement regressions."
+    },
+    {
       "path": "css/css-position/position-absolute-chrome-bug-001.html",
       "type": "testharness",
       "capabilities": ["absolute-positioning", "percentage-insets", "dynamic-class-relayout", "resize-back-stability"],

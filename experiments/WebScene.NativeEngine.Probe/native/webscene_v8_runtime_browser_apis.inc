@@ -400,6 +400,60 @@
             arguments);
     }
 
+    void retain_dom_event_listener(
+        event_listener_registration& registration,
+        v8::Local<v8::Object> target)
+    {
+        auto local_context = registration.context.Get(isolate);
+        const auto key = v8::Private::ForApi(
+            isolate, js_string(isolate, "webscene.dom-event-listeners"));
+        v8::Local<v8::Value> existing;
+        v8::Local<v8::Map> entries;
+        if (target->GetPrivate(local_context, key).ToLocal(&existing)
+            && existing->IsMap()) {
+            entries = existing.As<v8::Map>();
+        } else {
+            entries = v8::Map::New(isolate);
+            target->SetPrivate(local_context, key, entries).Check();
+        }
+        auto entry = v8::Object::New(isolate);
+        entry->Set(local_context, js_string(isolate, "callback"),
+            registration.callback.Get(isolate)).Check();
+        if (!registration.signal.IsEmpty()) {
+            entry->Set(local_context, js_string(isolate, "signal"),
+                registration.signal.Get(isolate)).Check();
+        }
+        entries->Set(local_context, entry, v8::True(isolate)).ToLocalChecked();
+        registration.node_owner.Reset(isolate, target);
+        registration.node_entry.Reset(isolate, entry);
+        registration.node_owner.SetWeak();
+        registration.node_entry.SetWeak();
+        registration.callback.SetWeak();
+        if (!registration.signal.IsEmpty()) registration.signal.SetWeak();
+    }
+
+    void clear_event_listener(event_listener_registration& registration)
+    {
+        // Remove the JS ownership edge as well as the native dispatch entry.
+        // Otherwise removed/once/aborted callbacks accumulate on live targets.
+        if (!registration.node_owner.IsEmpty() && !registration.node_entry.IsEmpty()) {
+            auto local_context = registration.context.Get(isolate);
+            v8::Context::Scope context_scope(local_context);
+            const auto key = v8::Private::ForApi(
+                isolate, js_string(isolate, "webscene.dom-event-listeners"));
+            v8::Local<v8::Value> entries;
+            if (registration.node_owner.Get(isolate)->GetPrivate(local_context, key)
+                    .ToLocal(&entries) && entries->IsMap()) {
+                entries.As<v8::Map>()->Delete(local_context,
+                    registration.node_entry.Get(isolate)).Check();
+            }
+        }
+        registration.node_owner.Reset();
+        registration.node_entry.Reset();
+        registration.callback.Reset();
+        registration.signal.Reset();
+    }
+
     static void add_event_listener(const v8::FunctionCallbackInfo<v8::Value>& info)
     {
         auto* self = current(info.GetIsolate());
@@ -535,9 +589,16 @@
                 use_capture,
                 use_once,
                 use_passive,
+                {},
+                {},
                 {}};
             if (!use_signal.IsEmpty()) {
                 registration.signal.Reset(info.GetIsolate(), use_signal);
+            }
+            if (target_node_id != 0U
+                && target_node_id != std::numeric_limits<uint32_t>::max()
+                && unwrap_node(info.This()) != nullptr) {
+                self->retain_dom_event_listener(registration, info.This());
             }
             registrations.push_back(std::move(registration));
         } else if (type == "resize") {
@@ -564,6 +625,8 @@
                 use_capture,
                 use_once,
                 use_passive,
+                {},
+                {},
                 {}};
             if (!use_signal.IsEmpty()) {
                 registration.signal.Reset(info.GetIsolate(), use_signal);
@@ -640,8 +703,7 @@
                 }
                 // Do not erase while an event may be iterating the vector. The
                 // dispatch tail compacts this tombstone.
-                registration.callback.Reset();
-                registration.signal.Reset();
+                self->clear_event_listener(registration);
                 break;
             }
             return;
@@ -655,8 +717,7 @@
                 || !callback->StrictEquals(requested)) {
                 continue;
             }
-            registration.callback.Reset();
-            registration.signal.Reset();
+            self->clear_event_listener(registration);
             break;
         }
     }
@@ -1130,8 +1191,7 @@
                 if (registration.signal.IsEmpty()) continue;
                 auto registered_signal = registration.signal.Get(info.GetIsolate());
                 if (!registered_signal->StrictEquals(signal)) continue;
-                registration.callback.Reset();
-                registration.signal.Reset();
+                self->clear_event_listener(registration);
             }
         };
         for (auto& [type, registrations] : self->frame_event_listeners) {
@@ -1259,6 +1319,8 @@
             false,
             once,
             false,
+            {},
+            {},
             {}});
     }
 
@@ -1843,15 +1905,13 @@
                             local_context,
                             js_string(info.GetIsolate(), "aborted")).ToLocal(&aborted)
                         && aborted->BooleanValue(info.GetIsolate())) {
-                        listener.callback.Reset();
-                        listener.signal.Reset();
+                        self->clear_event_listener(listener);
                         continue;
                     }
                 }
                 const auto passive = listener.passive;
                 if (listener.once) {
-                    listener.callback.Reset();
-                    listener.signal.Reset();
+                    self->clear_event_listener(listener);
                 }
                 event->Set(
                     local_context,
@@ -1907,15 +1967,13 @@
                             local_context,
                             js_string(info.GetIsolate(), "aborted")).ToLocal(&aborted)
                         && aborted->BooleanValue(info.GetIsolate())) {
-                        listener.callback.Reset();
-                        listener.signal.Reset();
+                        self->clear_event_listener(listener);
                         continue;
                     }
                 }
                 const auto passive = listener.passive;
                 if (listener.once) {
-                    listener.callback.Reset();
-                    listener.signal.Reset();
+                    self->clear_event_listener(listener);
                 }
                 event->Set(
                     local_context,

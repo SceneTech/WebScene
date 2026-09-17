@@ -899,14 +899,16 @@
         }
         for (auto& [type, listeners] : frame_event_listeners) {
             static_cast<void>(type);
-            std::erase_if(listeners, [&](const auto& listener) {
+            std::erase_if(listeners, [&](auto& listener) {
                 const auto listener_context = listener.context.Get(isolate);
-                return std::any_of(
+                const auto detached = std::any_of(
                     detached_contexts.begin(),
                     detached_contexts.end(),
                     [&](const auto context) {
                         return listener_context == context;
                     });
+                if (detached) clear_event_listener(listener);
+                return detached;
             });
         }
     }
@@ -1415,8 +1417,10 @@
         }
         for (auto& [type, listeners] : frame_event_listeners) {
             static_cast<void>(type);
-            std::erase_if(listeners, [&](const auto& listener) {
-                return node_ids.contains(listener.target);
+            std::erase_if(listeners, [&](auto& listener) {
+                if (!node_ids.contains(listener.target)) return false;
+                clear_event_listener(listener);
+                return true;
             });
         }
         if (nodes.contains(active_element)) active_element = nullptr;

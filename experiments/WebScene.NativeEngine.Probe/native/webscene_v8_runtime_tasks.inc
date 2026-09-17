@@ -972,15 +972,13 @@
                             local_context,
                             js_string(isolate, "aborted")).ToLocal(&aborted)
                         && aborted->BooleanValue(isolate)) {
-                        listener.callback.Reset();
-                        listener.signal.Reset();
+                        clear_event_listener(listener);
                         continue;
                     }
                 }
                 const auto passive = listener.passive;
                 if (listener.once) {
-                    listener.callback.Reset();
-                    listener.signal.Reset();
+                    clear_event_listener(listener);
                 }
                 event->Set(
                     local_context,
@@ -1097,15 +1095,13 @@
                                 local_frame_context,
                                 js_string(isolate, "aborted")).ToLocal(&aborted)
                             && aborted->BooleanValue(isolate)) {
-                            listener.callback.Reset();
-                            listener.signal.Reset();
+                            clear_event_listener(listener);
                             continue;
                         }
                     }
                     const auto passive = listener.passive;
                     if (listener.once) {
-                        listener.callback.Reset();
-                        listener.signal.Reset();
+                        clear_event_listener(listener);
                     }
                     event->Set(
                         local_frame_context,
@@ -1781,15 +1777,13 @@
                             local_context,
                             js_string(isolate, "aborted")).ToLocal(&aborted)
                         && aborted->BooleanValue(isolate)) {
-                        listener.callback.Reset();
-                        listener.signal.Reset();
+                        clear_event_listener(listener);
                         continue;
                     }
                 }
                 const auto passive = listener.passive;
                 if (listener.once) {
-                    listener.callback.Reset();
-                    listener.signal.Reset();
+                    clear_event_listener(listener);
                 }
                 event->Set(
                     local_context,

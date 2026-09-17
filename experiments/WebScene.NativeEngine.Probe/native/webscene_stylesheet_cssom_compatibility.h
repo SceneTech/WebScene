@@ -8,7 +8,7 @@ namespace webscene_native {
 // staged rule-set replacement so one task publishes each owner's final rules
 // and recascades once.
 // This is a bounded adapter, not a complete CSSOM implementation: constructed
-// sheets, imported-sheet inspection and nested rule mutation remain unsupported.
+// sheets and imported-sheet inspection remain unsupported.
 // Semantics: https://www.w3.org/TR/cssom-1/
 inline constexpr std::string_view cssCompatibilityScript = R"JS(
 // SCENETECH_CSS_COMPATIBILITY_V1
@@ -20,6 +20,47 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
   const text = value => {
     if (typeof value === 'symbol') throw new TypeError('A CSS rule cannot be a Symbol');
     return String(value);
+  };
+  const ruleInstances = new WeakSet();
+  const styleRuleInstances = new WeakSet();
+  const groupingRuleInstances = new WeakSet();
+  const conditionRuleInstances = new WeakSet();
+  const mediaRuleInstances = new WeakSet();
+  const ruleListInstances = new WeakSet();
+  const interfaceConstructor = (name, instances, parent) => {
+    const constructor = { [name]: function() {
+      throw new TypeError('Illegal constructor');
+    } }[name];
+    Object.defineProperty(constructor, Symbol.hasInstance, {
+      value: value => instances.has(value)
+    });
+    if (parent) Object.setPrototypeOf(constructor.prototype, parent.prototype);
+    if (typeof globalThis[name] !== 'function')
+      Object.defineProperty(globalThis, name, { value: constructor, configurable: true });
+    return constructor;
+  };
+  const CSSRuleInterface = interfaceConstructor('CSSRule', ruleInstances);
+  const CSSStyleRuleInterface = interfaceConstructor(
+    'CSSStyleRule', styleRuleInstances, CSSRuleInterface);
+  const CSSGroupingRuleInterface = interfaceConstructor(
+    'CSSGroupingRule', groupingRuleInstances, CSSRuleInterface);
+  const CSSConditionRuleInterface = interfaceConstructor(
+    'CSSConditionRule', conditionRuleInstances, CSSGroupingRuleInterface);
+  const CSSMediaRuleInterface = interfaceConstructor(
+    'CSSMediaRule', mediaRuleInstances, CSSConditionRuleInterface);
+  const CSSRuleListInterface = interfaceConstructor('CSSRuleList', ruleListInstances);
+  const installInterfaces = view => {
+    for (const [name, constructor] of [
+      ['CSSRule', CSSRuleInterface],
+      ['CSSStyleRule', CSSStyleRuleInterface],
+      ['CSSGroupingRule', CSSGroupingRuleInterface],
+      ['CSSConditionRule', CSSConditionRuleInterface],
+      ['CSSMediaRule', CSSMediaRuleInterface],
+      ['CSSRuleList', CSSRuleListInterface]
+    ]) {
+      if (typeof view[name] !== 'function')
+        Object.defineProperty(view, name, { value: constructor, configurable: true });
+    }
   };
   // Split only at top-level CSS rule boundaries. Quoted strings, escaped
   // delimiters, comments, URLs, attribute selectors and nested blocks are kept
@@ -88,18 +129,105 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
     }
     state.source = source;
   };
-  const makeRule = (state, parsed) => {
+  const makeList = (rules, synchronizeList) => {
+    const target = {};
+    const list = new Proxy(target, {
+      get(target, key, receiver) {
+        synchronizeList();
+        if (key === 'length') return rules().length;
+        if (key === 'item') return index => {
+          synchronizeList();
+          return rules()[Number(index) >>> 0] || null;
+        };
+        if (key === Symbol.iterator) return function* () {
+          synchronizeList();
+          yield* rules();
+        };
+        if (typeof key === 'string' && /^(0|[1-9][0-9]*)$/.test(key))
+          return rules()[Number(key)];
+        return Reflect.get(target, key, receiver);
+      },
+      set() { return false; },
+      deleteProperty() { return false; },
+      defineProperty() { return false; }
+    });
+    ruleListInstances.add(list);
+    return list;
+  };
+  const makeRule = (state, parsed, containingRule = null) => {
     let cssText = parsed.cssText;
     let parent = state.sheet;
     let style;
+    let serializeGroup;
+    const mediaMatch = /^@media(?:\s+([^\{]*?))?\s*\{/i.exec(parsed.cssText);
     const rule = {};
+    ruleInstances.add(rule);
+    if (mediaMatch) {
+      groupingRuleInstances.add(rule);
+      conditionRuleInstances.add(rule);
+      mediaRuleInstances.add(rule);
+    } else if (parsed.selectorText !== undefined) {
+      styleRuleInstances.add(rule);
+    }
     Object.defineProperties(rule, {
       cssText: { enumerable: true, get: () => cssText },
       parentStyleSheet: { enumerable: true, get: () => parent },
-      parentRule: { enumerable: true, value: null },
-      detach: { value: () => { parent = null; } }
+      parentRule: { enumerable: true, get: () => parent ? containingRule : null }
     });
-    if (parsed.selectorText !== undefined) {
+    if (mediaMatch) {
+      let children = splitRules(parsed.body || '').map(child => makeRule(state, child, rule));
+      let conditionText = (mediaMatch[1] || '').trim();
+      const attached = () => parent && (containingRule
+        ? containingRule.cssRules && Array.from(containingRule.cssRules).includes(rule)
+        : state.rules.includes(rule));
+      const serialize = () => {
+        cssText = `@media ${conditionText} {${children.map(child => child.cssText).join('')}}`;
+      };
+      serializeGroup = serialize;
+      const list = makeList(() => children, () => synchronize(state));
+      Object.defineProperties(rule, {
+        type: { enumerable: true, value: 4 },
+        conditionText: {
+          enumerable: true,
+          get: () => conditionText,
+          set(value) {
+            synchronize(state);
+            conditionText = text(value).trim();
+            serialize();
+            if (attached()) publish(state);
+          }
+        },
+        cssRules: { enumerable: true, get: () => list },
+        insertRule: { writable: true, value(ruleText, index = 0) {
+          if (arguments.length === 0) throw new TypeError('A CSS rule is required');
+          synchronize(state);
+          index = Number(index) >>> 0;
+          if (index > children.length) exception('Rule index is out of bounds', 'IndexSizeError');
+          const parsedChildren = splitRules(text(ruleText));
+          if (parsedChildren.length !== 1) exception('Exactly one CSS rule is required', 'SyntaxError');
+          if (/^@(import|namespace)\b/i.test(parsedChildren[0].cssText))
+            exception('Imported and namespace rules require native CSSOM support', 'NotSupportedError');
+          children.splice(index, 0, makeRule(state, parsedChildren[0], rule));
+          serialize();
+          if (attached()) publish(state);
+          return index;
+        } },
+        deleteRule: { writable: true, value(index) {
+          if (arguments.length === 0) throw new TypeError('A rule index is required');
+          synchronize(state);
+          index = Number(index) >>> 0;
+          if (index >= children.length) exception('Rule index is out of bounds', 'IndexSizeError');
+          children.splice(index, 1)[0].detach();
+          serialize();
+          if (attached()) publish(state);
+        } },
+        detach: { value: () => {
+          parent = null;
+          for (const child of children) child.detach();
+        } }
+      });
+      serialize();
+    } else if (parsed.selectorText !== undefined) {
       Object.defineProperties(rule, {
         type: { enumerable: true, value: 1 },
         selectorText: { enumerable: true, value: parsed.selectorText },
@@ -113,7 +241,11 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
           const commit = () => {
             synchronize(state);
             cssText = parsed.selectorText + ' {' + declaration.cssText + '}';
-            if (parent && state.rules.includes(rule)) publish(state);
+            if (parent && (containingRule || state.rules.includes(rule))) {
+              if (containingRule && typeof containingRule.__webSceneSerialize === 'function')
+                containingRule.__webSceneSerialize();
+              publish(state);
+            }
           };
           style = new Proxy(declaration, {
             get(target, key) {
@@ -132,9 +264,18 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
             }
           });
           return style;
-        } }
+        } },
+        detach: { value: () => { parent = null; } }
       });
+    } else {
+      Object.defineProperty(rule, 'detach', { value: () => { parent = null; } });
     }
+    if (mediaMatch) Object.defineProperty(rule, '__webSceneSerialize', {
+      value: () => {
+        serializeGroup();
+        if (containingRule?.__webSceneSerialize) containingRule.__webSceneSerialize();
+      }
+    });
     return rule;
   };
   const synchronize = state => {
@@ -148,6 +289,7 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
   };
   const augment = sheet => {
     if (!sheet || typeof sheet.insertRule === 'function') return sheet;
+    installInterfaces(sheet.ownerNode?.ownerDocument?.defaultView || globalThis);
     const state = {
       sheet, owner: sheet.ownerNode,
       source: undefined, ownerSource: undefined, rules: [], disabled: false,
@@ -155,20 +297,7 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
         ? sheet.ownerNode.getAttribute('media') || ''
         : ''
     };
-    const list = new Proxy({}, {
-      get(_target, key) {
-        synchronize(state);
-        if (key === 'length') return state.rules.length;
-        if (key === 'item') return index => { synchronize(state); return state.rules[Number(index) >>> 0] || null; };
-        if (key === Symbol.iterator) return function* () {
-          for (let index = 0; index < state.rules.length; index++) { synchronize(state); yield state.rules[index]; }
-        };
-        if (typeof key === 'string' && /^(0|[1-9][0-9]*)$/.test(key)) return state.rules[Number(key)];
-      },
-      set() { return false; },
-      deleteProperty() { return false; },
-      defineProperty() { return false; }
-    });
+    const list = makeList(() => state.rules, () => synchronize(state));
     const media = {};
     Object.defineProperties(media, {
       mediaText: {

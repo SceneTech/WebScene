@@ -1,6 +1,6 @@
 # Linux native headless SDK profile
 
-The Linux x86_64 SDK is a Native-only producer profile. It installs `WebScene::Core`, `NativeWeb`, `SharedCSS`, `Compiler`, and optionally `WebGPU`. It does not build or package V8, the Runtime component, application scripts or runtime-loaded application HTML. The compiler/ABI pin is LLVM 22.1.1 with libc++. See `src/WebScene.Sdk/cmake/WebSceneLinuxSDK.cmake` and the checksum-pinned installer in `eng/sdk/install-linux-llvm.py`.
+The Linux x86_64 SDK is a Native-only producer profile. It installs `WebScene::Core`, `NativeWeb`, `SharedCSS`, `Compiler`, and optionally `WebGPU`. It does not build or package V8, the Runtime component, application scripts or runtime-loaded application HTML. The SDK compiler links the full HTML/CSS/selector parser archive as a build-time tool. `WebScene::SharedCSS` links a separate CSS/selector-only archive whose checked symbol surface contains no runtime HTML entry points or `html5ever` implementation. The compiler/ABI pin is LLVM 22.1.1 with libc++. See `src/WebScene.Sdk/cmake/WebSceneLinuxSDK.cmake` and the checksum-pinned installer in `eng/sdk/install-linux-llvm.py`.
 
 HTML/templates are still compiled to C++20 at build time. Applications explicitly select `CSS_BACKEND shared`; native CSS parsing is allowed. The Linux package exports relocatable imported targets and a platform marker so a macOS binary SDK cannot accidentally be consumed on Linux. Requesting unavailable Runtime components fails rather than substituting another host.
 

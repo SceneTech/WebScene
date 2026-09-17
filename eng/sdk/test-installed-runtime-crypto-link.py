@@ -139,6 +139,7 @@ def main() -> None:
                 "libwebscene_media.a",
                 "libixwebsocket.a",
                 "libwebscene_html_parser.a",
+                "libwebscene_css_selector_parser.a",
                 "libv8_monolith.a",
             ):
                 run(archiver, "rcs", str(libraries / name), str(empty_object))

@@ -4,14 +4,8 @@
 // This is a clean-room html5ever TreeSink for WebScene. It intentionally
 // contains no code from browser integrations reviewed during evaluation.
 
-use html5ever::driver::parse_fragment_for_element;
-use html5ever::interface::tree_builder::{ElementFlags, NodeOrText, QuirksMode, TreeSink};
-use html5ever::tendril::{StrTendril, TendrilSink};
-use html5ever::{parse_document, Attribute, ParseOpts, QualName};
 use std::alloc::{GlobalAlloc, Layout, System};
-use std::borrow::Cow;
-use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::cell::Cell;
 use std::ffi::c_void;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
@@ -66,7 +60,6 @@ unsafe impl GlobalAlloc for MeasuringAllocator {
 static ALLOCATOR: MeasuringAllocator = MeasuringAllocator;
 
 const ABI_VERSION: u32 = 1;
-const HTML_ABI_VERSION: u32 = 2;
 const STATUS_OK: u32 = 0;
 const STATUS_INVALID_ARGUMENT: u32 = 1;
 const STATUS_CALLBACK_FAILED: u32 = 2;
@@ -87,6 +80,34 @@ impl ByteSlice {
         }
     }
 }
+
+fn read_slice(value: ByteSlice) -> Option<&'static [u8]> {
+    if value.length == 0 {
+        return Some(&[]);
+    }
+    if value.data.is_null() {
+        return None;
+    }
+    Some(unsafe { std::slice::from_raw_parts(value.data, value.length) })
+}
+
+fn reset_allocation_metrics() {
+    ALLOCATION_CURRENT.with(|value| value.set(0));
+    ALLOCATION_PEAK.with(|value| value.set(0));
+    ALLOCATION_COUNT.with(|value| value.set(0));
+}
+
+#[cfg(feature = "html")]
+mod html_syntax {
+use super::*;
+use html5ever::driver::parse_fragment_for_element;
+use html5ever::interface::tree_builder::{ElementFlags, NodeOrText, QuirksMode, TreeSink};
+use html5ever::tendril::{StrTendril, TendrilSink};
+use html5ever::{parse_document, Attribute, ParseOpts, QualName};
+use std::borrow::Cow;
+use std::cell::RefCell;
+use std::collections::HashMap;
+const HTML_ABI_VERSION: u32 = 2;
 
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
@@ -545,16 +566,6 @@ fn quirks_code(mode: QuirksMode) -> u32 {
     }
 }
 
-fn read_slice(value: ByteSlice) -> Option<&'static [u8]> {
-    if value.length == 0 {
-        return Some(&[]);
-    }
-    if value.data.is_null() {
-        return None;
-    }
-    Some(unsafe { std::slice::from_raw_parts(value.data, value.length) })
-}
-
 fn parse_options(options: &ParseOptions) -> ParseOpts {
     let mut result = ParseOpts::default();
     result.tree_builder.scripting_enabled = options.scripting_enabled != 0;
@@ -618,12 +629,6 @@ fn new_sink<'a>(options: &ParseOptions, callbacks: &'a SinkVTable) -> Sink<'a> {
         doctype_count: Cell::new(0),
         preserve_comments: options.preserve_comments != 0,
     }
-}
-
-fn reset_allocation_metrics() {
-    ALLOCATION_CURRENT.with(|value| value.set(0));
-    ALLOCATION_PEAK.with(|value| value.set(0));
-    ALLOCATION_COUNT.with(|value| value.set(0));
 }
 
 fn attach_allocation_metrics(mut result: ParseResult) -> ParseResult {
@@ -710,6 +715,8 @@ pub extern "C" fn webscene_html_parse_fragment(
         ..Default::default()
     });
     attach_allocation_metrics(result)
+}
+
 }
 
 #[cfg(feature = "cssparser")]

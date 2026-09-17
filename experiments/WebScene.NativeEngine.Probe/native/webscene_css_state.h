@@ -185,6 +185,11 @@ struct compiled_css_selector final {
         // compounds. Functional selectors are analyzed once at preparation.
         std::vector<css_compound_dependencies> invalidation;
         std::vector<css_declaration> declarations;
+        // Parsed once with the immutable declaration payload. Runtime
+        // invalidation and media-query planning must not rescan var() token
+        // streams on every mutation or viewport transition.
+        std::vector<std::vector<std::string>> declaration_variable_references;
+        std::vector<std::string> variable_references;
         std::vector<std::string> media_queries;
         uint32_t specificity{0};
         // One-based index into prepared_stylesheet::cascade_layers. Runtime

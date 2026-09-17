@@ -6959,6 +6959,8 @@ std::string v8_dom_runtime::event_diagnostics() const
     result << ", css-rule-match-checks=" << impl_->css_rule_match_checks;
     result << ", css-cascade-applications=" << impl_->css_cascade_applications;
     result << ", css-cascade-candidate-checks=" << impl_->css_cascade_candidate_checks;
+    result << ", css-variable-runtime-token-scans="
+        << impl_->css_variable_runtime_token_scans;
     result << ", style-recascade-schedule-requests="
         << impl_->style_recascade_schedule_requests;
     result << ", style-recascade-coalesced-requests="
@@ -7512,6 +7514,10 @@ v8_dom_runtime::memory_metrics v8_dom_runtime::read_memory_metrics() const noexc
                         * sizeof(implementation::compiled_css_compound)
                     + payload->declarations.capacity()
                         * sizeof(implementation::css_declaration)
+                    + payload->declaration_variable_references.capacity()
+                        * sizeof(std::vector<std::string>)
+                    + payload->variable_references.capacity()
+                        * sizeof(std::string)
                     + payload->media_queries.capacity() * sizeof(std::string);
                 for (const auto& compound :
                     payload->compiled_selector.compounds) {
@@ -7568,6 +7574,19 @@ v8_dom_runtime::memory_metrics v8_dom_runtime::read_memory_metrics() const noexc
                     result.process_shared_css_rule_storage_bytes +=
                         string_bytes(declaration.name)
                         + string_bytes(declaration.value);
+                }
+                for (const auto& references :
+                     payload->declaration_variable_references) {
+                    result.process_shared_css_rule_storage_bytes +=
+                        references.capacity() * sizeof(std::string);
+                    for (const auto& reference : references) {
+                        result.process_shared_css_rule_storage_bytes +=
+                            string_bytes(reference);
+                    }
+                }
+                for (const auto& reference : payload->variable_references) {
+                    result.process_shared_css_rule_storage_bytes +=
+                        string_bytes(reference);
                 }
                 for (const auto& query : payload->media_queries) {
                     result.process_shared_css_rule_storage_bytes +=

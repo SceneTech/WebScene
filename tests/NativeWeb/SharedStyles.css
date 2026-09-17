@@ -30,3 +30,5 @@ dialog::backdrop {background:#080e185e;}
 :host {color:inherit;}
 .generated-metrics {display:flex;width:100px;}
 .generated-metrics:before {content:'x';width:20px;height:40px;}
+/* Keeps immutable custom-property dependency metadata in generated CSS parity. */
+.variable-metadata-probe { --probe-width: 17px; width: var(--probe-width); }

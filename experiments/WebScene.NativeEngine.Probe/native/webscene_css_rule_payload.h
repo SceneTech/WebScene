@@ -2,9 +2,39 @@
 #include "webscene_css_pseudo_application.h"
 #include "webscene_css_state.h"
 #include "webscene_css_invalidation.h"
+#include <algorithm>
+#include <cctype>
 #include <mutex>
 
 namespace webscene_native::css {
+inline std::vector<std::string> referenced_custom_properties(
+    std::string_view value)
+{
+    std::unordered_set<std::string> unique;
+    for (size_t search = 0U;
+         (search = value.find("var(", search)) != std::string_view::npos;) {
+        auto cursor = search + 4U;
+        while (cursor < value.size()
+            && std::isspace(static_cast<unsigned char>(value[cursor]))) {
+            ++cursor;
+        }
+        const auto start = cursor;
+        while (cursor < value.size()
+            && value[cursor] != ',' && value[cursor] != ')'
+            && !std::isspace(static_cast<unsigned char>(value[cursor]))) {
+            ++cursor;
+        }
+        if (cursor > start
+            && value.substr(start, cursor - start).starts_with("--")) {
+            unique.emplace(value.substr(start, cursor - start));
+        }
+        search += 4U;
+    }
+    std::vector<std::string> references(unique.begin(), unique.end());
+    std::sort(references.begin(), references.end());
+    return references;
+}
+
 using rule_payload_cache = std::unordered_map<uint64_t,
     std::vector<std::weak_ptr<const css_rule_payload>>>;
 inline uint64_t rule_payload_hash(
@@ -104,6 +134,19 @@ std::shared_ptr<const css_rule_payload> intern_rule_payload(
         payload->specificity = payload->compiled_selector.specificity;
         payload->cascade_layer_index = cascade_layer_index;
         payload->declarations = declarations;
+        std::unordered_set<std::string> aggregate_references;
+        payload->declaration_variable_references.reserve(declarations.size());
+        for (const auto& declaration : declarations) {
+            auto references = referenced_custom_properties(declaration.value);
+            aggregate_references.insert(references.begin(), references.end());
+            payload->declaration_variable_references.push_back(
+                std::move(references));
+        }
+        payload->variable_references.assign(
+            aggregate_references.begin(), aggregate_references.end());
+        std::sort(
+            payload->variable_references.begin(),
+            payload->variable_references.end());
         payload->media_queries = media_queries;
         candidates.emplace_back(payload);
         return payload;

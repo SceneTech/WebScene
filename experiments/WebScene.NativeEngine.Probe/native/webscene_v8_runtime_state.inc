@@ -588,6 +588,7 @@
     mutable uint64_t css_rule_match_checks{0U};
     uint64_t css_cascade_applications{0U};
     uint64_t css_cascade_candidate_checks{0U};
+    mutable uint64_t css_variable_runtime_token_scans{0U};
     uint64_t style_recascade_schedule_requests{0U};
     uint64_t style_recascade_coalesced_requests{0U};
     uint64_t style_recascade_flush_batches{0U};

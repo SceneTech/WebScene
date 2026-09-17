@@ -77,6 +77,42 @@
 </script>
 <script>
   promise_test(async t => {
+    const root = document.createElement('section');
+    root.id = 'media-inherited-variable-viewport';
+    root.className = 'media-inherited-variable-root';
+    root.innerHTML = `<div class="media-inherited-variable-owner">
+      <i class="media-inherited-variable-child"></i>
+      <i class="media-inherited-variable-override"></i>
+    </div>`;
+    const style = document.createElement('style');
+    style.textContent = `
+      .media-inherited-variable-root {--responsive-color:rgb(17,18,19)}
+      .media-inherited-variable-owner {color:var(--responsive-color)}
+      .media-inherited-variable-override {color:rgb(31,32,33)}
+      @media(max-width:600px) {
+        .media-inherited-variable-root {--responsive-color:rgb(41,42,43)}
+      }`;
+    document.head.appendChild(style); document.body.appendChild(root);
+    t.add_cleanup(() => {root.remove(); style.remove();});
+    const owner = root.querySelector('.media-inherited-variable-owner');
+    const child = root.querySelector('.media-inherited-variable-child');
+    const override = root.querySelector('.media-inherited-variable-override');
+    const colors = () => [owner, child, override]
+      .map(node => getComputedStyle(node).color);
+    assert_array_equals(colors(), [
+      'rgb(17, 18, 19)', 'rgb(17, 18, 19)', 'rgb(31, 32, 33)'
+    ], 'wide inherited variable styles');
+    await test_driver.set_viewport(root, 480, 400);
+    assert_array_equals(colors(), [
+      'rgb(41, 42, 43)', 'rgb(41, 42, 43)', 'rgb(31, 32, 33)'
+    ], 'activation updates the variable consumer and inherited child only');
+    await test_driver.set_viewport(root, 800, 600);
+    assert_array_equals(colors(), [
+      'rgb(17, 18, 19)', 'rgb(17, 18, 19)', 'rgb(31, 32, 33)'
+    ], 'deactivation restores inheritance and preserves the override');
+  }, 'media custom-property consumers propagate changed inherited values');
+
+  promise_test(async t => {
     const parent = document.createElement('section');
     parent.id = 'media-index-viewport';
     parent.className = 'media-index-parent';

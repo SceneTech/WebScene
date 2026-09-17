@@ -1885,6 +1885,16 @@ static void emit_prepared_sheet(std::ostream& out,const css::prepared_stylesheet
     for(const auto& declaration:rule->declarations)
       out << "r->declarations.push_back({" << quote(declaration.name) << ',' << quote(declaration.value)
           << ',' << declaration.important << "});\n";
+    for(const auto& references:rule->declaration_variable_references) {
+      out << "r->declaration_variable_references.push_back({";
+      for(size_t index=0;index<references.size();++index) {
+        if(index!=0) out << ',';
+        out << quote(references[index]);
+      }
+      out << "});\n";
+    }
+    for(const auto& reference:rule->variable_references)
+      out << "r->variable_references.push_back(" << quote(reference) << ");\n";
     for(const auto& query:rule->media_queries)
       out << "r->media_queries.push_back(" << quote(query) << ");\n";
     out << "sheet.rules.push_back(std::move(r));}\n";

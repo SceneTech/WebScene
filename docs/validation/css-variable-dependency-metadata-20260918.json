@@ -1,0 +1,102 @@
+{
+  "date": "2026-09-18",
+  "scope": "immutable CSS variable dependency metadata and inherited-property replay",
+  "native": {
+    "focused_filter": "media-query-targeted-recascade",
+    "passed": true,
+    "runtime_stylesheet_token_scans": {
+      "32_unrelated_rules": 0,
+      "1024_unrelated_rules": 0
+    },
+    "inherited_variable_applications": {
+      "32_unrelated_descendants": [3, 3],
+      "1024_unrelated_descendants": [3, 3]
+    },
+    "custom_property_applications": {
+      "32_unrelated_descendants": [3, 3],
+      "1024_unrelated_descendants": [3, 3]
+    },
+    "inherited_value_applications": {
+      "32_unrelated_descendants": [10, 10],
+      "1024_unrelated_descendants": [10, 10]
+    },
+    "adjacent_filters": [
+      "attribute-invalidation-scope",
+      "stylesheet-cssom",
+      "dimension-variable-compatibility",
+      "css-invalidation-scaling"
+    ],
+    "generated_stylesheet_parity": true
+  },
+  "wpt": {
+    "native": {
+      "documents": "1/1",
+      "subtests": "5/5",
+      "result": "/tmp/webscene-media-metadata-native-final.ZFfSFu/results/results.json",
+      "sha256": "a12e844490ed5a12ae73f43cce30bc5b694a4b9c32c2ed1741bf8f539879aafc"
+    },
+    "chromium": {
+      "subtests": "5/5",
+      "result": "/tmp/webscene-media-metadata-chrome-final.wfJaaX/results/results.json",
+      "sha256": "5fa603ff9e904b1080474960c984e6a269fdc4064e328e532bd5d479ef210529"
+    }
+  },
+  "spotify": {
+    "nodes": 2732,
+    "images": 18,
+    "samples_per_candidate": 240,
+    "widths": [800, 700],
+    "merged_326_control_dispatch_ms": {
+      "median": 92.1278,
+      "mean": 92.99222416666665,
+      "min": 86.947,
+      "max": 104.625
+    },
+    "merged_335_dispatch_ms": {
+      "median": 59.46415,
+      "mean": 59.652355,
+      "min": 58.058,
+      "max": 81.707
+    },
+    "metadata_only_dispatch_ms": {
+      "median": 60.0185,
+      "mean": 59.84284499999999,
+      "p95": 61.5468,
+      "min": 57.0133,
+      "max": 77.033
+    },
+    "accepted_dispatch_ms": {
+      "median": 55.21825,
+      "mean": 55.337479583333334,
+      "p95": 56.3241,
+      "min": 54.0232,
+      "max": 70.7105,
+      "width_medians": {
+        "800": 55.06135,
+        "700": 55.411
+      }
+    },
+    "median_reduction_from_326_percent": 40.06342276706923,
+    "median_speedup_from_326": 1.6684302744110868,
+    "median_reduction_from_335_percent": 7.140268548360649,
+    "metadata_only_to_accepted_reduction_percent": 7.997950631888509,
+    "metadata_only_log": "/tmp/spotify-variable-metadata-profile-20260917.log",
+    "accepted_log": "/tmp/spotify-inherited-variable-replay-profile-20260917.log",
+    "trace_log": "/tmp/spotify-inherited-variable-replay-trace-20260917.log",
+    "representative_transition": {
+      "plan_ms": 13.6822,
+      "apply_ms": 22.6188,
+      "requests": 785,
+      "conditional_inherited": 431,
+      "triggered_inherited": 137,
+      "targeted_variable_replays": 690
+    }
+  },
+  "claims_excluded": [
+    "physical window cadence",
+    "Chrome speed comparison",
+    "release SDK qualification",
+    "completion of issue 235",
+    "completion of issue 238"
+  ]
+}

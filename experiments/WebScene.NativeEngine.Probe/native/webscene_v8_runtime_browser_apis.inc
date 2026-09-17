@@ -1403,6 +1403,7 @@
         const auto dispatch = [&](const char* type, bool cancelable,
                                   bool include_persisted,
                                   v8::Local<v8::Value>& result) {
+            v8::TryCatch try_catch(isolate);
             auto event = create_event_instance(local_context);
             event->Set(local_context, js_string(isolate, "type"),
                 js_string(isolate, type)).Check();
@@ -1415,16 +1416,19 @@
                     v8::False(isolate)).Check();
             }
             v8::Local<v8::Value> arguments[] = {event};
-            return dispatcher.As<v8::Function>()->Call(
-                local_context, target, 1, arguments).ToLocal(&result);
-        };
-
-        v8::TryCatch try_catch(isolate);
-        v8::Local<v8::Value> beforeunload_result;
-        if (!dispatch("beforeunload", true, false, beforeunload_result)) {
-            last_error = "Native window beforeunload dispatch failed: "
+            if (dispatcher.As<v8::Function>()->Call(
+                    local_context, target, 1, arguments).ToLocal(&result)) {
+                return true;
+            }
+            last_error = std::string("Native window ") + type
+                + " dispatch failed: "
                 + describe_reported_exception(try_catch, local_context);
             ++frame_script_error_count;
+            return false;
+        };
+
+        v8::Local<v8::Value> beforeunload_result;
+        if (!dispatch("beforeunload", true, false, beforeunload_result)) {
             return WEBSCENE_WINDOW_CLOSE_ERROR_V1;
         }
         perform_microtask_checkpoint();
@@ -1434,9 +1438,6 @@
 
         v8::Local<v8::Value> pagehide_result;
         if (!dispatch("pagehide", false, true, pagehide_result)) {
-            last_error = "Native window pagehide dispatch failed: "
-                + describe_reported_exception(try_catch, local_context);
-            ++frame_script_error_count;
             return WEBSCENE_WINDOW_CLOSE_ERROR_V1;
         }
         perform_microtask_checkpoint();

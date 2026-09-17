@@ -35,6 +35,7 @@ bool apply_native_cascade(native_document& document,dom_node& node,
                 auto& authored=node.mutable_authored_style();
                 if(!declaration.important && authored.important_declarations.contains(declaration.name)) continue;
                 authored.declarations[declaration.name]=declaration.value;
+                authored.record_declaration_order(declaration.name);
                 if(declaration.important) authored.important_declarations.insert(declaration.name);
             }
         }

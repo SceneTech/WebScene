@@ -32,19 +32,36 @@ void apply_matched_declarations(dom_node& node,const cascaded_rule_order& order,
         // Temporarily removing the inline guard lets a declaration update its own
         // computed value while the important-origin mask still prevents a
         // normal inline declaration from overriding an author !important rule.
-        for (const auto& [name, value] : node.authored_style().declarations) {
+        uint64_t inline_groups = 0U;
+        bool ordered_inline_replay =
+            node.authored_style().requires_full_replay;
+        node.authored_style().for_each_declaration(
+            [&](const std::string& name, const std::string&) {
+                if (name.starts_with("--")
+                    || node.authored_style().important_declarations.contains(name)) {
+                    return;
+                }
+                const auto group = css::property_mask(name);
+                ordered_inline_replay = ordered_inline_replay || name == "all"
+                    || (group != 0U && (inline_groups & group) != 0U);
+                inline_groups |= group;
+            });
+        node.authored_style().for_each_declaration(
+            [&](const std::string& name, const std::string& value) {
             const auto inline_important =
                 node.authored_style().important_declarations.contains(name);
             const auto inherited_dimension = (name == "width" || name == "height")
                 && trim_css_view(value) == "inherit";
             if (name.starts_with("--") || inline_important
-                || (value.find("var(") == std::string::npos && !inherited_dimension)) continue;
+                || (!ordered_inline_replay
+                    && value.find("var(") == std::string::npos
+                    && !inherited_dimension)) return;
             const auto property_mask = css::property_mask(name);
             const auto retained_inline_mask = node.style.inline_property_mask;
             node.style.inline_property_mask &= ~property_mask;
             apply({name, value, false}, true);
             node.style.inline_property_mask = retained_inline_mask;
-        }
+        });
         // Inline transition declarations are stored separately from the hot
         // style object. Recascade clears cold animation state before applying
         // stylesheet rules, so restore the inline origin afterward while
@@ -72,17 +89,18 @@ void apply_matched_declarations(dom_node& node,const cascaded_rule_order& order,
         // rule list is applied. Replaying only the authored important tier
         // restores the CSS cascade order without reapplying every ordinary
         // inline declaration or adding a mutation-lived winner cache.
-        for (const auto& [name, value] : node.authored_style().declarations) {
+        node.authored_style().for_each_declaration(
+            [&](const std::string& name, const std::string& value) {
             if (name.starts_with("--")
                 || !node.authored_style().important_declarations.contains(name)) {
-                continue;
+                return;
             }
             const auto property_mask = css::property_mask(name);
             const auto retained_inline_mask = node.style.inline_property_mask;
             node.style.inline_property_mask &= ~property_mask;
             apply({name, value, true}, true);
             node.style.inline_property_mask = retained_inline_mask;
-        }
+        });
 }
 
 template<typename Apply>

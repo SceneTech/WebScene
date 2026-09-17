@@ -43,17 +43,17 @@ void apply_resolved_declaration(native_document& document,dom_node& node,
                     & property) != 0U;
         };
         if (name == "all") {
-            if (value != "unset" || declaration.important) {
+            if (!cascade_keyword_is(value, "unset")) {
                 decision.classification = "unsupported";
                 decision.semantic_slice =
-                    "non-important unset across modeled properties, excluding custom properties";
+                    "unset across modeled properties, excluding custom properties";
                 return;
             }
 
-            css::apply_all_unset(node);
+            css::apply_all_unset(node, declaration.important, inline_origin);
             decision.classification = "partially-supported";
             decision.semantic_slice =
-                "non-important unset across modeled properties, excluding custom properties";
+                "unset across modeled properties, excluding custom properties";
             return;
         }
         if (name == "color" && !is_inline(inline_color)

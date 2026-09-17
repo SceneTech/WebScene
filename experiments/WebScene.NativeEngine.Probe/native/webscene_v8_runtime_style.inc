@@ -34,8 +34,29 @@
     {
         const auto canonical_name = canonical_css_property_name(name);
         auto& authored = node.mutable_authored_style();
-        authored.declarations.erase(canonical_name);
-        authored.important_declarations.erase(canonical_name);
+        if (canonical_name == "all") {
+            std::vector<std::string> superseded;
+            for (const auto& [property, ignored] : authored.declarations) {
+                if (!property.starts_with("--")) superseded.push_back(property);
+            }
+            for (const auto& property : superseded) {
+                authored.erase_declaration(property);
+            }
+        } else {
+            authored.erase_declaration(canonical_name);
+        }
+        uint64_t remaining_inline_mask = 0U;
+        authored.for_each_declaration(
+            [&](const std::string& property, const std::string&) {
+                if (!property.starts_with("--")) {
+                    remaining_inline_mask |= inline_style_mask(property);
+                }
+            });
+        struct inline_mask_refresh final {
+            dom_node& node;
+            uint64_t mask;
+            ~inline_mask_refresh() { node.style.inline_property_mask = mask; }
+        } refresh{node, remaining_inline_mask};
         if (canonical_name == "grid-template-areas") {
             css::apply_grid_template_areas(node.style, "none");
             constexpr std::array grid_properties{
@@ -364,12 +385,8 @@
     static std::string serialized_inline_style(const dom_node& node)
     {
         const auto& authored = node.authored_style();
-        std::vector<std::pair<std::string, std::string>> declarations(
-            authored.declarations.begin(),
-            authored.declarations.end());
-        std::sort(declarations.begin(), declarations.end());
         std::string result;
-        for (const auto& [name, value] : declarations) {
+        authored.for_each_declaration([&](const std::string& name, const std::string& value) {
             if (!result.empty()) result.push_back(' ');
             result += name;
             result += ": ";
@@ -378,7 +395,7 @@
                 result += " !important";
             }
             result.push_back(';');
-        }
+        });
         return result;
     }
 
@@ -412,21 +429,18 @@
         const auto has = [&](uint64_t mask) {
             return (node.style.inline_property_mask & mask) != 0U;
         };
-        const auto& authored = node.authored_style().declarations;
+        const auto& authored = node.authored_style();
         if (has(inline_padding)) {
             node_style specified;
             auto applied = false;
-            constexpr std::array properties{
-                "padding", "padding-block", "padding-inline",
-                "padding-block-start", "padding-block-end",
-                "padding-inline-start", "padding-inline-end",
-                "padding-top", "padding-right", "padding-bottom", "padding-left"
-            };
-            for (const auto* property : properties) {
-                const auto declaration = authored.find(property);
-                if (declaration == authored.end()) continue;
-                applied = apply_padding_declaration(
-                    specified, property, declaration->second) || applied;
+            for (const auto important : {false, true}) {
+                authored.for_each_declaration(
+                    [&](const std::string& property, const std::string& value) {
+                    if (authored.important_declarations.contains(property) != important)
+                        return;
+                    applied = apply_padding_declaration(
+                        specified, property, value) || applied;
+                });
             }
             if (applied) {
                 if (canonical_name == "padding-left") return serialize_length(specified.padding_left);
@@ -438,17 +452,14 @@
         if (has(inline_margin)) {
             node_style specified;
             auto applied = false;
-            constexpr std::array properties{
-                "margin", "margin-block", "margin-inline",
-                "margin-block-start", "margin-block-end",
-                "margin-inline-start", "margin-inline-end",
-                "margin-top", "margin-right", "margin-bottom", "margin-left"
-            };
-            for (const auto* property : properties) {
-                const auto declaration = authored.find(property);
-                if (declaration == authored.end()) continue;
-                applied = apply_margin_declaration(
-                    specified, property, declaration->second) || applied;
+            for (const auto important : {false, true}) {
+                authored.for_each_declaration(
+                    [&](const std::string& property, const std::string& value) {
+                    if (authored.important_declarations.contains(property) != important)
+                        return;
+                    applied = apply_margin_declaration(
+                        specified, property, value) || applied;
+                });
             }
             if (applied) {
                 if (canonical_name == "margin-left") return specified.margin_left_auto
@@ -464,17 +475,14 @@
         if (has(inline_border)) {
             node_style specified;
             auto applied = false;
-            constexpr std::array properties{
-                "border", "border-width",
-                "border-top", "border-right", "border-bottom", "border-left",
-                "border-top-width", "border-right-width",
-                "border-bottom-width", "border-left-width"
-            };
-            for (const auto* property : properties) {
-                const auto declaration = authored.find(property);
-                if (declaration == authored.end()) continue;
-                applied = apply_border_declaration(
-                    specified, property, declaration->second) || applied;
+            for (const auto important : {false, true}) {
+                authored.for_each_declaration(
+                    [&](const std::string& property, const std::string& value) {
+                    if (authored.important_declarations.contains(property) != important)
+                        return;
+                    applied = apply_border_declaration(
+                        specified, property, value) || applied;
+                });
             }
             if (applied) {
                 if (canonical_name == "border-left-width") {
@@ -587,8 +595,7 @@
                 custom.values.erase(name);
                 custom.important.erase(name);
                 auto& authored = node->mutable_authored_style();
-                authored.declarations.erase(name);
-                authored.important_declarations.erase(name);
+                authored.erase_declaration(name);
             } else {
                 auto& custom = node->style.mutable_custom_properties();
                 custom.values[name] = value;
@@ -596,6 +603,7 @@
                 else custom.important.erase(name);
                 auto& authored = node->mutable_authored_style();
                 authored.declarations[name] = value;
+                authored.record_declaration_order(name);
                 if (important) authored.important_declarations.insert(name);
                 else authored.important_declarations.erase(name);
             }
@@ -634,9 +642,16 @@
         const auto existing = authored.declarations.find(canonical_name);
         const auto existing_important =
             authored.important_declarations.contains(canonical_name);
+        const auto all_has_superseded = canonical_name == "all"
+            && std::any_of(
+                authored.declarations.begin(), authored.declarations.end(),
+                [](const auto& entry) {
+                    return entry.first != "all" && !entry.first.starts_with("--");
+                });
         if (existing != authored.declarations.end()
             && existing->second == specified_value
-            && existing_important == important) {
+            && existing_important == important
+            && !all_has_superseded) {
 #if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
             if (self->resize_profile_active) {
                 ++self->last_resize_redundant_style_writes;
@@ -646,10 +661,24 @@
                 *node, "style", old_value, node->attributes.at("style"));
             return;
         }
+        if (canonical_name == "all") {
+            std::vector<std::string> superseded;
+            for (const auto& [property, ignored] : authored.declarations) {
+                if (!property.starts_with("--")) superseded.push_back(property);
+            }
+            for (const auto& property : superseded) {
+                authored.erase_declaration(property);
+            }
+        }
         authored.declarations[canonical_name] = specified_value;
+        authored.record_declaration_order(canonical_name);
         if (important) authored.important_declarations.insert(canonical_name);
         else authored.important_declarations.erase(canonical_name);
-        if (value.find("var(") != std::string::npos && property_mask != 0U) {
+        if (canonical_name == "all") {
+            self->apply_css_declaration(
+                *node, {canonical_name, specified_value, important}, true);
+            node->style.inline_property_mask |= property_mask;
+        } else if (value.find("var(") != std::string::npos && property_mask != 0U) {
             // A CSSOM write is observable immediately. Resolve variable-backed
             // declarations through the same computed-value path used during a
             // cascade instead of feeding raw var() tokens to numeric parsers.
@@ -1055,15 +1084,13 @@
         if (computed) self->ensure_layout();
         std::string value;
         if (!computed) {
+            const auto canonical_name = canonical_css_property_name(name);
+            const auto expanded = expanded_inline_box_longhand(
+                *node, canonical_name);
             const auto& authored_style = node->authored_style().declarations;
-            const auto authored = authored_style.find(
-                canonical_css_property_name(name));
-            if (authored != authored_style.end()) value = authored->second;
-            else if (const auto expanded = expanded_inline_box_longhand(
-                         *node, canonical_css_property_name(name));
-                     expanded.has_value()) {
-                value = *expanded;
-            }
+            const auto authored = authored_style.find(canonical_name);
+            if (expanded.has_value()) value = *expanded;
+            else if (authored != authored_style.end()) value = authored->second;
         } else if (name.starts_with("--")) {
             const std::string* known_value = nullptr;
             for (auto* current_node = node; current_node != nullptr;
@@ -1279,12 +1306,18 @@
             } else if (name == "border-top-style") {
                 value = node->style.border_top_width.value > 0 ? "solid" : "none";
             } else if (name == "width") {
-                value = computed
+                value = computed && node->style.width.unit == length_unit::automatic
+                        && node->style.display == display_mode::inline_flow
+                    ? "auto"
+                    : computed
                     ? format_pixels(connected_computed_dimension(
                         *node, node->style.width, true))
                     : format_length(node->style.width);
             } else if (name == "height") {
-                value = computed
+                value = computed && node->style.height.unit == length_unit::automatic
+                        && node->style.display == display_mode::inline_flow
+                    ? "auto"
+                    : computed
                     ? format_pixels(connected_computed_dimension(
                         *node, node->style.height, false))
                     : format_length(node->style.height);
@@ -1514,8 +1547,7 @@
             custom.values.erase(name);
             custom.important.erase(name);
             auto& authored = node->mutable_authored_style();
-            authored.declarations.erase(name);
-            authored.important_declarations.erase(name);
+            authored.erase_declaration(name);
             sync_style_attribute(*node);
             self->recascade_custom_property(*node, name);
             self->notify_custom_element_attribute(
@@ -1566,15 +1598,13 @@
         if (computed) self->ensure_layout();
         std::string value;
         if (!computed) {
+            const auto canonical_name = canonical_css_property_name(name);
+            const auto expanded = expanded_inline_box_longhand(
+                *node, canonical_name);
             const auto& authored_style = node->authored_style().declarations;
-            const auto authored = authored_style.find(
-                canonical_css_property_name(name));
-            if (authored != authored_style.end()) value = authored->second;
-            else if (const auto expanded = expanded_inline_box_longhand(
-                         *node, canonical_css_property_name(name));
-                     expanded.has_value()) {
-                value = *expanded;
-            }
+            const auto authored = authored_style.find(canonical_name);
+            if (expanded.has_value()) value = *expanded;
+            else if (authored != authored_style.end()) value = authored->second;
             info.GetReturnValue().Set(js_string(info.GetIsolate(), value.c_str()));
             return;
         }
@@ -1672,12 +1702,18 @@
                 connected_used_value)) {
             value = format_pixels(connected_used_value);
         } else if (name == "width") {
-            value = computed
+            value = computed && node->style.width.unit == length_unit::automatic
+                    && node->style.display == display_mode::inline_flow
+                ? "auto"
+                : computed
                 ? format_pixels(connected_computed_dimension(
                     *node, node->style.width, true))
                 : format_length(node->style.width);
         } else if (name == "height") {
-            value = computed
+            value = computed && node->style.height.unit == length_unit::automatic
+                    && node->style.display == display_mode::inline_flow
+                ? "auto"
+                : computed
                 ? format_pixels(connected_computed_dimension(
                     *node, node->style.height, false))
                 : format_length(node->style.height);
@@ -2195,9 +2231,16 @@
             canonical_name,
             value);
         const auto existing = authored.declarations.find(canonical_name);
+        const auto all_has_superseded = canonical_name == "all"
+            && std::any_of(
+                authored.declarations.begin(), authored.declarations.end(),
+                [](const auto& entry) {
+                    return entry.first != "all" && !entry.first.starts_with("--");
+                });
         if (existing != authored.declarations.end()
             && existing->second == specified_value
-            && !authored.important_declarations.contains(canonical_name)) {
+            && !authored.important_declarations.contains(canonical_name)
+            && !all_has_superseded) {
 #if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
             if (self->resize_profile_active) {
                 ++self->last_resize_redundant_style_writes;
@@ -2207,9 +2250,23 @@
                 *node, "style", old_value, node->attributes.at("style"));
             return;
         }
+        if (canonical_name == "all") {
+            std::vector<std::string> superseded;
+            for (const auto& [property, ignored] : authored.declarations) {
+                if (!property.starts_with("--")) superseded.push_back(property);
+            }
+            for (const auto& property : superseded) {
+                authored.erase_declaration(property);
+            }
+        }
         authored.declarations[canonical_name] = specified_value;
+        authored.record_declaration_order(canonical_name);
         authored.important_declarations.erase(canonical_name);
-        if (canonical_name == "grid-template-areas") {
+        if (canonical_name == "all") {
+            self->apply_css_declaration(
+                *node, {canonical_name, specified_value, false}, true);
+            node->style.inline_property_mask |= property_mask;
+        } else if (canonical_name == "grid-template-areas") {
             css::apply_grid_template_areas(node->style, value);
             node->style.inline_property_mask |= inline_grid;
         } else if (apply_grid_placement_declaration(node->style, name, value)) {

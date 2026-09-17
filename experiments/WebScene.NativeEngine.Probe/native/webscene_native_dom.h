@@ -1064,6 +1064,51 @@ struct dom_node final {
     struct authored_style_data final {
         std::unordered_map<std::string, std::string> declarations;
         std::unordered_set<std::string> important_declarations;
+        // Declaration-block order matters when shorthand and longhand names
+        // overlap. A changed CSSOM property becomes the latest declaration.
+        std::vector<std::string> declaration_order;
+        bool requires_full_replay{false};
+
+        void record_declaration_order(std::string_view name)
+        {
+            const auto existing = std::find(
+                declaration_order.begin(), declaration_order.end(), name);
+            if (existing != declaration_order.end()) declaration_order.erase(existing);
+            declaration_order.emplace_back(name);
+            requires_full_replay = requires_full_replay || name == "all";
+        }
+
+        void erase_declaration(std::string_view name)
+        {
+            declarations.erase(std::string(name));
+            important_declarations.erase(std::string(name));
+            const auto existing = std::find(
+                declaration_order.begin(), declaration_order.end(), name);
+            if (existing != declaration_order.end()) declaration_order.erase(existing);
+            // Removing a declaration can expose an earlier shorthand or
+            // longhand whose retained computed field was overwritten.
+            requires_full_replay = true;
+        }
+
+        template<typename Apply>
+        void for_each_declaration(Apply&& apply) const
+        {
+            for (const auto& name : declaration_order) {
+                const auto declaration = declarations.find(name);
+                if (declaration != declarations.end()) {
+                    apply(declaration->first, declaration->second);
+                }
+            }
+            // Compatibility for internal call sites that seed declarations
+            // directly. Parser and CSSOM entry points always record order.
+            for (const auto& [name, value] : declarations) {
+                if (std::find(
+                        declaration_order.begin(), declaration_order.end(), name)
+                    == declaration_order.end()) {
+                    apply(name, value);
+                }
+            }
+        }
     };
 
     struct table_layout_data final {

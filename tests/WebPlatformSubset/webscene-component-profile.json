@@ -935,6 +935,13 @@
       "reason": "Table-driven browser/native cascade winner and computed-value checkpoints for #238."
     },
     {
+      "path": "contracts/css-effective-property-cascade.html",
+      "type": "testharness",
+      "capabilities": ["effective-property-cascade", "shorthand-longhand-precedence", "cascade-rollback", "all-property", "inline-declaration-order"],
+      "evidence": ["css-effective-property-audit"],
+      "reason": "Browser-referenced effective-longhand cascade coverage for shorthand rollback, all, and inline CSSOM authored order."
+    },
+    {
       "path": "contracts/css-character-data-checkpoints.html",
       "type": "testharness",
       "capabilities": ["character-data-style-checkpoints", "dom-string-conversion-order", "structural-selector-invalidation"],

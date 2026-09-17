@@ -2,6 +2,7 @@
 #include "webscene_css_declarations.h"
 #include "webscene_css_matching.h"
 #include "webscene_css_transitions.h"
+#include "webscene_css_container_queries.h"
 
 #include <iterator>
 
@@ -113,11 +114,11 @@ public:
                 "nested rules are parsed without cascade-layer ordering",
                 "stylesheet-parser");
         } else if (name == "container") {
+            current.media_query = encode_container_query(trim_value(prelude));
             owner_.record_feature(
-                "css", "at-rule:@container", "unsupported",
-                "container conditions are not evaluated",
+                "css", "at-rule:@container", "supported",
+                "named and unnamed size conditions are evaluated against the nearest eligible ancestor",
                 "stylesheet-parser");
-            current.children_active = false;
         } else {
             owner_.record_feature(
                 "css", "at-rule:@" + name, "unsupported", {},

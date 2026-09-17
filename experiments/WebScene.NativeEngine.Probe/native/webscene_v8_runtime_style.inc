@@ -100,6 +100,19 @@
             node.style.contain_stacking_context = false;
             node.style.mutable_textual().contain_value = "none";
             node.style.inline_property_mask &= ~inline_contain;
+        } else if (name == "containerType" || name == "container-type") {
+            node.style.mutable_textual().container_type = "normal";
+            node.style.inline_property_mask &= ~inline_containment_features;
+        } else if (name == "containerName" || name == "container-name") {
+            node.style.mutable_textual().container_name = "none";
+            node.style.inline_property_mask &= ~inline_containment_features;
+        } else if (name == "contentVisibility" || name == "content-visibility") {
+            node.style.mutable_textual().content_visibility = "visible";
+            node.style.content_visibility_hidden = false;
+            node.style.inline_property_mask &= ~inline_containment_features;
+        } else if (name == "containIntrinsicSize" || name == "contain-intrinsic-size") {
+            node.style.mutable_textual().contain_intrinsic_size = {};
+            node.style.inline_property_mask &= ~inline_containment_features;
         } else if (name == "cssFloat" || name == "float") {
             node.style.floating = float_mode::none;
             node.style.inline_property_mask &= ~inline_float;
@@ -361,7 +374,11 @@
                 : length.unit == length_unit::em ? "em"
                 : length.unit == length_unit::rem ? "rem"
                 : length.unit == length_unit::viewport_width ? "vw"
-                : length.unit == length_unit::viewport_height ? "vh" : "px";
+                : length.unit == length_unit::viewport_height ? "vh"
+                : length.unit == length_unit::container_inline ? "cqi"
+                : length.unit == length_unit::container_block ? "cqb"
+                : length.unit == length_unit::container_min ? "cqmin"
+                : length.unit == length_unit::container_max ? "cqmax" : "px";
             return serialize_css_number(length.value) + suffix;
         };
         const auto has = [&](uint64_t mask) {
@@ -674,6 +691,24 @@
                 || (" " + computed + " ").find(" layout ") != std::string::npos
                 || (" " + computed + " ").find(" paint ") != std::string::npos;
             node->style.inline_property_mask |= inline_contain;
+        } else if (name == "container-type" || name == "containerType") {
+            auto type = lower_html_name(value);
+            if (type != "inline-size" && type != "size") type = "normal";
+            node->style.mutable_textual().container_type = std::move(type);
+            node->style.inline_property_mask |= inline_containment_features;
+        } else if (name == "container-name" || name == "containerName") {
+            node->style.mutable_textual().container_name = lower_html_name(value);
+            node->style.inline_property_mask |= inline_containment_features;
+        } else if (name == "content-visibility" || name == "contentVisibility") {
+            auto visibility = lower_html_name(value);
+            if (visibility != "hidden" && visibility != "auto") visibility = "visible";
+            node->style.mutable_textual().content_visibility = visibility;
+            node->style.content_visibility_hidden = visibility == "hidden";
+            node->style.inline_property_mask |= inline_containment_features;
+        } else if (name == "contain-intrinsic-size" || name == "containIntrinsicSize") {
+            node->style.mutable_textual().contain_intrinsic_size =
+                native_document::parse_length(value);
+            node->style.inline_property_mask |= inline_containment_features;
         } else if (name == "float" || name == "cssFloat") {
             node->style.floating = value == "left" ? float_mode::left
                 : value == "right" ? float_mode::right
@@ -922,6 +957,14 @@
             self->document.mark_dirty();
             return;
         }
+        if (canonical_name == "width" || canonical_name == "height"
+            || canonical_name == "container" || canonical_name == "container-type"
+            || canonical_name == "container-name" || canonical_name == "content-visibility"
+            || canonical_name == "contain-intrinsic-size") {
+            self->recascade_connected_subtree(*node, "container-dependent-style");
+            self->document.mark_dirty();
+            return;
+        }
         if (has_important_rule) self->apply_css_rules(*node);
         else {
             self->configure_style_keyframe_animation(*node);
@@ -1048,6 +1091,16 @@
             } else if (name == "contain") {
                 value = node->style.textual().contain_value.empty()
                     ? "none" : node->style.textual().contain_value;
+            } else if (name == "container-type") {
+                value = node->style.textual().container_type;
+            } else if (name == "container-name") {
+                value = node->style.textual().container_name;
+            } else if (name == "content-visibility") {
+                value = node->style.textual().content_visibility;
+            } else if (name == "contain-intrinsic-size") {
+                const auto intrinsic = node->style.textual().contain_intrinsic_size;
+                value = intrinsic.unit == length_unit::automatic
+                    ? "none" : format_pixels(resolve_connected_css_length(*node, intrinsic, 0));
             } else if (name == "float") {
                 value = node->style.floating == float_mode::left ? "left"
                     : node->style.floating == float_mode::right ? "right" : "none";
@@ -1448,7 +1501,11 @@
                 || length.unit == length_unit::viewport_width_capped
                 || length.unit == length_unit::viewport_height_capped
                 || length.unit == length_unit::viewport_width_floored
-                || length.unit == length_unit::viewport_height_floored) {
+                || length.unit == length_unit::viewport_height_floored
+                || length.unit == length_unit::container_inline
+                || length.unit == length_unit::container_block
+                || length.unit == length_unit::container_min
+                || length.unit == length_unit::container_max) {
                 return format_pixels(resolve_connected_css_length(
                     *node, length, reference));
             }
@@ -1548,6 +1605,19 @@
                 : node->style.position == position_mode::sticky ? "sticky"
                 : node->style.position == position_mode::relative ? "relative"
                 : "static";
+        } else if (name == "contain") {
+            value = node->style.textual().contain_value.empty()
+                ? "none" : node->style.textual().contain_value;
+        } else if (name == "containerType") {
+            value = node->style.textual().container_type;
+        } else if (name == "containerName") {
+            value = node->style.textual().container_name;
+        } else if (name == "contentVisibility") {
+            value = node->style.textual().content_visibility;
+        } else if (name == "containIntrinsicSize") {
+            const auto intrinsic = node->style.textual().contain_intrinsic_size;
+            value = intrinsic.unit == length_unit::automatic
+                ? "none" : format_pixels(resolve_connected_css_length(*node, intrinsic, 0));
         } else if (name == "cssFloat") {
             value = node->style.floating == float_mode::left ? "left"
                 : node->style.floating == float_mode::right ? "right" : "none";
@@ -2068,6 +2138,34 @@
                 : value == "relative" ? position_mode::relative
                 : position_mode::normal;
             node->style.inline_property_mask |= inline_position;
+        } else if (name == "contain") {
+            auto contain = lower_html_name(value);
+            if (contain == "initial" || contain == "unset" || contain == "revert") {
+                contain = "none";
+            }
+            node->style.mutable_textual().contain_value = contain;
+            node->style.contain_stacking_context = contain == "content" || contain == "strict"
+                || (" " + contain + " ").find(" layout ") != std::string::npos
+                || (" " + contain + " ").find(" paint ") != std::string::npos;
+            node->style.inline_property_mask |= inline_contain;
+        } else if (name == "containerType") {
+            auto type = lower_html_name(value);
+            if (type != "inline-size" && type != "size") type = "normal";
+            node->style.mutable_textual().container_type = std::move(type);
+            node->style.inline_property_mask |= inline_containment_features;
+        } else if (name == "containerName") {
+            node->style.mutable_textual().container_name = lower_html_name(value);
+            node->style.inline_property_mask |= inline_containment_features;
+        } else if (name == "contentVisibility") {
+            auto visibility = lower_html_name(value);
+            if (visibility != "hidden" && visibility != "auto") visibility = "visible";
+            node->style.mutable_textual().content_visibility = visibility;
+            node->style.content_visibility_hidden = visibility == "hidden";
+            node->style.inline_property_mask |= inline_containment_features;
+        } else if (name == "containIntrinsicSize") {
+            node->style.mutable_textual().contain_intrinsic_size =
+                native_document::parse_length(value);
+            node->style.inline_property_mask |= inline_containment_features;
         } else if (name == "cssFloat") {
             node->style.floating = value == "left" ? float_mode::left
                 : value == "right" ? float_mode::right
@@ -2334,6 +2432,14 @@
             *node, "style", old_value, node->attributes.at("style"));
         if (canonical_name == "font-size" || canonical_name == "font") {
             self->recascade_connected_subtree(*node, "font-metrics");
+            self->document.mark_dirty();
+            return;
+        }
+        if (canonical_name == "width" || canonical_name == "height"
+            || canonical_name == "container" || canonical_name == "container-type"
+            || canonical_name == "container-name" || canonical_name == "content-visibility"
+            || canonical_name == "contain-intrinsic-size") {
+            self->recascade_connected_subtree(*node, "container-dependent-style");
             self->document.mark_dirty();
             return;
         }

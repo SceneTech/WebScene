@@ -1,0 +1,99 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Containment, size queries, container units, and skipped-content lifecycle</title>
+<link rel="help" href="https://drafts.csswg.org/css-contain-3/">
+<link rel="help" href="https://drafts.csswg.org/css-conditional-5/#container-rule">
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<style id="rules">
+  #outer { width: 320px; container: workspace / inline-size; }
+  #inner { width: 180px; container: sidebar / inline-size; }
+  #target { width: 10cqi; height: 10px; padding-left: 1px; }
+  #self { width: 300px; container-type: inline-size; padding-left: 3px; }
+  @container workspace (min-width: 300px) { #target { padding-left: 17px; } }
+  @container sidebar (width < 200px) { #target { padding-top: 11px; } }
+  @container missing (width > 1px) { #target { padding-right: 99px; } }
+  @container (width > 200px) { #self { padding-left: 77px; } }
+  #skipped { width: 90px; content-visibility: hidden; contain-intrinsic-size: 40px; }
+  #skippedChild { width: 30px; height: 80px; }
+</style>
+<div id="outer"><div id="inner"><div id="target"></div></div></div>
+<div id="self"></div>
+<div id="skipped"><button id="skippedChild">hidden</button></div>
+<script>
+  const pixels = value => Math.round(parseFloat(value));
+  const outer = document.getElementById('outer');
+  const target = document.getElementById('target');
+  const selfNode = document.getElementById('self');
+  const skipped = document.getElementById('skipped');
+  const skippedChild = document.getElementById('skippedChild');
+
+  test(() => {
+    const style = getComputedStyle(outer);
+    assert_equals(style.getPropertyValue('container-type'), 'inline-size');
+    assert_equals(style.getPropertyValue('container-name'), 'workspace');
+  }, 'container type and name have computed CSSOM values');
+
+  test(() => {
+    const style = getComputedStyle(target);
+    assert_equals(pixels(style.paddingLeft), 17);
+    assert_equals(pixels(style.paddingTop), 11);
+    assert_not_equals(pixels(style.paddingRight), 99);
+  }, 'nested named containers select the nearest container with the requested name');
+
+  test(() => {
+    assert_equals(pixels(getComputedStyle(selfNode).paddingLeft), 3);
+  }, 'an element cannot query itself');
+
+  test(() => {
+    assert_equals(target.offsetWidth, 35);
+  }, 'cqi resolves from the nearest query container inline size');
+
+  test(() => {
+    outer.style.width = '240px';
+    assert_equals(pixels(getComputedStyle(target).paddingLeft), 1);
+    outer.style.width = '320px';
+    assert_equals(pixels(getComputedStyle(target).paddingLeft), 17);
+  }, 'width mutations cross a query threshold in both directions synchronously');
+
+  test(() => {
+    outer.style.setProperty('container-type', 'normal');
+    assert_equals(pixels(getComputedStyle(target).paddingLeft), 1);
+    outer.style.setProperty('container-type', 'inline-size');
+    assert_equals(pixels(getComputedStyle(target).paddingLeft), 17);
+  }, 'container-type mutations update dependent descendants');
+
+  test(() => {
+    const parent = outer.parentNode;
+    outer.remove();
+    parent.appendChild(outer);
+    assert_equals(pixels(getComputedStyle(target).paddingLeft), 17);
+  }, 'container dependencies survive detach and reattach');
+
+  test(() => {
+    assert_equals(getComputedStyle(skipped).getPropertyValue('content-visibility'), 'hidden');
+    assert_equals(pixels(getComputedStyle(skipped).getPropertyValue('contain-intrinsic-size')), 40);
+    assert_equals(skipped.offsetHeight, 40);
+    assert_true(skipped.contains(skippedChild));
+  }, 'hidden content keeps its intrinsic fallback and skips descendant layout');
+
+  test(() => {
+    skippedChild.focus();
+    assert_not_equals(document.activeElement, skippedChild);
+    skipped.style.setProperty('content-visibility', 'visible');
+    assert_equals(skippedChild.offsetHeight, 80);
+    skippedChild.focus();
+    assert_equals(document.activeElement, skippedChild);
+    skipped.style.setProperty('content-visibility', 'hidden');
+    assert_equals(skipped.offsetHeight, 40);
+  }, 'hide and reveal update geometry and focus participation without stale descendants');
+
+  test(() => {
+    const replacement = document.createElement('style');
+    replacement.textContent = '#outer{width:320px;container:workspace / inline-size}'
+      + '@container workspace (width >= 300px){#target{padding-bottom:13px}}';
+    document.head.appendChild(replacement);
+    assert_equals(pixels(getComputedStyle(target).paddingBottom), 13);
+    replacement.remove();
+  }, 'dynamically attached container rules participate in the cascade');
+</script>

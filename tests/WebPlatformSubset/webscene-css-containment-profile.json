@@ -1,0 +1,27 @@
+{
+  "profile": "webscene-css-containment-1",
+  "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+  "runtime": "v8",
+  "viewport": {
+    "width": 800,
+    "height": 600,
+    "deviceScaleFactor": 1
+  },
+  "required": [
+    {
+      "path": "contracts/css-containment-container-visibility.html",
+      "type": "testharness",
+      "capabilities": [
+        "containment",
+        "container-size-query",
+        "named-container-query",
+        "container-relative-units",
+        "content-visibility-lifecycle"
+      ],
+      "evidence": ["css-containment-254"],
+      "reason": "Product-neutral coverage for nested container thresholds, container units, detach/reattach, and skipped-content geometry and focus lifecycle."
+    }
+  ],
+  "harnessBlocked": [],
+  "excluded": []
+}

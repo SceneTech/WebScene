@@ -50,6 +50,14 @@ inline void apply_all_unset(dom_node& node)
         reset.mutable_textual().contain_value =
             previous.textual().contain_value;
     }
+    if (is_inline(inline_containment_features)) {
+        auto& textual = reset.mutable_textual();
+        textual.container_type = previous.textual().container_type;
+        textual.container_name = previous.textual().container_name;
+        textual.content_visibility = previous.textual().content_visibility;
+        textual.contain_intrinsic_size = previous.textual().contain_intrinsic_size;
+        reset.content_visibility_hidden = previous.content_visibility_hidden;
+    }
     if (is_inline(inline_padding)) {
         reset.padding_left = previous.padding_left;
         reset.padding_top = previous.padding_top;

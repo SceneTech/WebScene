@@ -162,6 +162,11 @@ enum class css_property_id : uint16_t {
     list_style_type,
     scrollbar_width,
     scrollbar_color,
+    container,
+    container_type,
+    container_name,
+    content_visibility,
+    contain_intrinsic_size,
 };
 
 enum class css_wide_keyword : uint8_t {
@@ -452,6 +457,11 @@ inline css_property_id property_id(std::string_view raw_name)
     if (name == "display") return css_property_id::display;
     if (name == "position") return css_property_id::position;
     if (name == "contain") return css_property_id::contain;
+    if (name == "container") return css_property_id::container;
+    if (name == "container-type") return css_property_id::container_type;
+    if (name == "container-name") return css_property_id::container_name;
+    if (name == "content-visibility") return css_property_id::content_visibility;
+    if (name == "contain-intrinsic-size") return css_property_id::contain_intrinsic_size;
     if (name == "float" || name == "cssfloat") return css_property_id::floating;
     if (name == "z-index" || name == "zindex") return css_property_id::z_index;
     if (name == "flex-direction" || name == "flexdirection") return css_property_id::flex_direction;
@@ -1022,6 +1032,9 @@ inline specified_css_value compile_specified_value(css_property_id property, std
     case css_property_id::display:
     case css_property_id::position:
     case css_property_id::contain:
+    case css_property_id::container:
+    case css_property_id::container_type:
+    case css_property_id::content_visibility:
     case css_property_id::floating:
     case css_property_id::flex_direction:
     case css_property_id::flex_wrap:
@@ -1221,7 +1234,10 @@ inline specified_css_value compile_specified_value(css_property_id property, std
     case css_property_id::animation_timing_function:
     case css_property_id::animation_iteration_count:
     case css_property_id::scrollbar_color:
+    case css_property_id::container_name:
         set_component_list(); break;
+    case css_property_id::contain_intrinsic_size:
+        set_length(); break;
     case css_property_id::box_shadow:
         result.kind = specified_css_kind::shadow; result.payload = specified_shadow(value); result.valid = true; break;
     case css_property_id::font:

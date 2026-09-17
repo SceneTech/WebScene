@@ -530,6 +530,7 @@ void native_document::append_scene(
         return (radius_bits << 16U) | width_bits;
     };
     const auto append_pseudo = [&](const node_style::pseudo_element& pseudo) {
+        if (node.style.content_visibility_hidden) return;
         if ((!paint_self && !(pseudo_only && &pseudo == paint_pseudo_target && !visibility_hidden))
             || !pseudo.generated || pseudo.display_none || pseudo.visibility_hidden) return;
         const auto after_retained_canvas = &pseudo == &node.style.after_pseudo()
@@ -1811,7 +1812,9 @@ void native_document::append_scene(
         int z_index{};
         size_t source_order{};
     };
-    const auto& children = composed_children(node);
+    static const std::vector<dom_node*> no_painted_children;
+    const auto& children = node.style.content_visibility_hidden
+        ? no_painted_children : composed_children(node);
     const auto paint_entry_count = children.size()
         + (before_paints_after_content ? 1U : 0U)
         + (!after_paints_behind_content ? 1U : 0U);
@@ -1916,6 +1919,7 @@ void native_document::append_scene(
                 }
                 if (style_establishes_atomic_stacking_context(current) || current.contains_retained_canvas) return;
             }
+            if (current.style.content_visibility_hidden) return;
             const auto add_pseudo = [&](const node_style::pseudo_element& pseudo) {
                 if (pseudo.generated && !pseudo.display_none && pseudo.z_index > 0) {
                     elevated_paint.push_back({&current,&pseudo,pseudo.z_index,elevated_paint.size()});

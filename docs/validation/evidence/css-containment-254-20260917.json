@@ -1,0 +1,55 @@
+{
+  "schema": "webscene-css-containment-qualification-v1",
+  "recordedAt": "2026-09-17",
+  "baseCommit": "1db2c73142ccb9f8152e5bbd8794c86ef5a9b8ba",
+  "issue": 254,
+  "gates": {
+    "nativeWpt": {
+      "documentsPassed": 1,
+      "documentsTotal": 1,
+      "subtestsPassed": 10,
+      "subtestsTotal": 10,
+      "durationSeconds": 0.116138,
+      "reportBytes": 2829,
+      "reportMaximumBytes": 65536,
+      "reportSha256": "6c16bb8385eabbd746d5983e87066ca595affa92717e8ab236562873ed3602fa"
+    },
+    "chromeOracle": {
+      "identity": "Google Chrome 153.0.8010.48",
+      "documentsPassed": 1,
+      "documentsTotal": 1,
+      "subtestsPassed": 10,
+      "subtestsTotal": 10,
+      "reportBytes": 2496,
+      "reportMaximumBytes": 65536,
+      "reportSha256": "43f7a5beeab61728f070e997d7bf48703226e9e81a4cded4fa323c46cb9e4e59"
+    },
+    "nativeLifecycle": {
+      "descendants": 4096,
+      "cycles": 100,
+      "elapsedMilliseconds": 1340.03,
+      "maximumMilliseconds": 10000,
+      "peakNodeDelta": 4101,
+      "maximumNodeDelta": 4102,
+      "retainedNodeDelta": 0,
+      "maximumPostCleanupHeapGrowthBytes": 33554432
+    },
+    "portableBuild": {
+      "targetsPassed": 1,
+      "targetsTotal": 1
+    },
+    "v8Build": {
+      "targetsPassed": 2,
+      "targetsTotal": 2
+    }
+  },
+  "ownership": {
+    "pullRequest245Files": 46,
+    "overlappingFiles": 0
+  },
+  "knownBaselineFailure": {
+    "gate": "webscene_native_engine_tests",
+    "message": "identical resources (including warmup) were loaded more than once across four engines",
+    "changeRelated": false
+  }
+}

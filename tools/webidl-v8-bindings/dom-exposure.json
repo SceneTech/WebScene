@@ -320,6 +320,17 @@
       "constants": []
     },
     {
+      "name": "HTMLIFrameElement",
+      "template": "html_iframe_element_template",
+      "constructor": "illegal_dom_constructor",
+      "parent": "HTMLElement",
+      "attributes": [
+        { "name": "sandbox", "getter": "get_iframe_sandbox", "setter": "set_iframe_sandbox" }
+      ],
+      "methods": [],
+      "constants": []
+    },
+    {
       "name": "HTMLTableCellElement",
       "template": "html_table_cell_element_template",
       "constructor": "illegal_dom_constructor",
@@ -444,7 +455,6 @@
   "aliases": {
     "HTMLButtonElement": "HTMLElement",
     "HTMLCanvasElement": "HTMLElement",
-    "HTMLIFrameElement": "HTMLElement",
     "HTMLImageElement": "HTMLElement",
     "HTMLInputElement": "HTMLElement",
     "HTMLParagraphElement": "HTMLElement",

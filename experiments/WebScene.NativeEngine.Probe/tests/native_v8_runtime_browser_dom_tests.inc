@@ -1775,6 +1775,173 @@ void test_dom_token_list_collection_performance_gate()
     webscene_engine_destroy(engine);
 }
 
+void test_iframe_sandbox_dom_token_list_security_and_lifecycle_gate()
+{
+    auto engine = std::unique_ptr<webscene_engine, decltype(&webscene_engine_destroy)>{
+        webscene_engine_create(0), &webscene_engine_destroy};
+    require(engine != nullptr, "iframe sandbox engine creation failed");
+
+    webscene_engine_memory_metrics baseline{sizeof(webscene_engine_memory_metrics)};
+    require(webscene_engine_get_memory_metrics(engine.get(), &baseline) != 0,
+        "iframe sandbox baseline memory metrics were unavailable");
+    const auto started = std::chrono::steady_clock::now();
+    const auto result = evaluate(engine.get(), R"JS(
+        (() => {
+          const frame = document.createElement('iframe');
+          const tokens = frame.sandbox;
+          frame.sandbox.add(
+            'allow-scripts', 'allow-same-origin', 'allow-forms',
+            'allow-pointer-lock', 'allow-downloads');
+          const codeOssShape = [
+            frame instanceof HTMLIFrameElement,
+            Object.prototype.toString.call(tokens),
+            tokens === frame.sandbox,
+            frame.getAttribute('sandbox'),
+            [...tokens].join(','),
+            tokens.supports('allow-scripts'),
+            !tokens.supports('allow-webscene-bypass'),
+            !('sandbox' in document.createElement('div'))
+          ];
+
+          frame.setAttribute('sandbox', 'allow-scripts allow-forms allow-scripts');
+          const directAttributeIsLive = tokens.length === 2
+            && tokens[0] === 'allow-scripts' && tokens.item(1) === 'allow-forms';
+          tokens.replace('allow-forms', 'allow-downloads');
+          tokens.value = 'allow-pointer-lock  allow-same-origin';
+          frame.sandbox = 'allow-scripts allow-same-origin';
+          const putForwardsIsLive = tokens === frame.sandbox
+            && tokens.contains('allow-same-origin');
+          frame.removeAttribute('sandbox');
+          const removalIsLive = tokens.length === 0 && tokens.value === '';
+          tokens.add('allow-scripts');
+          const mutationRecreatesAttribute = frame.getAttribute('sandbox') === 'allow-scripts';
+
+          let atomicInvalidMutation = false;
+          frame.sandbox.value = 'allow-scripts';
+          try { frame.sandbox.add('allow-forms', ''); } catch (error) {
+            atomicInvalidMutation = error.name === 'SyntaxError'
+              && frame.sandbox.value === 'allow-scripts';
+          }
+          let classSupportsTypeError = false;
+          try { document.body.classList.supports('x'); } catch (error) {
+            classSupportsTypeError = error instanceof TypeError;
+          }
+
+          const opaque = document.createElement('iframe');
+          opaque.setAttribute('sandbox', '');
+          document.body.appendChild(opaque);
+          const opaqueDocumentDenied = opaque.contentDocument === null;
+          opaque.remove();
+
+          const cycleStarted = performance.now();
+          let cycleChecksum = 0;
+          for (let index = 0; index < 100; ++index) {
+            const candidate = document.createElement('iframe');
+            const retainedList = candidate.sandbox;
+            retainedList.add('allow-scripts', 'allow-same-origin');
+            document.body.appendChild(candidate);
+            cycleChecksum += retainedList.length;
+            candidate.remove();
+          }
+          return {
+            codeOssShape,
+            directAttributeIsLive,
+            putForwardsIsLive,
+            removalIsLive,
+            mutationRecreatesAttribute,
+            atomicInvalidMutation,
+            classSupportsTypeError,
+            opaqueDocumentDenied,
+            cycleChecksum,
+            cyclesUnderFiveSeconds: performance.now() - cycleStarted < 5000
+          };
+        })()
+    )JS", "native-iframe-sandbox-dom-token-list.js");
+    const auto elapsed = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - started).count();
+    require(
+        result == R"JSON({"codeOssShape":[true,"[object DOMTokenList]",true,"allow-scripts allow-same-origin allow-forms allow-pointer-lock allow-downloads","allow-scripts,allow-same-origin,allow-forms,allow-pointer-lock,allow-downloads",true,true,true],"directAttributeIsLive":true,"putForwardsIsLive":true,"removalIsLive":true,"mutationRecreatesAttribute":true,"atomicInvalidMutation":true,"classSupportsTypeError":true,"opaqueDocumentDenied":true,"cycleChecksum":200,"cyclesUnderFiveSeconds":true})JSON",
+        "iframe sandbox DOMTokenList/security contract regressed: " + result);
+    execute(engine.get(), R"JS(
+        (() => {
+          const allowed = document.createElement('iframe');
+          allowed.sandbox.add('allow-same-origin', 'allow-scripts');
+          document.body.appendChild(allowed);
+          const allowedDocument = allowed.contentDocument;
+          allowedDocument.open();
+          allowedDocument.write(
+            '<html><body><script>window.__sandboxScriptRan = true;<\/script></body></html>');
+          allowedDocument.close();
+          globalThis.__sandboxAllowedFrame = allowed;
+        })()
+    )JS", "native-iframe-sandbox-allowed-script-setup.js");
+    auto script_result = std::string{};
+    for (auto attempt = 0; attempt < 250; ++attempt) {
+        script_result = evaluate(engine.get(),
+            "__sandboxAllowedFrame.contentWindow.__sandboxScriptRan === true",
+            "native-iframe-sandbox-allowed-script-result.js");
+        if (script_result == "true") break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    require(script_result == "true",
+        "iframe sandbox allow-scripts permission regressed: " + script_result);
+    execute_and_wait(engine.get(), R"JS(
+        __sandboxAllowedFrame.remove();
+        delete globalThis.__sandboxAllowedFrame;
+        const blocked = document.createElement('iframe');
+        blocked.sandbox.add('allow-same-origin');
+        document.body.appendChild(blocked);
+        const blockedDocument = blocked.contentDocument;
+        blockedDocument.open();
+        blockedDocument.write(
+          '<html><body><script>window.__sandboxScriptRan = true;<\/script></body></html>');
+        blockedDocument.close();
+        globalThis.__sandboxBlockedFrame = blocked;
+    )JS", "native-iframe-sandbox-blocked-script-setup.js");
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    script_result = evaluate(engine.get(),
+        "__sandboxBlockedFrame.contentWindow.__sandboxScriptRan === true",
+        "native-iframe-sandbox-blocked-script-result.js");
+    require(script_result == "false",
+        "iframe sandbox executed script without allow-scripts: " + script_result);
+    execute_and_wait(engine.get(), R"JS(
+        __sandboxBlockedFrame.remove();
+        delete globalThis.__sandboxBlockedFrame;
+    )JS", "native-iframe-sandbox-script-cleanup.js");
+    require(elapsed < 5.0,
+        "100 iframe sandbox create/attach/detach cycles exceeded five seconds");
+
+    require(webscene_engine_request_low_memory(engine.get()) != 0,
+        "iframe sandbox low-memory request was rejected");
+    webscene_engine_memory_metrics after{sizeof(webscene_engine_memory_metrics)};
+    for (auto attempt = 0; attempt < 500; ++attempt) {
+        require(webscene_engine_get_memory_metrics(engine.get(), &after) != 0,
+            "iframe sandbox final memory metrics were unavailable");
+        if (after.low_memory_notifications > baseline.low_memory_notifications
+            && after.native_wrapper_handle_count
+                <= baseline.native_wrapper_handle_count + 256U) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    require(after.low_memory_notifications > baseline.low_memory_notifications,
+        "iframe sandbox low-memory collection did not complete");
+    std::cout << "Iframe sandbox gate: cycles=100 elapsed=" << elapsed
+              << "s heapBefore=" << baseline.v8_used_heap_bytes
+              << " heapAfter=" << after.v8_used_heap_bytes
+              << " wrappersBefore=" << baseline.native_wrapper_handle_count
+              << " wrappersAfter=" << after.native_wrapper_handle_count
+              << " wrapperBytesBefore=" << baseline.native_wrapper_storage_bytes
+              << " wrapperBytesAfter=" << after.native_wrapper_storage_bytes << '\n';
+    require(after.v8_used_heap_bytes
+            <= baseline.v8_used_heap_bytes + 8U * 1024U * 1024U,
+        "100 iframe sandbox cycles retained more than 8 MiB of V8 heap");
+    require(after.native_wrapper_handle_count
+            <= baseline.native_wrapper_handle_count + 256U,
+        "100 iframe sandbox cycles retained more than 256 weak native wrapper handles");
+    require(after.native_wrapper_storage_bytes
+            <= baseline.native_wrapper_storage_bytes + 16U * 1024U,
+        "100 iframe sandbox cycles retained more than 16 KiB of wrapper registry storage");
+}
+
 void test_animation_frame_dispatch_is_attributed()
 {
     auto* engine = webscene_engine_create(0);

@@ -1,0 +1,152 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>HTMLIFrameElement sandbox reflected DOMTokenList</title>
+<body>
+<script>
+  const state = window.__webSceneWptState = {
+    complete: false, harness: null, results: [], errors: [], diagnostics: []
+  };
+  function assert(condition, message) { if (!condition) throw new Error(message); }
+  function assertThrows(name, body, message) {
+    let error = null;
+    try { body(); } catch (caught) { error = caught; }
+    assert(error && error.name === name,
+      `${message}: expected ${name}, got ${error && error.name}`);
+  }
+  function test(name, body) {
+    try {
+      body();
+      state.results.push({ name, status: "PASS", message: null, stack: null });
+    } catch (error) {
+      state.results.push({
+        name, status: "FAIL", message: String(error.message || error),
+        stack: error.stack || null
+      });
+    }
+  }
+  function finish() {
+    const failure = state.results.find(result => result.status !== "PASS");
+    state.harness = failure
+      ? { status: 1, message: failure.message, stack: failure.stack }
+      : { status: 0, message: null, stack: null };
+    state.complete = true;
+  }
+
+  test("sandbox has the HTML IDL and SameObject DOMTokenList shape", () => {
+    const frame = document.createElement("iframe");
+    const tokens = frame.sandbox;
+    assert(frame instanceof HTMLIFrameElement, "iframe brand mismatch");
+    assert(Object.prototype.toString.call(tokens) === "[object DOMTokenList]",
+      "sandbox brand mismatch");
+    assert(tokens instanceof DOMTokenList, "sandbox prototype mismatch");
+    assert(tokens === frame.sandbox, "sandbox did not preserve SameObject identity");
+    assert("sandbox" in HTMLIFrameElement.prototype,
+      "sandbox was not installed on HTMLIFrameElement.prototype");
+    assert(!("sandbox" in document.createElement("div")),
+      "sandbox leaked to unrelated HTML elements");
+  });
+
+  test("the exact Code OSS token statement reflects in order", () => {
+    const frame = document.createElement("iframe");
+    frame.sandbox.add(
+      "allow-scripts", "allow-same-origin", "allow-forms",
+      "allow-pointer-lock", "allow-downloads");
+    assert(frame.getAttribute("sandbox") ===
+      "allow-scripts allow-same-origin allow-forms allow-pointer-lock allow-downloads",
+      `serialized tokens were ${JSON.stringify(frame.getAttribute("sandbox"))}`);
+    assert(frame.sandbox.length === 5, `length was ${frame.sandbox.length}`);
+    assert([...frame.sandbox].join(",") ===
+      "allow-scripts,allow-same-origin,allow-forms,allow-pointer-lock,allow-downloads",
+      "token iteration order changed");
+    for (const token of frame.sandbox) {
+      assert(frame.sandbox.supports(token), `supports rejected ${token}`);
+    }
+    assert(!frame.sandbox.supports("allow-webscene-bypass"),
+      "supports accepted an unknown token");
+  });
+
+  test("attribute, value, assignment, and mutation stay live", () => {
+    const frame = document.createElement("iframe");
+    const tokens = frame.sandbox;
+    frame.setAttribute("sandbox", "allow-scripts allow-forms allow-scripts");
+    assert(tokens.length === 2 && tokens[0] === "allow-scripts"
+      && tokens.item(1) === "allow-forms", "direct attribute mutation was not live");
+    tokens.replace("allow-forms", "allow-downloads");
+    assert(frame.getAttribute("sandbox") === "allow-scripts allow-downloads",
+      "replace did not normalize and reflect");
+    tokens.value = "allow-pointer-lock  allow-same-origin";
+    assert(tokens.length === 2 && tokens.value ===
+      "allow-pointer-lock  allow-same-origin", "value forwarding was not live");
+    frame.sandbox = "allow-scripts allow-same-origin";
+    assert(tokens === frame.sandbox && tokens.contains("allow-same-origin"),
+      "PutForwards assignment replaced the list or lost the value");
+    frame.removeAttribute("sandbox");
+    assert(tokens.length === 0 && tokens.value === "",
+      "removeAttribute did not clear the retained list");
+    tokens.add("allow-scripts");
+    assert(frame.hasAttribute("sandbox") && frame.getAttribute("sandbox") === "allow-scripts",
+      "token mutation did not recreate the attribute");
+  });
+
+  test("invalid mutations reject atomically", () => {
+    const frame = document.createElement("iframe");
+    frame.sandbox.value = "allow-scripts";
+    assertThrows("SyntaxError", () => frame.sandbox.add("allow-forms", ""),
+      "empty add token");
+    assert(frame.sandbox.value === "allow-scripts", "add partially mutated");
+    assertThrows("InvalidCharacterError",
+      () => frame.sandbox.remove("allow-scripts", "bad token"),
+      "whitespace remove token");
+    assert(frame.sandbox.value === "allow-scripts", "remove partially mutated");
+    assertThrows("TypeError", () => document.body.classList.supports("x"),
+      "classList supports without a supported-token set");
+  });
+
+  test("opaque sandbox denies parent document access", () => {
+    const frame = document.createElement("iframe");
+    frame.setAttribute("sandbox", "");
+    document.body.appendChild(frame);
+    assert(frame.contentDocument === null,
+      "sandbox without allow-same-origin exposed contentDocument");
+    frame.remove();
+  });
+
+  const blocked = document.createElement("iframe");
+  blocked.sandbox.add("allow-same-origin");
+  document.body.appendChild(blocked);
+  const blockedDocument = blocked.contentDocument;
+  blockedDocument.open();
+  blockedDocument.write(
+    "<html><body><script>window.__sandboxScriptRan = true;<\/script></body></html>");
+  blockedDocument.close();
+
+  const allowed = document.createElement("iframe");
+  allowed.sandbox.add("allow-same-origin", "allow-scripts");
+  document.body.appendChild(allowed);
+  const allowedDocument = allowed.contentDocument;
+  allowedDocument.open();
+  allowedDocument.write(
+    "<html><body><script>window.__sandboxScriptRan = true;<\/script></body></html>");
+  allowedDocument.close();
+
+  setTimeout(() => {
+    test("allow-scripts gates iframe script execution", () => {
+      assert(blocked.contentWindow.__sandboxScriptRan !== true,
+        "script ran without allow-scripts");
+      assert(allowed.contentWindow.__sandboxScriptRan === true,
+        "script did not run with allow-scripts");
+    });
+    state.diagnostics.push(JSON.stringify({
+      codeOssTokens: [
+        "allow-scripts", "allow-same-origin", "allow-forms",
+        "allow-pointer-lock", "allow-downloads"
+      ],
+      blockedScript: blocked.contentWindow.__sandboxScriptRan === true,
+      allowedScript: allowed.contentWindow.__sandboxScriptRan === true
+    }));
+    blocked.remove();
+    allowed.remove();
+    finish();
+  }, 50);
+</script>
+</body>

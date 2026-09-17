@@ -940,6 +940,7 @@
                     | (frame_realm ? (1ULL << 63U) : 0ULL);
                 collect(node_wrappers, key);
                 collect(class_list_wrappers, key);
+                collect(sandbox_token_list_wrappers, key);
                 collect(style_wrappers, key);
                 collect(computed_style_wrappers, key);
                 collect(canvas_contexts, key);
@@ -977,6 +978,7 @@
                     | (frame_realm ? (1ULL << 63U) : 0ULL);
                 weaken(node_wrappers, key);
                 weaken(class_list_wrappers, key);
+                weaken(sandbox_token_list_wrappers, key);
                 weaken(style_wrappers, key);
                 weaken(computed_style_wrappers, key);
                 weaken(canvas_contexts, key);
@@ -1001,6 +1003,7 @@
                 | (frame_realm ? (1ULL << 63U) : 0ULL);
             if (weak(node_wrappers, key)
                 || weak(class_list_wrappers, key)
+                || weak(sandbox_token_list_wrappers, key)
                 || weak(style_wrappers, key)
                 || weak(computed_style_wrappers, key)
                 || weak(canvas_contexts, key)) {
@@ -1059,6 +1062,7 @@
                     | (frame_realm ? (1ULL << 63U) : 0ULL);
                 retain(node_wrappers, key);
                 retain(class_list_wrappers, key);
+                retain(sandbox_token_list_wrappers, key);
                 retain(style_wrappers, key);
                 retain(computed_style_wrappers, key);
                 retain(canvas_contexts, key);
@@ -1248,6 +1252,7 @@
                     || inspect(node_wrappers, key)
                     || inspect(detached_documents, node.id)
                     || inspect(class_list_wrappers, key)
+                    || inspect(sandbox_token_list_wrappers, key)
                     || inspect(style_wrappers, key)
                     || inspect(computed_style_wrappers, key)
                     || inspect(canvas_contexts, key);
@@ -1279,6 +1284,7 @@
         };
         erase_wrappers(node_wrappers);
         erase_wrappers(class_list_wrappers);
+        erase_wrappers(sandbox_token_list_wrappers);
         erase_wrappers(style_wrappers);
         erase_wrappers(computed_style_wrappers);
         erase_wrappers(canvas_contexts);
@@ -1515,6 +1521,8 @@
                     ? html_slot_element_template.Get(isolate)
                     : node.tag == "a"
                         ? html_anchor_element_template.Get(isolate)
+                    : node.tag == "iframe"
+                        ? html_iframe_element_template.Get(isolate)
                     : node.tag == "dialog"
                         ? html_dialog_element_template.Get(isolate)
                     : node.tag == "form"
@@ -1630,12 +1638,45 @@
         auto local_context = isolate->GetCurrentContext();
         auto constructor = ensure_dom_token_list_template()
             ->GetFunction(local_context).ToLocalChecked();
-        v8::Local<v8::Value> arguments[] = {v8::External::New(
-            isolate,
-            &node,
-            v8::kExternalPointerTypeTagDefault)};
-        auto object = constructor->NewInstance(local_context, 1, arguments).ToLocalChecked();
+        v8::Local<v8::Value> arguments[] = {
+            v8::External::New(
+                isolate,
+                &node,
+                v8::kExternalPointerTypeTagDefault),
+            v8::Integer::New(
+                isolate,
+                static_cast<int>(reflected_token_list_kind::class_names))};
+        auto object = constructor->NewInstance(local_context, 2, arguments).ToLocalChecked();
         auto& wrapper = class_list_wrappers[key];
+        wrapper.Reset(isolate, object);
+        if (!is_connected(node)) wrapper.SetWeak();
+        return object;
+    }
+
+    v8::Local<v8::Object> wrap_sandbox_token_list(dom_node& node)
+    {
+        const auto key = wrapper_key(node);
+        auto known = sandbox_token_list_wrappers.find(key);
+        if (known != sandbox_token_list_wrappers.end() && !known->second.IsEmpty()) {
+            if (is_connected(node) && known->second.IsWeak()) known->second.ClearWeak();
+            return known->second.Get(isolate);
+        }
+        if (known != sandbox_token_list_wrappers.end()) {
+            sandbox_token_list_wrappers.erase(known);
+        }
+        auto local_context = isolate->GetCurrentContext();
+        auto constructor = ensure_dom_token_list_template()
+            ->GetFunction(local_context).ToLocalChecked();
+        v8::Local<v8::Value> arguments[] = {
+            v8::External::New(
+                isolate,
+                &node,
+                v8::kExternalPointerTypeTagDefault),
+            v8::Integer::New(
+                isolate,
+                static_cast<int>(reflected_token_list_kind::iframe_sandbox))};
+        auto object = constructor->NewInstance(local_context, 2, arguments).ToLocalChecked();
+        auto& wrapper = sandbox_token_list_wrappers[key];
         wrapper.Reset(isolate, object);
         if (!is_connected(node)) wrapper.SetWeak();
         return object;
@@ -1693,6 +1734,15 @@
             if (!is_connected(node)
                 || node.script_state == script_execution_state::already_started) {
                 return;
+            }
+            for (auto* ancestor = node.parent; ancestor != nullptr;
+                 ancestor = ancestor->parent) {
+                if (ancestor->tag != "iframe") continue;
+                if (!iframe_sandbox_allows(*ancestor, "allow-scripts")) {
+                    node.script_state = script_execution_state::already_started;
+                    return;
+                }
+                break;
             }
             // The already-started flag is set before evaluation, matching the
             // browser's one-shot lifecycle even when execution reports an

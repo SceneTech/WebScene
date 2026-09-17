@@ -6589,11 +6589,13 @@ v8_dom_runtime::memory_metrics v8_dom_runtime::read_memory_metrics() const noexc
     result.native_wrapper_handle_count =
         impl_->node_wrappers.size()
         + impl_->class_list_wrappers.size()
+        + impl_->sandbox_token_list_wrappers.size()
         + impl_->style_wrappers.size()
         + impl_->computed_style_wrappers.size();
     result.native_wrapper_storage_bytes =
         wrapper_map_storage(impl_->node_wrappers)
         + wrapper_map_storage(impl_->class_list_wrappers)
+        + wrapper_map_storage(impl_->sandbox_token_list_wrappers)
         + wrapper_map_storage(impl_->style_wrappers)
         + wrapper_map_storage(impl_->computed_style_wrappers);
     const auto listener_map_storage = [](const auto& map) {

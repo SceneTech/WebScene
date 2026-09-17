@@ -2404,6 +2404,14 @@
       "evidence": ["service-workers-cache-derived", "chromium-153-direct-neutral-contract", "vscode-oss-resource-broker-shape"],
       "reason": "Candidate second resource-plane stack for WebScene #266. It provides bounded worker-local CacheStorage with empty-match and cloned-response semantics plus asynchronous controlled Window.fetch dispatch with unhandled host fallback and rejected-response propagation. The native companion gate covers 100 controlled requests, one cache miss followed by stable clones, WebIDL brands/descriptors, unregister teardown, p95 <= 250 ms, <= 8 MiB retained V8 heap, and <= 64 MiB peak-RSS growth. WritableStream/TransformStream fallback, interception of parser/image/style loads, and unchanged Markdown product acceptance remain later #266 slices.",
       "nativeNavigation": true
+    },
+    {
+      "path": "contracts/cache-storage-transform-stream.html",
+      "type": "contract",
+      "capabilities": ["transform-stream-fallback", "writable-stream-default-writer", "cache-transform-response-clone"],
+      "evidence": ["streams-transform-stream-derived", "chromium-153-direct-neutral-contract", "vscode-oss-safari-resource-stream-shape"],
+      "reason": "Candidate third resource-plane stack for WebScene #266. It adds WritableStream/default-writer and TransformStream byte delivery to the lower CacheStorage/request-broker stack and covers the unchanged Code OSS chunk fallback sequence: create a transform, retain its writer, resolve the response with its readable side, write ordered byte chunks, close or abort, and observe writer.closed teardown. The cumulative native gate covers 100 controlled cached requests, exact byte order, browser-shaped brands/descriptors, p95 <= 250 ms, <= 8 MiB retained V8 heap, and <= 64 MiB peak-RSS growth. Interception of parser/image/style loads and unchanged Markdown product acceptance remain later #266 slices.",
+      "nativeNavigation": true
     }
   ],
   "harnessBlocked": [],

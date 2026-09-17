@@ -146,6 +146,7 @@ inline void apply_animation_shorthand(node_style& style, const std::string& valu
         auto delay = std::string("0s");
         auto timing = std::string("ease");
         auto iterations = std::string("1");
+        auto fill_mode = std::string("none");
         auto saw_time = false;
         const auto first = split_css_component_list(value, ',');
         for (const auto& token : split_value_tokens(
@@ -164,8 +165,10 @@ inline void apply_animation_shorthand(node_style& style, const std::string& valu
                     return std::isdigit(character) || character == '.';
                 })) {
                 iterations = lower;
+            } else if (lower == "forwards" || lower == "both") {
+                fill_mode = lower;
             } else if (lower != "normal" && lower != "none"
-                && lower != "forwards" && lower != "backwards" && lower != "both"
+                && lower != "backwards"
                 && lower != "running" && lower != "paused"
                 && lower != "alternate" && lower != "alternate-reverse"
                 && lower != "reverse") {
@@ -178,6 +181,7 @@ inline void apply_animation_shorthand(node_style& style, const std::string& valu
         animations.animation_delay_value = delay;
         animations.animation_timing_function_value = timing;
         animations.animation_iteration_count_value = iterations;
+        animations.animation_fill_mode_value = fill_mode;
     }
 
 inline void configure_keyframes(node_style& style,
@@ -210,6 +214,9 @@ inline void configure_keyframes(node_style& style,
         animations.opacity_keyframe_iterations = iteration == "infinite"
             ? std::numeric_limits<float>::infinity()
             : std::max(0.0F, std::strtof(iteration.c_str(), nullptr));
+        const auto fill_mode = ascii_lower(trim_value(animations.animation_fill_mode_value));
+        animations.opacity_keyframe_fill_forwards =
+            fill_mode == "forwards" || fill_mode == "both";
         node_style::transition_timing animation_timing;
         if (!timings.empty()) parse_transition_timing(timings.front(), animation_timing);
         animations.opacity_keyframe_x1 = animation_timing.x1;
@@ -226,6 +233,7 @@ inline void configure_keyframes(node_style& style,
         signature << name << '|' << animations.opacity_keyframe_duration_ms << '|'
             << animations.opacity_keyframe_delay_ms << '|'
             << animations.opacity_keyframe_iterations << '|'
+            << animations.opacity_keyframe_fill_forwards << '|'
             << animations.opacity_keyframe_x1 << ',' << animations.opacity_keyframe_y1 << ','
             << animations.opacity_keyframe_x2 << ',' << animations.opacity_keyframe_y2;
         const auto base_signature = signature.str();

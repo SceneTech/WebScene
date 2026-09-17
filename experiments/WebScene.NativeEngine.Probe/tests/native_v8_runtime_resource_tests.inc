@@ -199,6 +199,75 @@ size_t load_contextual_test_resource_v3(
         destination_capacity);
 }
 
+void test_initial_non_javascript_script_is_inert()
+{
+    resource_server server{.content = {
+        {"https://script-type.test/index.html", R"HTML(
+            <!doctype html><body>
+            <script id="data" type="application/json">globalThis.__inertExecuted = true</script>
+            <script>globalThis.__executableObservedInert = globalThis.__inertExecuted === undefined</script>
+            </body>
+        )HTML"}
+    }};
+    webscene_engine_options options{};
+    options.struct_size = sizeof(options);
+    options.resource_load_callback = load_test_resource;
+    options.resource_load_user_data = &server;
+    auto* engine = webscene_engine_create_with_options(&options);
+    require(engine != nullptr, "inert initial script engine creation failed");
+    constexpr std::string_view address{"https://script-type.test/index.html"};
+    require(
+        webscene_engine_load_url(engine, address.data(), address.size()) != 0U,
+        "inert initial script navigation failed");
+    const auto result = evaluate_until_equals(
+        engine,
+        "JSON.stringify([globalThis.__executableObservedInert, document.getElementById('data')?.type, document.getElementById('data')?.textContent])",
+        "initial-inert-script-result.js",
+        R"("[true,\"application/json\",\"globalThis.__inertExecuted = true\"]")");
+    require(
+        result == R"("[true,\"application/json\",\"globalThis.__inertExecuted = true\"]")",
+        "initial non-JavaScript script executed or lost its DOM data: " + result);
+    webscene_engine_destroy(engine);
+}
+
+void test_initial_document_images_are_loaded()
+{
+    constexpr std::array<unsigned char,70> raster_png{{
+        0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,0x00,0x00,0x00,0x0d,
+        0x49,0x48,0x44,0x52,0x00,0x00,0x00,0x01,0x00,0x00,0x00,0x01,
+        0x08,0x06,0x00,0x00,0x00,0x1f,0x15,0xc4,0x89,0x00,0x00,0x00,
+        0x0d,0x49,0x44,0x41,0x54,0x78,0xda,0x63,0x90,0xdd,0x19,0xf2,
+        0x1f,0x00,0x04,0x4b,0x02,0x2a,0x81,0xeb,0x0d,0xbc,0x00,0x00,
+        0x00,0x00,0x49,0x45,0x4e,0x44,0xae,0x42,0x60,0x82}};
+    resource_server server{.content = {
+        {"https://initial-image.test/index.html",
+            R"HTML(<!doctype html><img id="cover" src="cover.png" style="width:40px">)HTML"},
+        {"https://initial-image.test/cover.png", std::string(
+            reinterpret_cast<const char*>(raster_png.data()), raster_png.size())}
+    }};
+    webscene_engine_options options{};
+    options.struct_size = sizeof(options);
+    options.resource_load_callback = load_test_resource;
+    options.resource_load_user_data = &server;
+    auto* engine = webscene_engine_create_with_options(&options);
+    require(engine != nullptr, "initial image engine creation failed");
+    constexpr std::string_view address{"https://initial-image.test/index.html"};
+    require(
+        webscene_engine_load_url(engine, address.data(), address.size()) != 0U,
+        "initial image navigation failed");
+    const auto state = evaluate_until_equals(
+        engine,
+        "JSON.stringify((() => { const image = document.getElementById('cover'); "
+        "const rect = image.getBoundingClientRect(); return [image.complete, "
+        "image.naturalWidth, image.naturalHeight, rect.width, rect.height]; })())",
+        "initial-image-state.js",
+        R"("[true,1,1,40,40]")");
+    require(
+        state == R"("[true,1,1,40,40]")",
+        "an image authored in the navigation response was not loaded: " + state);
+    webscene_engine_destroy(engine);
+}
+
 void test_fetch_carries_document_origin_to_resource_host()
 {
     contextual_resource_server server{

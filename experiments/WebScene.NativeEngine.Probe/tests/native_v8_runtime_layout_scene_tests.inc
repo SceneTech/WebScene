@@ -51,6 +51,8 @@ void test_native_overflow_scrolling_and_nowrap(webscene_engine* engine)
         fail("overflow range or nowrap layout was not established: " + initial);
     }
 
+    webscene_engine_metrics metrics_before_wheel{};
+    webscene_engine_get_metrics(engine, &metrics_before_wheel);
     const auto consumed_before_wheel = consumed_input_count(engine);
     wheel_input(engine, 20, 20, 60, 41U);
     wait_for_consumed_inputs(
@@ -67,6 +69,11 @@ void test_native_overflow_scrolling_and_nowrap(webscene_engine* engine)
     if (scrolled != R"({"scrollTop":60,"firstTop":-60,"lastTop":68})") {
         fail("wheel input did not scroll the nearest overflow viewport: " + scrolled);
     }
+    webscene_engine_metrics metrics_after_wheel{};
+    webscene_engine_get_metrics(engine, &metrics_after_wheel);
+    require(
+        metrics_after_wheel.layout_passes == metrics_before_wheel.layout_passes,
+        "ordinary overflow scrolling reran layout instead of translating retained geometry");
 
     const auto revealed = evaluate(engine, R"JS(
         (() => {
@@ -87,6 +94,7 @@ void test_native_overflow_scrolling_and_nowrap(webscene_engine* engine)
     webscene_engine_request_scene_checkpoint(engine);
     auto observed_scrollbar_rail = false;
     auto observed_scrollbar_thumb = false;
+    auto scrollbar_evidence = std::string{};
     for (auto attempt = 0; attempt < 100
         && (!observed_scrollbar_rail || !observed_scrollbar_thumb); ++attempt) {
         const auto* scene = webscene_engine_acquire_latest_scene(engine);
@@ -95,11 +103,17 @@ void test_native_overflow_scrolling_and_nowrap(webscene_engine* engine)
                 const auto& command = scene->commands[index];
                 if (command.kind != 10U) continue;
                 if (command.rgba == 0x7F7F7F40U) {
+                    scrollbar_evidence = "rail=" + std::to_string(command.x) + ","
+                        + std::to_string(command.y) + "," + std::to_string(command.width)
+                        + "," + std::to_string(command.height);
                     observed_scrollbar_rail = std::abs(command.x - 152.0F) < 0.1F
                         && std::abs(command.y - 2.0F) < 0.1F
                         && std::abs(command.width - 6.0F) < 0.1F
                         && std::abs(command.height - 60.0F) < 0.1F;
                 } else if (command.rgba == 0xA0A0A0D0U) {
+                    scrollbar_evidence += " thumb=" + std::to_string(command.x) + ","
+                        + std::to_string(command.y) + "," + std::to_string(command.width)
+                        + "," + std::to_string(command.height);
                     observed_scrollbar_thumb = std::abs(command.x - 152.0F) < 0.1F
                         && std::abs(command.y - 38.0F) < 0.1F
                         && std::abs(command.width - 6.0F) < 0.1F
@@ -115,7 +129,8 @@ void test_native_overflow_scrolling_and_nowrap(webscene_engine* engine)
     }
     require(
         observed_scrollbar_rail && observed_scrollbar_thumb,
-        "native overflow viewport did not paint a proportional scrollbar at its bounded maximum");
+        "native overflow viewport did not paint a proportional scrollbar at its bounded maximum: "
+            + scrollbar_evidence);
 
     const auto hidden_scrollbar_state = evaluate(engine, R"JS(
         (() => {
@@ -194,6 +209,72 @@ void test_native_overflow_scrolling_and_nowrap(webscene_engine* engine)
         bounded == expected_bounded,
         "repeated wheel input escaped the finite range or dispatched at an unchanged boundary: "
             + bounded);
+}
+
+void test_scroll_offset_changes_translate_retained_geometry_without_layout(
+    webscene_engine* engine)
+{
+    resize(engine, 320, 180, 5790U);
+    const auto initial = evaluate(engine, R"JS(
+        (() => {
+          document.body.innerHTML = `<style>
+            html,body { margin:0; }
+            #scroller { position:absolute; top:20px; width:120px; height:80px; overflow:auto; }
+            #content { height:240px; }
+            #fixed { position:fixed; top:7px; left:9px; width:10px; height:10px; }
+          </style><div id="scroller"><div id="content"><div id="fixed"></div></div></div>`;
+          const scroller = document.getElementById('scroller');
+          const content = document.getElementById('content');
+          const fixed = document.getElementById('fixed');
+          globalThis.__scrollFastPath = { scroller, content, fixed };
+          return [scroller.scrollTop, content.getBoundingClientRect().top,
+            fixed.getBoundingClientRect().top];
+        })()
+    )JS", "native-scroll-offset-fast-path-setup.js");
+    require(
+        initial == "[0,20,7]",
+        "scroll fast-path fixture did not establish initial geometry: " + initial);
+
+    webscene_engine_metrics before{};
+    webscene_engine_get_metrics(engine, &before);
+    const auto consumed_before_wheel = consumed_input_count(engine);
+    wheel_input(engine, 20, 40, 40, 5791U);
+    wait_for_consumed_inputs(
+        engine,
+        consumed_before_wheel + 1U,
+        "scroll fast-path wheel input was not consumed");
+    const auto after_wheel = evaluate(engine, R"JS(
+        [__scrollFastPath.scroller.scrollTop,
+         __scrollFastPath.content.getBoundingClientRect().top,
+         __scrollFastPath.fixed.getBoundingClientRect().top]
+    )JS", "native-scroll-offset-fast-path-wheel-result.js");
+    webscene_engine_metrics after{};
+    webscene_engine_get_metrics(engine, &after);
+    require(
+        after_wheel == "[40,-20,7]",
+        "wheel fast path did not translate scrolled content independently of fixed content: "
+            + after_wheel);
+    require(
+        after.layout_passes == before.layout_passes,
+        "wheel fast path reran full-document layout");
+
+    const auto programmatic = evaluate(engine, R"JS(
+        (() => {
+          __scrollFastPath.scroller.scrollTop = 70;
+          return [__scrollFastPath.scroller.scrollTop,
+            __scrollFastPath.content.getBoundingClientRect().top,
+            __scrollFastPath.fixed.getBoundingClientRect().top];
+        })()
+    )JS", "native-scroll-offset-fast-path-programmatic-result.js");
+    webscene_engine_metrics after_programmatic{};
+    webscene_engine_get_metrics(engine, &after_programmatic);
+    require(
+        programmatic == "[70,-50,7]",
+        "programmatic scroll fast path did not translate retained geometry: "
+            + programmatic);
+    require(
+        after_programmatic.layout_passes == after.layout_passes,
+        "programmatic scroll offset reran full-document layout");
 }
 
 void test_authored_scrollbar_style_and_thumb_drag(webscene_engine* engine)

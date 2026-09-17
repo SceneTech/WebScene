@@ -39,7 +39,8 @@ inline std::string decode_content(std::string value)
     }
 
 inline property_result apply_pseudo_value(node_style::pseudo_element& pseudo,
-    uint32_t parent_foreground, const std::string& name, const std::string& value)
+    uint32_t parent_foreground, bool parent_border_box,
+    const std::string& name, const std::string& value)
 {
     property_result decision;
         if (name == "content") {
@@ -154,7 +155,9 @@ inline property_result apply_pseudo_value(node_style::pseudo_element& pseudo,
         } else if (name == "padding-bottom" || name == "padding-block-end") {
             pseudo.padding_bottom = native_document::parse_length(value);
         } else if (name == "box-sizing") {
-            pseudo.border_box = value == "border-box";
+            pseudo.border_box = value == "inherit"
+                ? parent_border_box
+                : value == "border-box";
         } else if (canonical_property_name(name).starts_with("border")
             && name.find("radius") == std::string::npos) {
             node_style border_style{};

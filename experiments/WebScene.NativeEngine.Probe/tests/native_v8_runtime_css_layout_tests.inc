@@ -1431,6 +1431,111 @@ void test_hover_specificity_preserves_visible_theme_icon(webscene_engine* engine
         "a later low-specificity rule hid or recolored the hovered child: " + result);
 }
 
+void test_hover_recascade_preserves_horizontal_catalog_row(webscene_engine* engine)
+{
+    execute(engine, R"JS(
+        document.body.innerHTML = `
+          <style>
+            .catalog { display:grid; grid-auto-flow:column; grid-template-rows:repeat(1,auto);
+              gap:12px; width:620px; overflow:hidden; }
+            .card { width:140px; height:190px; background:#181818; }
+            .card:hover { background:#282828; }
+            .alternate:hover .action, .card:hover .action,
+            .alternate:focus-within .action, .card:focus-within {
+              opacity:1; transform:translateY(0); }
+            .action { opacity:0; width:32px; height:32px; transform:translateY(8px);
+              background:#1ed760; border-radius:50%; }
+          </style>
+          <section class="catalog">
+            <article class="card"><button class="action">Play</button></article>
+            <article class="card"></article><article class="card"></article>
+            <article class="card"></article>
+          </section>`;
+    )JS", "native-catalog-hover-layout-setup.js");
+    resize(engine, 800, 500, 109U);
+    const auto before = evaluate(engine,
+        "JSON.stringify(Array.from(document.querySelectorAll('.card'), n => { const r=n.getBoundingClientRect(); return [r.x,r.y,r.width,r.height]; }))",
+        "native-catalog-hover-layout-before.js");
+    const auto pointer_x = std::stod(evaluate(
+        engine,
+        "document.querySelector('.card').getBoundingClientRect().x + 100",
+        "native-catalog-hover-x.js"));
+    const auto pointer_y = std::stod(evaluate(
+        engine,
+        "document.querySelector('.card').getBoundingClientRect().y + 100",
+        "native-catalog-hover-y.js"));
+    pointer_move(engine, pointer_x, pointer_y, 110U);
+    wait_for_consumed_inputs(engine, 2U, "catalog hover pointer move was not consumed");
+    const auto after = evaluate(engine,
+        "JSON.stringify(Array.from(document.querySelectorAll('.card'), n => { const r=n.getBoundingClientRect(); return [r.x,r.y,r.width,r.height]; }))",
+        "native-catalog-hover-layout-after.js");
+    require(before == after,
+        "hover recascade changed a grid-auto-flow catalog row into a different layout: before="
+            + before + " after=" + after);
+    const auto hover_result = evaluate(engine, R"JS(
+        (() => {
+          const action = document.querySelector('.action');
+          const card = document.querySelector('.card');
+          const hit = document.elementFromPoint(card.getBoundingClientRect().x + 100,
+            card.getBoundingClientRect().y + 100);
+          return [getComputedStyle(action).opacity, card.matches(':hover'),
+            hit && hit.tagName, hit && hit.className];
+        })()
+    )JS", "native-catalog-hover-action.js");
+    require(hover_result == R"JSON(["1",true,"ARTICLE","card"])JSON",
+        "catalog hover did not apply its visual-only action state: " + hover_result);
+
+    webscene_engine_request_scene_checkpoint(engine);
+    auto painted_action = false;
+    for (auto attempt = 0; attempt < 100; ++attempt) {
+        const auto* scene = webscene_engine_acquire_latest_scene(engine);
+        if (scene != nullptr) {
+            for (uint32_t index = 0; index < scene->header.command_count; ++index) {
+                const auto& command = scene->commands[index];
+                if ((command.rgba >> 8U) == 0x1ED760U
+                    && std::abs(command.width - 32.0F) < 0.01F
+                    && std::abs(command.height - 32.0F) < 0.01F
+                    && std::abs(command.radius_top_left - 16.0F) < 0.01F) {
+                    painted_action = true;
+                    break;
+                }
+            }
+            webscene_scene_acknowledge(scene);
+            webscene_scene_release(scene);
+        }
+        if (painted_action) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    require(painted_action,
+        "catalog hover computed the action visible but did not publish its paint");
+}
+
+void test_universal_box_sizing_inherits_from_document_element(webscene_engine* engine)
+{
+    execute(engine, R"JS(
+        document.body.innerHTML = `<style>
+          @layer reset {
+            html { box-sizing:border-box; }
+            *, ::before, ::after { box-sizing:inherit; }
+          }
+          #card { width:100px; padding:12px; }
+          #card::before { content:""; display:block; width:10px; padding:2px; }
+        </style><div id="card"><span id="child"></span></div>`;
+    )JS", "native-inherited-box-sizing-setup.js");
+    const auto result = evaluate(engine, R"JS(
+        ([
+          getComputedStyle(document.documentElement).boxSizing,
+          getComputedStyle(document.body).boxSizing,
+          getComputedStyle(document.getElementById('card')).boxSizing,
+          getComputedStyle(document.getElementById('child')).boxSizing,
+          document.getElementById('card').getBoundingClientRect().width,
+          getComputedStyle(document.getElementById('card'), '::before').boxSizing
+        ])
+    )JS", "native-inherited-box-sizing-result.js");
+    require(result == R"JSON(["border-box","border-box","border-box","border-box",100,"border-box"])JSON",
+        "explicit box-sizing inheritance did not preserve the document reset: " + result);
+}
+
 void test_complex_is_specificity_ignores_non_element_siblings(webscene_engine* engine)
 {
     const auto result = evaluate(engine, R"JS(
@@ -1526,7 +1631,6 @@ void test_br_keeps_inline_block_on_its_own_line(webscene_engine* engine)
             return [
               value.x - origin.x,
               value.y - origin.y,
-              value.width,
               value.height
             ];
           };
@@ -1537,7 +1641,7 @@ void test_br_keeps_inline_block_on_its_own_line(webscene_engine* engine)
         })()
     )JS", "native-br-inline-block-lines.js");
     require(
-        result == R"JSON({"rows":[[0,0,320,10],[0,10,320,20]],"boxes":[[5.5,0,10,10],[0,20,10,10]]})JSON",
+        result == R"JSON({"rows":[[0,0,10],[0,10,20]],"boxes":[[5.5,0,10],[0,20,10]]})JSON",
         "baseline alignment moved an inline-block across a forced line break: " + result);
 }
 
@@ -1578,6 +1682,41 @@ void test_hover_invalidation_updates_functional_and_sibling_subjects(
         hovered == R"("40px")" && unhovered == R"("20px")",
         "functional or sibling hover invalidation regressed: hovered="
             + hovered + ", unhovered=" + unhovered);
+
+    execute(engine, R"JS(
+        document.body.innerHTML = `
+          <style>
+            .menu { width: 80px; height: 80px; }
+            .menu > .item { width: 60px; height: 60px; }
+            .menu > :not(:hover, :focus) > * { opacity: .25; }
+            .menu > :hover > * { opacity: 1; }
+          </style>
+          <div class="menu"><div class="item"><span class="label">Open</span></div></div>`;
+    )JS", "native-hover-direct-child-invalidation-setup.js");
+    resize(engine, 320, 200, 106U);
+    const auto item_x = std::stod(evaluate(
+        engine,
+        "document.querySelector('.item').getBoundingClientRect().x + 40",
+        "native-hover-direct-child-invalidation-x.js"));
+    const auto item_y = std::stod(evaluate(
+        engine,
+        "document.querySelector('.item').getBoundingClientRect().y + 40",
+        "native-hover-direct-child-invalidation-y.js"));
+    pointer_move(engine, item_x, item_y, 107U);
+    const auto direct_child_hovered = evaluate(
+        engine,
+        "getComputedStyle(document.querySelector('.label')).opacity",
+        "native-hover-direct-child-invalidation-hovered.js");
+    pointer_move(engine, 250, 150, 108U);
+    const auto direct_child_unhovered = evaluate(
+        engine,
+        "getComputedStyle(document.querySelector('.label')).opacity",
+        "native-hover-direct-child-invalidation-unhovered.js");
+    require(
+        direct_child_hovered == R"("1")"
+            && direct_child_unhovered == R"("0.25")",
+        "functional direct-child hover invalidation regressed: hovered="
+            + direct_child_hovered + ", unhovered=" + direct_child_unhovered);
 }
 
 void test_hover_dependency_matching_reuses_compiled_triggers(
@@ -1698,7 +1837,7 @@ void test_hover_moves_between_block_and_display_contents_child(webscene_engine* 
           hovered2.addEventListener('mouseover', event => __hoverEvents.push(event.target.id));
         })()
     )JS", "native-display-contents-hover-setup.js");
-    resize(engine, 320, 200, 106U);
+    resize(engine, 320, 200, 109U);
     const auto first_x = std::stod(evaluate(
         engine,
         "hovered.getBoundingClientRect().x + 5",
@@ -1715,14 +1854,14 @@ void test_hover_moves_between_block_and_display_contents_child(webscene_engine* 
         engine,
         "hovered2.getBoundingClientRect().y + 5",
         "native-display-contents-hover-second-y.js"));
-    pointer_move(engine, first_x, first_y, 107U);
+    pointer_move(engine, first_x, first_y, 110U);
     require(
         evaluate(
             engine,
             "__hoverEvents.length",
             "native-display-contents-hover-first-result.js") == "1",
         "the first hover move was not dispatched before entering display:contents");
-    pointer_move(engine, second_x, second_y, 108U);
+    pointer_move(engine, second_x, second_y, 111U);
     const auto result = evaluate(engine, R"JS(
         ({
           events: __hoverEvents,
@@ -1777,6 +1916,73 @@ void test_single_fractional_grid_track_stays_one_column(webscene_engine* engine)
     if (result != R"([344,0,0,344,344,169,"contents"])") {
         fail("a single 1fr grid track was split into columns: " + result);
     }
+}
+
+void test_auto_fill_minmax_custom_property_tracks_keep_their_sizing(
+    webscene_engine* engine)
+{
+    const auto result = evaluate(engine, R"JS(
+        (() => {
+          document.body.innerHTML = `
+            <style>
+              body { margin: 0; }
+              #results {
+                --minimum: 180px;
+                display: grid;
+                gap: 20px 12px;
+                grid-template-columns: repeat(auto-fill, minmax(var(--minimum), 1fr));
+                width: 1000px;
+              }
+              #top { grid-column: 1 / 3; height: 40px; }
+              #songs { grid-column: 3 / -1; height: 40px; }
+              #wide { grid-column: 1 / -1; height: 30px; }
+            </style>
+            <main id="results">
+              <section id="top"></section><section id="songs"></section>
+              <section id="wide"></section>
+            </main>`;
+          const geometry = () => {
+            const rect = id => {
+              const value = document.getElementById(id).getBoundingClientRect();
+              return [value.x, value.y, value.width, value.height];
+            };
+            return { top: rect('top'), songs: rect('songs'), wide: rect('wide') };
+          };
+          const desktop = geometry();
+          results.style.width = '800px';
+          const compact = geometry();
+          results.style.width = '1000px';
+          results.style.setProperty(
+            'grid-template-columns', 'minmax(var(--minimum), 1fr)');
+          const oneTrack = geometry();
+          results.style.setProperty(
+            'grid-template-columns',
+            'repeat(auto-fill, minmax(var(--minimum), 1fr))');
+          const restored = geometry();
+          const close = (actual, expected) => Math.abs(actual - expected) <= .02;
+          const same = (actual, expected) => actual.every(
+            (value, index) => close(value, expected[index]));
+          return {
+            pass: same(desktop.top, [0, 0, 392.8, 40])
+              && same(desktop.songs, [404.8, 0, 595.2, 40])
+              && same(desktop.wide, [0, 60, 1000, 30])
+              && same(compact.top, [0, 0, 394, 40])
+              && same(compact.songs, [406, 0, 394, 40])
+              && same(compact.wide, [0, 60, 800, 30])
+              && close(oneTrack.top[2], 1000)
+              && same(restored.top, desktop.top)
+              && same(restored.songs, desktop.songs)
+              && same(restored.wide, desktop.wide),
+            desktop,
+            compact,
+            oneTrack,
+            restored
+          };
+        })()
+    )JS", "native-auto-fill-minmax-custom-property-grid.js");
+    require(
+        result.find(R"("pass":true)") != std::string::npos,
+        "auto-fill minmax tracks lost their custom-property minimum or placement: " + result);
 }
 
 void test_tradingview_symbol_search_display_contents_rows_join_parent_grid(

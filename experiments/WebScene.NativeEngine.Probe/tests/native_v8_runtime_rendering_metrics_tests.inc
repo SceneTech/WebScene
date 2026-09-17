@@ -744,7 +744,7 @@ void test_tradingview_repeating_svg_checker_background_reaches_scene(
             + observed_resource);
 }
 
-void test_svg_img_element_loads_and_reaches_scene(webscene_engine* engine)
+void test_image_elements_load_and_reach_scene(webscene_engine* engine)
 {
     const auto resource_directory = std::filesystem::temp_directory_path()
         / ("webscene-img-svg-"
@@ -755,6 +755,20 @@ void test_svg_img_element_loads_and_reaches_scene(webscene_engine* engine)
     {
         std::ofstream svg(svg_path, std::ios::binary);
         svg << R"(<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 12"><rect width="24" height="12" fill="#2962ff"/></svg>)";
+    }
+    const auto raster_path = resource_directory / "pixel.png";
+    constexpr std::array<unsigned char,70> raster_png{{
+        0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,0x00,0x00,0x00,0x0d,
+        0x49,0x48,0x44,0x52,0x00,0x00,0x00,0x01,0x00,0x00,0x00,0x01,
+        0x08,0x06,0x00,0x00,0x00,0x1f,0x15,0xc4,0x89,0x00,0x00,0x00,
+        0x0d,0x49,0x44,0x41,0x54,0x78,0xda,0x63,0x90,0xdd,0x19,0xf2,
+        0x1f,0x00,0x04,0x4b,0x02,0x2a,0x81,0xeb,0x0d,0xbc,0x00,0x00,
+        0x00,0x00,0x49,0x45,0x4e,0x44,0xae,0x42,0x60,0x82}};
+    {
+        std::ofstream raster(raster_path, std::ios::binary);
+        raster.write(
+            reinterpret_cast<const char*>(raster_png.data()),
+            static_cast<std::streamsize>(raster_png.size()));
     }
     const auto root = resource_directory.string();
     require(
@@ -857,6 +871,34 @@ void test_svg_img_element_loads_and_reaches_scene(webscene_engine* engine)
     execute(engine, R"JS(
         (() => {
           const image = document.createElement('img');
+          image.id = 'native-raster-image';
+          image.style.setProperty('inline-size', '40px');
+          image.style.setProperty(
+            'block-size', 'var(--missing-image-block-size, revert-layer)');
+          image.style.borderRadius = '4px';
+          globalThis.__nativeRasterImageLoads = 0;
+          image.addEventListener('load', () => __nativeRasterImageLoads++);
+          image.src = 'pixel.png';
+          document.body.appendChild(image);
+        })()
+    )JS", "native-raster-img-setup.js");
+    const auto raster_image_state = evaluate_until_equals(
+        engine,
+        R"JS(JSON.stringify((() => {
+          const image = document.querySelector('#native-raster-image');
+          const rect = image.getBoundingClientRect();
+          return [image.complete,image.naturalWidth,image.naturalHeight,rect.width,rect.height,__nativeRasterImageLoads];
+        })()))JS",
+        "native-raster-img-state.js",
+        R"("[true,1,1,40,40,1]")");
+    require(
+        raster_image_state == R"("[true,1,1,40,40,1]")",
+        "raster IMG did not expose intrinsic size or preserve its aspect ratio: "
+            + raster_image_state);
+
+    execute(engine, R"JS(
+        (() => {
+          const image = document.createElement('img');
           image.id = 'native-broken-image';
           globalThis.__nativeBrokenImageEvents = { errors: 0, loads: 0 };
           image.addEventListener('error', () => __nativeBrokenImageEvents.errors++);
@@ -888,6 +930,7 @@ void test_svg_img_element_loads_and_reaches_scene(webscene_engine* engine)
         const auto* scene = webscene_engine_acquire_latest_scene(engine);
         if (scene != nullptr) {
             auto matching_images = 0U;
+            auto matching_raster = false;
             for (uint32_t index = 0; index < scene->header.command_count; ++index) {
                 const auto& command = scene->commands[index];
                 if (command.kind == 6U
@@ -902,9 +945,14 @@ void test_svg_img_element_loads_and_reaches_scene(webscene_engine* engine)
                         && bytes.find("0 0 24 12") != std::string_view::npos) {
                         ++matching_images;
                     }
+                    if (bytes.starts_with("webscene-raster-v1\t")
+                        && bytes.size() == 19U + raster_png.size()
+                        && static_cast<unsigned char>(bytes[19U]) == 0x89U) {
+                        matching_raster = true;
+                    }
                 }
             }
-            found = matching_images >= 4U;
+            found = matching_images >= 4U && matching_raster;
             webscene_scene_acknowledge(scene);
             webscene_scene_release(scene);
         }
@@ -914,6 +962,53 @@ void test_svg_img_element_loads_and_reaches_scene(webscene_engine* engine)
     std::error_code cleanup_error;
     std::filesystem::remove_all(resource_directory, cleanup_error);
     require(found, "loaded SVG IMG element did not reach the native scene");
+}
+
+void test_percentage_radius_reaches_raster_image_scene_clip(webscene_engine* engine)
+{
+    execute(engine, R"JS(
+        document.body.innerHTML = `<img id="artist" style="display:block;width:40px;height:40px;border-radius:50%"
+          src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mOQ3RnyHwAESwIqgesNvAAAAABJRU5ErkJggg==">`;
+    )JS", "native-rounded-raster-image-setup.js");
+    const auto state = evaluate_until_equals(
+        engine,
+        R"JS(JSON.stringify((() => {
+          const image = document.querySelector('#artist');
+          const rect = image.getBoundingClientRect();
+          return [image.complete,rect.width,rect.height,getComputedStyle(image).borderTopLeftRadius];
+        })()))JS",
+        "native-rounded-raster-image-state.js",
+        R"("[true,40,40,\"50%\"]")"
+    );
+    require(
+        state == R"("[true,40,40,\"50%\"]")" ,
+        "percentage-radius raster IMG did not preserve its authored geometry: " + state);
+
+    webscene_engine_request_scene_checkpoint(engine);
+    auto found = false;
+    for (auto attempt = 0; attempt < 100; ++attempt) {
+        const auto* scene = webscene_engine_acquire_latest_scene(engine);
+        if (scene != nullptr) {
+            for (uint32_t index = 0; index < scene->header.command_count; ++index) {
+                const auto& command = scene->commands[index];
+                if (command.kind == 6U
+                    && std::abs(command.width - 40.0F) < 0.01F
+                    && std::abs(command.height - 40.0F) < 0.01F
+                    && std::abs(command.radius_top_left - 20.0F) < 0.01F
+                    && std::abs(command.radius_top_right - 20.0F) < 0.01F
+                    && std::abs(command.radius_bottom_right - 20.0F) < 0.01F
+                    && std::abs(command.radius_bottom_left - 20.0F) < 0.01F) {
+                    found = true;
+                    break;
+                }
+            }
+            webscene_scene_acknowledge(scene);
+            webscene_scene_release(scene);
+        }
+        if (found) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    require(found, "50% raster image radius did not reach the native clip metadata");
 }
 
 void test_virtual_html_root_inherits_font_metrics(webscene_engine* engine)

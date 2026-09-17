@@ -3482,6 +3482,10 @@ struct v8_dom_runtime::implementation final {
             js_string(isolate, "supports"),
             v8::Function::New(local_context, css_supports).ToLocalChecked()).Check();
         global->Set(local_context, js_string(isolate, "CSS"), css).Check();
+        global->Set(local_context, js_string(isolate, "atob"),
+            v8::Function::New(local_context, window_atob).ToLocalChecked()).Check();
+        global->Set(local_context, js_string(isolate, "btoa"),
+            v8::Function::New(local_context, window_btoa).ToLocalChecked()).Check();
         auto mutation_observer_template = v8::FunctionTemplate::New(
             isolate,
             observer_constructor,
@@ -3661,6 +3665,11 @@ struct v8_dom_runtime::implementation final {
             local_context,
             js_string(isolate, "DOMMatrixReadOnly"),
             matrix_template->GetFunction(local_context).ToLocalChecked()).Check();
+        auto rect_template = v8::FunctionTemplate::New(isolate, dom_rect_constructor);
+        rect_template->SetClassName(js_string(isolate, "DOMRect"));
+        auto rect_constructor = rect_template->GetFunction(local_context).ToLocalChecked();
+        global->Set(local_context, js_string(isolate, "DOMRect"), rect_constructor).Check();
+        global->Set(local_context, js_string(isolate, "DOMRectReadOnly"), rect_constructor).Check();
 
         auto location = v8::Object::New(isolate);
         location->Set(
@@ -3680,6 +3689,17 @@ struct v8_dom_runtime::implementation final {
             js_string(isolate, "reload"),
             v8::Function::New(local_context, location_reload).ToLocalChecked()).Check();
         global->Set(local_context, js_string(isolate, "location"), location).Check();
+        auto history = v8::Object::New(isolate);
+        history->Set(local_context, js_string(isolate, "length"),
+            v8::Integer::New(isolate, 1)).Check();
+        history->Set(local_context, js_string(isolate, "state"), v8::Null(isolate)).Check();
+        history->Set(local_context, js_string(isolate, "scrollRestoration"),
+            js_string(isolate, "auto")).Check();
+        for (const auto* name : {"back", "forward", "go", "pushState", "replaceState"}) {
+            history->Set(local_context, js_string(isolate, name),
+                v8::Function::New(local_context, no_op).ToLocalChecked()).Check();
+        }
+        global->Set(local_context, js_string(isolate, "history"), history).Check();
 
         install_navigator(isolate, local_context, global);
 
@@ -4257,13 +4277,36 @@ struct v8_dom_runtime::implementation final {
                 this._method = 'GET';
                 this._url = '';
                 this._mimeType = '';
+                this._headers = {};
+                this._listeners = new Map();
+              }
+              addEventListener(type, listener) {
+                if (typeof listener !== 'function') return;
+                const listeners = this._listeners.get(type) ?? [];
+                if (!listeners.includes(listener)) listeners.push(listener);
+                this._listeners.set(type, listeners);
+              }
+              removeEventListener(type, listener) {
+                const listeners = this._listeners.get(type);
+                if (!listeners) return;
+                const index = listeners.indexOf(listener);
+                if (index >= 0) listeners.splice(index, 1);
+              }
+              _dispatch(type) {
+                const event = new Event(type);
+                Object.defineProperty(event, 'target', { value: this });
+                this[`on${type}`]?.call(this, event);
+                for (const listener of (this._listeners.get(type) ?? []).slice()) {
+                  listener.call(this, event);
+                }
               }
               open(method, url) {
                 this._method = String(method).toUpperCase();
                 this._url = String(url);
                 this.readyState = 1;
-                this.onreadystatechange?.(new Event('readystatechange'));
+                this._dispatch('readystatechange');
               }
+              setRequestHeader(name, value) { this._headers[String(name)] = String(value); }
               overrideMimeType(value) {
                 this._mimeType = String(value);
               }
@@ -4287,13 +4330,13 @@ struct v8_dom_runtime::implementation final {
                     this.status = 200;
                     this.statusText = 'OK';
                     this.readyState = 4;
-                    this.onreadystatechange?.(new Event('readystatechange'));
-                    this.onload?.(new Event('load'));
+                    this._dispatch('readystatechange');
+                    this._dispatch('load');
                   } catch (error) {
                     this.status = 0;
                     this.readyState = 4;
-                    this.onreadystatechange?.(new Event('readystatechange'));
-                    this.onerror?.(new Event('error'));
+                    this._dispatch('readystatechange');
+                    this._dispatch('error');
                   }
                 });
               }
@@ -6091,6 +6134,20 @@ std::string v8_dom_runtime::event_diagnostics() const
         << impl_->detached_dom_release_max_roots_per_slice;
     result << ", detached-dom-idle-gc-notifications="
         << impl_->detached_dom_idle_gc_notifications;
+    result << ", attribute-transition-schedule-requests="
+        << impl_->attribute_transition_schedule_requests;
+    result << ", attribute-transition-coalesced-requests="
+        << impl_->attribute_transition_coalesced_requests;
+    result << ", selector-invalidation-plan-lookups="
+        << impl_->selector_invalidation_plan_lookups;
+    result << ", selector-invalidation-candidate-visits="
+        << impl_->selector_invalidation_candidate_visits;
+    result << ", selector-invalidation-fallback-visits="
+        << impl_->selector_invalidation_fallback_visits;
+    result << ", css-compound-match-checks=" << impl_->css_compound_match_checks;
+    result << ", css-rule-match-checks=" << impl_->css_rule_match_checks;
+    result << ", css-cascade-applications=" << impl_->css_cascade_applications;
+    result << ", css-cascade-candidate-checks=" << impl_->css_cascade_candidate_checks;
     result << ", style-recascade-schedule-requests="
         << impl_->style_recascade_schedule_requests;
     result << ", style-recascade-coalesced-requests="
@@ -6658,6 +6715,23 @@ v8_dom_runtime::memory_metrics v8_dom_runtime::read_memory_metrics() const noexc
                             + string_bytes(pseudo.argument);
                     }
                 }
+                result.process_shared_css_rule_storage_bytes +=
+                    payload->invalidation.capacity() * sizeof(css::css_compound_dependencies);
+                for (const auto& dependencies : payload->invalidation) {
+                    for (const auto* index : {&dependencies.attributes, &dependencies.classes}) {
+                        result.process_shared_css_rule_storage_bytes += index->bucket_count() * sizeof(void*);
+                        for (const auto& [key, dependency] : *index) {
+                            result.process_shared_css_rule_storage_bytes +=
+                                sizeof(std::pair<const std::string, css::css_feature_dependency>)
+                                + dependency.routes.capacity() * sizeof(css::css_invalidation_route);
+                            for (const auto& route : dependency.routes)
+                                result.process_shared_css_rule_storage_bytes +=
+                                    route.capacity() * sizeof(css::css_invalidation_step);
+                            result.process_shared_css_rule_storage_bytes +=
+                                2U * sizeof(void*) + string_bytes(key);
+                        }
+                    }
+                }
                 for (const auto& declaration : payload->declarations) {
                     result.process_shared_css_rule_storage_bytes +=
                         string_bytes(declaration.name)
@@ -6686,6 +6760,8 @@ v8_dom_runtime::memory_metrics v8_dom_runtime::read_memory_metrics() const noexc
         + indexed_rule_storage(impl_->css_rules_by_tag)
         + indexed_rule_storage(impl_->css_rules_by_attribute)
         + indexed_rule_storage(impl_->css_rules_by_variable_reference)
+        + indexed_rule_storage(impl_->css_invalidation_rules_by_attribute)
+        + indexed_rule_storage(impl_->css_invalidation_rules_by_class)
         + impl_->css_focus_rules.capacity() * sizeof(size_t)
         + impl_->unindexed_css_rules.capacity() * sizeof(size_t)
         + impl_->hover_selector_dependencies.capacity()

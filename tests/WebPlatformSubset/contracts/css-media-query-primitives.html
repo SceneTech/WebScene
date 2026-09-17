@@ -8,6 +8,10 @@
   @media (max-width: 10000px) { #probe { --max-width: pass; } }
   @media (min-height: 1px) { #probe { --min-height: pass; } }
   @media (max-height: 10000px) { #probe { --max-height: pass; } }
+  @media (width>=1px) { #probe { --range-min-width: pass; } }
+  @media (width<10000px) { #probe { --range-max-width: pass; } }
+  @media (height>1px) { #probe { --range-min-height: pass; } }
+  @media (height<=10000px) { #probe { --range-max-height: pass; } }
   @media (orientation: landscape) { #probe { --orientation: pass; } }
   @media (hover: hover) { #probe { --hover: pass; } }
   @media (any-hover: hover) { #probe { --any-hover: pass; } }
@@ -55,13 +59,36 @@
     }
   }
 
+  const layeredReset = document.createElement("style");
+  layeredReset.textContent = "@layer reset { html { box-sizing: border-box; } * { box-sizing: inherit; } }";
+  document.head.appendChild(layeredReset);
   const style = getComputedStyle(document.getElementById("probe"));
+  test("dynamically inserted universal rules inside a cascade layer recascade existing elements", () => {
+    if (style.boxSizing !== "border-box") {
+      throw new Error("dynamic layered inherited box-sizing resolved to " + style.boxSizing);
+    }
+  });
+  test("dynamically inserted layered universal rules apply to later elements", () => {
+    const later = document.createElement("div");
+    document.body.appendChild(later);
+    if (getComputedStyle(later).boxSizing !== "border-box") {
+      throw new Error("later element ignored the dynamic layered universal rule");
+    }
+  });
   test("media type and viewport bounds", () => {
     for (const property of [
       "--media-all", "--min-width", "--max-width", "--min-height", "--max-height"
     ]) assertSelected(style, property);
   });
   test("orientation query", () => assertSelected(style, "--orientation"));
+  test("modern viewport range syntax reaches CSS and matchMedia", () => {
+    for (const property of ["--range-min-width", "--range-max-width",
+      "--range-min-height", "--range-max-height"]) assertSelected(style, property);
+    for (const query of ["(width>=1px)", "(width<10000px)",
+      "(height>1px)", "(height<=10000px)"]) {
+      if (!matchMedia(query).matches) throw new Error(query + " did not match");
+    }
+  });
   test("hover and pointer capability queries", () => {
     for (const property of ["--hover", "--any-hover", "--pointer", "--any-pointer"])
       assertSelected(style, property);

@@ -1,0 +1,31 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Finite opacity animations retain their final keyframe with forwards fill</title>
+<style>
+  @keyframes reveal { from { opacity: 0; } to { opacity: 1; } }
+  #artwork { width: 100px; height: 100px; background: green; opacity: 0;
+    animation: reveal 100ms linear; animation-fill-mode: forwards; }
+</style>
+<div id="artwork"></div>
+<script>
+  const state = window.__webSceneWptState = {
+    complete: false, harness: null, results: [], errors: [], diagnostics: []
+  };
+  const finish = error => {
+    const opacity = Number(getComputedStyle(document.getElementById("artwork")).opacity);
+    state.diagnostics = [JSON.stringify({ opacity })];
+    state.results.push({
+      name: "animation-fill-mode forwards retains the revealed opacity",
+      status: error ? "FAIL" : "PASS",
+      message: error ? String(error.message || error) : null,
+      stack: error && error.stack ? String(error.stack) : null
+    });
+    state.harness = error ? { status: 1, message: state.results[0].message, stack: state.results[0].stack }
+      : { status: 0, message: null, stack: null };
+    state.complete = true;
+  };
+  setTimeout(() => {
+    const opacity = Number(getComputedStyle(document.getElementById("artwork")).opacity);
+    finish(opacity > .99 ? null : new Error("final opacity reverted to " + opacity));
+  }, 250);
+</script>

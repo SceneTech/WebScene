@@ -75,12 +75,12 @@ inline uint64_t property_mask(std::string_view name)
         if (name == "stroke-width") return inline_svg_stroke_width;
         if (name == "scrollbar-width") return inline_scrollbar_width;
         if (name == "scrollbar-color") return inline_scrollbar_color;
-        if (name == "width") return inline_width;
-        if (name == "height") return inline_height;
-        if (name == "min-width") return inline_min_width;
-        if (name == "min-height") return inline_min_height;
-        if (name == "max-width") return inline_max_width;
-        if (name == "max-height") return inline_max_height;
+        if (name == "width" || name == "inline-size") return inline_width;
+        if (name == "height" || name == "block-size") return inline_height;
+        if (name == "min-width" || name == "min-inline-size") return inline_min_width;
+        if (name == "min-height" || name == "min-block-size") return inline_min_height;
+        if (name == "max-width" || name == "max-inline-size") return inline_max_width;
+        if (name == "max-height" || name == "max-block-size") return inline_max_height;
         if (name == "left" || name == "inset-inline-start") return inline_left;
         if (name == "top" || name == "inset-block-start") return inline_top;
         if (name == "right" || name == "inset-inline-end") return inline_right;
@@ -106,7 +106,7 @@ inline uint64_t property_mask(std::string_view name)
         if (name == "flex-shrink") return inline_flex_shrink;
         if (name == "flex-basis") return inline_flex_basis;
         if (name == "flex-wrap" || name == "flexWrap") return inline_flex_wrap;
-        if (name == "grid-template-columns" || name == "grid-template-rows"
+        if (name == "grid-template" || name == "grid-template-columns" || name == "grid-template-rows"
             || name == "grid-template-areas"
             || name == "grid-area" || name == "grid-row"
             || name == "grid-row-start" || name == "grid-row-end"

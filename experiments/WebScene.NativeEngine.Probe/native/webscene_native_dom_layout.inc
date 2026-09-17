@@ -79,6 +79,19 @@ static size_t native_table_span(std::string_view text, size_t maximum = 1000, bo
 
 void native_document::layout(float viewport_width, float viewport_height)
 {
+    const auto trace_layout = std::getenv("WEBSCENE_TRACE_LAYOUT_PHASES") != nullptr;
+    const auto layout_started = trace_layout
+        ? std::chrono::steady_clock::now()
+        : std::chrono::steady_clock::time_point{};
+    auto phase_started = layout_started;
+    const auto trace_phase = [&](std::string_view phase) {
+        if (!trace_layout) return;
+        const auto now = std::chrono::steady_clock::now();
+        std::cerr << "WebScene layout phase: name=" << phase << ", ms="
+            << std::chrono::duration<double, std::milli>(now - phase_started).count()
+            << '\n';
+        phase_started = now;
+    };
     if (layout_scratch_ == nullptr) {
         layout_scratch_ = std::make_unique<layout_scratch_storage>();
     }
@@ -156,6 +169,7 @@ void native_document::layout(float viewport_width, float viewport_height)
             clear_projection_layout(clear_projection_layout, *state.root);
         }
     }
+    trace_phase("prepare");
     viewport_width_ = std::max(1.0F, viewport_width);
     viewport_height_ = std::max(1.0F, viewport_height);
     body_->layout = {
@@ -176,6 +190,7 @@ void native_document::layout(float viewport_width, float viewport_height)
         }
     }
     layout_children(*body_);
+    trace_phase("tree");
     // Sticky offsets are visual adjustments to completed normal-flow geometry.
     // Applying them during row layout uses unfinished table/group dimensions
     // and can alter the virtualizer's scroll extent. Resolve outer sticky boxes
@@ -263,7 +278,9 @@ void native_document::layout(float viewport_width, float viewport_height)
         for (auto* child : composed_children(node)) self(self,*child);
     };
     apply_sticky(apply_sticky,*body_);
+    trace_phase("sticky");
     update_paint_z_index(*this, *body_);
+    trace_phase("paint-order");
     auto retained_canvas_seen = false;
     auto retained_canvases_remaining = count_retained_canvases(*this, *body_);
     update_retained_canvas_paint_phase(
@@ -271,6 +288,7 @@ void native_document::layout(float viewport_width, float viewport_height)
         *body_,
         retained_canvas_seen,
         retained_canvases_remaining);
+    trace_phase("canvas-retention");
     // The pool normally retains only the high-water scratch blocks needed by
     // repeated layout. Bound pathological one-off documents so a transient
     // giant flex tree cannot become permanent per-context memory.
@@ -285,6 +303,11 @@ void native_document::layout(float viewport_width, float viewport_height)
     globally_dirty_ = false;
     active_animation_demand_cache_valid_ = false;
     out_of_flow_geometry_dirty_roots_.clear();
+    if (trace_layout) {
+        std::cerr << "WebScene layout total: ms="
+            << std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - layout_started).count() << '\n';
+    }
 }
 
 static bool parse_intrinsic_view_box(
@@ -1887,8 +1910,7 @@ void native_document::layout_children(dom_node& parent)
         }
     }
     const auto& parent_grid = parent.style.grid();
-    const auto implicit_column_grid = parent_grid.auto_flow_column
-        && !parent_grid.auto_columns.empty();
+    const auto implicit_column_grid = parent_grid.auto_flow_column;
     if (is_grid_container(parent.style.display)
         && (parent_grid.two_columns || implicit_column_grid
             || !parent_grid.template_columns.empty() || !parent_grid.template_rows.empty()
@@ -1954,6 +1976,23 @@ void native_document::layout_children(dom_node& parent)
             && parent.has_grid_layout()
             && !parent.grid_layout().column_widths.empty();
         auto effective_columns = parent_grid.template_columns;
+        const auto column_gap = inherited_subgrid_columns
+            ? parent.grid_layout().column_gap
+            : resolve_length(parent, parent.style.column_gap, content.width, 0);
+        if (parent_grid.auto_repeat_columns && effective_columns.size() == 1U) {
+            // Keep the repeated track by value. vector::assign may reallocate
+            // effective_columns, so an element reference aliases storage that
+            // the operation invalidates before it has finished copying.
+            const auto repeated = effective_columns.front();
+            const auto minimum = repeated.kind == grid_track::sizing::minmax
+                ? resolve_length(parent, repeated.minimum, content.width, 0)
+                : resolve_length(parent, repeated.maximum, content.width, 0);
+            if (minimum > 0 && content.width > minimum) {
+                const auto count = std::max<size_t>(1U, static_cast<size_t>(
+                    std::floor((content.width + column_gap) / (minimum + column_gap))));
+                effective_columns.assign(count, repeated);
+            }
+        }
         if (effective_columns.empty() && implicit_column_grid) {
             const auto implicit_count = std::max<size_t>(
                 1U,
@@ -1968,8 +2007,9 @@ void native_document::layout_children(dom_node& parent)
                     }));
             effective_columns.reserve(implicit_count);
             for (size_t index = 0; index < implicit_count; ++index) {
-                effective_columns.push_back(
-                    parent_grid.auto_columns[index % parent_grid.auto_columns.size()]);
+                effective_columns.push_back(parent_grid.auto_columns.empty()
+                    ? grid_track{}
+                    : parent_grid.auto_columns[index % parent_grid.auto_columns.size()]);
             }
         }
         const auto column_count = inherited_subgrid_columns
@@ -2140,9 +2180,6 @@ void native_document::layout_children(dom_node& parent)
             }
         }
 
-        const auto column_gap = inherited_subgrid_columns
-            ? parent.grid_layout().column_gap
-            : resolve_length(parent, parent.style.column_gap, content.width, 0);
         const auto row_gap = resolve_length(
             parent, parent.style.row_gap, content.height, 0);
         std::vector<float> column_widths = inherited_subgrid_columns
@@ -2395,6 +2432,12 @@ void native_document::layout_children(dom_node& parent)
         const auto committed_height = std::accumulate(
             row_heights.begin(), row_heights.end(), total_row_gap);
         if (fractional_row_weight > 0) {
+            for (size_t row = 0; row < row_heights.size()
+                && row < parent_grid.template_rows.size(); ++row) {
+                if (parent_grid.template_rows[row].fraction > 0) {
+                    row_heights[row] = row_minimums[row];
+                }
+            }
             distribute_fractions(row_heights,parent_grid.template_rows,content.height,total_row_gap);
         } else if (parent.used_height_is_definite
             && parent.style.align_content_stretches
@@ -3204,6 +3247,13 @@ void native_document::layout_children(dom_node& parent)
                     ? std::max(0.0F, containing.height - top - bottom
                         - margin_top - margin_bottom)
                     : intrinsic_height;
+            if (child->tag == "img" && !is_specified(child->style.height)
+                && child->replaced_image().natural_width > 0
+                && child->replaced_image().natural_height > 0) {
+                assigned.height = assigned.width
+                    * child->replaced_image().natural_height
+                    / child->replaced_image().natural_width;
+            }
             // Absolutely/fixed positioned boxes still participate in the CSS
             // min/max size constraints. Dialogs commonly combine
             // `width: 100%` with `max-width` and then position the capped box.
@@ -3358,6 +3408,17 @@ void native_document::layout_children(dom_node& parent)
                                 0.0F,
                                 available_line_cross_size - margin_top - margin_bottom),
                             intrinsic_height);
+            // An inline replaced image with an authored width and automatic
+            // height uses its natural aspect ratio. The block-flow path below
+            // already performs this substitution; keep the atomic inline path
+            // equivalent so a decoded image cannot remain at its unscaled
+            // natural height after its inline width is resolved.
+            if (child->tag == "img" && !definite_authored_height
+                && child->replaced_image().natural_width > 0
+                && child->replaced_image().natural_height > 0) {
+                height = width * child->replaced_image().natural_height
+                    / child->replaced_image().natural_width;
+            }
             height = constrain_size(*child, false, height, content.height);
             assigned_height_is_definite = definite_authored_height
                 || (flex_container
@@ -3462,6 +3523,16 @@ void native_document::layout_children(dom_node& parent)
                         intrinsic_width)
                     : std::max(0.0F, content.width - margin_left - margin_right);
             width = constrain_size(*child, true, width, content.width);
+            if (child->tag == "img" && !is_specified(child->style.height)
+                && child->replaced_image().natural_width > 0
+                && child->replaced_image().natural_height > 0) {
+                height = constrain_size(
+                    *child,
+                    false,
+                    width * child->replaced_image().natural_height
+                        / child->replaced_image().natural_width,
+                    content.height);
+            }
             const auto horizontal_margin_is_auto = child->style.margin_left_auto
                 || child->style.margin_right_auto;
             if (horizontal_margin_is_auto) {
@@ -4334,6 +4405,12 @@ float native_document::compute_intrinsic_size(
         // applied to the wrapper and used to size its portaled listbox.
         return constrain(columns * measure_text_width("0", node) + padding);
     }
+    if (node.tag == "img" && node.replaced_image().complete) {
+        const auto& image = node.replaced_image();
+        const auto intrinsic = horizontal
+            ? image.natural_width : image.natural_height;
+        if (intrinsic > 0) return constrain(intrinsic + padding);
+    }
     if (node.tag == "svg" || node.tag == "img" || node.tag == "canvas" || node.tag == "video") {
 #if defined(WEBSCENE_NATIVE_ENGINE_INTRINSIC_SIZE_BRANCH_BENCHMARK)
         ++intrinsic_size_branch_counts_for_benchmark[5];
@@ -4381,8 +4458,7 @@ float native_document::compute_intrinsic_size(
     }
 
     const auto& node_grid = node.style.grid();
-    const auto intrinsic_implicit_column_grid = node_grid.auto_flow_column
-        && !node_grid.auto_columns.empty();
+    const auto intrinsic_implicit_column_grid = node_grid.auto_flow_column;
     if (is_grid_container(node.style.display)
         && (node_grid.two_columns || intrinsic_implicit_column_grid
             || !node_grid.template_areas.empty())) {
@@ -4405,8 +4481,9 @@ float native_document::compute_intrinsic_size(
                     }));
             effective_columns.reserve(implicit_count);
             for (size_t index = 0; index < implicit_count; ++index) {
-                effective_columns.push_back(
-                    grid.auto_columns[index % grid.auto_columns.size()]);
+                effective_columns.push_back(grid.auto_columns.empty()
+                    ? node_style::grid_data::track{}
+                    : grid.auto_columns[index % grid.auto_columns.size()]);
             }
         }
         const auto column_count = std::max<size_t>(

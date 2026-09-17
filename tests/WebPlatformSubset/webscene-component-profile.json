@@ -151,6 +151,34 @@
       "reason": "Browser-authorized reduction of TradingView's device breakpoint manager: retained MediaQueryList objects must update their matches snapshots, notify modern and legacy listeners exactly once when a host resize crosses a breakpoint, remain silent within a breakpoint, and stop notifying removed listeners."
     },
     {
+      "path": "contracts/media-query-targeted-subtree-recascade.html",
+      "type": "testharness",
+      "capabilities": ["viewport-media-style-activation", "viewport-media-style-deactivation", "inherited-custom-property-recascade", "unaffected-sibling-stability"],
+      "evidence": ["spotify-live-resize-media-recascade-profile"],
+      "reason": "Product-neutral regression for targeted viewport-media invalidation. Breakpoint entry and exit must update a matched ancestor, inherited custom-property consumers, and directly matched descendants while preserving unrelated sibling styles."
+    },
+    {
+      "path": "contracts/css-attribute-invalidation-scope.html",
+      "type": "testharness",
+      "capabilities": ["rightmost-attribute-subject-invalidation", "ancestor-attribute-descendant-invalidation", "attribute-removal-recascade", "compiled-selector-dependencies", "class-mutation-invalidation", "batched-conjunctive-removal"],
+      "evidence": ["spotify-overlayscrollbars-resize-invalidation-profile"],
+      "reason": "Product-neutral regression for compiled selector dependencies, nested relational selectors, escaped identifiers, class mutation APIs, inherited control state, and multi-attribute removal at rendering checkpoints."
+    },
+    {
+      "path": "contracts/css-nested-selector-invalidation.html",
+      "type": "testharness",
+      "capabilities": ["nested-selector-invalidation", "compiled-forward-reverse-routes", "inherited-disabled-invalidation"],
+      "evidence": ["general-css-invalidation-workstream"],
+      "reason": "Product-neutral coverage for nested forward and reverse dependency routes, sibling boundaries, inherited disabled controls, and combined mutation checkpoints."
+    },
+    {
+      "path": "contracts/css-id-dataset-checkpoints.html",
+      "type": "testharness",
+      "capabilities": ["id-selector-invalidation", "dataset-selector-invalidation", "batched-style-checkpoints"],
+      "evidence": ["general-css-invalidation-workstream"],
+      "reason": "ID and dataset property/attribute mutation APIs must update sibling and relational subjects at synchronous checkpoints, including batched conjunctions and reentrant custom-element callbacks."
+    },
+    {
       "path": "contracts/responsive-toolbar-breakpoint-navigation.html",
       "type": "testharness",
       "capabilities": ["live-toolbar-breakpoint-state", "compact-overflow-navigation", "wide-compact-wide-resize"],
@@ -616,12 +644,26 @@
       "reason": "Required after the unchanged product-neutral reftest passes exact pixels in the native runner. All four observed logical inline longhands must match their physical left/right equivalents, including content placement and following-sibling geometry. Evidence: artifacts/web-platform-logical-inline-v1/{native,managed}/results.json."
     },
     {
+      "path": "contracts/css-logical-sizing.html",
+      "type": "contract",
+      "capabilities": ["logical-sizing", "inline-size", "block-size", "logical-min-size", "logical-max-size", "horizontal-writing-mode-axis-mapping"],
+      "evidence": ["product-neutral-native-regression", "responsive-card-sizing"],
+      "reason": "Required product-neutral regression for horizontal writing mode. Logical preferred, minimum, and maximum sizes must constrain the same used dimensions as their physical width and height counterparts."
+    },
+    {
       "path": "contracts/svg-currentcolor-menu-chevron.html",
       "type": "reftest",
       "reference": "contracts/svg-currentcolor-menu-chevron-ref.html",
       "capabilities": ["svg-currentcolor", "inherited-color", "svg-fill", "svg-stroke", "native-svg-raster"],
       "evidence": ["volume-menu-submenu-chevrons", "observed-hosted-component-svg-presentation-paint"],
       "reason": "Required after the exact product-neutral reftest passes the native runner. It covers literal and CSS-authored fill/stroke, author override of black presentation attributes, inherited HTML color, currentColor resolution, and native SVG rasterization. Evidence: artifacts/web-platform-svg-chevron-v3/{native,managed}/results.json."
+    },
+    {
+      "path": "contracts/html-raster-image-intrinsic-size.html",
+      "type": "contract",
+      "capabilities": ["html-raster-image", "png-data-url", "natural-image-dimensions", "replaced-image-aspect-ratio", "percentage-border-radius", "rounded-raster-scene-publication"],
+      "evidence": ["product-neutral-native-regression", "catalog-artwork"],
+      "reason": "Required product-neutral regression for decoding an encoded PNG resource, exposing natural dimensions, deriving an automatic block size from the used inline size, preserving a 50% image radius, and publishing retained raster paint bytes with circular clipping metadata."
     },
     {
       "path": "contracts/submenu-pointer-lifecycle.html",
@@ -923,9 +965,9 @@
     {
       "path": "contracts/html-script-raw-text-inertness.html",
       "type": "contract",
-      "capabilities": ["script-raw-text-tokenization", "style-markup-in-script-inertness", "non-javascript-script-data-block", "document-style-extraction"],
+      "capabilities": ["script-raw-text-tokenization", "style-markup-in-script-inertness", "non-javascript-script-data-block", "initial-non-javascript-script-inertness", "document-style-extraction"],
       "evidence": ["jquery-4.0.0-css-upstream-source", "jquery-toggle-and-visible-loader-reduction", "direct-chrome-neutral-contract", "managed-and-native-neutral-contract"],
-      "reason": "Required after Chrome and native pass all 3/3 product-neutral SCRIPT raw-text assertions. Executable and non-JavaScript SCRIPT contents remain raw text, style-like source cannot enter the document cascade, and inert data blocks remain in the DOM without execution. The shared loader fix closes upstream jQuery toggle and visibility failures without consumer-specific behavior. Evidence: artifacts/web-platform-script-raw-text-chrome-v1-20260723/results.json, artifacts/web-platform-script-raw-text-managed-v2-20260723/results.json, and artifacts/web-platform-script-raw-text-native-v3-20260723/results.json."
+      "reason": "Required product-neutral SCRIPT raw-text contract. Executable and non-JavaScript SCRIPT contents remain raw text, style-like source cannot enter the document cascade, and initial inert data blocks remain in the DOM without execution."
     },
     {
       "path": "contracts/dom-selector-syntax-errors.html",
@@ -1119,6 +1161,13 @@
       "reason": "Required after corrected unchanged bytes pass Chrome and the native runner. The browser-authorized contract requires a finite scroll range, queued scroll events at changed boundaries, saturation at both ends, no duplicate event at an unchanged boundary, overflow hit-test clipping, row-flex extent invariance across repeated boundary scrolling, synchronous extent/offset re-clamping after content shrink and re-expansion, and preservation of that geometry when the author hides the scrollbar with ::-webkit-scrollbar { display:none }. Chrome rejected the earlier candidate because a layout-taking scrollbar induced a horizontal scrollbar, an absolutely positioned tail legitimately preserved overflow after the nominal parent height shrank, and scroll events were asserted synchronously. The corrected contract removes those false assumptions. Managed raster authority and native scene tests require a proportional default overlay thumb that moves with the bounded offset, then require the host thumb to disappear without changing scroll position or extent when the pseudo-element display winner is none. Evidence: artifacts/web-platform-overflow-scroll-chrome-v1-20260723/results.json (rejected formulation), artifacts/web-platform-overflow-scroll-chrome-v2-20260723/results.json, artifacts/web-platform-overflow-scroll-managed-fixed-v2-20260723/results.json, artifacts/web-platform-overflow-scroll-native-current-v2-20260723/results.json, OverflowViewportClipsHitTestingAndReclampsAfterExtentMutation, test_native_overflow_scrolling_and_nowrap, and test_row_flex_vertical_scroll_extent_remains_bounded."
     },
     {
+      "path": "contracts/scroll-retained-geometry.html",
+      "type": "testharness",
+      "capabilities": ["scroll-client-geometry-translation", "scroll-invariant-offset-geometry", "fixed-descendant-scroll-independence", "reversible-scroll-offsets"],
+      "evidence": ["catalog-main-content-wheel-performance", "chromium-scroll-property-tree-parity", "native-no-layout-scroll-regression"],
+      "reason": "Product-neutral regression for the retained scroll-offset fast path. Programmatic scrolling must move descendant client geometry immediately without changing layout-relative offsets, fixed descendants must remain viewport anchored, and repeated offsets must not accumulate translation error. The focused native regression additionally requires zero new layout passes for the same wheel and scrollTop changes."
+    },
+    {
       "path": "contracts/css-visibility-inheritance-interaction.html",
       "type": "contract",
       "capabilities": ["stylesheet-visibility-inheritance", "computed-visibility-override-restoration", "hidden-layout-retention", "hidden-focus-rejection", "hidden-hit-test-rejection"],
@@ -1141,6 +1190,13 @@
     }
   ],
   "candidate": [
+    {
+      "path": "contracts/css-grid-auto-fill-minmax-custom-property.html",
+      "type": "testharness",
+      "capabilities": ["css-grid", "auto-fill-tracks", "minmax", "custom-property-track-minimum", "responsive-track-count"],
+      "evidence": ["spotify-search-top-result-and-songs-grid", "direct-chrome-neutral-contract", "native-focused-regression"],
+      "reason": "Product-neutral reduction of a responsive catalog search grid. repeat(auto-fill, minmax(var(...), 1fr)) must retain the repeated track's minimum while expanding the track list, preserve explicit multi-column placement, and recompute the count when the grid width changes."
+    },
     {
       "path": "contracts/css-grid-flex-track-minimum.html",
       "type": "testharness",
@@ -1410,7 +1466,7 @@
     {
       "path": "contracts/css-grid-form-layout.html",
       "type": "contract",
-      "capabilities": ["grid-fractional-tracks", "grid-auto-tracks", "grid-minmax-tracks", "grid-gaps", "grid-explicit-placement", "grid-row-span"],
+      "capabilities": ["grid-fractional-tracks", "grid-auto-tracks", "grid-minmax-tracks", "grid-gaps", "grid-explicit-placement", "grid-row-span", "grid-template-shorthand", "named-grid-areas"],
       "evidence": ["reported-7guis-temperature-and-crud-grid-reduction"],
       "reason": "Product-neutral reductions of the form layouts that were changed to flex during the 7GUIs port: equal fractional columns around an automatic separator, minmax fractional CRUD columns, source-order auto placement, and ordinary explicit row/column placement."
     },
@@ -1592,6 +1648,13 @@
       "capabilities": ["keyframes-opacity", "animation-shorthand", "animation-longhands", "animation-delay", "infinite-iteration", "staggered-animation", "host-frame-clock"],
       "evidence": ["automatically-discovered-three-dot-loader-animation"],
       "reason": "Product-neutral reduction of a three-dot composition: opacity @keyframes, a one-second infinite cycle, and three staggered delays. Native publishes at least sixty frames with bounded cadence and distinct opacity values. Keep candidate until the bounded CSS Animations slice is stable on every released native RID. Evidence: artifacts/web-platform-subset-opacity-keyframes-final-20260722/results.json."
+    },
+    {
+      "path": "contracts/css-animation-fill-mode-forwards.html",
+      "type": "contract",
+      "capabilities": ["keyframes-opacity", "animation-fill-mode", "forwards-fill", "finite-animation"],
+      "evidence": ["spotify-lazy-artwork-fade-retention-regression"],
+      "reason": "Product-neutral reduction of lazy-loaded artwork that fades from opacity zero and relies on animation-fill-mode: forwards. The final keyframe must remain painted after a finite animation completes instead of reverting to the authored hidden opacity."
     },
     {
       "path": "contracts/css-rotation-keyframes-cadence.html",

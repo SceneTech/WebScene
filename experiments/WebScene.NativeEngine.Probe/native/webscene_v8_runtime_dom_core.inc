@@ -587,6 +587,11 @@
         state.rules_by_tag = std::move(css_rules_by_tag);
         state.rules_by_attribute = std::move(css_rules_by_attribute);
         state.rules_by_variable_reference = std::move(css_rules_by_variable_reference);
+        state.invalidation_rules_by_attribute =
+            std::move(css_invalidation_rules_by_attribute);
+        state.invalidation_rules_by_class = std::move(css_invalidation_rules_by_class);
+        state.child_list_sensitive = css_child_list_sensitive;
+        css_child_list_sensitive = false;
         state.focus_rules = std::move(css_focus_rules);
         state.unindexed_rules = std::move(unindexed_css_rules);
         state.attribute_dependencies = std::move(css_attribute_dependencies);
@@ -613,6 +618,11 @@
         css_rules_by_attribute = std::move(state.rules_by_attribute);
         css_rules_by_variable_reference =
             std::move(state.rules_by_variable_reference);
+        css_invalidation_rules_by_attribute =
+            std::move(state.invalidation_rules_by_attribute);
+        css_invalidation_rules_by_class =
+            std::move(state.invalidation_rules_by_class);
+        css_child_list_sensitive = state.child_list_sensitive;
         css_focus_rules = std::move(state.focus_rules);
         unindexed_css_rules = std::move(state.unindexed_rules);
         css_attribute_dependencies = std::move(state.attribute_dependencies);
@@ -4531,6 +4541,7 @@
             throw_hierarchy_request(info.GetIsolate(), "appendChild");
             return;
         }
+        auto* previous_parent = child->parent;
         if (child != nullptr && child->parent != nullptr) {
             if (self->is_connected(*child)) {
                 self->notify_custom_elements_subtree(*child, "disconnected");
@@ -4545,12 +4556,12 @@
                 js_string(info.GetIsolate(), "appendChild requires a detached native node")));
             return;
         }
-        self->recascade_connected_subtree(*child);
-        // Appending a child changes structural selectors on the container
-        // itself. In particular, a dynamically populated `:empty` button must
-        // stop matching before layout (TradingView's market-status pill uses
-        // exactly this pattern).
-        self->recascade_connected_node(*parent);
+        // The completed child list changes existing siblings too, including
+        // functional selectors containing combinators. Reparenting also
+        // invalidates the source list, not only the inserted node.
+        if (previous_parent != nullptr && previous_parent != parent)
+            self->recascade_changed_child_list(*previous_parent);
+        self->recascade_changed_child_list(*parent, child);
         self->activate_connected_stylesheet(*child);
         self->enqueue_connected_resources_subtree(
             *child,
@@ -5223,6 +5234,7 @@
                 return;
             }
         }
+        auto* previous_parent = child->parent;
         if (child->parent != nullptr) {
             if (self->is_connected(*child)) {
                 self->notify_custom_elements_subtree(*child, "disconnected");
@@ -5234,7 +5246,9 @@
         }
         if (before == nullptr) {
             if (self->document.append_child(*parent, *child)) {
-                self->recascade_connected_subtree(*child);
+                if (previous_parent != nullptr && previous_parent != parent)
+                    self->recascade_changed_child_list(*previous_parent);
+                self->recascade_changed_child_list(*parent, child);
                 self->activate_connected_stylesheet(*child);
                 self->notify_custom_elements_subtree(*child, "connected");
                 synchronize_textarea_value_from_children(*parent);
@@ -5249,7 +5263,9 @@
         child->parent = parent;
         parent->children.insert(position, child);
         self->document.mark_dirty();
-        self->recascade_connected_subtree(*child);
+        if (previous_parent != nullptr && previous_parent != parent)
+            self->recascade_changed_child_list(*previous_parent);
+        self->recascade_changed_child_list(*parent, child);
         self->activate_connected_stylesheet(*child);
         self->notify_custom_elements_subtree(*child, "connected");
         synchronize_textarea_value_from_children(*parent);

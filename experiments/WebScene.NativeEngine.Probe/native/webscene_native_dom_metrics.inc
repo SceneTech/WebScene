@@ -683,6 +683,70 @@ void native_document::mark_dirty() noexcept
     out_of_flow_geometry_dirty_roots_.clear();
 }
 
+void native_document::set_scroll_offset(
+    dom_node& node,
+    float left,
+    float top) noexcept
+{
+    const auto dx = node.scroll_left - left;
+    const auto dy = node.scroll_top - top;
+    if (std::abs(dx) <= 0.01F && std::abs(dy) <= 0.01F) return;
+
+    node.scroll_left = left;
+    node.scroll_top = top;
+
+    // Scroll offsets are paint-property changes, not layout changes. Keep the
+    // already-computed geometry and translate the retained scroll contents in
+    // place, matching Blink's compositor scroll-offset transform fast path.
+    // Sticky positioning is the one modeled feature whose visual offset must
+    // be recomputed from the new scrollport, so retain the full-layout fallback
+    // for a subtree that contains it (or for already-invalid geometry).
+    const auto contains_sticky = [&](const auto& self, const dom_node& current) -> bool {
+        for (const auto* child : composed_children(current)) {
+            if (child->style.position == position_mode::sticky
+                || self(self, *child)) {
+                return true;
+            }
+        }
+        return false;
+    };
+    if (dirty_ || contains_sticky(contains_sticky, node)) {
+        mark_dirty();
+        return;
+    }
+
+    const auto translate_paint_artifacts = [](dom_node& current, float x, float y) {
+        for (auto& fragment : current.text_layout_fragments) {
+            fragment.x += x;
+            fragment.y += y;
+        }
+        if (current.style.has_pseudo_elements()) {
+            for (auto* pseudo : {
+                    &current.style.mutable_before_pseudo(),
+                    &current.style.mutable_after_pseudo()}) {
+                if (!pseudo->generated) continue;
+                pseudo->layout.x += x;
+                pseudo->layout.y += y;
+            }
+        }
+        current.list_marker_layout.x += x;
+        current.list_marker_layout.y += y;
+    };
+    translate_paint_artifacts(node, dx, dy);
+    const auto translate_descendants = [&](const auto& self, dom_node& current) -> void {
+        // Fixed-position boxes belong to the viewport rather than the scroller.
+        if (current.style.position == position_mode::fixed) return;
+        current.layout.x += dx;
+        current.layout.y += dy;
+        translate_paint_artifacts(current, dx, dy);
+        for (auto* child : composed_children(current)) self(self, *child);
+    };
+    for (auto* child : composed_children(node)) {
+        translate_descendants(translate_descendants, *child);
+    }
+    mark_scene_changed();
+}
+
 void native_document::mark_out_of_flow_geometry_dirty(dom_node& node) noexcept
 {
     if (node.parent == nullptr

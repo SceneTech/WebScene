@@ -667,8 +667,11 @@ bool native_document::advance_animations() noexcept
                     ? duration * std::max(0.0F, iterations)
                     : 0.0F;
                 if (finite && elapsed_ms >= total_duration) {
-                    // The bounded slice implements the initial fill-mode (`none`).
-                    animation.painted_opacity = node.style.opacity;
+                    animation.painted_opacity =
+                        node.style.animations().opacity_keyframe_fill_forwards
+                        && !node.style.animations().opacity_keyframes.empty()
+                        ? node.style.animations().opacity_keyframes.back().opacity
+                        : node.style.opacity;
                     animation.opacity_keyframe_animation_active = false;
                     keyframe_animation_completed = true;
                     advanced = advanced || keyframe_paint_visible;

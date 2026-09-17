@@ -1031,13 +1031,13 @@ void native_document::append_scene(
     if (paint_self
         && node.tag == "img"
         && !replaced_image.markup.empty()
-        && !replaced_image.view_box.empty()
+        && (replaced_image.encoded_raster || !replaced_image.view_box.empty())
         && node.layout.width > 0
         && node.layout.height > 0) {
-        const auto resource_index = append_scene_string(
-            replaced_image.view_box + '\t' + replaced_image.markup,
-            strings,
-            string_bytes);
+        const auto resource = replaced_image.encoded_raster
+            ? std::string{"webscene-raster-v1\t"} + replaced_image.markup
+            : replaced_image.view_box + "\t\t" + replaced_image.markup;
+        const auto resource_index = append_scene_string(resource, strings, string_bytes);
         commands.push_back(webscene_scene_command{
             6U,
             resource_index,
@@ -1046,7 +1046,11 @@ void native_document::append_scene(
             node.layout.width,
             node.layout.height,
             0U,
-            node.id});
+            node.id,
+            radii.top_left,
+            radii.top_right,
+            radii.bottom_right,
+            radii.bottom_left});
     }
     if (paint_self && node.style.box_shadow_present && node.style.box_shadow_inset
         && node.layout.width > 0 && node.layout.height > 0) {

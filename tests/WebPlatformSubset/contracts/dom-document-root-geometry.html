@@ -34,6 +34,47 @@
       "generic root client rect list");
   });
 
+  test("DOMRect constructors expose normalized rectangle edges", () => {
+    assert(typeof DOMRect === "function", "DOMRect constructor is missing");
+    assert(typeof DOMRectReadOnly === "function", "DOMRectReadOnly constructor is missing");
+    const rect = new DOMRect(12, 8, -5, 20);
+    assert(rect.x === 12 && rect.y === 8, "DOMRect origin");
+    assert(rect.width === -5 && rect.height === 20, "DOMRect dimensions");
+    assert(rect.left === 7 && rect.right === 12, "DOMRect horizontal edges");
+    assert(rect.top === 8 && rect.bottom === 28, "DOMRect vertical edges");
+  });
+
+  test("Window base64 helpers round-trip binary strings", () => {
+    assert(typeof atob === "function" && typeof btoa === "function",
+      "base64 helpers are missing");
+    assert(btoa("Spotify") === "U3BvdGlmeQ==", "btoa encoding");
+    assert(atob("U3BvdGlmeQ==") === "Spotify", "atob decoding");
+  });
+
+  test("Performance timeline queries are present and return arrays", () => {
+    assert(Array.isArray(performance.getEntriesByType("navigation")),
+      "getEntriesByType result");
+    assert(Array.isArray(performance.getEntriesByName("missing")),
+      "getEntriesByName result");
+  });
+
+  test("History exposes the initial same-document entry", () => {
+    assert(history.length === 1, "initial history length");
+    assert(typeof history.pushState === "function", "pushState is missing");
+    assert(typeof history.replaceState === "function", "replaceState is missing");
+  });
+
+  test("XMLHttpRequest exposes EventTarget-style listeners", () => {
+    const request = new XMLHttpRequest();
+    let observed = false;
+    const listener = event => { observed = event.target === request; };
+    request.addEventListener("readystatechange", listener);
+    request.open("GET", "data:text/plain,ok");
+    request.removeEventListener("readystatechange", listener);
+    assert(observed, "readystatechange listener was not dispatched");
+    assert(typeof request.setRequestHeader === "function", "setRequestHeader is missing");
+  });
+
   const failure = state.results.find(result => result.status !== "PASS");
   state.harness = failure
     ? { status: 1, message: failure.message, stack: failure.stack }

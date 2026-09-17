@@ -93,6 +93,33 @@
     assert(elapsed < 2000, `500 mutations exceeded 2000ms: ${elapsed}ms`);
   });
 
+  test("grid-template shorthand shares named-area state with longhand mutation", () => {
+    const fixture = document.createElement('div');
+    fixture.innerHTML = `<style>
+      #shorthand-grid { display:grid; width:300px;
+        grid-template: "top top" 40px "left right" 60px / 100px 200px; }
+      #shorthand-top { grid-area:top; }
+      #shorthand-right { grid-row:right-start / right-end;
+        grid-column:right-start / right-end; }
+      </style><div id="shorthand-grid"><div id="shorthand-top"></div>
+        <div id="shorthand-right"></div></div>`;
+    document.body.appendChild(fixture);
+    const container = document.getElementById('shorthand-grid');
+    const box = () => container.getBoundingClientRect();
+    const top = () => document.getElementById('shorthand-top').getBoundingClientRect();
+    const right = () => document.getElementById('shorthand-right').getBoundingClientRect();
+    near(top().width, 300, 'shorthand spanning width');
+    near(right().x - box().x, 100, 'shorthand generated column line');
+    near(right().y - box().y, 40, 'shorthand generated row line');
+    container.style.gridTemplateAreas = '"left right" "top top"';
+    near(top().y - box().y, 40, 'longhand replaces shorthand area state');
+    near(right().y - box().y, 0, 'generated lines follow longhand mutation');
+    container.style.removeProperty('grid-template-areas');
+    near(top().y - box().y, 0, 'removal restores shorthand area state');
+    near(right().y - box().y, 40, 'removal restores generated lines');
+    fixture.remove();
+  });
+
   const failure = state.results.find(result => result.status !== "PASS");
   state.harness = failure ? { status: 1, message: failure.message, stack: failure.stack }
     : { status: 0, message: null, stack: null };

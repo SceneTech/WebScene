@@ -25,14 +25,15 @@
         if (node != nullptr) {
             self->record_feature(
                 "html", "attribute:id", "supported", {}, "html-attribute");
+            const auto text = to_wtf8(info.GetIsolate(), value);
             const auto previous = node->attributes.find("id");
             const std::optional<std::string> old_value =
                 previous == node->attributes.end()
                     ? std::nullopt
                     : std::optional<std::string>(previous->second);
-            node->id_attribute = to_wtf8(info.GetIsolate(), value);
+            node->id_attribute = text;
             node->attributes["id"] = node->id_attribute;
-            self->recascade_connected_subtree(*node, "className-property");
+            self->recascade_attribute_selector_transition(*node, "id", old_value, node->id_attribute);
             self->notify_custom_element_attribute(
                 *node, "id", old_value, node->id_attribute);
         }
@@ -71,7 +72,7 @@
             }
             node->class_name = class_name;
             node->attributes["class"] = node->class_name;
-            self->recascade_dynamic_state_subject(*node, "className-property");
+            self->recascade_class_selector_transition(*node, old_value, class_name);
             self->notify_custom_element_attribute(
                 *node, "class", old_value, node->class_name);
         }
@@ -700,12 +701,17 @@
         if (node == nullptr || property->IsSymbol()) return v8::Intercepted::kNo;
         const auto name = dataset_attribute_name(info.GetIsolate(), property);
         self->record_html_attribute_feature(name, "dataset-binding");
-        node->attributes[name] = to_utf8(info.GetIsolate(), value);
+        const auto text = to_utf8(info.GetIsolate(), value);
+        const auto previous = node->attributes.find(name);
+        const auto old_value = previous == node->attributes.end() ? std::nullopt
+            : std::optional<std::string>(previous->second);
+        node->attributes[name] = text;
         if (self->attribute_requires_recascade(name)) {
-            self->recascade_connected_subtree(*node, "setAttributeNS");
+            self->recascade_attribute_selector_transition(*node, name, old_value, text);
         } else {
             self->document.mark_dirty();
         }
+        self->notify_custom_element_attribute(*node, name, old_value, text);
         return v8::Intercepted::kYes;
     }
 
@@ -730,12 +736,20 @@
         auto* node = unwrap_node(info.Holder());
         if (node == nullptr || property->IsSymbol()) return v8::Intercepted::kNo;
         const auto name = dataset_attribute_name(info.GetIsolate(), property);
+        const auto previous = node->attributes.find(name);
+        if (previous == node->attributes.end()) {
+            info.GetReturnValue().Set(true);
+            return v8::Intercepted::kYes;
+        }
+        const auto old_value = std::optional<std::string>(previous->second);
+        self->detach_attr(*node, name, *old_value);
         node->attributes.erase(name);
         if (self->attribute_requires_recascade(name)) {
-            self->recascade_connected_subtree(*node, "removeAttribute");
+            self->recascade_attribute_selector_transition(*node, name, old_value, std::nullopt);
         } else {
             self->document.mark_dirty();
         }
+        self->notify_custom_element_attribute(*node, name, old_value, std::nullopt);
         info.GetReturnValue().Set(true);
         return v8::Intercepted::kYes;
     }
@@ -865,9 +879,17 @@
             && node->attributes.contains("class")) {
             return;
         }
+        const auto old_value = class_attribute_value(*node);
         node->class_name = value;
         node->attributes["class"] = node->class_name;
-        self->recascade_dynamic_state_subject(*node, "classList.value");
+        self->recascade_class_selector_transition(*node, old_value, value);
+    }
+
+    static std::optional<std::string> class_attribute_value(const dom_node& node)
+    {
+        const auto found = node.attributes.find("class");
+        return found == node.attributes.end() ? std::nullopt
+            : std::optional<std::string>(found->second);
     }
 
     const std::vector<std::string>& class_tokens(const dom_node& node) const
@@ -943,8 +965,9 @@
     void set_class_tokens(
         dom_node& node,
         const std::vector<std::string>& tokens,
-        std::string_view reason)
+        std::string_view /*reason*/)
     {
+        const auto old_value = class_attribute_value(node);
         std::string serialized;
         for (const auto& token : tokens) {
             if (!serialized.empty()) serialized.push_back(' ');
@@ -955,7 +978,7 @@
         // associated attribute. The attribute remains present when the set is
         // empty, matching the DOM Standard's update steps.
         node.attributes["class"] = node.class_name;
-        recascade_dynamic_state_subject(node, reason);
+        recascade_class_selector_transition(node, old_value, node.class_name);
     }
 
     static void class_list_add(const v8::FunctionCallbackInfo<v8::Value>& info)
@@ -1614,8 +1637,7 @@
             0.0F,
             maximum);
         if (std::abs(next - node->scroll_left) <= 0.01F) return;
-        node->scroll_left = next;
-        self->document.mark_dirty();
+        self->document.set_scroll_offset(*node, next, node->scroll_top);
         self->enqueue_programmatic_scroll_event(*node);
     }
 
@@ -1640,8 +1662,7 @@
             0.0F,
             maximum);
         if (std::abs(next - node->scroll_top) <= 0.01F) return;
-        node->scroll_top = next;
-        self->document.mark_dirty();
+        self->document.set_scroll_offset(*node, node->scroll_left, next);
         self->enqueue_programmatic_scroll_event(*node);
     }
 
@@ -1684,9 +1705,7 @@
         const auto next_left=static_cast<float>(std::clamp(left,0.0,static_cast<double>(maximum_left)));
         const auto next_top=static_cast<float>(std::clamp(top,0.0,static_cast<double>(maximum_top)));
         if (next_left == node->scroll_left && next_top == node->scroll_top) return;
-        node->scroll_left=next_left;
-        node->scroll_top=next_top;
-        self->document.mark_dirty();
+        self->document.set_scroll_offset(*node, next_left, next_top);
         self->enqueue_programmatic_scroll_event(*node);
     }
 

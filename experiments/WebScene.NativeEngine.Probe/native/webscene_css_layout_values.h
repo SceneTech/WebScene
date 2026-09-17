@@ -374,7 +374,70 @@ template<typename Decision,typename Protected>
 bool apply_grid_value(dom_node& node,const std::string& name,const std::string& value,
     Decision& decision,Protected&& is_inline)
 {
-    if (name == "grid-template-areas" && !is_inline(inline_grid)) {
+    if (name == "grid-template" && !is_inline(inline_grid)) {
+            // Share main's validated named-area representation with the
+            // shorthand, while retaining this branch's explicit track support.
+            auto grid = node.style.grid();
+            grid.template_rows.clear();
+            grid.template_columns.clear();
+            std::vector<std::vector<std::string>> rows;
+            std::vector<node_style::grid_data::track> row_tracks;
+            std::string area_source;
+            size_t cursor = 0;
+            size_t slash = std::string::npos;
+            while (cursor < value.size()) {
+                if (value[cursor] == '/') { slash = cursor; break; }
+                if (value[cursor] != '"' && value[cursor] != '\'') { ++cursor; continue; }
+                const auto quote = value[cursor++];
+                const auto end = value.find(quote, cursor);
+                if (end == std::string::npos) break;
+                if (!area_source.empty()) area_source.push_back(' ');
+                area_source += value.substr(cursor - 1U, end - cursor + 2U);
+                std::istringstream names{value.substr(cursor, end - cursor)};
+                std::vector<std::string> row;
+                for (std::string area; names >> area;) row.push_back(area);
+                cursor = end + 1U;
+                auto track_end = cursor;
+                while (track_end < value.size() && value[track_end] != '"'
+                    && value[track_end] != '\'' && value[track_end] != '/') ++track_end;
+                const auto track_text = value.substr(cursor, track_end - cursor);
+                auto parsed_tracks = parse_simple_grid_tracks(track_text);
+                if (!row.empty()) {
+                    rows.push_back(std::move(row));
+                    row_tracks.push_back(parsed_tracks.empty()
+                        ? node_style::grid_data::track{} : parsed_tracks.front());
+                }
+                cursor = track_end;
+            }
+            if (slash == std::string::npos) slash = value.find('/', cursor);
+            if (slash != std::string::npos) {
+                grid.template_columns = parse_simple_grid_tracks(value.substr(slash + 1U));
+            }
+            size_t column_count = grid.template_columns.size();
+            for (const auto& row : rows) column_count = std::max(column_count, row.size());
+            while (grid.template_columns.size() < column_count) {
+                grid.template_columns.push_back({});
+            }
+            grid.template_rows = std::move(row_tracks);
+            grid.fractional_rows = std::any_of(
+                grid.template_rows.begin(), grid.template_rows.end(),
+                [](const auto& track) { return track.fraction > 0; });
+            const auto areas = parse_grid_template_areas(
+                area_source.empty() ? "none" : area_source);
+            if (!areas.has_value()) {
+                decision.classification = "unsupported";
+                decision.semantic_slice = "invalid grid-template area declarations are ignored";
+                return true;
+            }
+            grid.template_areas = areas->areas;
+            grid.template_area_row_count = areas->row_count;
+            grid.template_area_column_count = areas->column_count;
+            grid.template_areas_value = areas->serialized;
+            grid.two_columns = column_count > 1U;
+            node.style.mutable_grid() = std::move(grid);
+            decision.classification = "partially-supported";
+            decision.semantic_slice = "named grid-template areas with explicit column tracks";
+        } else if (name == "grid-template-areas" && !is_inline(inline_grid)) {
             if (!apply_grid_template_areas(node.style, value)) {
                 decision.classification = "unsupported";
                 decision.semantic_slice = "invalid grid-template-areas declarations are ignored";
@@ -391,9 +454,19 @@ bool apply_grid_value(dom_node& node,const std::string& name,const std::string& 
                 : std::string_view(value).substr(first, last - first + 1U);
             grid.subgrid_columns = trimmed == "subgrid"
                 || trimmed.starts_with("subgrid ");
+            grid.auto_repeat_columns = trimmed.starts_with("repeat(auto-fill,")
+                || trimmed.starts_with("repeat(auto-fit,");
             grid.template_columns = grid.subgrid_columns
                 ? std::vector<node_style::grid_data::track>{}
                 : parse_simple_grid_tracks(value);
+            if (grid.auto_repeat_columns) {
+                const auto comma = value.find(',');
+                const auto close = value.find_last_of(')');
+                if (comma != std::string::npos && close != std::string::npos && close > comma) {
+                    grid.template_columns = parse_simple_grid_tracks(
+                        value.substr(comma + 1U, close - comma - 1U));
+                }
+            }
             grid.two_columns = grid.subgrid_columns
                 || grid.template_columns.size() > 1U
                 || grid.template_area_column_count > 1U
@@ -541,7 +614,9 @@ bool apply_flex_value(dom_node& node,const std::string& name,const std::string& 
                 }
             }
         } else if (name == "box-sizing" && !is_inline(inline_box_sizing)) {
-            node.style.border_box = value == "border-box";
+            node.style.border_box = value == "inherit" && node.parent != nullptr
+                ? node.parent->style.border_box
+                : value == "border-box";
         } else { return false; }
         return true;
 }

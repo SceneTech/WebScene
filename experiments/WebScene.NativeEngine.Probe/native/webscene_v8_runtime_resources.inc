@@ -10,6 +10,125 @@
         return slash == std::string::npos ? value : value.substr(slash + 1U);
     }
 
+    static bool raster_image_dimensions(
+        std::string_view bytes, float& width, float& height)
+    {
+        const auto byte = [&](size_t index) {
+            return static_cast<uint8_t>(bytes[index]);
+        };
+        const auto be16 = [&](size_t index) {
+            return static_cast<uint32_t>((byte(index) << 8U) | byte(index + 1U));
+        };
+        const auto be32 = [&](size_t index) {
+            return (static_cast<uint32_t>(byte(index)) << 24U)
+                | (static_cast<uint32_t>(byte(index + 1U)) << 16U)
+                | (static_cast<uint32_t>(byte(index + 2U)) << 8U)
+                | static_cast<uint32_t>(byte(index + 3U));
+        };
+        const auto accept = [&](uint32_t candidate_width, uint32_t candidate_height) {
+            if (candidate_width == 0U || candidate_height == 0U
+                || candidate_width > 1'000'000U || candidate_height > 1'000'000U) {
+                return false;
+            }
+            width = static_cast<float>(candidate_width);
+            height = static_cast<float>(candidate_height);
+            return true;
+        };
+
+        if (bytes.size() >= 24U
+            && bytes.substr(0U, 8U) == std::string_view{"\x89PNG\r\n\x1a\n", 8U}) {
+            return accept(be32(16U), be32(20U));
+        }
+        if (bytes.size() >= 10U
+            && (bytes.starts_with("GIF87a") || bytes.starts_with("GIF89a"))) {
+            return accept(
+                static_cast<uint32_t>(byte(6U) | (byte(7U) << 8U)),
+                static_cast<uint32_t>(byte(8U) | (byte(9U) << 8U)));
+        }
+        if (bytes.size() >= 30U && bytes.starts_with("RIFF")
+            && bytes.substr(8U, 4U) == "WEBP") {
+            if (bytes.substr(12U, 4U) == "VP8X") {
+                return accept(
+                    1U + byte(24U) + (byte(25U) << 8U) + (byte(26U) << 16U),
+                    1U + byte(27U) + (byte(28U) << 8U) + (byte(29U) << 16U));
+            }
+            if (bytes.substr(12U, 4U) == "VP8 "
+                && bytes.size() >= 30U
+                && byte(23U) == 0x9dU && byte(24U) == 0x01U && byte(25U) == 0x2aU) {
+                return accept(
+                    (byte(26U) | (byte(27U) << 8U)) & 0x3fffU,
+                    (byte(28U) | (byte(29U) << 8U)) & 0x3fffU);
+            }
+            if (bytes.substr(12U, 4U) == "VP8L" && byte(20U) == 0x2fU) {
+                return accept(
+                    1U + ((byte(21U) | (byte(22U) << 8U)) & 0x3fffU),
+                    1U + (((byte(22U) >> 6U) | (byte(23U) << 2U)
+                        | (byte(24U) << 10U)) & 0x3fffU));
+            }
+        }
+        if (bytes.size() >= 4U && byte(0U) == 0xffU && byte(1U) == 0xd8U) {
+            size_t cursor = 2U;
+            while (cursor + 3U < bytes.size()) {
+                while (cursor < bytes.size() && byte(cursor) == 0xffU) ++cursor;
+                if (cursor >= bytes.size()) break;
+                const auto marker = byte(cursor++);
+                if (marker == 0xd8U || marker == 0xd9U || (marker >= 0xd0U && marker <= 0xd7U)) {
+                    continue;
+                }
+                if (cursor + 1U >= bytes.size()) break;
+                const auto length = be16(cursor);
+                if (length < 2U || cursor + length > bytes.size()) break;
+                const auto start_of_frame = (marker >= 0xc0U && marker <= 0xc3U)
+                    || (marker >= 0xc5U && marker <= 0xc7U)
+                    || (marker >= 0xc9U && marker <= 0xcbU)
+                    || (marker >= 0xcdU && marker <= 0xcfU);
+                if (start_of_frame && length >= 7U) {
+                    return accept(be16(cursor + 5U), be16(cursor + 3U));
+                }
+                cursor += length;
+            }
+        }
+        return false;
+    }
+
+    static bool decode_base64_data_url(std::string_view address, std::string& bytes)
+    {
+        if (!address.starts_with("data:") || address.size() > 32U * 1024U * 1024U) {
+            return false;
+        }
+        const auto separator = address.find(',');
+        if (separator == std::string_view::npos
+            || address.substr(5U, separator - 5U).find(";base64") == std::string_view::npos) {
+            return false;
+        }
+        const auto encoded = address.substr(separator + 1U);
+        const auto decode = [](unsigned char character) -> int {
+            if (character >= 'A' && character <= 'Z') return character - 'A';
+            if (character >= 'a' && character <= 'z') return character - 'a' + 26;
+            if (character >= '0' && character <= '9') return character - '0' + 52;
+            if (character == '+') return 62;
+            if (character == '/') return 63;
+            return -1;
+        };
+        bytes.clear();
+        bytes.reserve(encoded.size() * 3U / 4U);
+        uint32_t accumulator = 0U;
+        unsigned bits = 0U;
+        for (const auto character : encoded) {
+            if (character == '=') break;
+            if (std::isspace(static_cast<unsigned char>(character))) continue;
+            const auto value = decode(static_cast<unsigned char>(character));
+            if (value < 0) return false;
+            accumulator = (accumulator << 6U) | static_cast<uint32_t>(value);
+            bits += 6U;
+            if (bits >= 8U) {
+                bits -= 8U;
+                bytes.push_back(static_cast<char>((accumulator >> bits) & 0xffU));
+            }
+        }
+        return !bytes.empty();
+    }
+
     static std::string resource_kind_name(uint32_t kind)
     {
         switch (kind) {
@@ -1041,6 +1160,7 @@
                     image.view_box.clear();
                     image.natural_width = 0;
                     image.natural_height = 0;
+                    image.encoded_raster = false;
                     image.complete = true;
                     wrapper->Set(
                         local_context,
@@ -1069,6 +1189,8 @@
                     ? (markup = object_url->second,
                         resolved_source = source->second,
                         true)
+                    : decode_base64_data_url(source->second, markup)
+                    ? (resolved_source = source->second, true)
                     : load_text_resource(
                         source->second,
                         base,
@@ -1079,21 +1201,26 @@
                     return mark_broken_image();
                 }
                 const auto view_box = svg_view_box(markup);
-                if (view_box.empty()) {
-                    return mark_broken_image();
-                }
-                float view_x = 0;
-                float view_y = 0;
                 float view_width = 0;
                 float view_height = 0;
-                std::istringstream view_box_stream(view_box);
-                view_box_stream
-                    >> view_x >> view_y >> view_width >> view_height;
+                const auto encoded_raster = view_box.empty()
+                    && raster_image_dimensions(markup, view_width, view_height);
+                if (view_box.empty() && !encoded_raster) {
+                    return mark_broken_image();
+                }
+                if (!encoded_raster) {
+                    float view_x = 0;
+                    float view_y = 0;
+                    std::istringstream view_box_stream(view_box);
+                    view_box_stream
+                        >> view_x >> view_y >> view_width >> view_height;
+                }
                 if (view_width < 640 && advance_thumbnail()) return true;
                 image.source = source->second;
                 image.resolved_source = std::move(resolved_source);
                 image.markup = std::move(markup);
                 image.view_box = view_box;
+                image.encoded_raster = encoded_raster;
                 image.natural_width = std::max(0.0F, view_width);
                 image.natural_height = std::max(0.0F, view_height);
                 image.complete = true;

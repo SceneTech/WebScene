@@ -85,6 +85,7 @@ inline bool grid_layout_equal(
             && left.two_columns == right.two_columns
             && left.auto_flow_column == right.auto_flow_column
             && left.fractional_rows == right.fractional_rows
+            && left.auto_repeat_columns == right.auto_repeat_columns
             && left.span_all == right.span_all
             && left.column_start == right.column_start
             && left.template_areas_value == right.template_areas_value

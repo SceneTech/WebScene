@@ -118,7 +118,7 @@ void apply_pseudo_declaration(dom_node& node,node_style::pseudo_element& pseudo,
         const auto& name = declaration.name;
         on_resolved(contains_variable);
         const auto result = css::apply_pseudo_value(
-            pseudo, node.style.foreground_rgba, name, value);
+            pseudo, node.style.foreground_rgba, node.style.border_box, name, value);
         decision.classification = result.classification;
         decision.semantic_slice = result.semantic_slice;
 }

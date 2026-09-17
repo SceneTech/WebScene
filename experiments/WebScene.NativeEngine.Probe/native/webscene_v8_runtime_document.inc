@@ -532,6 +532,29 @@
         info.GetReturnValue().Set(result);
     }
 
+    static void dom_rect_constructor(const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto isolate = info.GetIsolate();
+        auto context = isolate->GetCurrentContext();
+        auto result = info.IsConstructCall() ? info.This() : v8::Object::New(isolate);
+        const auto number = [&](int index) {
+            return index < info.Length() && info[index]->IsNumber()
+                ? info[index]->NumberValue(context).FromMaybe(0.0)
+                : 0.0;
+        };
+        const auto x = number(0), y = number(1), width = number(2), height = number(3);
+        const auto set = [&](const char* name, double value) {
+            result->Set(context, js_string(isolate, name),
+                v8::Number::New(isolate, value)).Check();
+        };
+        set("x", x); set("y", y); set("width", width); set("height", height);
+        set("left", std::min(x, x + width));
+        set("right", std::max(x, x + width));
+        set("top", std::min(y, y + height));
+        set("bottom", std::max(y, y + height));
+        info.GetReturnValue().Set(result);
+    }
+
     static layout_rect transformed_client_bounds(
         const native_document& document,
         const dom_node& node)
@@ -751,9 +774,27 @@
         }
         if (self->attribute_requires_recascade(name)) {
             if (name == "class") {
-                self->recascade_dynamic_state_subject(*node, "setAttribute-class");
+                self->recascade_class_selector_transition(
+                    *node, old_value, value);
             } else {
-                self->recascade_connected_subtree(*node, "style.setProperty-clear");
+                const auto trace_reason =
+                    std::getenv("WEBSCENE_TRACE_RECASCADE_ROOTS") != nullptr
+                    ? std::string{"setAttribute:"} + name
+                    : std::string{"setAttribute"};
+                // Attribute selectors in the rightmost compound affect only
+                // the mutated subject. Keep a subtree recascade for selectors
+                // which use this attribute on an ancestor/sibling, and for
+                // attributes whose semantics can inherit independently of a
+                // selector. OverlayScrollbars updates its viewport data
+                // attribute on every resize; treating that subject-only state
+                // as a whole content-tree invalidation dominated the frame.
+                if (name == "style" || name == "dir"
+                    || name == "lang") {
+                    self->recascade_connected_subtree(*node, trace_reason);
+                } else {
+                    self->recascade_attribute_selector_transition(
+                        *node, name, old_value, value);
+                }
             }
         } else {
             self->document.mark_dirty();
@@ -785,7 +826,9 @@
         else if (name == "class") node->class_name = value;
         if (self->attribute_requires_recascade(name)) {
             if (name == "class") {
-                self->recascade_dynamic_state_subject(*node, "setAttributeNS-class");
+                self->recascade_class_selector_transition(*node, old_value, value);
+            } else if (name == "id") {
+                self->recascade_attribute_selector_transition(*node, name, old_value, value);
             } else {
                 self->recascade_connected_subtree(*node, "style.removeProperty-custom");
             }
@@ -823,9 +866,13 @@
         }
         if (self->attribute_requires_recascade(name)) {
             if (name == "class") {
-                self->recascade_dynamic_state_subject(*node, "removeAttribute-class");
+                self->recascade_class_selector_transition(*node, old_value, std::nullopt);
+            } else if (name == "style" || name == "dir"
+                || name == "lang") {
+                self->recascade_connected_subtree(*node, "removeAttribute");
             } else {
-                self->recascade_connected_subtree(*node);
+                self->recascade_attribute_selector_transition(
+                    *node, name, old_value, std::nullopt);
             }
         } else {
             self->document.mark_dirty();
@@ -894,9 +941,13 @@
         }
         if (self->attribute_requires_recascade(name)) {
             if (name == "class") {
-                self->recascade_dynamic_state_subject(*node, "removeAttributeNS-class");
+                self->recascade_class_selector_transition(*node, old_value, std::nullopt);
+            } else if (name == "style" || name == "dir"
+                || name == "lang") {
+                self->recascade_connected_subtree(*node, "removeAttributeNS");
             } else {
-                self->recascade_connected_subtree(*node);
+                self->recascade_attribute_selector_transition(
+                    *node, name, old_value, std::nullopt);
             }
         } else {
             self->document.mark_dirty();
@@ -913,6 +964,9 @@
         const auto raw_name = to_utf8(info.GetIsolate(), info[0]);
         const auto name = normalized_dom_attribute_name(*node, raw_name);
         const bool present = node->attributes.contains(name);
+        const auto old_value = present
+            ? std::optional<std::string>(node->attributes.at(name))
+            : std::nullopt;
         const bool force_present = info.Length() < 2 || info[1]->IsUndefined()
             ? !present
             : info[1]->BooleanValue(info.GetIsolate());
@@ -925,26 +979,35 @@
             if (name == "width" || name == "height") reset_canvas_backing_store(*self, *node);
             if (name == "id") node->id_attribute.clear();
             else if (name == "class") node->class_name.clear();
-            self->notify_custom_element_attribute(
-                *node, name, std::nullopt, std::string{});
         } else {
-            const auto old_value = std::optional<std::string>(node->attributes.at(name));
             node->attributes.erase(name);
             if (name == "width" || name == "height") reset_canvas_backing_store(*self, *node);
             if (name == "id") node->id_attribute.clear();
             else if (name == "class") node->class_name.clear();
-            self->notify_custom_element_attribute(
-                *node, name, old_value, std::nullopt);
         }
         if (self->attribute_requires_recascade(name)) {
             if (name == "class") {
-                self->recascade_dynamic_state_subject(*node, "toggleAttribute-class");
+                self->recascade_class_selector_transition(*node, old_value,
+                    force_present ? std::optional<std::string>(std::string{}) : std::nullopt);
+            } else if (name == "style" || name == "dir"
+                || name == "lang") {
+                self->recascade_connected_subtree(*node, "toggleAttribute");
             } else {
-                self->recascade_connected_subtree(*node);
+                self->recascade_attribute_selector_transition(
+                    *node,
+                    name,
+                    old_value,
+                    force_present
+                        ? std::optional<std::string>(std::string{})
+                        : std::nullopt);
             }
         } else {
             self->document.mark_dirty();
         }
+        // Queue invalidation before author callbacks: they may synchronously
+        // read styles or replace this attribute with another value.
+        self->notify_custom_element_attribute(*node, name, old_value,
+            force_present ? std::optional<std::string>(std::string{}) : std::nullopt);
         info.GetReturnValue().Set(force_present);
     }
 
@@ -993,12 +1056,26 @@
             const auto close = html.find("</script>", open_end + 1U);
             if (close == std::string::npos) break;
             const auto attributes = html.substr(open, open_end - open + 1U);
-            result.push_back(frame_script{
-                extract_html_attribute(attributes, "src"),
-                html.substr(open_end + 1U, close - open_end - 1U),
-                attributes.find("defer") != std::string::npos || extract_html_attribute(attributes, "type") == "module",
-                index++,
-                extract_html_attribute(attributes, "type") == "module"});
+            auto type = lower_html_name(extract_html_attribute(attributes, "type"));
+            const auto first = type.find_first_not_of(" \t\r\n\f");
+            const auto last = type.find_last_not_of(" \t\r\n\f");
+            type = first == std::string::npos
+                ? std::string{}
+                : type.substr(first, last - first + 1U);
+            const auto executable = type.empty() || type == "module"
+                || type == "text/javascript"
+                || type == "application/javascript"
+                || type == "application/ecmascript"
+                || type == "text/ecmascript";
+            if (executable) {
+                result.push_back(frame_script{
+                    extract_html_attribute(attributes, "src"),
+                    html.substr(open_end + 1U, close - open_end - 1U),
+                    attributes.find("defer") != std::string::npos || type == "module",
+                    index,
+                    type == "module"});
+            }
+            ++index;
             cursor = close + 9U;
         }
         return result;

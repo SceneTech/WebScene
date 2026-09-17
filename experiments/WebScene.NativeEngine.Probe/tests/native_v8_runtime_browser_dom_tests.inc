@@ -146,6 +146,31 @@ void test_dom_box_dimensions_primitives(webscene_engine* engine)
           const disconnected = document.createElement('div');
           disconnected.style.cssText = 'width:40px;height:30px';
           const disconnectedRect = disconnected.getBoundingClientRect();
+          const deepRoot = document.createElement('section');
+          let deepest = deepRoot;
+          for (let depth = 0; depth < 32; ++depth) {
+            const child = document.createElement('div');
+            deepest.appendChild(child);
+            deepest = child;
+          }
+          deepest.style.cssText = 'display:block;width:41px;height:31px';
+          document.body.appendChild(deepRoot);
+          const connectedDeepRect = deepest.getBoundingClientRect();
+          const connectedDeep = [
+            deepest.isConnected,
+            connectedDeepRect.width,
+            connectedDeepRect.height
+          ];
+          deepRoot.remove();
+          const disconnectedDeepRect = deepest.getBoundingClientRect();
+          const disconnectedDeep = [
+            deepest.isConnected,
+            deepest.getClientRects().length,
+            disconnectedDeepRect.width,
+            disconnectedDeepRect.height
+          ];
+          document.body.appendChild(deepRoot);
+          const reconnectedDeepRect = deepest.getBoundingClientRect();
           document.body.appendChild(authored);
           single.style.width = '300px';
           a.style.width = '200px';
@@ -173,6 +198,11 @@ void test_dom_box_dimensions_primitives(webscene_engine* engine)
               disconnectedRect.width,
               disconnectedRect.height
             ],
+            deepConnectionTransitions: [
+              connectedDeep,
+              disconnectedDeep,
+              [deepest.isConnected, reconnectedDeepRect.width, reconnectedDeepRect.height]
+            ],
             columns: [width('single'), width('double')],
             row: width('row'),
             headers: [width('h1'), width('h2'), width('h3')],
@@ -180,7 +210,7 @@ void test_dom_box_dimensions_primitives(webscene_engine* engine)
           };
         })()
     )JS", "native-dom-box-dimensions-primitives.js");
-    const auto expected = R"JSON({"clone":["100px","2px","2px","3px"],"authoredEdges":["2px","3px","9px","7px"],"disconnected":[false,0,0,0,0,0],"columns":[300,600],"row":42,"headers":[200,200,200],"heights":[30,6]})JSON";
+    const auto expected = R"JSON({"clone":["100px","2px","2px","3px"],"authoredEdges":["2px","3px","9px","7px"],"disconnected":[false,0,0,0,0,0],"deepConnectionTransitions":[[true,41,31],[false,0,0,0],[true,41,31]],"columns":[300,600],"row":42,"headers":[200,200,200],"heights":[30,6]})JSON";
     require(
         result == expected,
         "DOM box dimension primitives diverged: " + result);

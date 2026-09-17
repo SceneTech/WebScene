@@ -1364,6 +1364,10 @@
             local_context,
             js_string(isolate, "getSelection"),
             v8::Function::New(local_context, get_selection).ToLocalChecked()).Check();
+        global->Set(local_context, js_string(isolate, "atob"),
+            v8::Function::New(local_context, window_atob).ToLocalChecked()).Check();
+        global->Set(local_context, js_string(isolate, "btoa"),
+            v8::Function::New(local_context, window_btoa).ToLocalChecked()).Check();
         auto text_encoder_template = v8::FunctionTemplate::New(isolate);
         text_encoder_template->PrototypeTemplate()->Set(
             js_string(isolate, "encode"),
@@ -1387,6 +1391,11 @@
         auto matrix_template = v8::FunctionTemplate::New(isolate, dom_matrix_constructor);
         global->Set(local_context, js_string(isolate, "DOMMatrix"), matrix_template->GetFunction(local_context).ToLocalChecked()).Check();
         global->Set(local_context, js_string(isolate, "DOMMatrixReadOnly"), matrix_template->GetFunction(local_context).ToLocalChecked()).Check();
+        auto rect_template = v8::FunctionTemplate::New(isolate, dom_rect_constructor);
+        rect_template->SetClassName(js_string(isolate, "DOMRect"));
+        auto rect_constructor = rect_template->GetFunction(local_context).ToLocalChecked();
+        global->Set(local_context, js_string(isolate, "DOMRect"), rect_constructor).Check();
+        global->Set(local_context, js_string(isolate, "DOMRectReadOnly"), rect_constructor).Check();
         global->Set(local_context, js_string(isolate, "Image"),
             v8::FunctionTemplate::New(isolate, image_constructor)
                 ->GetFunction(local_context).ToLocalChecked()).Check();
@@ -2478,6 +2487,9 @@
         css_rules_by_tag.clear();
         css_rules_by_attribute.clear();
         css_rules_by_variable_reference.clear();
+        css_invalidation_rules_by_attribute.clear();
+        css_invalidation_rules_by_class.clear();
+        css_child_list_sensitive = false;
         css_focus_rules.clear();
         unindexed_css_rules.clear();
         css_attribute_dependencies.clear();

@@ -328,6 +328,12 @@
     css_index_string_map<std::vector<size_t>> css_rules_by_tag;
     css_index_string_map<std::vector<size_t>> css_rules_by_attribute;
     css_index_string_map<std::vector<size_t>> css_rules_by_variable_reference;
+    // Subject-key indexes above accelerate matching one element. These feature
+    // indexes include every selector compound so mutations can find affected
+    // rules without rescanning the complete stylesheet.
+    css_index_string_map<std::vector<size_t>> css_invalidation_rules_by_attribute;
+    css_index_string_map<std::vector<size_t>> css_invalidation_rules_by_class;
+    bool css_child_list_sensitive{false};
     std::vector<size_t> css_focus_rules;
     std::vector<size_t> unindexed_css_rules;
     css_index_string_set css_attribute_dependencies;
@@ -493,6 +499,12 @@
         std::string reason;
         std::string custom_property;
     };
+    struct pending_attribute_selector_transition final {
+        dom_node* subject{nullptr};
+        std::string name;
+        std::optional<std::string> previous_value;
+        std::optional<std::string> current_value;
+    };
     bool batch_style_recascades{true};
     bool batch_connected_resource_style_recascades{true};
     bool prefetch_iframe_documents{true};
@@ -502,7 +514,34 @@
     bool filter_stylesheet_candidates{true};
     uint32_t style_recascade_batch_depth{0};
     std::vector<pending_style_recascade> pending_style_recascades;
+    std::vector<pending_attribute_selector_transition>
+        pending_attribute_selector_transitions;
+    std::unordered_map<dom_node*, std::unordered_map<std::string, size_t>>
+        pending_attribute_selector_transition_index;
+    bool flushing_attribute_selector_transitions{false};
+    mutable css::selector_match_context* active_selector_match_context{nullptr};
+    class selector_match_batch_scope final {
+        implementation& owner_;
+        css::selector_match_context* previous_;
+        css::selector_match_context context_;
+    public:
+        explicit selector_match_batch_scope(implementation& owner)
+            : owner_(owner), previous_(owner.active_selector_match_context) {
+            owner_.active_selector_match_context = &context_;
+        }
+        ~selector_match_batch_scope() { owner_.active_selector_match_context = previous_; }
+        void reset() { context_ = {}; }
+    };
 #if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+    uint64_t attribute_transition_schedule_requests{0U};
+    uint64_t attribute_transition_coalesced_requests{0U};
+    uint64_t selector_invalidation_plan_lookups{0U};
+    uint64_t selector_invalidation_candidate_visits{0U};
+    uint64_t selector_invalidation_fallback_visits{0U};
+    mutable uint64_t css_compound_match_checks{0U};
+    mutable uint64_t css_rule_match_checks{0U};
+    uint64_t css_cascade_applications{0U};
+    uint64_t css_cascade_candidate_checks{0U};
     uint64_t style_recascade_schedule_requests{0U};
     uint64_t style_recascade_coalesced_requests{0U};
     uint64_t style_recascade_flush_batches{0U};

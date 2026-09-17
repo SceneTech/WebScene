@@ -20,7 +20,22 @@
         if (value->IsNumber()) return {"number", to_utf8(isolate, value)};
         if (value->IsBigInt()) return {"bigint", "[BigInt]"};
         if (value->IsSymbol()) return {"symbol", "[Symbol]"};
-        return {"object", value->IsNativeError() ? "[Error]" : "[Object]"};
+        if (value->IsNativeError()) {
+            auto context = isolate->GetCurrentContext();
+            v8::Local<v8::Value> stack;
+            if (!context.IsEmpty()
+                && value.As<v8::Object>()->Get(
+                    context, js_string(isolate, "stack")).ToLocal(&stack)
+                && stack->IsString()) {
+                return {"object", diagnostic_string(stack.As<v8::String>(), truncated)};
+            }
+            auto message = v8::Exception::CreateMessage(isolate, value);
+            if (!message.IsEmpty()) {
+                return {"object", diagnostic_string(message->Get(), truncated)};
+            }
+            return {"object", "[Error]"};
+        }
+        return {"object", "[Object]"};
     }
 
     void diagnostic_location(runtime_diagnostic& record, v8::Local<v8::Context> local_context)

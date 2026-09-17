@@ -26,12 +26,26 @@
   }
   #placed-a { grid-row: 1 / 3; }
   #placed-c { grid-column: 2; }
+  .carousel { display:grid; grid-auto-flow:column; grid-template-rows:repeat(1,auto); gap:12px; width:444px; }
+  .carousel > * { width:140px; height:80px; }
+  .carousel > :first-child .action { opacity:0; }
+  .carousel > :first-child.hovered .action { opacity:1; }
+  .shell { display:grid; width:500px; height:300px;
+    grid-template:"banner banner sidebar" "nav nav nav" "library main aside" 1fr "player player player" / 100px 1fr; }
+  #shell-banner { grid-area:banner; height:10px; }
+  #shell-nav { grid-area:nav; height:20px; }
+  #shell-library { grid-area:library; }
+  #shell-main { grid-area:main; }
+  #shell-aside { grid-area:aside; width:30px; }
+  #shell-player { grid-area:player; height:30px; }
 </style>
 <div class="temperature" id="temperature">
   <label id="celsius"></label><span class="equals" id="equals">=</span><label id="fahrenheit"></label>
 </div>
 <div class="crud" id="crud"><div id="list"></div><div id="form"></div></div>
 <div class="placed"><div id="placed-a"></div><div id="placed-b"></div><div id="placed-c"></div></div>
+<div class="carousel"><div id="carousel-a"><span class="action"></span></div><div id="carousel-b"></div><div id="carousel-c"></div></div>
+<div class="shell" id="shell"><div id="shell-banner"></div><div id="shell-nav"></div><div id="shell-library"></div><div id="shell-main"></div><div id="shell-aside"></div><div id="shell-player"></div></div>
 <script>
   const state = window.__webSceneWptState = {
     complete: false, harness: null, results: [], errors: [], diagnostics: []
@@ -65,6 +79,37 @@
     require(close(a.width, 60) && close(a.height, 40), JSON.stringify(a));
     require(close(b.left, 60) && close(b.top, 119), JSON.stringify(b));
     require(close(c.left, 60) && close(c.top, 139), JSON.stringify(c));
+  });
+
+  check("column auto-flow uses implicit auto columns when grid-auto-columns is omitted", () => {
+    const a = rect("carousel-a"), b = rect("carousel-b"), c = rect("carousel-c");
+    require(close(a.top, b.top) && close(a.top, c.top), JSON.stringify({ a, b, c }));
+    require(close(b.left - a.right, 12) && close(c.left - b.right, 12),
+      JSON.stringify({ a, b, c }));
+  });
+
+  check("visual-state recascade preserves the horizontal catalog row", () => {
+    const before = [rect("carousel-a"), rect("carousel-b"), rect("carousel-c")]
+      .map(({ x, y, width, height }) => [x, y, width, height]);
+    document.getElementById("carousel-a").classList.add("hovered");
+    const after = [rect("carousel-a"), rect("carousel-b"), rect("carousel-c")]
+      .map(({ x, y, width, height }) => [x, y, width, height]);
+    require(JSON.stringify(after) === JSON.stringify(before), JSON.stringify({ before, after }));
+    require(getComputedStyle(document.querySelector(".action")).opacity === "1",
+      "visual hover proxy did not trigger recascade");
+  });
+
+  check("grid-template shorthand places named application-shell areas", () => {
+    const shell = rect("shell"), library = rect("shell-library"), main = rect("shell-main"),
+      aside = rect("shell-aside"), player = rect("shell-player");
+    require(close(library.top, main.top) && close(main.top, aside.top),
+      JSON.stringify({ library, main, aside }));
+    require(close(library.left, shell.left) && close(main.left, library.right),
+      JSON.stringify({ shell, library, main }));
+    require(close(aside.right, shell.right) && close(player.bottom, shell.bottom),
+      JSON.stringify({ aside, player, shell }));
+    require(close(player.left, shell.left) && close(player.width, shell.width),
+      JSON.stringify({ player, shell }));
   });
 
   state.diagnostics = [JSON.stringify({

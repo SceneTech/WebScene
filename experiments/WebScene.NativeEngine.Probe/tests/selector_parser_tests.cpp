@@ -1,4 +1,5 @@
 #include "webscene_selector_parser.h"
+#include "webscene_css_invalidation.h"
 
 #include <cstdlib>
 #include <iostream>
@@ -97,6 +98,48 @@ void require_wtf8_domstring_round_trip()
         "non-WTF-8 invalid input remains rejected");
 }
 
+void test_compiled_css_invalidation_plans()
+{
+    using namespace webscene_native::css;
+    const auto compile = [](std::string_view text) {
+        auto selector = compile_selector(text);
+        require(!selector.compounds.empty(), "invalidation test selector failed parsing");
+        return compile_invalidation_plan(selector);
+    };
+    auto nested = compile(R"(.card:not(:has([data-ready])))");
+    require(nested[0].attributes.at("data-ready").scope == invalidation_ancestors,
+        "nested relational dependency was not compiled to ancestor scope");
+    auto relative = compile(R"(.card:has(> [data-a], > [data-b="x,y"]))");
+    require(relative[0].attributes.at("data-a").routes
+            == std::vector<css_invalidation_route>{{css_invalidation_step::parent}}
+        && relative[0].attributes.at("data-b").routes
+            == std::vector<css_invalidation_route>{{css_invalidation_step::parent}},
+        "relative selector-list arms were not independently anchored");
+    auto escaped = compile(R"(.escaped\:active[data\2d ready] > .target)");
+    require(escaped[0].classes.contains("escaped:active")
+        && escaped[0].attributes.contains("data-ready"),
+        "compiled dependency identifiers were not decoded");
+    auto complex = compile(R"(.target:is(.active .target))");
+    require(complex[0].classes.at("active").routes
+            == std::vector<css_invalidation_route>{{css_invalidation_step::descendants}},
+        "complex nested selectors must route to their final compound");
+    auto inherited = compile("input:disabled");
+    require(inherited[0].attributes.at("disabled").routes
+            == std::vector<css_invalidation_route>{{css_invalidation_step::inclusive_descendants}},
+        "inherited disabled state must include the subject and descendants");
+    auto reverse = compile(".card:has(.branch > [data-ready])");
+    require(reverse[0].attributes.at("data-ready").routes
+            == std::vector<css_invalidation_route>{{css_invalidation_step::parent,
+                css_invalidation_step::ancestors}},
+        "relational invalidation must reverse the relative combinators");
+    require(compile(".target:is(.on ~ .target)")[0].child_list_sensitive,
+        "nested sibling matching must record child-list sensitivity");
+    require(compile(".target:not(:last-child)")[0].child_list_sensitive,
+        "nested structural pseudo must record child-list sensitivity");
+    require(!compile(".parent > .target")[0].child_list_sensitive,
+        "ordinary child matching does not require restyling existing siblings");
+}
+
 } // namespace
 
 int main()
@@ -105,6 +148,7 @@ int main()
     require_specificity();
     require_validation();
     require_wtf8_domstring_round_trip();
+    test_compiled_css_invalidation_plans();
     std::cout << "selector parser tests passed\n";
     return 0;
 }

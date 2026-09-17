@@ -1,6 +1,7 @@
 #pragma once
 #include "webscene_css_pseudo_application.h"
 #include "webscene_css_state.h"
+#include "webscene_css_invalidation.h"
 #include <mutex>
 
 namespace webscene_native::css {
@@ -86,6 +87,9 @@ std::shared_ptr<const css_rule_payload> intern_rule_payload(
         std::string pseudo_origin;
         if (split_pseudo_element_selector(payload->selector, pseudo_origin) != 0 && !pseudo_origin.empty())
             payload->compiled_pseudo_origin = compile(pseudo_origin);
+        payload->invalidation = compile_invalidation_plan(
+            payload->compiled_pseudo_origin.compounds.empty()
+                ? payload->compiled_selector : payload->compiled_pseudo_origin);
         payload->specificity = payload->compiled_selector.specificity;
         payload->declarations = declarations;
         payload->media_queries = media_queries;

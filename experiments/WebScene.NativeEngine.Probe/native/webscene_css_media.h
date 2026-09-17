@@ -40,11 +40,31 @@ inline bool media_matches(std::string query, const media_environment& environmen
                     condition_start + 1U,
                     condition_end - condition_start - 1U));
                 const auto separator = condition.find(':');
-                const auto feature = trim_value(std::string_view(condition).substr(0, separator));
-                const auto value = separator == std::string::npos
+                auto feature = trim_value(std::string_view(condition).substr(0, separator));
+                auto value = separator == std::string::npos
                     ? std::string{} : trim_value(std::string_view(condition).substr(separator + 1U));
+                auto range_operator = std::string{};
+                if (separator == std::string::npos) {
+                    for (const auto candidate : {std::string_view{"<="}, std::string_view{">="},
+                         std::string_view{"<"}, std::string_view{">"}, std::string_view{"="}}) {
+                        const auto position = condition.find(candidate);
+                        if (position == std::string::npos) continue;
+                        feature = trim_value(std::string_view(condition).substr(0, position));
+                        value = trim_value(std::string_view(condition).substr(
+                            position + candidate.size()));
+                        range_operator = std::string(candidate);
+                        break;
+                    }
+                }
                 const auto number = std::strtof(value.c_str(), nullptr);
-                if (feature == "max-width") matches = environment.width <= number;
+                if ((feature == "width" || feature == "height") && !range_operator.empty()) {
+                    const auto actual = feature == "width" ? environment.width : environment.height;
+                    if (range_operator == "<=") matches = actual <= number;
+                    else if (range_operator == ">=") matches = actual >= number;
+                    else if (range_operator == "<") matches = actual < number;
+                    else if (range_operator == ">") matches = actual > number;
+                    else matches = actual == number;
+                } else if (feature == "max-width") matches = environment.width <= number;
                 else if (feature == "min-width") matches = environment.width >= number;
                 else if (feature == "max-height") matches = environment.height <= number;
                 else if (feature == "min-height") matches = environment.height >= number;
@@ -117,13 +137,22 @@ bool inventory_media(std::string query, Record&& record_feature)
                 const auto condition = trim_value(std::string_view(alternative).substr(
                     condition_start + 1U, condition_end - condition_start - 1U));
                 const auto separator = condition.find(':');
-                const auto feature = trim_value(std::string_view(condition).substr(0U, separator));
+                auto feature = trim_value(std::string_view(condition).substr(0U, separator));
+                auto range_syntax = false;
+                if (separator == std::string::npos) {
+                    const auto operator_position = condition.find_first_of("<>=");
+                    if (operator_position != std::string::npos) {
+                        feature = trim_value(std::string_view(condition).substr(
+                            0U, operator_position));
+                        range_syntax = feature == "width" || feature == "height";
+                    }
+                }
                 static const std::unordered_set<std::string> supported_features{
                     "max-width", "min-width", "max-height", "min-height", "orientation",
                     "hover", "any-hover", "pointer", "any-pointer",
                     "prefers-reduced-motion", "prefers-color-scheme"};
-                const auto known = separator != std::string::npos
-                    && supported_features.contains(feature);
+                const auto known = range_syntax || (separator != std::string::npos
+                    && supported_features.contains(feature));
                 record_feature(
                     "css",
                     "media-feature:" + (feature.empty() ? std::string("<missing>") : feature),

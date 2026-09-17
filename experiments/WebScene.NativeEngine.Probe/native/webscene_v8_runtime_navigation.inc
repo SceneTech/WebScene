@@ -550,6 +550,9 @@
         css_rules_by_tag.clear();
         css_rules_by_attribute.clear();
         css_rules_by_variable_reference.clear();
+        css_invalidation_rules_by_attribute.clear();
+        css_invalidation_rules_by_class.clear();
+        css_child_list_sensitive = false;
         css_focus_rules.clear();
         unindexed_css_rules.clear();
         css_attribute_dependencies.clear();
@@ -612,6 +615,13 @@
         parse_inner_html(body, body_html);
         append_script_elements(body, scripts);
 #endif
+
+        // Images authored in the navigation response already exist before any
+        // DOM insertion callback runs. Queue them explicitly just as the HTML
+        // parser in a browser starts fetching image resources during document
+        // construction. Dynamic and innerHTML insertion paths enqueue their
+        // own image subtrees separately.
+        enqueue_connected_image_resources_subtree(html_element, local_context);
 
         if (!execute_document_start_scripts(local_context, false)) return false;
 

@@ -94,6 +94,7 @@ uint8_t measure_baseline_fixture_text(
 #include "native_v8_runtime_layout_scene_tests.inc"
 #include "native_v8_runtime_canvas_tests.inc"
 #include "native_v8_runtime_frame_scheduling_tests.inc"
+#include "native_css_invalidation_tests.inc"
 #include "native_youtube_embed_tests.inc"
 #include "native_v8_runtime_browser_dom_tests.inc"
 #include "native_v8_runtime_resize_observer_tests.inc"
@@ -254,6 +255,19 @@ int main()
             return 0;
         }
         if (selected == "media-query-reentrant") { test_media_query_callback_can_create_more_queries(); return 0; }
+        if (selected == "media-query-targeted-recascade") {
+            test_media_query_resize_recascades_only_affected_subtrees();
+            return 0;
+        }
+        if (selected == "attribute-invalidation-scope") {
+            test_attribute_invalidation_scopes_subject_and_descendant_rules();
+            return 0;
+        }
+        if (selected == "css-invalidation-scaling") {
+            test_compiled_css_invalidation_scaling();
+            test_compiled_css_route_scaling();
+            return 0;
+        }
         if (selected == "runtime-diagnostics") {
             test_runtime_diagnostics();
             test_runtime_diagnostics_frame_and_failure();
@@ -374,6 +388,23 @@ int main()
             webscene_engine_destroy(focused_engine);
             return 0;
         }
+        if (selected == "scroll-offset-fast-path") {
+            auto* focused_engine = webscene_engine_create(0);
+            require(focused_engine != nullptr, "focused engine creation failed");
+            for (auto attempt = 0; attempt < 100; ++attempt) {
+                const auto* scene = webscene_engine_acquire_latest_scene(focused_engine);
+                if (scene != nullptr) {
+                    webscene_scene_acknowledge(scene);
+                    webscene_scene_release(scene);
+                    break;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            }
+            test_scroll_offset_changes_translate_retained_geometry_without_layout(
+                focused_engine);
+            webscene_engine_destroy(focused_engine);
+            return 0;
+        }
         if (selected == "go-to-overflow") {
             auto* focused_engine = webscene_engine_create(0);
             require(focused_engine != nullptr, "focused engine creation failed");
@@ -385,6 +416,14 @@ int main()
             auto* focused_engine = webscene_engine_create(0);
             require(focused_engine != nullptr, "focused engine creation failed");
             test_compact_go_to_fixed_grid_tracks_preserve_trailing_space(
+                focused_engine);
+            webscene_engine_destroy(focused_engine);
+            return 0;
+        }
+        if (selected == "auto-fill-minmax-grid") {
+            auto* focused_engine = webscene_engine_create(0);
+            require(focused_engine != nullptr, "focused engine creation failed");
+            test_auto_fill_minmax_custom_property_tracks_keep_their_sizing(
                 focused_engine);
             webscene_engine_destroy(focused_engine);
             return 0;
@@ -536,6 +575,14 @@ int main()
             auto* focused_engine = webscene_engine_create(0);
             require(focused_engine != nullptr, "focused engine creation failed");
             test_window_post_message_coalesces_style_recascade(focused_engine);
+            webscene_engine_destroy(focused_engine);
+            return 0;
+        }
+        if (selected == "resize-attribute-style-batching") {
+            auto* focused_engine = webscene_engine_create(0);
+            require(focused_engine != nullptr, "focused engine creation failed");
+            test_resize_event_coalesces_attribute_selector_recascades(
+                focused_engine);
             webscene_engine_destroy(focused_engine);
             return 0;
         }
@@ -774,6 +821,37 @@ int main()
             webscene_engine_destroy(focused_engine);
             return 0;
         }
+        if (selected == "catalog-hover-layout") {
+            auto* focused_engine = webscene_engine_create(0);
+            require(focused_engine != nullptr, "focused engine creation failed");
+            test_hover_recascade_preserves_horizontal_catalog_row(focused_engine);
+            webscene_engine_destroy(focused_engine);
+            return 0;
+        }
+        if (selected == "hover-invalidation") {
+            auto* focused_engine = webscene_engine_create(0);
+            require(focused_engine != nullptr, "focused engine creation failed");
+            test_hover_invalidation_updates_functional_and_sibling_subjects(
+                focused_engine);
+            test_hover_moves_between_block_and_display_contents_child(
+                focused_engine);
+            webscene_engine_destroy(focused_engine);
+            return 0;
+        }
+        if (selected == "inherited-box-sizing") {
+            auto* focused_engine = webscene_engine_create(0);
+            require(focused_engine != nullptr, "focused engine creation failed");
+            test_universal_box_sizing_inherits_from_document_element(focused_engine);
+            webscene_engine_destroy(focused_engine);
+            return 0;
+        }
+        if (selected == "raster-image-rounded-clip") {
+            auto* focused_engine = webscene_engine_create(0);
+            require(focused_engine != nullptr, "focused engine creation failed");
+            test_percentage_radius_reaches_raster_image_scene_clip(focused_engine);
+            webscene_engine_destroy(focused_engine);
+            return 0;
+        }
         if (selected == "fragment-replacement-script-lifecycle") {
             auto* focused_engine = webscene_engine_create(0);
             require(focused_engine != nullptr, "focused engine creation failed");
@@ -814,8 +892,10 @@ int main()
     test_zero_command_engine_starts_with_clean_scene();
     test_document_start_ordering_storage_and_fail_closed_errors();
     test_four_navigation_workers_enter_startup_concurrently();
+    test_initial_document_images_are_loaded();
     test_parallel_resource_prefetch();
     test_fetch_carries_document_origin_to_resource_host();
+    test_initial_non_javascript_script_is_inert();
     test_slow_fetch_does_not_block_loading_state_publication();
     test_tradingview_datafeed_iframe_symbol_search_round_trip();
     test_tradingview_save_acknowledgement_uses_multipart_post();
@@ -833,6 +913,10 @@ int main()
     test_resource_failure_diagnostics();
     test_runtime_diagnostics_frame_and_failure();
     test_media_query_callback_can_create_more_queries();
+    test_media_query_resize_recascades_only_affected_subtrees();
+    test_attribute_invalidation_scopes_subject_and_descendant_rules();
+    test_compiled_css_invalidation_scaling();
+    test_compiled_css_route_scaling();
     test_concurrent_input_producers_remain_consumable();
     test_dom_implementation_create_html_document();
     test_mixed_continuous_input_backlog_is_coalesced();
@@ -892,6 +976,7 @@ int main()
         "throw new Error('IntersectionObserver bootstrap missing')",
         "intersection-observer-bootstrap.js");
     test_dimension_custom_property_recascade(engine);
+    test_logical_size_properties_map_to_horizontal_box_axes(engine);
     test_dimension_custom_property_inheritance(engine);
     test_geometry_variable_positions(engine);
     test_modal_backdrop_scene(engine);
@@ -922,6 +1007,7 @@ int main()
     test_bounded_css_named_color_palette();
     test_visibility_inherits_for_computed_style_and_focus(engine);
     test_hover_specificity_preserves_visible_theme_icon(engine);
+    test_hover_recascade_preserves_horizontal_catalog_row(engine);
     test_complex_is_specificity_ignores_non_element_siblings(engine);
     test_inline_relative_line_height_uses_cascaded_font_size(engine);
     test_empty_inline_element_does_not_stretch_cross_size(engine);
@@ -930,6 +1016,7 @@ int main()
     test_hover_dependency_matching_reuses_compiled_triggers(engine);
     test_hover_moves_between_block_and_display_contents_child(engine);
     test_single_fractional_grid_track_stays_one_column(engine);
+    test_auto_fill_minmax_custom_property_tracks_keep_their_sizing(engine);
     test_tradingview_symbol_search_display_contents_rows_join_parent_grid(engine);
     test_tradingview_settings_subgrid_keeps_controls_on_their_rows(engine);
     test_tradingview_property_table_preserves_control_row_spacing(engine);
@@ -1001,6 +1088,7 @@ int main()
     test_segmented_rounded_borders_share_an_unclipped_join(engine);
     test_flex_gap_and_variable_text_metrics(engine);
     test_native_overflow_scrolling_and_nowrap(engine);
+    test_scroll_offset_changes_translate_retained_geometry_without_layout(engine);
     test_authored_scrollbar_style_and_thumb_drag(engine);
     test_absolute_virtualized_rows_follow_ancestor_scroll_container(engine);
     test_rounded_overflow_visual_fixture_geometry(engine);
@@ -1098,7 +1186,8 @@ int main()
     test_element_opacity_emits_isolated_group(engine);
     test_svg_background_image_reaches_scene_with_position_and_size(engine);
     test_tradingview_repeating_svg_checker_background_reaches_scene(engine);
-    test_svg_img_element_loads_and_reaches_scene(engine);
+    test_image_elements_load_and_reach_scene(engine);
+    test_percentage_radius_reaches_raster_image_scene_clip(engine);
     test_virtual_html_root_inherits_font_metrics(engine);
     test_font_shorthand_inherit_resets_control_metrics(engine);
     test_webkit_font_smoothing_inherits_into_text_scene(engine);
@@ -1128,6 +1217,7 @@ int main()
     test_session_storage_in_outer_and_frame_contexts(engine);
     test_window_post_message_is_queued(engine);
     test_window_post_message_coalesces_style_recascade(engine);
+    test_resize_event_coalesces_attribute_selector_recascades(engine);
     test_cross_frame_post_message_and_window_frames(engine);
     test_frame_resize_preserves_outer_percentage_height(engine);
     test_inner_window_load_acknowledgement(engine);

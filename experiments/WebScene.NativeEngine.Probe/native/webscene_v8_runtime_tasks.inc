@@ -766,6 +766,10 @@
         }
         result << '}';
         last_resize_cpu_profile = std::move(result).str();
+        if (profile_resize_cpu) {
+            std::cerr << "WebScene resize CPU profile: "
+                << last_resize_cpu_profile << '\n';
+        }
     }
 #endif
 
@@ -934,6 +938,12 @@
         v8::Isolate::Scope isolate_scope(isolate);
         v8::HandleScope handle_scope(isolate);
         activate_css_cascade(context.Get(isolate));
+        // A resize event, its frame listeners and their microtasks are one
+        // rendering task. Attribute-heavy libraries such as OverlayScrollbars
+        // may update the same selector-bearing nodes repeatedly while measuring
+        // the new viewport. Accumulate those invalidations until the synchronous
+        // layout barrier instead of recascading intermediate states.
+        style_recascade_batch_scope style_batch(*this);
         {
             auto local_context = context.Get(isolate);
             v8::Context::Scope context_scope(local_context);
@@ -1006,13 +1016,10 @@
             if (css_context.IsEmpty()) return;
             activate_css_cascade(css_context);
             v8::Context::Scope css_context_scope(css_context);
-            if (!refresh_css_media_matches()) return;
-#if defined(WEBSCENE_NATIVE_ENGINE_MEDIA_REFRESH_ROOT_ONLY_EXPERIMENT)
-            rebuild_root_variables();
-#else
+            std::vector<size_t> changed_rules;
+            if (!refresh_css_media_matches(&changed_rules)) return;
             rebuild_css_rule_indexes_and_root_variables();
-#endif
-            apply_css_rules_subtree(active_root());
+            recascade_media_query_changes(active_root(), changed_rules);
         };
         refresh_context_styles(context.Get(isolate));
         for (auto& [id, persistent_context] : actual_frame_contexts) {
@@ -1140,6 +1147,7 @@
             std::chrono::duration_cast<std::chrono::nanoseconds>(
                 frame_listeners_finished - outer_listeners_finished).count());
 #endif
+        style_batch.finish();
         if (shared_isolate != nullptr) {
             isolate->Exit();
             try {
@@ -3354,9 +3362,7 @@
                     && std::abs(next_y - scroll_target->scroll_top) <= 0.01F) {
                     continue;
                 }
-                scroll_target->scroll_left = next_x;
-                scroll_target->scroll_top = next_y;
-                document.mark_dirty();
+                document.set_scroll_offset(*scroll_target, next_x, next_y);
                 if (!dispatch_input_event_type(input, "scroll", *scroll_target)) {
                     last_error = "Native scroll dispatch failed: "
                         + describe_reported_exception(try_catch, local_context);

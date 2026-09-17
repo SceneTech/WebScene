@@ -357,7 +357,9 @@
       "attributes": [
         { "name": "length", "getter": "get_form_or_select_length" }
       ],
-      "methods": [],
+      "methods": [
+        { "name": "add", "callback": "select_add", "length": 2 }
+      ],
       "constants": []
     },
     {

@@ -287,6 +287,66 @@ void test_specialized_content_properties(webscene_engine* engine)
         "specialized meta/template content properties diverged: " + result);
 }
 
+void test_html_select_add_contract(webscene_engine* engine)
+{
+    const auto result = evaluate(engine, R"JS(
+        (() => {
+          const select = document.createElement('select');
+          const option = value => {
+            const result = document.createElement('option');
+            result.value = value;
+            result.textContent = value;
+            return result;
+          };
+          const first = option('first');
+          const second = option('second');
+          const third = option('third');
+          select.add(first);
+          select.add(third);
+          select.add(second, third);
+
+          const group = document.createElement('optgroup');
+          const nested = option('nested');
+          group.appendChild(nested);
+          select.add(group);
+          const indexed = option('indexed');
+          select.add(indexed, 1);
+          select.add(third, nested);
+
+          let notFound = '';
+          try { select.add(option('rejected'), option('foreign')); }
+          catch (error) { notFound = error.name; }
+          const beforeSelf = select.length;
+          const selfResult = select.add(first, first);
+
+          // Exercise the VS Code population shape with a direct ceiling that
+          // catches blocking publication or accidental quadratic insertion.
+          const bounded = document.createElement('select');
+          const started = performance.now();
+          let checksum = 0;
+          for (let index = 0; index < 4096; ++index) {
+            const item = option(String(index));
+            bounded.add(item);
+            checksum += item.value.length;
+          }
+          const elapsed = performance.now() - started;
+          if (elapsed > 2000) {
+            throw new Error(`HTMLSelectElement.add gate exceeded: ${elapsed}ms`);
+          }
+          return {
+            type: typeof select.add,
+            order: Array.from({length: select.length}, (_, index) => select[index].value),
+            parents: [third.parentNode === group, group.firstChild === third],
+            rejection: notFound,
+            self: [selfResult === undefined, select.length === beforeSelf],
+            bounded: [bounded.length, checksum > 0]
+          };
+        })()
+    )JS", "native-html-select-add-contract.js");
+    const auto expected = R"JSON({"type":"function","order":["first","indexed","second","third","nested"],"parents":[true,true],"rejection":"NotFoundError","self":[true,true],"bounded":[4096,true]})JSON";
+    require(result == expected, "HTMLSelectElement.add contract diverged: " + result);
+}
+
 void test_child_collection_item(webscene_engine* engine)
 {
     const auto result = evaluate(engine, R"JS(

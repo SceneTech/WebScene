@@ -2445,6 +2445,97 @@
         return v8::Intercepted::kYes;
     }
 
+    static void select_add(const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        binding_callback_timer binding_timer(
+            self->profile(binding_category::dom_mutation),
+            self->profile_named("HTMLSelectElement.add"));
+        auto* select = unwrap_node(info.This());
+        auto* item = info.Length() > 0 && info[0]->IsObject()
+            ? unwrap_node(info[0].As<v8::Object>())
+            : nullptr;
+        if (self == nullptr || select == nullptr || select->tag != "select"
+            || item == nullptr || (item->tag != "option" && item->tag != "optgroup")) {
+            info.GetIsolate()->ThrowException(v8::Exception::TypeError(
+                js_string(info.GetIsolate(),
+                    "HTMLSelectElement.add requires an option or optgroup")));
+            return;
+        }
+        if (insertion_would_create_cycle(select, item)) {
+            throw_dom_exception(
+                info,
+                "The option is an ancestor of the select element",
+                "HierarchyRequestError");
+            return;
+        }
+
+        dom_node* reference = nullptr;
+        if (info.Length() > 1 && !info[1]->IsNullOrUndefined()) {
+            if (info[1]->IsObject()) {
+                reference = unwrap_node(info[1].As<v8::Object>());
+                if (reference == nullptr || reference->kind != dom_node_kind::element) {
+                    info.GetIsolate()->ThrowException(v8::Exception::TypeError(
+                        js_string(info.GetIsolate(),
+                            "HTMLSelectElement.add before must be an element or index")));
+                    return;
+                }
+                auto* ancestor = reference->parent;
+                while (ancestor != nullptr && ancestor != select) ancestor = ancestor->parent;
+                if (ancestor != select) {
+                    throw_dom_exception(
+                        info,
+                        "The reference element is not a descendant of this select",
+                        "NotFoundError");
+                    return;
+                }
+            } else {
+                auto local_context = info.GetIsolate()->GetCurrentContext();
+                v8::Maybe<int32_t> converted = info[1]->Int32Value(local_context);
+                if (converted.IsNothing()) return;
+                const auto index = converted.FromJust();
+                if (index >= 0) {
+                    const auto options = form_or_select_items(*select);
+                    if (static_cast<size_t>(index) < options.size()) {
+                        reference = options[static_cast<size_t>(index)];
+                    }
+                }
+            }
+        }
+        if (item == reference) return;
+        auto* parent = reference == nullptr ? select : reference->parent;
+        if (parent == nullptr) return;
+
+        if (item->parent != nullptr) {
+            auto* old_parent = item->parent;
+            if (self->is_connected(*item)) {
+                self->notify_custom_elements_subtree(*item, "disconnected");
+            }
+            std::erase(old_parent->children, item);
+            item->parent = nullptr;
+            self->recascade_connected_node(*old_parent);
+        }
+        if (reference == nullptr) {
+            if (!self->document.append_child(*parent, *item)) return;
+        } else {
+            const auto position = std::find(
+                parent->children.begin(), parent->children.end(), reference);
+            if (position == parent->children.end()) return;
+            item->parent = parent;
+            item->visible = true;
+            parent->children.insert(position, item);
+            self->document.mark_dirty();
+        }
+        self->recascade_connected_subtree(*item);
+        self->recascade_connected_node(*parent);
+        self->activate_connected_stylesheet(*item);
+        self->enqueue_connected_resources_subtree(
+            *item,
+            info[0].As<v8::Object>(),
+            info.GetIsolate()->GetCurrentContext());
+        self->notify_custom_elements_subtree(*item, "connected");
+    }
+
     static void get_selected_index(
         v8::Local<v8::Name>,
         const v8::PropertyCallbackInfo<v8::Value>& info)

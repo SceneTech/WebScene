@@ -1312,6 +1312,15 @@ if(BUILD_TESTING AND WEBSCENE_NATIVE_ENGINE_ENABLE_V8)
     add_dependencies(webscene_hybrid_v8_runtime_tests webscene_native_engine)
     add_test(NAME webscene_hybrid_v8_runtime_tests COMMAND webscene_hybrid_v8_runtime_tests)
     set_tests_properties(webscene_hybrid_v8_runtime_tests PROPERTIES TIMEOUT 30 LABELS "hybrid;runtime")
+    add_test(
+        NAME webscene_worker_object_url_tests
+        COMMAND webscene_hybrid_v8_runtime_tests)
+    set_tests_properties(
+        webscene_worker_object_url_tests
+        PROPERTIES
+            ENVIRONMENT "WEBSCENE_HYBRID_V8_RUNTIME_TEST_FILTER=worker-messageport"
+            TIMEOUT 30
+            LABELS "hybrid;runtime;worker;security;performance")
     foreach(webcrypto_filter IN ITEMS aes-gcm aes-cbc hmac)
         string(REPLACE "-" "_" webcrypto_test_suffix "${webcrypto_filter}")
         add_test(

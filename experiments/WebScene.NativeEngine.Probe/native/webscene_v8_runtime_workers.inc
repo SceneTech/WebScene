@@ -209,7 +209,7 @@
             const auto url = resolve_resource_url(
                 to_utf8(info.GetIsolate(),info[index]),
                 self->current_base_address());
-            if (resource_origin(url) != resource_origin(self->current_base_address())) {
+            if (resource_origin(url) != self->current_security_origin()) {
                 throw_dom_exception(info,"Worker script must be same origin","SecurityError");
                 return;
             }
@@ -291,15 +291,15 @@
         // worker owns its source even if the parent revokes the URL immediately.
         std::optional<std::string> embedded_source;
         if (url.starts_with("blob:")) {
-            const auto found = self->object_url_binary.find(url);
-            if (found == self->object_url_binary.end()
-                || found->second.origin != resource_origin(self->current_base_address())) {
+            const auto found = self->find_binary_object_url(
+                url, self->current_security_origin());
+            if (!found) {
                 throw_dom_exception(info,"Worker Blob URL is unavailable for this origin","SecurityError"); return;
             }
-            embedded_source.emplace(found->second.bytes.begin(), found->second.bytes.end());
+            embedded_source = found->bytes;
         }
         if (!embedded_source
-            && resource_origin(url) != resource_origin(self->current_base_address())) {
+            && resource_origin(url) != self->current_security_origin()) {
             throw_dom_exception(info,"Worker script must be same origin","SecurityError"); return;
         }
         bool module = false;
@@ -337,9 +337,10 @@
         target->Set(realm,js_string(isolate,"terminate"),v8::Function::New(realm,worker_terminate,data).ToLocalChecked()).Check();
         auto loader=self->load_resource_callback;
         auto root=self->resource_root;
-        auto worker_origin=resource_origin(self->current_base_address());
+        auto object_url_registry=self->object_url_registry;
+        auto worker_origin=self->current_security_origin();
         self->dedicated_workers.push_back(std::move(state));
-        raw->thread=std::thread([raw,url,module,worker_origin=std::move(worker_origin),embedded_source=std::move(embedded_source),worker_name=std::move(worker_name),loader=std::move(loader),root=std::move(root)] {
+        raw->thread=std::thread([raw,url,module,worker_origin=std::move(worker_origin),embedded_source=std::move(embedded_source),worker_name=std::move(worker_name),loader=std::move(loader),root=std::move(root),object_url_registry=std::move(object_url_registry)] {
             auto report=[&](const std::string& text) {
                 {
                     std::lock_guard lock(raw->mutex);
@@ -353,6 +354,8 @@
                 native_document document;
                 v8_dom_runtime runtime(document,[]{return v8_dom_runtime::viewport_metrics{1,1,1,0};},{},loader);
                 auto* child=runtime.impl_.get();
+                child->object_url_registry = object_url_registry;
+                child->inherited_worker_origin = worker_origin;
                 struct running_guard {
                     worker_state* state;implementation* child;
                     ~running_guard(){

@@ -1387,9 +1387,9 @@ struct v8_dom_runtime::implementation final {
         const auto local_context = info.GetIsolate()->GetCurrentContext();
         if(specifier.starts_with("blob:")) {
             auto resolver=v8::Promise::Resolver::New(local_context).ToLocalChecked();
-            auto found=self->object_url_binary.find(specifier);
-            if(found==self->object_url_binary.end()||found->second.origin!=resource_origin(base))resolver->Reject(local_context,v8::Exception::TypeError(js_string(info.GetIsolate(),"Blob URL is unavailable for this origin"))).Check();
-            else {auto value=v8::Object::New(info.GetIsolate());auto bytes=v8::ArrayBuffer::New(info.GetIsolate(),found->second.bytes.size());if(!found->second.bytes.empty())std::memcpy(bytes->GetBackingStore()->Data(),found->second.bytes.data(),found->second.bytes.size());value->CreateDataProperty(local_context,js_string(info.GetIsolate(),"body"),bytes).Check();value->CreateDataProperty(local_context,js_string(info.GetIsolate(),"url"),js_dom_string(info.GetIsolate(),specifier)).Check();resolver->Resolve(local_context,value).Check();}
+            auto found=self->find_binary_object_url(specifier,self->current_security_origin());
+            if(!found)resolver->Reject(local_context,v8::Exception::TypeError(js_string(info.GetIsolate(),"Blob URL is unavailable for this origin"))).Check();
+            else {auto value=v8::Object::New(info.GetIsolate());auto bytes=v8::ArrayBuffer::New(info.GetIsolate(),found->bytes.size());if(!found->bytes.empty())std::memcpy(bytes->GetBackingStore()->Data(),found->bytes.data(),found->bytes.size());value->CreateDataProperty(local_context,js_string(info.GetIsolate(),"body"),bytes).Check();value->CreateDataProperty(local_context,js_string(info.GetIsolate(),"url"),js_dom_string(info.GetIsolate(),specifier)).Check();resolver->Resolve(local_context,value).Check();}
             info.GetReturnValue().Set(resolver->GetPromise());return;
         }
         if (self->pending_fetches.size() >= maximum_pending_fetches) {

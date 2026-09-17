@@ -773,9 +773,83 @@ void test_iframe_worker_extension_host_port_bootstrap() {
     require(runtime.load_url(root_url), runtime.last_error().c_str());
     for (unsigned i = 0; i < 5000 && !completed; ++i) {
         require(runtime.pump_task(), runtime.last_error().c_str());
-        if (!runtime.has_pending_tasks()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
     require(completed, "Code OSS-shaped iframe MessagePort bootstrap did not complete");
+}
+
+void test_nested_worker_blob_url_identity() {
+    webscene_native::native_document document;
+    bool finished = false;
+    webscene_native::v8_dom_runtime runtime(document,
+        []{return webscene_native::v8_dom_runtime::viewport_metrics{640,480,1,0};}, {},
+        [&](uint32_t kind, const std::string& url, const auto&, const std::string&, int64_t,
+            webscene_native::v8_dom_runtime::resource_response& response) {
+            if (kind != WEBSCENE_RESOURCE_DOCUMENT
+                || url != "https://worker.test/index.html") return false;
+            response.content = "<!doctype html>";
+            return true;
+        });
+    runtime.register_compiled_template("nested-worker-result", [&](auto& dom, const std::string& value) -> auto& {
+        require(value == "\"nested-source-sentinel\"",
+            "Nested worker resolved a colliding Blob URL source");
+        finished = true;
+        return dom.create_element("span");
+    });
+    require(runtime.initialize(), "Nested worker Blob URL runtime failed");
+    require(runtime.load_url("https://worker.test/index.html"), runtime.last_error().c_str());
+    require(runtime.execute(R"JS(
+      const primarySource = `
+        const nestedSource = 'postMessage("nested-source-sentinel")';
+        const nestedUrl = URL.createObjectURL(
+          new Blob([nestedSource], {type:'application/javascript'}));
+        postMessage({type:'_newWorker', url:nestedUrl});
+        await Promise.resolve();
+      `;
+      const primaryUrl = URL.createObjectURL(
+        new Blob([primarySource], {type:'application/javascript'}));
+      const primary = new Worker(primaryUrl, {type:'module'});
+      primary.onerror = event => document.createCompiledTemplate(
+        'nested-worker-result', event.message);
+      primary.onmessage = event => {
+        if (event.data.type !== '_newWorker') return;
+        if (event.data.url === primaryUrl)
+          throw Error('Nested worker Blob URL reused its parent identifier');
+        const nested = new Worker(event.data.url);
+        nested.onerror = error => document.createCompiledTemplate(
+          'nested-worker-result', error.message);
+        nested.onmessage = message => document.createCompiledTemplate(
+          'nested-worker-result', message.data);
+      };
+    )JS", "nested-worker-blob-identity"), runtime.last_error().c_str());
+    for (unsigned i=0;i<5000 && !finished;++i) {
+        require(runtime.pump_task(), runtime.last_error().c_str());
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    require(finished, "Nested worker did not execute its own Blob source");
+}
+
+void test_object_url_registry_capacity_and_reuse() {
+    webscene_native::native_document document;
+    webscene_native::v8_dom_runtime runtime(document,
+        []{return webscene_native::v8_dom_runtime::viewport_metrics{640,480,1,0};});
+    require(runtime.initialize(), "Object URL capacity runtime failed");
+    const auto started = std::chrono::steady_clock::now();
+    require(runtime.execute(R"JS(
+      const urls = [];
+      for (let index = 0; index < 4096; ++index) {
+        urls.push(URL.createObjectURL(new Blob(['x'])));
+      }
+      let bounded = false;
+      try { URL.createObjectURL(new Blob(['overflow'])); }
+      catch (error) { bounded = error.name === 'QuotaExceededError'; }
+      if (!bounded) throw Error('Object URL registry accepted an unbounded entry count');
+      for (const url of urls) URL.revokeObjectURL(url);
+      const reused = URL.createObjectURL(new Blob(['reused']));
+      URL.revokeObjectURL(reused);
+    )JS", "object-url-capacity"), runtime.last_error().c_str());
+    require(std::chrono::steady_clock::now() - started < std::chrono::seconds(5),
+        "Bounded object URL registry operations exceeded five seconds");
 }
 
 void test_worker_termination_race() {
@@ -1006,6 +1080,8 @@ void test_worker_message_port_contracts() {
     test_worker_error_delivery();
     test_worker_and_port_navigation_shutdown();
     test_window_messageerror_on_receiver_resource_exhaustion();
+    test_nested_worker_blob_url_identity();
+    test_object_url_registry_capacity_and_reuse();
 }
 
 int main() {

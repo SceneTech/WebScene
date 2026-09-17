@@ -1,0 +1,141 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Variadic child-list mutations preserve final structural style checkpoints</title>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<style>
+.variadic-list > .item {width:11px;height:13px}
+.variadic-list > .item:first-child {width:41px}
+.variadic-list > .item:last-child {height:43px}
+.variadic-scope:has(.marker) {--size:61px}
+.variadic-consumer {width:var(--size,29px)}
+</style>
+<body>
+<script>
+// DOM Standard ParentNode/ChildNode conversion and viable-sibling algorithms.
+// https://dom.spec.whatwg.org/#dom-parentnode-prepend
+// https://dom.spec.whatwg.org/#dom-childnode-before
+let observe=null;
+customElements.define('variadic-checkpoint',class extends HTMLElement {
+  connectedCallback(){if(observe)observe('connected',this);}
+  disconnectedCallback(){if(observe)observe('disconnected',this);}
+});
+function fixture(t){
+  const stage=document.createElement('div');
+  stage.innerHTML='<div class="variadic-scope"><div class="variadic-list"></div><div class="variadic-consumer"></div></div><div class="variadic-scope"><div class="variadic-list"><i class="item" id="anchor"></i></div><div class="variadic-consumer"></div></div>';
+  document.body.appendChild(stage);t.add_cleanup(()=>{observe=null;stage.remove();});
+  const [source,destination]=stage.querySelectorAll('.variadic-list');
+  const [sourceConsumer,destinationConsumer]=stage.querySelectorAll('.variadic-consumer');
+  return {stage,source,destination,anchor:destination.firstChild,sourceConsumer,destinationConsumer};
+}
+function node(id,custom=false){const n=document.createElement(custom?'variadic-checkpoint':'i');n.id=id;n.className='item';return n;}
+function invoke(method,f,...args){
+  return method==='append'||method==='prepend'?f.destination[method](...args):f.anchor[method](...args);
+}
+function sequence(parent){return Array.from(parent.childNodes,n=>n.nodeType===3?n.data:n.id);}
+function verifyPositions(parent){
+  const children=Array.from(parent.children);
+  children.forEach((n,i)=>{
+    assert_equals(getComputedStyle(n).width,i===0?'41px':'11px');
+    assert_equals(getComputedStyle(n).height,i===children.length-1?'43px':'13px');
+  });
+}
+for(const method of ['append','prepend','before','after']){
+  test(t=>{
+    const f=fixture(t),a=node('a'),b=node('b'),c=node('c'),fragment=document.createDocumentFragment();
+    fragment.append(b,c);
+    assert_equals(invoke(method,f,a,'text',fragment,7),undefined);
+    const inserted=['a','text','b','c','7'];
+    assert_array_equals(sequence(f.destination),method==='append'||method==='after'?['anchor',...inserted]:[...inserted,'anchor']);
+    assert_equals(fragment.childNodes.length,0);verifyPositions(f.destination);
+  },method+' inserts all arguments and fragment children with final positional styles');
+
+  test(t=>{
+    const f=fixture(t),a=node('a'),b=node('b'),c=node('c'),d=node('d');
+    f.destination.replaceChildren(a,b,c,d);f.anchor=b;
+    invoke(method,f,b,d,a,b);
+    assert_array_equals(sequence(f.destination),method==='append'?['c','d','a','b']:['d','a','b','c']);
+    assert_equals(f.destination.childNodes.length,4,'duplicate arguments move one identity, not copies');
+    verifyPositions(f.destination);
+  },method+' preserves viable insertion position when arguments include self siblings and duplicates');
+
+  test(t=>{
+    const f=fixture(t),a=node('a'),b=node('b'),fragment=document.createDocumentFragment();fragment.append(a,b);
+    invoke(method,f,fragment,a,fragment);
+    assert_array_equals(sequence(f.destination),method==='append'||method==='after'?['anchor','b','a']:['b','a','anchor']);
+    assert_equals(fragment.childNodes.length,0);verifyPositions(f.destination);
+  },method+' flattens repeated fragments and keeps the last occurrence of an extracted child');
+
+  test(t=>{
+    const f=fixture(t),moving=node('moving',true),fresh=node('fresh',true),fragment=document.createDocumentFragment();
+    moving.classList.add('marker');fresh.classList.add('marker');f.source.appendChild(moving);fragment.appendChild(fresh);
+    const snapshots=[];
+    observe=(phase,n)=>snapshots.push([phase,n.id,n.parentNode===f.destination,
+      getComputedStyle(f.sourceConsumer).width,getComputedStyle(f.destinationConsumer).width,
+      Array.from(f.destination.children,c=>getComputedStyle(c).width).join(',')].join('|'));
+    invoke(method,f,moving,fragment);observe=null;
+    const widths='41px,11px,11px';
+    assert_array_equals(snapshots,[
+      'disconnected|moving|true|29px|61px|'+widths,
+      'connected|moving|true|29px|61px|'+widths,
+      'connected|fresh|true|29px|61px|'+widths]);
+    verifyPositions(f.destination);
+  },method+' reactions observe both source and destination structural variable checkpoints');
+
+  test(t=>{
+    const f=fixture(t),moving=node('moving');f.source.appendChild(moving);const conversions=[];
+    invoke(method,f,moving,{toString(){conversions.push(moving.parentNode===f.source);return 'one';}},
+      {toString(){conversions.push(moving.parentNode===f.source);return 'two';}});
+    assert_array_equals(conversions,[true,true],'all WebIDL conversions precede structural mutation');
+    assert_equals(moving.parentNode,f.destination);verifyPositions(f.destination);
+  },method+' converts every string argument before detaching incoming nodes');
+
+  test(t=>{
+    const f=fixture(t),moving=node('moving');f.source.appendChild(moving);
+    invoke(method,f,moving,{toString(){
+      if(method==='before'||method==='after')f.source.appendChild(f.anchor);
+      else f.destination.replaceChildren(f.anchor);
+      return 'converted';
+    }});
+    const parent=method==='before'||method==='after'?f.source:f.destination;
+    assert_array_equals(sequence(parent),method==='append'||method==='after'?['anchor','moving','converted']:['moving','converted','anchor']);
+    verifyPositions(parent);
+  },method+' resolves insertion parent and siblings after reentrant string conversion');
+
+  test(t=>{
+    const f=fixture(t),moving=node('moving'),sentinel={error:true};f.source.appendChild(moving);
+    let caught,later=false;
+    try{invoke(method,f,moving,{toString(){throw sentinel;}},{toString(){later=true;return 'later';}});}catch(e){caught=e;}
+    assert_equals(caught,sentinel);assert_false(later);assert_equals(moving.parentNode,f.source);
+    assert_array_equals(sequence(f.destination),['anchor']);verifyPositions(f.destination);
+  },method+' throwing conversion preserves original exception and prevents native mutation');
+
+  test(t=>{
+    const f=fixture(t),moving=node('moving');f.source.appendChild(moving);
+    assert_throws_js(TypeError,()=>invoke(method,f,moving,Symbol('not a DOMString')));
+    assert_equals(moving.parentNode,f.source);assert_array_equals(sequence(f.destination),['anchor']);
+  },method+' rejects Symbol arguments before moving nodes');
+
+  test(t=>{
+    const f=fixture(t);
+    assert_throws_dom('HierarchyRequestError',()=>invoke(method,f,f.destination));
+    assert_equals(f.destination.parentNode,f.stage.lastElementChild);
+    assert_array_equals(sequence(f.destination),['anchor']);
+  },method+' single-node hierarchy failure leaves tree unchanged');
+
+  test(t=>{
+    const f=fixture(t),moving=node('moving',true);moving.classList.add('marker');f.source.appendChild(moving);
+    const snapshots=[];observe=(phase,n)=>{if(n===moving)snapshots.push([phase,n.isConnected,getComputedStyle(f.sourceConsumer).width].join('|'));};
+    assert_throws_dom('HierarchyRequestError',()=>invoke(method,f,moving,f.destination));observe=null;
+    assert_false(moving.isConnected,'conversion removals are not rolled back after failed insertion');
+    assert_false(f.destination.isConnected);
+    assert_equals(getComputedStyle(f.sourceConsumer).width,'29px','partial conversion updates source styles');
+    assert_array_equals(snapshots,['disconnected|false|29px']);
+  },method+' failed insertion still publishes conversion removals before disconnected callbacks');
+}
+for(const method of ['before','after'])test(t=>{
+  const detached=node('detached');let converted=false;
+  assert_equals(detached[method]({toString(){converted=true;return 'text';}}),undefined);
+  assert_true(converted);assert_equals(detached.parentNode,null);
+},method+' still performs argument conversion for a detached receiver');
+</script>

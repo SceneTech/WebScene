@@ -116,7 +116,8 @@ void test_compiled_css_route_scaling(bool structural_only = false, bool structur
     // Two independent axes: grow the affected component and grow unrelated
     // DOM/rules. Actual matching/cascade work must follow only the first axis.
     for (const auto* shape : {"descendants", "siblings", "disabled", "variables", "relational", "identity", "dataset",
-            "tree-wide-position", "tree-position", "tree-siblings", "tree-relational", "tree-empty", "tree-reactions"}) {
+            "tree-wide-position", "tree-position", "tree-siblings", "tree-relational", "tree-empty", "tree-reactions",
+            "tree-prepend", "tree-before", "tree-after"}) {
         if (structural_only && !std::string_view(shape).starts_with("tree-")) continue;
         for (const auto affected_count : {8, 128}) {
             std::vector<std::array<uint64_t, 8>> observations;
@@ -150,6 +151,9 @@ void test_compiled_css_route_scaling(bool structural_only = false, bool structur
                   } else if (shape === 'tree-position') {
                     markup = ('<div class="tree-list">' + target + '</div>').repeat(count);
                     rule = '.matrix-target:nth-child(2) {width:41px}';
+                  } else if (shape === 'tree-prepend' || shape === 'tree-before' || shape === 'tree-after') {
+                    markup = '<div class="tree-list"><b class="anchor"></b>' + target.repeat(count) + '</div>';
+                    rule = '.marker ~ .matrix-target {width:41px}';
                   } else if (shape === 'tree-siblings' || shape === 'tree-wide-position') {
                     markup = '<div class="tree-list">' + target.repeat(count) + '</div>';
                     rule = shape === 'tree-wide-position'
@@ -193,6 +197,23 @@ void test_compiled_css_route_scaling(bool structural_only = false, bool structur
                   globalThis.matrixMutation = enabled => {
                     reactions.length = 0;
                     if (shape.startsWith('tree-')) lists.forEach(list => {
+                      if (shape === 'tree-prepend' || shape === 'tree-before' || shape === 'tree-after') {
+                        if (enabled) {
+                          const first=document.createElement('i'), second=document.createElement('i');
+                          first.className=second.className='marker';
+                          const text=document.createTextNode('spacer'), fragment=document.createDocumentFragment();
+                          fragment.appendChild(second);
+                          const anchor=list.firstChild;
+                          if(shape==='tree-prepend')list.prepend(first,text,fragment);
+                          else if(shape==='tree-before')anchor.before(first,text,fragment);
+                          else anchor.after(first,text,fragment);
+                          if(list.childNodes.length!==count+4 || fragment.childNodes.length!==0 ||
+                              first.parentNode!==list || text.parentNode!==list || second.parentNode!==list)
+                            throw new Error('Variadic mutation dropped arguments or retained fragment children');
+                          list.inserted=[first,text,second];
+                        } else list.inserted.forEach(node=>node.remove());
+                        return;
+                      }
                       if (enabled !== (shape === 'tree-empty' || shape === 'tree-reactions')) {
                         const marker = document.createElement(shape === 'tree-reactions' ? 'matrix-checkpoint' : 'i');
                         marker.className = 'marker';

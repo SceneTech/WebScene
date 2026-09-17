@@ -68,6 +68,11 @@ used.
   Documents with no valid custom-element definition make no reaction-bridge calls;
   first definition during argument conversion lazily activates enclosing boundaries.
 - Fix `:empty` matching to ignore comments and empty text, but not whitespace text.
+- Share variadic insertion between `append`, `prepend`, `before`, and `after`:
+  convert non-Node arguments before reading tree state, flatten fragments, retain
+  the last occurrence of duplicate nodes, and resolve viable sibling positions.
+  Deliver structural reactions after both source/destination style checkpoints,
+  including source removals when final multi-node insertion fails.
 
 ## Correctness and scaling gates
 
@@ -128,9 +133,9 @@ WEBSCENE_NATIVE_ENGINE_TEST_FILTER=css-invalidation-scaling \
 
 ## Component-size matrix and measured matching bottleneck
 
-The same native filter now runs 76 cases: thirteen component shapes with ordinary
-unrelated rules (52 cases), plus six structural shapes with unrelated structural
-rules (24 cases); both use 8/128 affected targets and 32/1,024 unrelated nodes/rule
+The same native filter now runs 100 cases: sixteen component shapes with ordinary
+unrelated rules (64 cases), plus nine structural shapes with unrelated structural
+rules (36 cases); both use 8/128 affected targets and 32/1,024 unrelated nodes/rule
 families. Each case adds then removes selector state and checks every target's
 computed width. All eight counters
 must be identical at both unrelated sizes; work must stay within a linear
@@ -226,9 +231,8 @@ content (one 128-target sample: approximately 26 ms with 32 unrelated nodes/rule
 the residual cost needs attribution, not a claim of end-to-end improvement. Broader
 cascade/layout profiling remains coordinated with #238/#240/#243.
 
-This stage does not complete every DOM checkpoint: variadic/fragment forms of
-`prepend`/`before`/`after`, and further
-character-data/CSSOM mutation paths still need the browser-referenced audit.
+At this stage variadic/fragment insertion and further character-data/CSSOM paths
+still needed the browser-referenced audit; the insertion follow-up is below.
 The rest of the optimization plan remains open; no Chrome-speed advantage follows
 from the structural operation counts.
 
@@ -253,7 +257,7 @@ All 24 structural-noise cases and the 52 ordinary-noise cases pass certification
 semantic checks and exact eight-counter equality across unrelated sizes, with zero
 document fallback and bounded linear component work. The new mode is included in
 the normal native suite and `css-invalidation-scaling` filter; the focused
-`css-structural-rule-scaling` filter runs only these 24 cases.
+`css-structural-rule-scaling` filter runs only the structural-noise cases.
 
 The contract passes **73/73 in Chrome and WebScene**. Additions cover escaped ID,
 class and attribute keys, HTML attribute case folding, tag keys, universal/nested
@@ -266,6 +270,50 @@ contract; additional iframe dynamic-recascade and shared-shadow-value native
 groups pass after rebuilding without certification telemetry.
 These are operation-count and correctness results; timing and total synchronous
 style-read/layout cost remain separate, and no browser-speed advantage is claimed.
+
+### Variadic insertion checkpoints
+
+`css-variadic-child-list-checkpoints.html` initially passed **28/28 in Chrome**
+but only **4/28 in WebScene**. `prepend`/`before`/`after` only handled the first
+argument, and `append` continued native mutation and later conversions after an
+argument conversion threw. Missing fragment children also meant incomplete
+structural and custom-element callback checkpoints.
+
+The shared flat insertion path follows the DOM Standard's
+[ParentNode](https://dom.spec.whatwg.org/#interface-parentnode) and
+[ChildNode](https://dom.spec.whatwg.org/#interface-childnode) insertion ordering.
+As in [Chromium's Node implementation](https://chromium.googlesource.com/chromium/src/+/refs/heads/main/third_party/blink/renderer/core/dom/node.cc),
+it avoids materializing an intermediate DOM fragment. It converts all arguments
+first, stops on conversion errors, chooses viable siblings before extracting
+nodes, deduplicates by last occurrence, and performs one range insertion before
+source/destination invalidation and connected callbacks. The final contract passes
+**42/42 Chrome/native**: node/text/fragment insertion, duplicate/self/sibling
+arguments, repeated fragments, reentrant and throwing conversion, Symbols,
+detached receivers, hierarchy failures, and callback style/variable observations.
+
+**Rejected test assumption:** a failed multi-node insertion does not expose a
+materialized temporary fragment in Chrome. Its source explicitly documents this
+observable difference from the literal fragment algorithm. The contract checks
+the agreed source-removal/style/reaction checkpoints, not that rejected parent
+identity assumption; this is not a claim of complete DOM insertion conformance.
+
+Three native shapes exercise multi-argument `prepend`/`before`/`after` with a
+fragment and text, growing affected targets and both ordinary/structural unrelated
+rules. They assert all child identities, exact child count and an emptied fragment
+as well as computed widths, so dropping arguments cannot pass on styles alone.
+They are included in the default native suite and normal scaling filter.
+The **100-case certification matrix** passes with identical eight-counter vectors
+at both unrelated sizes, zero fallback, and linear component budgets. At 128
+targets with structural noise, each new shape records 548 plan lookups, 1,564
+candidate visits, 1,024 rule checks and 522 cascades; compound checks are 2,063 for
+prepend/before and 2,060 for after. Existing structural WPT 73/73, three adjacent
+DOM contracts 9/9, six custom-element contracts 118/118, seven adjacent native
+groups and parser tests also pass locally.
+The final production build passes all 100 semantic cases and the 42-check new
+contract without certification telemetry.
+Further `replaceWith`/`replaceChildren` conversion/duplicate/error checkpoints and
+character-data mutation paths remain to be audited. Broader CSSOM and layout work
+remain separately coordinated; no Chrome-speed or timing-improvement claim follows.
 
 ### Remaining acceptance work
 

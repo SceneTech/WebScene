@@ -4646,84 +4646,11 @@
             node != nullptr && !node->children.empty()));
     }
 
+#include "webscene_v8_runtime_variadic_dom.inc"
+
     static void append_nodes(const v8::FunctionCallbackInfo<v8::Value>& info)
     {
-        auto* self = current(info.GetIsolate());
-        custom_element_reaction_scope reactions(*self);
-        binding_callback_timer binding_timer(
-            self->profile(binding_category::dom_mutation),
-            self->profile_named("ParentNode.append"));
-        auto* parent = unwrap_node(info.This());
-        if (parent == nullptr) return;
-
-        std::vector<dom_node*> previous_parents;
-        std::vector<dom_node*> candidates;
-        candidates.reserve(static_cast<size_t>(info.Length()));
-        for (int index = 0; index < info.Length(); ++index) {
-            dom_node* candidate = nullptr;
-            if (info[index]->IsObject()) {
-                candidate = unwrap_node(info[index].As<v8::Object>());
-            }
-            if (candidate == nullptr) {
-                auto& text = self->document.create_element("#text");
-                text.text_content = to_wtf8(info.GetIsolate(), info[index]);
-                candidate = &text;
-            }
-            if (candidate->tag == "#document-fragment") {
-                for (auto* child : candidate->children) {
-                    if (insertion_would_create_cycle(parent, child)) {
-                        throw_hierarchy_request(info.GetIsolate(), "append");
-                        return;
-                    }
-                }
-            } else if (insertion_would_create_cycle(parent, candidate)) {
-                throw_hierarchy_request(info.GetIsolate(), "append");
-                return;
-            }
-            candidates.push_back(candidate);
-        }
-
-        std::vector<dom_node*> inserted;
-        for (auto* candidate : candidates) {
-            if (candidate == nullptr) continue;
-            if (candidate->tag == "#document-fragment") {
-                auto children = std::move(candidate->children);
-                candidate->children.clear();
-                for (auto* child : children) {
-                    if (child == nullptr) continue;
-                    child->parent = nullptr;
-                    child->visible = true;
-                    if (self->document.append_child(*parent, *child)) inserted.push_back(child);
-                }
-                continue;
-            }
-            if (candidate->parent != nullptr) {
-                if (self->is_connected(*candidate)) {
-                    self->notify_custom_elements_subtree(*candidate, "disconnected");
-                }
-                auto* old_parent = candidate->parent;
-                previous_parents.push_back(old_parent);
-                std::erase(old_parent->children, candidate);
-                synchronize_textarea_value_from_children(*old_parent);
-                candidate->parent = nullptr;
-            }
-            candidate->visible = true;
-            if (self->document.append_child(*parent, *candidate)) inserted.push_back(candidate);
-        }
-
-        self->recascade_completed_child_list(*parent, inserted, previous_parents);
-        for (auto* child : inserted) {
-            if (child == nullptr) continue;
-            self->enqueue_connected_resources_subtree(
-                *child,
-                self->wrap_node(*child),
-                info.GetIsolate()->GetCurrentContext());
-            self->enqueue_iframe_hydration_if_needed(*child);
-            self->notify_custom_elements_subtree(*child, "connected");
-        }
-        self->activate_connected_stylesheet(*parent);
-        synchronize_textarea_value_from_children(*parent);
-        self->document.mark_dirty();
+        insert_variadic_nodes(info, variadic_insertion::append);
     }
 
     static void remove_child(const v8::FunctionCallbackInfo<v8::Value>& info)
@@ -5161,75 +5088,12 @@
 
     static void prepend_child(const v8::FunctionCallbackInfo<v8::Value>& info)
     {
-        auto* self = current(info.GetIsolate());
-        custom_element_reaction_scope reactions(*self);
-        auto* parent = unwrap_node(info.This());
-        auto* child = info.Length() > 0 && info[0]->IsObject()
-            ? unwrap_node(info[0].As<v8::Object>()) : nullptr;
-        if (parent == nullptr || child == nullptr || parent == child) return;
-        if (insertion_would_create_cycle(parent, child)) {
-            throw_hierarchy_request(info.GetIsolate(), "prepend");
-            return;
-        }
-        auto* previous_parent = child->parent;
-        if (child->parent != nullptr) {
-            if (self->is_connected(*child)) {
-                self->notify_custom_elements_subtree(*child, "disconnected");
-            }
-            auto* old_parent = child->parent;
-            std::erase(old_parent->children, child);
-            synchronize_textarea_value_from_children(*old_parent);
-            child->parent = nullptr;
-        }
-        child->parent = parent;
-        parent->children.insert(parent->children.begin(), child);
-        self->document.mark_dirty();
-        if (previous_parent != nullptr && previous_parent != parent)
-            self->recascade_changed_child_list(*previous_parent);
-        self->recascade_changed_child_list(*parent, child);
-        self->activate_connected_stylesheet(*child);
-        self->notify_custom_elements_subtree(*child, "connected");
-        synchronize_textarea_value_from_children(*parent);
-        info.GetReturnValue().Set(info[0]);
+        insert_variadic_nodes(info, variadic_insertion::prepend);
     }
 
-    static void insert_sibling(
-        const v8::FunctionCallbackInfo<v8::Value>& info,
-        bool after)
+    static void insert_sibling(const v8::FunctionCallbackInfo<v8::Value>& info, bool after)
     {
-        auto* self = current(info.GetIsolate());
-        custom_element_reaction_scope reactions(*self);
-        auto* reference = unwrap_node(info.This());
-        auto* child = info.Length() > 0 && info[0]->IsObject()
-            ? unwrap_node(info[0].As<v8::Object>()) : nullptr;
-        if (reference == nullptr || reference->parent == nullptr || child == nullptr
-            || reference == child) return;
-        auto* parent = reference->parent;
-        if (insertion_would_create_cycle(parent, child)) {
-            throw_hierarchy_request(info.GetIsolate(), after ? "after" : "before");
-            return;
-        }
-        auto* previous_parent = child->parent;
-        if (child->parent != nullptr) {
-            if (self->is_connected(*child)) {
-                self->notify_custom_elements_subtree(*child, "disconnected");
-            }
-            auto* old_parent = child->parent;
-            std::erase(old_parent->children, child);
-            synchronize_textarea_value_from_children(*old_parent);
-            child->parent = nullptr;
-        }
-        const auto position = std::find(parent->children.begin(), parent->children.end(), reference);
-        if (position == parent->children.end()) return;
-        child->parent = parent;
-        parent->children.insert(position + (after ? 1 : 0), child);
-        self->document.mark_dirty();
-        if (previous_parent != nullptr && previous_parent != parent)
-            self->recascade_changed_child_list(*previous_parent);
-        self->recascade_changed_child_list(*parent, child);
-        self->activate_connected_stylesheet(*child);
-        self->notify_custom_elements_subtree(*child, "connected");
-        synchronize_textarea_value_from_children(*parent);
+        insert_variadic_nodes(info, after ? variadic_insertion::after : variadic_insertion::before);
     }
 
     static void insert_before_self(const v8::FunctionCallbackInfo<v8::Value>& info)

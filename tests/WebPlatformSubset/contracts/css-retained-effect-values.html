@@ -1,0 +1,104 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Retained effect syntax and computed values</title>
+<link rel="help" href="https://drafts.fxtf.org/filter-effects-1/">
+<link rel="help" href="https://drafts.fxtf.org/css-masking-1/">
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<style>
+  #effect {
+    width: 120px;
+    height: 80px;
+    mask-image: linear-gradient(black, transparent);
+    mask-size: 20px 30px;
+    mask-position: 4px 6px;
+    mask-repeat: no-repeat;
+    mask-composite: add;
+    clip-path: inset(1px 2px 3px 4px);
+    filter: brightness(0.5) grayscale(1);
+    backdrop-filter: blur(3px);
+  }
+  #effect.alternate {
+    clip-path: circle(25% at 50% 50%);
+    filter: contrast(2);
+  }
+</style>
+<div id="initial"></div>
+<div id="effect"></div>
+<script>
+  const initial = document.getElementById('initial');
+  const effect = document.getElementById('effect');
+
+  test(() => {
+    const style = getComputedStyle(initial);
+    assert_equals(style.getPropertyValue('mask-image'), 'none');
+    assert_equals(style.getPropertyValue('mask-size'), 'auto');
+    assert_equals(style.getPropertyValue('mask-position'), '0% 0%');
+    assert_equals(style.getPropertyValue('mask-repeat'), 'repeat');
+    assert_equals(style.getPropertyValue('mask-composite'), 'add');
+    assert_equals(style.getPropertyValue('clip-path'), 'none');
+    assert_equals(style.getPropertyValue('filter'), 'none');
+    assert_equals(style.getPropertyValue('backdrop-filter'), 'none');
+  }, 'retained effect properties expose browser-shaped initial values');
+
+  test(() => {
+    const style = getComputedStyle(effect);
+    assert_regexp_match(style.getPropertyValue('mask-image'), /^linear-gradient\(/);
+    effect.style.setProperty('mask-image', 'url("AssetCase.svg")');
+    assert_true(getComputedStyle(effect).getPropertyValue('mask-image').includes('AssetCase.svg'));
+    effect.style.removeProperty('mask-image');
+  }, 'mask-image exposes a computed gradient token');
+
+  test(() => {
+    const style = getComputedStyle(effect);
+    assert_equals(style.getPropertyValue('mask-size'), '20px 30px');
+    assert_equals(style.getPropertyValue('mask-position'), '4px 6px');
+  }, 'mask geometry longhands expose computed values');
+
+  test(() => {
+    const style = getComputedStyle(effect);
+    assert_equals(style.getPropertyValue('mask-repeat'), 'no-repeat');
+    assert_equals(style.getPropertyValue('mask-composite'), 'add');
+  }, 'mask repeat and composite expose computed values');
+
+  test(() => {
+    assert_equals(getComputedStyle(effect).getPropertyValue('clip-path'),
+      'inset(1px 2px 3px 4px)');
+  }, 'clip-path exposes the supported inset syntax');
+
+  test(() => {
+    assert_equals(getComputedStyle(effect).getPropertyValue('filter'),
+      'brightness(0.5) grayscale(1)');
+  }, 'foreground filter exposes its computed function list');
+
+  test(() => {
+    assert_equals(getComputedStyle(effect).getPropertyValue('backdrop-filter'), 'blur(3px)');
+  }, 'backdrop filter exposes its computed function list');
+
+  test(() => {
+    effect.style.setProperty('filter', 'brightness(0.75)');
+    effect.style.setProperty('filter', 'unknown-effect(2)');
+    assert_equals(effect.style.getPropertyValue('filter'), 'brightness(0.75)');
+    assert_equals(getComputedStyle(effect).getPropertyValue('filter'), 'brightness(0.75)');
+    effect.style.removeProperty('filter');
+  }, 'invalid effect CSSOM writes preserve the previous declaration');
+
+  test(() => {
+    effect.classList.add('alternate');
+    assert_equals(getComputedStyle(effect).getPropertyValue('filter'), 'contrast(2)');
+    assert_equals(getComputedStyle(effect).getPropertyValue('clip-path'),
+      'circle(25% at 50% 50%)');
+    effect.classList.remove('alternate');
+    assert_equals(getComputedStyle(effect).getPropertyValue('filter'),
+      'brightness(0.5) grayscale(1)');
+  }, 'class mutation refreshes and restores effect computed values');
+
+  test(() => {
+    const before = effect.getBoundingClientRect();
+    effect.style.setProperty('filter', 'blur(2px)');
+    effect.style.setProperty('clip-path', 'inset(2px)');
+    const after = effect.getBoundingClientRect();
+    assert_equals(after.width, before.width);
+    assert_equals(after.height, before.height);
+  }, 'effect syntax does not change principal box geometry');
+</script>

@@ -233,8 +233,14 @@ native_document::allocation_metrics native_document::read_allocation_metrics() c
     }
     result.textual_style_data_count = textual_allocations.size();
     for (const auto* textual : textual_allocations) {
+        const auto effect_value_storage_bytes =
+            textual->effect_values.bucket_count() * sizeof(void*)
+            + textual->effect_values.size()
+                * (sizeof(decltype(textual->effect_values)::value_type)
+                    + 2U * sizeof(void*));
         result.textual_style_storage_bytes +=
             sizeof(node_style::textual_style_data) + 2U * sizeof(void*)
+            + effect_value_storage_bytes
             + textual->font_family.capacity() + 1U
             + textual->text_align.capacity() + 1U
             + textual->vertical_align.capacity() + 1U
@@ -246,6 +252,10 @@ native_document::allocation_metrics native_document::read_allocation_metrics() c
             + textual->svg_text_anchor.capacity() + 1U
             + textual->list_style_position.capacity() + 1U
             + textual->list_style_type.capacity() + 1U;
+        for (const auto& [name, value] : textual->effect_values) {
+            result.textual_style_storage_bytes +=
+                name.capacity() + value.capacity() + 2U;
+        }
     }
     return result;
 }

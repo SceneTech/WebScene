@@ -16,14 +16,15 @@ public static class CssPropertyCatalog
         {
             "animation-delay", "animation-direction", "animation-duration", "animation-fill-mode",
             "animation-iteration-count", "animation-name", "animation-play-state", "animation-timing-function",
-            "accent-color", "appearance", "background-attachment", "background-clip", "background-origin",
+            "accent-color", "appearance", "backdrop-filter", "background-attachment", "background-clip", "background-origin",
             "background-position", "background-position-x", "background-position-y", "background-repeat",
             "background-size", "border-bottom", "border-collapse", "border-left", "border-right",
             "border-spacing", "border-top", "clear", "column-count", "columns", "css-float",
-            "color-scheme", "empty-cells", "fill-opacity", "float", "font-stretch", "grid-area", "grid-column",
+            "clip-path", "color-scheme", "empty-cells", "fill-opacity", "filter", "float", "font-stretch", "grid-area", "grid-column",
             "grid-column-end", "grid-column-start", "grid-row", "grid-row-end", "grid-row-start",
             "grid-gap", "inset-block", "inset-inline", "inset-inline-start", "inset-inline-end",
             "margin-block", "margin-inline", "margin-inline-start", "margin-inline-end",
+            "mask-composite", "mask-image", "mask-position", "mask-repeat", "mask-size",
             "padding-block", "padding-inline", "padding-inline-start", "padding-inline-end",
             "border-inline-start", "border-inline-end",
             "border-inline-start-width", "border-inline-end-width",
@@ -103,6 +104,22 @@ public static class CssPropertyCatalog
             "color-scheme" => normalizedValue is "normal" or "light" or "dark"
                 or "light dark" or "dark light" or "only light" or "only dark",
             "accent-color" => normalizedValue == "auto" || !string.IsNullOrWhiteSpace(trimmed),
+            "filter" or "backdrop-filter" => HasOnlyFunctions(normalizedValue,
+                "blur", "brightness", "contrast", "drop-shadow", "grayscale", "hue-rotate",
+                "invert", "opacity", "saturate", "sepia", "url"),
+            "clip-path" => HasOnlyFunctions(normalizedValue,
+                "circle", "ellipse", "inset", "path", "polygon", "rect", "url", "xywh"),
+            "mask-image" => normalizedValue == "none" || HasOnlyFunctions(normalizedValue,
+                "image", "image-set", "linear-gradient", "radial-gradient",
+                "repeating-linear-gradient", "repeating-radial-gradient", "url"),
+            "mask-repeat" => HasOnlyKeywords(normalizedValue,
+                "no-repeat", "repeat", "repeat-x", "repeat-y", "round", "space"),
+            "mask-composite" => HasOnlyKeywords(normalizedValue,
+                "add", "exclude", "intersect", "subtract"),
+            "mask-size" => normalizedValue.IndexOfAny(['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']) >= 0
+                || HasOnlyKeywords(normalizedValue, "auto", "contain", "cover"),
+            "mask-position" => normalizedValue.IndexOfAny(['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']) >= 0
+                || HasOnlyKeywords(normalizedValue, "bottom", "center", "left", "right", "top"),
             "letter-spacing" => normalizedValue == "normal"
                 || !IsInvalidUnitlessLength(trimmed),
             _ => true
@@ -150,4 +167,63 @@ public static class CssPropertyCatalog
         => double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var numeric)
            && double.IsFinite(numeric)
            && numeric != 0;
+
+    private static bool HasOnlyKeywords(string value, params string[] allowed)
+    {
+        var tokens = value.Split([',', ' ', '\t', '\r', '\n'],
+            StringSplitOptions.RemoveEmptyEntries);
+        return tokens.Length > 0 && tokens.All(token => allowed.Contains(token, StringComparer.Ordinal));
+    }
+
+    private static bool HasOnlyFunctions(string value, params string[] allowed)
+    {
+        if (value == "none")
+        {
+            return true;
+        }
+
+        var cursor = 0;
+        var found = false;
+        while (cursor < value.Length)
+        {
+            while (cursor < value.Length && (char.IsWhiteSpace(value[cursor]) || value[cursor] == ','))
+            {
+                cursor++;
+            }
+            if (cursor == value.Length)
+            {
+                break;
+            }
+
+            var start = cursor;
+            while (cursor < value.Length && (char.IsLetterOrDigit(value[cursor]) || value[cursor] == '-'))
+            {
+                cursor++;
+            }
+            if (start == cursor || !allowed.Contains(value[start..cursor], StringComparer.Ordinal))
+            {
+                return false;
+            }
+            while (cursor < value.Length && char.IsWhiteSpace(value[cursor]))
+            {
+                cursor++;
+            }
+            if (cursor == value.Length || value[cursor] != '(')
+            {
+                return false;
+            }
+
+            var depth = 1;
+            for (cursor++; cursor < value.Length && depth > 0; cursor++)
+            {
+                depth += value[cursor] == '(' ? 1 : value[cursor] == ')' ? -1 : 0;
+            }
+            if (depth != 0)
+            {
+                return false;
+            }
+            found = true;
+        }
+        return found;
+    }
 }

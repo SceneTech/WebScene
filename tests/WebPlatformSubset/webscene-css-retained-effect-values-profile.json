@@ -1,0 +1,27 @@
+{
+  "profile": "webscene-css-retained-effect-values-1",
+  "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+  "runtime": "v8",
+  "viewport": {
+    "width": 800,
+    "height": 600,
+    "deviceScaleFactor": 1
+  },
+  "required": [
+    {
+      "path": "contracts/css-retained-effect-values.html",
+      "type": "testharness",
+      "capabilities": [
+        "css-mask-longhand-values",
+        "css-clip-path-values",
+        "css-filter-values",
+        "css-backdrop-filter-values",
+        "css-effect-mutation"
+      ],
+      "evidence": ["css-retained-effect-values-256"],
+      "reason": "Product-neutral syntax and computed-value boundary for retained effects before scene-command paint qualification."
+    }
+  ],
+  "harnessBlocked": [],
+  "excluded": []
+}

@@ -626,6 +626,9 @@ bool valid_cssom_declaration_value(std::string_view property_name, std::string_v
     const auto last = value.find_last_not_of(" \t\r\n\f\v");
     const auto trimmed = value.substr(first, last - first + 1U);
     const auto canonical_name = canonical_css_property_name(property_name);
+    if (css::is_effect_property(canonical_name)) {
+        return css::normalize_effect_value(canonical_name, value).has_value();
+    }
     if (canonical_name == "grid-template-areas") {
         return css::parse_grid_template_areas(trimmed).has_value();
     }

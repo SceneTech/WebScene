@@ -8,6 +8,28 @@
             || authored.important_declarations.contains(canonical_name);
     }
 
+    static std::string computed_effect_value(
+        const dom_node& node,
+        std::string_view raw_name)
+    {
+        const auto name = canonical_css_property_name(raw_name);
+        const auto authored = node.authored_style().declarations.find(name);
+        if (authored != node.authored_style().declarations.end()) {
+            if (const auto normalized = css::normalize_effect_value(name, authored->second)) {
+                if (*normalized != "inherit") return *normalized;
+            }
+        }
+        for (auto* current = &node; current != nullptr; current = current->parent) {
+            const auto effect = current->style.textual().effect_values.find(name);
+            if (effect == current->style.textual().effect_values.end()) {
+                if (current == &node) break;
+                continue;
+            }
+            if (effect->second != "inherit") return effect->second;
+        }
+        return std::string(css::effect_initial_value(name));
+    }
+
     static bool clear_inline_style(dom_node& node, const std::string& name)
     {
         const auto canonical_name = canonical_css_property_name(name);
@@ -1372,6 +1394,8 @@
                         << ((color >> 8U) & 0xFFU) << ')';
                     value = stream.str();
                 }
+            } else if (css::is_effect_property(name)) {
+                value = computed_effect_value(*node, name);
             } else if (name == "white-space") {
                 value = node->style.textual().white_space;
             } else if (name == "cursor") {
@@ -1991,6 +2015,8 @@
             }
             value = accent.empty() || accent == "auto"
                 ? "auto" : serialize_color(native_document::parse_color(accent));
+        } else if (css::is_effect_property(canonical_css_property_name(name))) {
+            value = computed_effect_value(*node, name);
         } else if (name == "fontSize") {
             value = serialize_css_number(node->style.font_size >= 0
                 ? node->style.font_size : inherited_font_size(*node)) + "px";

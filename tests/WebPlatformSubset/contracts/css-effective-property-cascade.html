@@ -1,0 +1,233 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Effective-property shorthand, all, rollback, and inline-order cascade</title>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<style>
+  body { margin: 0; }
+  @layer effective-base, effective-theme;
+
+  @layer effective-base {
+    #margin-longhand-rollback,
+    #margin-shorthand-rollback {
+      margin: 1px 2px 3px 4px;
+    }
+    #padding-longhand-rollback {
+      padding: 5px 6px 7px 8px;
+    }
+    #inset-longhand-rollback {
+      position: absolute;
+      inset: 9px 10px 11px 12px;
+    }
+    #all-rollback {
+      --all-token: 31px;
+      color: rgb(21, 22, 23);
+      width: 31px;
+      margin-left: 13px;
+      opacity: 0.6;
+    }
+    #font-longhand-rollback {
+      font-size: 10px;
+      line-height: 2;
+    }
+    #border-longhand-rollback {
+      border-style: solid;
+      border-width: 1px 2px 3px 4px;
+      border-color: rgb(1, 2, 3) rgb(4, 5, 6) rgb(7, 8, 9) rgb(10, 11, 12);
+    }
+    #gap-longhand-rollback {
+      display: grid;
+      gap: 5px 6px;
+    }
+    #overflow-longhand-rollback {
+      overflow-x: hidden;
+      overflow-y: scroll;
+    }
+  }
+
+  @layer effective-theme {
+    #margin-longhand-rollback {
+      margin: 20px 21px 22px 23px;
+      margin-left: revert-layer;
+    }
+    #margin-shorthand-rollback {
+      margin-left: 29px;
+      margin: revert-layer;
+    }
+    #padding-longhand-rollback {
+      padding: 30px 31px 32px 33px;
+      padding-right: revert-layer;
+    }
+    #inset-longhand-rollback {
+      inset: 40px 41px 42px 43px;
+      right: revert-layer;
+    }
+    #all-rollback {
+      --all-token: 51px;
+      color: rgb(41, 42, 43);
+      width: var(--all-token);
+      margin-left: 17px;
+      opacity: 0.2;
+      all: revert-layer;
+    }
+    #font-longhand-rollback {
+      font: 20px/3 sans-serif;
+      line-height: revert-layer;
+    }
+    #border-longhand-rollback {
+      border-width: 10px 11px 12px 13px;
+      border-color: rgb(21, 22, 23) rgb(24, 25, 26) rgb(27, 28, 29) rgb(30, 31, 32);
+      border-left-width: revert-layer;
+      border-right-color: revert-layer;
+    }
+    #gap-longhand-rollback {
+      gap: 20px 21px;
+      column-gap: revert-layer;
+    }
+    #overflow-longhand-rollback {
+      overflow: auto;
+      overflow-y: revert-layer;
+    }
+  }
+
+  #all-important-parent { color: rgb(61, 62, 63); }
+  #inline-all-parent { color: rgb(81, 82, 83); }
+  #all-important {
+    color: rgb(71, 72, 73) !important;
+    width: 71px !important;
+    margin-left: 19px !important;
+    opacity: 0.3 !important;
+    all: unset !important;
+  }
+</style>
+
+<div id="margin-longhand-rollback"></div>
+<div id="margin-shorthand-rollback"></div>
+<div id="padding-longhand-rollback"></div>
+<div id="inset-longhand-rollback"></div>
+<div id="all-rollback"></div>
+<div id="font-longhand-rollback">font</div>
+<div id="border-longhand-rollback"></div>
+<div id="gap-longhand-rollback"></div>
+<div id="overflow-longhand-rollback"></div>
+<div id="all-important-parent"><div id="all-important"></div></div>
+<div id="inline-order"></div>
+<div id="inline-all-parent"><div id="inline-all"></div></div>
+
+<script>
+const computed = id => getComputedStyle(document.getElementById(id));
+
+test(() => {
+  const style = computed('margin-longhand-rollback');
+  assert_equals(style.marginTop, '20px');
+  assert_equals(style.marginRight, '21px');
+  assert_equals(style.marginBottom, '22px');
+  assert_equals(style.marginLeft, '4px');
+}, 'a longhand revert-layer suppresses only its component of a later-layer shorthand');
+
+test(() => {
+  const style = computed('margin-shorthand-rollback');
+  assert_equals(style.marginTop, '1px');
+  assert_equals(style.marginRight, '2px');
+  assert_equals(style.marginBottom, '3px');
+  assert_equals(style.marginLeft, '4px');
+}, 'a shorthand revert-layer suppresses every component declaration in its layer');
+
+test(() => {
+  const style = computed('padding-longhand-rollback');
+  assert_equals(style.paddingTop, '30px');
+  assert_equals(style.paddingRight, '6px');
+  assert_equals(style.paddingBottom, '32px');
+  assert_equals(style.paddingLeft, '33px');
+}, 'padding shorthand and longhand rollback compare as effective longhands');
+
+test(() => {
+  const style = computed('inset-longhand-rollback');
+  assert_equals(style.top, '40px');
+  assert_equals(style.right, '10px');
+  assert_equals(style.bottom, '42px');
+  assert_equals(style.left, '43px');
+}, 'inset shorthand and longhand rollback compare as effective longhands');
+
+test(() => {
+  const style = computed('all-rollback');
+  assert_equals(style.color, 'rgb(21, 22, 23)');
+  assert_equals(style.width, '31px');
+  assert_equals(style.marginLeft, '13px');
+  assert_equals(style.opacity, '0.6');
+  assert_equals(style.getPropertyValue('--all-token').trim(), '51px');
+}, 'all: revert-layer rolls back modeled ordinary properties but excludes custom properties');
+
+test(() => {
+  const style = computed('font-longhand-rollback');
+  assert_equals(style.fontSize, '20px');
+  assert_equals(style.lineHeight, '40px');
+}, 'font shorthand and line-height rollback compare as the line-height longhand');
+
+test(() => {
+  const style = computed('border-longhand-rollback');
+  assert_equals(style.borderTopWidth, '10px');
+  assert_equals(style.borderLeftWidth, '4px');
+  assert_equals(style.borderTopColor, 'rgb(21, 22, 23)');
+  assert_equals(style.borderRightColor, 'rgb(4, 5, 6)');
+}, 'border width and color shorthands roll back independent effective longhands');
+
+test(() => {
+  const style = computed('gap-longhand-rollback');
+  assert_equals(style.rowGap, '20px');
+  assert_equals(style.columnGap, '6px');
+}, 'gap shorthand rollback compares row and column gaps independently');
+
+test(() => {
+  const style = computed('overflow-longhand-rollback');
+  assert_equals(style.overflowX, 'auto');
+  assert_equals(style.overflowY, 'scroll');
+}, 'overflow shorthand rollback compares each axis independently');
+
+test(() => {
+  const style = computed('all-important');
+  assert_equals(style.color, 'rgb(61, 62, 63)');
+  assert_equals(style.display, 'inline');
+  assert_equals(style.width, 'auto');
+  assert_equals(style.marginLeft, '0px');
+  assert_equals(style.opacity, '1');
+}, 'important all: unset wins each modeled longhand and preserves inheritance rules');
+
+test(() => {
+  const target = document.getElementById('inline-order');
+  target.style.setProperty('margin-left', '7px');
+  target.style.setProperty('margin', '11px');
+  target.classList.add('first-recascade');
+  assert_equals(computed('inline-order').marginLeft, '11px');
+  assert_equals(target.style.getPropertyValue('margin-left'), '11px');
+
+  target.style.setProperty('margin-left', '13px');
+  target.classList.add('second-recascade');
+  assert_equals(computed('inline-order').marginLeft, '13px');
+  assert_equals(target.style.getPropertyValue('margin-left'), '13px');
+}, 'inline CSSOM recascade preserves shorthand/longhand authored order');
+
+test(() => {
+  const target = document.getElementById('inline-all');
+  target.style.setProperty('color', 'rgb(91, 92, 93)');
+  target.style.setProperty('width', '71px');
+  target.style.setProperty('all', 'unset');
+  target.classList.add('all-recascade');
+  let style = computed('inline-all');
+  assert_equals(style.color, 'rgb(81, 82, 83)');
+  assert_equals(style.display, 'inline');
+  assert_equals(style.width, 'auto');
+
+  target.style.setProperty('width', '29px');
+  target.classList.add('width-recascade');
+  style = computed('inline-all');
+  assert_equals(style.width, '29px');
+
+  target.style.removeProperty('all');
+  target.classList.add('remove-all-recascade');
+  style = computed('inline-all');
+  assert_equals(style.color, 'rgb(81, 82, 83)');
+  assert_equals(style.display, 'block');
+  assert_equals(style.width, getComputedStyle(document.body).width);
+}, 'inline CSSOM all participates in declaration order across recascade');
+</script>

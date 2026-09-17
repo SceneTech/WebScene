@@ -243,20 +243,30 @@ void test_cascade_layer_mutation_scaling()
                 Array.from({length:UNRELATED},(_,i)=>'<div class="layer-noise-'+i+'"></div>').join('')+'</aside>';
               const style=document.createElement('style');
               style.textContent='@layer reset, components;'+
-                '@layer reset {.layer-target {display:block;width:11px;height:13px!important}}'+
-                '@layer components {#layer-scope.active .layer-target {width:41px;height:43px!important}}'+
+                '@layer reset {.layer-target {display:block;width:11px;height:13px!important;'+
+                  'margin:1px 2px 3px 4px;padding:5px 6px 7px 8px}}'+
+                '@layer components {#layer-scope.active .layer-target {'+
+                  'width:41px;height:43px!important;margin:20px 21px 22px 23px;'+
+                  'margin-left:revert-layer;padding:30px 31px 32px 33px;'+
+                  'padding-right:revert-layer}}'+
                 Array.from({length:UNRELATED},(_,i)=>
                   '@layer noise-'+i+' {.layer-noise-'+i+' {width:7px}}').join('');
               document.head.appendChild(style);
               const scope=document.getElementById('layer-scope');
               const targets=Array.from(document.querySelectorAll('.layer-target'));
-              const snapshot=width=>targets.every(node=>
-                getComputedStyle(node).width===width && getComputedStyle(node).height==='13px');
+              const snapshot=enabled=>targets.every(node=>{
+                const computed=getComputedStyle(node);
+                return computed.width===(enabled?'41px':'11px') &&
+                  computed.height==='13px' && computed.marginLeft==='4px' &&
+                  computed.marginTop===(enabled?'20px':'1px') &&
+                  computed.paddingRight==='6px' &&
+                  computed.paddingTop===(enabled?'30px':'5px');
+              });
               globalThis.mutateLayerScope=enabled=>{
                 scope.classList.toggle('active',enabled);
-                return snapshot(enabled?'41px':'11px');
+                return snapshot(enabled);
               };
-              return snapshot('11px');
+              return snapshot(false);
             })())JS"};
             source.replace(source.find("AFFECTED"), 8, std::to_string(affected_count));
             for (size_t at = source.find("UNRELATED"); at != std::string::npos;

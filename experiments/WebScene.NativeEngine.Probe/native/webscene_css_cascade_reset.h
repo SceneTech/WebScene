@@ -68,12 +68,13 @@ inline void reset_cascaded_style(dom_node& node,
             // Rebuild from authored inline values, not a previous computed
             // value that may have been replaced by an important stylesheet.
             for (const auto important : {false, true}) {
-                for (const auto& [name, value] : node.authored_style().declarations) {
+                node.authored_style().for_each_declaration(
+                    [&](const std::string& name, const std::string& value) {
                     if (margin_sides(name) != 0U
                         && node.authored_style().important_declarations.contains(name) == important) {
                         apply_margin_declaration(node.style, name, resolve_value(node,value,variables));
                     }
-                }
+                });
             }
         }
         if ((node.style.inline_property_mask & inline_border) == 0U) {

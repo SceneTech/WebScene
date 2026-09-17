@@ -225,13 +225,14 @@ inline void recompute_cascaded_line_height(dom_node& node, const cascaded_rule_o
                 if (declaration.name == "font" || declaration.name == "line-height")
                     return "line-height";
                 return declaration.name;
-            });
+        });
         for (const auto important : {false, true}) {
-            for (const auto& [name, value] : node.authored_style().declarations) {
+            node.authored_style().for_each_declaration(
+                [&](const std::string& name, const std::string& value) {
                 if (node.authored_style().important_declarations.contains(name) != important)
-                    continue;
+                    return;
                 consider({name, value, important});
-            }
+            });
         }
         if (winning_value.has_value()) {
             const auto font_size = node.style.font_size >= 0

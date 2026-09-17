@@ -112,6 +112,7 @@
         authored.declarations[declaration.name] = serialize_cssom_specified_value(
             declaration.name,
             declaration.value);
+        authored.record_declaration_order(declaration.name);
         if (declaration.important) {
             authored.important_declarations.insert(declaration.name);
         } else {

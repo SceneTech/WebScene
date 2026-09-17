@@ -103,6 +103,186 @@ struct cascade_layer_property_hash final {
     }
 };
 
+// Rollback is defined over effective longhands, not the authored spelling.
+// Keep expansion on the rare rollback path: the ordinary cascade remains a
+// zero-expansion declaration replay, while a sheet containing revert keywords
+// pays the small amount of parsing needed to distinguish shorthand components.
+template<typename Apply>
+void for_each_effective_box_declaration(
+    const css_declaration& declaration,
+    Apply&& apply)
+{
+    const auto emit = [&](std::string_view name, std::string_view value) {
+        css_declaration effective{
+            std::string(name), std::string(value), declaration.important};
+        apply(effective, name);
+    };
+    const auto& name = declaration.name;
+    if (name == "margin-inline-start") {
+        emit("margin-left", declaration.value);
+        return;
+    }
+    if (name == "margin-inline-end") {
+        emit("margin-right", declaration.value);
+        return;
+    }
+    if (name == "margin-block-start") {
+        emit("margin-top", declaration.value);
+        return;
+    }
+    if (name == "margin-block-end") {
+        emit("margin-bottom", declaration.value);
+        return;
+    }
+    if (name == "padding-inline-start") {
+        emit("padding-left", declaration.value);
+        return;
+    }
+    if (name == "padding-inline-end") {
+        emit("padding-right", declaration.value);
+        return;
+    }
+    if (name == "padding-block-start") {
+        emit("padding-top", declaration.value);
+        return;
+    }
+    if (name == "padding-block-end") {
+        emit("padding-bottom", declaration.value);
+        return;
+    }
+    if (name == "inset-inline-start") {
+        emit("left", declaration.value);
+        return;
+    }
+    if (name == "inset-inline-end") {
+        emit("right", declaration.value);
+        return;
+    }
+    if (name == "inset-block-start") {
+        emit("top", declaration.value);
+        return;
+    }
+    if (name == "inset-block-end") {
+        emit("bottom", declaration.value);
+        return;
+    }
+    if (name == "border-inline-start-width") {
+        emit("border-left-width", declaration.value);
+        return;
+    }
+    if (name == "border-inline-end-width") {
+        emit("border-right-width", declaration.value);
+        return;
+    }
+    if (name == "border-block-start-width") {
+        emit("border-top-width", declaration.value);
+        return;
+    }
+    if (name == "border-block-end-width") {
+        emit("border-bottom-width", declaration.value);
+        return;
+    }
+    if (name == "border-inline-start-color") {
+        emit("border-left-color", declaration.value);
+        return;
+    }
+    if (name == "border-inline-end-color") {
+        emit("border-right-color", declaration.value);
+        return;
+    }
+    if (name == "border-block-start-color") {
+        emit("border-top-color", declaration.value);
+        return;
+    }
+    if (name == "border-block-end-color") {
+        emit("border-bottom-color", declaration.value);
+        return;
+    }
+    const auto expands_four = name == "margin" || name == "padding"
+        || name == "inset" || name == "border-width"
+        || name == "border-color";
+    const auto expands_two = name == "margin-block" || name == "margin-inline"
+        || name == "padding-block" || name == "padding-inline"
+        || name == "gap" || name == "overflow";
+    if (!expands_four && !expands_two) {
+        apply(declaration, std::string_view(declaration.name));
+        return;
+    }
+    const auto tokens = [&]() {
+        std::array<std::string_view, 4> result{};
+        size_t count = 0;
+        size_t start = std::string_view::npos;
+        int depth = 0;
+        const auto value = std::string_view(declaration.value);
+        for (size_t index = 0; index <= value.size(); ++index) {
+            const auto character = index < value.size() ? value[index] : ' ';
+            if (character == '(') ++depth;
+            else if (character == ')' && depth > 0) --depth;
+            if (std::isspace(static_cast<unsigned char>(character)) && depth == 0) {
+                if (start == std::string_view::npos) continue;
+                if (count == result.size()) return std::pair{result, size_t{0}};
+                result[count++] = value.substr(start, index - start);
+                start = std::string_view::npos;
+            } else if (start == std::string_view::npos) {
+                start = index;
+            }
+        }
+        return std::pair{result, count};
+    }();
+    const auto& values = tokens.first;
+    const auto count = tokens.second;
+    const auto four_sides = [&](std::string_view top, std::string_view right,
+                                std::string_view bottom, std::string_view left) {
+        if (count == 0U || count > 4U) {
+            apply(declaration, std::string_view(declaration.name));
+            return;
+        }
+        emit(top, values[0]);
+        emit(right, count > 1U ? values[1] : values[0]);
+        emit(bottom, count > 2U ? values[2] : values[0]);
+        emit(left, count > 3U ? values[3] : count > 1U ? values[1] : values[0]);
+    };
+    const auto two_sides = [&](std::string_view start, std::string_view end) {
+        if (count == 0U || count > 2U) {
+            apply(declaration, std::string_view(declaration.name));
+            return;
+        }
+        emit(start, values[0]);
+        emit(end, count > 1U ? values[1] : values[0]);
+    };
+    if (name == "margin") {
+        four_sides("margin-top", "margin-right", "margin-bottom", "margin-left");
+    } else if (name == "margin-block") {
+        two_sides("margin-top", "margin-bottom");
+    } else if (name == "margin-inline") {
+        two_sides("margin-left", "margin-right");
+    } else if (name == "padding") {
+        four_sides("padding-top", "padding-right", "padding-bottom", "padding-left");
+    } else if (name == "padding-block") {
+        two_sides("padding-top", "padding-bottom");
+    } else if (name == "padding-inline") {
+        two_sides("padding-left", "padding-right");
+    } else if (name == "inset") {
+        four_sides("top", "right", "bottom", "left");
+    } else if (name == "border-width") {
+        four_sides("border-top-width", "border-right-width",
+            "border-bottom-width", "border-left-width");
+    } else if (name == "border-color") {
+        four_sides("border-top-color", "border-right-color",
+            "border-bottom-color", "border-left-color");
+    } else if (name == "gap") {
+        two_sides("row-gap", "column-gap");
+    } else if (name == "overflow") {
+        two_sides("overflow-x", "overflow-y");
+    }
+}
+
+struct cascade_rollback_winner final {
+    size_t sequence{};
+    bool layer_rollback{};
+    bool origin_rollback{};
+};
+
 template<typename Apply, typename PropertyKey>
 void for_each_cascaded_declaration(
     const cascaded_rule_order& order,
@@ -131,50 +311,99 @@ void for_each_cascaded_declaration(
         const auto apply_tier = [&](const auto rules, bool important) {
             using layer_map = std::unordered_map<
                 cascade_layer_property,
-                const css_declaration*,
+                cascade_rollback_winner,
                 cascade_layer_property_hash>;
             layer_map layer_winners;
-            std::unordered_map<std::string_view, const css_declaration*> origin_winners;
-            std::unordered_map<std::string_view, uint32_t> origin_winner_layers;
+            std::unordered_map<uint32_t, cascade_rollback_winner> layer_all_winners;
+            std::unordered_map<std::string_view, cascade_rollback_winner> origin_winners;
+            std::optional<cascade_rollback_winner> origin_all_winner;
+            size_t sequence = 0U;
             for (const auto* rule : rules) {
                 for (const auto& declaration : rule->declarations()) {
                     if (declaration.name.starts_with("--") != custom
                         || declaration.important != important) {
                         continue;
                     }
-                    const auto name = std::string_view(property_key(declaration));
-                    layer_winners[{rule->cascade_layer_order, name}] = &declaration;
-                    origin_winners[name] = &declaration;
-                    origin_winner_layers[name] = rule->cascade_layer_order;
+                    for_each_effective_box_declaration(
+                        declaration,
+                        [&](const css_declaration& effective,
+                            std::string_view effective_name) {
+                            const auto mapped_name =
+                                std::string_view(property_key(effective));
+                            const auto name = mapped_name == effective.name
+                                ? effective_name : mapped_name;
+                            const auto revert = cascade_keyword_is(
+                                effective.value, "revert");
+                            const auto revert_layer = cascade_keyword_is(
+                                effective.value, "revert-layer");
+                            const cascade_rollback_winner winner{
+                                ++sequence,
+                                revert || revert_layer,
+                                revert || (revert_layer
+                                    && rule->cascade_layer_order == 0U)};
+                            if (!custom && name == "all") {
+                                layer_all_winners[rule->cascade_layer_order] = winner;
+                                origin_all_winner = winner;
+                            } else {
+                                layer_winners[{rule->cascade_layer_order, name}] = winner;
+                                origin_winners[name] = winner;
+                            }
+                        });
                 }
             }
-            std::unordered_set<cascade_layer_property, cascade_layer_property_hash>
-                reverted_layers;
-            std::unordered_set<std::string_view> reverted_origins;
-            for (const auto& [layer_property, declaration] : layer_winners) {
-                if (cascade_keyword_is(declaration->value, "revert")
-                    || cascade_keyword_is(declaration->value, "revert-layer"))
-                    reverted_layers.insert(layer_property);
-            }
-            for (const auto& [name, declaration] : origin_winners) {
-                if (cascade_keyword_is(declaration->value, "revert")
-                    || (cascade_keyword_is(declaration->value, "revert-layer")
-                        && origin_winner_layers[name] == 0U)) {
-                    reverted_origins.insert(name);
-                }
-            }
+            const auto later = [](const cascade_rollback_winner* left,
+                                  const cascade_rollback_winner* right) {
+                if (left == nullptr) return right;
+                if (right == nullptr) return left;
+                return left->sequence < right->sequence ? right : left;
+            };
+            const auto layer_winner = [&](uint32_t layer, std::string_view name) {
+                const auto explicit_winner = layer_winners.find({layer, name});
+                const auto all_winner = layer_all_winners.find(layer);
+                return later(
+                    explicit_winner == layer_winners.end()
+                        ? nullptr : &explicit_winner->second,
+                    all_winner == layer_all_winners.end()
+                        ? nullptr : &all_winner->second);
+            };
+            const auto origin_winner = [&](std::string_view name) {
+                const auto explicit_winner = origin_winners.find(name);
+                return later(
+                    explicit_winner == origin_winners.end()
+                        ? nullptr : &explicit_winner->second,
+                    origin_all_winner.has_value() ? &*origin_all_winner : nullptr);
+            };
             for (const auto* rule : rules) {
                 for (const auto& declaration : rule->declarations()) {
                     if (declaration.name.starts_with("--") != custom
                         || declaration.important != important) {
                         continue;
                     }
-                    const auto name = std::string_view(property_key(declaration));
-                    if (reverted_origins.contains(name)
-                        || reverted_layers.contains({rule->cascade_layer_order, name})) {
-                        continue;
-                    }
-                    apply(declaration);
+                    for_each_effective_box_declaration(
+                        declaration,
+                        [&](const css_declaration& effective,
+                            std::string_view effective_name) {
+                            const auto mapped_name =
+                                std::string_view(property_key(effective));
+                            const auto name = mapped_name == effective.name
+                                ? effective_name : mapped_name;
+                            if (!custom && name == "all") {
+                                if (!cascade_keyword_is(effective.value, "revert")
+                                    && !cascade_keyword_is(
+                                        effective.value, "revert-layer")) {
+                                    apply(effective);
+                                }
+                                return;
+                            }
+                            const auto* layer = layer_winner(
+                                rule->cascade_layer_order, name);
+                            const auto* origin = origin_winner(name);
+                            if ((layer != nullptr && layer->layer_rollback)
+                                || (origin != nullptr && origin->origin_rollback)) {
+                                return;
+                            }
+                            apply(effective);
+                        });
                 }
             }
         };

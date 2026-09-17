@@ -1,5 +1,6 @@
 #pragma once
 #include "webscene_css_box_values.h"
+#include <limits>
 
 namespace webscene_native::css {
 // Existing native style storage groups used for inline/important precedence.
@@ -74,6 +75,7 @@ enum inline_style_property : uint64_t {
 };
 inline uint64_t property_mask(std::string_view name)
     {
+        if (name == "all") return std::numeric_limits<uint64_t>::max();
         if (name == "stroke-width") return inline_svg_stroke_width;
         if (name == "scrollbar-width") return inline_scrollbar_width;
         if (name == "scrollbar-color") return inline_scrollbar_color;

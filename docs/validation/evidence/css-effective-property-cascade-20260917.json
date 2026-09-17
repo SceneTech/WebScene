@@ -1,0 +1,38 @@
+{
+  "date": "2026-09-17",
+  "issue": 235,
+  "contract": "tests/WebPlatformSubset/contracts/css-effective-property-cascade.html",
+  "chrome": {
+    "version": "153.0.8010.48",
+    "documentsPassed": 1,
+    "documentsTotal": 1,
+    "subtestsPassed": 12,
+    "subtestsTotal": 12
+  },
+  "nativeBaseline": {
+    "subtestsPassed": 1,
+    "subtestsTotal": 8
+  },
+  "nativeCurrentParser": {
+    "subtestsPassed": 12,
+    "subtestsTotal": 12
+  },
+  "nativeLegacyParser": {
+    "subtestsPassed": 12,
+    "subtestsTotal": 12
+  },
+  "unchangedCascadeWinnerMatrix": {
+    "subtestsPassed": 17,
+    "subtestsTotal": 17
+  },
+  "nativeWebCtest": {
+    "testsPassed": 3,
+    "testsTotal": 3
+  },
+  "scaling": [
+    {"affected": 8, "unrelated": 32, "selectorCandidates": 16, "fallbackVisits": 0, "ruleChecks": 32, "cascadeApplications": 18, "cascadeCandidates": 32},
+    {"affected": 8, "unrelated": 1024, "selectorCandidates": 16, "fallbackVisits": 0, "ruleChecks": 32, "cascadeApplications": 18, "cascadeCandidates": 32},
+    {"affected": 128, "unrelated": 32, "selectorCandidates": 256, "fallbackVisits": 0, "ruleChecks": 512, "cascadeApplications": 258, "cascadeCandidates": 512},
+    {"affected": 128, "unrelated": 1024, "selectorCandidates": 256, "fallbackVisits": 0, "ruleChecks": 512, "cascadeApplications": 258, "cascadeCandidates": 512}
+  ]
+}

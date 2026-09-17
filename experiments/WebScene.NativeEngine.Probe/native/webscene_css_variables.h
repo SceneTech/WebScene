@@ -98,14 +98,15 @@ inline std::string resolve_value(const dom_node& node,std::string value,
 
 inline void seed_inline_custom_properties(dom_node& node) {
         node.style.clear_custom_properties();
-        for (const auto& [name, value] : node.authored_style().declarations) {
-            if (!name.starts_with("--")) continue;
+        node.authored_style().for_each_declaration(
+            [&](const std::string& name, const std::string& value) {
+            if (!name.starts_with("--")) return;
             auto& custom = node.style.mutable_custom_properties();
             custom.values[name] = value;
             if (node.authored_style().important_declarations.contains(name)) {
                 custom.important.insert(name);
             }
-        }
+        });
 }
 inline bool apply_custom_property(dom_node& node,const css_declaration& declaration) {
     const auto& name=declaration.name;

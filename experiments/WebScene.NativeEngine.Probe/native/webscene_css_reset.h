@@ -6,10 +6,29 @@
 namespace webscene_native::css {
 // Existing modeled behavior for a non-important author all:unset declaration.
 // Callers handle unsupported reset keywords and cascade ordering before entry.
-inline void apply_all_unset(dom_node& node)
+inline void apply_all_unset(
+    dom_node& node,
+    bool important = false,
+    bool inline_origin = false)
 {
     const auto is_inline=[&](uint64_t property) {
-        return ((node.style.inline_property_mask|node.style.important_property_mask)&property)!=0;
+        if (inline_origin) {
+            // An inline `all` replaces earlier declarations in its own block.
+            // Only a higher author-important rule survives inline-normal all.
+            return !important
+                && (node.style.important_property_mask & property) != 0U;
+        }
+        if (!important) {
+            return ((node.style.inline_property_mask
+                | node.style.important_property_mask) & property) != 0U;
+        }
+        // Author-important all still yields to inline-important declarations.
+        return std::any_of(
+            node.authored_style().important_declarations.begin(),
+            node.authored_style().important_declarations.end(),
+            [&](const std::string& name) {
+                return (property_mask(name) & property) != 0U;
+            });
     };
     // `all: unset` is a common component-control reset. Start from the
     // modeled initial/inherited sentinels, then restore declarations
@@ -20,17 +39,32 @@ inline void apply_all_unset(dom_node& node)
     // element's declarations.
     auto previous = node.style;
     auto reset = node_style{};
-    reset.display = native_default_display_for_node(node);
-    reset.inline_property_mask = previous.inline_property_mask;
-    reset.important_property_mask = previous.important_property_mask;
-    reset.important_margin_sides = previous.important_margin_sides;
+    // `unset` selects the CSS initial value for non-inherited properties. The
+    // element-specific block/table defaults belong to the lower UA origin and
+    // must not replace author `all: unset` (whose initial display is inline).
+    reset.display = display_mode::inline_flow;
+    reset.inline_property_mask = inline_origin
+        ? std::numeric_limits<uint64_t>::max()
+        : previous.inline_property_mask;
+    reset.important_property_mask = important
+        ? std::numeric_limits<uint64_t>::max()
+        : previous.important_property_mask;
+    reset.important_margin_sides = important
+        ? 15U
+        : previous.important_margin_sides;
     reset.move_custom_properties_from(previous);
     reset.move_pseudo_elements_from(previous);
 
     const auto has_inline = [&](std::initializer_list<std::string_view> names) {
         return std::any_of(names.begin(), names.end(), [&](std::string_view candidate) {
-            return node.authored_style().declarations.contains(
-                std::string(candidate));
+            if (!node.authored_style().declarations.contains(
+                    std::string(candidate))) {
+                return false;
+            }
+            if (inline_origin) return false;
+            return !important
+                || node.authored_style().important_declarations.contains(
+                    std::string(candidate));
         });
     };
     if (is_inline(inline_width)) reset.width = previous.width;

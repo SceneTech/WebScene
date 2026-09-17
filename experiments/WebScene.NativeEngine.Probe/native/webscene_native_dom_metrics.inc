@@ -124,12 +124,16 @@ native_document::allocation_metrics native_document::read_allocation_metrics() c
             result.authored_style_storage_bytes +=
                 sizeof(dom_node::authored_style_data)
                 + hash_bytes(authored.declarations)
-                + hash_bytes(authored.important_declarations);
+                + hash_bytes(authored.important_declarations)
+                + authored.declaration_order.capacity() * sizeof(std::string);
             for (const auto& [name, value] : authored.declarations) {
                 result.authored_style_storage_bytes +=
                     name.capacity() + value.capacity() + 2U;
             }
             for (const auto& name : authored.important_declarations) {
+                result.authored_style_storage_bytes += name.capacity() + 1U;
+            }
+            for (const auto& name : authored.declaration_order) {
                 result.authored_style_storage_bytes += name.capacity() + 1U;
             }
         }

@@ -158,6 +158,26 @@
 
     struct service_worker_runtime_state;
 
+    struct service_worker_client_descriptor final {
+        std::string id;
+        std::string url;
+        std::string type{"window"};
+        std::string frame_type{"top-level"};
+        uint64_t generation{};
+    };
+
+    struct service_worker_client_state final {
+        service_worker_client_descriptor descriptor;
+        v8::Global<v8::Context> context;
+        v8::Global<v8::Object> container;
+    };
+
+    struct service_worker_message final {
+        std::string client_id;
+        uint64_t client_generation{};
+        clone_packet packet;
+    };
+
     struct service_worker_registration_state {
         std::string scope;
         std::string script_url;

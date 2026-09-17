@@ -588,19 +588,22 @@
         synchronize_media_elements();
         if(drain_media())return true;
 #endif
-        // Worker, MessagePort, and WebSocket messages are independent browser
-        // task sources. Rotate the first eligible source so a self-refilling
-        // worker or port cannot strand a socket response behind its backlog.
-        for (uint8_t offset = 0U; offset < 3U; ++offset) {
+        // Worker, ServiceWorker, MessagePort, and WebSocket messages are
+        // independent browser task sources. Rotate the first eligible source
+        // so a self-refilling source cannot strand another source behind its
+        // backlog.
+        for (uint8_t offset = 0U; offset < 4U; ++offset) {
             const auto source = static_cast<uint8_t>(
-                (next_async_message_task_source + offset) % 3U);
+                (next_async_message_task_source + offset) % 4U);
             const auto ready = source == 0U ? has_worker_messages()
-                : source == 1U ? has_message_port_messages()
+                : source == 1U ? has_service_worker_messages()
+                : source == 2U ? has_message_port_messages()
                 : websocket_transport.has_pending_events();
             if (!ready) continue;
-            next_async_message_task_source = static_cast<uint8_t>((source + 1U) % 3U);
+            next_async_message_task_source = static_cast<uint8_t>((source + 1U) % 4U);
             if (source == 0U) return drain_worker_message();
-            if (source == 1U) return drain_message_port_message();
+            if (source == 1U) return drain_service_worker_message();
+            if (source == 2U) return drain_message_port_message();
             return drain_websocket_event();
         }
         if (!pending_window_messages.empty()) {

@@ -115,6 +115,9 @@
     std::unordered_map<uint64_t, v8::Global<v8::Object>> computed_style_wrappers;
     std::unordered_map<std::string, service_worker_registration_state>
         service_worker_registrations;
+    std::unordered_map<std::string, service_worker_client_state>
+        service_worker_clients;
+    uint64_t next_service_worker_client_id{1U};
     bool service_worker_realm{false};
     std::unordered_set<uint64_t> detached_document_roots;
     std::unordered_map<uint64_t, v8::Global<v8::Object>> detached_documents;

@@ -2345,6 +2345,14 @@
       "evidence": ["service-workers-lifecycle-derived", "chromium-153-direct-neutral-contract", "vscode-oss-controllerchange-prelude-shape"],
       "reason": "Candidate second stack for WebScene #265. It executes an admitted module in an isolated ServiceWorkerGlobalScope, waits for install and activate lifetime promises, applies skipWaiting and clients.claim, selects a scope-matched controller, resolves the stable ready promise, rejects module evaluation failures, and tears down the registration-owned runtime. A focused native gate adds 100 register/control/update/unregister cycles, a one-registration high-water bound, a one-second p95 bound, and an 8 MiB retained-heap bound. Client enumeration/messaging, navigation generations, worker-runtime/queue telemetry, warm-navigation timing, and exact Code OSS acceptance remain in later cumulative stacks.",
       "nativeNavigation": true
+    },
+    {
+      "path": "contracts/fixtures/service-worker-client-messaging.html",
+      "type": "contract",
+      "capabilities": ["service-worker-clients-get-match-all", "client-window-client-identity", "service-worker-bidirectional-post-message", "service-worker-messageport-transfer", "service-worker-arraybuffer-transfer"],
+      "evidence": ["service-workers-clients-derived", "webmessaging-structured-clone-derived", "chromium-direct-neutral-contract", "vscode-oss-service-worker-message-shape"],
+      "reason": "Candidate third stack for WebScene #265. It proves stable Client/WindowClient identity through Clients.get and matchAll, scope-bound controller source identity, bounded bidirectional structured clone, ArrayBuffer ownership transfer, and MessagePort transfer across the Window and isolated service-worker realms. Focused native gates additionally retire stale generations across controlled navigation, enforce the 256-message/16 MiB queue, and bound 100 transferred round trips to p95 <= 250 ms, retained V8 heap to 8 MiB, and peak-RSS growth to 64 MiB. Exact unchanged Code OSS acceptance and exported task/queue telemetry remain cumulative gates.",
+      "nativeNavigation": true
     }
   ],
   "harnessBlocked": [],

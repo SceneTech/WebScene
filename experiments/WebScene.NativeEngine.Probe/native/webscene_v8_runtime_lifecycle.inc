@@ -204,6 +204,17 @@
         pending_digest_bytes = 0U;
         pending_ciphers.clear();
         pending_cipher_bytes = 0U;
+        for (auto& [scope, registration] : service_worker_registrations) {
+            static_cast<void>(scope);
+            if (registration.runtime != nullptr) registration.runtime->stop();
+        }
+        service_worker_registrations.clear();
+        for (auto& [id, client] : service_worker_clients) {
+            static_cast<void>(id);
+            client.context.Reset();
+            client.container.Reset();
+        }
+        service_worker_clients.clear();
         for (auto& binding : crypto_key_bindings) {
             if (binding) binding->wrapper.Reset();
         }

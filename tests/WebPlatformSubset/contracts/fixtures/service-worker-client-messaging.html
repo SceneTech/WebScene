@@ -1,0 +1,94 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Service worker Clients and messaging</title>
+<body>
+<script>
+  const state = window.__webSceneWptState = {
+    complete: false, harness: null, results: [], errors: [], diagnostics: []
+  };
+  function assert(condition, message) { if (!condition) throw new Error(message); }
+  async function test(name, body) {
+    try {
+      await body();
+      state.results.push({ name, status: "PASS", message: null, stack: null });
+    } catch (error) {
+      state.results.push({
+        name, status: "FAIL", message: String(error.message || error),
+        stack: error.stack || null
+      });
+    }
+  }
+  function finish() {
+    const failure = state.results.find(result => result.status !== "PASS");
+    state.harness = failure
+      ? { status: 1, message: failure.message, stack: failure.stack }
+      : { status: 0, message: null, stack: null };
+    state.complete = true;
+  }
+
+  (async () => {
+    let registration;
+    await test("claimed module worker controls the admitted window client", async () => {
+      const changed = new Promise(resolve => navigator.serviceWorker.addEventListener(
+        "controllerchange", resolve, { once: true }));
+      registration = await navigator.serviceWorker.register(
+        "service-worker-client-messaging.js", { type: "module" });
+      if (!navigator.serviceWorker.controller) await changed;
+      assert(navigator.serviceWorker.controller === registration.active,
+        "active worker did not become the controller");
+    });
+
+    await test("Client identity and bidirectional structured clone are stable", async () => {
+      const channel = new MessageChannel();
+      const bytes = new Uint8Array([3, 5, 8]);
+      const containerReply = new Promise(resolve => navigator.serviceWorker.addEventListener(
+        "message", resolve, { once: true }));
+      const portReply = new Promise(resolve => {
+        channel.port1.onmessage = resolve;
+        channel.port1.start();
+      });
+      navigator.serviceWorker.controller.postMessage({ value: 40, bytes },
+        [bytes.buffer, channel.port2]);
+      assert(bytes.byteLength === 0, "window retained transferred ArrayBuffer");
+      const [message, portMessage] = await Promise.all([containerReply, portReply]);
+      assert(message.source === navigator.serviceWorker.controller,
+        "container MessageEvent source did not preserve controller identity");
+      assert(message.data.kind === "service-worker-echo", "worker echo missing");
+      assert(message.data.sourceStable && message.data.listedStable,
+        "Clients get/matchAll lost stable client id");
+      assert(message.data.clientBrand, "Client wrappers lost WindowClient brand");
+      assert(message.data.clientsBrand, "Clients interface brand mismatch");
+      assert(message.data.descriptors, "Clients/Client IDL descriptors mismatch");
+      assert(message.data.incompatibleReceivers.clients,
+        "Clients method accepted an incompatible receiver");
+      assert(message.data.incompatibleReceivers.client,
+        "Client attribute accepted an incompatible receiver");
+      assert(message.data.incompatibleReceivers.windowClient,
+        "WindowClient attribute accepted an incompatible receiver");
+      assert(message.data.incompatibleReceivers.clientMethod,
+        "Client method accepted an incompatible receiver");
+      assert(message.data.incompatibleReceivers.windowClientMethod,
+        "WindowClient method accepted an incompatible receiver");
+      assert(message.data.client.type === "window", "Client.type mismatch");
+      assert(message.data.client.url === location.href, "Client.url mismatch");
+      assert(typeof message.data.client.focused === "boolean",
+        "WindowClient.focused mismatch");
+      assert(["hidden", "visible", "prerender", "unloaded"].includes(
+        message.data.client.visibilityState),
+        "WindowClient.visibilityState mismatch");
+      assert(message.data.bytes instanceof Uint8Array
+        && message.data.bytes.join(",") === "3,5,8",
+        "worker ArrayBuffer transfer changed bytes");
+      assert(portMessage.data.kind === "port-echo" && portMessage.data.value === 41,
+        "transferred MessagePort did not round trip");
+    });
+
+    await test("unregister releases registration ownership", async () => {
+      assert(await registration.unregister(), "unregister returned false");
+      assert((await navigator.serviceWorker.getRegistrations()).length === 0,
+        "registration remained after unregister");
+    });
+    finish();
+  })();
+</script>
+</body>

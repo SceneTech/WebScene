@@ -1,0 +1,26 @@
+{
+  "profile": "webscene-pseudo-icon-font-1",
+  "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+  "runtime": "v8",
+  "viewport": {
+    "width": 800,
+    "height": 600,
+    "deviceScaleFactor": 1
+  },
+  "required": [
+    {
+      "path": "contracts/css-pseudo-icon-font-family.html",
+      "type": "reftest",
+      "reference": "contracts/css-pseudo-icon-font-family-ref.html",
+      "capabilities": [
+        "generated-pseudo-font-family",
+        "downloadable-font-face",
+        "private-use-glyph-paint"
+      ],
+      "evidence": ["code-oss-seti-tab-and-list-icon-reduction"],
+      "reason": "Exact-pixel reduction of generated icon labels whose originating element uses the system UI face while ::before selects a downloadable icon face. The fixture maps the two private-use code points observed in unchanged Code OSS and compares them with ordinary reference glyph boxes."
+    }
+  ],
+  "harnessBlocked": [],
+  "excluded": []
+}

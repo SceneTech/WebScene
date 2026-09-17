@@ -282,6 +282,9 @@ inline property_result apply_pseudo_value(node_style::pseudo_element& pseudo,
             pseudo.foreground_rgba = native_document::parse_color(value);
         } else if (name == "font-size") {
             pseudo.font_size = std::max(0.0F, native_document::parse_length(value).value);
+        } else if (name == "font-family") {
+            pseudo.font_family = value == "inherit" || value == "unset"
+                ? std::string{} : value;
         } else if (name == "line-height") {
             if (value == "normal" || value == "initial" || value == "revert") {
                 pseudo.line_height = -2.0F;

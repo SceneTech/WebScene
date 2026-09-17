@@ -150,6 +150,9 @@ dom_node make_pseudo_layout_node(
     result.style.z_index = pseudo.z_index;
     result.style.font_size = pseudo.font_size;
     result.style.line_height = pseudo.line_height;
+    if (!pseudo.font_family.empty()) {
+        result.style.mutable_textual().font_family = pseudo.font_family;
+    }
     return result;
 }
 

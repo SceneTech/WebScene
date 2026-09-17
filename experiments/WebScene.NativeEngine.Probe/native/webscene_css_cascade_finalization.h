@@ -36,6 +36,7 @@ inline bool pseudo_layout_equal(
             && left.align_self == right.align_self
             && left.font_size == right.font_size
             && left.line_height == right.line_height
+            && left.font_family == right.font_family
             && left.content == right.content
             && left.generated == right.generated
             && left.display_none == right.display_none

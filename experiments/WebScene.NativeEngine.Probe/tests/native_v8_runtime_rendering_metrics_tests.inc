@@ -661,6 +661,8 @@ void test_svg_background_image_reaches_scene_with_position_and_size(webscene_eng
         "URL-backed SVG background did not retain its 100x60 paint box and longhands");
 }
 
+void test_generated_pseudo_font_family_scene_and_scale_gate();
+
 void test_rounded_icon_surfaces_publish_stable_commands_across_selection_mutation(
     webscene_engine* engine)
 {
@@ -783,6 +785,291 @@ void test_rounded_icon_surfaces_publish_stable_commands_across_selection_mutatio
         "rounded surface selection mutation did not change and restore the scene checksum");
     std::error_code cleanup_error;
     std::filesystem::remove_all(resource_directory, cleanup_error);
+    test_generated_pseudo_font_family_scene_and_scale_gate();
+}
+
+void test_generated_pseudo_font_family_scene_and_scale_gate()
+{
+    struct measurement_probe final {
+        std::atomic<uint32_t> fixture_calls{0};
+        std::atomic<uint32_t> alternate_calls{0};
+        std::atomic<uint32_t> parent_calls{0};
+    } probe;
+    webscene_engine_options options{};
+    options.struct_size = sizeof(options);
+    options.text_measure_user_data = &probe;
+    options.text_measure_callback = +[](
+        void* user_data,
+        const char* text,
+        size_t text_length,
+        const char* family,
+        size_t family_length,
+        float font_size,
+        int32_t,
+        float,
+        float,
+        webscene_text_metrics* metrics) -> uint8_t {
+        if (text == nullptr || family == nullptr || metrics == nullptr
+            || metrics->struct_size < sizeof(webscene_text_metrics)) return 0U;
+        auto& state = *static_cast<measurement_probe*>(user_data);
+        const std::string_view selected(family, family_length);
+        auto advance = font_size * 3.0F;
+        if (selected.find("FixtureIconAlternate") != std::string_view::npos) {
+            ++state.alternate_calls;
+            advance = 18.0F;
+        } else if (selected.find("FixtureIcon") != std::string_view::npos) {
+            ++state.fixture_calls;
+            advance = 12.0F;
+        } else if (selected.find("ParentFace") != std::string_view::npos) {
+            ++state.parent_calls;
+        }
+        metrics->advance_width = text_length == 0U ? 0.0F : advance;
+        metrics->ascent = font_size * 0.8F;
+        metrics->descent = font_size * 0.2F;
+        metrics->leading = 0.0F;
+        return 1U;
+    };
+    auto* engine = webscene_engine_create_with_options(&options);
+    require(engine != nullptr, "pseudo font-family engine creation failed");
+    resize(engine, 640, 480, 1U);
+    const auto execute_bounded = [&](std::string_view source,
+                                     std::string_view name,
+                                     int maximum_attempts) {
+        webscene_engine_metrics before{};
+        webscene_engine_get_metrics(engine, &before);
+        execute(engine, source, name);
+        for (auto attempt = 0; attempt < maximum_attempts; ++attempt) {
+            webscene_engine_metrics after{};
+            webscene_engine_get_metrics(engine, &after);
+            if (after.script_errors > before.script_errors) {
+                fail("pseudo font-family script failed: " + last_error(engine));
+            }
+            if (after.executed_scripts > before.executed_scripts) return;
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        fail("pseudo font-family script exceeded its bounded wait: " + std::string(name));
+    };
+
+    struct pseudo_scene_snapshot final {
+        uint64_t revision{};
+        uint64_t checksum{UINT64_C(1469598103934665603)};
+        uint32_t matching_commands{};
+        uint32_t total_commands{};
+        std::vector<uint32_t> node_ids;
+        std::string observed_text_commands;
+    };
+    const auto capture = [&](std::string_view expected_family,
+                             float expected_width,
+                             uint32_t expected_count) {
+        webscene_engine_request_scene_checkpoint(engine);
+        pseudo_scene_snapshot latest{};
+        for (auto attempt = 0; attempt < 5000; ++attempt) {
+            const auto* scene = webscene_engine_acquire_latest_scene(engine);
+            if (scene != nullptr) {
+                latest = {};
+                latest.revision = scene->header.revision;
+                latest.total_commands = scene->header.command_count;
+                for (uint32_t index = 0; index < scene->header.command_count; ++index) {
+                    const auto& command = scene->commands[index];
+                    if (command.kind != 3U || command.flags >= scene->string_count) continue;
+                    const auto descriptor = scene->strings[command.flags];
+                    const std::string_view resource(
+                        scene->string_bytes + descriptor.byte_offset,
+                        descriptor.byte_length);
+                    if (latest.observed_text_commands.size() < 2048U) {
+                        latest.observed_text_commands += " rgba=" + std::to_string(command.rgba)
+                            + " rect=" + std::to_string(command.x) + ","
+                            + std::to_string(command.y) + ","
+                            + std::to_string(command.width) + ","
+                            + std::to_string(command.height) + " resource="
+                            + std::string(resource);
+                    }
+                    if (command.rgba != 0x0C2238FFU) continue;
+                    const auto family_field = "\t" + std::string(expected_family) + "\t";
+                    require(resource.find(family_field) != std::string_view::npos,
+                        "generated pseudo text command used the originating font family: "
+                            + std::string(resource));
+                    require(std::abs(command.width - expected_width) < 0.01F
+                            && std::abs(command.height - 20.0F) < 0.01F,
+                        "generated pseudo intrinsic metrics did not use its font family");
+                    ++latest.matching_commands;
+                    latest.node_ids.push_back(command.node_id);
+                    const auto mix = [&](uint64_t value) {
+                        latest.checksum ^= value;
+                        latest.checksum *= UINT64_C(1099511628211);
+                    };
+                    mix(command.kind);
+                    mix(command.node_id);
+                    mix(std::bit_cast<uint32_t>(command.x));
+                    mix(std::bit_cast<uint32_t>(command.y));
+                    mix(std::bit_cast<uint32_t>(command.width));
+                    mix(std::bit_cast<uint32_t>(command.height));
+                    mix(command.rgba);
+                    for (const auto byte : resource) mix(static_cast<unsigned char>(byte));
+                }
+                webscene_scene_acknowledge(scene);
+                webscene_scene_release(scene);
+            }
+            if (latest.matching_commands == expected_count) return latest;
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        fail("generated pseudo font-family scene did not reach its expected command count: expected="
+            + std::to_string(expected_count) + " observed="
+            + std::to_string(latest.matching_commands) + " total="
+            + std::to_string(latest.total_commands) + latest.observed_text_commands);
+    };
+
+    execute(engine, R"JS(
+      (() => {
+        document.head.innerHTML = '';
+        document.body.innerHTML = '';
+        document.body.style.margin = '0';
+        const rules = document.createElement('style');
+        rules.id = 'pseudo-font-rules';
+        rules.textContent = `
+          .icon-host { display:block; font-family:ParentFace; height:20px; }
+          .icon-host::before { content:'\\e023'; display:inline-block;
+            color:rgb(12,34,56); font-family:FixtureIcon;
+            font-size:20px; line-height:20px; }
+          #single-icon::before { font-family:WrongFace; }
+          .icon-host::before { font-family:FixtureIcon !important; }
+          .icon-host.alternate::before { font-family:FixtureIconAlternate !important; }
+          .icon-host.inherited::before { font-family:inherit !important; }
+        `;
+        document.head.appendChild(rules);
+        const host = document.createElement('div');
+        host.id = 'single-icon';
+        host.className = 'icon-host';
+        document.body.appendChild(host);
+      })()
+    )JS", "native-pseudo-font-family-setup.js");
+    const auto initial = capture("FixtureIcon", 12.0F, 1U);
+    execute(engine,
+        "document.getElementById('single-icon').classList.add('inherited')",
+        "native-pseudo-font-family-inherit.js");
+    const auto inherited = capture("ParentFace", 60.0F, 1U);
+    execute(engine,
+        "document.getElementById('single-icon').classList.remove('inherited')",
+        "native-pseudo-font-family-inherit-restore.js");
+    const auto inherited_restored = capture("FixtureIcon", 12.0F, 1U);
+    require(initial.checksum != inherited.checksum
+            && initial.checksum == inherited_restored.checksum
+            && initial.node_ids == inherited_restored.node_ids,
+        "pseudo font-family inheritance did not exactly restore retained scene identity");
+    execute(engine,
+        "document.getElementById('single-icon').classList.add('alternate')",
+        "native-pseudo-font-family-alternate.js");
+    const auto alternate = capture("FixtureIconAlternate", 18.0F, 1U);
+    execute(engine,
+        "document.getElementById('single-icon').classList.remove('alternate')",
+        "native-pseudo-font-family-restore.js");
+    const auto restored = capture("FixtureIcon", 12.0F, 1U);
+    require(initial.checksum != alternate.checksum
+            && initial.checksum == restored.checksum
+            && initial.node_ids == restored.node_ids,
+        "pseudo font-family mutation did not change and exactly restore retained scene identity");
+    execute_bounded("document.getElementById('single-icon').remove()",
+        "native-pseudo-font-family-single-cleanup.js", 1000);
+
+    webscene_engine_metrics baseline{};
+    webscene_engine_get_metrics(engine, &baseline);
+    webscene_engine_memory_metrics baseline_memory{sizeof(webscene_engine_memory_metrics)};
+    require(webscene_engine_get_memory_metrics(engine, &baseline_memory) != 0,
+        "pseudo font-family baseline memory metrics were unavailable");
+    execute_bounded(R"JS(
+      (() => {
+        const rules = document.getElementById('pseudo-font-rules');
+        rules.textContent += `
+          #bulk > .bulk-icon { display:block; height:20px; font-family:ParentFace; }
+          #bulk > .bulk-icon::before { content:'\\e023'; display:inline-block;
+            color:rgb(12,34,56); font-family:FixtureIcon;
+            font-size:20px; line-height:20px; }
+          #bulk.alternate > .bulk-icon::before { font-family:FixtureIconAlternate; }
+        `;
+        const bulk = document.createElement('main');
+        bulk.id = 'bulk';
+        const fragment = document.createDocumentFragment();
+        for (let index = 0; index < 4096; ++index) {
+          const icon = document.createElement('span');
+          icon.className = 'bulk-icon';
+          fragment.appendChild(icon);
+        }
+        bulk.appendChild(fragment);
+        document.body.appendChild(bulk);
+      })()
+    )JS", "native-pseudo-font-family-scale-setup.js", 20000);
+    require(evaluate(engine, "document.getElementById('bulk').children.length",
+                "native-pseudo-font-family-scale-count.js") == "4096",
+        "pseudo font-family scale fixture did not create 4,096 icons");
+    const auto bulk_initial = capture("FixtureIcon", 12.0F, 4096U);
+    execute(engine, "document.getElementById('bulk').classList.add('alternate')",
+        "native-pseudo-font-family-scale-alternate.js");
+    const auto bulk_alternate = capture("FixtureIconAlternate", 18.0F, 4096U);
+    execute(engine, "document.getElementById('bulk').classList.remove('alternate')",
+        "native-pseudo-font-family-scale-restore.js");
+    const auto bulk_restored = capture("FixtureIcon", 12.0F, 4096U);
+    require(bulk_initial.checksum != bulk_alternate.checksum
+            && bulk_initial.checksum == bulk_restored.checksum
+            && bulk_initial.node_ids == bulk_restored.node_ids,
+        "4,096-node pseudo font mutation did not preserve retained node identity and checksum");
+
+    webscene_engine_metrics before_cycles{};
+    webscene_engine_get_metrics(engine, &before_cycles);
+    webscene_engine_memory_metrics before_cycles_memory{sizeof(webscene_engine_memory_metrics)};
+    require(webscene_engine_get_memory_metrics(engine, &before_cycles_memory) != 0,
+        "pseudo font-family scale memory metrics were unavailable");
+    const auto started = std::chrono::steady_clock::now();
+    execute_bounded(R"JS(
+      (() => {
+        const bulk = document.getElementById('bulk');
+        for (let cycle = 0; cycle < 100; ++cycle) {
+          bulk.classList.add('alternate');
+          bulk.classList.remove('alternate');
+        }
+      })()
+    )JS", "native-pseudo-font-family-scale-cycles.js", 20000);
+    require(evaluate(engine, "document.getElementById('bulk').children.length",
+                "native-pseudo-font-family-scale-cycle-count.js") == "4096",
+        "pseudo font-family scale cycles did not retain all icons");
+    const auto elapsed = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - started).count();
+    require(elapsed < 5000.0,
+        "4,096 pseudo icons across 100 family cycles exceeded 5 seconds: "
+            + std::to_string(elapsed));
+    const auto bulk_after_cycles = capture("FixtureIcon", 12.0F, 4096U);
+    require(bulk_after_cycles.checksum == bulk_initial.checksum
+            && bulk_after_cycles.node_ids == bulk_initial.node_ids,
+        "scaled family cycles did not restore the original retained scene");
+
+    webscene_engine_metrics after_cycles{};
+    webscene_engine_get_metrics(engine, &after_cycles);
+    webscene_engine_memory_metrics after_cycles_memory{sizeof(webscene_engine_memory_metrics)};
+    require(webscene_engine_get_memory_metrics(engine, &after_cycles_memory) != 0,
+        "post-cycle pseudo font-family memory metrics were unavailable");
+    require(after_cycles.dom_nodes == before_cycles.dom_nodes,
+        "pseudo font-family cycles changed the retained DOM node count");
+    require(after_cycles_memory.native_dom_pseudo_storage_bytes
+            == before_cycles_memory.native_dom_pseudo_storage_bytes,
+        "pseudo font-family cycles changed retained pseudo storage");
+    require(after_cycles_memory.native_dom_pseudo_storage_bytes
+            <= baseline_memory.native_dom_pseudo_storage_bytes + 4U * 1024U * 1024U,
+        "4,096 pseudo font records exceeded the 4 MiB native storage bound");
+    require(after_cycles_memory.native_text_measurement_cache_entry_count
+            == before_cycles_memory.native_text_measurement_cache_entry_count,
+        "family cycles grew the warmed text measurement cache");
+    require(probe.fixture_calls.load() <= 8U && probe.alternate_calls.load() <= 8U,
+        "repeated pseudo family cycles bypassed the bounded font measurement cache");
+    require(webscene_engine_requires_animation_frame(engine) == 0U,
+        "settled pseudo font-family fixture retained host frame demand");
+
+    std::cout << "pseudo-font-family icons=4096 cycles=100 elapsed-ms=" << elapsed
+              << " commands=" << bulk_after_cycles.matching_commands
+              << " total-commands=" << bulk_after_cycles.total_commands
+              << " pseudo-storage-bytes="
+              << after_cycles_memory.native_dom_pseudo_storage_bytes
+              << " fixture-measures=" << probe.fixture_calls.load()
+              << " alternate-measures=" << probe.alternate_calls.load() << '\n';
+    webscene_engine_destroy(engine);
 }
 
 void test_tradingview_repeating_svg_checker_background_reaches_scene(

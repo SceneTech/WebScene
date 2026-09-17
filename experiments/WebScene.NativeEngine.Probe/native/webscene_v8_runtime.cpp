@@ -260,6 +260,7 @@ extern "C" WEBSCENE_API uint64_t webscene_selector_sibling_benchmark_pointer_cop
 namespace webscene_native {
 namespace {
 
+#include "generated/webscene_css_supported_properties.inc"
 #include "webscene_v8_runtime_support.inc"
 #include "webscene_precompiled_javascript_support.inc"
 } // namespace
@@ -756,51 +757,14 @@ struct v8_dom_runtime::implementation final {
         style->SetInternalFieldCount(2);
         style->SetNativeDataProperty(
             js_string(isolate, "cssText"), get_style_css_text, set_style_css_text);
-        const char* properties[] = {
-            "width", "height", "minWidth", "minHeight", "maxWidth", "maxHeight",
-            "left", "top", "right", "bottom", "inset", "insetInlineStart", "insetInlineEnd",
-            "display", "position", "contain", "cssFloat", "flexDirection", "flexFlow",
-            "flexGrow", "flexShrink", "flexBasis", "flexWrap",
-            "alignItems", "alignSelf", "alignContent", "justifyContent", "gap", "rowGap", "columnGap",
-            "gridGap", "gridRowGap", "gridColumnGap",
-            "padding", "paddingInline", "paddingBlock",
-            "paddingLeft", "paddingTop", "paddingRight", "paddingBottom",
-            "paddingInlineStart", "paddingInlineEnd", "paddingBlockStart", "paddingBlockEnd",
-            "margin", "marginInline", "marginBlock",
-            "marginLeft", "marginTop", "marginRight", "marginBottom",
-            "boxSizing", "borderRadius", "boxShadow", "transform", "transformOrigin",
-            "transition", "transitionProperty", "transitionDuration", "transitionDelay",
-            "transitionTimingFunction", "animation", "animationName",
-            "animationDuration", "animationDelay", "animationTimingFunction",
-            "animationDirection", "animationFillMode", "animationIterationCount",
-            "animationPlayState", "appearance", "zIndex", "opacity",
-            "background", "backgroundColor", "backgroundImage", "backgroundRepeat",
-            "backgroundAttachment", "backgroundClip", "backgroundOrigin",
-            "backgroundPosition", "backgroundPositionX", "backgroundPositionY", "backgroundSize",
-            "border", "borderWidth", "borderStyle", "borderColor",
-            "borderTop", "borderRight", "borderBottom", "borderLeft",
-            "borderTopWidth", "borderRightWidth",
-            "borderBottomWidth", "borderLeftWidth", "borderTopStyle", "borderTopColor",
-            "borderRightColor", "borderBottomColor", "borderLeftColor",
-            "borderTopLeftRadius", "borderTopRightRadius", "borderBottomRightRadius",
-            "borderBottomLeftRadius", "borderCollapse", "borderSpacing", "clear",
-            "columnCount", "columns", "emptyCells", "fillOpacity", "float",
-            "gridTemplateAreas", "gridArea", "gridColumn", "gridColumnEnd", "gridColumnStart",
-            "gridRow", "gridRowEnd", "gridRowStart", "order", "orphans",
-            "outlineColor", "outlineWidth", "outlineStyle",
-            "overflow", "overflowX", "overflowY", "color",
-            "font", "fontSize", "fontFamily", "webkitFontSmoothing", "fontStretch",
-            "fontWeight", "lineHeight",
-            "letterSpacing", "wordSpacing", "resize", "tableLayout", "textAlign",
-            "textDecoration", "textOverflow", "verticalAlign", "whiteSpace", "widows", "zoom",
-            "visibility", "direction", "pointerEvents", "cursor"
-        };
-        for (const auto* property : properties) {
-            style->SetNativeDataProperty(js_string(isolate, property), get_style_property, set_style_property);
-            const auto css_name = canonical_css_property_name(property);
-            if (css_name != property) {
+        for (const auto& property : cssom_supported_property_catalog) {
+            style->SetNativeDataProperty(
+                js_string(isolate, property.idl_name.data()),
+                get_style_property,
+                set_style_property);
+            if (property.css_name != property.idl_name) {
                 style->SetNativeDataProperty(
-                    js_string(isolate, css_name.c_str()),
+                    js_string(isolate, property.css_name.data()),
                     get_style_property,
                     set_style_property);
             }

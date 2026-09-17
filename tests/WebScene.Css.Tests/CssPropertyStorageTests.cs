@@ -7,6 +7,9 @@ public sealed class CssPropertyStorageTests
     [Fact]
     public void KnownPropertyCatalogHasStableCaseInsensitiveIds()
     {
+        Assert.Equal(105, CssKnownProperties.Count);
+        Assert.Equal(CssGeneratedPropertyMetadata.KnownNames, CssKnownProperties.Names);
+
         for (var index = 0; index < CssKnownProperties.Names.Length; index++)
         {
             var name = CssKnownProperties.Names[index];

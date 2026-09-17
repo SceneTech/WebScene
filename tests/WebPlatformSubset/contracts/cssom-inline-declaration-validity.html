@@ -42,6 +42,24 @@
       "an expando leaked into the CSS declaration block");
   });
 
+  test("generated logical property metadata is exposed through CSSOM", () => {
+    const style = document.createElement("div").style;
+    const cases = [
+      ["inset-block-end", "insetBlockEnd", "7px"],
+      ["border-block-width", "borderBlockWidth", "2px"],
+      ["border-inline-color", "borderInlineColor", "red"],
+      ["padding-block-start", "paddingBlockStart", "3px"],
+      ["margin-block-end", "marginBlockEnd", "4px"]
+    ];
+    for (const [cssName, idlName, value] of cases) {
+      assert(cssName in style && idlName in style,
+        `${cssName}/${idlName} was absent from CSSStyleDeclaration`);
+      style[idlName] = value;
+      assert(style.getPropertyValue(cssName) === value,
+        `${idlName} did not update ${cssName}: ${style.getPropertyValue(cssName)}`);
+    }
+  });
+
   test("invalid declarations preserve the previous authored value", () => {
     const style = document.createElement("div").style;
     style.position = "absolute";

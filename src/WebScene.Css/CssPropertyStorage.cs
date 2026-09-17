@@ -12,28 +12,7 @@ namespace WebScene.Css;
 /// </summary>
 internal static class CssKnownProperties
 {
-    internal static readonly string[] Names =
-    [
-        "align-content", "align-items", "align-self", "all", "background", "background-color",
-        "background-image", "border", "border-bottom-color", "border-bottom-left-radius",
-        "border-bottom-right-radius", "border-bottom-style", "border-bottom-width", "border-color",
-        "border-left-color", "border-left-style", "border-left-width", "border-radius",
-        "border-right-color", "border-right-style", "border-right-width", "border-style",
-        "border-top-color", "border-top-left-radius", "border-top-right-radius", "border-top-style",
-        "border-top-width", "border-width", "bottom", "box-sizing", "clip-rule", "color",
-        "column-gap", "content", "cursor", "direction", "display", "fill", "fill-rule", "flex",
-        "flex-basis", "flex-direction", "flex-flow", "flex-grow", "flex-shrink", "flex-wrap", "font",
-        "font-family", "font-size", "font-style", "font-variant", "font-weight", "gap",
-        "grid", "grid-template-columns", "grid-template-rows", "height", "inset", "justify-content",
-        "left", "letter-spacing", "line-height", "margin", "margin-bottom", "margin-left",
-        "margin-right", "margin-top", "max-height", "max-width", "min-height", "min-width", "opacity",
-        "order", "overflow", "overflow-x", "overflow-y", "padding", "padding-bottom", "padding-left",
-        "padding-right", "padding-top", "pointer-events", "position", "right", "row-gap", "stroke",
-        "stroke-linecap", "stroke-linejoin", "stroke-width", "text-align", "text-indent", "text-transform",
-        "top", "transform", "visibility", "white-space", "width", "word-spacing", "z-index",
-        "outline", "outline-color", "outline-offset", "outline-style", "outline-width",
-        "grid-template-areas"
-    ];
+    internal static readonly string[] Names = CssGeneratedPropertyMetadata.KnownNames;
 
     private static readonly FrozenDictionary<string, int> s_ids = Names
         .Select(static (name, index) => new KeyValuePair<string, int>(name, index))
@@ -43,42 +22,12 @@ internal static class CssKnownProperties
 
     internal static bool TryGetId(string name, out int id)
     {
-        id = name switch
+        if (CssGeneratedPropertyMetadata.TryGetKnownId(name, out id))
         {
-            "align-content" => 0, "align-items" => 1, "align-self" => 2, "all" => 3,
-            "background" => 4, "background-color" => 5, "background-image" => 6, "border" => 7,
-            "border-bottom-color" => 8, "border-bottom-left-radius" => 9,
-            "border-bottom-right-radius" => 10, "border-bottom-style" => 11,
-            "border-bottom-width" => 12, "border-color" => 13, "border-left-color" => 14,
-            "border-left-style" => 15, "border-left-width" => 16, "border-radius" => 17,
-            "border-right-color" => 18, "border-right-style" => 19, "border-right-width" => 20,
-            "border-style" => 21, "border-top-color" => 22, "border-top-left-radius" => 23,
-            "border-top-right-radius" => 24, "border-top-style" => 25, "border-top-width" => 26,
-            "border-width" => 27, "bottom" => 28, "box-sizing" => 29, "clip-rule" => 30,
-            "color" => 31, "column-gap" => 32, "content" => 33, "cursor" => 34,
-            "direction" => 35, "display" => 36, "fill" => 37, "fill-rule" => 38, "flex" => 39,
-            "flex-basis" => 40, "flex-direction" => 41, "flex-flow" => 42, "flex-grow" => 43,
-            "flex-shrink" => 44, "flex-wrap" => 45, "font" => 46, "font-family" => 47,
-            "font-size" => 48, "font-style" => 49, "font-variant" => 50, "font-weight" => 51,
-            "gap" => 52, "grid" => 53, "grid-template-columns" => 54, "grid-template-rows" => 55,
-            "height" => 56, "inset" => 57, "justify-content" => 58, "left" => 59,
-            "letter-spacing" => 60, "line-height" => 61, "margin" => 62, "margin-bottom" => 63,
-            "margin-left" => 64, "margin-right" => 65, "margin-top" => 66, "max-height" => 67,
-            "max-width" => 68, "min-height" => 69, "min-width" => 70, "opacity" => 71,
-            "order" => 72, "overflow" => 73, "overflow-x" => 74, "overflow-y" => 75,
-            "padding" => 76, "padding-bottom" => 77, "padding-left" => 78,
-            "padding-right" => 79, "padding-top" => 80, "pointer-events" => 81,
-            "position" => 82, "right" => 83, "row-gap" => 84, "stroke" => 85,
-            "stroke-linecap" => 86, "stroke-linejoin" => 87, "stroke-width" => 88,
-            "text-align" => 89, "text-indent" => 90, "text-transform" => 91, "top" => 92,
-            "transform" => 93, "visibility" => 94, "white-space" => 95, "width" => 96,
-            "word-spacing" => 97, "z-index" => 98, "outline" => 99, "outline-color" => 100,
-            "outline-offset" => 101, "outline-style" => 102, "outline-width" => 103,
-            "grid-template-areas" => 104,
-            _ => -1
-        };
+            return true;
+        }
 
-        return id >= 0 || s_ids.TryGetValue(name, out id);
+        return s_ids.TryGetValue(name, out id);
     }
 }
 

@@ -1,0 +1,76 @@
+{
+  "date": "2026-09-17",
+  "issue": 235,
+  "catalog": {
+    "managedKnownProperties": 105,
+    "managedKnownPropertyOrderSha256": "fc4d77c515998b6df1f119ff7e09b0b82cc812744c34f1c44c6fd142067b1fb2",
+    "supportedPropertyExtras": 95,
+    "effectiveProperties": 61,
+    "unifiedSupportedProperties": 214,
+    "previousNativeHandwrittenIdlNames": 152
+  },
+  "generatedOutputs": {
+    "nativeEffectivePropertyTable": 61,
+    "nativeCssomCssIdlPairs": 214,
+    "managedKnownNames": 105,
+    "managedSupportedNames": 214,
+    "managedDirectIdSwitchEntries": 105
+  },
+  "contracts": {
+    "chrome": {
+      "version": "153.0.8010.48",
+      "passed": 5,
+      "total": 5
+    },
+    "nativeCurrentParser": {
+      "passed": 5,
+      "total": 5
+    },
+    "nativeLegacyParser": {
+      "passed": 5,
+      "total": 5
+    }
+  },
+  "tests": {
+    "managedSolutionBuild": {
+      "result": "pass",
+      "warnings": 16,
+      "newWarnings": 0,
+      "errors": 0
+    },
+    "generator": {
+      "passed": 6,
+      "total": 6,
+      "generatedCheck": "pass"
+    },
+    "managedCssNet8": {
+      "passed": 383,
+      "total": 383
+    },
+    "managedCssNet10": {
+      "passed": 383,
+      "total": 383
+    },
+    "managedSolution": {
+      "passed": 1774,
+      "skipped": 30,
+      "failed": 0
+    },
+    "nativeCurrentCssParser": {
+      "passed": 1,
+      "total": 1
+    },
+    "nativeWebCss": {
+      "passed": 3,
+      "total": 3
+    }
+  },
+  "adjacentCssomSweep": {
+    "documentsPassed": 9,
+    "documentsTotal": 10,
+    "subtestsPassed": 60,
+    "subtestsTotal": 61,
+    "propertyExposureFailures": 0,
+    "unrelatedFailure": "dom-document-cssom-hosted-page-primitives document.cookie"
+  }
+}

@@ -1426,6 +1426,7 @@
         set_context_location(local_context, global, frame_href);
 
         install_navigator(isolate, local_context, global);
+        install_service_worker_control(local_context, global);
 
         install_console(local_context, global);
 

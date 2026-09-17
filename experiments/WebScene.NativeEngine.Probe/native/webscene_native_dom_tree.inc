@@ -898,6 +898,9 @@ dom_node* native_document::hit_test_node(
     const auto top = std::min(transformed_top, transformed_bottom);
     const auto bottom = std::max(transformed_top, transformed_bottom);
     const auto inside = x >= left && y >= top && x <= right && y <= bottom;
+    if (node.style.content_visibility_hidden) {
+        return inside && !visibility_hidden && !pointer_events_none ? &node : nullptr;
+    }
     if (inside || !node.style.clip || ignore_own_clip) {
         if (style_establishes_atomic_stacking_context(node) || node.contains_retained_canvas) {
             std::vector<dom_node*> elevated;

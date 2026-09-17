@@ -34,6 +34,10 @@ enum class length_unit : uint8_t {
     viewport_height_capped,
     viewport_width_floored,
     viewport_height_floored,
+    container_inline,
+    container_block,
+    container_min,
+    container_max,
     max_content,
     min_content,
     fit_content,
@@ -567,6 +571,10 @@ struct node_style final {
         std::string text_transform;
         std::string white_space;
         std::string contain_value;
+        std::string container_type{"normal"};
+        std::string container_name{"none"};
+        std::string content_visibility{"visible"};
+        css_length contain_intrinsic_size{};
         // Authored cursor token. Cursor is inherited, so an empty value means
         // the host projection resolves the nearest declaration or `auto`.
         std::string cursor;
@@ -786,6 +794,7 @@ struct node_style final {
     bool transform_stacking_context : 1 {false};
     // layout/paint containment establishes an atomic stacking context.
     bool contain_stacking_context : 1 {false};
+    bool content_visibility_hidden : 1 {false};
     // Margin parsing passes these four flags by reference, so unlike the other
     // hot boolean style state they remain addressable scalar values.
     bool margin_left_auto{false};

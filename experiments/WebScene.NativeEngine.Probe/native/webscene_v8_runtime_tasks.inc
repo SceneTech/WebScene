@@ -2061,7 +2061,8 @@
         auto visibility_hidden = false;
         for (auto* current_node = node; current_node != nullptr;
              current_node = document.composed_parent(*current_node)) {
-            if (current_node->style.display == display_mode::none) return false;
+            if (current_node->style.display == display_mode::none
+                || current_node->style.content_visibility_hidden) return false;
             if (!visibility_resolved && current_node->style.visibility_specified) {
                 visibility_hidden = current_node->style.visibility_hidden;
                 visibility_resolved = true;

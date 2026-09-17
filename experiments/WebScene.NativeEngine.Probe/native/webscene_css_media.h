@@ -1,11 +1,13 @@
 #pragma once
+#include "webscene_css_container_queries.h"
 #include "webscene_css_matching.h"
 #include <cstdlib>
 
 namespace webscene_native::css {
 struct media_environment { float width; float height; bool dark=false; bool reduced_motion=false; };
 inline bool media_matches(std::string query, const media_environment& environment)
-    {
+{
+    if (is_container_query(query)) return true;
         std::transform(query.begin(), query.end(), query.begin(), [](unsigned char character) {
             return static_cast<char>(std::tolower(character));
         });

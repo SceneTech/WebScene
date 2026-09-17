@@ -1494,7 +1494,7 @@ void test_unsupported_features_are_reported_at_native_decision_points(webscene_e
                 != std::string::npos
             && report.find(R"("feature":"at-rule:@layer","classification":"partially-supported")")
                 != std::string::npos
-            && report.find(R"("feature":"at-rule:@container","classification":"unsupported")")
+            && report.find(R"("feature":"at-rule:@container","classification":"supported")")
                 != std::string::npos
             && report.find(R"("feature":"selector:pseudo-class:nth-child","classification":"partially-supported")")
                 != std::string::npos
@@ -1553,6 +1553,7 @@ void test_unsupported_features_are_reported_at_native_decision_points(webscene_e
             && listeners.find(R"("eventTypes":["click","webscene-dispatched")")
                 != std::string::npos,
         "registered listener targets were absent from the structured inventory: " + listeners);
+
 #endif
 }
 

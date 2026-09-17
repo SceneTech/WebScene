@@ -117,6 +117,14 @@ inline void reset_cascaded_style(dom_node& node,
             node.style.contain_stacking_context = false;
             node.style.mutable_textual().contain_value = "none";
         }
+        if ((node.style.inline_property_mask & inline_containment_features) == 0U) {
+            auto& textual = node.style.mutable_textual();
+            textual.container_type = "normal";
+            textual.container_name = "none";
+            textual.content_visibility = "visible";
+            textual.contain_intrinsic_size = {};
+            node.style.content_visibility_hidden = false;
+        }
         node.style.clear_animations();
         if ((node.style.inline_property_mask & inline_flex_direction) == 0U) {
             node.style.direction = flex_direction::row;

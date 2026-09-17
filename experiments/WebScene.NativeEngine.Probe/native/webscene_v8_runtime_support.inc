@@ -1121,6 +1121,23 @@ float resolve_connected_css_length(
         return std::max(
             root->layout.height * length.value / 100.0F,
             length.pixel_offset);
+    case length_unit::container_inline:
+    case length_unit::container_block:
+    case length_unit::container_min:
+    case length_unit::container_max: {
+        auto* container = context.parent;
+        while (container != nullptr
+            && container->style.textual().container_type != "size"
+            && container->style.textual().container_type != "inline-size") {
+            container = container->parent;
+        }
+        const auto width = container == nullptr ? root->layout.width : container->layout.width;
+        const auto height = container == nullptr ? root->layout.height : container->layout.height;
+        const auto basis = length.unit == length_unit::container_block ? height
+            : length.unit == length_unit::container_min ? std::min(width, height)
+            : length.unit == length_unit::container_max ? std::max(width, height) : width;
+        return basis * length.value / 100.0F;
+    }
     case length_unit::automatic:
     case length_unit::max_content:
     case length_unit::min_content:
@@ -1191,6 +1208,10 @@ float connected_computed_dimension(
         case length_unit::viewport_height_capped:
         case length_unit::viewport_width_floored:
         case length_unit::viewport_height_floored:
+        case length_unit::container_inline:
+        case length_unit::container_block:
+        case length_unit::container_min:
+        case length_unit::container_max:
             // display:none suppresses box generation, not the computed value of
             // an independently resolvable declaration. Percentage and intrinsic
             // values still require a real formatting context and remain on the

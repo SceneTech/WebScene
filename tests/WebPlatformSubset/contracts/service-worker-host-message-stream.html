@@ -1,0 +1,147 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Service Worker host-message response streaming</title>
+<script>
+  const state = window.__webSceneWptState = {
+    complete:false, harness:null, results:[], errors:[], diagnostics:[]
+  };
+  function record(name, condition, detail = 'Contract failed') {
+    state.results.push({name, status:condition ? 'PASS' : 'FAIL',
+      message:condition ? null : detail, stack:null});
+  }
+  const encode = value => new TextEncoder().encode(value);
+  const wait = duration => new Promise(resolve => setTimeout(resolve, duration));
+  (async () => {
+    const changed = new Promise(resolve => navigator.serviceWorker.addEventListener(
+      'controllerchange', resolve, {once:true}));
+    const registration = await navigator.serviceWorker.register(
+      'service-worker-host-message-stream-worker.js');
+    if (!navigator.serviceWorker.controller) await changed;
+    const controller = navigator.serviceWorker.controller;
+    let transferred = true;
+    navigator.serviceWorker.addEventListener('message', event => {
+      const message = event.data || {};
+      if (message.channel !== 'load-resource') return;
+      const {id, path} = message;
+      if (path === '/host-stream-timeout') return;
+      controller.postMessage({
+        channel:'did-load-resource',
+        data:{id, status:200, mime:'text/plain'}
+      });
+      if (path === '/host-stream-malformed') {
+        controller.postMessage({
+          channel:'did-load-resource-chunk',
+          data:{id, data:'not bytes'}
+        });
+        controller.postMessage({channel:'did-load-resource-end', data:{id}});
+        return;
+      }
+      const values = path === '/host-stream-error'
+        ? ['partial'] : ['host-', 'stream'];
+      for (const value of values) {
+        const bytes = encode(value);
+        controller.postMessage({
+          channel:'did-load-resource-chunk',
+          data:{id, data:bytes}
+        }, [bytes.buffer]);
+        transferred &&= bytes.byteLength === 0;
+      }
+      controller.postMessage({
+        channel:'did-load-resource-end',
+        data:{id, error:path === '/host-stream-error'}
+      });
+      controller.postMessage({
+        channel:'did-load-resource-end',
+        data:{id}
+      });
+      controller.postMessage({
+        channel:'did-load-resource-chunk',
+        data:{id, data:encode('late')}
+      });
+    });
+
+    const response = await fetch('host-stream-ok');
+    record('host metadata and transferred chunks form one ordered response',
+      response.status === 200 && await response.text() === 'host-stream'
+        && transferred);
+
+    let aborted = false;
+    try { await (await fetch('host-stream-error')).text(); }
+    catch (error) { aborted = true; }
+    record('host stream abort rejects response consumption', aborted);
+
+    let malformed = false;
+    try { await (await fetch('host-stream-malformed')).text(); }
+    catch (error) {
+      malformed = error instanceof TypeError || String(error).includes('Uint8Array');
+    }
+    record('non-byte response chunks fail closed', malformed);
+
+    const timeout = await fetch('host-stream-timeout');
+    record('unresolved host responses time out without fallback',
+      timeout.status === 408 && await timeout.text() === 'TimeoutError');
+
+    const transform = new TransformStream();
+    const writer = transform.writable.getWriter();
+    const reader = transform.readable.getReader();
+    let writeSettled = false;
+    let readySettled = false;
+    const write = writer.write(encode('pressure')).then(() => {
+      writeSettled = true;
+    });
+    writer.ready.then(() => { readySettled = true; });
+    await wait(0);
+    const backpressured = !writeSettled && !readySettled
+      && writer.desiredSize <= 0;
+    const chunk = await reader.read();
+    await write;
+    await writer.ready;
+    await writer.close();
+    const end = await reader.read();
+    record('TransformStream write and ready reflect readable backpressure',
+      backpressured && new TextDecoder().decode(chunk.value) === 'pressure'
+        && !chunk.done && end.done && writer.desiredSize === 0);
+
+    const canceled = new TransformStream();
+    const cancelWriter = canceled.writable.getWriter();
+    const cancelReader = canceled.readable.getReader();
+    const pendingWrite = cancelWriter.write(encode('cancel')).then(
+      () => false, () => true);
+    const closed = cancelWriter.closed.then(() => false, () => true);
+    await cancelReader.cancel(new DOMException('consumer canceled', 'AbortError'));
+    record('readable cancellation rejects pending writes and writer.closed',
+      await pendingWrite && await closed && cancelWriter.desiredSize === null);
+
+    controller.postMessage({channel:'did-load-resource-chunk',
+      data:{id:999999, data:encode('unknown')}});
+    controller.postMessage({channel:'did-load-resource-end',
+      data:{id:999999}});
+    const report = await new Promise(resolve => {
+      const listener = event => {
+        if (event.data?.channel !== 'host-stream-report') return;
+        navigator.serviceWorker.removeEventListener('message', listener);
+        resolve(event.data);
+      };
+      navigator.serviceWorker.addEventListener('message', listener);
+      controller.postMessage({channel:'report'});
+    });
+    record('duplicate late and unknown stream messages release all state',
+      report.pending === 0 && report.writers === 0
+        && report.observations.completed >= 1
+        && report.observations.completed <= 2
+        && report.observations.aborted === 1
+        && report.observations.timedOut === 1
+        && report.observations.ignored >= 6,
+      JSON.stringify(report));
+    await registration.unregister();
+  })().catch(error => {
+    state.errors.push(String(error && error.stack || error));
+    record('contract completed', false, state.errors[0]);
+  }).finally(() => {
+    const failure = state.results.find(result => result.status !== 'PASS');
+    state.harness = failure
+      ? {status:1, message:failure.message, stack:failure.stack}
+      : {status:0, message:null, stack:null};
+    state.complete = true;
+  });
+</script>

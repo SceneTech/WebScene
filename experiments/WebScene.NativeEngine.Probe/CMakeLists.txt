@@ -889,6 +889,12 @@ if(WEBSCENE_NATIVE_ENGINE_ENABLE_V8)
             COMMAND webscene_native_engine_tests)
         add_test(NAME webscene_native_service_worker_range_cache
             COMMAND webscene_native_engine_tests)
+        add_test(NAME webscene_native_service_worker_host_stream
+            COMMAND webscene_native_engine_tests)
+        set_tests_properties(webscene_native_service_worker_host_stream PROPERTIES
+            ENVIRONMENT "WEBSCENE_NATIVE_ENGINE_TEST_FILTER=service-worker-host-stream"
+            LABELS "native;service-worker;stream;security;lifecycle;performance"
+            TIMEOUT 75)
         set_tests_properties(webscene_native_service_worker_range_cache PROPERTIES
             ENVIRONMENT "WEBSCENE_NATIVE_ENGINE_TEST_FILTER=service-worker-range-cache"
             LABELS "native;service-worker;resource;security;lifecycle;performance"

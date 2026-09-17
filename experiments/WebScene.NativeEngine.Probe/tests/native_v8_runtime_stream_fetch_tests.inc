@@ -410,6 +410,356 @@ void test_cache_storage_and_controlled_fetch_broker()
     webscene_engine_destroy(engine);
 }
 
+void test_service_worker_host_message_streaming()
+{
+    resource_server server{.content = {
+        {"https://host-stream.test/index.html",
+            "<!doctype html><title>host message stream gate</title>"},
+        {"https://host-stream.test/service-worker.js", R"JS(
+            const pending = new Map();
+            const writers = new Map();
+            let nextId = 0;
+            const observations = {
+              requested:0, completed:0, aborted:0, timedOut:0, ignored:0
+            };
+            self.addEventListener('install', event => event.waitUntil(skipWaiting()));
+            self.addEventListener('activate', event => event.waitUntil(clients.claim()));
+            self.addEventListener('fetch', event => {
+              const path = new URL(event.request.url).pathname;
+              if (!path.startsWith('/host-')) return;
+              event.respondWith((async () => {
+                const client = await clients.get(event.clientId);
+                if (!client) return new Response('missing client', {status:404});
+                const id = ++nextId;
+                const result = new Promise((resolve, reject) => {
+                  const timeout = setTimeout(() => {
+                    if (!pending.delete(id)) return;
+                    ++observations.timedOut;
+                    reject(new DOMException('host response timed out', 'TimeoutError'));
+                  }, 200);
+                  pending.set(id, {
+                    resolve(value) { clearTimeout(timeout); pending.delete(id); resolve(value); },
+                    reject(error) { clearTimeout(timeout); pending.delete(id); reject(error); }
+                  });
+                });
+                ++observations.requested;
+                client.postMessage({channel:'load-resource', id, path});
+                try { return await result; }
+                catch (error) {
+                  return new Response(String(error?.name || error), {status:408});
+                }
+              })());
+            });
+            self.addEventListener('message', event => {
+              const message = event.data || {};
+              const data = message.data || {};
+              if (message.channel === 'did-load-resource') {
+                const request = pending.get(data.id);
+                if (!request || writers.has(data.id)) { ++observations.ignored; return; }
+                const transform = new TransformStream();
+                const writer = transform.writable.getWriter();
+                writers.set(data.id, writer);
+                writer.closed.then(
+                  () => writers.delete(data.id), () => writers.delete(data.id));
+                request.resolve(new Response(transform.readable, {
+                  status:data.status, headers:{'content-type':data.mime}
+                }));
+                return;
+              }
+              if (message.channel === 'did-load-resource-chunk') {
+                const writer = writers.get(data.id);
+                if (!writer) { ++observations.ignored; return; }
+                writer.write(data.data).catch(() => writers.delete(data.id));
+                return;
+              }
+              if (message.channel === 'did-load-resource-end') {
+                const writer = writers.get(data.id);
+                if (!writer) { ++observations.ignored; return; }
+                writers.delete(data.id);
+                if (data.error) {
+                  ++observations.aborted;
+                  writer.abort(new Error('host stream aborted')).catch(() => {});
+                } else {
+                  ++observations.completed;
+                  writer.close().catch(() => {});
+                }
+                return;
+              }
+              if (message.channel === 'report') {
+                event.source.postMessage({channel:'host-stream-report',
+                  observations:{...observations}, pending:pending.size,
+                  writers:writers.size});
+              }
+            });
+        )JS"}
+    }};
+    webscene_engine_options options{};
+    options.struct_size = sizeof(options);
+    options.resource_load_callback = load_test_resource;
+    options.resource_load_user_data = &server;
+    auto* engine = webscene_engine_create_with_options(&options);
+    require(engine != nullptr, "host message stream engine creation failed");
+    constexpr std::string_view address{"https://host-stream.test/index.html"};
+    require(webscene_engine_load_url(engine, address.data(), address.size()) != 0U,
+        "host message stream navigation failed");
+    require(evaluate_until_equals(engine, "location.href",
+            "host-stream-navigation.js",
+            R"("https://host-stream.test/index.html")", 2'500)
+            == R"("https://host-stream.test/index.html")",
+        "host message stream document did not become ready");
+
+    webscene_engine_memory_metrics memory_before{sizeof(webscene_engine_memory_metrics)};
+    require(webscene_engine_get_memory_metrics(engine, &memory_before) != 0,
+        "host message stream memory baseline unavailable");
+    const auto rss_before = service_worker_test_peak_rss_bytes();
+    const auto current_rss_before = service_worker_test_current_rss_bytes();
+    execute(engine, R"JS(
+      globalThis.__hostStream = {
+        complete:false, error:null, providerError:null, durations:[], report:null,
+        transferred:true, abortRejected:false, malformedRejected:false,
+        timeoutStatus:0, backpressured:false, canceled:false,
+        quotaError:null, bulkDuration:0, bulkCount:0, retired:false,
+        retireDuration:0, bulkComplete:false, continueAfterBulk:false
+      };
+      (async () => {
+        const wait = duration => new Promise(resolve => setTimeout(resolve, duration));
+        const changed = new Promise(resolve => navigator.serviceWorker.addEventListener(
+          'controllerchange', resolve, {once:true}));
+        const registration = await navigator.serviceWorker.register(
+          'service-worker.js', {type:'module'});
+        if (!navigator.serviceWorker.controller) await changed;
+        const controller = navigator.serviceWorker.controller;
+        const provide = async ({id, path}) => {
+          try {
+            if (path === '/host-timeout' || path === '/host-retire') return;
+            controller.postMessage({channel:'did-load-resource',
+              data:{id, status:200, mime:'application/octet-stream'}});
+            if (path === '/host-malformed') {
+              controller.postMessage({channel:'did-load-resource-chunk',
+                data:{id, data:'not bytes'}});
+            } else if (path === '/host-error') {
+              const bytes = new TextEncoder().encode('partial');
+              controller.postMessage({channel:'did-load-resource-chunk',
+                data:{id, data:bytes}}, [bytes.buffer]);
+              __hostStream.transferred &&= bytes.byteLength === 0;
+            } else if (path === '/host-bulk') {
+              for (let chunk = 0; chunk < 4; ++chunk) {
+                const bytes = new Uint8Array(256 * 1024);
+                bytes[0] = 0x48;
+                bytes[bytes.length - 1] = 0x53;
+                controller.postMessage({channel:'did-load-resource-chunk',
+                  data:{id, data:bytes}}, [bytes.buffer]);
+                __hostStream.transferred &&= bytes.byteLength === 0;
+                await wait(2);
+              }
+            } else {
+              const bytes = new Uint8Array(64 * 1024);
+              bytes[0] = 0x48;
+              bytes[bytes.length - 1] = 0x53;
+              controller.postMessage({channel:'did-load-resource-chunk',
+                data:{id, data:bytes}}, [bytes.buffer]);
+              __hostStream.transferred &&= bytes.byteLength === 0;
+            }
+            controller.postMessage({channel:'did-load-resource-end',
+              data:{id, error:path === '/host-error'}});
+            if (path === '/host-malformed' || path === '/host-error') {
+              controller.postMessage({channel:'did-load-resource-end', data:{id}});
+              controller.postMessage({channel:'did-load-resource-chunk',
+                data:{id, data:new Uint8Array([1])}});
+            }
+          } catch (error) {
+            __hostStream.providerError = String(error && error.stack || error);
+          }
+        };
+        navigator.serviceWorker.addEventListener('message', event => {
+          if (event.data?.channel === 'load-resource') void provide(event.data);
+        });
+        try {
+          const pressure = new TransformStream();
+          const pressureWriter = pressure.writable.getWriter();
+          const pressureReader = pressure.readable.getReader();
+          let writeSettled = false;
+          let readySettled = false;
+          const pressureWrite = pressureWriter.write(new Uint8Array([1])).then(
+            () => { writeSettled = true; });
+          pressureWriter.ready.then(() => { readySettled = true; });
+          await wait(0);
+          __hostStream.backpressured = !writeSettled && !readySettled
+            && pressureWriter.desiredSize <= 0;
+          const pressureChunk = await pressureReader.read();
+          await pressureWrite;
+          await pressureWriter.ready;
+          await pressureWriter.close();
+          const pressureEnd = await pressureReader.read();
+          __hostStream.backpressured &&= pressureChunk.value[0] === 1
+            && !pressureChunk.done && pressureEnd.done
+            && pressureWriter.desiredSize === 0;
+
+          const canceled = new TransformStream();
+          const cancelWriter = canceled.writable.getWriter();
+          const cancelReader = canceled.readable.getReader();
+          const cancelWrite = cancelWriter.write(new Uint8Array([2])).then(
+            () => false, () => true);
+          const cancelClosed = cancelWriter.closed.then(() => false, () => true);
+          await cancelReader.cancel(new DOMException('consumer canceled', 'AbortError'));
+          __hostStream.canceled = await cancelWrite && await cancelClosed
+            && cancelWriter.desiredSize === null;
+
+          const bounded = new TransformStream();
+          const boundedWriter = bounded.writable.getWriter();
+          const queued = [];
+          for (let index = 0; index < 17; ++index) {
+            queued.push(boundedWriter.write(new Uint8Array(1024 * 1024)).then(
+              () => null, error => error?.name || String(error)));
+          }
+          __hostStream.quotaError = await queued[16];
+          await Promise.all(queued);
+
+          const bulkStarted = performance.now();
+          const bulk = await Promise.all(Array.from({length:32}, (_, index) =>
+            fetch(`/host-bulk?${index}`).then(response => response.arrayBuffer())));
+          __hostStream.bulkDuration = performance.now() - bulkStarted;
+          __hostStream.bulkCount = bulk.filter(value => {
+            const bytes = new Uint8Array(value);
+            return bytes.byteLength === 1024 * 1024 && bytes[0] === 0x48
+              && bytes[bytes.length - 1] === 0x53;
+          }).length;
+          __hostStream.bulkComplete = true;
+          while (!__hostStream.continueAfterBulk) await wait(1);
+
+          for (let cycle = 0; cycle < 100; ++cycle) {
+            const started = performance.now();
+            const body = new Uint8Array(await (await fetch(`/host-warm?${cycle}`)).arrayBuffer());
+            if (body.byteLength !== 64 * 1024 || body[0] !== 0x48
+                || body[body.length - 1] !== 0x53) {
+              throw new Error(`warm response ${cycle} changed`);
+            }
+            __hostStream.durations.push(performance.now() - started);
+          }
+
+          try { await (await fetch('/host-error')).arrayBuffer(); }
+          catch (error) { __hostStream.abortRejected = true; }
+          try { await (await fetch('/host-malformed')).arrayBuffer(); }
+          catch (error) {
+            __hostStream.malformedRejected = String(error).includes('Uint8Array');
+          }
+          __hostStream.timeoutStatus = (await fetch('/host-timeout')).status;
+
+          for (let cycle = 0; cycle < 100; ++cycle) {
+            const stream = new TransformStream();
+            const writer = stream.writable.getWriter();
+            const reader = stream.readable.getReader();
+            const write = writer.write(new Uint8Array([cycle & 255])).catch(() => {});
+            const closed = writer.closed.catch(() => {});
+            await reader.cancel(new DOMException('cycle retired', 'AbortError'));
+            await write;
+            await closed;
+          }
+
+          controller.postMessage({channel:'did-load-resource-chunk',
+            data:{id:999999, data:new Uint8Array([1])}});
+          controller.postMessage({channel:'did-load-resource-end',
+            data:{id:999999}});
+          __hostStream.report = await new Promise(resolve => {
+            const listener = event => {
+              if (event.data?.channel !== 'host-stream-report') return;
+              navigator.serviceWorker.removeEventListener('message', listener);
+              resolve(event.data);
+            };
+            navigator.serviceWorker.addEventListener('message', listener);
+            controller.postMessage({channel:'report'});
+          });
+
+          const retireFetch = fetch('/host-retire').then(
+            () => false, () => true);
+          await wait(5);
+          const retireStarted = performance.now();
+          await registration.unregister();
+          __hostStream.retired = await retireFetch;
+          __hostStream.retireDuration = performance.now() - retireStarted;
+        } catch (error) {
+          __hostStream.error = String(error && error.stack || error);
+        } finally { __hostStream.complete = true; }
+      })();
+    )JS", "host-stream-gate.js");
+    require(evaluate_until_equals(engine, "__hostStream.bulkComplete",
+            "host-stream-bulk-complete.js", "true", 10'000) == "true",
+        "host message stream bulk gate did not finish: " + last_error(engine));
+    const auto current_rss_after_bulk = service_worker_test_current_rss_bytes();
+    execute(engine, "__hostStream.continueAfterBulk = true;",
+        "host-stream-continue.js");
+    require(evaluate_until_equals(engine, "__hostStream.complete",
+            "host-stream-complete.js", "true", 60'000) == "true",
+        "host message stream gate did not finish: " + last_error(engine));
+    require(evaluate(engine, "__hostStream.error", "host-stream-error.js") == "null",
+        "host message stream gate failed: "
+            + evaluate(engine, "__hostStream.error", "host-stream-error-detail.js"));
+    require(evaluate(engine, "__hostStream.providerError",
+            "host-stream-provider-error.js") == "null",
+        "host message provider failed: "
+            + evaluate(engine, "__hostStream.providerError",
+                "host-stream-provider-error-detail.js"));
+    require(evaluate(engine, R"JS((() => {
+      const value = __hostStream;
+      const report = value.report;
+      return value.transferred && value.abortRejected && value.malformedRejected
+        && value.timeoutStatus === 408 && value.backpressured && value.canceled
+        && value.quotaError === 'QuotaExceededError'
+        && value.bulkCount === 32 && value.bulkDuration <= 5000
+        && value.retired && value.retireDuration <= 500
+        && report.pending === 0 && report.writers === 0
+        && report.observations.aborted === 1
+        && report.observations.timedOut === 1
+        && report.observations.ignored >= 4;
+    })())JS", "host-stream-semantics.js") == "true",
+        "host message stream semantics diverged: "
+            + evaluate(engine, "JSON.stringify(__hostStream)",
+                "host-stream-semantics-detail.js"));
+    const auto p95 = std::stod(evaluate(engine, R"JS((() => {
+      const values = [...__hostStream.durations].sort((a,b) => a-b);
+      return values[Math.ceil(values.length * .95) - 1];
+    })())JS", "host-stream-p95.js"));
+    require(p95 <= 100.0,
+        "64 KiB host message stream p95 exceeded 100 ms: "
+            + std::to_string(p95));
+    require(webscene_engine_request_low_memory(engine) != 0,
+        "host message stream low-memory request rejected");
+    webscene_engine_memory_metrics memory_after{sizeof(webscene_engine_memory_metrics)};
+    for (auto attempt = 0; attempt < 250; ++attempt) {
+        require(webscene_engine_get_memory_metrics(engine, &memory_after) != 0,
+            "host message stream final memory metrics unavailable");
+        if (memory_after.low_memory_notifications
+            > memory_before.low_memory_notifications) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    require(memory_after.low_memory_notifications
+            > memory_before.low_memory_notifications,
+        "host message stream low-memory collection did not complete");
+    require(memory_after.v8_used_heap_bytes
+            <= memory_before.v8_used_heap_bytes + 8U * 1024U * 1024U,
+        "host message stream cycles retained more than 8 MiB V8 heap");
+    const auto bulk_ms = std::stod(evaluate(engine, "__hostStream.bulkDuration",
+        "host-stream-bulk-duration.js"));
+    const auto rss_after = service_worker_test_peak_rss_bytes();
+    webscene_engine_destroy(engine);
+    const auto current_rss_after = service_worker_test_current_rss_bytes();
+    require(rss_before == 0U || rss_after <= rss_before + 256U * 1024U * 1024U,
+        "host message stream stress exceeded 256 MiB peak RSS growth");
+    require(current_rss_after_bulk == 0U || current_rss_after == 0U
+            || current_rss_after <= current_rss_after_bulk + 64U * 1024U * 1024U,
+        "host message stream cycles retained more than 64 MiB RSS after teardown: before="
+            + std::to_string(current_rss_after_bulk) + " after="
+            + std::to_string(current_rss_after));
+    std::cout << "Host message stream gate: warmCycles=100 p95=" << p95
+              << "ms bulk32MiB=" << bulk_ms
+              << "ms heapBefore=" << memory_before.v8_used_heap_bytes
+              << " heapAfter=" << memory_after.v8_used_heap_bytes
+              << " peakRssBefore=" << rss_before << " peakRssAfter=" << rss_after
+              << " currentRssBefore=" << current_rss_before
+              << " currentRssAfterBulk=" << current_rss_after_bulk
+              << " currentRssAfter=" << current_rss_after << '\n';
+}
+
 void test_controlled_range_cache_headers_and_body_budget()
 {
     resource_server server{.content = {

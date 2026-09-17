@@ -335,6 +335,27 @@ uint64_t service_worker_test_peak_rss_bytes()
 #endif
 }
 
+uint64_t service_worker_test_current_rss_bytes()
+{
+#if defined(__APPLE__)
+    mach_task_basic_info_data_t info{};
+    mach_msg_type_number_t count = MACH_TASK_BASIC_INFO_COUNT;
+    if (task_info(mach_task_self(), MACH_TASK_BASIC_INFO,
+            reinterpret_cast<task_info_t>(&info), &count) != KERN_SUCCESS) return 0U;
+    return static_cast<uint64_t>(info.resident_size);
+#elif defined(__linux__)
+    std::ifstream statm("/proc/self/statm");
+    uint64_t total_pages = 0U;
+    uint64_t resident_pages = 0U;
+    statm >> total_pages >> resident_pages;
+    const auto page_size = sysconf(_SC_PAGESIZE);
+    return page_size > 0
+        ? resident_pages * static_cast<uint64_t>(page_size) : 0U;
+#else
+    return 0U;
+#endif
+}
+
 void test_service_worker_client_queue_performance_and_memory_gate()
 {
     resource_server server{.content = {

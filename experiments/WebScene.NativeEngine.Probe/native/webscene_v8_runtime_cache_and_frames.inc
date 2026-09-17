@@ -2103,9 +2103,11 @@
     }
 
     bool execute_frame_hydration_script(
+        const dom_node& frame,
         frame_hydration_state& hydration,
         const frame_script& script)
     {
+        if (!iframe_sandbox_allows(frame, "allow-scripts")) return true;
         auto local_frame_context = hydration.context.Get(isolate);
         if (local_frame_context.IsEmpty()) {
             frame_last_error_value = "Iframe context was discarded during hydration";
@@ -2176,7 +2178,7 @@
             while (hydration.next_script < hydration.scripts.size()) {
                 const auto& script = hydration.scripts[hydration.next_script++];
                 if (script.defer != defer) continue;
-                if (!execute_frame_hydration_script(hydration, script)) {
+                if (!execute_frame_hydration_script(frame, hydration, script)) {
                     return restore_outer(frame_hydration_result::failed);
                 }
                 executed_script = true;
@@ -2644,7 +2646,13 @@
             {},
             v8::PropertyHandlerFlags::kNonMasking));
         auto local_frame_context = v8::Context::New(isolate, nullptr, frame_global_template);
-        local_frame_context->SetSecurityToken(context.Get(isolate)->GetSecurityToken());
+        if (iframe_sandbox_allows(frame, "allow-same-origin")) {
+            local_frame_context->SetSecurityToken(context.Get(isolate)->GetSecurityToken());
+        } else {
+            local_frame_context->SetSecurityToken(js_string(
+                isolate,
+                ("webscene-opaque-sandbox-" + std::to_string(frame.id)).c_str()));
+        }
         local_frame_context->SetAlignedPointerInEmbedderData(
             runtime_context_embedder_slot,
             this,
@@ -2666,7 +2674,8 @@
             local_frame_context,
             "WebScene frame " + std::to_string(frame.id));
 #endif
-        if (!execute_document_start_scripts(local_frame_context, true)) {
+        if (iframe_sandbox_allows(frame, "allow-scripts")
+            && !execute_document_start_scripts(local_frame_context, true)) {
             activate_css_cascade(context.Get(isolate));
             return frame_hydration_result::failed;
         }

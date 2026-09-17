@@ -662,6 +662,13 @@
             info.GetReturnValue().Set(v8::Null(info.GetIsolate()));
             return;
         }
+        if (!self->iframe_sandbox_allows(*node, "allow-same-origin")) {
+            // WebScene does not yet expose a restricted cross-origin
+            // WindowProxy. Fail closed instead of returning the privileged
+            // same-origin object. #267 owns that broader proxy surface.
+            info.GetReturnValue().Set(v8::Null(info.GetIsolate()));
+            return;
+        }
         const auto actual = self->actual_frame_windows.find(node->id);
         if (actual != self->actual_frame_windows.end()) {
             info.GetReturnValue().Set(actual->second.Get(info.GetIsolate()));
@@ -677,6 +684,10 @@
         auto* self = current(info.GetIsolate());
         auto* node = unwrap_node(info.Holder());
         if (node == nullptr || node->tag != "iframe" || node->parent == nullptr) {
+            info.GetReturnValue().Set(v8::Null(info.GetIsolate()));
+            return;
+        }
+        if (!self->iframe_sandbox_allows(*node, "allow-same-origin")) {
             info.GetReturnValue().Set(v8::Null(info.GetIsolate()));
             return;
         }

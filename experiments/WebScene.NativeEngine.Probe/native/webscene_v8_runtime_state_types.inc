@@ -151,6 +151,11 @@
         std::string compiled_name;
     };
 
+    enum class reflected_token_list_kind : uint8_t {
+        class_names,
+        iframe_sandbox
+    };
+
     using css_declaration = webscene_native::css::css_declaration;
     using compiled_css_pseudo = webscene_native::css::compiled_css_pseudo;
     using compiled_css_compound = webscene_native::css::compiled_css_compound;

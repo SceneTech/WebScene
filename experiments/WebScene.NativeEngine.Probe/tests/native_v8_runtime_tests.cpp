@@ -159,6 +159,10 @@ int main()
             test_dom_token_list_collection_performance_gate();
             return 0;
         }
+        if (selected == "iframe-sandbox") {
+            test_iframe_sandbox_dom_token_list_security_and_lifecycle_gate();
+            return 0;
+        }
         if (selected == "rounded-icon-surfaces") {
             auto* focused_engine = webscene_engine_create(0);
             require(focused_engine != nullptr, "rounded icon surface engine creation failed");
@@ -1157,6 +1161,7 @@ int main()
     test_node_iterator_isolated_scaling_and_memory_gate();
     test_node_has_child_nodes_contract_and_performance(engine);
     test_dom_token_list_collection_performance_gate();
+    test_iframe_sandbox_dom_token_list_security_and_lifecycle_gate();
     test_table_cell_click_copies_text_to_host();
     test_synthetic_window_resize_dispatch_uses_outer_listener_registry(engine);
     test_document_create_event_and_init_event(engine);

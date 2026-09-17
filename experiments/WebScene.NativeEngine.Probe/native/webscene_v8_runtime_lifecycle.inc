@@ -241,6 +241,7 @@
         compilation_cache_order.clear();
         computed_style_wrappers.clear();
         class_list_wrappers.clear();
+        sandbox_token_list_wrappers.clear();
         style_wrappers.clear();
         stylesheet_wrappers.clear();
         detached_documents.clear();
@@ -261,6 +262,7 @@
         html_element_template.Reset();
         svg_element_template.Reset();
         html_anchor_element_template.Reset();
+        html_iframe_element_template.Reset();
         html_table_cell_element_template.Reset();
         html_dialog_element_template.Reset();
         html_form_element_template.Reset();

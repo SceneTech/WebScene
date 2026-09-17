@@ -105,6 +105,39 @@
     }
   });
 
+  test("matched-rule ordering preserves specificity, source order and important priority", () => {
+    const sheet = document.createElement("style");
+    const probe = document.createElement("div");
+    probe.id = "matched-order";
+    probe.className = "order-probe order-probe";
+    probe.setAttribute("data-order", "yes");
+    document.head.appendChild(sheet);
+    document.body.appendChild(probe);
+    try {
+      for (const widths of [[73, 79], [79, 73], [73, 79]]) {
+        sheet.textContent = "#matched-order { width:" + widths[0] + "px; display:flex; }"
+          + "#matched-order::before {content:''; width:10px; height:47px;}"
+          + ".order-probe {width:17px;} [data-order] {width:19px;}"
+          + ".order-probe::before {content:''; height:13px;}"
+          + "#matched-order {width:" + widths[1] + "px;}"
+          + "#matched-order.special {width:91px;}"
+          + ".order-probe.priority {width:61px!important;}"
+          + "@media(min-width:99999px){#matched-order{width:999px;} #matched-order::before{height:999px;}}";
+        assert(probe.getBoundingClientRect().width === widths[1], "source order or specificity changed");
+        assert(probe.getBoundingClientRect().height === 47, "pseudo specificity or media filtering changed");
+        probe.className = "order-probe special";
+        assert(probe.getBoundingClientRect().width === 91, "more specific state rule lost");
+        probe.className = "order-probe priority";
+        assert(probe.getBoundingClientRect().width === 61, "important declaration lost to specificity");
+        probe.className = "order-probe order-probe";
+        assert(probe.getBoundingClientRect().width === widths[1], "state removal retained a stale match");
+      }
+    } finally {
+      sheet.remove();
+      probe.remove();
+    }
+  });
+
   state.diagnostics.push(JSON.stringify({
     display: getComputedStyle(target).display,
     width: target.getBoundingClientRect().width,

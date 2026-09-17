@@ -265,8 +265,7 @@
                     class_name);
 #endif
             });
-        sort_css_candidates(candidates);
-        candidates.erase(std::unique(candidates.begin(), candidates.end()), candidates.end());
+        css::deduplicate_candidates(candidates);
 #if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
         css_cascade_candidate_checks += candidates.size();
         if (trace_css) css_profile_candidate_checks += candidates.size();

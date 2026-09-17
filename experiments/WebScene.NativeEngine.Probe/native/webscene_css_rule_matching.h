@@ -8,8 +8,9 @@ struct rule_matches {
     std::vector<const css_rule*> ordinary;
     std::vector<std::pair<int,const css_rule*>> pseudo;
 };
-// Candidates are valid indices in ascending precedence order. Results borrow the
-// rule vector and must be consumed before its owner mutates/replaces that storage.
+// Candidates are unique valid indices in any order. Only successful matches
+// need cascade precedence sorting. Results borrow the rule vector and must be
+// consumed before its owner mutates/replaces that storage.
 template<typename MatchSelector,typename MatchRule>
 rule_matches match_candidates(native_document& document,const dom_node& node,
     std::span<const css_rule> rules,std::span<const size_t> candidates,
@@ -49,6 +50,19 @@ rule_matches match_candidates(native_document& document,const dom_node& node,
                 && !match_rule(node,rule)) continue;
             result.ordinary.push_back(&rule);
         }
+        const auto precedes = [](const css_rule* left, const css_rule* right) {
+            const auto a = left->specificity(), b = right->specificity();
+            // Both pointers belong to the same contiguous rule span: address
+            // order is original stylesheet/source order, not discovery order.
+            return a != b ? a < b : left < right;
+        };
+        if (result.ordinary.size() > 1U)
+            std::sort(result.ordinary.begin(), result.ordinary.end(), precedes);
+        if (result.pseudo.size() > 1U)
+            std::sort(result.pseudo.begin(), result.pseudo.end(),
+                [&](const auto& left, const auto& right) {
+                    return precedes(left.second, right.second);
+                });
     return result;
 }
 } // namespace webscene_native::css

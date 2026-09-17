@@ -86,6 +86,49 @@ bool test_subject_candidate_index_scaling() {
     return bounded;
 }
 
+bool test_match_before_precedence_sorting() {
+    using namespace webscene_native;
+    for(const auto unrelated:{32,1024}) {
+        native_document document;
+        auto& node=document.create_element("div");
+        node.id_attribute="target";node.class_name="target target";
+        document.append_child(document.body(),node);
+        std::string source="#target {width:43px} .target {width:11px} .target {width:17px}"
+            "#target::before {content:'high'} .target::before {content:'low'}"
+            ".target::after {content:'after'} #target {width:999px}";
+        for(int i=0;i<unrelated;++i)
+            source+=".missing-"+std::to_string(i)+" * {width:999px}";
+        auto sheet=css::prepare_stylesheet(source,"",[](const auto&) {return true;});
+        if(!sheet || sheet->rules.size()!=static_cast<size_t>(unrelated+7)) return false;
+        std::vector<css::css_rule> rules;
+        for(const auto& payload:sheet->rules) rules.push_back({payload,0,0,true});
+        rules[6].media_matches=false;
+        std::vector<size_t> indices;
+        for(size_t i=rules.size();i>0;--i) indices.push_back(i-1);
+        css::query_host query(document);
+        const auto match=[&] {
+            return css::match_candidates(document,node,rules,indices,
+                [&](const auto& subject,const auto&,const auto& selector) {
+                    return query.matches_prepared(subject,selector);
+                },[&](const auto& subject,const auto& rule) {
+                    return query.matches_prepared(subject,rule.compiled_selector());
+                });
+        };
+        const auto reversed=match();
+        if(reversed.ordinary!=std::vector<const css::css_rule*>{&rules[1],&rules[2],&rules[0]}
+            || reversed.pseudo!=std::vector<std::pair<int,const css::css_rule*>>{
+                {1,&rules[4]},{2,&rules[5]},{1,&rules[3]}}) return false;
+        indices.push_back(0);indices.push_back(4);
+        css::deduplicate_candidates(indices);
+        const auto deduplicated=match();
+        if(indices.size()!=rules.size() || deduplicated.ordinary!=reversed.ordinary
+            || deduplicated.pseudo!=reversed.pseudo) return false;
+        std::cout<<"matched-order unrelated="<<unrelated<<" candidates="<<indices.size()
+            <<" precedence-entries="<<reversed.ordinary.size()+reversed.pseudo.size()<<'\n';
+    }
+    return true;
+}
+
 int main(int argc,char** argv) {
     if(argc==2) {
         std::ifstream input(argv[1]);
@@ -108,6 +151,7 @@ int main(int argc,char** argv) {
         return 0;
     }
     if(!test_subject_candidate_index_scaling()) return 170;
+    if(!test_match_before_precedence_sorting()) return 173;
     using webscene_native::css::parse_declarations;
     const auto values=parse_declarations(R"CSS(
       COLOR: red !important; --Theme: blue; --theme: green;
@@ -794,7 +838,8 @@ int main(int argc,char** argv) {
     std::vector<webscene_native::css::css_rule> match_rules;
     for(const auto& payload:match_sheet->rules) match_rules.push_back({payload,0,0,true});
     std::vector<size_t> match_indices{2,1,0};
-    webscene_native::css::sort_candidates(match_rules,match_indices);
+    // Matching receives discovery order, not cascade order. It must return
+    // only the matches, ordered by specificity and original source position.
     ordered_node.id_attribute="panel";
     webscene_native::css::query_host match_query(ordered_document);
     const auto collect=[&] {

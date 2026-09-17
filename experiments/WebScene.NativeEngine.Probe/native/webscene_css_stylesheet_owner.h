@@ -75,8 +75,7 @@ public:
                 if(found!=state_.rules_by_class.end())
                     output.insert(output.end(),found->second.begin(),found->second.end());
             });
-        sort_candidates(state_.rules,result);
-        result.erase(std::unique(result.begin(),result.end()),result.end());
+        deduplicate_candidates(result);
         return result;
     }
 };

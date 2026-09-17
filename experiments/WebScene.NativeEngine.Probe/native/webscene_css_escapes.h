@@ -222,7 +222,8 @@ inline std::optional<css_url_token> consume_css_url_token(
     // CSS recovers an unterminated quoted URL at EOF by closing the string and
     // function. Preserve a trailing ')' as string data when it occurred after
     // the opening quote, matching browser CSSOM serialization.
-    if (quote != '\0' && !closed_quote) {
+    if (quote != '\0' && !closed_quote && !decoded.empty()
+        && decoded.back() == ')') {
         return css_url_token{function_begin, input.size(), std::move(decoded)};
     }
     return std::nullopt;

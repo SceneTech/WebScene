@@ -35,11 +35,24 @@ inline std::string resolve_resource_urls(
             result.append(value, copied, search - copied);
             if (token->value.empty()) {
                 result.append(value, search, token->end - search);
+            } else if (token->value.starts_with('#')) {
+                auto argument = search + 4U;
+                while (argument < token->end
+                    && detail::css_whitespace(
+                        static_cast<unsigned char>(value[argument]))) {
+                    ++argument;
+                }
+                if (argument < token->end
+                    && (value[argument] == '\'' || value[argument] == '"')) {
+                    detail::append_css_quoted(result, token->value);
+                } else {
+                    result += "url(";
+                    result += token->value;
+                    result += ')';
+                }
             } else {
                 const auto resolved = percent_encode_css_url(
-                    token->value.starts_with('#')
-                        ? token->value
-                        : resources::resolve_url(token->value, stylesheet_address));
+                    resources::resolve_url(token->value, stylesheet_address));
                 detail::append_css_quoted(result, resolved);
             }
             copied = token->end;

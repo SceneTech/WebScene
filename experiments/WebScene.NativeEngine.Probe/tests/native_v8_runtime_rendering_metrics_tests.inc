@@ -661,6 +661,130 @@ void test_svg_background_image_reaches_scene_with_position_and_size(webscene_eng
         "URL-backed SVG background did not retain its 100x60 paint box and longhands");
 }
 
+void test_rounded_icon_surfaces_publish_stable_commands_across_selection_mutation(
+    webscene_engine* engine)
+{
+    const auto resource_directory = std::filesystem::temp_directory_path()
+        / ("webscene-rounded-icon-surfaces-"
+            + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::filesystem::create_directories(resource_directory);
+    {
+        std::ofstream svg(resource_directory / "icon.svg", std::ios::binary);
+        svg << R"(<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path fill="#fff" d="M1 1h14v14H1z"/></svg>)";
+    }
+    const auto root = resource_directory.string();
+    require(
+        webscene_engine_set_resource_root(engine, root.data(), root.size()) != 0,
+        "rounded icon surface resource root was rejected");
+    execute(engine, R"JS(
+        (() => {
+          document.body.innerHTML = '';
+          document.body.style.margin = '0';
+          const style = document.createElement('style');
+          style.textContent = `
+            .surface { position:absolute; left:8px; border-radius:4px;
+              background-repeat:no-repeat; background-position:8px center;
+              background-size:16px auto; background-image:url("icon.svg"); }
+            .tab { top:8px; width:120px; height:24px; background-color:rgb(24,50,76); }
+            .row { top:48px; width:220px; height:22px; overflow:hidden;
+              background-color:rgb(32,64,80); display:flex; }
+            .surface.selected.tab { background-color:rgb(36,104,172); }
+            .surface.selected.row { background-color:rgb(20,120,160); }
+            .label { margin-left:30px; background:transparent; }
+          `;
+          document.body.appendChild(style);
+          document.body.insertAdjacentHTML('beforeend',
+            '<div id="tab-surface" class="surface tab"><span class="label">tab</span></div>' +
+            '<div id="row-surface" class="surface row"><span class="label">row</span></div>');
+        })()
+    )JS", "native-rounded-icon-surfaces-setup.js");
+    require(
+        evaluate(engine, R"JS((() => ['tab-surface','row-surface'].map(id => {
+          const element=document.getElementById(id), style=getComputedStyle(element), box=element.getBoundingClientRect();
+          return [box.x,box.y,box.width,box.height,style.borderTopLeftRadius,
+            style.borderTopRightRadius,style.borderBottomRightRadius,style.borderBottomLeftRadius,
+            style.backgroundRepeat,style.backgroundPosition,style.backgroundSize];
+        }))())JS", "native-rounded-icon-surfaces-style.js")
+            == R"([[8,8,120,24,"4px","4px","4px","4px","no-repeat","8px center","16px auto"],[8,48,220,22,"4px","4px","4px","4px","no-repeat","8px center","16px auto"]])",
+        "rounded icon surfaces did not retain exact computed geometry and longhands");
+
+    const auto capture = [&]() {
+        webscene_engine_request_scene_checkpoint(engine);
+        std::uint64_t checksum = UINT64_C(1469598103934665603);
+        auto found_tab_fill = false, found_row_fill = false;
+        auto found_tab_icon = false, found_row_icon = false;
+        for (auto attempt = 0; attempt < 100; ++attempt) {
+            const auto* scene = webscene_engine_acquire_latest_scene(engine);
+            if (scene != nullptr) {
+                found_tab_fill = found_row_fill = found_tab_icon = found_row_icon = false;
+                checksum = UINT64_C(1469598103934665603);
+                for (uint32_t index = 0; index < scene->header.command_count; ++index) {
+                    const auto& command = scene->commands[index];
+                    const auto tab_geometry = std::abs(command.x - 8.0F) < 0.01F
+                        && std::abs(command.y - 8.0F) < 0.01F
+                        && std::abs(command.width - 120.0F) < 0.01F
+                        && std::abs(command.height - 24.0F) < 0.01F;
+                    const auto row_geometry = std::abs(command.x - 8.0F) < 0.01F
+                        && std::abs(command.y - 48.0F) < 0.01F
+                        && std::abs(command.width - 220.0F) < 0.01F
+                        && std::abs(command.height - 22.0F) < 0.01F;
+                    if (command.kind == 7U && (tab_geometry || row_geometry)) {
+                        require(command.flags == (row_geometry ? 1U : 0U)
+                            && std::abs(command.radius_top_left - 4.0F) < 0.01F
+                            && std::abs(command.radius_top_right - 4.0F) < 0.01F
+                            && std::abs(command.radius_bottom_right - 4.0F) < 0.01F
+                            && std::abs(command.radius_bottom_left - 4.0F) < 0.01F,
+                            "rounded surface fill command changed ABI fields");
+                        found_tab_fill = found_tab_fill || tab_geometry;
+                        found_row_fill = found_row_fill || row_geometry;
+                        checksum ^= command.rgba;
+                        checksum *= UINT64_C(1099511628211);
+                    }
+                    if (command.kind == 6U && (tab_geometry || row_geometry)
+                        && command.flags < scene->string_count) {
+                        const auto descriptor = scene->strings[command.flags];
+                        const std::string_view resource(
+                            scene->string_bytes + descriptor.byte_offset,
+                            descriptor.byte_length);
+                        require(resource.starts_with("webscene-bg-svg-v1\t0 0 16 16\t")
+                            && resource.find("\tno-repeat\t8px center\t16px auto\t")
+                                != std::string_view::npos,
+                            "rounded surface icon did not retain its structured background resource");
+                        found_tab_icon = found_tab_icon || tab_geometry;
+                        found_row_icon = found_row_icon || row_geometry;
+                        for (const auto byte : resource) {
+                            checksum ^= static_cast<unsigned char>(byte);
+                            checksum *= UINT64_C(1099511628211);
+                        }
+                    }
+                }
+                webscene_scene_acknowledge(scene);
+                webscene_scene_release(scene);
+            }
+            if (found_tab_fill && found_row_fill && found_tab_icon && found_row_icon) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        require(found_tab_fill && found_row_fill && found_tab_icon && found_row_icon,
+            "two rounded surfaces did not publish paired fill and structured icon commands");
+        return checksum;
+    };
+    const auto initial = capture();
+    execute(engine, R"JS(
+      document.getElementById('tab-surface').classList.add('selected');
+      document.getElementById('row-surface').classList.add('selected');
+    )JS", "native-rounded-icon-surfaces-select.js");
+    const auto selected = capture();
+    execute(engine, R"JS(
+      document.getElementById('tab-surface').classList.remove('selected');
+      document.getElementById('row-surface').classList.remove('selected');
+    )JS", "native-rounded-icon-surfaces-restore.js");
+    const auto restored = capture();
+    require(initial != selected && initial == restored,
+        "rounded surface selection mutation did not change and restore the scene checksum");
+    std::error_code cleanup_error;
+    std::filesystem::remove_all(resource_directory, cleanup_error);
+}
+
 void test_tradingview_repeating_svg_checker_background_reaches_scene(
     webscene_engine* engine)
 {

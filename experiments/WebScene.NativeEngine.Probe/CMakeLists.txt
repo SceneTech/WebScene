@@ -888,6 +888,8 @@ if(WEBSCENE_NATIVE_ENGINE_ENABLE_V8)
         add_test(NAME webscene_native_host_close_decision COMMAND webscene_native_engine_tests)
         add_test(NAME webscene_native_service_worker_parser_resources
             COMMAND webscene_native_engine_tests)
+        add_test(NAME webscene_native_service_worker_markdown_resources
+            COMMAND webscene_native_engine_tests)
         add_test(NAME webscene_native_service_worker_range_cache
             COMMAND webscene_native_engine_tests)
         add_test(NAME webscene_native_service_worker_host_stream
@@ -903,6 +905,10 @@ if(WEBSCENE_NATIVE_ENGINE_ENABLE_V8)
         set_tests_properties(webscene_native_service_worker_parser_resources PROPERTIES
             ENVIRONMENT "WEBSCENE_NATIVE_ENGINE_TEST_FILTER=service-worker-parser-resources"
             LABELS "native;service-worker;resource;security;lifecycle;performance"
+            TIMEOUT 45)
+        set_tests_properties(webscene_native_service_worker_markdown_resources PROPERTIES
+            ENVIRONMENT "WEBSCENE_NATIVE_ENGINE_TEST_FILTER=service-worker-markdown-resources"
+            LABELS "native;service-worker;resource;css;security;lifecycle;performance"
             TIMEOUT 45)
         set_tests_properties(webscene_native_idle_v8_platform PROPERTIES
             ENVIRONMENT "WEBSCENE_NATIVE_ENGINE_TEST_FILTER=idle-v8-platform")

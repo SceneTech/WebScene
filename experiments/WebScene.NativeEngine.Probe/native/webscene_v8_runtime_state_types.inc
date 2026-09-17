@@ -256,6 +256,7 @@
         std::string controlled_url;
         std::chrono::steady_clock::time_point controlled_deadline{};
         bool interception_started{};
+        bool css_image{};
     };
 
     enum class resize_observer_box { content, border, device_pixel_content };

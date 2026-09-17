@@ -1,0 +1,216 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>VS Code 645f29c Markdown resource broker fixture</title>
+<div id="preview" class="preview">Markdown preview</div>
+<img id="markdown-image" alt="deterministic Markdown image">
+<script>
+  if (!new URL(location.href).searchParams.has('id') && location.protocol === 'file:') {
+    const prepared = new URL(location.href);
+    prepared.searchParams.set('id', 'markdown-preview');
+    history.replaceState(null, '', prepared);
+  }
+  if (!new URL(location.href).searchParams.has('id')) {
+    const next = new URL(location.href);
+    next.searchParams.set('id', 'markdown-preview');
+    location.replace(next);
+  } else {
+    const state = window.__webSceneWptState = {
+      complete:false, harness:null, results:[], errors:[], diagnostics:[], durations:[], phase:'register'
+    };
+    let controlReload = false;
+    let brokerWorker = null;
+    let readmeBody = '';
+    const record = (name, condition, detail = 'Contract failed') => state.results.push({
+      name, status:condition ? 'PASS' : 'FAIL',
+      message:condition ? null : detail, stack:null
+    });
+    const nativeFixture = location.hostname === 'vscode-webview.test'
+      || location.protocol === 'file:';
+    const resourceOrigin = nativeFixture
+      ? 'https://file+.vscode-resource.test'
+      : `http://localhost:${location.port}`;
+    const workerParameters = nativeFixture
+      ? 'vscode-resource-base-authority=vscode-resource.test&platform=electron'
+      : `remoteAuthority=${encodeURIComponent(`localhost:${location.port}`)}&platform=electron`;
+    const resourceUrl = name => `${resourceOrigin}/workspace/${name}`;
+    const seen = new Map();
+    const responseBytes = new TextEncoder();
+    const resourceBodies = new Map([
+      ['/workspace/prelude.js', {
+        mime:'text/javascript', body:'globalThis.__markdownPrelude=(globalThis.__markdownPrelude||0)+1;'
+      }],
+      ['/workspace/extension.css', {
+        mime:'text/css', body:'.preview{color:rgb(12,34,56);width:32px;height:24px;background-image:url("css-image.svg");background-repeat:no-repeat}'
+      }],
+      ['/workspace/markdown-image.svg', {
+        mime:'image/svg+xml', body:'<svg xmlns="http://www.w3.org/2000/svg" width="7" height="5" viewBox="0 0 7 5"><rect width="7" height="5" fill="#0c2238"/></svg>'
+      }],
+      ['/workspace/css-image.svg', {
+        mime:'image/svg+xml', body:'<svg xmlns="http://www.w3.org/2000/svg" width="3" height="2" viewBox="0 0 3 2"><rect width="3" height="2" fill="#0c2238"/></svg>'
+      }],
+      ['/workspace/stale.svg', {
+        mime:'image/svg+xml', body:'<svg xmlns="http://www.w3.org/2000/svg" width="13" height="11" viewBox="0 0 13 11"><rect width="13" height="11" fill="#f00"/></svg>'
+      }]
+    ]);
+    const postStream = (request, mime, body) => {
+      const bytes = responseBytes.encode(body);
+      brokerWorker.postMessage({channel:'did-load-resource', data:{
+        status:200, id:request.id, path:request.path, mime,
+        etag:undefined, mtime:undefined
+      }});
+      const split = Math.max(1, Math.floor(bytes.byteLength / 2));
+      brokerWorker.postMessage({channel:'did-load-resource-chunk', data:{
+        id:request.id, data:bytes.slice(0, split)
+      }});
+      brokerWorker.postMessage({channel:'did-load-resource-chunk', data:{
+        id:request.id, data:bytes.slice(split)
+      }});
+      brokerWorker.postMessage({channel:'did-load-resource-end', data:{
+        id:request.id
+      }});
+    };
+    navigator.serviceWorker.addEventListener('message', event => {
+      const request = event.data;
+      if (!request || request.channel !== 'load-resource') return;
+      seen.set(request.path, (seen.get(request.path) || 0) + 1);
+      if (request.path === '/workspace/README.md') {
+        postStream(request, 'text/markdown', readmeBody);
+        return;
+      }
+      const resource = resourceBodies.get(request.path);
+      if (resource && request.path === '/workspace/stale.svg') {
+        setTimeout(() => postStream(request, resource.mime, resource.body), 25);
+      } else if (resource) postStream(request, resource.mime, resource.body);
+      else brokerWorker.postMessage({
+        channel:'did-load-resource', data:{status:404, id:request.id, path:request.path}
+      });
+    });
+    const load = element => new Promise((resolve, reject) => {
+      element.onload = resolve;
+      element.onerror = () => reject(new Error(`resource failed: ${element.src || element.href}`));
+      document.body.append(element);
+    });
+    (async () => {
+      const changed = new Promise(resolve => navigator.serviceWorker.addEventListener(
+        'controllerchange', resolve, {once:true}));
+      const registration = await navigator.serviceWorker.register(
+        `service-worker.js?${workerParameters}`);
+      state.phase = 'control';
+      if (!navigator.serviceWorker.controller && !nativeFixture) {
+        await Promise.race([
+          changed,
+          new Promise(resolve => setTimeout(resolve, 100))
+        ]);
+      }
+      if (!navigator.serviceWorker.controller && !nativeFixture
+          && !new URL(location.href).searchParams.has('controlled')) {
+        controlReload = true;
+        const controlled = new URL(location.href);
+        controlled.searchParams.set('controlled', '1');
+        location.replace(controlled);
+        return;
+      }
+      brokerWorker = navigator.serviceWorker.controller || registration.active;
+      if (!brokerWorker) throw new Error('worker did not control fixture');
+      if (nativeFixture && !navigator.serviceWorker.controller) {
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+      readmeBody = await (await fetch('README.md')).text();
+      state.phase = 'script';
+      const script = document.createElement('script');
+      script.src = resourceUrl('prelude.js');
+      await load(script);
+      state.phase = 'stylesheet';
+      const link = document.createElement('link');
+      link.rel = 'stylesheet';
+      link.href = resourceUrl('extension.css');
+      await load(link);
+      state.phase = 'element-image';
+      const image = document.getElementById('markdown-image');
+      image.src = resourceUrl('markdown-image.svg');
+      await new Promise((resolve, reject) => {
+        image.onload = resolve;
+        image.onerror = () => reject(new Error('Markdown image failed'));
+      });
+      const readme = readmeBody;
+      state.phase = 'initial-css-image';
+      for (let attempt = 0; attempt < 100 && !seen.has('/workspace/css-image.svg'); ++attempt) {
+        await new Promise(resolve => setTimeout(resolve, 2));
+      }
+      record('unchanged VS Code worker streams Markdown preview resources',
+        globalThis.__markdownPrelude === 1
+          && getComputedStyle(document.getElementById('preview')).color === 'rgb(12, 34, 56)'
+          && image.naturalWidth === 7 && image.naturalHeight === 5
+          && readme.includes('# Code OSS on AppScene'),
+        JSON.stringify({prelude:globalThis.__markdownPrelude,
+          color:getComputedStyle(document.getElementById('preview')).color,
+          width:image.naturalWidth,height:image.naturalHeight,readme:readme.slice(0, 80)}));
+      record('stylesheet CSS url image is routed through the same controller',
+        seen.get('/workspace/css-image.svg') === 1,
+        JSON.stringify(Object.fromEntries(seen)));
+      record('worker host broker receives every product-shaped resource',
+        ['/workspace/prelude.js','/workspace/extension.css','/workspace/markdown-image.svg',
+          '/workspace/css-image.svg'].every(path => seen.has(path)),
+        JSON.stringify(Object.fromEntries(seen)));
+      const preview = document.getElementById('preview');
+      state.phase = 'css-image-cycles';
+      for (let cycle = 0; cycle < 100; ++cycle) {
+        const prior = seen.get('/workspace/css-image.svg') || 0;
+        const started = performance.now();
+        preview.style.backgroundImage = `url("${resourceUrl(`css-image.svg?cycle=${cycle}`)}")`;
+        for (let attempt = 0;
+          attempt < 100 && (seen.get('/workspace/css-image.svg') || 0) === prior;
+          ++attempt) await new Promise(resolve => setTimeout(resolve, 1));
+        if ((seen.get('/workspace/css-image.svg') || 0) === prior) {
+          throw new Error(`CSS image cycle ${cycle} did not reach the host broker`);
+        }
+        state.durations.push(performance.now() - started);
+      }
+      const ordered = [...state.durations].sort((a, b) => a - b);
+      const p95 = ordered[Math.ceil(ordered.length * .95) - 1];
+      state.diagnostics.push({name:'css-image-cycles', cycles:100, p95});
+      record('100 warm CSS image cycles remain within the 100 ms p95 budget',
+        p95 <= 100, `p95=${p95}`);
+      let prior = seen.get('/workspace/denied.svg') || 0;
+      state.phase = 'denied-css-image';
+      preview.style.backgroundImage = `url("${resourceUrl('denied.svg')}")`;
+      for (let attempt = 0;
+        attempt < 100 && (seen.get('/workspace/denied.svg') || 0) === prior;
+        ++attempt) await new Promise(resolve => setTimeout(resolve, 1));
+      record('handled CSS image failure remains inside the controller',
+        (seen.get('/workspace/denied.svg') || 0) === prior + 1,
+        JSON.stringify(Object.fromEntries(seen)));
+      preview.style.backgroundImage = 'url("fallback.svg")';
+      state.phase = 'fallback-css-image';
+      await new Promise(resolve => setTimeout(resolve, 20));
+      prior = seen.get('/workspace/stale.svg') || 0;
+      state.phase = 'stale-css-image';
+      preview.style.backgroundImage = `url("${resourceUrl('stale.svg')}")`;
+      for (let attempt = 0;
+        attempt < 100 && (seen.get('/workspace/stale.svg') || 0) === prior;
+        ++attempt) await new Promise(resolve => setTimeout(resolve, 1));
+      prior = seen.get('/workspace/css-image.svg') || 0;
+      preview.style.backgroundImage = `url("${resourceUrl('css-image.svg?final=1')}")`;
+      for (let attempt = 0;
+        attempt < 100 && (seen.get('/workspace/css-image.svg') || 0) === prior;
+        ++attempt) await new Promise(resolve => setTimeout(resolve, 1));
+      await new Promise(resolve => setTimeout(resolve, 40));
+      record('late CSS image response cannot replace the current style',
+        getComputedStyle(preview).backgroundImage.includes('css-image.svg?final=1'),
+        getComputedStyle(preview).backgroundImage);
+      state.phase = 'unregister';
+      await registration.unregister();
+      state.phase = 'done';
+    })().catch(error => {
+      state.errors.push(String(error && error.stack || error));
+      record('contract completed', false, state.errors[0]);
+    }).finally(() => {
+      if (controlReload) return;
+      const failure = state.results.find(result => result.status !== 'PASS');
+      state.harness = failure
+        ? {status:1, message:failure.message, stack:failure.stack}
+        : {status:0, message:null, stack:null};
+      state.complete = true;
+    });
+  }
+</script>

@@ -215,6 +215,10 @@ int main()
             test_controlled_connected_resource_interception();
             return 0;
         }
+        if (selected == "service-worker-markdown-resources") {
+            test_vscode_markdown_css_image_resource_broker();
+            return 0;
+        }
         if (selected == "service-worker-parser-resources") {
             test_controlled_parser_and_nested_frame_resources();
             return 0;

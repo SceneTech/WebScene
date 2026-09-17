@@ -340,12 +340,16 @@
 #endif
         auto resource_name = std::string{};
         if (trace_resource) {
-            const auto attribute_name =
-                resource.node->tag == "script" ? "src" : "href";
-            if (const auto attribute =
-                    resource.node->attributes.find(attribute_name);
-                attribute != resource.node->attributes.end()) {
-                resource_name = resource_leaf_name(attribute->second);
+            if (resource.css_image) {
+                resource_name = resource_leaf_name(resource.controlled_url);
+            } else {
+                const auto attribute_name =
+                    resource.node->tag == "script" ? "src" : "href";
+                if (const auto attribute =
+                        resource.node->attributes.find(attribute_name);
+                    attribute != resource.node->attributes.end()) {
+                    resource_name = resource_leaf_name(attribute->second);
+                }
             }
         }
         std::optional<service_worker_fetch_result> controlled;
@@ -366,10 +370,14 @@
                 controlled->error = "Service worker connected resource timed out";
             }
         }
-        if (!load_connected_resource(
-                *resource.node,
-                wrapper,
-                controlled.has_value() ? &*controlled : nullptr)) {
+        if (resource.css_image) {
+            apply_controlled_css_image_resource(
+                resource,
+                controlled.has_value() ? &*controlled : nullptr);
+        } else if (!load_connected_resource(
+                       *resource.node,
+                       wrapper,
+                       controlled.has_value() ? &*controlled : nullptr)) {
             last_error = frame_last_error_value;
             return false;
         }

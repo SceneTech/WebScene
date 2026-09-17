@@ -116,10 +116,32 @@ async function closeChrome(chrome) {
   await rm(chrome.userDataDirectory, { recursive: true, force: true });
 }
 
-async function launchContractServer() {
+async function launchContractServer(setViewport) {
   const server = createServer(async (request, response) => {
     try {
       const requestUrl = new URL(request.url || "/", "http://127.0.0.1");
+      if (requestUrl.pathname === '/__webscene_test_viewport' && request.method === 'POST') {
+        const width=Number(requestUrl.searchParams.get('width'));
+        const height=Number(requestUrl.searchParams.get('height'));
+        if (!Number.isInteger(width) || !Number.isInteger(height)
+            || width<1 || height<1 || width>8192 || height>8192) throw new Error('Invalid test viewport');
+        await setViewport(width,height);
+        response.writeHead(204); response.end(); return;
+      }
+      // Local contracts use the native runner's set_viewport extension. Drive
+      // a real Chromium viewport change; do not emulate CSS/media results.
+      if (requestUrl.pathname === '/resources/testdriver.js') {
+        response.writeHead(200, {'content-type':'text/javascript; charset=utf-8'});
+        response.end(`globalThis.test_driver={async set_viewport(_element,width,height){
+          const response=await fetch('/__webscene_test_viewport?width='+width+'&height='+height,{method:'POST'});
+          if(!response.ok) throw new Error('Viewport driver failed');
+          await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+        }};`); return;
+      }
+      if (['/resources/testdriver-actions.js','/resources/testdriver-vendor.js'].includes(requestUrl.pathname)) {
+        response.writeHead(200, {'content-type':'text/javascript; charset=utf-8'});
+        response.end('// Only the local set_viewport extension is implemented.'); return;
+      }
       let relativePath = decodeURIComponent(requestUrl.pathname).replace(/^\/+/, "");
       // Local WPT-style reductions use the canonical /resources/ URLs. Serve
       // the same pinned harness used by the native runner, not a second copy.
@@ -246,8 +268,13 @@ for (const relativePath of options.paths) {
 }
 
 const identity = chromeIdentity();
-const contractServer = await launchContractServer();
 let chrome;
+const contractServer = await launchContractServer(async (width,height) => {
+  if (!chrome) throw new Error('Chrome is not ready');
+  await chrome.client.send('Emulation.setDeviceMetricsOverride', {
+    width,height,mobile:false,deviceScaleFactor:options.deviceScaleFactor
+  });
+});
 try {
   chrome = await launchChrome(identity.executable, options.deviceScaleFactor);
 } catch (error) {
@@ -271,6 +298,9 @@ try {
     source: `globalThis.__webSceneWptExpectedDeviceScaleFactor = ${options.deviceScaleFactor};`
   });
   for (const relativePath of options.paths) {
+    await chrome.client.send('Emulation.setDeviceMetricsOverride', {
+      width:800,height:600,mobile:false,deviceScaleFactor:options.deviceScaleFactor
+    });
     process.stdout.write(`RUN  chrome ${relativePath} ... `);
     const result = await runDocument(
       chrome.client,

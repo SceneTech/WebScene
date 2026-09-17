@@ -969,6 +969,11 @@
         webscene_frame_trace::scope invalidation_trace(
             frame_trace, "media-invalidation-start", "media-invalidation-end", 0);
         if (changed_rules.empty()) return;
+        // Media truth changes, but this synchronous matching/cascade pass does
+        // not mutate the DOM or dispatch authored callbacks. Reuse sibling
+        // positions and selector prefixes across its subjects, then discard
+        // them before matchMedia listeners can mutate selector state.
+        selector_match_batch_scope matching_scope(*this);
         std::vector<dom_node*> roots;
         const auto has_selected_ancestor = [&](const dom_node& node) {
             for (auto* ancestor = node.parent; ancestor != nullptr;

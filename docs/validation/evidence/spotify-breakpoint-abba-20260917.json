@@ -1,0 +1,560 @@
+{
+  "schema": "webscene-spotify-breakpoint-abba-v1",
+  "date": "2026-09-17",
+  "controlWebScene": "6da8c56c5337b3a9e1dac6181f2613c391539357",
+  "appScene": "3b00e8957970321ea5209a42550014b6207712dd",
+  "candidateChange": "pass-local selector_match_batch_scope in recascade_media_query_changes",
+  "compiler": "LLVM 22.1.8",
+  "certification": false,
+  "workload": "unchanged live Spotify, engine ABI only; warm 1800 frames; settle at 800; alternate 700/800 twelve times; pump 60 frames per width",
+  "limitations": [
+    "No GPU/native presentation measured",
+    "Live site and background host activity not controlled",
+    "Production listener/layout phase timings unavailable, not zero",
+    "Not full breakpoint-stall resolution or Chrome comparison"
+  ],
+  "runs": [
+    {
+      "name": "A1",
+      "variant": "control",
+      "measurements": [
+        {
+          "width": 700,
+          "dispatchMs": 318.318,
+          "barrierMs": 337.264,
+          "layoutPasses": 4,
+          "scenes": 4,
+          "nodes": 2723,
+          "images": 15
+        },
+        {
+          "width": 800,
+          "dispatchMs": 297.452,
+          "barrierMs": 307.477,
+          "layoutPasses": 4,
+          "scenes": 4,
+          "nodes": 2723,
+          "images": 15
+        },
+        {
+          "width": 700,
+          "dispatchMs": 377.407,
+          "barrierMs": 394.779,
+          "layoutPasses": 4,
+          "scenes": 4,
+          "nodes": 2723,
+          "images": 15
+        },
+        {
+          "width": 800,
+          "dispatchMs": 327.311,
+          "barrierMs": 344.456,
+          "layoutPasses": 4,
+          "scenes": 4,
+          "nodes": 2723,
+          "images": 15
+        },
+        {
+          "width": 700,
+          "dispatchMs": 331.649,
+          "barrierMs": 349.137,
+          "layoutPasses": 4,
+          "scenes": 4,
+          "nodes": 2723,
+          "images": 15
+        },
+        {
+          "width": 800,
+          "dispatchMs": 321.561,
+          "barrierMs": 341.994,
+          "layoutPasses": 4,
+          "scenes": 4,
+          "nodes": 2723,
+          "images": 15
+        },
+        {
+          "width": 700,
+          "dispatchMs": 296.17,
+          "barrierMs": 312.432,
+          "layoutPasses": 4,
+          "scenes": 4,
+          "nodes": 2723,
+          "images": 15
+        },
+        {
+          "width": 800,
+          "dispatchMs": 331.643,
+          "barrierMs": 345.733,
+          "layoutPasses": 4,
+          "scenes": 4,
+          "nodes": 2723,
+          "images": 15
+        },
+        {
+          "width": 700,
+          "dispatchMs": 358.59,
+          "barrierMs": 375.623,
+          "layoutPasses": 4,
+          "scenes": 4,
+          "nodes": 2723,
+          "images": 15
+        },
+        {
+          "width": 800,
+          "dispatchMs": 395.251,
+          "barrierMs": 417.567,
+          "layoutPasses": 4,
+          "scenes": 5,
+          "nodes": 2723,
+          "images": 15
+        },
+        {
+          "width": 700,
+          "dispatchMs": 307.66,
+          "barrierMs": 322.088,
+          "layoutPasses": 4,
+          "scenes": 4,
+          "nodes": 2723,
+          "images": 15
+        },
+        {
+          "width": 800,
+          "dispatchMs": 324.261,
+          "barrierMs": 339.106,
+          "layoutPasses": 4,
+          "scenes": 4,
+          "nodes": 2723,
+          "images": 15
+        }
+      ],
+      "dispatch": {
+        "n": 12,
+        "minMs": 296.17,
+        "medianMs": 325.786,
+        "meanMs": 332.27275000000003,
+        "p95Ms": 395.251,
+        "maxMs": 395.251
+      }
+    },
+    {
+      "name": "B1",
+      "variant": "candidate",
+      "measurements": [
+        {
+          "width": 700,
+          "dispatchMs": 208.639,
+          "barrierMs": 220.711,
+          "layoutPasses": 4,
+          "scenes": 4,
+          "nodes": 2723,
+          "images": 15
+        },
+        {
+          "width": 800,
+          "dispatchMs": 229.727,
+          "barrierMs": 243.426,
+          "layoutPasses": 4,
+          "scenes": 4,
+          "nodes": 2723,
+          "images": 15
+        },
+        {
+          "width": 700,
+          "dispatchMs": 240.214,
+          "barrierMs": 255.72,
+          "layoutPasses": 4,
+          "scenes": 4,
+          "nodes": 2723,
+          "images": 15
+        },
+        {
+          "width": 800,
+          "dispatchMs": 234.755,
+          "barrierMs": 252.043,
+          "layoutPasses": 4,
+          "scenes": 4,
+          "nodes": 2723,
+          "images": 15
+        },
+        {
+          "width": 700,
+          "dispatchMs": 250.204,
+          "barrierMs": 270.113,
+          "layoutPasses": 4,
+          "scenes": 4,
+          "nodes": 2723,
+          "images": 15
+        },
+        {
+          "width": 800,
+          "dispatchMs": 236.665,
+          "barrierMs": 252.066,
+          "layoutPasses": 4,
+          "scenes": 4,
+          "nodes": 2723,
+          "images": 15
+        },
+        {
+          "width": 700,
+          "dispatchMs": 239.276,
+          "barrierMs": 254.055,
+          "layoutPasses": 4,
+          "scenes": 4,
+          "nodes": 2723,
+          "images": 15
+        },
+        {
+          "width": 800,
+          "dispatchMs": 235.378,
+          "barrierMs": 249.488,
+          "layoutPasses": 4,
+          "scenes": 4,
+          "nodes": 2723,
+          "images": 15
+        },
+        {
+          "width": 700,
+          "dispatchMs": 233.259,
+          "barrierMs": 250.018,
+          "layoutPasses": 4,
+          "scenes": 4,
+          "nodes": 2723,
+          "images": 15
+        },
+        {
+          "width": 800,
+          "dispatchMs": 237.876,
+          "barrierMs": 252.366,
+          "layoutPasses": 4,
+          "scenes": 4,
+          "nodes": 2723,
+          "images": 15
+        },
+        {
+          "width": 700,
+          "dispatchMs": 236.853,
+          "barrierMs": 252.022,
+          "layoutPasses": 4,
+          "scenes": 4,
+          "nodes": 2723,
+          "images": 15
+        },
+        {
+          "width": 800,
+          "dispatchMs": 235.106,
+          "barrierMs": 247.809,
+          "layoutPasses": 4,
+          "scenes": 4,
+          "nodes": 2723,
+          "images": 15
+        }
+      ],
+      "dispatch": {
+        "n": 12,
+        "minMs": 208.639,
+        "medianMs": 236.0215,
+        "meanMs": 234.82933333333332,
+        "p95Ms": 250.204,
+        "maxMs": 250.204
+      }
+    },
+    {
+      "name": "B2",
+      "variant": "candidate",
+      "measurements": [
+        {
+          "width": 700,
+          "dispatchMs": 225.689,
+          "barrierMs": 240.718,
+          "layoutPasses": 4,
+          "scenes": 4,
+          "nodes": 2723,
+          "images": 15
+        },
+        {
+          "width": 800,
+          "dispatchMs": 236.371,
+          "barrierMs": 252.114,
+          "layoutPasses": 4,
+          "scenes": 4,
+          "nodes": 2723,
+          "images": 15
+        },
+        {
+          "width": 700,
+          "dispatchMs": 233.784,
+          "barrierMs": 246.311,
+          "layoutPasses": 4,
+          "scenes": 4,
+          "nodes": 2723,
+          "images": 15
+        },
+        {
+          "width": 800,
+          "dispatchMs": 236.8,
+          "barrierMs": 249.662,
+          "layoutPasses": 4,
+          "scenes": 4,
+          "nodes": 2723,
+          "images": 15
+        },
+        {
+          "width": 700,
+          "dispatchMs": 235.562,
+          "barrierMs": 250.094,
+          "layoutPasses": 4,
+          "scenes": 4,
+          "nodes": 2723,
+          "images": 15
+        },
+        {
+          "width": 800,
+          "dispatchMs": 223.446,
+          "barrierMs": 241,
+          "layoutPasses": 4,
+          "scenes": 4,
+          "nodes": 2723,
+          "images": 15
+        },
+        {
+          "width": 700,
+          "dispatchMs": 235.422,
+          "barrierMs": 245.839,
+          "layoutPasses": 4,
+          "scenes": 4,
+          "nodes": 2723,
+          "images": 15
+        },
+        {
+          "width": 800,
+          "dispatchMs": 240.1,
+          "barrierMs": 252.27,
+          "layoutPasses": 4,
+          "scenes": 4,
+          "nodes": 2723,
+          "images": 15
+        },
+        {
+          "width": 700,
+          "dispatchMs": 228.409,
+          "barrierMs": 240.738,
+          "layoutPasses": 4,
+          "scenes": 4,
+          "nodes": 2723,
+          "images": 15
+        },
+        {
+          "width": 800,
+          "dispatchMs": 233.833,
+          "barrierMs": 247.775,
+          "layoutPasses": 4,
+          "scenes": 4,
+          "nodes": 2723,
+          "images": 15
+        },
+        {
+          "width": 700,
+          "dispatchMs": 231.221,
+          "barrierMs": 243.491,
+          "layoutPasses": 4,
+          "scenes": 4,
+          "nodes": 2723,
+          "images": 15
+        },
+        {
+          "width": 800,
+          "dispatchMs": 243.42,
+          "barrierMs": 257.413,
+          "layoutPasses": 4,
+          "scenes": 4,
+          "nodes": 2723,
+          "images": 15
+        }
+      ],
+      "dispatch": {
+        "n": 12,
+        "minMs": 223.446,
+        "medianMs": 234.6275,
+        "meanMs": 233.6714166666667,
+        "p95Ms": 243.42,
+        "maxMs": 243.42
+      }
+    },
+    {
+      "name": "A2",
+      "variant": "control",
+      "measurements": [
+        {
+          "width": 700,
+          "dispatchMs": 309.674,
+          "barrierMs": 321.406,
+          "layoutPasses": 4,
+          "scenes": 4,
+          "nodes": 2723,
+          "images": 15
+        },
+        {
+          "width": 800,
+          "dispatchMs": 301.196,
+          "barrierMs": 314.057,
+          "layoutPasses": 4,
+          "scenes": 4,
+          "nodes": 2723,
+          "images": 15
+        },
+        {
+          "width": 700,
+          "dispatchMs": 291.51,
+          "barrierMs": 306.198,
+          "layoutPasses": 4,
+          "scenes": 4,
+          "nodes": 2723,
+          "images": 15
+        },
+        {
+          "width": 800,
+          "dispatchMs": 295.954,
+          "barrierMs": 307.296,
+          "layoutPasses": 4,
+          "scenes": 4,
+          "nodes": 2723,
+          "images": 15
+        },
+        {
+          "width": 700,
+          "dispatchMs": 288.558,
+          "barrierMs": 302.609,
+          "layoutPasses": 4,
+          "scenes": 4,
+          "nodes": 2723,
+          "images": 15
+        },
+        {
+          "width": 800,
+          "dispatchMs": 296.801,
+          "barrierMs": 308.745,
+          "layoutPasses": 4,
+          "scenes": 4,
+          "nodes": 2723,
+          "images": 15
+        },
+        {
+          "width": 700,
+          "dispatchMs": 304.726,
+          "barrierMs": 316.591,
+          "layoutPasses": 4,
+          "scenes": 4,
+          "nodes": 2723,
+          "images": 15
+        },
+        {
+          "width": 800,
+          "dispatchMs": 299.967,
+          "barrierMs": 317.754,
+          "layoutPasses": 4,
+          "scenes": 4,
+          "nodes": 2723,
+          "images": 15
+        },
+        {
+          "width": 700,
+          "dispatchMs": 299.071,
+          "barrierMs": 311.63,
+          "layoutPasses": 4,
+          "scenes": 4,
+          "nodes": 2723,
+          "images": 15
+        },
+        {
+          "width": 800,
+          "dispatchMs": 297.694,
+          "barrierMs": 309.887,
+          "layoutPasses": 4,
+          "scenes": 4,
+          "nodes": 2723,
+          "images": 15
+        },
+        {
+          "width": 700,
+          "dispatchMs": 291.699,
+          "barrierMs": 307.585,
+          "layoutPasses": 4,
+          "scenes": 4,
+          "nodes": 2723,
+          "images": 15
+        },
+        {
+          "width": 800,
+          "dispatchMs": 299.88,
+          "barrierMs": 311.515,
+          "layoutPasses": 4,
+          "scenes": 4,
+          "nodes": 2723,
+          "images": 15
+        }
+      ],
+      "dispatch": {
+        "n": 12,
+        "minMs": 288.558,
+        "medianMs": 298.38250000000005,
+        "meanMs": 298.06083333333333,
+        "p95Ms": 309.674,
+        "maxMs": 309.674
+      }
+    }
+  ],
+  "aggregate": {
+    "control": {
+      "dispatch": {
+        "n": 24,
+        "minMs": 288.558,
+        "medianMs": 302.961,
+        "meanMs": 315.1667916666667,
+        "p95Ms": 377.407,
+        "maxMs": 395.251
+      },
+      "narrowing": {
+        "n": 12,
+        "minMs": 288.558,
+        "medianMs": 306.193,
+        "meanMs": 314.58600000000007,
+        "p95Ms": 377.407,
+        "maxMs": 377.407
+      },
+      "widening": {
+        "n": 12,
+        "minMs": 295.954,
+        "medianMs": 300.5815,
+        "meanMs": 315.74758333333335,
+        "p95Ms": 395.251,
+        "maxMs": 395.251
+      }
+    },
+    "candidate": {
+      "dispatch": {
+        "n": 24,
+        "minMs": 208.639,
+        "medianMs": 235.39999999999998,
+        "meanMs": 234.25037500000005,
+        "p95Ms": 243.42,
+        "maxMs": 250.204
+      },
+      "narrowing": {
+        "n": 12,
+        "minMs": 208.639,
+        "medianMs": 234.603,
+        "meanMs": 233.21099999999998,
+        "p95Ms": 250.204,
+        "maxMs": 250.204
+      },
+      "widening": {
+        "n": 12,
+        "minMs": 223.446,
+        "medianMs": 235.8745,
+        "meanMs": 235.28975000000003,
+        "p95Ms": 243.42,
+        "maxMs": 243.42
+      }
+    }
+  }
+}

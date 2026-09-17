@@ -54,3 +54,33 @@
       "deactivation restores base styles without disturbing the unrelated sibling");
   }, "media-query activation and deactivation recascade matched subtrees");
 </script>
+<script>
+  promise_test(async t => {
+    const list = document.createElement('section');
+    list.id = 'media-matching-viewport-target';
+    list.className = 'media-matching-list';
+    const nodes = Array.from({length:128}, () => document.createElement('b'));
+    list.append(...nodes);
+    const style = document.createElement('style');
+    style.textContent = `
+      .media-matching-list > b {display:block;width:11px;height:13px}
+      .media-matching-list > b:nth-child(odd) {height:17px}
+      .media-matching-list > b:first-child ~ b {width:19px}
+      @media(max-width:600px) {
+        .media-matching-list {--size:23px}
+        .media-matching-list > b {width:var(--size)}
+      }`;
+    document.head.appendChild(style); document.body.appendChild(list);
+    t.add_cleanup(() => {list.remove(); style.remove();});
+    for (let pass=0; pass<4; ++pass) {
+      if (pass===2) list.prepend(list.lastChild);
+      await test_driver.set_viewport(list, pass%2 ? 800 : 480, 600);
+      Array.from(list.children).forEach((node,index) => {
+        assert_equals(getComputedStyle(node).width,
+          index ? '19px' : pass%2 ? '11px' : '23px', 'sibling width at pass '+pass+' index '+index);
+        assert_equals(getComputedStyle(node).height, index%2 ? '13px' : '17px',
+          'position at pass '+pass+' index '+index);
+      });
+    }
+  }, 'repeated media transitions use current sibling order without retaining matching state across mutations');
+</script>

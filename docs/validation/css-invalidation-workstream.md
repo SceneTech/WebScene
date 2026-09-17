@@ -561,6 +561,15 @@ theme probe was rerun. Reports are under
 
 ### Remaining acceptance work
 
+The [Spotify breakpoint follow-up](spotify-breakpoint-profile-20260917.md)
+isolates a roughly 300 ms media recascade despite smooth ordinary resizing.
+Pass-local selector reuse removes repeated positional scans (eight siblings:
+288→8 visits; 128 siblings: 128 visits). Native and Chrome regression coverage
+passes; serial production-engine A/B/B/A lowers median breakpoint dispatch
+303→235 ms. This is partial progress: affected-subtree cascade remains expensive,
+physical presentation is unqualified, and the currently open manual demo has
+not been replaced with this development build.
+
 The [September 17 resize-stage investigation](css-resize-stage-profile.md) records
 fresh production profiles and fixes the mismatched native/Chrome benchmark waveform.
 It does not qualify physical presentation or end-to-end browser parity.

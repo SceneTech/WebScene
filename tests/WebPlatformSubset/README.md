@@ -131,6 +131,13 @@ The separate IndexedDB candidate profile requires
 optional `--native-storage-quota-bytes <bytes>` sets its partition quota. See
 `docs/architecture/indexeddb-persistence.md` for its lifecycle and native gates.
 
+The Chrome contract runner supports the local `test_driver.set_viewport(element,
+width, height)` extension used by the media contracts. It changes Chromium's real
+emulated viewport through CDP and waits two animation frames; it does not stub
+media-query answers. Each document starts at 800×600. Other testdriver actions
+are not implemented by this adapter. The native adapter requires the target
+element to have an id.
+
 Static reftests and self-verifying visual tests can also collect an independent
 Chromium differential or color-oracle result:
 

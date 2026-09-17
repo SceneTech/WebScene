@@ -27,3 +27,6 @@
 
 #mark.paint {fill:blue;stroke:green;}
 dialog::backdrop {background:#080e185e;}
+:host {color:inherit;}
+.generated-metrics {display:flex;width:100px;}
+.generated-metrics:before {content:'x';width:20px;height:40px;}

@@ -71,6 +71,23 @@ class CompilerTests(unittest.TestCase):
             self.assertNotEqual(result.returncode,0)
             self.assertEqual(original,source.read_bytes())
 
+    def test_prepared_rule_classification_is_emitted(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=pathlib.Path(folder);source=root/'classification.css';output=root/'classification.cppm'
+            selectors=['.plain', '.item::before', '.item:after',
+                '.item::-webkit-scrollbar', '.item::-webkit-scrollbar-thumb',
+                '.item::-webkit-scrollbar-track',
+                'dialog::backdrop', ':host', '[data-note="::before"]']
+            source.write_text('\n'.join(selector+' {color:red}' for selector in selectors))
+            result=subprocess.run([UIC,'--prepare-css',source,output,'--module','test.classification'],capture_output=True,text=True)
+            self.assertEqual(result.returncode,0,result.stderr)
+            generated=output.read_text()
+            for kind in [0,1,2,3,4,5,7]:
+                self.assertIn('r->pseudo_kind='+str(kind)+';',generated)
+            self.assertEqual(generated.count('r->pseudo_kind='),len(selectors))
+            self.assertEqual(generated.count('r->host_selector=1;'),1)
+            self.assertEqual(generated.count('r->host_selector=0;'),len(selectors)-1)
+
     def test_opacity_transition_shorthand(self):
         for value in ['opacity 100ms linear 20ms', 'opacity .2s ease-in', 'none']:
             result, out = self.compile('<div></div>', 'div {transition:'+value+'}')

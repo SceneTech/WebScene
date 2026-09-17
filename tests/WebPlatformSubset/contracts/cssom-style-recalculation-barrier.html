@@ -87,6 +87,24 @@
     }
   });
 
+  test("generated text keeps its own box after stylesheet replacement", () => {
+    const sheet = document.createElement("style");
+    const probe = document.createElement("div");
+    probe.className = "generated-metrics";
+    document.head.appendChild(sheet);
+    document.body.appendChild(probe);
+    try {
+      for (const size of [40, 20, 40]) {
+        sheet.textContent = ".generated-metrics { display:flex; width:100px; } .generated-metrics:before { content:'x'; width:20px; height:" + size + "px; }";
+        assert(probe.getBoundingClientRect().height === size,
+          "pseudo text did not generate its " + size + "px box");
+      }
+    } finally {
+      sheet.remove();
+      probe.remove();
+    }
+  });
+
   state.diagnostics.push(JSON.stringify({
     display: getComputedStyle(target).display,
     width: target.getBoundingClientRect().width,

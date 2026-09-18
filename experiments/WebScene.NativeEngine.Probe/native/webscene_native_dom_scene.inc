@@ -1621,6 +1621,7 @@ void native_document::append_scene(
         const auto text_y = node.layout.y + std::max(0.0F, (node.layout.height - line_height) * 0.5F);
         const auto text_width = std::max(
             0.0F, node.layout.width - padding_left - padding_right);
+        const auto text_alignment = resolved_text_align(node);
         const auto placeholder = node.attributes.find("placeholder");
         const bool placeholder_type = node.tag == "textarea" || input_type == node.attributes.end()
             || input_type->second == "text" || input_type->second == "search"
@@ -1634,7 +1635,7 @@ void native_document::append_scene(
                 node, show_placeholder ? placeholder->second : node.form_control().value);
             std::ostringstream resource;
             resource << font_size << '\t' << line_height << '\t'
-                << resolved_font_weight(node) << '\t' << "start" << '\t'
+                << resolved_font_weight(node) << '\t' << text_alignment << '\t'
                 << resolved_font_family(node) << '\t'
                 << resolved_font_smoothing(node) << '\t' << painted_value;
             commands.push_back(webscene_scene_command{
@@ -1656,10 +1657,18 @@ void native_document::append_scene(
             const auto caret_index = std::min(
                 node.form_control().selection_end,
                 node.form_control().value.size());
-            const auto caret_x = std::min(
-                text_x + measure_text_width(
+            const auto value_width = measure_text_width(
+                node.form_control().value, node);
+            const auto aligned_text_x = text_alignment == "center"
+                ? text_x + std::max(0.0F, (text_width - value_width) * 0.5F)
+                : text_alignment == "right" || text_alignment == "end"
+                    ? text_x + std::max(0.0F, text_width - value_width)
+                    : text_x;
+            const auto caret_x = std::clamp(
+                aligned_text_x + measure_text_width(
                     std::string_view(node.form_control().value).substr(0, caret_index),
                     node),
+                text_x,
                 node.layout.x + node.layout.width - padding_right);
             commands.push_back(webscene_scene_command{
                 14U,

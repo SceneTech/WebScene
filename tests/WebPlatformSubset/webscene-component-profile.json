@@ -140,6 +140,13 @@
       "evidence": ["tradingview-symbol-search-uppercase-input"]
     },
     {
+      "path": "contracts/css-form-control-text-align.html",
+      "type": "reftest",
+      "reference": "contracts/css-form-control-text-align-ref.html",
+      "capabilities": ["form-control-text-align", "centered-input-value", "aligned-input-caret"],
+      "evidence": ["spotify-login-otp-slot-overlay"]
+    },
+    {
       "path": "contracts/css-zero-height-overflow-hidden-paint.html",
       "type": "reftest",
       "reference": "contracts/css-zero-height-overflow-hidden-paint-ref.html",

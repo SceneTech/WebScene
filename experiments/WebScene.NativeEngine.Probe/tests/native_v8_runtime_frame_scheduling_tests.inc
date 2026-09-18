@@ -17,6 +17,7 @@ void test_native_text_input_focus_events_and_caret(webscene_engine* engine)
           input.style.height = '32px';
           input.style.paddingLeft = '4px';
           input.style.fontSize = '16px';
+          input.style.textAlign = 'center';
           input.style.letterSpacing = '2px';
           input.style.wordSpacing = '3px';
           input.style.color = 'rgb(18, 52, 86)';
@@ -115,7 +116,9 @@ void test_native_text_input_focus_events_and_caret(webscene_engine* engine)
     bool observed_caret = false;
     bool observed_text_spacing = false;
     bool observed_transformed_text = false;
+    bool observed_center_aligned_text = false;
     float observed_text_x = 0.0F;
+    float observed_text_width = 0.0F;
     float observed_caret_x = 0.0F;
     uint64_t caret_scene_revision = 0U;
     for (auto attempt = 0; attempt < 100; ++attempt) {
@@ -129,12 +132,15 @@ void test_native_text_input_focus_events_and_caret(webscene_engine* engine)
                     && std::abs(command.radius_top_right - 3.0F) < 0.01F) {
                     observed_text_spacing = true;
                     observed_text_x = command.x;
+                    observed_text_width = command.width;
                     if (command.flags < scene->string_count) {
                         const auto& descriptor = scene->strings[command.flags];
                         const std::string_view resource(
                             scene->string_bytes + descriptor.byte_offset,
                             descriptor.byte_length);
                         observed_transformed_text = resource.ends_with("\tTREND");
+                        observed_center_aligned_text =
+                            resource.find("\tcenter\t") != std::string_view::npos;
                     }
                 }
                 if (command.kind == 14U
@@ -161,10 +167,14 @@ void test_native_text_input_focus_events_and_caret(webscene_engine* engine)
         observed_transformed_text,
         "native input painted its raw value instead of its CSS-transformed text");
     require(
-        std::abs((observed_caret_x - observed_text_x) - 57.6F) < 0.05F,
-        "native input caret did not use the same CSS-spaced advance as its text");
+        observed_center_aligned_text,
+        "native input value did not preserve its CSS text-align in the scene");
+    require(
+        std::abs((observed_caret_x - observed_text_x)
+            - (observed_text_width + 57.6F) * 0.5F) < 0.05F,
+        "center-aligned native input caret did not use the same CSS-spaced advance as its text");
 
-    animation_frame(engine, 600.0, 30U);
+    animation_frame(engine, 600.0, 34U);
     require(
         evaluate(engine, "document.activeElement === __nativeTextInput",
             "native-text-input-blink-ready.js") == "true",
@@ -203,7 +213,7 @@ void test_native_text_input_focus_events_and_caret(webscene_engine* engine)
         require(evaluate(engine, "true", "native-text-input-key-drain.js") == "true",
             "native keyboard navigation events did not drain");
     };
-    uint64_t editing_sequence = 31U;
+    uint64_t editing_sequence = 35U;
     press_key(37U, 0U, editing_sequence);
     press_key(37U, WEBSCENE_INPUT_MODIFIER_SHIFT, editing_sequence);
     const auto selected = evaluate(engine, R"JS((() => ({

@@ -2407,6 +2407,174 @@ void test_mouse_moves_are_raf_aligned_at_compositor_cadence()
     webscene_engine_destroy(engine);
 }
 
+void test_same_document_history_state_and_url_mutation(webscene_engine* engine)
+{
+    const auto initial = evaluate(
+        engine,
+        "[location.href,document.URL,document.documentURI,document.baseURI,history.length,history.state]",
+        "history-initial.js");
+    require(
+        initial == R"(["http://127.0.0.1/","http://127.0.0.1/","http://127.0.0.1/","http://127.0.0.1/",1,null])",
+        std::string("initial History/Location state was not browser-shaped: ") + initial);
+
+    const auto replaced = evaluate(engine, R"JS(
+        (() => {
+          const stableLocation = location;
+          const stableHistory = history;
+          const input = {nested:{value:7}, list:[1,2,3]};
+          let popstates = 0;
+          addEventListener('popstate', () => ++popstates);
+          const prepared = new URL(location.href);
+          prepared.searchParams.set('id', 'markdown-preview');
+          prepared.hash = 'ready';
+          history.replaceState(input, '', prepared);
+          input.nested.value = 99;
+          return [
+            location === stableLocation,
+            history === stableHistory,
+            location.href,
+            location.search,
+            location.hash,
+            document.URL,
+            document.documentURI,
+            document.baseURI,
+            history.length,
+            history.state.nested.value,
+            history.state === input,
+            popstates
+          ];
+        })()
+    )JS", "history-replace-state.js");
+    require(
+        replaced == R"([true,true,"http://127.0.0.1/?id=markdown-preview#ready","?id=markdown-preview","#ready","http://127.0.0.1/?id=markdown-preview#ready","http://127.0.0.1/?id=markdown-preview#ready","http://127.0.0.1/?id=markdown-preview#ready",1,7,false,0])",
+        std::string("replaceState did not update the live same-document URL/state: ")
+            + replaced);
+    require(
+        !take_typed_host_request(engine),
+        "replaceState incorrectly emitted a native host navigation request");
+
+    const auto pushed = evaluate(engine, R"JS(
+        (() => {
+          history.pushState({page:2}, '', 'next/page?mode=edit');
+          return [location.href, document.baseURI, history.length,
+            history.state.page, new URL('asset.svg', document.baseURI).href];
+        })()
+    )JS", "history-push-state.js");
+    require(
+        pushed == R"(["http://127.0.0.1/next/page?mode=edit","http://127.0.0.1/next/page?mode=edit",2,2,"http://127.0.0.1/next/asset.svg"])",
+        std::string("pushState did not update length/base resolution: ") + pushed);
+    require(
+        !take_typed_host_request(engine),
+        "pushState incorrectly emitted a native host navigation request");
+
+    const auto rejected = evaluate(engine, R"JS(
+        (() => {
+          const before = [location.href, history.length, history.state.page];
+          let crossOrigin = '';
+          let clone = '';
+          let brand = '';
+          try { history.replaceState({bad:true}, '', 'https://example.com/x'); }
+          catch (error) { crossOrigin = error.name; }
+          try { history.replaceState(() => {}, '', '?bad=clone'); }
+          catch (error) { clone = error.name; }
+          try { history.replaceState.call({}, null, '', '?bad=brand'); }
+          catch (error) { brand = error.name; }
+          return [crossOrigin, clone, brand, location.href === before[0],
+            history.length === before[1], history.state.page === before[2]];
+        })()
+    )JS", "history-rejection.js");
+    require(
+        rejected == R"(["SecurityError","DataCloneError","TypeError",true,true,true])",
+        std::string("History rejection was not atomic/browser-shaped: ") + rejected);
+
+    webscene_engine_metrics before{};
+    webscene_engine_get_metrics(engine, &before);
+    const auto profile = evaluate(engine, R"JS(
+        (() => {
+          const samples = [];
+          for (let batch = 0; batch < 100; ++batch) {
+            const started = performance.now();
+            for (let index = 0; index < 100; ++index) {
+              history.replaceState({batch,index}, '', `?batch=${batch}&index=${index}`);
+            }
+            samples.push((performance.now() - started) / 100);
+          }
+          samples.sort((a,b) => a-b);
+          for (let index = 0; index < 1000; ++index) {
+            history.pushState({index}, '', `?push=${index}`);
+          }
+          return [samples[94], samples[99], history.length,
+            history.state.index, location.search];
+        })()
+    )JS", "history-performance.js");
+    webscene_engine_metrics after{};
+    webscene_engine_get_metrics(engine, &after);
+    require(
+        after.layout_passes == before.layout_passes
+            && after.published_scenes == before.published_scenes,
+        "same-document History mutation published layout or scene work");
+    require(
+        !take_typed_host_request(engine),
+        "History stress emitted a native host request");
+    std::cout << "History same-document gate: " << profile
+              << " layouts=" << (after.layout_passes - before.layout_passes)
+              << " scenes=" << (after.published_scenes - before.published_scenes)
+              << '\n';
+
+    const auto fixture_root = std::filesystem::temp_directory_path() / (
+        "webscene-history-same-document-"
+        + std::to_string(std::chrono::steady_clock::now()
+            .time_since_epoch().count()));
+    std::filesystem::create_directories(fixture_root);
+    const auto fixture_path = fixture_root / "index.html";
+    {
+        std::ofstream file(fixture_path);
+        file << R"HTML(<!doctype html><body>
+          <script>globalThis.__webSceneComponentReady=true;</script>
+        </body>)HTML";
+    }
+    auto* file_engine = webscene_engine_create(0);
+    require(file_engine != nullptr, "file History engine creation failed");
+    const auto root_text = fixture_root.string();
+    webscene_engine_set_resource_root(
+        file_engine, root_text.data(), root_text.size());
+    const auto fixture_url = "file://" + fixture_path.string();
+    require(
+        webscene_engine_load_url(
+            file_engine, fixture_url.data(), fixture_url.size()) != 0U,
+        "file History fixture navigation failed");
+    require(
+        evaluate_until_equals(
+            file_engine,
+            "Boolean(globalThis.__webSceneComponentReady)",
+            "history-file-ready.js",
+            "true") == "true",
+        "file History fixture did not become ready");
+    const auto file_result = evaluate(file_engine, R"JS(
+        (() => {
+          const stableLocation = location;
+          const prepared = new URL(location.href);
+          prepared.searchParams.set('id', 'markdown-preview');
+          let error = '';
+          try { history.replaceState({prepared:true}, '', prepared); }
+          catch (failure) { error = `${failure.name}:${failure.message}`; }
+          return [location === stableLocation, location.protocol,
+            location.search, document.URL === location.href,
+            document.baseURI === location.href, history.state?.prepared,
+            error];
+        })()
+    )JS", "history-file-code-oss.js");
+    require(
+        file_result == R"([true,"file:","?id=markdown-preview",true,true,true,""])",
+        std::string("file URL-object replaceState did not match Code OSS: ")
+            + file_result);
+    require(
+        !take_typed_host_request(file_engine),
+        "file replaceState emitted a native host navigation");
+    webscene_engine_destroy(file_engine);
+    std::filesystem::remove_all(fixture_root);
+}
+
 void test_pointer_cursor_and_external_anchor_host_handoff(webscene_engine* engine)
 {
     execute(engine, R"JS(

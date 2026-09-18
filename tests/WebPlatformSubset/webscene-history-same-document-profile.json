@@ -1,0 +1,22 @@
+{
+  "profile": "webscene-history-same-document-1",
+  "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+  "runtime": "v8",
+  "viewport": { "width": 800, "height": 600, "deviceScaleFactor": 1 },
+  "required": [
+    {
+      "path": "contracts/history-same-document-state-url.html",
+      "type": "contract",
+      "capabilities": [
+        "history-state-structured-clone",
+        "same-document-url-mutation",
+        "location-document-url-reflection",
+        "same-origin-history-enforcement"
+      ],
+      "evidence": ["code-oss-markdown-history-preparation-392"],
+      "reason": "Chromium authority and native regression for the unchanged Code OSS Markdown URL-object replaceState path."
+    }
+  ],
+  "harnessBlocked": [],
+  "excluded": []
+}

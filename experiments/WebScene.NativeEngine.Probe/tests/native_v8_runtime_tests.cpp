@@ -157,6 +157,14 @@ int main()
             test_navigation_replaces_top_level_realm();
             return 0;
         }
+        if (selected == "history-same-document") {
+            auto* focused_engine = webscene_engine_create(0);
+            require(focused_engine != nullptr,
+                "same-document History engine creation failed");
+            test_same_document_history_state_and_url_mutation(focused_engine);
+            webscene_engine_destroy(focused_engine);
+            return 0;
+        }
         if (selected == "idle-v8-platform") {
             test_idle_v8_foreground_completion();
             return 0;

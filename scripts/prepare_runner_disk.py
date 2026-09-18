@@ -140,6 +140,7 @@ def main() -> int:
     parser.add_argument("--system-temp", type=Path, required=True)
     parser.add_argument("--minimum-free-bytes", type=int, required=True)
     parser.add_argument("--stale-seconds", type=int, default=DEFAULT_STALE_SECONDS)
+    parser.add_argument("--system-stale-seconds", type=int, default=120)
     parser.add_argument("--maximum-entries", type=int, default=DEFAULT_MAX_ENTRIES)
     parser.add_argument("--maximum-seconds", type=float, default=DEFAULT_MAX_SECONDS)
     args = parser.parse_args()
@@ -169,7 +170,7 @@ def main() -> int:
     )
     system_result = reclaim_stale_entries(
         args.system_temp,
-        stale_seconds=args.stale_seconds,
+        stale_seconds=args.system_stale_seconds,
         maximum_entries=args.maximum_entries,
         maximum_seconds=args.maximum_seconds,
         allowed_prefixes=("rustc", "tmp", "cmake-", "cargo-", "dotnet-"),

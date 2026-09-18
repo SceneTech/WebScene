@@ -420,7 +420,7 @@ class BundleAuditTests(unittest.TestCase):
                          extension["resultBytes"])
         if os.name != "nt":
             self.assertEqual(self.fixture.extension.stat().st_mode & 0o777, 0o555)
-        self.assertEqual(self.fixture.extension.stat().st_mtime_ns, original_mtime)
+            self.assertEqual(self.fixture.extension.stat().st_mtime_ns, original_mtime)
         self.assertFalse(any(".webscene-thin-" in item.name
                              for item in self.fixture.extension.parent.iterdir()))
         stable = (self.fixture.extension.read_bytes(),

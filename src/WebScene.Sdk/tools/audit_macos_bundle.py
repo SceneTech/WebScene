@@ -176,6 +176,12 @@ def file_metadata(path: Path) -> dict:
     }
 
 
+def stable_normalization_metadata(entry: dict) -> tuple:
+    if os.name == "nt":
+        return tuple(entry.get(field) for field in ("type", "size", "macho"))
+    return stable_metadata(entry)
+
+
 def run_tool(arguments: list[str]) -> str:
     environment = dict(os.environ)
     environment.update(LC_ALL="C", LANG="C")
@@ -243,7 +249,8 @@ def normalize_single_architecture(bundle: Path, architecture: str,
             continue
         current = path.stat(follow_symlinks=False)
         current_metadata = file_metadata(path)
-        if (stable_metadata(current_metadata) != stable_metadata(original)
+        if (stable_normalization_metadata(current_metadata)
+                != stable_normalization_metadata(original)
                 or sha256(path) != candidate["sha256"]):
             raise AuditError(f"Mach-O mutated before normalization: {relative}")
         descriptor, temporary_name = tempfile.mkstemp(
@@ -279,11 +286,12 @@ def normalize_single_architecture(bundle: Path, architecture: str,
             os.chmod(temporary, stat.S_IMODE(original["mode"]))
             os.utime(temporary, ns=(current.st_atime_ns, original["mtimeNs"]))
             result_metadata = temporary.stat(follow_symlinks=False)
-            if (stat.S_IMODE(result_metadata.st_mode) != stat.S_IMODE(original["mode"])
-                    or (os.name != "nt" and (
-                        result_metadata.st_uid != original["uid"]
-                        or result_metadata.st_gid != original["gid"]))
-                    or result_metadata.st_mtime_ns != original["mtimeNs"]):
+            if (os.name != "nt" and (
+                    stat.S_IMODE(result_metadata.st_mode)
+                    != stat.S_IMODE(original["mode"])
+                    or result_metadata.st_uid != original["uid"]
+                    or result_metadata.st_gid != original["gid"]
+                    or result_metadata.st_mtime_ns != original["mtimeNs"])):
                 raise AuditError(f"cannot preserve metadata while normalizing {relative}")
             result_bytes = result_metadata.st_size
             if result_bytes > candidate["bytes"]:
@@ -292,7 +300,8 @@ def normalize_single_architecture(bundle: Path, architecture: str,
             result_hash = sha256(temporary)
             with temporary.open("rb") as stream:
                 os.fsync(stream.fileno())
-            if (stable_metadata(current_metadata) != stable_metadata(file_metadata(path))
+            if (stable_normalization_metadata(current_metadata)
+                    != stable_normalization_metadata(file_metadata(path))
                     or sha256(path) != candidate["sha256"]):
                 raise AuditError(f"Mach-O mutated during normalization: {relative}")
             os.replace(temporary, path)
@@ -333,12 +342,12 @@ def normalize_single_architecture(bundle: Path, architecture: str,
             if (stable_metadata(before[relative]) != stable_metadata(after[relative])
                     or sha256(bundle / relative) != result["resultSha256"]):
                 raise AuditError(f"unchanged Mach-O was modified: {relative}")
-        elif (after[relative]["mode"] != before[relative]["mode"]
+        elif (after[relative]["size"] != result["resultBytes"]
               or (os.name != "nt" and (
-                  after[relative]["uid"] != before[relative]["uid"]
-                  or after[relative]["gid"] != before[relative]["gid"]))
-              or after[relative]["mtimeNs"] != before[relative]["mtimeNs"]
-              or after[relative]["size"] != result["resultBytes"]
+                  after[relative]["mode"] != before[relative]["mode"]
+                  or after[relative]["uid"] != before[relative]["uid"]
+                  or after[relative]["gid"] != before[relative]["gid"]
+                  or after[relative]["mtimeNs"] != before[relative]["mtimeNs"]))
               or sha256(bundle / relative) != result["resultSha256"]):
             raise AuditError(f"normalized Mach-O mutated after replacement: {relative}")
 

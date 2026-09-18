@@ -122,6 +122,8 @@
             "The document navigated before directory enumeration completed");
         cancel_file_grant_create_file_promises(
             "The document navigated before file creation completed");
+        cancel_file_grant_create_directory_promises(
+            "The document navigated before directory creation completed");
         fullscreen_element = nullptr;
         document_fullscreen = false;
         { std::lock_guard lock(host_request_mutex); host_requests.clear(); }

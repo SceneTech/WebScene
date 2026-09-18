@@ -1889,6 +1889,44 @@ WEBSCENE_API uint8_t webscene_engine_complete_file_grant_create_file_request_v2(
     webscene_engine* engine,
     const webscene_file_grant_create_file_completion_v2* completion);
 
+/* Atomically gets or creates one direct directory child beneath an opaque directory
+ * grant. A successful completion carries metadata and a newly derived opaque
+ * directory grant; paths, bookmarks, descriptors, and native objects stay native. */
+enum {
+    WEBSCENE_FILE_GRANT_CREATE_DIRECTORY_SUCCESS_V2 = 0,
+    WEBSCENE_FILE_GRANT_CREATE_DIRECTORY_CANCELLED_V2 = 1,
+    WEBSCENE_FILE_GRANT_CREATE_DIRECTORY_DENIED_V2 = 2,
+    WEBSCENE_FILE_GRANT_CREATE_DIRECTORY_NOT_FOUND_V2 = 3,
+    WEBSCENE_FILE_GRANT_CREATE_DIRECTORY_TYPE_MISMATCH_V2 = 4,
+    WEBSCENE_FILE_GRANT_CREATE_DIRECTORY_CHANGED_V2 = 5,
+    WEBSCENE_FILE_GRANT_CREATE_DIRECTORY_IO_ERROR_V2 = 6,
+    WEBSCENE_FILE_GRANT_CREATE_DIRECTORY_LIMIT_V2 = 7,
+    WEBSCENE_FILE_GRANT_CREATE_DIRECTORY_MAXIMUM_NAME_BYTES_V2 = 1024 * 1024,
+    WEBSCENE_FILE_GRANT_CREATE_DIRECTORY_MAXIMUM_PENDING_OPERATIONS_V2 = 64
+};
+typedef struct webscene_file_grant_create_directory_request_v2 {
+    uint32_t struct_size, version;
+    uint64_t request_id;
+    webscene_file_panel_token_v2 directory_grant_id;
+    webscene_file_panel_string_v2 display_name;
+    uint64_t reserved;
+} webscene_file_grant_create_directory_request_v2;
+typedef struct webscene_file_grant_create_directory_completion_v2 {
+    uint32_t struct_size, version;
+    uint64_t request_id;
+    uint32_t status, capabilities;
+    webscene_file_grant_metadata_v2 metadata;
+    webscene_file_panel_string_v2 display_name;
+    webscene_file_panel_token_v2 grant_id;
+} webscene_file_grant_create_directory_completion_v2;
+WEBSCENE_API const webscene_file_grant_create_directory_request_v2*
+webscene_engine_take_file_grant_create_directory_request_v2(webscene_engine* engine);
+WEBSCENE_API void webscene_file_grant_create_directory_request_release_v2(
+    const webscene_file_grant_create_directory_request_v2* request);
+WEBSCENE_API uint8_t webscene_engine_complete_file_grant_create_directory_request_v2(
+    webscene_engine* engine,
+    const webscene_file_grant_create_directory_completion_v2* completion);
+
 /* One-way release of a live opaque file grant after the final browser-side
  * wrapper or in-flight structured-clone packet relinquishes ownership. The
  * engine queues each token at most once per broker lifetime. Request memory is

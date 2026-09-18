@@ -624,13 +624,9 @@
             return std::any_of(
                 references.begin(), references.end(),
                 [&variables](const auto& reference) {
-                    if constexpr (requires { variables.contains(reference); }) {
-                        return variables.contains(reference);
-                    } else {
-                        return std::find(
-                            variables.begin(), variables.end(), reference)
-                            != variables.end();
-                    }
+                    return css::variable_collection_contains(
+                        variables,
+                        reference);
                 });
         }
         if (declaration_index >= rule.declarations().size()) return false;
@@ -639,13 +635,9 @@
         return std::any_of(
             references.begin(), references.end(),
             [&variables](const auto& reference) {
-                if constexpr (requires { variables.contains(reference); }) {
-                    return variables.contains(reference);
-                } else {
-                    return std::find(
-                        variables.begin(), variables.end(), reference)
-                        != variables.end();
-                }
+                return css::variable_collection_contains(
+                    variables,
+                    reference);
             });
     }
 

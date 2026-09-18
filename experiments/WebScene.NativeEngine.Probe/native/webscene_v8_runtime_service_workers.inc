@@ -1011,7 +1011,7 @@
                           constructor() { throw new TypeError('Illegal constructor'); }
                           match(request) {
                             const state = requireCache(this);
-                            const stored = __webSceneServiceWorkerGlobalControl(
+                            const stored = control(
                               'cache-match', state.name, cacheKey(request));
                             return Promise.resolve(stored === undefined ? undefined
                               : new Response(stored.body, {
@@ -1034,7 +1034,7 @@
                             }
                             const clone = response.clone();
                             const body = new Uint8Array(await clone.arrayBuffer());
-                            __webSceneServiceWorkerGlobalControl(
+                            control(
                               'cache-put', state.name, key, {
                                 status:response.status, statusText:response.statusText,
                                 headers:[...response.headers], body,
@@ -1044,11 +1044,11 @@
                           }
                           delete(request) {
                             const state = requireCache(this);
-                            return Promise.resolve(__webSceneServiceWorkerGlobalControl(
+                            return Promise.resolve(control(
                               'cache-delete-entry', state.name, cacheKey(request)));
                           }
                           keys() {
-                            const keys = __webSceneServiceWorkerGlobalControl(
+                            const keys = control(
                               'cache-entry-keys', requireCache(this).name);
                             return Promise.resolve(keys.map(key =>
                               new Request(key.slice(key.indexOf(' ') + 1), {
@@ -1060,7 +1060,7 @@
                           open(name) {
                             const storage = requireCacheStorage(this);
                             const key = String(name);
-                            __webSceneServiceWorkerGlobalControl('cache-open', key);
+                            control('cache-open', key);
                             let value = storage.wrappers.get(key);
                             if (!value) {
                               value = Object.create(Cache.prototype);
@@ -1071,27 +1071,27 @@
                           }
                           has(name) {
                             requireCacheStorage(this);
-                            return Promise.resolve(__webSceneServiceWorkerGlobalControl(
+                            return Promise.resolve(control(
                               'cache-storage-has', String(name)));
                           }
                           delete(name) {
                             const key = String(name);
                             const storage = requireCacheStorage(this);
-                            const deleted = __webSceneServiceWorkerGlobalControl(
+                            const deleted = control(
                               'cache-storage-delete', key);
                             if (deleted) storage.wrappers.delete(key);
                             return Promise.resolve(deleted);
                           }
                           keys() {
                             requireCacheStorage(this);
-                            return Promise.resolve(__webSceneServiceWorkerGlobalControl(
+                            return Promise.resolve(control(
                               'cache-storage-keys'));
                           }
                           async match(request) {
                             requireCacheStorage(this);
-                            for (const name of __webSceneServiceWorkerGlobalControl(
+                            for (const name of control(
                                 'cache-storage-keys')) {
-                              const stored = __webSceneServiceWorkerGlobalControl(
+                              const stored = control(
                                 'cache-match', name, cacheKey(request));
                               const response = stored === undefined ? undefined
                                 : new Response(stored.body, {

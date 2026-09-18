@@ -8,6 +8,7 @@ const snapshot = async () => {
   const cache = await caches.open(cacheName);
   const response = await cache.match(cacheUrl);
   return {
+    privateBridgeHidden:!('__webSceneServiceWorkerGlobalControl' in globalThis),
     names,
     found:!!response,
     status:response?.status,

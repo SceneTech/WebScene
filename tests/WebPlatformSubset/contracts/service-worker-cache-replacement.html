@@ -45,7 +45,8 @@
     const firstWorker = await activatedWorker(firstRegistration);
     const seeded = await request(firstWorker, 'seed');
     record('initial active worker stores complete response metadata',
-      seeded.snapshot?.found && seeded.snapshot.status === 201
+      seeded.snapshot?.privateBridgeHidden && seeded.snapshot.found
+        && seeded.snapshot.status === 201
         && seeded.snapshot.statusText === 'Cached'
         && seeded.snapshot.etag === '"replacement-v1"'
         && seeded.snapshot.marker === 'seeded'
@@ -56,7 +57,8 @@
     const secondWorker = await activatedWorker(secondRegistration);
     const replaced = await request(secondWorker, 'report');
     record('replacement active worker sees the origin CacheStorage names',
-      replaced.snapshot?.names.includes('worker-replacement-cache-v1'),
+      replaced.snapshot?.privateBridgeHidden
+        && replaced.snapshot.names.includes('worker-replacement-cache-v1'),
       JSON.stringify(replaced));
     record('replacement active worker clones cached response metadata and body',
       replaced.snapshot?.found && replaced.snapshot.status === 201

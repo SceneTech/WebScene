@@ -1312,6 +1312,88 @@
         return std::ranges::find(tokens, token) != tokens.end();
     }
 
+    bool iframe_permissions_policy_allows(
+        const dom_node& frame,
+        std::string_view feature)
+    {
+        const auto default_allows = iframe_owner_allows_same_origin_access(
+            const_cast<dom_node&>(frame));
+        const auto allow = frame.attributes.find("allow");
+        if (allow == frame.attributes.end()) return default_allows;
+
+        size_t directive_start = 0U;
+        while (directive_start <= allow->second.size()) {
+            const auto directive_end = allow->second.find(';', directive_start);
+            const auto directive = std::string_view(allow->second).substr(
+                directive_start,
+                directive_end == std::string::npos
+                    ? std::string::npos
+                    : directive_end - directive_start);
+            std::vector<std::string_view> tokens;
+            for (size_t index = 0U; index < directive.size();) {
+                while (index < directive.size()
+                    && std::isspace(static_cast<unsigned char>(directive[index])) != 0) {
+                    ++index;
+                }
+                const auto token_start = index;
+                while (index < directive.size()
+                    && std::isspace(static_cast<unsigned char>(directive[index])) == 0) {
+                    ++index;
+                }
+                if (token_start != index) tokens.push_back(
+                    directive.substr(token_start, index - token_start));
+            }
+            if (!tokens.empty() && tokens.front() == feature) {
+                // An omitted allowlist on an iframe policy declaration means
+                // `src`, which admits the framed document's declared origin.
+                if (tokens.size() == 1U) return true;
+                for (size_t index = 1U; index < tokens.size(); ++index) {
+                    const auto token = tokens[index];
+                    if (token == "*" || token == "'src'") return true;
+                    if (token == "'none'") continue;
+                    if (token == "'self'" && default_allows) return true;
+
+                    auto origin_token = token;
+                    if (origin_token.size() >= 2U
+                        && ((origin_token.front() == '\'' && origin_token.back() == '\'')
+                            || (origin_token.front() == '"' && origin_token.back() == '"'))) {
+                        origin_token.remove_prefix(1U);
+                        origin_token.remove_suffix(1U);
+                    }
+                    const auto source = frame.attributes.find("src");
+                    const auto parent_base = effective_document_base(
+                        css_cascade_root_for_node(const_cast<dom_node&>(frame)));
+                    const auto target = source == frame.attributes.end()
+                        || source->second.empty()
+                        ? parent_base
+                        : resolve_resource_url(source->second, parent_base);
+                    if (resource_origin(std::string(origin_token))
+                        == resource_origin(target)) return true;
+                }
+                return false;
+            }
+            if (directive_end == std::string::npos) break;
+            directive_start = directive_end + 1U;
+        }
+        return default_allows;
+    }
+
+    bool current_permissions_policy_allows(std::string_view feature)
+    {
+        const auto local_context = isolate->GetCurrentContext();
+        if (local_context.IsEmpty()) return false;
+        auto* root = static_cast<dom_node*>(
+            local_context->GetAlignedPointerFromEmbedderData(
+                1, v8::kEmbedderDataTypeTagDefault));
+        for (auto* node = root; node != nullptr; node = node->parent) {
+            if (node->tag == "iframe"
+                && !iframe_permissions_policy_allows(*node, feature)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     static void token_list_supports(
         const v8::FunctionCallbackInfo<v8::Value>& info)
     {
@@ -1815,6 +1897,31 @@
         auto* node = unwrap_node(info.Holder());
         if (node == nullptr || node->tag != "iframe") return;
         node->attributes["sandbox"] = to_wtf8(info.GetIsolate(), value);
+    }
+
+    static void get_iframe_allow(
+        v8::Local<v8::Name>,
+        const v8::PropertyCallbackInfo<v8::Value>& info)
+    {
+        auto* node = unwrap_node(info.Holder());
+        if (node == nullptr || node->tag != "iframe") return;
+        const auto allow = node->attributes.find("allow");
+        const auto value = allow == node->attributes.end()
+            ? std::string_view{}
+            : std::string_view(allow->second);
+        info.GetReturnValue().Set(js_dom_string(
+            info.GetIsolate(),
+            value));
+    }
+
+    static void set_iframe_allow(
+        v8::Local<v8::Name>,
+        v8::Local<v8::Value> value,
+        const v8::PropertyCallbackInfo<void>& info)
+    {
+        auto* node = unwrap_node(info.Holder());
+        if (node == nullptr || node->tag != "iframe") return;
+        node->attributes["allow"] = to_wtf8(info.GetIsolate(), value);
     }
 
     static void range_select_node_contents(const v8::FunctionCallbackInfo<v8::Value>&)

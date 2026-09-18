@@ -1753,6 +1753,248 @@ void wheel_input(
     require(webscene_engine_enqueue(engine, &input) != 0, "wheel input was rejected");
 }
 
+void test_discrete_wheel_scroll_uses_bounded_frame_animation()
+{
+    auto* engine = webscene_engine_create(0);
+    require(engine != nullptr, "discrete wheel animation engine creation failed");
+    resize(engine, 320, 240, 88'000U);
+    execute(engine, R"JS(
+        (() => {
+          document.body.innerHTML = '';
+          document.body.style.margin = '0';
+          const scroller = document.createElement('div');
+          scroller.style.width = '200px';
+          scroller.style.height = '100px';
+          scroller.style.overflow = 'auto';
+          const content = document.createElement('div');
+          content.style.height = '1000px';
+          scroller.appendChild(content);
+          document.body.appendChild(scroller);
+          globalThis.__smoothScroller = scroller;
+          globalThis.__smoothWheelEvents = 0;
+          globalThis.__smoothScrollEvents = 0;
+          globalThis.__preventCoarseWheel = false;
+          globalThis.__preventedInsideWheel = false;
+          globalThis.__cancelCoarseWheelCalls = 0;
+          scroller.addEventListener('wheel', event => {
+            __smoothWheelEvents++;
+            if (__preventCoarseWheel) {
+              __cancelCoarseWheelCalls++;
+              event.preventDefault();
+              __preventedInsideWheel = event.defaultPrevented;
+            }
+          });
+          scroller.addEventListener('scroll', () => __smoothScrollEvents++);
+        })()
+    )JS", "native-discrete-wheel-animation-setup.js");
+    require(
+        evaluate(engine, "__smoothScroller.clientHeight",
+            "native-discrete-wheel-animation-ready.js") == "100",
+        "discrete wheel animation fixture did not complete layout");
+
+    animation_frame_and_wait(engine, 1'000.0, 88'001U);
+    webscene_engine_metrics before{};
+    webscene_engine_get_metrics(engine, &before);
+    const auto consumed_before = consumed_input_count(engine);
+    wheel_input(
+        engine,
+        50,
+        50,
+        100,
+        88'002U,
+        WEBSCENE_INPUT_WHEEL_DISCRETE);
+    wait_for_consumed_inputs(
+        engine,
+        consumed_before + 1U,
+        "discrete wheel input was not consumed");
+    require(
+        evaluate(engine,
+            "({top:__smoothScroller.scrollTop,wheel:__smoothWheelEvents,scroll:__smoothScrollEvents})",
+            "native-discrete-wheel-before-frame.js")
+            == R"JSON({"top":0,"wheel":1,"scroll":0})JSON",
+        "discrete wheel did not dispatch immediately while deferring only its default scroll");
+    wait_for_animation_frame_demand(
+        engine,
+        true,
+        "discrete wheel did not request compositor frames");
+
+    animation_frame_and_wait(engine, 1'016.0, 88'003U);
+    const auto first_frame = std::stod(evaluate(
+        engine,
+        "__smoothScroller.scrollTop",
+        "native-discrete-wheel-first-frame.js"));
+    require(
+        first_frame > 0.0 && first_frame < 100.0,
+        "first discrete wheel frame did not make bounded forward progress");
+    animation_frame_and_wait(engine, 1'050.0, 88'004U);
+    const auto middle_frame = std::stod(evaluate(
+        engine,
+        "__smoothScroller.scrollTop",
+        "native-discrete-wheel-middle-frame.js"));
+    require(
+        middle_frame > first_frame && middle_frame < 100.0,
+        "discrete wheel interpolation was not monotonic before its target");
+    animation_frame_and_wait(engine, 1'200.0, 88'005U);
+    require(
+        evaluate(engine, "__smoothScroller.scrollTop",
+            "native-discrete-wheel-final-frame.js") == "100",
+        "discrete wheel animation did not land exactly on its target");
+    wait_for_animation_frame_demand(
+        engine,
+        false,
+        "completed discrete wheel animation retained compositor demand");
+    webscene_engine_metrics after{};
+    webscene_engine_get_metrics(engine, &after);
+    require(
+        after.layout_passes == before.layout_passes,
+        "discrete wheel animation reran layout instead of translating retained paint artifacts");
+
+    const auto retarget_consumed = consumed_input_count(engine);
+    wheel_input(
+        engine,
+        50,
+        50,
+        80,
+        88'006U,
+        WEBSCENE_INPUT_WHEEL_DISCRETE);
+    wait_for_consumed_inputs(
+        engine,
+        retarget_consumed + 1U,
+        "first retargeting wheel input was not consumed");
+    animation_frame_and_wait(engine, 1'216.0, 88'007U);
+    const auto retarget_frame = std::stod(evaluate(
+        engine,
+        "__smoothScroller.scrollTop",
+        "native-discrete-wheel-retarget-frame.js"));
+    require(
+        retarget_frame > 100.0 && retarget_frame < 180.0,
+        "retargeting fixture did not leave an in-flight destination");
+    wheel_input(
+        engine,
+        50,
+        50,
+        80,
+        88'008U,
+        WEBSCENE_INPUT_WHEEL_DISCRETE);
+    wait_for_consumed_inputs(
+        engine,
+        retarget_consumed + 3U,
+        "second retargeting wheel input was not consumed");
+    animation_frame_and_wait(engine, 1'500.0, 88'009U);
+    require(
+        evaluate(engine, "__smoothScroller.scrollTop",
+            "native-discrete-wheel-retarget-final.js") == "260",
+        "same-direction wheel ticks did not extend the pending destination");
+    wait_for_animation_frame_demand(
+        engine,
+        false,
+        "retargeted discrete wheel animation retained compositor demand");
+
+    const auto precision_consumed = consumed_input_count(engine);
+    wheel_input(
+        engine,
+        50,
+        50,
+        25,
+        88'010U,
+        WEBSCENE_INPUT_WHEEL_PRECISE);
+    wait_for_consumed_inputs(
+        engine,
+        precision_consumed + 1U,
+        "precision wheel input was not consumed");
+    require(
+        evaluate(engine, "__smoothScroller.scrollTop",
+            "native-precision-wheel-direct.js") == "285",
+        "precision wheel input was incorrectly interpolated a second time");
+    require(
+        webscene_engine_requires_animation_frame(engine) == 0U,
+        "precision wheel input incorrectly requested animation frames");
+
+    require(
+        evaluate(engine, "globalThis.__preventCoarseWheel = true",
+            "native-discrete-wheel-prevent-default-setup.js") == "true",
+        "discrete wheel prevention fixture did not arm");
+    const auto prevented_consumed = consumed_input_count(engine);
+    wheel_input(
+        engine,
+        50,
+        50,
+        100,
+        88'011U,
+        WEBSCENE_INPUT_WHEEL_DISCRETE);
+    wait_for_consumed_inputs(
+        engine,
+        prevented_consumed + 1U,
+        "prevented discrete wheel input was not consumed");
+    const auto prevented_result = evaluate(engine,
+        "({top:__smoothScroller.scrollTop,wheel:__smoothWheelEvents,cancelCalls:__cancelCoarseWheelCalls,inside:__preventedInsideWheel})",
+        "native-discrete-wheel-prevent-default.js");
+    const auto prevented_demand = webscene_engine_requires_animation_frame(engine);
+    require(
+        prevented_result == R"JSON({"top":285,"wheel":5,"cancelCalls":1,"inside":true})JSON"
+            && prevented_demand == 0U,
+        "preventDefault did not suppress the discrete wheel animator: "
+            + prevented_result + " demand=" + std::to_string(prevented_demand));
+    require(
+        evaluate(engine, "globalThis.__preventCoarseWheel = false",
+            "native-discrete-wheel-prevent-default-cleanup.js") == "false",
+        "discrete wheel prevention fixture did not disarm");
+
+    const auto cancellation_consumed = consumed_input_count(engine);
+    wheel_input(
+        engine,
+        50,
+        50,
+        100,
+        88'012U,
+        WEBSCENE_INPUT_WHEEL_DISCRETE);
+    wait_for_consumed_inputs(
+        engine,
+        cancellation_consumed + 1U,
+        "cancellable discrete wheel input was not consumed");
+    animation_frame_and_wait(engine, 1'516.0, 88'013U);
+    require(
+        evaluate(engine, "(__smoothScroller.scrollTop=300,__smoothScroller.scrollTop)",
+            "native-discrete-wheel-script-cancel.js") == "300",
+        "script scroll did not replace the in-flight wheel position");
+    wait_for_animation_frame_demand(
+        engine,
+        false,
+        "script scroll did not cancel the discrete wheel animator");
+    animation_frame_and_wait(engine, 1'700.0, 88'014U);
+    require(
+        evaluate(engine, "__smoothScroller.scrollTop",
+            "native-discrete-wheel-script-cancel-final.js") == "300",
+        "cancelled discrete wheel animation overwrote a script scroll");
+
+    require(
+        webscene_engine_set_accessibility_preferences_v1(
+            engine,
+            WEBSCENE_ACCESSIBILITY_PREFERENCE_REDUCED_MOTION_V1) != 0,
+        "reduced-motion preference was rejected");
+    const auto reduced_motion_consumed = consumed_input_count(engine);
+    wheel_input(
+        engine,
+        50,
+        50,
+        40,
+        88'015U,
+        WEBSCENE_INPUT_WHEEL_DISCRETE);
+    wait_for_consumed_inputs(
+        engine,
+        reduced_motion_consumed + 1U,
+        "reduced-motion wheel input was not consumed");
+    require(
+        evaluate(engine, "__smoothScroller.scrollTop",
+            "native-discrete-wheel-reduced-motion.js") == "340"
+            && webscene_engine_requires_animation_frame(engine) == 0U,
+        "reduced motion did not preserve immediate discrete wheel scrolling");
+    require(
+        webscene_engine_set_accessibility_preferences_v1(engine, 0U) != 0,
+        "reduced-motion preference did not reset");
+    webscene_engine_destroy(engine);
+}
+
 void test_navigator_platform_and_wheel_modifiers(webscene_engine* engine)
 {
     const auto navigator_result = evaluate(

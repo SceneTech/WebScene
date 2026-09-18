@@ -239,6 +239,10 @@ int main()
             test_worker_starts_after_engine_configuration();
             return 0;
         }
+        if (selected == "discrete-wheel-scroll") {
+            test_discrete_wheel_scroll_uses_bounded_frame_animation();
+            return 0;
+        }
         if (selected == "dom-punctuation-keyboard") {
             auto* focused_engine = webscene_engine_create(0);
             require(focused_engine != nullptr, "keyboard event engine creation failed");
@@ -1414,6 +1418,7 @@ int main()
     test_ordered_scene_consumer_preserves_two_diff_chain();
     test_keyboard_and_pointer_focus_modality();
     test_navigator_platform_and_wheel_modifiers(engine);
+    test_discrete_wheel_scroll_uses_bounded_frame_animation();
     test_resize_precedes_new_viewport_pointer_input(engine);
     test_generated_pseudo_element_opacity(engine);
     test_tradingview_split_color_swatch_uses_pseudo_border_triangle(engine);

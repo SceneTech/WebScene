@@ -107,7 +107,15 @@ enum {
     WEBSCENE_INPUT_POINTER_MODIFIER_SHIFT = 1U << 16U,
     WEBSCENE_INPUT_POINTER_MODIFIER_CONTROL = 1U << 17U,
     WEBSCENE_INPUT_POINTER_MODIFIER_ALT = 1U << 18U,
-    WEBSCENE_INPUT_POINTER_MODIFIER_META = 1U << 19U
+    WEBSCENE_INPUT_POINTER_MODIFIER_META = 1U << 19U,
+    // Wheel hosts must preserve the device class across the ABI. Precision
+    // devices (trackpads and pixel wheels) already provide a frame-dense
+    // stream, including platform momentum, and must not be interpolated again.
+    // Discrete wheels report coarse ticks and opt into WebScene's bounded
+    // target-offset animator. Unclassified legacy input remains immediate.
+    WEBSCENE_INPUT_WHEEL_PRECISE = 1U << 20U,
+    WEBSCENE_INPUT_WHEEL_NATIVE_MOMENTUM = 1U << 21U,
+    WEBSCENE_INPUT_WHEEL_DISCRETE = 1U << 22U
 };
 
 typedef struct webscene_input_event {

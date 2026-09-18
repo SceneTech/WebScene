@@ -111,6 +111,8 @@
 #if defined(WEBSCENE_NATIVE_ENGINE_WITH_V8)
                 if (runtime_ != nullptr) {
                     runtime_->signal_animation_frame(event.x);
+                    static_cast<void>(
+                        runtime_->advance_discrete_wheel_scroll(event.x));
                     update_compilation_metrics();
                 }
 #endif

@@ -380,6 +380,7 @@ public:
     uint32_t current_cursor_kind() const noexcept;
     void notify_low_memory();
     void signal_animation_frame(double timestamp_ms);
+    bool advance_discrete_wheel_scroll(double timestamp_ms);
     bool pump_animation_frame_task();
     bool has_pending_animation_frame_task() const noexcept;
     uint8_t host_animation_frame_demand() const noexcept;

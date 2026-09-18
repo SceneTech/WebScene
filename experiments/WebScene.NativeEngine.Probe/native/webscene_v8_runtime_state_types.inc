@@ -102,6 +102,18 @@
         uint64_t input_sequence;
     };
 
+    struct discrete_wheel_scroll_animation final {
+        uint32_t target_id{};
+        v8::Global<v8::Context> context;
+        float start_x{};
+        float start_y{};
+        float target_x{};
+        float target_y{};
+        double start_timestamp_ms{-1.0};
+        double duration_ms{140.0};
+        uint64_t input_sequence{};
+    };
+
     struct websocket_binding final {
         v8::Global<v8::Context> context;
         v8::Global<v8::Function> callback;

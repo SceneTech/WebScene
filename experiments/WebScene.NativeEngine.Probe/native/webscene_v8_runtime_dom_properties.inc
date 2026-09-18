@@ -2068,6 +2068,7 @@
                 info.GetIsolate()->GetCurrentContext()).FromMaybe(0)),
             0.0F,
             maximum);
+        self->cancel_discrete_wheel_scroll(node);
         if (std::abs(next - node->scroll_left) <= 0.01F) return;
         self->document.set_scroll_offset(*node, next, node->scroll_top);
         self->enqueue_programmatic_scroll_event(*node);
@@ -2093,6 +2094,7 @@
                 info.GetIsolate()->GetCurrentContext()).FromMaybe(0)),
             0.0F,
             maximum);
+        self->cancel_discrete_wheel_scroll(node);
         if (std::abs(next - node->scroll_top) <= 0.01F) return;
         self->document.set_scroll_offset(*node, node->scroll_left, next);
         self->enqueue_programmatic_scroll_event(*node);
@@ -2136,6 +2138,7 @@
         const auto maximum_top=std::max(0.0F,node->scroll_content_height-node->scroll_viewport_height);
         const auto next_left=static_cast<float>(std::clamp(left,0.0,static_cast<double>(maximum_left)));
         const auto next_top=static_cast<float>(std::clamp(top,0.0,static_cast<double>(maximum_top)));
+        self->cancel_discrete_wheel_scroll(node);
         if (next_left == node->scroll_left && next_top == node->scroll_top) return;
         self->document.set_scroll_offset(*node, next_left, next_top);
         self->enqueue_programmatic_scroll_event(*node);

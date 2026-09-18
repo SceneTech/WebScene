@@ -863,10 +863,19 @@ public sealed class NativeSceneSurface : Control, INativeWebSceneRenderDiagnosti
     {
         ObserveHostTimeline();
         var point = args.GetPosition(this);
+        // Avalonia does not expose the native momentum phase. Fractional
+        // deltas are nevertheless the reliable signal that the platform is
+        // already delivering a precision stream; integral notches opt into
+        // WebScene's bounded discrete-wheel interpolation.
+        var precise = Math.Abs(args.Delta.X - Math.Round(args.Delta.X)) > 0.0001
+            || Math.Abs(args.Delta.Y - Math.Round(args.Delta.Y)) > 0.0001;
+        const uint preciseWheel = 1U << 20;
+        const uint discreteWheel = 1U << 22;
         var input = new InputEvent
         {
             Kind = 4,
-            Flags = EncodeModifiers(args.KeyModifiers) << 16,
+            Flags = (EncodeModifiers(args.KeyModifiers) << 16)
+                | (precise ? preciseWheel : discreteWheel),
             Sequence = NextSequence(),
             X = point.X,
             Y = point.Y,

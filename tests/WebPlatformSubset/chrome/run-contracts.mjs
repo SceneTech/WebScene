@@ -169,6 +169,14 @@ async function launchContractServer(setViewport) {
           (globalThis.__resourceCacheExecutions || 0) + 1;`);
         return;
       }
+      if (requestUrl.pathname === '/__webscene_markdown_external.svg') {
+        response.writeHead(200, {
+          'content-type':'image/svg+xml',
+          'cache-control':'no-store'
+        });
+        response.end('<svg xmlns="http://www.w3.org/2000/svg" width="2" height="3" viewBox="0 0 2 3"><rect width="2" height="3"/></svg>');
+        return;
+      }
       // Local contracts use the native runner's set_viewport extension. Drive
       // a real Chromium viewport change; do not emulate CSS/media results.
       if (requestUrl.pathname === '/resources/testdriver.js') {

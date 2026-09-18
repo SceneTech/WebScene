@@ -100,16 +100,17 @@ class PrepareRunnerDiskTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 reclaim_stale_entries(link)
 
-    def test_entry_and_time_bounds_fail_closed(self) -> None:
+    def test_entry_and_time_bounds_truncate_cleanup(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             for index in range(3):
                 (root / str(index)).mkdir()
-            with self.assertRaises(RuntimeError):
-                reclaim_stale_entries(root, maximum_entries=2)
+            result = reclaim_stale_entries(root, maximum_entries=2)
+            self.assertEqual(result.inspected, 2)
+            self.assertTrue(result.truncated)
             with mock.patch("prepare_runner_disk.time.monotonic", side_effect=[0.0, 1.0]):
-                with self.assertRaises(RuntimeError):
-                    reclaim_stale_entries(root, maximum_seconds=0.5)
+                result = reclaim_stale_entries(root, maximum_seconds=0.5)
+            self.assertTrue(result.truncated)
 
     def test_ten_thousand_entry_scan_is_bounded(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -125,7 +126,7 @@ class PrepareRunnerDiskTests(unittest.TestCase):
 
     def test_cli_fails_when_cleanup_cannot_reach_minimum_free_space(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            result = ReclaimResult(0, 0, 0, 0, 0, 0, 1, 2)
+            result = ReclaimResult(0, 0, 0, 0, 0, 0, 1, 2, False)
             arguments = [
                 "prepare_runner_disk.py",
                 directory,
@@ -151,7 +152,7 @@ class PrepareRunnerDiskTests(unittest.TestCase):
                 "--minimum-free-bytes",
                 "1",
             ]
-            result = ReclaimResult(0, 0, 0, 0, 0, 0, 4, 4)
+            result = ReclaimResult(0, 0, 0, 0, 0, 0, 4, 4, False)
             with mock.patch.dict(os.environ, {"RUNNER_TEMP": directory}, clear=False):
                 with mock.patch("sys.argv", arguments):
                     with mock.patch("prepare_runner_disk.reclaim_stale_entries", return_value=result):
@@ -179,7 +180,7 @@ class PrepareRunnerDiskTests(unittest.TestCase):
             self.assertFalse(removable.exists())
             self.assertTrue(unrelated.exists())
             self.assertEqual(result.removed, 1)
-            self.assertEqual(result.skipped_protected, 1)
+            self.assertEqual(result.inspected, 1)
 
     def test_privileged_cleanup_is_limited_to_named_direct_children(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

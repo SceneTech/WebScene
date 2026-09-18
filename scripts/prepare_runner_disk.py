@@ -30,6 +30,7 @@ class ReclaimResult:
     skipped_protected: int
     free_before: int
     free_after: int
+    truncated: bool
 
 
 def _protected_children(root: Path, paths: list[Path]) -> set[Path]:
@@ -90,17 +91,16 @@ def reclaim_stale_entries(
     deadline = time.monotonic() + maximum_seconds
     free_before = shutil.disk_usage(root).free
     inspected = removed = skipped_recent = skipped_owned = skipped_permission = skipped_protected = 0
+    truncated = False
 
     for entry in root.iterdir():
-        inspected += 1
-        if inspected > maximum_entries:
-            raise RuntimeError(f"runner temporary directory exceeds {maximum_entries} entries")
-        if time.monotonic() > deadline:
-            raise RuntimeError(f"runner cleanup exceeded {maximum_seconds:.1f} seconds")
-        if entry in protected:
-            skipped_protected += 1
-            continue
         if allowed_prefixes and not any(entry.name.startswith(prefix) for prefix in allowed_prefixes):
+            continue
+        if inspected >= maximum_entries or time.monotonic() > deadline:
+            truncated = True
+            break
+        inspected += 1
+        if entry in protected:
             skipped_protected += 1
             continue
 
@@ -130,6 +130,7 @@ def reclaim_stale_entries(
         skipped_protected=skipped_protected,
         free_before=free_before,
         free_after=free_after,
+        truncated=truncated,
     )
 
 
@@ -181,7 +182,7 @@ def main() -> int:
         f"recent={result.skipped_recent} owned-by-other={result.skipped_owned} "
         f"permission-skipped={result.skipped_permission} protected={result.skipped_protected} "
         f"free-before={result.free_before} "
-        f"free-after={result.free_after} reclaimed={reclaimed}."
+        f"free-after={result.free_after} reclaimed={reclaimed} truncated={result.truncated}."
     )
     print(
         "System temporary disk preflight: "
@@ -189,7 +190,8 @@ def main() -> int:
         f"recent={system_result.skipped_recent} owned-by-other={system_result.skipped_owned} "
         f"permission-skipped={system_result.skipped_permission} "
         f"protected={system_result.skipped_protected} free-before={system_result.free_before} "
-        f"free-after={system_result.free_after} reclaimed={system_reclaimed}."
+        f"free-after={system_result.free_after} reclaimed={system_reclaimed} "
+        f"truncated={system_result.truncated}."
     )
     available = min(result.free_after, system_result.free_after)
     if available < args.minimum_free_bytes:

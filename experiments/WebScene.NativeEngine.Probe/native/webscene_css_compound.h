@@ -341,17 +341,12 @@ inline bool compound_matches(const Host& host,const dom_node& node,
                         return host.css_selector_matches(node, item, scope_root);
                     })) return false;
             } else if (name == "has") {
-                bool any = false;
-                size_t start = 0;
-                while (start <= argument.size()) {
-                    auto end = argument.find(',', start);
-                    if (end == std::string::npos) end = argument.size();
-                    const auto relative = trim_css_view(
-                        argument.substr(start, end - start));
+                const auto any = css_selector_list_any(argument,
+                    [&](std::string_view relative) {
                     if (!relative.empty()) {
                         if (relative.front() == '>') {
                             const auto child_selector = trim_css_view(relative.substr(1U));
-                            any = !child_selector.empty() && std::any_of(
+                            return !child_selector.empty() && std::any_of(
                                 node.children.begin(),
                                 node.children.end(),
                                 [&](const auto* child) {
@@ -360,13 +355,12 @@ inline bool compound_matches(const Host& host,const dom_node& node,
                                             *child, child_selector, &node);
                                 });
                         } else if (relative.front() != '+' && relative.front() != '~') {
-                            any = host.query_selector_node(
+                            return host.query_selector_node(
                                 const_cast<dom_node&>(node), relative, false) != nullptr;
                         }
                     }
-                    if (any || end == argument.size()) break;
-                    start = end + 1U;
-                }
+                    return false;
+                });
                 if (!any) return false;
             } else {
                 // Stateful and vendor pseudo-classes are not active unless the

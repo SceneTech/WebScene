@@ -2115,22 +2115,121 @@ void test_resource_cache_reuse_across_engine_generations()
         "first resource-cache script did not execute");
     const auto requests_after_first =
         server.requests.load(std::memory_order_relaxed);
+    webscene_engine_memory_metrics warm_memory{
+        sizeof(webscene_engine_memory_metrics)};
+    require(webscene_engine_get_memory_metrics(first, &warm_memory) != 0,
+        "warm resource-cache memory metrics were unavailable");
     webscene_engine_destroy(first);
-
-    auto* second = webscene_engine_create_with_options(&options);
-    require(second != nullptr, "second resource-cache engine creation failed");
-    require(
-        webscene_engine_load_url(second, url.data(), url.size()) != 0,
-        "second resource-cache document load failed");
-    require(
-        evaluate(second, "globalThis.__cachedResourceValue", "resource-cache-second.js") == "42",
-        "process-cached resource did not execute in the second engine");
+    const auto rss_after_warmup = service_worker_test_current_rss_bytes();
+    std::vector<double> durations;
+    durations.reserve(100U);
+    uint64_t maximum_v8_heap = warm_memory.v8_used_heap_bytes;
+    for (size_t cycle = 0U; cycle < 100U; ++cycle) {
+        auto* engine = webscene_engine_create_with_options(&options);
+        require(engine != nullptr, "resource-cache cycle engine creation failed");
+        const auto started = std::chrono::steady_clock::now();
+        require(
+            webscene_engine_load_url(engine, url.data(), url.size()) != 0,
+            "resource-cache cycle document load failed");
+        require(
+            evaluate(engine, "globalThis.__cachedResourceValue",
+                "resource-cache-cycle.js") == "42",
+            "process-cached resource did not execute in a replacement engine");
+        durations.push_back(std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - started).count());
+        webscene_engine_memory_metrics memory{
+            sizeof(webscene_engine_memory_metrics)};
+        require(webscene_engine_get_memory_metrics(engine, &memory) != 0,
+            "resource-cache cycle memory metrics were unavailable");
+        maximum_v8_heap = std::max(maximum_v8_heap, memory.v8_used_heap_bytes);
+        webscene_engine_destroy(engine);
+    }
+    std::sort(durations.begin(), durations.end());
+    const auto p95 = durations[94U];
     require(
         requests_after_first == 2
             && server.requests.load(std::memory_order_relaxed)
                 == requests_after_first,
         "document and script bodies were not reused from the process resource cache");
-    webscene_engine_destroy(second);
+    require(p95 <= 100.0,
+        "warm parser resource reuse exceeded 100ms p95: " + std::to_string(p95));
+    require(maximum_v8_heap <= warm_memory.v8_used_heap_bytes + 8U * 1024U * 1024U,
+        "resource-cache cycles retained more than 8 MiB V8 heap");
+    const auto rss_after_cycles = service_worker_test_current_rss_bytes();
+    require(rss_after_cycles <= rss_after_warmup + 64U * 1024U * 1024U,
+        "resource-cache cycles retained more than 64 MiB RSS after teardown");
+    std::cout << "Parser resource cache gate: cycles=100 p95=" << p95
+              << "ms requests=" << requests_after_first
+              << " warmHeap=" << warm_memory.v8_used_heap_bytes
+              << " maxHeap=" << maximum_v8_heap
+              << " rssBefore=" << rss_after_warmup
+              << " rssAfter=" << rss_after_cycles << '\n';
+
+    std::error_code cleanup_error;
+    std::filesystem::remove_all(cache_directory, cleanup_error);
+}
+
+void test_parser_resource_cache_partitioning()
+{
+    const auto cache_directory = std::filesystem::temp_directory_path()
+        / ("webscene-native-parser-cache-partition-test-" + std::to_string(
+            std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::filesystem::create_directories(cache_directory);
+    const auto cache_path = cache_directory.string();
+    resource_server server{.content = {
+        {"https://partition-a.test/seed.html", R"HTML(
+            <!doctype html><script>
+              document.cookie='parser-partition=a; Path=/; Secure';
+              globalThis.__webSceneComponentReady=true;
+            </script>)HTML"},
+        {"https://partition-a.test/index.html", R"HTML(
+            <!doctype html><script src="/value.js"></script>)HTML"},
+        {"https://partition-b.test/index.html", R"HTML(
+            <!doctype html><script src="https://partition-a.test/value.js"></script>)HTML"},
+        {"https://partition-a.test/value.js",
+            "globalThis.__partitionValue=42;globalThis.__webSceneComponentReady=true;"}
+    }};
+    const webscene_engine_options options{
+        sizeof(webscene_engine_options),
+        64U,
+        cache_path.data(),
+        cache_path.size(),
+        load_test_resource,
+        &server};
+    auto* engine = webscene_engine_create_with_options(&options);
+    require(engine != nullptr, "parser cache partition engine creation failed");
+    const auto load_and_require_script = [&](std::string_view address) {
+        require(webscene_engine_load_url(
+                engine, address.data(), address.size()) != 0,
+            "parser cache partition navigation failed");
+        require(evaluate(engine, "globalThis.__partitionValue",
+                "parser-cache-partition-value.js") == "42",
+            "partitioned parser resource did not execute");
+    };
+    constexpr std::string_view seed{"https://partition-a.test/seed.html"};
+    require(webscene_engine_load_url(engine, seed.data(), seed.size()) != 0,
+        "parser cache cookie seed navigation failed");
+    constexpr std::string_view first{"https://partition-a.test/index.html"};
+    load_and_require_script(first);
+    require(server.requests.load(std::memory_order_relaxed) == 3,
+        "initial cookie-partitioned parser resources had unexpected host reads");
+    execute(engine,
+        "document.cookie='parser-partition=b; Path=/; Secure'",
+        "parser-cache-cookie-replacement.js");
+    load_and_require_script(first);
+    require(server.requests.load(std::memory_order_relaxed) == 5,
+        "a different cookie representation consumed fresh parser cache entries");
+    load_and_require_script(first);
+    require(server.requests.load(std::memory_order_relaxed) == 5,
+        "the same cookie representation did not reuse fresh parser cache entries");
+    constexpr std::string_view second{"https://partition-b.test/index.html"};
+    load_and_require_script(second);
+    require(server.requests.load(std::memory_order_relaxed) == 7,
+        "a different initiator origin consumed fresh parser cache entries");
+    load_and_require_script(second);
+    require(server.requests.load(std::memory_order_relaxed) == 7,
+        "the same initiator origin did not reuse fresh parser cache entries");
+    webscene_engine_destroy(engine);
 
     std::error_code cleanup_error;
     std::filesystem::remove_all(cache_directory, cleanup_error);

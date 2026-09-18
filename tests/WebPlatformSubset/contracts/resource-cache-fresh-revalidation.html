@@ -1,0 +1,54 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Fresh parser resources and validators use the browser HTTP cache</title>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<script>
+const loadScript = url => new Promise((resolve, reject) => {
+  const script = document.createElement('script');
+  script.src = url;
+  script.onload = () => { script.remove(); resolve(); };
+  script.onerror = () => reject(new Error(`Could not load ${url}`));
+  document.head.append(script);
+});
+
+const counts = async key => {
+  const response = await fetch(
+    `/__webscene_resource_cache_count?key=${encodeURIComponent(key)}`,
+    {cache:'no-store'});
+  return response.json();
+};
+
+promise_test(async () => {
+  const url = '/__webscene_resource_cache.js?mode=fresh&key=fresh-parser';
+  await loadScript(url);
+  await loadScript(url);
+  assert_equals((await counts('fresh-parser')).requests, 1,
+    'a fresh parser resource avoids a second network request');
+}, 'fresh parser resources are reused without revalidation');
+
+promise_test(async () => {
+  const url = '/__webscene_resource_cache.js?mode=validator&key=validator-parser';
+  await loadScript(url);
+  await loadScript(url);
+  const result = await counts('validator-parser');
+  assert_equals(result.requests, 2, 'no-cache reaches the server again');
+  assert_equals(result.conditional, 1, 'the second request carries If-None-Match');
+}, 'stale parser resources revalidate and consume a 304 response');
+
+promise_test(async () => {
+  const url = '/__webscene_resource_cache.js?mode=fresh&key=parser-cycles';
+  await loadScript(url);
+  const durations = [];
+  for (let cycle = 0; cycle < 100; cycle++) {
+    const started = performance.now();
+    await loadScript(url);
+    durations.push(performance.now() - started);
+  }
+  durations.sort((left, right) => left - right);
+  const p95 = durations[94];
+  assert_less_than_equal(p95, 100, `100-cycle cached parser p95 was ${p95}ms`);
+  assert_equals((await counts('parser-cycles')).requests, 1,
+    'all 100 cycles reuse the fresh response');
+}, '100 fresh parser resource cycles stay cached and bounded');
+</script>

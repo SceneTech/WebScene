@@ -965,6 +965,12 @@ if(WEBSCENE_NATIVE_ENGINE_ENABLE_V8)
             ENVIRONMENT "WEBSCENE_NATIVE_ENGINE_TEST_FILTER=file-system-access"
             LABELS "native;file-system-access;security;lifecycle;performance"
             TIMEOUT 30)
+        add_test(NAME webscene_native_resource_cache_prefetch
+            COMMAND webscene_native_engine_tests)
+        set_tests_properties(webscene_native_resource_cache_prefetch PROPERTIES
+            ENVIRONMENT "WEBSCENE_NATIVE_ENGINE_TEST_FILTER=resource-cache-prefetch"
+            LABELS "native;resource;cache;security;lifecycle;performance"
+            TIMEOUT 90)
         add_test(NAME webscene_native_host_close_decision COMMAND webscene_native_engine_tests)
         add_test(NAME webscene_native_service_worker_parser_resources
             COMMAND webscene_native_engine_tests)

@@ -578,6 +578,8 @@
         std::condition_variable condition;
         std::atomic<bool> ready{false};
         bool loaded{false};
+        bool cross_engine_shareable{false};
+        const void* owner{nullptr};
         std::shared_ptr<const resource_response> response;
         std::chrono::steady_clock::time_point expires_at{};
         uint64_t access{0U};

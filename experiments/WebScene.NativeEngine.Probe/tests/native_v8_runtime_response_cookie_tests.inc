@@ -184,3 +184,126 @@ void test_response_header_cookie_contracts()
         "bounded cookie mutation/read gate exceeded three seconds: " + mutation);
     webscene_engine_destroy(engine);
 }
+
+struct single_flight_cookie_server final {
+    std::atomic<uint32_t> target_requests{0U};
+};
+
+size_t load_single_flight_cookie_resource_v4(
+    void* user_data,
+    uint32_t,
+    const char* url,
+    size_t url_length,
+    const char*,
+    size_t,
+    int64_t,
+    const webscene_resource_request_context_v4*,
+    webscene_resource_response_v4* response,
+    char* destination,
+    size_t destination_capacity)
+{
+    auto& server = *static_cast<single_flight_cookie_server*>(user_data);
+    const std::string_view address(url, url_length);
+    const auto target = address == "https://single-flight-cookie.test/index.html";
+    static constexpr std::string_view target_body = R"HTML(
+      <!doctype html><script>
+        globalThis.__singleFlightCookie = document.cookie;
+        globalThis.__webSceneComponentReady = true;
+      </script>)HTML";
+    static constexpr std::string_view warmup_body =
+        "<!doctype html><script>globalThis.__webSceneComponentReady=true;</script>";
+    const auto body = target ? target_body : warmup_body;
+    static const webscene_resource_header_v4 target_headers[]{
+        {sizeof(webscene_resource_header_v4), "Set-Cookie", 10U,
+            "sid=isolated; Path=/; Secure; HttpOnly", 38U}};
+    if (response != nullptr) {
+        response->status = 200U;
+        response->status_text = "OK";
+        response->status_text_length = 2U;
+        response->final_url = url;
+        response->final_url_length = url_length;
+        response->headers = target ? target_headers : nullptr;
+        response->header_count = target ? std::size(target_headers) : 0U;
+    }
+    constexpr size_t header_size = 2U + sizeof(uint32_t) + sizeof(int64_t) * 2U;
+    const auto required = header_size + body.size();
+    if (destination == nullptr || destination_capacity < required) return required;
+    if (target) {
+        server.target_requests.fetch_add(1U, std::memory_order_relaxed);
+        std::this_thread::sleep_for(std::chrono::milliseconds(60));
+    }
+    destination[0] = 1;
+    destination[1] = 1;
+    const uint32_t tag_length = 0U;
+    const int64_t last_modified = 0;
+    const auto fresh_until = std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count() + 3600;
+    std::memcpy(destination + 2U, &tag_length, sizeof(tag_length));
+    std::memcpy(destination + 2U + sizeof(tag_length),
+        &last_modified, sizeof(last_modified));
+    std::memcpy(destination + 2U + sizeof(tag_length) + sizeof(last_modified),
+        &fresh_until, sizeof(fresh_until));
+    std::copy(body.begin(), body.end(), destination + header_size);
+    return required;
+}
+
+void test_cross_engine_single_flight_keeps_set_cookie_responses_private()
+{
+    constexpr size_t engine_count = 4U;
+    const auto cache_directory = std::filesystem::temp_directory_path()
+        / ("webscene-native-single-flight-cookie-test-" + std::to_string(
+            std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::filesystem::create_directories(cache_directory);
+    const auto cache_path = cache_directory.string();
+    single_flight_cookie_server server;
+    webscene_engine_options options{};
+    options.struct_size = sizeof(options);
+    options.compilation_cache_directory = cache_path.data();
+    options.compilation_cache_directory_length = cache_path.size();
+    options.resource_load_callback_v4 = load_single_flight_cookie_resource_v4;
+    options.resource_load_v4_user_data = &server;
+    std::array<webscene_engine*, engine_count> engines{};
+    for (auto& engine : engines) {
+        engine = webscene_engine_create_with_options(&options);
+        require(engine != nullptr, "single-flight cookie engine creation failed");
+    }
+    std::atomic<size_t> ready{0U};
+    std::atomic<bool> start{false};
+    std::array<std::thread, engine_count> workers;
+    std::array<std::string, engine_count> cookies;
+    constexpr std::string_view target{
+        "https://single-flight-cookie.test/index.html"};
+    for (size_t index = 0U; index < engine_count; ++index) {
+        workers[index] = std::thread([&, index] {
+            const auto warmup = "https://single-flight-cookie.test/warmup-"
+                + std::to_string(index) + ".html";
+            require(webscene_engine_load_url(
+                    engines[index], warmup.data(), warmup.size()) != 0,
+                "single-flight cookie warmup failed");
+            ready.fetch_add(1U, std::memory_order_release);
+            while (!start.load(std::memory_order_acquire)) std::this_thread::yield();
+            require(webscene_engine_load_url(
+                    engines[index], target.data(), target.size()) != 0,
+                "single-flight cookie navigation failed");
+            cookies[index] = evaluate(engines[index],
+                "globalThis.__singleFlightCookie",
+                "single-flight-cookie-result.js");
+        });
+    }
+    while (ready.load(std::memory_order_acquire) != engine_count) {
+        std::this_thread::yield();
+    }
+    start.store(true, std::memory_order_release);
+    for (auto& worker : workers) worker.join();
+    const auto target_requests = server.target_requests.load(std::memory_order_relaxed);
+    require(target_requests == engine_count,
+        "a credentialed Set-Cookie response was shared across engine cookie jars: requests="
+            + std::to_string(target_requests));
+    for (const auto& cookie : cookies) {
+        require(cookie == "\"\"",
+            "HttpOnly single-flight cookie became script-visible: " + cookie);
+    }
+    for (auto* engine : engines) webscene_engine_destroy(engine);
+    std::error_code cleanup_error;
+    std::filesystem::remove_all(cache_directory, cleanup_error);
+}

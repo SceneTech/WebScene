@@ -26,6 +26,7 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
   const groupingRuleInstances = new WeakSet();
   const conditionRuleInstances = new WeakSet();
   const mediaRuleInstances = new WeakSet();
+  const mediaListInstances = new WeakSet();
   const ruleListInstances = new WeakSet();
   const interfaceConstructor = (name, instances, parent) => {
     const constructor = { [name]: function() {
@@ -48,6 +49,7 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
     'CSSConditionRule', conditionRuleInstances, CSSGroupingRuleInterface);
   const CSSMediaRuleInterface = interfaceConstructor(
     'CSSMediaRule', mediaRuleInstances, CSSConditionRuleInterface);
+  const MediaListInterface = interfaceConstructor('MediaList', mediaListInstances);
   const CSSRuleListInterface = interfaceConstructor('CSSRuleList', ruleListInstances);
   const installInterfaces = view => {
     for (const [name, constructor] of [
@@ -56,6 +58,7 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
       ['CSSGroupingRule', CSSGroupingRuleInterface],
       ['CSSConditionRule', CSSConditionRuleInterface],
       ['CSSMediaRule', CSSMediaRuleInterface],
+      ['MediaList', MediaListInterface],
       ['CSSRuleList', CSSRuleListInterface]
     ]) {
       if (typeof view[name] !== 'function')
@@ -112,6 +115,103 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
     if (!state) throw new TypeError('Illegal stylesheet receiver');
     synchronize(state);
     return state;
+  };
+  // Keep the WPT-covered MediaList grammar bounded to comma-separated media
+  // queries while respecting strings and nested functional expressions. The
+  // native cascade remains the authority for whether each query matches.
+  const splitMediaQueries = value => {
+    const source = value === null ? '' : text(value);
+    if (!source.trim()) return [];
+    const queries = [];
+    let start = 0, parentheses = 0, quote = '', comment = false;
+    for (let index = 0; index < source.length; index++) {
+      const character = source[index], next = source[index + 1];
+      if (comment) {
+        if (character === '*' && next === '/') { comment = false; index++; }
+        continue;
+      }
+      if (quote) {
+        if (character === '\\') index++;
+        else if (character === quote) quote = '';
+        continue;
+      }
+      if (character === '/' && next === '*') { comment = true; index++; continue; }
+      if (character === '\\') { index++; continue; }
+      if (character === '"' || character === "'") { quote = character; continue; }
+      if (character === '(') parentheses++;
+      if (character === ')' && --parentheses < 0) return ['not all'];
+      if (character === ',' && parentheses === 0) {
+        queries.push(source.slice(start, index));
+        start = index + 1;
+      }
+    }
+    if (parentheses || quote || comment) return ['not all'];
+    queries.push(source.slice(start));
+    return queries;
+  };
+  const normalizeMediaQuery = value => {
+    let query = value.trim();
+    if (!query || /[$]/.test(query)) return 'not all';
+    query = query.replace(/\/\*[\s\S]*?\*\//g, ' ')
+      .replace(/\s+/g, ' ')
+      .replace(/\(\s*/g, '(')
+      .replace(/\s*\)/g, ')')
+      .replace(/\s*:\s*/g, ': ')
+      .trim();
+    query = query.replace(/^(?:(not|only)\s+)?([a-z][\w-]*)/i,
+      (_, prefix, medium) => (prefix ? prefix.toLowerCase() + ' ' : '')
+        + medium.toLowerCase());
+    return query.replace(/\b(and|or|not)\b/gi, keyword => keyword.toLowerCase());
+  };
+  const parseMediaList = value => splitMediaQueries(value).map(normalizeMediaQuery);
+  const makeMediaList = (read, write) => {
+    const target = {};
+    const queries = () => parseMediaList(read());
+    const commit = values => write(values.join(', '));
+    Object.defineProperties(target, {
+      mediaText: {
+        enumerable: true,
+        get: () => queries().join(', '),
+        set: value => commit(parseMediaList(value))
+      },
+      length: { enumerable: true, get: () => queries().length },
+      item: { value(index) { return queries()[Number(index) >>> 0] ?? null; } },
+      appendMedium: { value(medium) {
+        if (arguments.length === 0) throw new TypeError('A medium is required');
+        const parsed = parseMediaList(medium);
+        if (parsed.length !== 1 || splitMediaQueries(medium).length !== 1) return;
+        const current = queries();
+        if (!current.includes(parsed[0])) commit(current.concat(parsed[0]));
+      } },
+      deleteMedium: { value(medium) {
+        if (arguments.length === 0) throw new TypeError('A medium is required');
+        const parsed = parseMediaList(medium);
+        if (parsed.length !== 1 || splitMediaQueries(medium).length !== 1) return;
+        const current = queries();
+        const retained = current.filter(query => query !== parsed[0]);
+        if (retained.length === current.length)
+          exception('The medium was not found', 'NotFoundError');
+        commit(retained);
+      } },
+      toString: { value: () => queries().join(', ') }
+    });
+    const list = new Proxy(target, {
+      get(target, key, receiver) {
+        if (typeof key === 'string' && /^(0|[1-9][0-9]*)$/.test(key))
+          return queries()[Number(key)];
+        return Reflect.get(target, key, receiver);
+      },
+      set(target, key, value, receiver) {
+        if (typeof key === 'string' && /^(0|[1-9][0-9]*)$/.test(key)) return false;
+        return Reflect.set(target, key, value, receiver);
+      },
+      deleteProperty(target, key) {
+        return typeof key !== 'string' || !/^(0|[1-9][0-9]*)$/.test(key)
+          ? Reflect.deleteProperty(target, key) : false;
+      }
+    });
+    mediaListInstances.add(list);
+    return list;
   };
   const publish = state => {
     const source = state.rules.map(rule => rule.cssText).join('\n');
@@ -177,15 +277,25 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
     });
     if (mediaMatch) {
       let children = splitRules(parsed.body || '').map(child => makeRule(state, child, rule));
-      let conditionText = (mediaMatch[1] || '').trim();
+      let conditionText = parseMediaList(mediaMatch[1] || '').join(', ');
       const attached = () => parent && (containingRule
         ? containingRule.cssRules && Array.from(containingRule.cssRules).includes(rule)
         : state.rules.includes(rule));
       const serialize = () => {
         cssText = `@media ${conditionText} {${children.map(child => child.cssText).join('')}}`;
       };
+      const commitCondition = value => {
+        const normalized = parseMediaList(value).join(', ');
+        if (normalized === conditionText) return;
+        conditionText = normalized;
+        serialize();
+        if (parent && containingRule?.__webSceneSerialize)
+          containingRule.__webSceneSerialize();
+        if (attached()) publish(state);
+      };
       serializeGroup = serialize;
       const list = makeList(() => children, () => synchronize(state));
+      const media = makeMediaList(() => conditionText, commitCondition);
       Object.defineProperties(rule, {
         type: { enumerable: true, value: 4 },
         conditionText: {
@@ -193,9 +303,15 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
           get: () => conditionText,
           set(value) {
             synchronize(state);
-            conditionText = text(value).trim();
-            serialize();
-            if (attached()) publish(state);
+            commitCondition(value);
+          }
+        },
+        media: {
+          enumerable: true,
+          get: () => media,
+          set(value) {
+            synchronize(state);
+            media.mediaText = value;
           }
         },
         cssRules: { enumerable: true, get: () => list },
@@ -324,24 +440,11 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
         : ''
     };
     const list = makeList(() => state.rules, () => synchronize(state));
-    const media = {};
-    Object.defineProperties(media, {
-      mediaText: {
-        enumerable: true,
-        get() { return state.mediaText; },
-        set(value) {
-          state.mediaText = text(value).trim();
-          if (state.mediaText) state.owner.setAttribute('media', state.mediaText);
-          else state.owner.removeAttribute('media');
-          publish(state);
-        }
-      },
-      length: { enumerable: true, get() {
-        return state.mediaText ? state.mediaText.split(',').length : 0;
-      } },
-      item: { value(index) {
-        return state.mediaText.split(',').map(value => value.trim())[Number(index)] || null;
-      } }
+    const media = makeMediaList(() => state.mediaText, value => {
+      state.mediaText = value;
+      if (state.mediaText) state.owner.setAttribute('media', state.mediaText);
+      else state.owner.removeAttribute('media');
+      publish(state);
     });
     sheets.set(sheet, state);
     Object.defineProperties(sheet, {

@@ -1,0 +1,203 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>CSSMediaRule MediaList mutation stays live and synchronous</title>
+<body>
+<script>
+  const state = window.__webSceneWptState = {
+    complete: false, harness: null, results: [], errors: [], diagnostics: []
+  };
+
+  function record(name, error) {
+    state.results.push({
+      name,
+      status: error ? "FAIL" : "PASS",
+      message: error ? String(error && error.message || error) : null,
+      stack: error && error.stack ? String(error.stack) : null
+    });
+  }
+
+  function exercise(document, view, prefix) {
+    const style = document.createElement("style");
+    style.textContent = `@media (min-width: 1px), print {
+      .${prefix}-top { color: rgb(17, 23, 31); }
+      @media (min-width: 1px) {
+        .${prefix}-nested { background-color: rgb(41, 43, 47); }
+      }
+    }`;
+    document.head.appendChild(style);
+    const top = document.createElement("div");
+    const nested = document.createElement("div");
+    top.className = `${prefix}-top`;
+    nested.className = `${prefix}-nested`;
+    document.body.append(top, nested);
+
+    const sheet = style.sheet;
+    const group = sheet.cssRules[0];
+    const media = group.media;
+    const nestedGroup = group.cssRules[1];
+    const nestedMedia = nestedGroup.media;
+    const authoredText = style.textContent;
+    const initial = {
+      mediaInterface: typeof view.MediaList === "function"
+        && media instanceof view.MediaList,
+      identity: group.media === media && nestedGroup.media === nestedMedia,
+      mediaText: media.mediaText,
+      conditionText: group.conditionText,
+      length: media.length,
+      indexed: [media[0], media[1], media[2]],
+      item: [media.item(0), media.item(1), media.item(2)],
+      string: media.toString(),
+      color: view.getComputedStyle(top).color,
+      background: view.getComputedStyle(nested).backgroundColor
+    };
+
+    group.media = "(max-width:1px)";
+    const forwarded = {
+      identity: group.media === media,
+      mediaText: media.mediaText,
+      conditionText: group.conditionText,
+      serialized: group.cssText.includes("(max-width: 1px)"),
+      color: view.getComputedStyle(top).color,
+      textStable: style.textContent === authoredText
+    };
+
+    media.appendMedium("screen");
+    media.appendMedium("SCREEN");
+    media.appendMedium("screen, print");
+    const appended = {
+      mediaText: media.mediaText,
+      conditionText: group.conditionText,
+      length: media.length,
+      color: view.getComputedStyle(top).color,
+      textStable: style.textContent === authoredText
+    };
+
+    media.deleteMedium("screen");
+    let missing = "";
+    try { media.deleteMedium("speech"); }
+    catch (error) { missing = error.name; }
+    const deleted = {
+      mediaText: media.mediaText,
+      conditionText: group.conditionText,
+      length: media.length,
+      missing,
+      color: view.getComputedStyle(top).color,
+      textStable: style.textContent === authoredText
+    };
+
+    nestedMedia.mediaText = "(max-width:1px)";
+    const nestedMutation = {
+      identity: nestedGroup.media === nestedMedia,
+      mediaText: nestedMedia.mediaText,
+      conditionText: nestedGroup.conditionText,
+      childSerialized: nestedGroup.cssText.includes("(max-width: 1px)"),
+      parentSerialized: group.cssText.includes("(max-width: 1px)"),
+      background: view.getComputedStyle(nested).backgroundColor,
+      textStable: style.textContent === authoredText
+    };
+
+    sheet.deleteRule(0);
+    media.mediaText = "screen";
+    const detached = {
+      identity: group.media === media,
+      mediaText: media.mediaText,
+      conditionText: group.conditionText,
+      serialized: group.cssText.includes("@media screen"),
+      parentStyleSheet: group.parentStyleSheet,
+      color: view.getComputedStyle(top).color
+    };
+
+    style.remove();
+    top.remove();
+    nested.remove();
+    return { initial, forwarded, appended, deleted, nestedMutation, detached };
+  }
+
+  try {
+    const frame = document.createElement("iframe");
+    document.body.appendChild(frame);
+    const main = exercise(document, window, "media-main");
+    const nested = exercise(
+      frame.contentDocument, frame.contentWindow, "media-frame");
+    const transparent = value => value === "rgba(0, 0, 0, 0)"
+      || value === "transparent";
+    const initialPass = value => value.initial.mediaInterface
+      && value.initial.identity
+      && value.initial.mediaText === "(min-width: 1px), print"
+      && value.initial.conditionText === "(min-width: 1px), print"
+      && value.initial.length === 2
+      && value.initial.indexed[0] === "(min-width: 1px)"
+      && value.initial.indexed[1] === "print"
+      && value.initial.indexed[2] === undefined
+      && value.initial.item[0] === "(min-width: 1px)"
+      && value.initial.item[1] === "print"
+      && value.initial.item[2] === null
+      && value.initial.string === "(min-width: 1px), print"
+      && value.initial.color === "rgb(17, 23, 31)"
+      && value.initial.background === "rgb(41, 43, 47)";
+    const forwardedPass = value => value.forwarded.identity
+      && value.forwarded.mediaText === "(max-width: 1px)"
+      && value.forwarded.conditionText === "(max-width: 1px)"
+      && value.forwarded.serialized
+      && value.forwarded.color === "rgb(0, 0, 0)"
+      && value.forwarded.textStable;
+    const appendedPass = value => value.appended.mediaText
+        === "(max-width: 1px), screen"
+      && value.appended.conditionText === "(max-width: 1px), screen"
+      && value.appended.length === 2
+      && value.appended.color === "rgb(17, 23, 31)"
+      && value.appended.textStable;
+    const deletedPass = value => value.deleted.mediaText === "(max-width: 1px)"
+      && value.deleted.conditionText === "(max-width: 1px)"
+      && value.deleted.length === 1
+      && value.deleted.missing === "NotFoundError"
+      && value.deleted.color === "rgb(0, 0, 0)"
+      && value.deleted.textStable;
+    const nestedPass = value => value.nestedMutation.identity
+      && value.nestedMutation.mediaText === "(max-width: 1px)"
+      && value.nestedMutation.conditionText === "(max-width: 1px)"
+      && value.nestedMutation.childSerialized
+      && value.nestedMutation.parentSerialized
+      && transparent(value.nestedMutation.background)
+      && value.nestedMutation.textStable;
+    const detachedPass = value => value.detached.identity
+      && value.detached.mediaText === "screen"
+      && value.detached.conditionText === "screen"
+      && value.detached.serialized
+      && value.detached.parentStyleSheet === null
+      && value.detached.color === "rgb(0, 0, 0)";
+    record("media rules expose stable browser-shaped MediaList reflection",
+      initialPass(main) && initialPass(nested)
+        ? null : new Error(JSON.stringify({ main: main.initial, nested: nested.initial })));
+    record("CSSMediaRule media assignment forwards to mediaText",
+      forwardedPass(main) && forwardedPass(nested)
+        ? null : new Error(JSON.stringify({ main: main.forwarded, nested: nested.forwarded })));
+    record("appendMedium normalizes, deduplicates, and recascades",
+      appendedPass(main) && appendedPass(nested)
+        ? null : new Error(JSON.stringify({ main: main.appended, nested: nested.appended })));
+    record("deleteMedium reports missing queries and recascades",
+      deletedPass(main) && deletedPass(nested)
+        ? null : new Error(JSON.stringify({ main: main.deleted, nested: nested.deleted })));
+    record("nested MediaList mutation serializes its containing group",
+      nestedPass(main) && nestedPass(nested)
+        ? null : new Error(JSON.stringify({ main: main.nestedMutation, nested: nested.nestedMutation })));
+    record("detached media rules mutate without recascading their former document",
+      detachedPass(main) && detachedPass(nested)
+        ? null : new Error(JSON.stringify({ main: main.detached, nested: nested.detached })));
+    state.diagnostics.push(JSON.stringify({ main, nested }));
+    frame.remove();
+  } catch (error) {
+    record("MediaList mutation setup", error);
+  }
+
+  const failure = state.results.find(result => result.status !== "PASS");
+  state.harness = failure
+    ? { status: 1, message: failure.message, stack: failure.stack }
+    : { status: 0, message: null, stack: null };
+  state.complete = true;
+  const evidence = document.createElement("pre");
+  evidence.id = "cssom-media-list-mutation-evidence";
+  evidence.hidden = true;
+  evidence.textContent = JSON.stringify(state);
+  document.body.appendChild(evidence);
+</script>

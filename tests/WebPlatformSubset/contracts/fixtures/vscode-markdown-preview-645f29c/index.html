@@ -34,6 +34,9 @@
       : `remoteAuthority=${encodeURIComponent(`localhost:${location.port}`)}&platform=electron`;
     const resourceUrl = name => `${resourceOrigin}/workspace/${name}`;
     const seen = new Map();
+    const streamStarts = new Map();
+    const batchQueue = [];
+    let drainingBatch = false;
     const responseBytes = new TextEncoder();
     const pngBytes = new Uint8Array([
       137,80,78,71,13,10,26,10,0,0,0,13,73,72,68,82,0,0,0,1,0,0,0,1,
@@ -58,24 +61,93 @@
       }],
       ['/workspace/stale.svg', {
         mime:'image/svg+xml', body:'<svg xmlns="http://www.w3.org/2000/svg" width="13" height="11" viewBox="0 0 13 11"><rect width="13" height="11" fill="#f00"/></svg>'
+      }],
+      ['/workspace/markdown/preview.js', {
+        mime:'text/javascript', body:'globalThis.__consumerMarkdown=true;'
+      }],
+      ['/workspace/notebook/renderer.js', {
+        mime:'text/javascript', body:'export default "notebook-renderer";'
+      }],
+      ['/workspace/custom-editor/editor.css', {
+        mime:'text/css', body:'.custom-editor{color:rgb(21,22,23)}'
+      }],
+      ['/workspace/extension-detail/icon.svg', {
+        mime:'image/svg+xml', body:'<svg xmlns="http://www.w3.org/2000/svg" width="11" height="9"/>'
+      }],
+      ['/workspace/chat-mcp/app.js', {
+        mime:'text/javascript', body:'export const channel="chat-mcp";'
+      }],
+      ['/workspace/mermaid/index.js', {
+        mime:'text/javascript', body:'export const renderer="mermaid";'
+      }],
+      ['/workspace/mermaid/codicon.css', {
+        mime:'text/css', body:'.codicon{font-family:codicon}'
+      }],
+      ['/workspace/simple-browser/main.js', {
+        mime:'text/javascript', body:'globalThis.__consumerSimpleBrowser=true;'
+      }],
+      ['/workspace/simple-browser/main.css', {
+        mime:'text/css', body:'.simple-browser{display:block}'
+      }],
+      ['/workspace/release-notes/media.svg', {
+        mime:'image/svg+xml', body:'<svg xmlns="http://www.w3.org/2000/svg" width="17" height="13"/>'
+      }],
+      ['/workspace/warm-64k.bin', {
+        mime:'application/octet-stream', body:new Uint8Array(64 * 1024).fill(0x5a),
+        etag:'"consumer-matrix-v1"'
       }]
     ]);
-    const postStream = (request, mime, body) => {
+    const postStream = (request, mime, body, etag = undefined) => {
+      if (etag && request.ifNoneMatch === etag) {
+        brokerWorker.postMessage({channel:'did-load-resource', data:{
+          status:304, id:request.id, path:request.path, mime, etag
+        }});
+        return;
+      }
       const bytes = body instanceof Uint8Array ? body : responseBytes.encode(body);
+      streamStarts.set(request.path, (streamStarts.get(request.path) || 0) + 1);
       brokerWorker.postMessage({channel:'did-load-resource', data:{
         status:200, id:request.id, path:request.path, mime,
-        etag:undefined, mtime:undefined
+        etag, mtime:undefined
       }});
       const split = Math.max(1, Math.floor(bytes.byteLength / 2));
+      const first = bytes.slice(0, split);
+      const second = bytes.slice(split);
       brokerWorker.postMessage({channel:'did-load-resource-chunk', data:{
-        id:request.id, data:bytes.slice(0, split)
+        id:request.id, data:first
       }});
       brokerWorker.postMessage({channel:'did-load-resource-chunk', data:{
-        id:request.id, data:bytes.slice(split)
+        id:request.id, data:second
       }});
       brokerWorker.postMessage({channel:'did-load-resource-end', data:{
         id:request.id
       }});
+    };
+    const drainBatch = async () => {
+      if (drainingBatch) return;
+      drainingBatch = true;
+      while (batchQueue.length) {
+        const request = batchQueue.shift();
+        streamStarts.set(request.path, (streamStarts.get(request.path) || 0) + 1);
+        brokerWorker.postMessage({channel:'did-load-resource', data:{
+          status:200, id:request.id, path:request.path,
+          mime:'application/octet-stream'
+        }});
+        for (let chunk = 0; chunk < 16; ++chunk) {
+          brokerWorker.postMessage({channel:'did-load-resource-chunk', data:{
+            id:request.id, data:new Uint8Array(64 * 1024).fill(0x42)
+          }});
+        }
+        brokerWorker.postMessage({channel:'did-load-resource-end', data:{
+          id:request.id
+        }});
+        await new Promise(resolve => setTimeout(resolve, 0));
+      }
+      drainingBatch = false;
+    };
+    const queueBatch = request => {
+      batchQueue.push(request);
+      void drainBatch();
     };
     navigator.serviceWorker.addEventListener('message', event => {
       const request = event.data;
@@ -99,10 +171,14 @@
         });
         return;
       }
+      if (request.path.startsWith('/workspace/batch/')) {
+        queueBatch(request);
+        return;
+      }
       const resource = resourceBodies.get(request.path);
       if (resource && request.path === '/workspace/stale.svg') {
         setTimeout(() => postStream(request, resource.mime, resource.body), 25);
-      } else if (resource) postStream(request, resource.mime, resource.body);
+      } else if (resource) postStream(request, resource.mime, resource.body, resource.etag);
       else brokerWorker.postMessage({
         channel:'did-load-resource', data:{status:404, id:request.id, path:request.path}
       });
@@ -150,10 +226,16 @@
         location.replace(controlled);
         return;
       }
+      if (nativeFixture && !navigator.serviceWorker.controller) {
+        await Promise.race([
+          changed,
+          new Promise(resolve => setTimeout(resolve, 2500))
+        ]);
+      }
       brokerWorker = navigator.serviceWorker.controller || registration.active;
       if (!brokerWorker) throw new Error('worker did not control fixture');
       if (nativeFixture && !navigator.serviceWorker.controller) {
-        await new Promise(resolve => setTimeout(resolve, 50));
+        throw new Error('worker did not claim native fixture');
       }
       readmeBody = await (await fetch('README.md')).text();
       state.phase = 'script';
@@ -207,6 +289,61 @@
           && seen.get('/workspace/missing.png') === 1
           && seen.get('/outside/denied.png') === 1,
         JSON.stringify({missing, denied, seen:Object.fromEntries(seen)}));
+      state.phase = 'consumer-matrix';
+      const consumerAssets = [
+        ['markdown', 'markdown/preview.js', 'text/javascript', 'consumerMarkdown'],
+        ['notebook', 'notebook/renderer.js', 'text/javascript', 'notebook-renderer'],
+        ['custom-editor', 'custom-editor/editor.css', 'text/css', 'custom-editor'],
+        ['extension-detail', 'extension-detail/icon.svg', 'image/svg+xml', '<svg'],
+        ['chat-mcp', 'chat-mcp/app.js', 'text/javascript', 'chat-mcp'],
+        ['mermaid-script', 'mermaid/index.js', 'text/javascript', 'mermaid'],
+        ['mermaid-style', 'mermaid/codicon.css', 'text/css', 'codicon'],
+        ['simple-browser-script', 'simple-browser/main.js', 'text/javascript', 'consumerSimpleBrowser'],
+        ['simple-browser-style', 'simple-browser/main.css', 'text/css', 'simple-browser'],
+        ['release-notes', 'release-notes/media.svg', 'image/svg+xml', '<svg']
+      ];
+      const consumerResults = [];
+      for (const [consumer, path, mime, marker] of consumerAssets) {
+        const response = await fetch(resourceUrl(path));
+        const body = await response.text();
+        consumerResults.push({consumer, path, status:response.status,
+          mime:response.headers.get('content-type'), marker:body.includes(marker)});
+      }
+      record('representative Code OSS consumers share the unchanged resource broker',
+        consumerResults.every((result, index) => result.status === 200 && result.marker
+          && result.mime?.startsWith(consumerAssets[index][2]))
+          && consumerAssets.every(([, path]) => seen.get(`/workspace/${path}`) === 1),
+        JSON.stringify({consumerResults, seen:Object.fromEntries(seen)}));
+      state.phase = 'concurrent-body-bound';
+      const batch = await Promise.all(Array.from({length:32}, async (_, index) => {
+        const response = await fetch(resourceUrl(`batch/${index}.bin`));
+        return {status:response.status, bytes:(await response.arrayBuffer()).byteLength};
+      }));
+      record('32 concurrent one MiB consumer resources complete inside the 64 MiB bound',
+        batch.every(result => result.status === 200 && result.bytes === 1024 * 1024)
+          && [...seen.keys()].filter(path => path.startsWith('/workspace/batch/')).length === 32,
+        JSON.stringify(batch));
+      state.phase = 'warm-validator-cycles';
+      const warmDurations = [];
+      for (let cycle = 0; cycle < 100; ++cycle) {
+        const started = performance.now();
+        const response = await fetch(resourceUrl('warm-64k.bin'));
+        if (response.status !== 200 || (await response.arrayBuffer()).byteLength !== 64 * 1024) {
+          throw new Error(`warm consumer resource cycle ${cycle} failed`);
+        }
+        warmDurations.push(performance.now() - started);
+        if (cycle === 0) await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      const warmOrdered = [...warmDurations].sort((a, b) => a - b);
+      const warmP95 = warmOrdered[Math.ceil(warmOrdered.length * .95) - 1];
+      state.diagnostics.push({name:'consumer-resource-cycles', cycles:100, p95:warmP95,
+        requests:seen.get('/workspace/warm-64k.bin'),
+        streamStarts:streamStarts.get('/workspace/warm-64k.bin')});
+      record('100 validator-backed 64 KiB consumer cycles stay bounded and reuse one body',
+        warmP95 <= 100 && seen.get('/workspace/warm-64k.bin') === 100
+          && streamStarts.get('/workspace/warm-64k.bin') === 1,
+        JSON.stringify({warmP95, seen:Object.fromEntries(seen),
+          streamStarts:Object.fromEntries(streamStarts)}));
       const preview = document.getElementById('preview');
       state.phase = 'css-image-cycles';
       for (let cycle = 0; cycle < 100; ++cycle) {

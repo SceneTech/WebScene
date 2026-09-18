@@ -1461,6 +1461,7 @@ void test_vscode_markdown_css_image_resource_broker()
             std::istreambuf_iterator<char>(stream),
             std::istreambuf_iterator<char>()};
     };
+    const auto fixture = read_fixture("index.html");
     const auto exact_worker = read_fixture("service-worker.js");
     const auto readme = read_fixture("README.md");
     require(exact_worker.find("const VERSION = 6;") != std::string::npos
@@ -2365,6 +2366,98 @@ void test_vscode_markdown_css_image_resource_broker()
               << " peakRssAfter=" << peak_rss_after
               << " currentRssBefore=" << current_rss_before
               << " currentRssAfter=" << current_rss_after << '\n';
+
+    constexpr std::string_view matrix_address{
+        "https://vscode-webview.test/index.html?id=markdown-preview"};
+    constexpr std::string_view matrix_worker_address{
+        "https://vscode-webview.test/service-worker.js?"
+        "vscode-resource-base-authority=vscode-resource.test&platform=electron"};
+    resource_server matrix_server{.content = {
+        {std::string{matrix_address}, fixture},
+        {std::string{matrix_worker_address}, exact_worker},
+        {"https://vscode-webview.test/README.md", readme},
+        {"https://vscode-webview.test/__webscene_markdown_external.svg",
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"2\" height=\"3\" "
+            "viewBox=\"0 0 2 3\"><rect width=\"2\" height=\"3\"/></svg>"}
+    }};
+    webscene_engine_options matrix_options{};
+    matrix_options.struct_size = sizeof(matrix_options);
+    matrix_options.resource_load_callback = load_test_resource;
+    matrix_options.resource_load_user_data = &matrix_server;
+    auto* matrix_engine = webscene_engine_create_with_options(&matrix_options);
+    require(matrix_engine != nullptr,
+        "webview consumer resource matrix engine creation failed");
+    webscene_engine_memory_metrics matrix_memory_before{
+        sizeof(webscene_engine_memory_metrics)};
+    require(webscene_engine_get_memory_metrics(
+            matrix_engine, &matrix_memory_before) != 0,
+        "webview consumer resource matrix memory baseline unavailable");
+    const auto matrix_peak_rss_before = service_worker_test_peak_rss_bytes();
+    const auto matrix_current_rss_before = service_worker_test_current_rss_bytes();
+    require(webscene_engine_load_url(matrix_engine,
+            matrix_address.data(), matrix_address.size()) != 0U,
+        "webview consumer resource matrix navigation failed");
+    require(evaluate_until_equals(matrix_engine,
+            "__webSceneWptState.complete", "consumer-matrix-complete.js",
+            "true", 30'000) == "true",
+        "webview consumer resource matrix timed out: "
+            + evaluate(matrix_engine, "JSON.stringify(__webSceneWptState)",
+                "consumer-matrix-timeout-detail.js"));
+    require(evaluate(matrix_engine,
+            "__webSceneWptState.harness.status", "consumer-matrix-status.js") == "0",
+        "webview consumer resource matrix failed: "
+            + evaluate(matrix_engine, "JSON.stringify(__webSceneWptState)",
+                "consumer-matrix-failure-detail.js"));
+    require(evaluate(matrix_engine, R"JS((() => {
+      const result = __webSceneWptState.results.find(value =>
+        value.name === 'representative Code OSS consumers share the unchanged resource broker');
+      const batch = __webSceneWptState.results.find(value =>
+        value.name === '32 concurrent one MiB consumer resources complete inside the 64 MiB bound');
+      const cycles = __webSceneWptState.diagnostics.find(value =>
+        value.name === 'consumer-resource-cycles');
+      return result?.status === 'PASS' && batch?.status === 'PASS'
+        && cycles?.cycles === 100 && cycles?.p95 <= 100
+        && cycles?.streamStarts === 1;
+    })())JS", "consumer-matrix-bounds.js") == "true",
+        "webview consumer resource matrix bounds diverged");
+    require(webscene_engine_request_low_memory(matrix_engine) != 0,
+        "webview consumer resource matrix low-memory request rejected");
+    webscene_engine_memory_metrics matrix_memory_after{
+        sizeof(webscene_engine_memory_metrics)};
+    for (auto attempt = 0; attempt < 250; ++attempt) {
+        require(webscene_engine_get_memory_metrics(
+                matrix_engine, &matrix_memory_after) != 0,
+            "webview consumer resource matrix final memory metrics unavailable");
+        if (matrix_memory_after.low_memory_notifications
+            > matrix_memory_before.low_memory_notifications) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    require(matrix_memory_after.low_memory_notifications
+            > matrix_memory_before.low_memory_notifications,
+        "webview consumer resource matrix low-memory collection did not complete");
+    require(matrix_memory_after.v8_used_heap_bytes
+                <= matrix_memory_before.v8_used_heap_bytes + 8U * 1024U * 1024U
+            && matrix_memory_after.v8_external_bytes
+                <= matrix_memory_before.v8_external_bytes + 8U * 1024U * 1024U,
+        "webview consumer resource matrix retained more than 8 MiB of V8 heap or external memory");
+    const auto matrix_peak_rss_after = service_worker_test_peak_rss_bytes();
+    require(matrix_peak_rss_after <= matrix_peak_rss_before + 256U * 1024U * 1024U,
+        "webview consumer resource matrix exceeded 256 MiB RSS high-water growth");
+    const auto matrix_p95 = evaluate(matrix_engine, R"JS((() =>
+      __webSceneWptState.diagnostics.find(value =>
+        value.name === 'consumer-resource-cycles').p95)())JS", "consumer-matrix-p95.js");
+    webscene_engine_destroy(matrix_engine);
+    const auto matrix_current_rss_after = service_worker_test_current_rss_bytes();
+    std::cout << "Webview consumer resource matrix: consumers=8 concurrent=32 "
+              << "cycles=100 p95=" << matrix_p95
+              << "ms heapBefore=" << matrix_memory_before.v8_used_heap_bytes
+              << " heapAfter=" << matrix_memory_after.v8_used_heap_bytes
+              << " externalBefore=" << matrix_memory_before.v8_external_bytes
+              << " externalAfter=" << matrix_memory_after.v8_external_bytes
+              << " peakRssBefore=" << matrix_peak_rss_before
+              << " peakRssAfter=" << matrix_peak_rss_after
+              << " currentRssBefore=" << matrix_current_rss_before
+              << " currentRssAfter=" << matrix_current_rss_after << '\n';
     test_nested_admitted_resource_client_lifecycle();
 }
 

@@ -866,10 +866,12 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
         ? Array.from(containingRule.cssRules || []).includes(rule)
         : state.rules.includes(rule));
       const serialize = () => {
-        const declarations = declaration ? declaration.cssText : contents.leading;
+        let declarations = text(
+          declaration ? declaration.cssText : contents.leading).trim();
+        if (declarations && !declarations.endsWith(';')) declarations += ';';
         const body = [declarations, ...children.map(child => child.cssText)]
           .filter(Boolean).join(' ');
-        cssText = selectorText + ' {' + body + '}';
+        cssText = selectorText + (body ? ' { ' + body + ' }' : ' { }');
       };
       const commit = () => {
         synchronize(state);

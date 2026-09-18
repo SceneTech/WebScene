@@ -17,6 +17,8 @@ const int _sceneComponentReady = 4;
 const int _layerReplace = 1;
 const int _layerRemove = 2;
 const int _canvasEvenOdd = 1 << 16;
+const int _domPolygonClipResource = 1 << 31;
+const int _domPolygonClipIndexMask = _domPolygonClipResource - 1;
 
 final class SceneApplyResult {
   const SceneApplyResult({
@@ -306,9 +308,8 @@ final class WebSceneSceneProjector extends ChangeNotifier {
               ..color = _rgba(command.rgba),
           );
         case 12:
-          canvas
-            ..save()
-            ..clipRRect(_domRRect(command), doAntiAlias: true);
+          canvas.save();
+          _clipDomShape(canvas, scene, command);
         case 13:
           canvas.restore();
       }
@@ -938,6 +939,27 @@ final class WebSceneSceneProjector extends ChangeNotifier {
           .allMatches(value)
           .map((match) => double.parse(match.group(0)!))
           .toList();
+
+  static void _clipDomShape(
+    ui.Canvas canvas,
+    WebSceneSceneView scene,
+    WebSceneSceneCommand command,
+  ) {
+    if (command.flags & _domPolygonClipResource == 0) {
+      canvas.clipRRect(_domRRect(command), doAntiAlias: true);
+      return;
+    }
+    try {
+      canvas.clipPath(
+        parseSvgPathData(
+          _domString(scene, command.flags & _domPolygonClipIndexMask),
+        ),
+        doAntiAlias: true,
+      );
+    } catch (_) {
+      canvas.clipRect(ui.Rect.zero, doAntiAlias: false);
+    }
+  }
 
   static String _domString(WebSceneSceneView scene, int index) =>
       _stringAt(scene, index);

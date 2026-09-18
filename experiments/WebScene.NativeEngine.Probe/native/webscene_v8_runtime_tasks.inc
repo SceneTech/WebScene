@@ -3631,6 +3631,16 @@
             types[type_count++] = "mousemove";
             break;
         case WEBSCENE_INPUT_POINTER_DOWN:
+            {
+                auto* previous_active_target = active_pointer_target;
+                active_pointer_target = target;
+                // Browsers expose :active before pointerdown and mousedown
+                // listeners synchronously inspect computed style.
+                recascade_active_transition(
+                    previous_active_target,
+                    active_pointer_target,
+                    "active-pointer-down");
+            }
             pointer_down_target = target;
             pointer_down_x = input.x;
             pointer_down_y = input.y;
@@ -3639,6 +3649,15 @@
             if (changed_button == 2) context_menu_target = target;
             break;
         case WEBSCENE_INPUT_POINTER_UP:
+            {
+                auto* previous_active_target = active_pointer_target;
+                active_pointer_target = nullptr;
+                // The physical press has ended before pointerup/mouseup run.
+                recascade_active_transition(
+                    previous_active_target,
+                    nullptr,
+                    "active-pointer-up");
+            }
             types[type_count++] = "pointerup";
             types[type_count++] = "mouseup";
             if (pointer_down_target != nullptr

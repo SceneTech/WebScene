@@ -3102,12 +3102,14 @@
             }
     }
 
-    void recascade_hover_transition(
+    void recascade_interaction_transition(
         dom_node* previous,
         dom_node* next,
+        const std::vector<hover_selector_dependency>& dependencies,
+        std::string_view state_name,
         std::string_view reason)
     {
-        if (previous == next || hover_selector_dependencies.empty()) return;
+        if (previous == next || dependencies.empty()) return;
 
         std::vector<dom_node*> previous_path;
         std::vector<dom_node*> next_path;
@@ -3159,7 +3161,7 @@
 
         for (auto* changed_node : changed) {
             if (changed_node == nullptr) continue;
-            for (const auto& dependency : hover_selector_dependencies) {
+            for (const auto& dependency : dependencies) {
                 if (dependency.trigger_compound != "*"
                     && !css_compound_selector_matches(
                         *changed_node,
@@ -3253,15 +3255,42 @@
         if (trace) {
             const auto elapsed = std::chrono::duration<double, std::milli>(
                 std::chrono::steady_clock::now() - started).count();
-            std::cerr << "[Native Engine Probe] CSS hover invalidation "
+            std::cerr << "[Native Engine Probe] CSS " << state_name
+                << " invalidation "
                 << std::fixed << std::setprecision(3) << elapsed
                 << " ms, changed=" << changed.size()
-                << ", dependencies=" << hover_selector_dependencies.size()
+                << ", dependencies=" << dependencies.size()
                 << ", roots=" << requests.size()
                 << ", nodes=" << recalculated_nodes
                 << ", reason=" << reason << '\n';
         }
 #endif
+    }
+
+    void recascade_hover_transition(
+        dom_node* previous,
+        dom_node* next,
+        std::string_view reason)
+    {
+        recascade_interaction_transition(
+            previous,
+            next,
+            hover_selector_dependencies,
+            "hover",
+            reason);
+    }
+
+    void recascade_active_transition(
+        dom_node* previous,
+        dom_node* next,
+        std::string_view reason)
+    {
+        recascade_interaction_transition(
+            previous,
+            next,
+            active_selector_dependencies,
+            "active",
+            reason);
     }
 
     void rebuild_root_variables()
@@ -3285,6 +3314,8 @@
         css_child_list_index.clear();
         css_focus_rules.clear();
         unindexed_css_rules.clear();
+        hover_selector_dependencies.clear();
+        active_selector_dependencies.clear();
         css_attribute_dependencies.clear();
         css_descendant_attribute_dependencies.clear();
         for (size_t index = 0; index < css_rules.size(); ++index) {

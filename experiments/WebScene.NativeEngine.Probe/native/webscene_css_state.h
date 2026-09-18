@@ -284,6 +284,7 @@ struct compiled_css_selector final {
         css_index_string_set attribute_dependencies;
         css_index_string_set descendant_attribute_dependencies;
         std::vector<hover_selector_dependency> hover_dependencies;
+        std::vector<hover_selector_dependency> active_dependencies;
         std::unordered_map<std::string, std::string> variables;
         std::unordered_set<std::string> important_variables;
         std::unordered_map<std::string, uint32_t> cascade_layer_orders;

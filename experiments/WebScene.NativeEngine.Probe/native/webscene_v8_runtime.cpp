@@ -8014,6 +8014,8 @@ v8_dom_runtime::memory_metrics v8_dom_runtime::read_memory_metrics() const noexc
         + child_list_index_storage(impl_->css_child_list_index)
         + impl_->unindexed_css_rules.capacity() * sizeof(size_t)
         + impl_->hover_selector_dependencies.capacity()
+            * sizeof(implementation::hover_selector_dependency)
+        + impl_->active_selector_dependencies.capacity()
             * sizeof(implementation::hover_selector_dependency);
     result.native_css_index_storage_bytes +=
         impl_->compiled_class_token_lists.bucket_count() * sizeof(void*)
@@ -8082,6 +8084,8 @@ v8_dom_runtime::memory_metrics v8_dom_runtime::read_memory_metrics() const noexc
             + child_list_index_storage(cascade.child_list_index)
             + cascade.unindexed_rules.capacity() * sizeof(size_t)
             + cascade.hover_dependencies.capacity()
+                * sizeof(implementation::hover_selector_dependency)
+            + cascade.active_dependencies.capacity()
                 * sizeof(implementation::hover_selector_dependency);
     }
     return result;

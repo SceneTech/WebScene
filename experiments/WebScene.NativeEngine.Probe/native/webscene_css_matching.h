@@ -198,11 +198,17 @@ struct interaction_state final {
     const dom_node* hovered{};
     const dom_node* focused{};
     bool focus_visible{};
+    const dom_node* active{};
 };
 inline bool interaction_matches(const native_document& document,const dom_node& node,
     std::string_view pseudo,const interaction_state& state,bool text_control) {
     if(pseudo=="hover") {
         for(auto* current=state.hovered;current;current=current->parent)
+            if(current==&node) return true;
+        return false;
+    }
+    if(pseudo=="active") {
+        for(auto* current=state.active;current;current=current->parent)
             if(current==&node) return true;
         return false;
     }

@@ -1188,6 +1188,7 @@
             css_focus_rules.shrink_to_fit();
             unindexed_css_rules.shrink_to_fit();
             hover_selector_dependencies.shrink_to_fit();
+            active_selector_dependencies.shrink_to_fit();
             for (auto& [root, cascade] : inactive_css_cascades) {
                 static_cast<void>(root);
                 cascade.rules.shrink_to_fit();
@@ -1207,6 +1208,7 @@
                 cascade.focus_rules.shrink_to_fit();
                 cascade.unindexed_rules.shrink_to_fit();
                 cascade.hover_dependencies.shrink_to_fit();
+                cascade.active_dependencies.shrink_to_fit();
             }
         } catch (...) {
             // Capacity compaction is opportunistic. A failed allocator request

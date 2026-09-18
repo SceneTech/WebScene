@@ -1,6 +1,6 @@
 {
   "profile": "file-system-access-picker-handles",
-  "wptRevision": "2699eaa2e5f906eda4d7443f7080c3de19e62365",
+  "wptRevision": "76fdb39425f8319118cba6c0c961e1d835c2879f",
   "runtime": "v8",
   "viewport": {
     "width": 800,
@@ -24,6 +24,15 @@
     }
   ],
   "harnessBlocked": [
+    {
+      "path": "contracts/file-system-access-directory-resolve.html",
+      "type": "testharness",
+      "capabilities": [
+        "file-system-directory-handle-resolve",
+        "opaque-file-grant-ancestry"
+      ],
+      "reason": "Chromium/WPT oracle uses origin-private filesystem handles; the native runner receives host-issued opaque grants and exercises equivalent same-directory, ordered Unicode descendant, unrelated null, branded-argument, native status, navigation cancellation and bounded ancestry behavior through the host bridge."
+    },
     {
       "path": "contracts/file-system-access-handle-structured-clone.html",
       "type": "testharness",

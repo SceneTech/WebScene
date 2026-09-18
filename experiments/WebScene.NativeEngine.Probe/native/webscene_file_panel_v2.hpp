@@ -649,6 +649,227 @@ private:
     bool retiring_{};
 };
 
+struct file_grant_ancestry_request_lease_v2 final {
+    webscene_file_grant_ancestry_request_v2 view{};
+    std::vector<std::uint8_t> base_directory_grant_id;
+    std::vector<std::uint8_t> possible_descendant_grant_id;
+
+    void bind() {
+        view.struct_size = sizeof(view);
+        view.version = 2;
+        view.base_directory_grant_id = {
+            base_directory_grant_id.empty() ? nullptr
+                                            : base_directory_grant_id.data(),
+            base_directory_grant_id.size()};
+        view.possible_descendant_grant_id = {
+            possible_descendant_grant_id.empty() ? nullptr
+                                                 : possible_descendant_grant_id.data(),
+            possible_descendant_grant_id.size()};
+    }
+};
+static_assert(std::is_standard_layout_v<file_grant_ancestry_request_lease_v2>);
+static_assert(offsetof(file_grant_ancestry_request_lease_v2, view) == 0);
+
+struct file_grant_ancestry_completion_data_v2 final {
+    std::uint64_t request_id{};
+    std::uint32_t status{WEBSCENE_FILE_GRANT_ANCESTRY_IO_ERROR_V2};
+    std::vector<std::string> components;
+    std::string error_code;
+};
+
+using file_grant_ancestry_completion_callback_v2 =
+    std::function<void(file_grant_ancestry_completion_data_v2&&)>;
+
+struct file_grant_ancestry_metrics_v2 final {
+    std::size_t queued_requests{};
+    std::size_t pending_requests{};
+    std::size_t retained_input_bytes{};
+    std::uint64_t completed_requests{};
+    std::uint64_t retired_requests{};
+    std::uint64_t copied_completion_bytes{};
+    std::uint64_t rejected_operations{};
+};
+
+class file_grant_ancestry_broker_v2 final {
+public:
+    bool queue(const webscene_file_grant_ancestry_request_v2& source,
+               file_grant_ancestry_completion_callback_v2 callback) {
+        auto lease = copy_request(source);
+        if (!lease) { reject(); return false; }
+        const auto id = lease->view.request_id;
+        const auto retained = lease->base_directory_grant_id.size()
+            + lease->possible_descendant_grant_id.size();
+        std::lock_guard lock(mutex_);
+        if (retiring_
+            || pending_.size()
+                >= WEBSCENE_FILE_GRANT_ANCESTRY_MAXIMUM_PENDING_OPERATIONS_V2
+            || pending_.contains(id)) {
+            ++rejected_operations_;
+            return false;
+        }
+        pending_.emplace(id, pending_request{retained, std::move(callback)});
+        retained_input_bytes_ += retained;
+        queued_.push_back(std::move(lease));
+        return true;
+    }
+
+    std::unique_ptr<file_grant_ancestry_request_lease_v2> take() {
+        std::lock_guard lock(mutex_);
+        if (queued_.empty()) return {};
+        auto result = std::move(queued_.front());
+        queued_.pop_front();
+        result->bind();
+        return result;
+    }
+
+    bool complete(const webscene_file_grant_ancestry_completion_v2& source) {
+        file_grant_ancestry_completion_callback_v2 callback;
+        std::optional<file_grant_ancestry_completion_data_v2> completion;
+        {
+            std::lock_guard lock(mutex_);
+            const auto found = pending_.find(source.request_id);
+            if (found == pending_.end()
+                || !(completion = copy_completion(source))) {
+                ++rejected_operations_;
+                return false;
+            }
+            callback = std::move(found->second.callback);
+            retained_input_bytes_ -= found->second.retained_bytes;
+            pending_.erase(found);
+            copied_completion_bytes_ += completion->error_code.size();
+            for (const auto& component : completion->components)
+                copied_completion_bytes_ += component.size();
+            ++completed_requests_;
+        }
+        if (callback) {
+            try { callback(std::move(*completion)); }
+            catch (...) { }
+        }
+        return true;
+    }
+
+    void retire() {
+        std::vector<std::pair<std::uint64_t, pending_request>> pending;
+        {
+            std::lock_guard lock(mutex_);
+            if (retiring_) return;
+            retiring_ = true;
+            pending.reserve(pending_.size());
+            for (auto& [id, request] : pending_)
+                pending.emplace_back(id, std::move(request));
+            retired_requests_ += pending_.size();
+            pending_.clear();
+            queued_.clear();
+            retained_input_bytes_ = 0;
+        }
+        for (auto& [id, request] : pending) {
+            if (!request.callback) continue;
+            try {
+                request.callback(file_grant_ancestry_completion_data_v2{
+                    id, WEBSCENE_FILE_GRANT_ANCESTRY_CANCELLED_V2, {}, {}});
+            } catch (...) { }
+        }
+        std::lock_guard lock(mutex_);
+        retiring_ = false;
+    }
+
+    file_grant_ancestry_metrics_v2 metrics() const {
+        std::lock_guard lock(mutex_);
+        return {queued_.size(), pending_.size(), retained_input_bytes_,
+            completed_requests_, retired_requests_, copied_completion_bytes_,
+            rejected_operations_};
+    }
+
+private:
+    struct pending_request final {
+        std::size_t retained_bytes{};
+        file_grant_ancestry_completion_callback_v2 callback;
+    };
+
+    static bool valid_token(webscene_file_panel_token_v2 token) {
+        return token.data != nullptr && token.byte_count != 0
+            && token.byte_count <= file_panel_maximum_token_bytes_v2;
+    }
+    static bool safe_name(std::string_view name) {
+        return !name.empty() && name != "." && name != ".."
+            && name.find('/') == std::string_view::npos
+            && name.find('\\') == std::string_view::npos
+            && file_panel_valid_utf8_v2(name);
+    }
+    void reject() { std::lock_guard lock(mutex_); ++rejected_operations_; }
+
+    static std::unique_ptr<file_grant_ancestry_request_lease_v2> copy_request(
+        const webscene_file_grant_ancestry_request_v2& source) {
+        if (source.struct_size < sizeof(source) || source.version != 2
+            || source.request_id == 0 || source.reserved != 0
+            || !valid_token(source.base_directory_grant_id)
+            || !valid_token(source.possible_descendant_grant_id)) return {};
+        auto result = std::make_unique<file_grant_ancestry_request_lease_v2>();
+        result->view = source;
+        result->base_directory_grant_id.assign(
+            source.base_directory_grant_id.data,
+            source.base_directory_grant_id.data
+                + source.base_directory_grant_id.byte_count);
+        result->possible_descendant_grant_id.assign(
+            source.possible_descendant_grant_id.data,
+            source.possible_descendant_grant_id.data
+                + source.possible_descendant_grant_id.byte_count);
+        result->bind();
+        return result;
+    }
+
+    static std::optional<file_grant_ancestry_completion_data_v2>
+    copy_completion(const webscene_file_grant_ancestry_completion_v2& source) {
+        if (source.struct_size < sizeof(source) || source.version != 2
+            || source.request_id == 0 || source.reserved != 0
+            || source.status > WEBSCENE_FILE_GRANT_ANCESTRY_LIMIT_V2)
+            return std::nullopt;
+        const auto error = file_panel_string_view_v2(
+            source.error_code, file_panel_maximum_error_code_bytes_v2);
+        if (!error) return std::nullopt;
+        const bool success =
+            source.status == WEBSCENE_FILE_GRANT_ANCESTRY_SUCCESS_V2;
+        if (!success) {
+            if (source.components != nullptr || source.component_count != 0)
+                return std::nullopt;
+        } else if (source.component_count
+                > WEBSCENE_FILE_GRANT_ANCESTRY_MAXIMUM_COMPONENTS_V2
+            || (source.component_count == 0) != (source.components == nullptr)) {
+            return std::nullopt;
+        }
+        file_grant_ancestry_completion_data_v2 result;
+        result.request_id = source.request_id;
+        result.status = source.status;
+        result.error_code.assign(*error);
+        std::size_t copied_bytes = result.error_code.size();
+        result.components.reserve(source.component_count);
+        for (std::size_t index = 0; index < source.component_count; ++index) {
+            const auto& component = source.components[index];
+            if (component.struct_size < sizeof(component)
+                || component.version != 2) return std::nullopt;
+            const auto name = file_panel_string_view_v2(component.display_name,
+                WEBSCENE_FILE_GRANT_ANCESTRY_MAXIMUM_NAME_BYTES_V2);
+            if (!name || !safe_name(*name)) return std::nullopt;
+            copied_bytes += name->size();
+            if (copied_bytes
+                > WEBSCENE_FILE_GRANT_ANCESTRY_MAXIMUM_NAME_BYTES_V2)
+                return std::nullopt;
+            result.components.emplace_back(*name);
+        }
+        return result;
+    }
+
+    mutable std::mutex mutex_;
+    std::deque<std::unique_ptr<file_grant_ancestry_request_lease_v2>> queued_;
+    std::unordered_map<std::uint64_t, pending_request> pending_;
+    std::size_t retained_input_bytes_{};
+    std::uint64_t completed_requests_{};
+    std::uint64_t retired_requests_{};
+    std::uint64_t copied_completion_bytes_{};
+    std::uint64_t rejected_operations_{};
+    bool retiring_{};
+};
+
 inline constexpr std::size_t file_grant_read_maximum_pending_v2 = 64;
 
 struct file_grant_read_request_lease_v2 final {

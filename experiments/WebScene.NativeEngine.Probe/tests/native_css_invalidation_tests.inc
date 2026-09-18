@@ -281,8 +281,194 @@ void test_compiled_subject_index_scaling()
     }
 }
 
+void test_nested_functional_selector_scaling()
+{
+    constexpr auto affected_count = 128;
+    constexpr auto transition_count = 1000;
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+    std::vector<std::array<uint64_t, 7>> observations;
+#endif
+    for (const auto unrelated_count : {32, 1024}) {
+        auto* engine = webscene_engine_create(0);
+        require(engine != nullptr, "nested functional selector engine creation failed");
+        resize(engine, 800, 600, 1U);
+        wait_for_consumed_inputs(
+            engine, 1U, "nested functional selector viewport was not applied");
+
+        webscene_engine_memory_metrics loaded_memory{sizeof(loaded_memory)};
+        const auto rss_before = file_system_access_test_peak_rss_bytes();
+        auto setup_source = std::string{R"JS((([affected, unrelated]) => {
+          const style = document.createElement('style');
+          style.id = 'nested-functional-style';
+          style.textContent = `
+            .functional-leaf { display:block; width:11px; height:13px; }
+            .functional-host:is(:not(.blocked, [data-off]), .fallback) > .functional-leaf {
+              width:41px;
+            }
+            .functional-host:not(:is(.blocked, [data-off]), .excluded) > .functional-leaf {
+              height:43px;
+            }
+          ` + Array.from({length: unrelated}, (_, index) =>
+            `.noise-${index}:is(:not(.unused-a-${index}, [data-unused-${index}]), .unused-b-${index}) { color:rgb(7,8,9); }`
+          ).join('');
+          const root = document.createElement('main');
+          root.id = 'nested-functional-root';
+          root.innerHTML = `<section class="functional-host">${
+            '<i class="functional-leaf"></i>'.repeat(affected)}</section>` +
+            Array.from({length: unrelated}, (_, index) =>
+              `<aside class="noise-${index}"></aside>`).join('');
+          document.head.appendChild(style);
+          document.body.appendChild(root);
+          const host = root.firstElementChild;
+          const leaves = Array.from(host.children);
+          const snapshot = enabled => leaves.every(node => {
+            const computed = getComputedStyle(node);
+            return computed.width === (enabled ? '11px' : '41px') &&
+              computed.height === (enabled ? '13px' : '43px');
+          });
+          globalThis.mutateNestedFunctional = () => {
+            for (let index = 0; index < TRANSITIONS; ++index) {
+              const enabled = (index & 1) === 0;
+              host.toggleAttribute('data-off', enabled);
+              if (!snapshot(enabled)) return false;
+            }
+            return true;
+          };
+          const first = getComputedStyle(leaves[0]);
+          return [leaves.length, snapshot(false), first.width, first.height,
+            host.matches(':is(:not(.blocked, [data-off]), .fallback)'),
+            host.matches(':not(:is(.blocked, [data-off]), .excluded)'),
+            leaves.filter(node => getComputedStyle(node).width === '41px').length,
+            leaves.filter(node => getComputedStyle(node).height === '43px').length];
+        })(COUNTS))JS"};
+        setup_source.replace(
+            setup_source.find("TRANSITIONS"), 11, std::to_string(transition_count));
+        setup_source.replace(
+            setup_source.find("COUNTS"), 6,
+            "[" + std::to_string(affected_count) + ","
+                + std::to_string(unrelated_count) + "]");
+        const auto setup = evaluate(
+            engine, setup_source, "nested-functional-scale-setup.js");
+        require(setup == "[128,true,\"41px\",\"43px\",true,true,128,128]",
+            "nested functional selector scale setup diverged: " + setup);
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+        std::this_thread::sleep_for(std::chrono::milliseconds(260));
+        execute_and_wait_for_wrapper_retention_scene(
+            engine,
+            "document.body.style.backgroundColor='rgb(1,2,3)'",
+            "nested-functional-scale-baseline.js");
+        const std::array<std::string_view, 7> names{
+            "selector-invalidation-plan-lookups",
+            "selector-invalidation-candidate-visits",
+            "selector-invalidation-fallback-visits",
+            "css-compound-match-checks",
+            "css-rule-match-checks",
+            "css-cascade-applications",
+            "css-cascade-candidate-checks"};
+        std::array<uint64_t, 7> before{};
+        for (size_t index = 0; index < names.size(); ++index) {
+            before[index] = runtime_counter_diagnostic(engine, names[index]);
+        }
+#endif
+        for (auto attempt = 0; attempt < 250; ++attempt) {
+            require(webscene_engine_get_memory_metrics(engine, &loaded_memory) != 0,
+                "nested functional selector loaded memory metrics were unavailable");
+            if (loaded_memory.v8_used_heap_bytes > 0U
+                && loaded_memory.native_dom_node_count >= affected_count) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        require(loaded_memory.v8_used_heap_bytes > 0U
+                && loaded_memory.native_dom_node_count >= affected_count,
+            "nested functional selector loaded memory metrics did not settle");
+        const auto started = std::chrono::steady_clock::now();
+        require(evaluate(
+                engine,
+                "mutateNestedFunctional()",
+                "nested-functional-scale-mutations.js") == "true",
+            "nested functional selector transitions produced stale computed style");
+        const auto elapsed = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - started).count();
+        require(elapsed < 2000.0,
+            "1,000 nested functional selector transitions exceeded two seconds");
+
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+        std::this_thread::sleep_for(std::chrono::milliseconds(260));
+        execute_and_wait_for_wrapper_retention_scene(
+            engine,
+            "document.body.style.backgroundColor='rgb(3,2,1)'",
+            "nested-functional-scale-result.js");
+        std::array<uint64_t, 7> delta{};
+        for (size_t index = 0; index < names.size(); ++index) {
+            delta[index] = runtime_counter_diagnostic(engine, names[index])
+                - before[index];
+        }
+        require(delta[0] > 0U && delta[1] > 0U && delta[2] == 0U,
+            "nested functional selector mutation used no plan or document fallback");
+        for (const auto value : delta) {
+            require(value <= static_cast<uint64_t>(
+                    transition_count * (affected_count * 20 + 64)),
+                "nested functional selector work exceeded its linear bound");
+        }
+        std::cout << "nested-functional-counters unrelated=" << unrelated_count;
+        for (size_t index = 0; index < names.size(); ++index) {
+            std::cout << ' ' << names[index] << '=' << delta[index];
+        }
+        std::cout << '\n';
+        observations.push_back(delta);
+#endif
+
+        require(evaluate(engine, R"JS((() => {
+          document.getElementById('nested-functional-root').remove();
+          document.getElementById('nested-functional-style').remove();
+          delete globalThis.mutateNestedFunctional;
+          return document.querySelectorAll('.functional-leaf').length;
+        })())JS", "nested-functional-scale-retire.js") == "0",
+            "nested functional selector fixture did not detach");
+        require(webscene_engine_request_low_memory(engine) != 0,
+            "nested functional selector low-memory request was rejected");
+        webscene_engine_memory_metrics final_memory{sizeof(final_memory)};
+        for (auto attempt = 0; attempt < 250; ++attempt) {
+            require(webscene_engine_get_memory_metrics(engine, &final_memory) != 0,
+                "nested functional selector final memory metrics were unavailable");
+            if (final_memory.low_memory_notifications
+                > loaded_memory.low_memory_notifications) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        const auto rss_after = file_system_access_test_peak_rss_bytes();
+        require(final_memory.low_memory_notifications
+                > loaded_memory.low_memory_notifications
+                && final_memory.v8_used_heap_bytes
+                    <= loaded_memory.v8_used_heap_bytes + 1024U * 1024U
+                && final_memory.native_dom_node_count
+                    <= loaded_memory.native_dom_node_count,
+            "nested functional selector teardown retained heap or DOM nodes: heap "
+                + std::to_string(loaded_memory.v8_used_heap_bytes) + " -> "
+                + std::to_string(final_memory.v8_used_heap_bytes) + ", dom "
+                + std::to_string(loaded_memory.native_dom_node_count) + " -> "
+                + std::to_string(final_memory.native_dom_node_count) + ", low-memory "
+                + std::to_string(loaded_memory.low_memory_notifications) + " -> "
+                + std::to_string(final_memory.low_memory_notifications));
+        require(rss_before == 0U || rss_after <= rss_before + 64U * 1024U * 1024U,
+            "nested functional selector peak RSS grew by more than 64 MiB");
+        std::cout << "nested-functional-selectors affected=" << affected_count
+            << " unrelated=" << unrelated_count
+            << " transitions=" << transition_count
+            << " ms=" << elapsed
+            << " heapBefore=" << loaded_memory.v8_used_heap_bytes
+            << " heapAfter=" << final_memory.v8_used_heap_bytes
+            << " rssBefore=" << rss_before
+            << " rssAfter=" << rss_after << '\n';
+        webscene_engine_destroy(engine);
+    }
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+    require(observations.size() == 2U && observations[0] == observations[1],
+        "unrelated rules amplified nested functional selector invalidation work");
+#endif
+}
+
 void test_compiled_css_invalidation_scaling()
 {
+    test_nested_functional_selector_scaling();
     std::vector<std::array<uint64_t, 7>> observations;
     for (const auto unrelated_count : {32, 1024}) {
         auto* engine = webscene_engine_create(0);

@@ -1967,6 +1967,13 @@
       "reason": "Candidate contract for standards-owned selector parsing. It distinguishes parsing and specificity from WebScene's existing matching, cascade, and invalidation implementation."
     },
     {
+      "path": "contracts/css-nested-functional-selectors.html",
+      "type": "contract",
+      "capabilities": ["nested-functional-selector-lists", "functional-selector-specificity", "functional-selector-class-invalidation", "functional-selector-attribute-invalidation"],
+      "evidence": ["selectors-level-4-functional-pseudo-classes", "direct-chromium-native-contract"],
+      "reason": "Candidate contract for depth-aware :is(), :where(), and :not() argument matching. It protects commas in nested functions and quoted attribute values, standards specificity, and live class/attribute invalidation."
+    },
+    {
       "path": "css/selectors/is-specificity.html",
       "type": "testharness",
       "capabilities": ["is-selector-specificity", "complex-functional-selector-list"],

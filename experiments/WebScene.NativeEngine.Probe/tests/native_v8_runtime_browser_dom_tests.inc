@@ -2487,6 +2487,150 @@ void test_adopted_stylesheet_multi_root_contract_and_lifecycle()
     webscene_engine_destroy(engine);
 }
 
+void test_nested_style_rule_cssom_performance_and_lifecycle()
+{
+    auto* engine = webscene_engine_create(0);
+    require(engine != nullptr, "nested CSSOM performance engine creation failed");
+    resize(engine, 800, 600, 1U);
+    wait_for_consumed_inputs(
+        engine, 1U, "nested CSSOM performance viewport was not consumed");
+    execute_and_wait(engine, "globalThis.__nestedCssomBaseline = true",
+        "nested-cssom-performance-baseline.js");
+    webscene_engine_metrics engine_before{};
+    webscene_engine_get_metrics(engine, &engine_before);
+    webscene_runtime_work_metrics work_before{sizeof(webscene_runtime_work_metrics)};
+    require(webscene_engine_get_runtime_work_metrics(engine, &work_before) != 0,
+        "nested CSSOM baseline work metrics were unavailable");
+    webscene_engine_memory_metrics memory_before{sizeof(webscene_engine_memory_metrics)};
+    require(webscene_engine_get_memory_metrics(engine, &memory_before) != 0,
+        "nested CSSOM baseline memory metrics were unavailable");
+    const auto rss_before = file_system_access_test_peak_rss_bytes();
+    const auto result = evaluate(engine, R"JS((() => {
+      const durations = [];
+      for (let cycle = 0; cycle < 20; cycle++) {
+        const style = document.createElement('style');
+        const host = document.createElement('div');
+        const child = document.createElement('span');
+        host.className = `nested-performance-${cycle}`;
+        child.className = 'seed';
+        host.appendChild(child);
+        style.textContent = `.${host.className} {
+          color: rgb(1, 2, 3); & > .seed { width: 1px; }
+        }`;
+        document.head.appendChild(style);
+        document.body.appendChild(host);
+        const outer = style.sheet.cssRules[0];
+        const rules = outer.cssRules;
+        const started = performance.now();
+        for (let index = 0; index < 64; index++) {
+          outer.insertRule(
+            `& > .rule-${index} { width: ${index + 1}px; }`, rules.length);
+        }
+        child.className = 'rule-63';
+        if (rules.length !== 65 || rules[64].selectorText !== '& > .rule-63'
+            || getComputedStyle(child).width !== '64px') {
+          throw new Error('nested CSSOM insertion state diverged');
+        }
+        while (rules.length > 1) outer.deleteRule(rules.length - 1);
+        if (rules.length !== 1 || getComputedStyle(child).width !== 'auto')
+          throw new Error('nested CSSOM deletion state diverged');
+        durations.push(performance.now() - started);
+        style.remove(); host.remove();
+      }
+      const ordered = durations.slice().sort((left, right) => left - right);
+      const p95 = ordered[18], maximum = ordered[19];
+      if (p95 > 32 || maximum > 500)
+        throw new Error(`nested CSSOM latency exceeded ${p95}/${maximum}`);
+
+      for (let cycle = 0; cycle < 100; cycle++) {
+        const frame = document.createElement('iframe');
+        document.body.appendChild(frame);
+        for (const [doc, prefix] of [
+          [document, `nested-main-life-${cycle}`],
+          [frame.contentDocument, `nested-frame-life-${cycle}`]
+        ]) {
+          const style = doc.createElement('style');
+          const host = doc.createElement('div');
+          const child = doc.createElement('span');
+          host.className = prefix;
+          child.className = 'child';
+          host.appendChild(child);
+          style.textContent = `.${prefix} {
+            color: rgb(1, 2, 3); & > .child { display: block; }
+            background: rgb(4, 5, 6);
+          }`;
+          doc.head.appendChild(style);
+          doc.body.appendChild(host);
+          const outer = style.sheet.cssRules[0];
+          const rules = outer.cssRules;
+          if (rules.length !== 2
+              || rules[0].parentRule !== outer
+              || rules[1].constructor.name !== 'CSSNestedDeclarations') {
+            throw new Error('nested CSSOM lifecycle reflection diverged');
+          }
+          const inserted = outer.insertRule('&.active { display: none; }', 2);
+          outer.deleteRule(inserted);
+          style.sheet.deleteRule(0);
+          if (outer.parentStyleSheet !== null
+              || rules[0].parentStyleSheet !== null) {
+            throw new Error('nested CSSOM lifecycle detachment diverged');
+          }
+          style.remove(); host.remove();
+        }
+        frame.remove();
+      }
+      return { status: 'passed', cycles: durations.length,
+        lifecycleCycles: 100, roots: 200, p95, max: maximum };
+    })())JS", "nested-cssom-performance-lifecycle.js");
+    require(result.find(R"("status":"passed")") != std::string::npos,
+        "nested CSSOM performance/lifecycle workload failed: " + result);
+    require(webscene_engine_request_low_memory(engine) != 0,
+        "nested CSSOM low-memory request was rejected");
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    webscene_engine_metrics engine_after{};
+    webscene_engine_get_metrics(engine, &engine_after);
+    webscene_runtime_work_metrics work_after{sizeof(webscene_runtime_work_metrics)};
+    require(webscene_engine_get_runtime_work_metrics(engine, &work_after) != 0,
+        "nested CSSOM final work metrics were unavailable");
+    webscene_engine_memory_metrics memory_after{sizeof(webscene_engine_memory_metrics)};
+    require(webscene_engine_get_memory_metrics(engine, &memory_after) != 0,
+        "nested CSSOM final memory metrics were unavailable");
+    const auto rss_after = file_system_access_test_peak_rss_bytes();
+    require(memory_after.v8_used_heap_bytes
+            <= memory_before.v8_used_heap_bytes + 8U * 1024U * 1024U,
+        "nested CSSOM cycles retained more than 8 MiB of V8 heap");
+    require(memory_after.native_css_rule_count
+            <= memory_before.native_css_rule_count + 4U,
+        "nested CSSOM cycles retained native CSS rules");
+    require(memory_after.native_dom_node_count
+            <= memory_before.native_dom_node_count + 32U,
+        "nested CSSOM cycles retained native DOM nodes");
+    require(memory_after.pending_scene_count <= 2U,
+        "nested CSSOM cycles left an unbounded pending scene queue");
+    require(rss_before == 0U
+            || rss_after <= rss_before + 64U * 1024U * 1024U,
+        "nested CSSOM cycles increased peak RSS by more than 64 MiB");
+    require(engine_after.layout_passes <= engine_before.layout_passes + 64U
+            && engine_after.published_scenes <= engine_before.published_scenes + 64U
+            && work_after.scene_builds <= work_before.scene_builds + 64U,
+        "nested CSSOM mutation exceeded bounded layout/scene publication");
+    std::cout << "nested-cssom-profile=" << result
+              << " heap=" << memory_before.v8_used_heap_bytes << "/"
+              << memory_after.v8_used_heap_bytes
+              << " rules=" << memory_before.native_css_rule_count << "/"
+              << memory_after.native_css_rule_count
+              << " nodes=" << memory_before.native_dom_node_count << "/"
+              << memory_after.native_dom_node_count
+              << " rss=" << rss_before << "/" << rss_after
+              << " layout=" << engine_before.layout_passes << "/"
+              << engine_after.layout_passes
+              << " scenes=" << engine_before.published_scenes << "/"
+              << engine_after.published_scenes
+              << " builds=" << work_before.scene_builds << "/"
+              << work_after.scene_builds << '\n';
+    webscene_engine_destroy(engine);
+}
+
 void test_batched_stylesheet_rule_mutation_performance()
 {
     auto* engine = webscene_engine_create(0);
@@ -3352,7 +3496,9 @@ void test_batched_stylesheet_rule_mutation_performance()
         R"("passed")",
         500);
     require(result == R"("passed")",
-        "stylesheet mutation performance workload failed: " + result);
+        "stylesheet mutation performance workload failed: "
+            + evaluate(engine, "globalThis.__stylesheetMutationResult",
+                "stylesheet-rule-mutation-failure.js"));
     const auto metrics = evaluate(
         engine,
         "globalThis.__stylesheetMutationResult",

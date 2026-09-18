@@ -1,6 +1,42 @@
+size_t load_indexeddb_test_document(
+    void*,
+    uint32_t kind,
+    const char* url,
+    size_t url_length,
+    const char*,
+    size_t,
+    int64_t,
+    char* destination,
+    size_t destination_capacity)
+{
+    constexpr std::string_view content{
+        "<!doctype html><title>IndexedDB origin fixture</title>"};
+    constexpr size_t header_size = 2U + sizeof(uint32_t) + sizeof(int64_t) * 2U;
+    const auto address = std::string_view(url, url_length);
+    if (kind != WEBSCENE_RESOURCE_DOCUMENT
+        || !address.starts_with("http://127.0.0.1:")
+        || !address.ends_with('/')) {
+        return 0U;
+    }
+    const auto required = header_size + content.size();
+    if (destination == nullptr || destination_capacity < required) return required;
+    destination[0] = 1;
+    destination[1] = 0;
+    const uint32_t entity_tag_length = 0U;
+    const int64_t timestamp = 0;
+    std::memcpy(destination + 2U, &entity_tag_length, sizeof(entity_tag_length));
+    std::memcpy(destination + 2U + sizeof(entity_tag_length),
+        &timestamp, sizeof(timestamp));
+    std::memcpy(destination + 2U + sizeof(entity_tag_length) + sizeof(timestamp),
+        &timestamp, sizeof(timestamp));
+    std::copy(content.begin(), content.end(), destination + header_size);
+    return required;
+}
+
 webscene_engine* create_indexeddb_engine(
     const std::filesystem::path& root,
     std::string_view partition,
+    uint16_t port,
     uint64_t quota = 4U * 1024U * 1024U)
 {
     const auto root_text = root.string();
@@ -11,16 +47,20 @@ webscene_engine* create_indexeddb_engine(
     options.storage_partition_key = partition.data();
     options.storage_partition_key_length = partition.size();
     options.storage_quota_bytes = quota;
-    return webscene_engine_create_with_options(&options);
-}
-
-void configure_indexeddb_test_origin(webscene_engine* engine, uint16_t port)
-{
-    const auto source = std::string(
-        "location.protocol='http:';location.hostname='127.0.0.1';"
-        "location.origin='http://127.0.0.1:") + std::to_string(port)
-        + "';location.href=location.origin+'/';";
-    execute_and_wait(engine, source, "indexeddb-test-origin.js");
+    options.resource_load_callback = load_indexeddb_test_document;
+    auto* engine = webscene_engine_create_with_options(&options);
+    if (engine == nullptr) return nullptr;
+    const auto address = std::string("http://127.0.0.1:")
+        + std::to_string(port) + '/';
+    if (webscene_engine_load_url(engine, address.data(), address.size()) == 0U
+        || evaluate_until_equals(engine, "location.href",
+               "indexeddb-initial-origin.js", '"' + address + '"', 2500)
+            != '"' + address + '"'
+        || take_typed_host_request(engine)) {
+        webscene_engine_destroy(engine);
+        return nullptr;
+    }
+    return engine;
 }
 
 void wait_for_indexeddb_flag(webscene_engine* engine, std::string_view expression)
@@ -44,9 +84,8 @@ void test_indexeddb_persistence_and_transaction_contract()
         std::filesystem::remove_all(root, error);
     };
 
-    auto* engine = create_indexeddb_engine(root, "code-oss-profile");
+    auto* engine = create_indexeddb_engine(root, "code-oss-profile", 41001U);
     require(engine != nullptr, "IndexedDB engine creation failed");
-    configure_indexeddb_test_origin(engine, 41001U);
     execute_and_wait(engine, R"JS(
       globalThis.indexedDbProbe = { done: false };
       let stage = 'open-v1';
@@ -148,10 +187,9 @@ void test_indexeddb_persistence_and_transaction_contract()
         "upgrade, rollback, structured clone, or cursor behavior changed");
     webscene_engine_destroy(engine);
 
-    engine = create_indexeddb_engine(root, "code-oss-profile");
+    engine = create_indexeddb_engine(root, "code-oss-profile", 41999U);
     require(engine != nullptr, "IndexedDB restart engine creation failed");
     // A different ephemeral loopback port retains the explicit app partition.
-    configure_indexeddb_test_origin(engine, 41999U);
     execute_and_wait(engine, R"JS(
       globalThis.indexedDbRestartProbe = { done: false };
       (() => new Promise((resolve, reject) => {
@@ -198,9 +236,9 @@ void test_indexeddb_quota_and_corruption_failures()
             + std::to_string(std::chrono::steady_clock::now()
                 .time_since_epoch().count()));
     std::filesystem::create_directories(root);
-    auto* engine = create_indexeddb_engine(root, "failure-profile", 1024U * 1024U);
+    auto* engine = create_indexeddb_engine(
+        root, "failure-profile", 42001U, 1024U * 1024U);
     require(engine != nullptr, "IndexedDB failure engine creation failed");
-    configure_indexeddb_test_origin(engine, 42001U);
     execute_and_wait(engine, R"JS(
       globalThis.indexedDbQuotaProbe = { done: false };
       new Promise((resolve, reject) => {
@@ -250,9 +288,9 @@ void test_indexeddb_quota_and_corruption_failures()
     corrupt.put(static_cast<char>(prior ^ 0xff));
     corrupt.close();
 
-    engine = create_indexeddb_engine(root, "failure-profile", 1024U * 1024U);
+    engine = create_indexeddb_engine(
+        root, "failure-profile", 42002U, 1024U * 1024U);
     require(engine != nullptr, "IndexedDB corruption engine creation failed");
-    configure_indexeddb_test_origin(engine, 42002U);
     execute_and_wait(engine, R"JS(
       globalThis.indexedDbCorruptionProbe = { done: false };
       const request = indexedDB.open('quota-db');

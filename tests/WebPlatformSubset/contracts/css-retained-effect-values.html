@@ -80,6 +80,13 @@
   }, 'compound foreground filters preserve authored function order');
 
   test(() => {
+    effect.style.setProperty('filter', 'blur(max(4px, calc(8px * 0.25)))');
+    assert_equals(getComputedStyle(effect).getPropertyValue('filter'),
+      'blur(max(4px, calc(8px * 0.25)))');
+    effect.style.removeProperty('filter');
+  }, 'foreground blur preserves nested functional length syntax');
+
+  test(() => {
     assert_equals(getComputedStyle(effect).getPropertyValue('backdrop-filter'), 'blur(3px)');
   }, 'backdrop filter exposes its computed function list');
 

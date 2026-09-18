@@ -379,8 +379,18 @@ void native_document::append_scene(
                 return result;
             }
             const auto opening = remaining.find('(');
-            const auto closing = opening == std::string_view::npos
-                ? std::string_view::npos : remaining.find(')', opening + 1U);
+            auto closing = std::string_view::npos;
+            if (opening != std::string_view::npos) {
+                auto depth = 1U;
+                for (auto index = opening + 1U; index < remaining.size(); ++index) {
+                    if (remaining[index] == '(') {
+                        ++depth;
+                    } else if (remaining[index] == ')' && --depth == 0U) {
+                        closing = index;
+                        break;
+                    }
+                }
+            }
             if (opening == 0U || opening == std::string_view::npos
                 || closing == std::string_view::npos) {
                 result.clear();
@@ -389,21 +399,39 @@ void native_document::append_scene(
             const auto name = trim(remaining.substr(0U, opening));
             const auto argument = trim(
                 remaining.substr(opening + 1U, closing - opening - 1U));
-            const auto parsed = css::parse_ascii_number_prefix(argument);
-            if (!parsed.has_value() || parsed->value < 0.0F) {
-                result.clear();
-                return result;
-            }
-            const auto suffix = argument.substr(parsed->consumed);
             uint32_t flags = 0U;
             float amount = -1.0F;
             float maximum = 0.0F;
             if (equals_ascii_case_insensitive(name, "blur")) {
                 flags = 1U << 28U;
                 maximum = 256.0F;
-                amount = suffix == "px" || (suffix.empty() && parsed->value == 0.0F)
-                    ? parsed->value : -1.0F;
+                const auto length = parse_length(std::string{argument});
+                switch (length.unit) {
+                case length_unit::pixels:
+                case length_unit::em:
+                case length_unit::rem:
+                case length_unit::viewport_width:
+                case length_unit::viewport_height:
+                case length_unit::viewport_width_capped:
+                case length_unit::viewport_height_capped:
+                case length_unit::viewport_width_floored:
+                case length_unit::viewport_height_floored:
+                case length_unit::container_inline:
+                case length_unit::container_block:
+                case length_unit::container_min:
+                case length_unit::container_max:
+                    amount = resolve_length(node, length, 0.0F, -1.0F);
+                    break;
+                default:
+                    break;
+                }
             } else {
+                const auto parsed = css::parse_ascii_number_prefix(argument);
+                if (!parsed.has_value() || parsed->value < 0.0F) {
+                    result.clear();
+                    return result;
+                }
+                const auto suffix = argument.substr(parsed->consumed);
                 if (equals_ascii_case_insensitive(name, "brightness")) {
                     flags = 1U << 31U;
                     maximum = 10.0F;

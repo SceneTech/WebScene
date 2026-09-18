@@ -38,6 +38,15 @@
   #shell-main { grid-area:main; }
   #shell-aside { grid-area:aside; width:30px; }
   #shell-player { grid-area:player; height:30px; }
+  .spanning-shell { --panel-gap:8px; display:grid; width:300px; height:300px;
+    gap:var(--panel-gap);
+    grid-template:"top top""nav nav""content aside" 1fr"footer footer"/1fr 1fr; }
+  #spanning-header { grid-area:top/1/nav/-1;
+    height:calc(48px + var(--panel-gap) * 2); }
+  #spanning-banner { grid-area:top; height:0; }
+  #spanning-content { grid-area:content; }
+  #spanning-aside { grid-area:aside; }
+  #spanning-footer { grid-area:footer; height:30px; }
 </style>
 <div class="temperature" id="temperature">
   <label id="celsius"></label><span class="equals" id="equals">=</span><label id="fahrenheit"></label>
@@ -46,6 +55,7 @@
 <div class="placed"><div id="placed-a"></div><div id="placed-b"></div><div id="placed-c"></div></div>
 <div class="carousel"><div id="carousel-a"><span class="action"></span></div><div id="carousel-b"></div><div id="carousel-c"></div></div>
 <div class="shell" id="shell"><div id="shell-banner"></div><div id="shell-nav"></div><div id="shell-library"></div><div id="shell-main"></div><div id="shell-aside"></div><div id="shell-player"></div></div>
+<div class="spanning-shell" id="spanning-shell"><div id="spanning-banner"></div><div id="spanning-header"></div><div id="spanning-content"></div><div id="spanning-aside"></div><div id="spanning-footer"></div></div>
 <script>
   const state = window.__webSceneWptState = {
     complete: false, harness: null, results: [], errors: [], diagnostics: []
@@ -112,10 +122,24 @@
       JSON.stringify({ player, shell }));
   });
 
+  check("a definite spanning item overlaps an occupied area and grows auto rows", () => {
+    const shell = rect("spanning-shell"), header = rect("spanning-header"),
+      content = rect("spanning-content"), aside = rect("spanning-aside"),
+      footer = rect("spanning-footer");
+    require(close(header.top, shell.top) && close(header.height, 64),
+      JSON.stringify({ shell, header }));
+    require(close(content.top - shell.top, 72) && close(aside.top, content.top),
+      JSON.stringify({ shell, header, content, aside }));
+    require(header.bottom + 8 <= content.top + .01,
+      "spanning header overlaps the content row");
+    require(close(footer.bottom, shell.bottom), JSON.stringify({ shell, footer }));
+  });
+
   state.diagnostics = [JSON.stringify({
     celsius: rect("celsius"), equals: rect("equals"), fahrenheit: rect("fahrenheit"),
     list: rect("list"), form: rect("form"),
-    placedA: rect("placed-a"), placedB: rect("placed-b"), placedC: rect("placed-c")
+    placedA: rect("placed-a"), placedB: rect("placed-b"), placedC: rect("placed-c"),
+    spanningHeader: rect("spanning-header"), spanningContent: rect("spanning-content")
   })];
   state.harness = { status: state.results.some(result => result.status !== "PASS") ? 1 : 0, message: null, stack: null };
   state.complete = true;

@@ -364,6 +364,41 @@ void test_named_grid_template_areas_layout_cssom_and_mutation(webscene_engine* e
             + result);
 }
 
+void test_grid_item_spanning_auto_rows_contributes_its_height(webscene_engine* engine)
+{
+    resize(engine, 300, 300, 203U);
+    const auto result = evaluate(engine, R"JS(
+        (() => {
+          document.body.innerHTML = `
+            <style>
+              html,body { margin:0; }
+              #shell { --panel-gap:8px; display:grid; width:300px; height:300px;
+                gap:var(--panel-gap);
+                grid-template:"top top""nav nav""content aside" 1fr"footer footer"/1fr 1fr; }
+              #header { grid-area:top/1/nav/-1;
+                height:calc(48px + var(--panel-gap) * 2); }
+              #banner { grid-area:top; height:0; }
+              #content { grid-area:content; }
+              #aside { grid-area:aside; }
+              #footer { grid-area:footer; height:30px; }
+            </style>
+            <div id="shell"><div id="banner"></div><div id="header"></div><div id="content"></div>
+              <div id="aside"></div><div id="footer"></div></div>`;
+          const rect = id => {
+            const value = document.getElementById(id).getBoundingClientRect();
+            return [value.x,value.y,value.width,value.height].map(number =>
+              Math.round(number * 1000) / 1000);
+          };
+          return {shell:rect('shell'),header:rect('header'),content:rect('content'),
+            aside:rect('aside'),footer:rect('footer')};
+        })()
+    )JS", "native-grid-spanning-auto-rows.js");
+    require(
+        result == R"JSON({"shell":[0,0,300,300],"header":[0,0,300,64],"content":[0,72,146,190],"aside":[154,72,146,190],"footer":[0,270,300,30]})JSON",
+        "a grid item spanning adjacent auto rows did not grow those tracks: "
+            + result);
+}
+
 void test_grid_auto_maximum_tracks_stretch_remaining_space(webscene_engine* engine)
 {
     resize(engine, 700, 400, 202U);

@@ -2163,11 +2163,13 @@ void native_document::layout_children(dom_node& parent)
             if (column + column_span > column_count) {
                 column = column_count - column_span;
             }
-            // Fully definite placements may overlap. Named template areas are
-            // definite in both axes, so a second item assigned to the same
-            // area must retain the area's geometry instead of being shifted
-            // into the next implicit row by the auto-placement cursor.
-            while (!(named.has_row && named.has_column)
+            // Fully definite placements may overlap. Definite named lines can
+            // be combined with numeric lines in the other axis, so retain that
+            // geometry instead of shifting the item past an occupied area.
+            const auto fully_definite = authored_row.has_value()
+                && (authored_column_start.has_value()
+                    || authored_column_end.has_value());
+            while (!fully_definite
                 && !fits(row, column, row_span, column_span)) {
                 if (!authored_column_start.has_value()
                     && !authored_column_end.has_value()) {
@@ -2433,6 +2435,44 @@ void native_document::layout_children(dom_node& parent)
                             flow_bounds.second - flow_bounds.first)));
             }
             record_contribution(authored);
+        }
+        for (const auto& item : items) {
+            if (item.row_span <= 1U
+                || item.row + item.row_span > row_heights.size()) continue;
+            const auto margins = resolve_length(
+                    *item.node, item.node->style.margin_top, content.height, 0)
+                + resolve_length(
+                    *item.node, item.node->style.margin_bottom, content.height, 0);
+            const auto cyclic_percentage_height =
+                item.node->style.height.unit == length_unit::percent;
+            const auto contribution = (is_specified(item.node->style.height)
+                    && !cyclic_percentage_height
+                ? outer_authored_size(*item.node, false, content.height)
+                : intrinsic_size(*item.node, false, content.height))
+                + margins;
+            const auto current = std::accumulate(
+                    row_heights.begin() + static_cast<std::ptrdiff_t>(item.row),
+                    row_heights.begin() + static_cast<std::ptrdiff_t>(
+                        item.row + item.row_span),
+                    0.0F)
+                + row_gap * static_cast<float>(item.row_span - 1U);
+            if (contribution <= current) continue;
+
+            std::vector<size_t> growable_rows;
+            for (auto row = item.row; row < item.row + item.row_span; ++row) {
+                if (row >= parent_grid.template_rows.size()
+                    || (parent_grid.template_rows[row].maximum_is_auto
+                        && parent_grid.template_rows[row].fraction <= 0)) {
+                    growable_rows.push_back(row);
+                }
+            }
+            if (growable_rows.empty()) continue;
+            const auto share = (contribution - current)
+                / static_cast<float>(growable_rows.size());
+            for (const auto row : growable_rows) {
+                row_heights[row] += share;
+                row_minimums[row] = std::max(row_minimums[row], row_heights[row]);
+            }
         }
         const auto single_auto_row = row_count == 1U
             && (parent_grid.template_rows.empty()
@@ -4600,7 +4640,9 @@ float native_document::compute_intrinsic_size(
                 }
                 return true;
             };
-            while (!(named.has_row && named.has_column) && !fits(row, column)) {
+            const auto fully_definite = authored_row.has_value()
+                && authored_column.has_value();
+            while (!fully_definite && !fits(row, column)) {
                 if (!authored_column.has_value()) {
                     ++column;
                     if (column + column_span > column_count) {

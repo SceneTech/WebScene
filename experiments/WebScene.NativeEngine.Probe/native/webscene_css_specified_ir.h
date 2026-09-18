@@ -240,6 +240,7 @@ inline specified_css_value compile_specified_value(css_property_id property,std:
     case native_property_grammar::special:return out;
     }
     switch(property){
+    case css_property_id::aspect_ratio:components();break;
     case css_property_id::contain:case css_property_id::cursor:case css_property_id::font_family:components();break;
     case css_property_id::fill:case css_property_id::stroke:color();break;
     case css_property_id::border_color:{const auto p=css_ir_split(value);if(p.empty()||p.size()>4)break;out.kind=specified_css_kind::color_list;out.color_count=static_cast<uint8_t>(p.size());out.valid=true;for(size_t i=0;i<p.size();++i){out.colors[i]=css_ir_color(p[i]);out.valid&=out.colors[i].valid;}break;}

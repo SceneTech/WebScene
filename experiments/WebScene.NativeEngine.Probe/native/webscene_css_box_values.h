@@ -2,6 +2,38 @@
 #include "webscene_css_matching.h"
 
 namespace webscene_native::css {
+inline bool parse_preferred_aspect_ratio(
+    std::string_view authored,
+    float& width,
+    float& height)
+{
+    auto value = trim_css_view(authored);
+    if (value == "initial" || value == "unset" || value == "revert"
+        || value == "revert-layer" || value == "auto") {
+        width = 0;
+        height = 0;
+        return true;
+    }
+    if (value.starts_with("auto ")) value = trim_css_view(value.substr(5U));
+    const auto slash = value.find('/');
+    const auto numerator_text = trim_css_view(value.substr(0U, slash));
+    const auto denominator_text = slash == std::string_view::npos
+        ? std::string_view{"1"}
+        : trim_css_view(value.substr(slash + 1U));
+    if (numerator_text.empty() || denominator_text.empty()) return false;
+    const auto parse_positive = [](std::string_view token, float& output) {
+        const auto text = std::string(token);
+        char* end = nullptr;
+        const auto parsed = std::strtof(text.c_str(), &end);
+        if (end == text.c_str() || *end != '\0' || !std::isfinite(parsed)
+            || parsed <= 0) return false;
+        output = parsed;
+        return true;
+    };
+    return parse_positive(numerator_text, width)
+        && parse_positive(denominator_text, height);
+}
+
 inline std::string canonical_property_name(std::string_view name)
 {
     if (name.starts_with("--")) return std::string(name);

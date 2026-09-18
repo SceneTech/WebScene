@@ -72,6 +72,14 @@
   }, 'foreground filter exposes its computed function list');
 
   test(() => {
+    effect.style.setProperty('filter',
+      'blur(2px) saturate(1.08) contrast(1.5) grayscale(0.25)');
+    assert_equals(getComputedStyle(effect).getPropertyValue('filter'),
+      'blur(2px) saturate(1.08) contrast(1.5) grayscale(0.25)');
+    effect.style.removeProperty('filter');
+  }, 'compound foreground filters preserve authored function order');
+
+  test(() => {
     assert_equals(getComputedStyle(effect).getPropertyValue('backdrop-filter'), 'blur(3px)');
   }, 'backdrop filter exposes its computed function list');
 

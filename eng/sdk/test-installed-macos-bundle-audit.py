@@ -73,6 +73,7 @@ def main():
         library = frameworks / "libfixture.dylib"
         host = macos / "Fixture"
         extension = plugins / "sample.node"
+        absolute_extension = plugins / "absolute.node"
         alternate_architecture = "x86_64" if architecture == "arm64" else "arm64"
         common = ["-arch", architecture, "-mmacosx-version-min=13.0"]
         run(["xcrun", "clang", *common, "-dynamiclib", str(source),
@@ -90,6 +91,9 @@ def main():
             extension_slices.append(output)
         run(["xcrun", "lipo", "-create", *map(str, extension_slices),
              "-output", str(extension)])
+        producer_identity = "/Users/runner/work/native/release/deps/libabsolute.node"
+        run(["xcrun", "clang", *common, "-dynamiclib", str(extension_source),
+             "-install_name", producer_identity, "-o", str(absolute_extension)])
         original_extension_bytes = extension.stat().st_size
         initial_architectures = run(
             ["xcrun", "lipo", "-archs", str(extension)], capture_output=True
@@ -130,7 +134,8 @@ def main():
         package_evidence = json.loads(package_payload)
         normalization = package_evidence["normalization"]
         extension_normalization = next(
-            item for item in normalization["files"] if item["path"].endswith(".node")
+            item for item in normalization["files"]
+            if item["path"] == "Contents/PlugIns/sample.node"
         )
         if extension_normalization["action"] != "thinned":
             raise RuntimeError("installed packager did not record .node thinning")
@@ -142,6 +147,20 @@ def main():
             raise RuntimeError("normalization exceeded its temporary disk bound")
         if normalization["summary"]["savedBytes"] <= 0:
             raise RuntimeError("normalization did not reduce the universal bundle")
+        if normalization["summary"]["relocatedInstallNames"] != 1:
+            raise RuntimeError("installed packager recorded wrong relocated identity count")
+        if len(normalization["installNames"]) != 1:
+            raise RuntimeError("installed packager omitted install-name evidence")
+        install_name = normalization["installNames"][0]
+        if (install_name["path"] != "Contents/PlugIns/absolute.node"
+                or install_name["original"] != producer_identity
+                or install_name["result"] != "@rpath/libabsolute.node"):
+            raise RuntimeError(f"wrong install-name evidence: {install_name}")
+        final_identity = run(
+            ["xcrun", "otool", "-D", str(absolute_extension)], capture_output=True
+        ).stdout.splitlines()[1:]
+        if final_identity != ["@rpath/libabsolute.node"]:
+            raise RuntimeError(f"absolute producer identity was not relocated: {final_identity}")
         if any(".webscene-thin-" in item.name for item in plugins.iterdir()):
             raise RuntimeError("normalization left a temporary file")
         if os.fsencode(temporary) in package_payload:
@@ -164,6 +183,7 @@ def main():
         loader = work / "load-extension"
         run(["xcrun", "clang", *common, str(loader_source), "-o", str(loader)])
         run([str(loader), str(extension)])
+        run([str(loader), str(absolute_extension)])
 
         evidence_path = work / "evidence.json"
         command = [
@@ -192,8 +212,8 @@ def main():
         schema = json.loads(schema_path.read_text())
         if schema["properties"]["schemaVersion"]["const"] != evidence["schemaVersion"]:
             raise RuntimeError("installed evidence and schema versions differ")
-        if evidence["summary"]["machoFiles"] != 3:
-            raise RuntimeError("installed tool did not recursively audit all three Mach-O files")
+        if evidence["summary"]["machoFiles"] != 4:
+            raise RuntimeError("installed tool did not recursively audit all four Mach-O files")
         if not any(item["path"].endswith(".node") for item in evidence["binaries"]):
             raise RuntimeError("installed tool omitted the native extension")
         if os.fsencode(temporary) in expected:
@@ -217,7 +237,7 @@ def main():
             raise RuntimeError("installed tool accepted a dangling bundled dependency")
         print(
             f"installed macOS bundle audit: universal .node thinned, signed, loaded; "
-            f"3 Mach-O files, 10 stable passes in {elapsed:.3f}s, "
+            f"4 Mach-O files, 10 stable passes in {elapsed:.3f}s, "
             f"{len(expected)} evidence bytes"
         )
     return 0

@@ -108,6 +108,16 @@ inline std::vector<css_compound_dependencies> compile_invalidation_plan(
             } else if (pseudo.name == "checked") {
                 for (const auto* name : {"checked", "selected", "type"})
                     add(output.attributes[name], route);
+            } else if (pseudo.name == "default") {
+                // Authored defaults update the subject directly. Submit-button
+                // ownership/order changes can select a different control, so
+                // those rare mutations conservatively recascade the document.
+                add(output.attributes["checked"], route);
+                add(output.attributes["selected"], route);
+                for (const auto* name : {"type", "form", "id"})
+                    output.attributes[name].scope |= invalidation_fallback;
+                output.child_list_sensitive = true;
+                output.child_list.scope |= invalidation_fallback;
             } else if (pseudo.name == "indeterminate") {
                 for (const auto* name : {"$live-form-indeterminate", "checked", "type", "name"})
                     add(output.attributes[name], route);

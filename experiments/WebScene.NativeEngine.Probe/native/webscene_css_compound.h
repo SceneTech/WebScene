@@ -339,6 +339,8 @@ inline bool compound_matches(const Host& host,const dom_node& node,
                 if (!hash || !css::target_matches(node,*hash)) return false;
             } else if (name == "checked") {
                 if (!css::checked_matches(node)) return false;
+            } else if (name == "default") {
+                if (!css::default_matches(document,node)) return false;
             } else if (name == "indeterminate") {
                 if (!css::indeterminate_matches(node)) return false;
             } else if (name == "in-range") {

@@ -1,0 +1,128 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Nested functional selector matching, specificity, and invalidation</title>
+<style>
+  .host > .is-leaf,
+  .host > .not-leaf,
+  .host > .comma-leaf { width: 11px; }
+
+  .host:is(:not(.blocked, [hidden]), .fallback) > .is-leaf {
+    width: 41px;
+  }
+  .host:not(:is(.blocked, [hidden]), .excluded) > .not-leaf {
+    width: 43px;
+  }
+  .host:is([data-token="a,b"], :not(.x, .y)) > .comma-leaf {
+    width: 47px;
+  }
+
+  .specificity-leaf:is(:not(.unused, #missing), .fallback) {
+    --nested-is-specificity: pass;
+  }
+  div.host > span.specificity-leaf {
+    --nested-is-specificity: lower-specificity-won;
+  }
+
+  .scope .where-leaf:where(:is(#where-leaf, .missing), :not(#never, .other)) {
+    --nested-where-specificity: lower-specificity-won;
+  }
+  .scope .host .where-leaf {
+    --nested-where-specificity: pass;
+  }
+</style>
+<body>
+<main class="scope">
+  <div id="host" class="host" data-token="a,b">
+    <span class="is-leaf"></span>
+    <span class="not-leaf"></span>
+    <span class="comma-leaf"></span>
+    <span class="specificity-leaf"></span>
+    <span id="where-leaf" class="where-leaf"></span>
+  </div>
+</main>
+<script>
+  const state = window.__webSceneWptState = {
+    complete: false, harness: null, results: [], errors: [], diagnostics: []
+  };
+
+  function assert(condition, message) {
+    if (!condition) throw new Error(message);
+  }
+
+  function test(name, body) {
+    try {
+      body();
+      state.results.push({ name, status: "PASS", message: null, stack: null });
+    } catch (error) {
+      state.results.push({
+        name,
+        status: "FAIL",
+        message: String(error && error.message || error),
+        stack: error && error.stack ? String(error.stack) : null
+      });
+    }
+  }
+
+  const host = document.getElementById("host");
+  const isLeaf = host.querySelector(".is-leaf");
+  const notLeaf = host.querySelector(".not-leaf");
+  const commaLeaf = host.querySelector(".comma-leaf");
+  const width = node => getComputedStyle(node).width;
+  const property = (node, name) => getComputedStyle(node).getPropertyValue(name).trim();
+
+  test("nested :is() and :not() selector lists match", () => {
+    assert(host.matches(":is(:not(.blocked, [hidden]), .fallback)"),
+      "nested :is() did not match through :not()");
+    assert(host.matches(":not(:is(.blocked, [hidden]), .excluded)"),
+      "nested :not() did not match through :is()");
+    assert(width(isLeaf) === "41px" && width(notLeaf) === "43px",
+      `nested computed widths diverged: ${width(isLeaf)}, ${width(notLeaf)}`);
+  });
+
+  test("commas inside nested functions and attribute strings stay scoped", () => {
+    assert(host.matches(":is([data-token=\"a,b\"], :not(.x, .y))"),
+      "attribute or nested-list comma split the outer :is() list");
+    assert(width(commaLeaf) === "47px",
+      `attribute-comma rule did not apply: ${width(commaLeaf)}`);
+  });
+
+  test("nested functional selectors retain standards specificity", () => {
+    assert(property(host.querySelector(".specificity-leaf"),
+      "--nested-is-specificity") === "pass", "nested :is() maximum specificity was lost");
+    assert(property(host.querySelector(".where-leaf"),
+      "--nested-where-specificity") === "pass", "nested :where() contributed specificity");
+  });
+
+  test("class mutations invalidate nested functional dependencies", () => {
+    host.classList.add("blocked");
+    assert(width(isLeaf) === "11px" && width(notLeaf) === "11px",
+      "adding nested class dependency retained matching styles");
+    assert(!host.matches(":is(:not(.blocked, [hidden]), .fallback)") &&
+      !host.matches(":not(:is(.blocked, [hidden]), .excluded)"),
+      "nested class dependency did not change selector matching");
+    host.classList.add("fallback");
+    assert(width(isLeaf) === "41px" && width(notLeaf) === "11px",
+      "fallback arm or nested negation did not recascade");
+    host.classList.remove("fallback");
+    host.classList.remove("blocked");
+    assert(width(isLeaf) === "41px" && width(notLeaf) === "43px",
+      "removing nested class dependencies did not restore styles");
+  });
+
+  test("attribute mutations invalidate nested functional dependencies", () => {
+    host.toggleAttribute("hidden", true);
+    assert(host.matches("[hidden]"), "direct presence selector did not see hidden");
+    assert(!host.matches(":not([hidden])"), "single nested attribute selector remained negated");
+    assert(width(isLeaf) === "11px" && width(notLeaf) === "11px",
+      `adding nested attribute dependency retained matching styles: hidden=${host.hasAttribute("hidden")}, value=${host.getAttribute("hidden")}, ${width(isLeaf)}, ${width(notLeaf)}, is=${host.matches(":is(:not(.blocked, [hidden]), .fallback)")}, not=${host.matches(":not(:is(.blocked, [hidden]), .excluded)")}`);
+    host.toggleAttribute("hidden", false);
+    assert(width(isLeaf) === "41px" && width(notLeaf) === "43px",
+      "removing nested attribute dependency did not restore styles");
+  });
+
+  const failure = state.results.find(result => result.status !== "PASS");
+  state.harness = failure
+    ? { status: 1, message: failure.message, stack: failure.stack }
+    : { status: 0, message: null, stack: null };
+  state.complete = true;
+</script>

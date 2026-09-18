@@ -333,33 +333,13 @@ inline bool compound_matches(const Host& host,const dom_node& node,
                 if (!css::interaction_matches(document,node,name,
                     host.selector_interaction_state(),host.is_text_control(&node))) return false;
             } else if (name == "not") {
-                size_t start = 0;
-                while (start <= argument.size()) {
-                    auto end = argument.find(',', start);
-                    if (end == std::string::npos) end = argument.size();
-                    if (host.css_selector_matches(
-                            node,
-                            trim_css_view(argument.substr(start, end - start)),
-                            scope_root)) {
-                        return false;
-                    }
-                    if (end == argument.size()) break;
-                    start = end + 1U;
-                }
+                if (css_selector_list_any(argument, [&](std::string_view item) {
+                        return host.css_selector_matches(node, item, scope_root);
+                    })) return false;
             } else if (name == "is" || name == "where") {
-                bool any = false;
-                size_t start = 0;
-                while (start <= argument.size()) {
-                    auto end = argument.find(',', start);
-                    if (end == std::string::npos) end = argument.size();
-                    any = any || host.css_selector_matches(
-                        node,
-                        trim_css_view(argument.substr(start, end - start)),
-                        scope_root);
-                    if (end == argument.size()) break;
-                    start = end + 1U;
-                }
-                if (!any) return false;
+                if (!css_selector_list_any(argument, [&](std::string_view item) {
+                        return host.css_selector_matches(node, item, scope_root);
+                    })) return false;
             } else if (name == "has") {
                 bool any = false;
                 size_t start = 0;

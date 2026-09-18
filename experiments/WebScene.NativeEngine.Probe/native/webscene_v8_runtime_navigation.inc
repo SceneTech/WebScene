@@ -239,6 +239,7 @@
 
         pointer_capture_target = nullptr;
         pointer_down_target = nullptr;
+        active_pointer_target = nullptr;
         scrollbar_drag_target = nullptr;
         scrollbar_drag_vertical = false;
         scrollbar_drag_pointer_origin = 0;
@@ -615,6 +616,7 @@
         css_attribute_dependencies.clear();
         css_descendant_attribute_dependencies.clear();
         hover_selector_dependencies.clear();
+        active_selector_dependencies.clear();
         css_variables.clear();
         important_css_variables.clear();
         css_cascade_layer_orders.clear();

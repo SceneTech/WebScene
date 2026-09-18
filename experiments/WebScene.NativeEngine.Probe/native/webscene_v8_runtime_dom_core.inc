@@ -701,6 +701,7 @@
         state.descendant_attribute_dependencies =
             std::move(css_descendant_attribute_dependencies);
         state.hover_dependencies = std::move(hover_selector_dependencies);
+        state.active_dependencies = std::move(active_selector_dependencies);
         state.variables = std::move(css_variables);
         state.important_variables = std::move(important_css_variables);
         state.cascade_layer_orders = std::move(css_cascade_layer_orders);
@@ -738,6 +739,7 @@
         css_descendant_attribute_dependencies =
             std::move(state.descendant_attribute_dependencies);
         hover_selector_dependencies = std::move(state.hover_dependencies);
+        active_selector_dependencies = std::move(state.active_dependencies);
         css_variables = std::move(state.variables);
         important_css_variables = std::move(state.important_variables);
         css_cascade_layer_orders = std::move(state.cascade_layer_orders);
@@ -1874,6 +1876,7 @@
         if (nodes.contains(active_element)) active_element = nullptr;
         if (nodes.contains(pointer_capture_target)) pointer_capture_target = nullptr;
         if (nodes.contains(pointer_down_target)) pointer_down_target = nullptr;
+        if (nodes.contains(active_pointer_target)) active_pointer_target = nullptr;
         if (nodes.contains(scrollbar_drag_target)) scrollbar_drag_target = nullptr;
         if (nodes.contains(hover_target)) hover_target = nullptr;
         if (nodes.contains(current_related_target)) current_related_target = nullptr;

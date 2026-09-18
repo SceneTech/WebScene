@@ -475,6 +475,7 @@
     css_index_string_set css_attribute_dependencies;
     css_index_string_set css_descendant_attribute_dependencies;
     std::vector<hover_selector_dependency> hover_selector_dependencies;
+    std::vector<hover_selector_dependency> active_selector_dependencies;
     std::unordered_map<std::string, std::string> css_variables;
     std::unordered_set<std::string> important_css_variables;
     std::unordered_map<std::string, uint32_t> css_cascade_layer_orders;
@@ -607,6 +608,7 @@
     uint64_t input_callback_invocation_count{0};
     dom_node* pointer_capture_target{nullptr};
     dom_node* pointer_down_target{nullptr};
+    dom_node* active_pointer_target{nullptr};
     dom_node* scrollbar_drag_target{nullptr};
     bool scrollbar_drag_vertical{false};
     double scrollbar_drag_pointer_origin{0};

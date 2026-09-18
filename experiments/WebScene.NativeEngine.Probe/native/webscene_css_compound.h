@@ -347,7 +347,8 @@ inline bool compound_matches(const Host& host,const dom_node& node,
                 if (forms::range_state(node) != forms::numeric_range_state::in_range) return false;
             } else if (name == "out-of-range") {
                 if (forms::range_state(node) != forms::numeric_range_state::out_of_range) return false;
-            } else if (name == "hover" || name == "focus" || name == "focus-visible" || name == "focus-within") {
+            } else if (name == "hover" || name == "active" || name == "focus"
+                || name == "focus-visible" || name == "focus-within") {
                 if (!css::interaction_matches(document,node,name,
                     host.selector_interaction_state(),host.is_text_control(&node))) return false;
             } else if (name == "not") {

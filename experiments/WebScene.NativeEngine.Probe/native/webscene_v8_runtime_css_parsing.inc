@@ -127,9 +127,12 @@
         return true;
     }
 
-    static void strip_hover_state_from_trigger(std::string& trigger)
+    static void strip_interaction_state_from_trigger(
+        std::string& trigger,
+        std::string_view pseudo)
     {
-        // A functional pseudo containing :hover changes truth when hover does,
+        const auto needle = std::string(":") + std::string(pseudo);
+        // A functional pseudo containing the state changes truth with it,
         // but its other arguments are not prerequisites for invalidation.
         // Removing the complete function deliberately broadens the structural
         // trigger while retaining class/id/tag/attribute filtering.
@@ -164,7 +167,7 @@
                     else if (character == ')') --depth;
                 }
                 if (depth != 0) break;
-                if (trigger.find(":hover", open + 1U) < close - 1U) {
+                if (trigger.find(needle, open + 1U) < close - 1U) {
                     trigger.erase(colon, close - colon);
                     removed_function = true;
                     break;
@@ -174,17 +177,21 @@
             if (!removed_function) break;
         }
         for (size_t position = 0;
-            (position = trigger.find(":hover", position)) != std::string::npos;) {
-            trigger.erase(position, 6U);
+            (position = trigger.find(needle, position)) != std::string::npos;) {
+            trigger.erase(position, needle.size());
         }
     }
 
-    void index_hover_selector_dependencies(const css_rule& rule)
+    void index_interaction_selector_dependencies(
+        const css_rule& rule,
+        std::string_view pseudo,
+        std::vector<hover_selector_dependency>& dependencies)
     {
         const auto& selector = rule.selector();
+        const auto needle = std::string(":") + std::string(pseudo);
         size_t search = 0U;
-        while ((search = selector.find(":hover", search)) != std::string::npos) {
-            const auto token_end = search + 6U;
+        while ((search = selector.find(needle, search)) != std::string::npos) {
+            const auto token_end = search + needle.size();
             if (token_end < selector.size()) {
                 const auto next = selector[token_end];
                 if (std::isalnum(static_cast<unsigned char>(next))
@@ -269,7 +276,7 @@
             auto trigger = selector.substr(
                 compound_begin,
                 compound_end - compound_begin);
-            strip_hover_state_from_trigger(trigger);
+            strip_interaction_state_from_trigger(trigger, pseudo);
             if (const auto pseudo_element = trigger.find("::");
                 pseudo_element != std::string::npos) {
                 trigger.resize(pseudo_element);
@@ -379,7 +386,7 @@
             auto affected = selector.substr(
                 affected_begin,
                 affected_end - affected_begin);
-            strip_hover_state_from_trigger(affected);
+            strip_interaction_state_from_trigger(affected, pseudo);
             if (const auto pseudo_element = affected.find("::");
                 pseudo_element != std::string::npos) {
                 affected.resize(pseudo_element);
@@ -399,7 +406,7 @@
                 affected = "*";
             }
             auto compiled_trigger = compile_css_compound_selector(trigger);
-            hover_selector_dependencies.push_back({
+            dependencies.push_back({
                 std::move(trigger),
                 std::move(affected),
                 std::move(compiled_trigger),
@@ -471,7 +478,10 @@
             css_inheritance_candidate_rules.push_back(
                 {index, inheritance_candidate_mask});
         }
-        index_hover_selector_dependencies(rule);
+        index_interaction_selector_dependencies(
+            rule, "hover", hover_selector_dependencies);
+        index_interaction_selector_dependencies(
+            rule, "active", active_selector_dependencies);
         const auto index_invalidation_rule = [&](auto& feature_index,
                                                   std::string_view feature) {
             auto& rules = feature_index[std::string(feature)];
@@ -1565,7 +1575,7 @@
     { return css::compile_css_compound_selector(selector); }
 
     css::interaction_state selector_interaction_state() const
-    { return {hover_target,active_element,focus_visible}; }
+    { return {hover_target,active_element,focus_visible,active_pointer_target}; }
     std::optional<std::string> selector_target_hash() const
     {
                 const auto local_context = isolate->GetCurrentContext();

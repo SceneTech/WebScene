@@ -604,11 +604,21 @@ void test_svg_background_image_reaches_scene_with_position_and_size(webscene_eng
               background-position: 0 2px;
               background-size: 48px auto;
             }
+            .svg-mask {
+              width: 100px;
+              height: 60px;
+              background: rgb(20, 80, 160);
+              -webkit-mask: url("badge.svg") no-repeat 4px 6px / 48px auto;
+              mask: url("badge.svg") no-repeat 4px 6px / 48px auto;
+            }
           `;
           document.body.appendChild(style);
           const target = document.createElement('div');
           target.className = 'svg-background';
           document.body.appendChild(target);
+          const masked = document.createElement('div');
+          masked.className = 'svg-mask';
+          document.body.appendChild(masked);
         })()
     )JS", "native-svg-background-setup.js");
     require(
@@ -626,6 +636,7 @@ void test_svg_background_image_reaches_scene_with_position_and_size(webscene_eng
 
     webscene_engine_request_scene_checkpoint(engine);
     auto found = false;
+    auto found_mask = false;
     for (auto attempt = 0; attempt < 100; ++attempt) {
         const auto* scene = webscene_engine_acquire_latest_scene(engine);
         if (scene != nullptr) {
@@ -645,13 +656,25 @@ void test_svg_background_image_reaches_scene_with_position_and_size(webscene_eng
                         && bytes.find("\tno-repeat\t0 2px\t48px auto\t")
                             != std::string_view::npos
                         && bytes.find("<svg") != std::string_view::npos;
-                    break;
+                } else if (command.kind == 47U
+                    && std::abs(command.width - 100.0F) < 0.01F
+                    && std::abs(command.height - 60.0F) < 0.01F
+                    && command.flags < scene->string_count) {
+                    const auto resource = scene->strings[command.flags];
+                    const std::string_view bytes(
+                        scene->string_bytes + resource.byte_offset,
+                        resource.byte_length);
+                    found_mask = bytes.starts_with(
+                            "webscene-mask-svg-v1\t0 0 2 1\t")
+                        && bytes.find("\tno-repeat\t4px 6px\t48px auto\t")
+                            != std::string_view::npos
+                        && bytes.find("<svg") != std::string_view::npos;
                 }
             }
             webscene_scene_acknowledge(scene);
             webscene_scene_release(scene);
         }
-        if (found) break;
+        if (found && found_mask) break;
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
     std::error_code cleanup_error;
@@ -659,6 +682,9 @@ void test_svg_background_image_reaches_scene_with_position_and_size(webscene_eng
     require(
         found,
         "URL-backed SVG background did not retain its 100x60 paint box and longhands");
+    require(
+        found_mask,
+        "URL-backed SVG mask did not retain its paint box, source, and longhands");
 }
 
 void test_generated_pseudo_font_family_scene_and_scale_gate();

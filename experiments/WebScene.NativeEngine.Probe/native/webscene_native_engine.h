@@ -157,9 +157,12 @@ typedef struct webscene_scene_header {
 // the rounded-rectangle fields used by existing producers and presenters.
 // Group kind 30 uses flags bit 31 for brightness, bit 30 for grayscale,
 // bit 29 for contrast, bit 28 for foreground blur, and bit 27 for saturation;
+// bit 26 opens a neutral isolated layer for a following kind-47 linear mask.
 // stroke_width carries
 // the bounded non-negative multiplier or CSS blur standard deviation.
 // A zero flag retains the opacity-group alpha stored in the low byte of rgba.
+// DOM kind 47 applies the indexed webscene-bg-v2 linear-gradient resource to
+// the current isolated layer using destination-in before kind 31 restores it.
 typedef struct webscene_scene_command {
     uint32_t kind;
     uint32_t flags;

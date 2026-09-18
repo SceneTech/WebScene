@@ -79,7 +79,7 @@ void store_maximum(std::atomic<uint64_t>& target, uint64_t value)
 
 bool command_uses_dom_string(const webscene_scene_command& command)
 {
-    return command.kind >= 3U && command.kind <= 6U;
+    return (command.kind >= 3U && command.kind <= 6U) || command.kind == 47U;
 }
 
 std::string_view command_dom_string(

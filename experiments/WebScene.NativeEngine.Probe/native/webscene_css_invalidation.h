@@ -138,6 +138,18 @@ inline std::vector<css_compound_dependencies> compile_invalidation_plan(
                 if (std::any_of(arm.combinators.begin(), arm.combinators.end(),
                         [](char value) { return value == '+' || value == '~'; }))
                     output.child_list_sensitive = true;
+                if (has && !arm.combinators.empty()
+                    && (arm.combinators.front() == '+'
+                        || arm.combinators.front() == '~')) {
+                    // On removal, the changed final sibling no longer exists to
+                    // seed a reverse route. Visit the surviving sibling subjects;
+                    // stable outer-compound keys filter the bounded child list.
+                    auto surviving_subjects = css_invalidation_route{
+                        css_invalidation_step::children};
+                    surviving_subjects.insert(
+                        surviving_subjects.end(), route.begin(), route.end());
+                    add(output.child_list, surviving_subjects);
+                }
                 for (size_t i = 0; i < arm.compiled_compounds.size(); ++i) {
                     css_invalidation_route nested_route;
                     if (has) {

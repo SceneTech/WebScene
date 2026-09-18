@@ -481,6 +481,187 @@ void test_nested_functional_selector_scaling()
 #endif
 }
 
+void test_relative_sibling_has_scaling()
+{
+    constexpr auto affected_count = 128;
+    constexpr auto transition_count = 1000;
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+    std::vector<std::array<uint64_t, 7>> observations;
+#endif
+    for (const auto unrelated_count : {32, 1024}) {
+        auto* engine = webscene_engine_create(0);
+        require(engine != nullptr, "relative sibling :has engine creation failed");
+        resize(engine, 800, 600, 1U);
+        wait_for_consumed_inputs(
+            engine, 1U, "relative sibling :has viewport was not applied");
+
+        webscene_engine_memory_metrics loaded_memory{sizeof(loaded_memory)};
+        const auto rss_before = file_system_access_test_peak_rss_bytes();
+        auto setup_source = std::string{R"JS((([affected, unrelated]) => {
+          const style = document.createElement('style');
+          style.id = 'relative-sibling-has-style';
+          style.textContent = `
+            .relative-result {display:block;width:11px;height:13px}
+            .adjacent-subject:has(+ .adjacent-marker.selected) > .relative-result {width:41px}
+            .general-subject:has(~ .general-marker [data-ready]) > .relative-result {height:43px}
+          ` + Array.from({length: unrelated}, (_, index) =>
+            `.noise-${index}:has(+ .unused-${index}) {color:rgb(7,8,9)}`
+          ).join('');
+          const root = document.createElement('main');
+          root.id = 'relative-sibling-has-root';
+          root.innerHTML = Array.from({length: affected}, () => `<section class="relative-group">
+            <i class="adjacent-subject"><b class="relative-result"></b></i>
+            <i class="adjacent-marker selected"></i>
+            <i class="general-subject"><b class="relative-result"></b></i>
+            <i></i><i class="general-marker"><b data-ready></b></i>
+          </section>`).join('') + '<aside>' +
+            Array.from({length: unrelated}, (_, index) =>
+              `<i class="noise-${index}"></i>`).join('') + '</aside>';
+          document.head.appendChild(style);
+          document.body.appendChild(root);
+          const adjacentMarkers = Array.from(root.querySelectorAll('.adjacent-marker'));
+          const ready = Array.from(root.querySelectorAll('[data-ready]'));
+          const adjacentResults = Array.from(root.querySelectorAll('.adjacent-subject .relative-result'));
+          const generalResults = Array.from(root.querySelectorAll('.general-subject .relative-result'));
+          const snapshot = enabled => adjacentResults.every(node =>
+              getComputedStyle(node).width === (enabled ? '41px' : '11px')) &&
+            generalResults.every(node =>
+              getComputedStyle(node).height === (enabled ? '43px' : '13px'));
+          globalThis.mutateRelativeSiblingHas = () => {
+            for (let index = 0; index < TRANSITIONS; ++index) {
+              const enabled = (index & 1) !== 0;
+              adjacentMarkers.forEach(node => node.classList.toggle('selected', enabled));
+              ready.forEach(node => node.toggleAttribute('data-ready', enabled));
+              if (!snapshot(enabled)) return false;
+            }
+            return true;
+          };
+          return [adjacentResults.length, generalResults.length, snapshot(true),
+            root.querySelector('.adjacent-subject').matches(':has(+ .adjacent-marker.selected)'),
+            root.querySelector('.general-subject').matches(':has(~ .general-marker [data-ready])')];
+        })(COUNTS))JS"};
+        setup_source.replace(
+            setup_source.find("TRANSITIONS"), 11, std::to_string(transition_count));
+        setup_source.replace(
+            setup_source.find("COUNTS"), 6,
+            "[" + std::to_string(affected_count) + ","
+                + std::to_string(unrelated_count) + "]");
+        const auto setup = evaluate(
+            engine, setup_source, "relative-sibling-has-scale-setup.js");
+        require(setup == "[128,128,true,true,true]",
+            "relative sibling :has scale setup diverged: " + setup);
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+        std::this_thread::sleep_for(std::chrono::milliseconds(260));
+        execute_and_wait_for_wrapper_retention_scene(
+            engine,
+            "document.body.style.backgroundColor='rgb(1,2,3)'",
+            "relative-sibling-has-scale-baseline.js");
+        const std::array<std::string_view, 7> names{
+            "selector-invalidation-plan-lookups",
+            "selector-invalidation-candidate-visits",
+            "selector-invalidation-fallback-visits",
+            "css-compound-match-checks",
+            "css-rule-match-checks",
+            "css-cascade-applications",
+            "css-cascade-candidate-checks"};
+        std::array<uint64_t, 7> before{};
+        for (size_t index = 0; index < names.size(); ++index)
+            before[index] = runtime_counter_diagnostic(engine, names[index]);
+#endif
+        for (auto attempt = 0; attempt < 250; ++attempt) {
+            require(webscene_engine_get_memory_metrics(engine, &loaded_memory) != 0,
+                "relative sibling :has loaded memory metrics were unavailable");
+            if (loaded_memory.v8_used_heap_bytes > 0U
+                && loaded_memory.native_dom_node_count >= affected_count) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        require(loaded_memory.v8_used_heap_bytes > 0U
+                && loaded_memory.native_dom_node_count >= affected_count,
+            "relative sibling :has loaded memory metrics did not settle");
+        const auto started = std::chrono::steady_clock::now();
+        require(evaluate(
+                engine,
+                "mutateRelativeSiblingHas()",
+                "relative-sibling-has-scale-mutations.js") == "true",
+            "relative sibling :has transitions produced stale computed style");
+        const auto elapsed = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - started).count();
+        require(elapsed < 5000.0,
+            "1,000 relative sibling :has transitions exceeded five seconds");
+
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+        std::this_thread::sleep_for(std::chrono::milliseconds(260));
+        execute_and_wait_for_wrapper_retention_scene(
+            engine,
+            "document.body.style.backgroundColor='rgb(3,2,1)'",
+            "relative-sibling-has-scale-result.js");
+        std::array<uint64_t, 7> delta{};
+        for (size_t index = 0; index < names.size(); ++index)
+            delta[index] = runtime_counter_diagnostic(engine, names[index])
+                - before[index];
+        std::cout << "relative-sibling-has-counters unrelated=" << unrelated_count;
+        for (size_t index = 0; index < names.size(); ++index)
+            std::cout << ' ' << names[index] << '=' << delta[index];
+        std::cout << '\n';
+        require(delta[0] > 0U && delta[1] > 0U && delta[2] == 0U,
+            "relative sibling :has mutation used no plan or document fallback");
+        const std::array<uint64_t, 7> upper_bounds{
+            transition_count * affected_count * 4U,
+            transition_count * affected_count * 80U,
+            0U,
+            transition_count * affected_count * 180U,
+            transition_count * affected_count * 8U,
+            transition_count * affected_count * 4U,
+            transition_count * affected_count * 8U};
+        for (size_t index = 0; index < delta.size(); ++index)
+            require(delta[index] <= upper_bounds[index],
+                "relative sibling :has work exceeded its affected-sibling bound");
+        observations.push_back(delta);
+#endif
+
+        require(evaluate(engine, R"JS((() => {
+          document.getElementById('relative-sibling-has-root').remove();
+          document.getElementById('relative-sibling-has-style').remove();
+          delete globalThis.mutateRelativeSiblingHas;
+          return document.querySelectorAll('.relative-group').length;
+        })())JS", "relative-sibling-has-scale-retire.js") == "0",
+            "relative sibling :has fixture did not detach");
+        require(webscene_engine_request_low_memory(engine) != 0,
+            "relative sibling :has low-memory request was rejected");
+        webscene_engine_memory_metrics final_memory{sizeof(final_memory)};
+        for (auto attempt = 0; attempt < 250; ++attempt) {
+            require(webscene_engine_get_memory_metrics(engine, &final_memory) != 0,
+                "relative sibling :has final memory metrics were unavailable");
+            if (final_memory.low_memory_notifications
+                > loaded_memory.low_memory_notifications) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        const auto rss_after = file_system_access_test_peak_rss_bytes();
+        require(final_memory.low_memory_notifications
+                > loaded_memory.low_memory_notifications
+                && final_memory.v8_used_heap_bytes
+                    <= loaded_memory.v8_used_heap_bytes + 1024U * 1024U
+                && final_memory.native_dom_node_count
+                    <= loaded_memory.native_dom_node_count,
+            "relative sibling :has teardown retained heap or DOM nodes");
+        require(rss_before == 0U || rss_after <= rss_before + 64U * 1024U * 1024U,
+            "relative sibling :has peak RSS grew by more than 64 MiB");
+        std::cout << "relative-sibling-has affected=" << affected_count
+            << " unrelated=" << unrelated_count
+            << " transitions=" << transition_count
+            << " ms=" << elapsed
+            << " heapBefore=" << loaded_memory.v8_used_heap_bytes
+            << " heapAfter=" << final_memory.v8_used_heap_bytes
+            << " rssBefore=" << rss_before
+            << " rssAfter=" << rss_after << '\n';
+        webscene_engine_destroy(engine);
+    }
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+    require(observations.size() == 2U && observations[0] == observations[1],
+        "unrelated rules amplified relative sibling :has invalidation work");
+#endif
+}
+
 void test_compiled_css_invalidation_scaling()
 {
     test_nested_functional_selector_scaling();

@@ -50,6 +50,11 @@ jobs:
           if command -v docker >/dev/null 2>&1; then
             sudo docker system df || true
           fi
+          if command -v lsof >/dev/null 2>&1; then
+            sudo lsof -nP +L1 /tmp 2>/dev/null |
+              awk 'NR > 1 { key=$1 ":" $2; bytes[key]+=$7 } END { for (key in bytes) print bytes[key], key }' |
+              sort -nr | head -30 || true
+          fi
       - name: Install pinned build tools
         run: |
           sudo flock /var/lock/webscene-apt.lock bash -c '

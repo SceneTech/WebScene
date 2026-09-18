@@ -263,6 +263,73 @@ inline bool direction_matches(const native_document& document,const dom_node& no
                 }
                 return true;
 }
+inline const dom_node* form_owner_for_selector(
+    const native_document& document,const dom_node& control) {
+    const auto explicit_owner=control.attributes.find("form");
+    if(explicit_owner!=control.attributes.end()) {
+        if(explicit_owner->second.empty()) return nullptr;
+        const dom_node* root=&control;
+        while(auto* parent=document.dom_parent(*root)) {
+            if(parent->tag=="iframe") break;
+            root=parent;
+        }
+        const auto find=[&](const auto& recurse,const dom_node& current)->const dom_node* {
+            if(current.tag=="form" && current.id_attribute==explicit_owner->second)
+                return &current;
+            for(const auto* child:current.children) {
+                if(child==nullptr || child->tag=="iframe") continue;
+                if(const auto* matched=recurse(recurse,*child)) return matched;
+            }
+            return nullptr;
+        };
+        return find(find,*root);
+    }
+    for(auto* ancestor=document.dom_parent(control);ancestor!=nullptr;
+        ancestor=document.dom_parent(*ancestor)) {
+        if(ancestor->tag=="iframe") break;
+        if(ancestor->tag=="form") return ancestor;
+    }
+    return nullptr;
+}
+
+inline bool is_submit_button_for_selector(const dom_node& node) {
+    const auto authored=node.attributes.find("type");
+    const auto type=authored==node.attributes.end()
+        ? std::string_view{}:std::string_view{authored->second};
+    if(node.tag=="button") return type.empty() || html_keyword_equals(type,"submit");
+    return node.tag=="input"
+        && (html_keyword_equals(type,"submit") || html_keyword_equals(type,"image"));
+}
+
+inline bool default_matches(const native_document& document,const dom_node& node) {
+    if(node.tag=="option") return node.attributes.contains("selected");
+    if(node.tag=="input") {
+        const auto type=node.attributes.find("type");
+        if(type!=node.attributes.end()
+            && (html_keyword_equals(type->second,"checkbox")
+                || html_keyword_equals(type->second,"radio")))
+            return node.attributes.contains("checked");
+    }
+    if(!is_submit_button_for_selector(node)) return false;
+    const auto* owner=form_owner_for_selector(document,node);
+    if(owner==nullptr) return false;
+    const dom_node* root=&node;
+    while(auto* parent=document.dom_parent(*root)) {
+        if(parent->tag=="iframe") break;
+        root=parent;
+    }
+    const auto first=[&](const auto& recurse,const dom_node& current)->const dom_node* {
+        if(is_submit_button_for_selector(current)
+            && form_owner_for_selector(document,current)==owner) return &current;
+        for(const auto* child:current.children) {
+            if(child==nullptr || child->tag=="iframe") continue;
+            if(const auto* matched=recurse(recurse,*child)) return matched;
+        }
+        return nullptr;
+    };
+    return first(first,*root)==&node;
+}
+
 inline bool checked_matches(const dom_node& node) {
     const auto type=node.attributes.find("type");
     const bool checkable=node.tag=="input" && type!=node.attributes.end() &&

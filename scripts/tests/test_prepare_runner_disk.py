@@ -218,6 +218,24 @@ class PrepareRunnerDiskTests(unittest.TestCase):
             self.assertEqual(result.removed, 1)
             self.assertEqual(result.skipped_permission, 1)
 
+    def test_concurrent_removal_is_counted_as_reclaimed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            entry = root / "tmp-old"
+            entry.mkdir()
+            now = time.time()
+            os.utime(entry, (now - 3600, now - 3600))
+
+            def remove(path: Path, *, privileged: bool) -> None:
+                path.rmdir()
+                raise FileNotFoundError
+
+            with mock.patch("prepare_runner_disk._remove_entry", side_effect=remove):
+                result = reclaim_stale_entries(root, stale_seconds=1800, now=now)
+
+            self.assertEqual(result.removed, 1)
+            self.assertFalse(entry.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

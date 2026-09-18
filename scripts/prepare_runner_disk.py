@@ -104,7 +104,10 @@ def reclaim_stale_entries(
             skipped_protected += 1
             continue
 
-        metadata = entry.lstat()
+        try:
+            metadata = entry.lstat()
+        except FileNotFoundError:
+            continue
         if metadata.st_uid != uid:
             skipped_owned += 1
             continue
@@ -115,6 +118,9 @@ def reclaim_stale_entries(
         privileged = any(entry.name.startswith(prefix) for prefix in privileged_prefixes)
         try:
             _remove_entry(entry, privileged=privileged)
+        except FileNotFoundError:
+            removed += 1
+            continue
         except PermissionError:
             skipped_permission += 1
             continue

@@ -42,7 +42,7 @@ jobs:
 
   installed-macos-consumer:
     name: Installed SDK macOS consumer
-    runs-on: [self-hosted, macOS, ARM64]
+    runs-on: macos-15
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4

@@ -240,6 +240,32 @@
         return std::chrono::system_clock::from_time_t(seconds);
     }
 
+    void persist_cookie_jar_locked()
+    {
+        const auto persistence = cookie_jar->persistence.lock();
+        if (!persistence) return;
+        const auto now = std::chrono::system_clock::now();
+        std::vector<profile_cookie> durable;
+        durable.reserve(cookie_jar->cookies.size());
+        for (const auto& cookie : cookie_jar->cookies) {
+            if (!cookie.persistent || cookie.expires <= now) continue;
+            profile_cookie value;
+            value.name = cookie.name;
+            value.value = cookie.value;
+            value.domain = cookie.domain;
+            value.path = cookie.path;
+            value.expiry_unix_seconds = static_cast<int64_t>(
+                std::chrono::system_clock::to_time_t(cookie.expires));
+            value.creation_order = cookie.creation_order;
+            value.host_only = cookie.host_only;
+            value.secure = cookie.secure;
+            value.http_only = cookie.http_only;
+            value.same_site = static_cast<profile_cookie_same_site>(cookie.same_site);
+            durable.push_back(std::move(value));
+        }
+        persistence->replace_cookies(std::move(durable));
+    }
+
     void store_cookie(
         const std::string& response_url,
         const std::string& line,
@@ -335,6 +361,7 @@
         if (!from_http && known != cookie_jar->cookies.end() && known->http_only) return;
         if (cookie.persistent && cookie.expires <= std::chrono::system_clock::now()) {
             if (known != cookie_jar->cookies.end()) cookie_jar->cookies.erase(known);
+            persist_cookie_jar_locked();
             return;
         }
         if (known != cookie_jar->cookies.end()) {
@@ -352,6 +379,7 @@
             }
             cookie_jar->cookies.push_back(std::move(cookie));
         }
+        persist_cookie_jar_locked();
     }
 
     std::string cookie_header_for(
@@ -374,9 +402,10 @@
         std::vector<const stored_cookie*> matches;
         const auto now = std::chrono::system_clock::now();
         std::lock_guard lock(cookie_jar->mutex);
-        std::erase_if(cookie_jar->cookies, [now](const auto& cookie) {
+        const auto expired = std::erase_if(cookie_jar->cookies, [now](const auto& cookie) {
             return cookie.persistent && cookie.expires <= now;
         });
+        if (expired != 0U) persist_cookie_jar_locked();
         for (const auto& cookie : cookie_jar->cookies) {
             if (script_visible && cookie.http_only) continue;
             if (cookie.secure && target.scheme != "https") continue;

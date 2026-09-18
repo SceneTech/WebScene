@@ -98,6 +98,7 @@
     std::string storage_partition_key;
     uint64_t storage_quota_bytes{0};
     std::unique_ptr<indexeddb_storage> indexeddb;
+    std::shared_ptr<browser_profile_storage> profile_storage;
     std::mutex indexeddb_completion_mutex;
     std::deque<indexeddb_completion> indexeddb_completions;
     std::unordered_map<uint64_t, pending_indexeddb_promise>
@@ -184,6 +185,7 @@
     std::unordered_map<std::string, session_storage_state>
         outer_local_storage_by_origin;
     std::unordered_map<uint32_t, std::unique_ptr<session_storage_state>> frame_session_storage;
+    std::unordered_map<uint32_t, std::unique_ptr<session_storage_state>> frame_local_storage;
     std::vector<document_start_script> current_document_start_scripts;
     std::unordered_map<uint32_t, v8::Global<v8::Function>> frame_load_listeners;
     std::unordered_map<uint32_t, std::vector<v8::Global<v8::Function>>>

@@ -24,6 +24,7 @@
 #include "webscene_performance_timeline_compatibility.h"
 #include "webscene_file_reader_compatibility.h"
 #include "webscene_indexeddb_storage.h"
+#include "webscene_profile_storage.h"
 #include "webscene_indexeddb_compatibility.h"
 #include "webscene_stylesheet_cssom_compatibility.h"
 #include "webscene_secure_random.h"
@@ -1147,6 +1148,130 @@ struct v8_dom_runtime::implementation final {
         return storage;
     }
 
+    static bool require_storage_access(
+        const v8::FunctionCallbackInfo<v8::Value>& info,
+        session_storage_state* storage)
+    {
+        if (storage == nullptr) return false;
+        if (storage->accessible) return true;
+        throw_dom_exception(
+            info,
+            "Storage is unavailable for an opaque origin",
+            "SecurityError");
+        return false;
+    }
+
+    static uint64_t storage_usage(
+        const session_storage_state& storage,
+        const std::string* replacement_key = nullptr,
+        const std::string* replacement_value = nullptr)
+    {
+        uint64_t total = 0U;
+        for (const auto& key : storage.keys) {
+            const auto known = storage.values.find(key);
+            if (known == storage.values.end()) continue;
+            const auto value_size = replacement_key != nullptr && key == *replacement_key
+                ? replacement_value->size() : known->second.size();
+            const auto addition = static_cast<uint64_t>(key.size()) + value_size;
+            if (total > std::numeric_limits<uint64_t>::max() - addition) {
+                return std::numeric_limits<uint64_t>::max();
+            }
+            total += addition;
+        }
+        if (replacement_key != nullptr && !storage.values.contains(*replacement_key)) {
+            const auto addition = static_cast<uint64_t>(replacement_key->size())
+                + replacement_value->size();
+            if (total > std::numeric_limits<uint64_t>::max() - addition) {
+                return std::numeric_limits<uint64_t>::max();
+            }
+            total += addition;
+        }
+        return total;
+    }
+
+    static void persist_local_storage(const session_storage_state& storage)
+    {
+        if (!storage.local || storage.origin.empty() || storage.origin == "null") return;
+        const auto persistence = storage.persistence.lock();
+        if (!persistence) return;
+        profile_local_storage durable;
+        durable.keys = storage.keys;
+        durable.values = storage.values;
+        persistence->replace_local_storage(storage.origin, std::move(durable));
+    }
+
+    void dispatch_storage_event(
+        session_storage_state* storage,
+        v8::Local<v8::Context> source,
+        const std::optional<std::string>& key,
+        const std::optional<std::string>& old_value,
+        const std::optional<std::string>& new_value)
+    {
+        if (storage == nullptr || !storage->local) return;
+        std::string source_url = storage->origin;
+        {
+            v8::Context::Scope source_scope(source);
+            v8::Local<v8::Value> location;
+            v8::Local<v8::Value> href;
+            v8::Local<v8::String> href_text;
+            if (source->Global()->Get(
+                    source, js_string(isolate, "location")).ToLocal(&location)
+                && location->IsObject()
+                && location.As<v8::Object>()->Get(
+                    source, js_string(isolate, "href")).ToLocal(&href)
+                && href->ToString(source).ToLocal(&href_text)) {
+                v8::String::Utf8Value utf8(isolate, href_text);
+                if (*utf8 != nullptr) source_url.assign(*utf8, utf8.length());
+            }
+        }
+        std::vector<v8::Local<v8::Context>> recipients;
+        const auto admit = [&](v8::Local<v8::Context> candidate) {
+            if (candidate.IsEmpty() || candidate == source) return;
+            v8::Context::Scope scope(candidate);
+            v8::Local<v8::Value> area;
+            if (!candidate->Global()->Get(
+                    candidate, js_string(isolate, "localStorage")).ToLocal(&area)
+                || !area->IsObject()
+                || unwrap_session_storage(area.As<v8::Object>()) != storage) return;
+            recipients.push_back(candidate);
+        };
+        if (!context.IsEmpty()) admit(context.Get(isolate));
+        for (auto& [id, frame] : actual_frame_contexts) {
+            static_cast<void>(id);
+            if (!frame.IsEmpty()) admit(frame.Get(isolate));
+        }
+        for (const auto recipient : recipients) {
+            v8::Context::Scope scope(recipient);
+            auto global = recipient->Global();
+            v8::Local<v8::Value> area;
+            if (!global->Get(
+                    recipient, js_string(isolate, "localStorage")).ToLocal(&area)) continue;
+            auto event = create_window_event(recipient, "storage");
+            event->Set(recipient, js_string(isolate, "key"), key.has_value()
+                ? v8::Local<v8::Value>(js_dom_string(isolate, *key))
+                : v8::Local<v8::Value>(v8::Null(isolate))).Check();
+            event->Set(recipient, js_string(isolate, "oldValue"), old_value.has_value()
+                ? v8::Local<v8::Value>(js_dom_string(isolate, *old_value))
+                : v8::Local<v8::Value>(v8::Null(isolate))).Check();
+            event->Set(recipient, js_string(isolate, "newValue"), new_value.has_value()
+                ? v8::Local<v8::Value>(js_dom_string(isolate, *new_value))
+                : v8::Local<v8::Value>(v8::Null(isolate))).Check();
+            event->Set(
+                recipient,
+                js_string(isolate, "url"),
+                js_string(isolate, source_url.c_str())).Check();
+            event->Set(recipient, js_string(isolate, "storageArea"), area).Check();
+            v8::Local<v8::Value> dispatcher;
+            if (!global->Get(
+                    recipient, js_string(isolate, "dispatchEvent")).ToLocal(&dispatcher)
+                || !dispatcher->IsFunction()) continue;
+            v8::TryCatch ignored(isolate);
+            v8::Local<v8::Value> arguments[]{event};
+            static_cast<void>(dispatcher.As<v8::Function>()->Call(
+                recipient, global, 1, arguments));
+        }
+    }
+
     static bool storage_string(
         v8::Isolate* isolate,
         v8::Local<v8::Value> value,
@@ -1171,7 +1296,7 @@ struct v8_dom_runtime::implementation final {
         current(info.GetIsolate())->record_feature(
             "web-api", "Storage.getItem", "supported", {}, "web-api-binding");
         auto* storage = require_session_storage(info);
-        if (storage == nullptr) return;
+        if (!require_storage_access(info, storage)) return;
         std::string key;
         if (!storage_string(
                 info.GetIsolate(),
@@ -1188,7 +1313,7 @@ struct v8_dom_runtime::implementation final {
         current(info.GetIsolate())->record_feature(
             "web-api", "Storage.setItem", "supported", {}, "web-api-binding");
         auto* storage = require_session_storage(info);
-        if (storage == nullptr) return;
+        if (!require_storage_access(info, storage)) return;
         std::string key;
         std::string value;
         if (!storage_string(
@@ -1199,8 +1324,28 @@ struct v8_dom_runtime::implementation final {
                 info.GetIsolate(),
                 info.Length() > 1 ? info[1] : v8::Undefined(info.GetIsolate()),
                 value)) return;
+        if (storage_usage(*storage, &key, &value) > storage->quota_bytes) {
+            throw_dom_exception(
+                info,
+                "The Web Storage quota was exceeded",
+                "QuotaExceededError");
+            return;
+        }
+        std::optional<std::string> old_value;
+        if (const auto known = storage->values.find(key);
+            known != storage->values.end()) {
+            if (known->second == value) return;
+            old_value = known->second;
+        }
         if (!storage->values.contains(key)) storage->keys.push_back(key);
         storage->values[key] = value;
+        persist_local_storage(*storage);
+        current(info.GetIsolate())->dispatch_storage_event(
+            storage,
+            info.GetIsolate()->GetCurrentContext(),
+            key,
+            old_value,
+            value);
     }
 
     static void session_storage_remove_item(const v8::FunctionCallbackInfo<v8::Value>& info)
@@ -1208,14 +1353,24 @@ struct v8_dom_runtime::implementation final {
         current(info.GetIsolate())->record_feature(
             "web-api", "Storage.removeItem", "supported", {}, "web-api-binding");
         auto* storage = require_session_storage(info);
-        if (storage == nullptr) return;
+        if (!require_storage_access(info, storage)) return;
         std::string key;
         if (!storage_string(
                 info.GetIsolate(),
                 info.Length() > 0 ? info[0] : v8::Undefined(info.GetIsolate()),
                 key)) return;
-        if (storage->values.erase(key) == 0U) return;
+        const auto known = storage->values.find(key);
+        if (known == storage->values.end()) return;
+        const auto old_value = known->second;
+        storage->values.erase(known);
         std::erase(storage->keys, key);
+        persist_local_storage(*storage);
+        current(info.GetIsolate())->dispatch_storage_event(
+            storage,
+            info.GetIsolate()->GetCurrentContext(),
+            key,
+            old_value,
+            std::nullopt);
     }
 
     static void session_storage_clear(const v8::FunctionCallbackInfo<v8::Value>& info)
@@ -1223,9 +1378,17 @@ struct v8_dom_runtime::implementation final {
         current(info.GetIsolate())->record_feature(
             "web-api", "Storage.clear", "supported", {}, "web-api-binding");
         auto* storage = require_session_storage(info);
-        if (storage == nullptr) return;
+        if (!require_storage_access(info, storage)) return;
+        if (storage->keys.empty()) return;
         storage->keys.clear();
         storage->values.clear();
+        persist_local_storage(*storage);
+        current(info.GetIsolate())->dispatch_storage_event(
+            storage,
+            info.GetIsolate()->GetCurrentContext(),
+            std::nullopt,
+            std::nullopt,
+            std::nullopt);
     }
 
     static void session_storage_key(const v8::FunctionCallbackInfo<v8::Value>& info)
@@ -1233,7 +1396,7 @@ struct v8_dom_runtime::implementation final {
         current(info.GetIsolate())->record_feature(
             "web-api", "Storage.key", "supported", {}, "web-api-binding");
         auto* storage = require_session_storage(info);
-        if (storage == nullptr) return;
+        if (!require_storage_access(info, storage)) return;
         const auto context = info.GetIsolate()->GetCurrentContext();
         const auto maybe_index = (info.Length() > 0
             ? info[0]
@@ -1253,11 +1416,17 @@ struct v8_dom_runtime::implementation final {
         current(info.GetIsolate())->record_feature(
             "web-api", "Storage.length", "supported", {}, "web-api-binding");
         auto* storage = unwrap_session_storage(info.Holder());
-        if (storage != nullptr) {
-            info.GetReturnValue().Set(v8::Integer::NewFromUnsigned(
+        if (storage == nullptr) return;
+        if (!storage->accessible) {
+            throw_dom_exception(
                 info.GetIsolate(),
-                static_cast<uint32_t>(storage->keys.size())));
+                "Storage is unavailable for an opaque origin",
+                "SecurityError");
+            return;
         }
+        info.GetReturnValue().Set(v8::Integer::NewFromUnsigned(
+            info.GetIsolate(),
+            static_cast<uint32_t>(storage->keys.size())));
     }
 
     v8::Local<v8::Object> create_session_storage(

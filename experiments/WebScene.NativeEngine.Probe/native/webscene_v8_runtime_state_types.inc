@@ -395,6 +395,11 @@
     struct session_storage_state final {
         std::vector<std::string> keys;
         std::unordered_map<std::string, std::string> values;
+        std::weak_ptr<browser_profile_storage> persistence;
+        std::string origin;
+        uint64_t quota_bytes{5U * 1024U * 1024U};
+        bool local{false};
+        bool accessible{true};
     };
 
     struct canvas_path_segment final {
@@ -686,6 +691,7 @@
         std::mutex mutex;
         std::vector<stored_cookie> cookies;
         uint64_t next_creation_order{1U};
+        std::weak_ptr<browser_profile_storage> persistence;
     };
 
     struct pending_fetch_task final {

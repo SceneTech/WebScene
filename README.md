@@ -129,6 +129,7 @@ interop guides for both presenters:
 - [Content and resource loading](docfx/articles/content-and-resources.md)
 - [Lifecycle and diagnostics](docfx/articles/lifecycle-and-diagnostics.md)
 - [Compatibility and security](docfx/articles/compatibility-and-security.md)
+- [Durable browser profiles](docs/browser-profiles.md)
 - [Troubleshooting](docfx/articles/troubleshooting.md)
 
 Build the documentation site locally with `./build-docs.sh`.

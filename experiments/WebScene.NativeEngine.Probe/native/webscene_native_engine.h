@@ -929,6 +929,35 @@ typedef struct webscene_engine_options {
     uint64_t storage_quota_bytes;
 } webscene_engine_options;
 
+/*
+ * Profile data is local application data, protected by owner-only filesystem
+ * permissions but not encrypted by WebScene. Hosts should select an OS-backed
+ * protected location and may layer platform credential/encryption facilities.
+ * Clear only while no engine has the partition open; BUSY is returned instead
+ * of racing a live writer. The partition key is hashed below storage_directory,
+ * so it is never interpreted as a path and cannot broaden the deletion scope.
+ */
+enum {
+    WEBSCENE_PROFILE_CLEAR_COOKIES_V1 = 1U << 0U,
+    WEBSCENE_PROFILE_CLEAR_LOCAL_STORAGE_V1 = 1U << 1U,
+    WEBSCENE_PROFILE_CLEAR_ALL_SITE_DATA_V1 = 1U << 2U
+};
+enum {
+    WEBSCENE_PROFILE_STATUS_OK_V1 = 0U,
+    WEBSCENE_PROFILE_STATUS_INVALID_ARGUMENT_V1 = 1U,
+    WEBSCENE_PROFILE_STATUS_BUSY_V1 = 2U,
+    WEBSCENE_PROFILE_STATUS_IO_ERROR_V1 = 3U,
+    WEBSCENE_PROFILE_STATUS_CORRUPT_V1 = 4U,
+    WEBSCENE_PROFILE_STATUS_QUOTA_EXCEEDED_V1 = 5U
+};
+WEBSCENE_API uint32_t webscene_profile_clear_data_v1(
+    const char* storage_directory,
+    size_t storage_directory_length,
+    const char* storage_partition_key,
+    size_t storage_partition_key_length,
+    uint64_t storage_quota_bytes,
+    uint32_t flags);
+
 enum {
     WEBSCENE_DOCUMENT_SCRIPT_ALL_FRAMES = 1U << 0U
 };

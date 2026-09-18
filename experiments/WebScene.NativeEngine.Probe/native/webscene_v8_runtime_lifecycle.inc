@@ -88,9 +88,59 @@
         , profile_css(std::getenv("WEBSCENE_PROBE_PROFILE_CSS") != nullptr)
 #endif
     {
+        outer_local_storage.local = true;
         file_grant_releases = std::make_shared<file_grant_release_dispatcher>();
         file_grant_releases->sink = file_grant_release_request_sink;
         if (!storage_directory.empty() && !storage_partition_key.empty()) {
+            profile_storage = std::make_shared<browser_profile_storage>(
+                std::filesystem::path(storage_directory),
+                storage_partition_key,
+                storage_quota_bytes);
+            if (profile_storage->available()) {
+                const auto loaded = profile_storage->snapshot();
+                const auto now = std::chrono::system_clock::now();
+                {
+                    std::lock_guard lock(cookie_jar->mutex);
+                    cookie_jar->persistence = profile_storage;
+                    for (const auto& durable : loaded.cookies) {
+                        const auto expiry = std::chrono::system_clock::from_time_t(
+                            static_cast<std::time_t>(durable.expiry_unix_seconds));
+                        if (expiry <= now) continue;
+                        stored_cookie cookie;
+                        cookie.name = durable.name;
+                        cookie.value = durable.value;
+                        cookie.domain = durable.domain;
+                        cookie.path = durable.path;
+                        cookie.expires = expiry;
+                        cookie.creation_order = durable.creation_order;
+                        cookie.persistent = true;
+                        cookie.host_only = durable.host_only;
+                        cookie.secure = durable.secure;
+                        cookie.http_only = durable.http_only;
+                        cookie.same_site = static_cast<cookie_same_site>(durable.same_site);
+                        cookie_jar->next_creation_order = std::max(
+                            cookie_jar->next_creation_order,
+                            cookie.creation_order + 1U);
+                        cookie_jar->cookies.push_back(std::move(cookie));
+                    }
+                }
+                const auto local_quota = storage_quota_bytes == 0U
+                    ? 5U * 1024U * 1024U
+                    : std::min<uint64_t>(storage_quota_bytes, 5U * 1024U * 1024U);
+                for (const auto& [origin, durable] : loaded.local_storage) {
+                    session_storage_state storage;
+                    storage.keys = durable.keys;
+                    storage.values = durable.values;
+                    storage.persistence = profile_storage;
+                    storage.origin = origin;
+                    storage.quota_bytes = local_quota;
+                    storage.local = true;
+                    storage.accessible = !origin.empty() && origin != "null";
+                    outer_local_storage_by_origin.emplace(origin, std::move(storage));
+                }
+            } else {
+                profile_storage.reset();
+            }
             indexeddb = std::make_unique<indexeddb_storage>(
                 std::filesystem::path(storage_directory),
                 storage_partition_key,
@@ -112,6 +162,7 @@
         stop_workers();
         // The storage worker never touches V8. Join it before persistent
         // resolver handles and the isolate are released.
+        profile_storage.reset();
         indexeddb.reset();
 #if defined(WEBSCENE_NATIVE_ENGINE_ENABLE_MEDIA)
         clear_media_bindings();

@@ -153,6 +153,14 @@ int main()
             test_indexeddb_runtime_contract();
             return 0;
         }
+        if (selected == "web-storage") {
+            auto* focused_engine = webscene_engine_create(0);
+            require(focused_engine != nullptr,
+                "Web Storage focused engine creation failed");
+            test_session_storage_in_outer_and_frame_contexts(focused_engine);
+            webscene_engine_destroy(focused_engine);
+            return 0;
+        }
         if (selected == "navigation-realm") {
             test_navigation_replaces_top_level_realm();
             return 0;
@@ -391,6 +399,7 @@ int main()
         if (selected == "resource-failure-diagnostics") { test_resource_failure_diagnostics(); return 0; }
         if (selected == "response-header-cookie") {
             test_response_header_cookie_contracts();
+            test_durable_profile_restart_contract();
             test_parallel_resource_prefetch();
             test_fetch_carries_document_origin_to_resource_host();
             test_tradingview_save_acknowledgement_uses_multipart_post();

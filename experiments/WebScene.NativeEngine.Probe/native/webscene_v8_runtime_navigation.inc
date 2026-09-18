@@ -57,6 +57,17 @@
                 outer_local_storage_by_origin.erase(known);
             }
         }
+        const auto local_quota = storage_quota_bytes == 0U
+            ? 5U * 1024U * 1024U
+            : std::min<uint64_t>(storage_quota_bytes, 5U * 1024U * 1024U);
+        outer_local_storage.persistence = profile_storage;
+        outer_local_storage.origin = next_origin;
+        outer_local_storage.quota_bytes = local_quota;
+        outer_local_storage.local = true;
+        outer_local_storage.accessible = !next_origin.empty() && next_origin != "null";
+        outer_session_storage.origin = next_origin;
+        outer_session_storage.local = false;
+        outer_session_storage.accessible = !next_origin.empty() && next_origin != "null";
         outer_storage_origin = next_origin;
     }
 
@@ -220,6 +231,7 @@
         frame_base_addresses.clear();
         provisional_frame_bodies.clear();
         frame_session_storage.clear();
+        frame_local_storage.clear();
         canvas_contexts.clear();
         canvas_states.clear();
 

@@ -26,7 +26,9 @@
         v8_dom_runtime::file_grant_directory_request_sink_v2
             file_grant_directory_request_sink_value,
         v8_dom_runtime::file_grant_release_request_sink_v2
-            file_grant_release_request_sink_value)
+            file_grant_release_request_sink_value,
+        v8_dom_runtime::file_grant_create_file_request_sink_v2
+            file_grant_create_file_request_sink_value)
         : document(document_value)
         , viewport_provider(std::move(viewport_provider_value))
         , load_resource_callback(std::move(resource_loader_value))
@@ -49,6 +51,8 @@
             std::move(file_grant_directory_request_sink_value))
         , file_grant_release_request_sink(
             std::move(file_grant_release_request_sink_value))
+        , file_grant_create_file_request_sink(
+            std::move(file_grant_create_file_request_sink_value))
         , interop_callback_available(std::move(interop_callback_available_value))
         , interop_callback_sink(std::move(interop_callback_sink_value))
         , runtime_work_available(std::move(runtime_work_available_value))
@@ -242,6 +246,7 @@
         file_grant_read_promise_targets.clear();
         file_grant_write_promise_targets.clear();
         file_grant_directory_promise_targets.clear();
+        file_grant_create_file_promise_targets.clear();
         file_targets.clear();
         pending_fetches.clear();
         pending_digests.clear();

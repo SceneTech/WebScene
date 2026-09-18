@@ -265,6 +265,12 @@
     };
     std::unordered_map<uint64_t, file_grant_directory_promise_target>
         file_grant_directory_promise_targets;
+    struct file_grant_create_file_promise_target {
+        v8::Global<v8::Context> context;
+        v8::Global<v8::Promise::Resolver> resolver;
+    };
+    std::unordered_map<uint64_t, file_grant_create_file_promise_target>
+        file_grant_create_file_promise_targets;
     std::function<void()> host_request_available;
     v8_dom_runtime::file_panel_request_sink_v2 file_panel_request_sink;
     v8_dom_runtime::file_grant_same_entry_request_sink_v2
@@ -279,6 +285,8 @@
         file_grant_directory_request_sink;
     v8_dom_runtime::file_grant_release_request_sink_v2
         file_grant_release_request_sink;
+    v8_dom_runtime::file_grant_create_file_request_sink_v2
+        file_grant_create_file_request_sink;
     std::shared_ptr<file_grant_release_dispatcher> file_grant_releases;
     std::unordered_map<std::string, std::weak_ptr<file_grant_owner>>
         file_grant_owners;

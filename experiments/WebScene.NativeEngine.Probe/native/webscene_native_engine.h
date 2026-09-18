@@ -155,6 +155,9 @@ typedef struct webscene_scene_header {
 // Clip kind 12 uses flags bit 31 to select an SVG path stored in the indexed
 // scene string; the remaining bits are its string index. A zero flag retains
 // the rounded-rectangle fields used by existing producers and presenters.
+// Group kind 30 uses flags bit 31 to select a foreground brightness filter;
+// stroke_width carries its non-negative multiplier. A zero flag retains the
+// opacity-group alpha stored in the low byte of rgba.
 typedef struct webscene_scene_command {
     uint32_t kind;
     uint32_t flags;

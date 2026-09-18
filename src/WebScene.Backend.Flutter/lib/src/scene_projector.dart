@@ -19,6 +19,7 @@ const int _layerRemove = 2;
 const int _canvasEvenOdd = 1 << 16;
 const int _domPolygonClipResource = 1 << 31;
 const int _domPolygonClipIndexMask = _domPolygonClipResource - 1;
+const int _domBrightnessFilter = 1 << 31;
 
 final class SceneApplyResult {
   const SceneApplyResult({
@@ -234,11 +235,7 @@ final class WebSceneSceneProjector extends ChangeNotifier {
       final command = scene.commands[index];
       switch (command.kind) {
         case 30:
-          canvas.saveLayer(
-            null,
-            ui.Paint()
-              ..color = ui.Color.fromARGB(command.rgba & 0xff, 255, 255, 255),
-          );
+          canvas.saveLayer(null, _domGroupPaint(command));
         case 31:
           canvas.restore();
         case 15:
@@ -959,6 +956,21 @@ final class WebSceneSceneProjector extends ChangeNotifier {
     } catch (_) {
       canvas.clipRect(ui.Rect.zero, doAntiAlias: false);
     }
+  }
+
+  static ui.Paint _domGroupPaint(WebSceneSceneCommand command) {
+    if (command.flags & _domBrightnessFilter == 0) {
+      return ui.Paint()
+        ..color = ui.Color.fromARGB(command.rgba & 0xff, 255, 255, 255);
+    }
+    final amount = command.strokeWidth.clamp(0.0, double.infinity).toDouble();
+    return ui.Paint()
+      ..colorFilter = ui.ColorFilter.matrix([
+        amount, 0, 0, 0, 0,
+        0, amount, 0, 0, 0,
+        0, 0, amount, 0, 0,
+        0, 0, 0, 1, 0,
+      ]);
   }
 
   static String _domString(WebSceneSceneView scene, int index) =>

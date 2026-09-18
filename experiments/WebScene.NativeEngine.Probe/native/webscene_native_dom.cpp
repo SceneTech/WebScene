@@ -196,13 +196,16 @@ struct paint_z_index_update final {
 
 bool style_establishes_atomic_stacking_context(const dom_node& node) noexcept
 {
+    const auto& effects = node.style.textual().effect_values;
+    const auto filter = effects.find("filter");
     return node.style.position == position_mode::fixed
         || node.style.position == position_mode::sticky
         || (node.style.position != position_mode::normal
             && !node.style.z_index_auto)
         || node.style.contain_stacking_context
         || node.style.opacity < 0.999F
-        || node.style.transform_stacking_context;
+        || node.style.transform_stacking_context
+        || (filter != effects.end() && filter->second != "none");
 }
 
 paint_z_index_update update_paint_z_index(

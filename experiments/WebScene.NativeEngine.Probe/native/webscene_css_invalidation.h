@@ -113,6 +113,9 @@ inline std::vector<css_compound_dependencies> compile_invalidation_plan(
                     add(output.attributes[name], route);
                 output.child_list_sensitive = true;
                 add(output.child_list, route);
+            } else if (pseudo.name == "in-range" || pseudo.name == "out-of-range") {
+                for (const auto* name : {"$live-form-range", "type", "min", "max"})
+                    add(output.attributes[name], route);
             } else if (pseudo.name == "read-only" || pseudo.name == "read-write") {
                 add(output.attributes["readonly"], route);
                 add(output.attributes["type"], route);

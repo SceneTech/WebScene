@@ -288,6 +288,8 @@
         { "name": "value", "getter": "get_form_value", "setter": "set_form_value" },
         { "name": "defaultValue", "getter": "get_default_value", "setter": "set_default_value" },
         { "name": "maxLength", "getter": "get_max_length", "setter": "set_max_length" },
+        { "name": "min", "getter": "get_reflected_string_attribute", "setter": "set_reflected_string_attribute" },
+        { "name": "max", "getter": "get_reflected_string_attribute", "setter": "set_reflected_string_attribute" },
         { "name": "readOnly", "getter": "get_read_only", "setter": "set_read_only" },
         { "name": "options", "getter": "get_select_options" },
         { "name": "elements", "getter": "get_form_elements" },

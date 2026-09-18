@@ -1286,12 +1286,21 @@
         if (context.IsEmpty() || local_context == context.Get(isolate)) {
             top_level_location_address = href;
         }
-        auto location = v8::Object::New(isolate);
-        location->SetNativeDataProperty(
+        v8::Local<v8::Value> existing_location;
+        const bool reuse_location = global->Get(
             local_context,
-            js_string(isolate, "href"),
-            get_location_href,
-            set_location_href).Check();
+            js_string(isolate, "location")).ToLocal(&existing_location)
+            && existing_location->IsObject();
+        auto location = reuse_location
+            ? existing_location.As<v8::Object>()
+            : v8::Object::New(isolate);
+        if (!reuse_location) {
+            location->SetNativeDataProperty(
+                local_context,
+                js_string(isolate, "href"),
+                get_location_href,
+                set_location_href).Check();
+        }
         const auto scheme_end = href.find(':');
         const auto authority_start = href.find("://");
         const auto authority_end = authority_start == std::string::npos
@@ -1358,22 +1367,24 @@
         location->Set(local_context, js_string(isolate, "pathname"), js_string(isolate, path.c_str())).Check();
         location->Set(local_context, js_string(isolate, "search"), js_string(isolate, search.c_str())).Check();
         location->Set(local_context, js_string(isolate, "hash"), js_string(isolate, hash.c_str())).Check();
-        location->Set(
-            local_context,
-            js_string(isolate, "toString"),
-            v8::Function::New(local_context, location_to_string).ToLocalChecked()).Check();
-        location->Set(
-            local_context,
-            js_string(isolate, "assign"),
-            v8::Function::New(local_context, location_assign).ToLocalChecked()).Check();
-        location->Set(
-            local_context,
-            js_string(isolate, "replace"),
-            v8::Function::New(local_context, location_replace).ToLocalChecked()).Check();
-        location->Set(
-            local_context,
-            js_string(isolate, "reload"),
-            v8::Function::New(local_context, location_reload).ToLocalChecked()).Check();
+        if (!reuse_location) {
+            location->Set(
+                local_context,
+                js_string(isolate, "toString"),
+                v8::Function::New(local_context, location_to_string).ToLocalChecked()).Check();
+            location->Set(
+                local_context,
+                js_string(isolate, "assign"),
+                v8::Function::New(local_context, location_assign).ToLocalChecked()).Check();
+            location->Set(
+                local_context,
+                js_string(isolate, "replace"),
+                v8::Function::New(local_context, location_replace).ToLocalChecked()).Check();
+            location->Set(
+                local_context,
+                js_string(isolate, "reload"),
+                v8::Function::New(local_context, location_reload).ToLocalChecked()).Check();
+        }
         std::string secure_host = host;
         if (const auto at = secure_host.rfind('@'); at != std::string::npos) secure_host.erase(0, at + 1);
         if (secure_host.starts_with("[")) {
@@ -1409,6 +1420,7 @@
         global->DefineOwnProperty(local_context, js_string(isolate, "isSecureContext"),
             v8::Boolean::New(isolate, secure), v8::ReadOnly).Check();
         global->Set(local_context, js_string(isolate, "location"), location).Check();
+        install_history(local_context, global);
         global->Set(
             local_context,
             js_string(isolate, "origin"),

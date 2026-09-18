@@ -4854,6 +4854,265 @@
         }
     }
 
+    static v8::Local<v8::Private> history_state_key(v8::Isolate* isolate)
+    {
+        return v8::Private::ForApi(
+            isolate, js_string(isolate, "WebScene.History.state"));
+    }
+
+    static v8::Local<v8::Private> history_length_key(v8::Isolate* isolate)
+    {
+        return v8::Private::ForApi(
+            isolate, js_string(isolate, "WebScene.History.length"));
+    }
+
+    static void get_history_state(
+        v8::Local<v8::Name>,
+        const v8::PropertyCallbackInfo<v8::Value>& info)
+    {
+        auto local_context = info.GetIsolate()->GetCurrentContext();
+        v8::Local<v8::Value> value;
+        if (info.Holder()->GetPrivate(
+                local_context, history_state_key(info.GetIsolate())).ToLocal(&value)) {
+            info.GetReturnValue().Set(value);
+        }
+    }
+
+    static void get_history_length(
+        v8::Local<v8::Name>,
+        const v8::PropertyCallbackInfo<v8::Value>& info)
+    {
+        auto local_context = info.GetIsolate()->GetCurrentContext();
+        v8::Local<v8::Value> value;
+        if (info.Holder()->GetPrivate(
+                local_context, history_length_key(info.GetIsolate())).ToLocal(&value)) {
+            info.GetReturnValue().Set(value);
+        }
+    }
+
+    static std::string strip_url_query_and_fragment(std::string value)
+    {
+        if (const auto suffix = value.find_first_of("?#"); suffix != std::string::npos) {
+            value.resize(suffix);
+        }
+        return value;
+    }
+
+    static std::string normalize_local_file_url(std::string value)
+    {
+        if (!lower_html_name(value).starts_with("file:")) return {};
+        const auto suffix_offset = value.find_first_of("?#", 5U);
+        const auto suffix = suffix_offset == std::string::npos
+            ? std::string{}
+            : value.substr(suffix_offset);
+        auto path = value.substr(
+            5U,
+            suffix_offset == std::string::npos
+                ? std::string::npos
+                : suffix_offset - 5U);
+        // Packaged documents use local file URLs without an authority. V8's
+        // URL implementation serializes those as either file:/path or
+        // file:///path; canonicalize both while rejecting file://host/path.
+        if (path.starts_with("//") && !path.starts_with("///")) return {};
+        const auto first_non_slash = path.find_first_not_of('/');
+        path = first_non_slash == std::string::npos
+            ? std::string("/")
+            : "/" + path.substr(first_non_slash);
+        return "file://" + path + suffix;
+    }
+
+    bool apply_same_document_history_url(
+        v8::Local<v8::Context> local_context,
+        const std::string& resolved)
+    {
+        auto* root = static_cast<dom_node*>(
+            local_context->GetAlignedPointerFromEmbedderData(
+                1, v8::kEmbedderDataTypeTagDefault));
+        if (root == nullptr) return false;
+        if (context.IsEmpty() || local_context == context.Get(isolate)) {
+            document_base_address = resolved;
+            top_level_location_address = resolved;
+        } else {
+            frame_base_addresses.insert_or_assign(root, resolved);
+        }
+        auto& cache = document_base_caches[root];
+        cache.navigation_address = resolved;
+        cache.fallback_address = resolved;
+        cache.effective_address = resolved;
+        cache.dirty = true;
+        set_context_location(local_context, local_context->Global(), resolved);
+        return true;
+    }
+
+    static void history_update_state(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        auto* isolate = info.GetIsolate();
+        auto local_context = isolate->GetCurrentContext();
+        if (self == nullptr || info.Length() < 2) {
+            isolate->ThrowException(v8::Exception::TypeError(
+                js_string(isolate,
+                    "History state mutation requires state and unused arguments")));
+            return;
+        }
+        if (!info.This()->HasPrivate(
+                local_context, history_length_key(isolate)).FromMaybe(false)) {
+            isolate->ThrowException(v8::Exception::TypeError(
+                js_string(isolate, "Illegal invocation")));
+            return;
+        }
+        const bool replace = info.Data()->IsTrue();
+        constexpr size_t maximum_history_url_bytes = 8192U;
+        auto current_address = self->current_navigation_address();
+        if (current_address.empty()) {
+            current_address = self->top_level_location_address;
+        }
+        std::string resolved = current_address;
+        const bool has_url = info.Length() > 2 && !info[2]->IsNullOrUndefined();
+        if (has_url) {
+            const auto authored = to_utf8(isolate, info[2]);
+            if (authored.size() > maximum_history_url_bytes
+                || authored.find_first_of("\r\n\0", 0U, 3U) != std::string::npos) {
+                throw_dom_exception(info, "History URL is invalid", "SecurityError");
+                return;
+            }
+            resolved = authored.empty()
+                ? current_address
+                : resolve_resource_url(authored, current_address);
+        }
+        if (resource_scheme(resolved) == "file") {
+            resolved = normalize_local_file_url(std::move(resolved));
+        }
+        const auto current_scheme = resource_scheme(current_address);
+        const auto resolved_scheme = resource_scheme(resolved);
+        const bool same_origin_http =
+            (current_scheme == "http" || current_scheme == "https")
+            && resolved_scheme == current_scheme
+            && resource_origin(resolved) == resource_origin(current_address);
+        const bool same_file_document = current_scheme == "file"
+            && resolved_scheme == "file"
+            && strip_url_query_and_fragment(resolved)
+                == strip_url_query_and_fragment(current_address);
+        if (resolved.empty() || resolved.size() > maximum_history_url_bytes
+            || (has_url && !same_origin_http && !same_file_document)) {
+            throw_dom_exception(
+                info,
+                "History URL must retain the current document origin",
+                "SecurityError");
+            return;
+        }
+
+        clone_packet packet;
+        if (!serialize_clone(
+                info,
+                info[0],
+                v8::Undefined(isolate),
+                packet,
+                1024U * 1024U)) {
+            return;
+        }
+        v8::Local<v8::Value> state;
+        if (!self->deserialize_clone(isolate, local_context, packet).ToLocal(&state)) {
+            if (!isolate->HasPendingException()) {
+                throw_dom_exception(
+                    info, "History state could not be cloned", "DataCloneError");
+            }
+            return;
+        }
+
+        auto history = info.This();
+        v8::Local<v8::Value> length_value;
+        uint32_t length = 1U;
+        if (history->GetPrivate(
+                local_context, history_length_key(isolate)).ToLocal(&length_value)) {
+            length = length_value->Uint32Value(local_context).FromMaybe(1U);
+        }
+        constexpr uint32_t maximum_history_entries = 1024U;
+        if (!replace && length >= maximum_history_entries) {
+            throw_dom_exception(
+                info, "History entry limit reached", "SecurityError");
+            return;
+        }
+        if (!self->apply_same_document_history_url(local_context, resolved)) {
+            throw_dom_exception(
+                info, "History realm is no longer active", "InvalidStateError");
+            return;
+        }
+        history->SetPrivate(
+            local_context, history_state_key(isolate), state).Check();
+        if (!replace) {
+            history->SetPrivate(
+                local_context,
+                history_length_key(isolate),
+                v8::Integer::NewFromUnsigned(isolate, length + 1U)).Check();
+        }
+        self->record_feature(
+            "web-api",
+            replace ? "History.replaceState" : "History.pushState",
+            replace ? "supported" : "partially-supported",
+            replace
+                ? "bounded same-document state and URL mutation without host navigation"
+                : "bounded same-document state and URL mutation; traversal is tracked separately",
+            "web-api-binding");
+    }
+
+    void install_history(
+        v8::Local<v8::Context> local_context,
+        v8::Local<v8::Object> global)
+    {
+        v8::Local<v8::Value> existing;
+        if (global->Get(
+                local_context, js_string(isolate, "history")).ToLocal(&existing)
+            && existing->IsObject()) {
+            return;
+        }
+        auto history = v8::Object::New(isolate);
+        history->SetPrivate(
+            local_context,
+            history_state_key(isolate),
+            v8::Null(isolate)).Check();
+        history->SetPrivate(
+            local_context,
+            history_length_key(isolate),
+            v8::Integer::New(isolate, 1)).Check();
+        history->SetNativeDataProperty(
+            local_context,
+            js_string(isolate, "state"),
+            get_history_state).Check();
+        history->SetNativeDataProperty(
+            local_context,
+            js_string(isolate, "length"),
+            get_history_length).Check();
+        history->Set(
+            local_context,
+            js_string(isolate, "scrollRestoration"),
+            js_string(isolate, "auto")).Check();
+        for (const auto* name : {"back", "forward", "go"}) {
+            history->Set(
+                local_context,
+                js_string(isolate, name),
+                v8::Function::New(local_context, no_op).ToLocalChecked()).Check();
+        }
+        history->Set(
+            local_context,
+            js_string(isolate, "pushState"),
+            v8::Function::New(
+                local_context,
+                history_update_state,
+                v8::False(isolate),
+                2).ToLocalChecked()).Check();
+        history->Set(
+            local_context,
+            js_string(isolate, "replaceState"),
+            v8::Function::New(
+                local_context,
+                history_update_state,
+                v8::True(isolate),
+                2).ToLocalChecked()).Check();
+        global->Set(local_context, js_string(isolate, "history"), history).Check();
+    }
+
     static bool request_location_navigation(
         v8::Isolate* isolate,
         v8::Local<v8::Context> local_context,

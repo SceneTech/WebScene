@@ -3849,18 +3849,6 @@ struct v8_dom_runtime::implementation final {
         global->Set(local_context, js_string(isolate, "DOMRectReadOnly"), rect_constructor).Check();
 
         set_context_location(local_context, global, "http://127.0.0.1/");
-        auto history = v8::Object::New(isolate);
-        history->Set(local_context, js_string(isolate, "length"),
-            v8::Integer::New(isolate, 1)).Check();
-        history->Set(local_context, js_string(isolate, "state"), v8::Null(isolate)).Check();
-        history->Set(local_context, js_string(isolate, "scrollRestoration"),
-            js_string(isolate, "auto")).Check();
-        for (const auto* name : {"back", "forward", "go", "pushState", "replaceState"}) {
-            history->Set(local_context, js_string(isolate, name),
-                v8::Function::New(local_context, no_op).ToLocalChecked()).Check();
-        }
-        global->Set(local_context, js_string(isolate, "history"), history).Check();
-
         install_navigator(isolate, local_context, global);
 
         install_console(local_context, global);

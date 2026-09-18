@@ -13,6 +13,7 @@ from audit_macos_bundle import (
     audit_bundle,
     default_deployment_target,
     encode_evidence,
+    normalize_single_architecture,
 )
 
 
@@ -91,13 +92,35 @@ def package(args):
             raise RuntimeError(f'Unbundled dependency in {binary.name}: {dependency}')
         if args.strip:
             run('strip', '-x', str(binary))
-        run('codesign', '--force', '--sign', '-', str(binary))
+    architectures = args.architecture or [platform.machine()]
+    maximum_deployment_target = (
+        args.maximum_deployment_target or default_deployment_target(bundle)
+    )
+    normalization = None
+    if len(architectures) == 1:
+        normalization = normalize_single_architecture(
+            bundle,
+            architectures[0],
+            maximum_entries=args.maximum_audit_entries,
+        )
+    pre_signature_evidence = audit_bundle(
+        bundle,
+        executable.relative_to(bundle).as_posix(),
+        architectures,
+        maximum_deployment_target,
+        maximum_entries=args.maximum_audit_entries,
+    )
+    for item in sorted(
+            pre_signature_evidence['binaries'],
+            key=lambda value: len(Path(value['path']).parts), reverse=True):
+        run('codesign', '--force', '--sign', '-', str(bundle / item['path']))
     evidence = audit_bundle(
         bundle,
         executable.relative_to(bundle).as_posix(),
-        args.architecture or [platform.machine()],
-        args.maximum_deployment_target or default_deployment_target(bundle),
+        architectures,
+        maximum_deployment_target,
         maximum_entries=args.maximum_audit_entries,
+        normalization=normalization,
     )
     evidence_path = bundle / 'Contents' / 'Resources' / 'webscene-macho-audit.json'
     evidence_path.parent.mkdir(parents=True, exist_ok=True)

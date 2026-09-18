@@ -280,6 +280,7 @@
         frame_windows.clear();
         frame_window_scroll_offsets.clear();
         frame_load_listeners.clear();
+        frame_dom_content_loaded_listeners.clear();
         frame_event_listeners.clear();
         actual_frame_windows.clear();
         actual_frame_contexts.clear();
@@ -938,6 +939,12 @@
             for (const auto& listener : listeners) {
                 if (listener.target == 0U || listener.callback.IsEmpty()) continue;
                 by_target[listener.target].insert(type);
+            }
+        }
+        for (const auto& [target, listeners] : frame_dom_content_loaded_listeners) {
+            if (std::any_of(listeners.begin(), listeners.end(),
+                    [](const auto& listener) { return !listener.IsEmpty(); })) {
+                by_target[target].insert("DOMContentLoaded");
             }
         }
         std::vector<uint32_t> target_ids;

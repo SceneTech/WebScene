@@ -882,12 +882,20 @@ struct v8_dom_runtime::implementation final {
 
         auto frame_window = v8::ObjectTemplate::New(isolate);
         frame_window->SetInternalFieldCount(1);
+        frame_window->SetHandler(v8::NamedPropertyHandlerConfiguration(
+            get_frame_window_proxy_named_property,
+            nullptr,
+            nullptr,
+            nullptr,
+            nullptr,
+            {},
+            v8::PropertyHandlerFlags::kNonMasking));
         frame_window->Set(
             js_string(isolate, "addEventListener"),
             v8::FunctionTemplate::New(isolate, frame_window_add_event_listener));
         frame_window->Set(
             js_string(isolate, "removeEventListener"),
-            v8::FunctionTemplate::New(isolate, remove_event_listener));
+            v8::FunctionTemplate::New(isolate, frame_window_remove_event_listener));
         frame_window->Set(
             js_string(isolate, "getComputedStyle"),
             v8::FunctionTemplate::New(isolate, get_computed_style));

@@ -1126,6 +1126,7 @@
             actual_frame_documents.erase(id);
             frame_session_storage.erase(id);
             frame_load_listeners.erase(id);
+            frame_dom_content_loaded_listeners.erase(id);
         }
         for (auto& [type, listeners] : frame_event_listeners) {
             static_cast<void>(type);
@@ -1674,6 +1675,7 @@
             actual_frame_documents.erase(id);
             frame_session_storage.erase(id);
             frame_load_listeners.erase(id);
+            frame_dom_content_loaded_listeners.erase(id);
         }
         if (!frame_context.IsEmpty()) {
             auto local_frame_context = frame_context.Get(isolate);
@@ -3107,6 +3109,24 @@
             v8::kEmbedderDataTypeTagDefault));
         if (root != nullptr && self->detached_document_roots.contains(root->id)) {
             info.GetReturnValue().Set(v8::Null(info.GetIsolate()));
+            return;
+        }
+        for (const auto& [frame_id, document_value] : self->actual_frame_documents) {
+            if (document_value.IsEmpty()
+                || !document_value.Get(info.GetIsolate())->StrictEquals(info.Holder())) {
+                continue;
+            }
+            const auto frame_context = self->actual_frame_contexts.find(frame_id);
+            if (frame_context == self->actual_frame_contexts.end()
+                || frame_context->second.IsEmpty()) break;
+            auto local_frame_context = frame_context->second.Get(info.GetIsolate());
+            v8::Context::Scope frame_scope(local_frame_context);
+            v8::Local<v8::Value> location;
+            if (local_frame_context->Global()->Get(
+                    local_frame_context,
+                    js_string(info.GetIsolate(), "location")).ToLocal(&location)) {
+                info.GetReturnValue().Set(location);
+            }
             return;
         }
         auto local_context = info.GetIsolate()->GetCurrentContext();

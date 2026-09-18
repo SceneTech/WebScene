@@ -662,6 +662,47 @@
         }
     }
 
+    bool iframe_owner_allows_same_origin_access(dom_node& frame)
+    {
+        if (!iframe_sandbox_allows(frame, "allow-same-origin")) return false;
+        const auto source = frame.attributes.find("src");
+        if (source == frame.attributes.end() || source->second.empty()
+            || source->second == "about:blank") return true;
+        const auto owner_base = effective_document_base(css_cascade_root_for_node(frame));
+        const auto target = resolve_resource_url(source->second, owner_base);
+        return resource_origin(target) == resource_origin(owner_base);
+    }
+
+    static v8::Intercepted get_frame_window_proxy_named_property(
+        v8::Local<v8::Name> property,
+        const v8::PropertyCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        auto* frame = unwrap_node(info.Holder());
+        if (self == nullptr || frame == nullptr
+            || !self->iframe_owner_allows_same_origin_access(*frame)) {
+            return v8::Intercepted::kNo;
+        }
+        const auto context_entry = self->actual_frame_contexts.find(frame->id);
+        const auto window_entry = self->actual_frame_windows.find(frame->id);
+        if (context_entry == self->actual_frame_contexts.end()
+            || context_entry->second.IsEmpty()
+            || window_entry == self->actual_frame_windows.end()
+            || window_entry->second.IsEmpty()) {
+            return v8::Intercepted::kNo;
+        }
+        auto frame_context = context_entry->second.Get(info.GetIsolate());
+        v8::Context::Scope frame_scope(frame_context);
+        v8::Local<v8::Value> value;
+        if (!window_entry->second.Get(info.GetIsolate())->Get(frame_context, property)
+                .ToLocal(&value)
+            || value->IsUndefined()) {
+            return v8::Intercepted::kNo;
+        }
+        info.GetReturnValue().Set(value);
+        return v8::Intercepted::kYes;
+    }
+
     static void get_content_window(
         v8::Local<v8::Name>,
         const v8::PropertyCallbackInfo<v8::Value>& info)
@@ -672,18 +713,16 @@
             info.GetReturnValue().Set(v8::Null(info.GetIsolate()));
             return;
         }
-        if (!self->iframe_sandbox_allows(*node, "allow-same-origin")) {
+        if (!self->iframe_owner_allows_same_origin_access(*node)) {
             // WebScene does not yet expose a restricted cross-origin
             // WindowProxy. Fail closed instead of returning the privileged
             // same-origin object. #267 owns that broader proxy surface.
             info.GetReturnValue().Set(v8::Null(info.GetIsolate()));
             return;
         }
-        const auto actual = self->actual_frame_windows.find(node->id);
-        if (actual != self->actual_frame_windows.end()) {
-            info.GetReturnValue().Set(actual->second.Get(info.GetIsolate()));
-            return;
-        }
+        // A browsing context keeps one WindowProxy while navigation replaces
+        // the Window behind it. frame_window() is the stable owner-realm proxy
+        // and forwards named properties to the current same-origin Window.
         info.GetReturnValue().Set(self->frame_window(*node));
     }
 
@@ -697,7 +736,7 @@
             info.GetReturnValue().Set(v8::Null(info.GetIsolate()));
             return;
         }
-        if (!self->iframe_sandbox_allows(*node, "allow-same-origin")) {
+        if (!self->iframe_owner_allows_same_origin_access(*node)) {
             info.GetReturnValue().Set(v8::Null(info.GetIsolate()));
             return;
         }
@@ -716,10 +755,13 @@
         auto* node = provisional_frame_owner(info.This());
         if (node == nullptr) return;
         node->attributes["frame-html"].clear();
-        const auto body = self->provisional_frame_bodies.find(node->id);
-        if (body != self->provisional_frame_bodies.end() && body->second != nullptr) {
-            self->detach_all_children(*body->second);
+        auto* target = unwrap_node(info.This());
+        if (target != nullptr && target->tag == "html") {
+            const auto body = self->provisional_frame_bodies.find(node->id);
+            target = body == self->provisional_frame_bodies.end()
+                ? nullptr : body->second;
         }
+        if (target != nullptr) self->detach_all_children(*target);
     }
 
     static void frame_document_write(const v8::FunctionCallbackInfo<v8::Value>& info)
@@ -738,12 +780,17 @@
         auto* node = provisional_frame_owner(info.This());
         if (node == nullptr) return;
         const auto html = node->attributes["frame-html"];
-        const auto body = self->provisional_frame_bodies.find(node->id);
-        if (body != self->provisional_frame_bodies.end() && body->second != nullptr) {
-            self->detach_all_children(*body->second);
+        auto* target = unwrap_node(info.This());
+        if (target != nullptr && target->tag == "html") {
+            const auto body = self->provisional_frame_bodies.find(node->id);
+            target = body == self->provisional_frame_bodies.end()
+                ? nullptr : body->second;
+        }
+        if (target != nullptr) {
+            self->detach_all_children(*target);
             auto body_html = extract_element_contents(html, "body");
             if (body_html.empty()) body_html = html;
-            self->parse_inner_html(*body->second, body_html);
+            self->parse_inner_html(*target, body_html);
         }
         // Documents containing executable/resource-bearing markup still need
         // their independent frame realm. Plain document.write replacement is
@@ -764,5 +811,48 @@
         const auto type = to_utf8(info.GetIsolate(), info[0]);
         if (type == "innerWindowLoad") {
             self->frame_load_listeners[node->id].Reset(info.GetIsolate(), info[1].As<v8::Function>());
+        } else if (type == "DOMContentLoaded") {
+            auto& listeners = self->frame_dom_content_loaded_listeners[node->id];
+            const auto callback = info[1].As<v8::Function>();
+            const auto duplicate = std::any_of(
+                listeners.begin(), listeners.end(), [&](auto& existing) {
+                    return !existing.IsEmpty()
+                        && existing.Get(info.GetIsolate())->StrictEquals(callback);
+                });
+            if (!duplicate) listeners.emplace_back(info.GetIsolate(), callback);
         }
+    }
+
+    static void frame_window_remove_event_listener(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        auto* node = unwrap_node(info.This());
+        if (node == nullptr || info.Length() < 2 || !info[1]->IsFunction()) return;
+        const auto type = to_utf8(info.GetIsolate(), info[0]);
+        const auto callback = info[1].As<v8::Function>();
+        if (type == "DOMContentLoaded") {
+            const auto found = self->frame_dom_content_loaded_listeners.find(node->id);
+            if (found == self->frame_dom_content_loaded_listeners.end()) return;
+            std::erase_if(found->second, [&](auto& existing) {
+                const auto matches = !existing.IsEmpty()
+                    && existing.Get(info.GetIsolate())->StrictEquals(callback);
+                if (matches) existing.Reset();
+                return matches;
+            });
+            if (found->second.empty()) {
+                self->frame_dom_content_loaded_listeners.erase(found);
+            }
+            return;
+        }
+        if (type == "innerWindowLoad") {
+            const auto found = self->frame_load_listeners.find(node->id);
+            if (found != self->frame_load_listeners.end()
+                && !found->second.IsEmpty()
+                && found->second.Get(info.GetIsolate())->StrictEquals(callback)) {
+                self->frame_load_listeners.erase(found);
+            }
+            return;
+        }
+        remove_event_listener(info);
     }

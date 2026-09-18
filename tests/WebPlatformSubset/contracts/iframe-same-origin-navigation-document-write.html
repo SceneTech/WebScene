@@ -1,0 +1,81 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Same-origin iframe navigation and document replacement</title>
+<body>
+<script>
+  const state = globalThis.__webSceneWptState = {
+    complete: false, harness: null, results: [], errors: [], diagnostics: []
+  };
+  const record = (name, condition, detail = null) => state.results.push({
+    name, status: condition ? "PASS" : "FAIL",
+    message: condition ? null : String(detail || "Contract failed"), stack: null
+  });
+  const finish = error => {
+    if (state.complete) return;
+    if (error) state.errors.push(String(error && error.stack || error));
+    const failed = state.results.find(result => result.status !== "PASS");
+    state.harness = error || failed
+      ? { status: 1, message: error ? String(error) : failed.message, stack: null }
+      : { status: 0, message: null, stack: null };
+    state.complete = true;
+  };
+
+  try {
+    const frame = document.createElement("iframe");
+    frame.setAttribute("sandbox", "allow-same-origin allow-scripts");
+    frame.src = "resources/iframe-same-origin-navigation-fake.html?id=markdown-preview";
+    document.body.appendChild(frame);
+
+    const initialWindow = frame.contentWindow;
+    let handled = false;
+    const timeout = setTimeout(() => finish(new Error(
+      "pre-navigation DOMContentLoaded listener did not observe the navigated document")), 3000);
+    globalThis.__finishIframeMarkdownReplacement = marker => setTimeout(() => {
+        try {
+          record("replacement document script reaches the owner realm",
+            marker?.textContent === "Markdown");
+          record("document replacement keeps the WindowProxy stable",
+            frame.contentWindow === initialWindow);
+          state.diagnostics.push({
+            href: frame.contentDocument.location.href,
+            stableWindow: frame.contentWindow === initialWindow,
+            body: frame.contentDocument.body?.textContent || ""
+          });
+          clearTimeout(timeout);
+          delete globalThis.__finishIframeMarkdownReplacement;
+          finish();
+        } catch (error) { clearTimeout(timeout); finish(error); }
+      }, 0);
+
+    initialWindow.addEventListener("DOMContentLoaded", event => {
+      if (handled) return;
+      handled = true;
+      try {
+        const navigatedDocument = event.target;
+        record("same-origin navigation preserves WindowProxy identity",
+          frame.contentWindow === initialWindow);
+        record("DOMContentLoaded targets the navigated contentDocument",
+          navigatedDocument === frame.contentDocument);
+        record("fake document URL is visible before replacement",
+          navigatedDocument.location.pathname.endsWith(
+            "/resources/iframe-same-origin-navigation-fake.html"),
+          navigatedDocument.location.href);
+
+        setTimeout(() => {
+          try {
+            navigatedDocument.open();
+            navigatedDocument.write(
+              "<!doctype html><html><body><main id='markdown-body'>Markdown</main>"
+              + "<script>parent.__finishIframeMarkdownReplacement("
+              + "document.querySelector('#markdown-body'));<\/script>"
+              + "</body></html>");
+            navigatedDocument.close();
+            record("document.open/write/close replaces the navigated document body",
+              frame.contentDocument.querySelector("#markdown-body")?.textContent === "Markdown");
+          } catch (error) { clearTimeout(timeout); finish(error); }
+        }, 0);
+      } catch (error) { clearTimeout(timeout); finish(error); }
+    });
+  } catch (error) { finish(error); }
+</script>
+</body>

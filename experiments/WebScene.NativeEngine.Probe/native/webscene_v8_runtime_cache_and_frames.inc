@@ -1190,6 +1190,18 @@
             local_context,
             js_string(isolate, "oninput"),
             v8::Null(isolate)).Check();
+        frame_document_value->Set(
+            local_context,
+            js_string(isolate, "open"),
+            v8::Function::New(local_context, frame_document_open).ToLocalChecked()).Check();
+        frame_document_value->Set(
+            local_context,
+            js_string(isolate, "write"),
+            v8::Function::New(local_context, frame_document_write).ToLocalChecked()).Check();
+        frame_document_value->Set(
+            local_context,
+            js_string(isolate, "close"),
+            v8::Function::New(local_context, frame_document_close).ToLocalChecked()).Check();
 
         global->Set(local_context, js_string(isolate, "window"), global).Check();
         global->Set(local_context, js_string(isolate, "self"), global).Check();
@@ -1197,6 +1209,7 @@
         auto& frame_storage = frame_session_storage.try_emplace(
             frame.id,
             std::make_unique<session_storage_state>()).first->second;
+        const auto same_origin_access = iframe_owner_allows_same_origin_access(frame);
         global->Set(
             local_context,
             js_string(isolate, "sessionStorage"),
@@ -1204,24 +1217,53 @@
         global->Set(
             local_context,
             js_string(isolate, "localStorage"),
-            create_session_storage(local_context, outer_local_storage)).Check();
+            create_session_storage(
+                local_context,
+                same_origin_access ? outer_local_storage : *frame_storage)).Check();
         actual_frame_windows[frame.id].Reset(isolate, global);
         actual_frame_contexts[frame.id].Reset(isolate, local_context);
         actual_frame_documents[frame.id].Reset(isolate, frame_document_value);
-        global->Set(local_context, js_string(isolate, "name"), js_string(isolate, frame.attributes["name"].c_str())).Check();
-        auto parent_window = context.Get(isolate)->Global();
-        for (auto* ancestor = frame.parent; ancestor != nullptr; ancestor = ancestor->parent) {
-            if (ancestor->tag != "iframe") continue;
-            const auto owner_window = actual_frame_windows.find(ancestor->id);
-            if (owner_window != actual_frame_windows.end()
-                && !owner_window->second.IsEmpty()) {
-                parent_window = owner_window->second.Get(isolate);
+        if (same_origin_access) {
+            const auto proxy_entry = frame_windows.find(frame.id);
+            if (proxy_entry != frame_windows.end() && !proxy_entry->second.IsEmpty()) {
+                auto owner_context = context.Get(isolate);
+                v8::Context::Scope owner_scope(owner_context);
+                auto proxy = proxy_entry->second.Get(isolate);
+                proxy->Set(
+                    owner_context,
+                    js_string(isolate, "document"),
+                    frame_document_value).Check();
             }
-            break;
+        }
+        global->Set(local_context, js_string(isolate, "name"), js_string(isolate, frame.attributes["name"].c_str())).Check();
+        v8::Local<v8::Value> parent_window = v8::Null(isolate);
+        if (same_origin_access) {
+            parent_window = context.Get(isolate)->Global();
+            for (auto* ancestor = frame.parent;
+                ancestor != nullptr;
+                ancestor = ancestor->parent) {
+                if (ancestor->tag != "iframe") continue;
+                const auto owner_window = actual_frame_windows.find(ancestor->id);
+                if (owner_window != actual_frame_windows.end()
+                    && !owner_window->second.IsEmpty()) {
+                    parent_window = owner_window->second.Get(isolate);
+                }
+                break;
+            }
         }
         global->Set(local_context, js_string(isolate, "parent"), parent_window).Check();
-        global->Set(local_context, js_string(isolate, "top"), context.Get(isolate)->Global()).Check();
-        global->Set(local_context, js_string(isolate, "frameElement"), frame_element).Check();
+        global->Set(
+            local_context,
+            js_string(isolate, "top"),
+            same_origin_access
+                ? v8::Local<v8::Value>(context.Get(isolate)->Global())
+                : v8::Local<v8::Value>(v8::Null(isolate))).Check();
+        global->Set(
+            local_context,
+            js_string(isolate, "frameElement"),
+            same_origin_access
+                ? v8::Local<v8::Value>(frame_element)
+                : v8::Local<v8::Value>(v8::Null(isolate))).Check();
         global->SetNativeDataProperty(
             local_context,
             js_string(isolate, "devicePixelRatio"),
@@ -1427,9 +1469,24 @@
             : std::string("http://127.0.0.1/")
                 + resource_root.filename().generic_string() + '/';
         set_context_location(local_context, global, frame_href);
+        if (iframe_owner_allows_same_origin_access(frame)) {
+            const auto proxy_entry = frame_windows.find(frame.id);
+            if (proxy_entry != frame_windows.end() && !proxy_entry->second.IsEmpty()) {
+                v8::Local<v8::Value> frame_location;
+                if (global->Get(local_context, js_string(isolate, "location"))
+                        .ToLocal(&frame_location)) {
+                    auto owner_context = context.Get(isolate);
+                    v8::Context::Scope owner_scope(owner_context);
+                    proxy_entry->second.Get(isolate)->Set(
+                        owner_context,
+                        js_string(isolate, "location"),
+                        frame_location).Check();
+                }
+            }
+        }
 
         install_navigator(isolate, local_context, global);
-        if (iframe_sandbox_allows(frame, "allow-same-origin")) {
+        if (same_origin_access) {
             install_service_worker_control(local_context, global);
         }
 
@@ -2210,6 +2267,12 @@
                     frame_last_error_value.clear();
                     continue;
                 }
+                // Script can synchronously remove its owning iframe. Detach
+                // retires this hydration state's persistent context, so do
+                // not yield and enqueue the discarded state for another slice.
+                if (!is_connected(frame) || hydration.context.IsEmpty()) {
+                    return restore_outer(frame_hydration_result::complete);
+                }
                 executed_script = true;
                 if (cooperative
                     && std::chrono::steady_clock::now() - slice_started >= slice_budget) {
@@ -2294,6 +2357,41 @@
             js_string(isolate, "document")).ToLocalChecked().As<v8::Object>();
         if (!dispatch_lifecycle_event(document_value, "DOMContentLoaded")) {
             return restore_outer(frame_hydration_result::failed);
+        }
+        if (iframe_owner_allows_same_origin_access(frame)) {
+            if (const auto found = frame_dom_content_loaded_listeners.find(frame.id);
+                found != frame_dom_content_loaded_listeners.end()
+                    && !found->second.empty()) {
+                std::vector<v8::Local<v8::Function>> callbacks;
+                callbacks.reserve(found->second.size());
+                for (auto& persistent : found->second) {
+                    if (!persistent.IsEmpty()) {
+                        callbacks.push_back(persistent.Get(isolate));
+                    }
+                }
+                auto owner_context = context.Get(isolate);
+                v8::Context::Scope owner_scope(owner_context);
+                auto event = v8::Object::New(isolate);
+                event->Set(owner_context, js_string(isolate, "type"),
+                    js_string(isolate, "DOMContentLoaded")).Check();
+                event->Set(owner_context, js_string(isolate, "target"),
+                    document_value).Check();
+                auto proxy = frame_window(frame);
+                event->Set(owner_context, js_string(isolate, "currentTarget"),
+                    proxy).Check();
+                v8::Local<v8::Value> arguments[] = {event};
+                for (auto callback : callbacks) {
+                    v8::TryCatch try_catch(isolate);
+                    if (callback->Call(owner_context, proxy, 1, arguments).IsEmpty()) {
+                        frame_last_error_value =
+                            "Iframe owner DOMContentLoaded callback failed: "
+                            + describe_reported_exception(try_catch, owner_context);
+                        ++frame_script_error_count;
+                        return restore_outer(frame_hydration_result::failed);
+                    }
+                }
+                perform_microtask_checkpoint();
+            }
         }
         document_value->Set(
             local_frame_context,
@@ -2575,7 +2673,7 @@
             {},
             v8::PropertyHandlerFlags::kNonMasking));
         auto local_frame_context = v8::Context::New(isolate, nullptr, frame_global_template);
-        if (iframe_sandbox_allows(frame, "allow-same-origin")) {
+        if (iframe_owner_allows_same_origin_access(frame)) {
             local_frame_context->SetSecurityToken(context.Get(isolate)->GetSecurityToken());
         } else {
             local_frame_context->SetSecurityToken(js_string(

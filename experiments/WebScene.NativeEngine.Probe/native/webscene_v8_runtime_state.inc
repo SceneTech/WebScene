@@ -178,6 +178,8 @@
     std::unordered_map<uint32_t, std::unique_ptr<session_storage_state>> frame_session_storage;
     std::vector<document_start_script> current_document_start_scripts;
     std::unordered_map<uint32_t, v8::Global<v8::Function>> frame_load_listeners;
+    std::unordered_map<uint32_t, std::vector<v8::Global<v8::Function>>>
+        frame_dom_content_loaded_listeners;
     std::unordered_map<std::string, std::vector<event_listener_registration>>
         frame_event_listeners;
 #if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)

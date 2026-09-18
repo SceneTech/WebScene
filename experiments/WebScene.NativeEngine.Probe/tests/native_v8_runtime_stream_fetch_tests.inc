@@ -1646,6 +1646,8 @@ void test_controlled_parser_and_nested_frame_resources()
                   parent.__finishParserCycle({error:'image'}));
               </script>
             </body></html>)HTML"},
+        {"https://parser-resource.test/pending-frame.html", R"HTML(
+            <!doctype html><script src="/pending-frame.js"></script>)HTML"},
         {"https://parser-resource.test/service-worker.js", R"JS(
             const requests = [];
             const pending = new Map();
@@ -1876,19 +1878,18 @@ void test_controlled_parser_and_nested_frame_resources()
       globalThis.__pendingParserRetirement = {complete:false,duration:0};
       (() => {
         const frame = document.createElement('iframe');
-        document.body.append(frame);
-        globalThis.__removePendingParserFrame = () => frame.remove();
         const started = performance.now();
-        const frameDocument = frame.contentDocument;
-        frameDocument.open();
-        frameDocument.write('<!doctype html><script src="/pending-frame.js"><\/script>');
-        frameDocument.close();
-        __pendingParserRetirement.duration = performance.now() - started;
-        __pendingParserRetirement.complete = true;
+        globalThis.__removePendingParserFrame = () => {
+          frame.remove();
+          __pendingParserRetirement.duration = performance.now() - started;
+          __pendingParserRetirement.complete = true;
+        };
+        frame.src = '/pending-frame.html';
+        document.body.append(frame);
       })();
     )JS", "pending-parser-retirement.js");
-    require(evaluate(engine, "__pendingParserRetirement.complete",
-            "pending-parser-retirement-complete.js") == "true",
+    require(evaluate_until_equals(engine, "__pendingParserRetirement.complete",
+            "pending-parser-retirement-complete.js", "true", 2'500) == "true",
         "retired pending parser request did not return");
     require(std::stod(evaluate(engine, "__pendingParserRetirement.duration",
             "pending-parser-retirement-duration.js")) <= 500.0,
@@ -1923,10 +1924,8 @@ void test_controlled_parser_and_nested_frame_resources()
             });
             __parserCycles.durations.push(performance.now() - started);
             ++__parserCycles.count;
-            // Let the retired frame and its controlled fetches reach the next
-            // task boundary before installing another browsing context. A
-            // single uninterrupted microtask chain can consume the host's
-            // bounded evaluation callback window on slower platforms.
+            // Run the next navigation as a new task after the retired frame's
+            // cascade and controlled fetch state have been released.
             await new Promise(resolve => setTimeout(resolve, 0));
           }
         } catch (error) {

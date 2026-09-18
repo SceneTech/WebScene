@@ -1,0 +1,226 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>CSSLayerBlockRule grouping mutation stays live and synchronous</title>
+<body>
+<script>
+  const state = window.__webSceneWptState = {
+    complete: false, harness: null, results: [], errors: [], diagnostics: []
+  };
+
+  function record(name, error) {
+    state.results.push({
+      name,
+      status: error ? "FAIL" : "PASS",
+      message: error ? String(error && error.message || error) : null,
+      stack: error && error.stack ? String(error.stack) : null
+    });
+  }
+
+  function exercise(document, view, prefix) {
+    const style = document.createElement("style");
+    const target = document.createElement("div");
+    style.textContent = `@layer base, theme;
+      @layer base { .${prefix} { color: rgb(1, 2, 3); } }
+      @layer theme { .${prefix} { color: rgb(4, 5, 6); } }`;
+    target.className = prefix;
+    document.head.appendChild(style);
+    document.body.appendChild(target);
+
+    const sheet = style.sheet;
+    const group = sheet.cssRules[2];
+    const rules = group.cssRules;
+    const original = rules[0];
+    const authoredText = style.textContent;
+    const initial = {
+      constructor: group.constructor.name,
+      layer: typeof view.CSSLayerBlockRule === "function"
+        && group instanceof view.CSSLayerBlockRule,
+      grouping: typeof view.CSSGroupingRule === "function"
+        && group instanceof view.CSSGroupingRule,
+      rule: group instanceof view.CSSRule,
+      type: group.type,
+      constantType: typeof view.CSSRule.LAYER_BLOCK_RULE,
+      name: group.name,
+      identity: group.cssRules === rules,
+      childParentRule: original.parentRule === group,
+      childParentSheet: original.parentStyleSheet === sheet,
+      color: view.getComputedStyle(target).color
+    };
+
+    let assignmentError = "";
+    try { group.name = "changed"; }
+    catch (error) { assignmentError = error.name; }
+    const readonly = { name: group.name, assignmentError };
+
+    const errors = {};
+    for (const [name, invoke] of Object.entries({
+      missingInsert: () => group.insertRule(),
+      missingDelete: () => group.deleteRule(),
+      range: () => group.insertRule(`.${prefix} {}`, 99),
+      multiple: () => group.insertRule(`.${prefix} {} .other {}`, 0),
+      imported: () => group.insertRule('@import url("x.css");', 0),
+      namespace: () => group.insertRule('@namespace x url("x");', 0)
+    })) {
+      try { invoke(); errors[name] = "none"; }
+      catch (error) { errors[name] = error.name; }
+    }
+
+    const index = group.insertRule(
+      `.${prefix} { color: rgb(7, 8, 9); }`, rules.length);
+    const inserted = rules[index];
+    const afterInsert = {
+      index,
+      length: rules.length,
+      identity: group.cssRules === rules,
+      childParentRule: inserted.parentRule === group,
+      childParentSheet: inserted.parentStyleSheet === sheet,
+      color: view.getComputedStyle(target).color,
+      serialized: group.cssText.includes("rgb(7, 8, 9)"),
+      textStable: style.textContent === authoredText
+    };
+
+    group.deleteRule(index);
+    const afterDelete = {
+      length: rules.length,
+      parentRule: inserted.parentRule,
+      parentStyleSheet: inserted.parentStyleSheet,
+      color: view.getComputedStyle(target).color,
+      textStable: style.textContent === authoredText
+    };
+
+    const mediaIndex = sheet.insertRule(
+      `@media (min-width:1px) { @layer nested {
+        .${prefix} { color: rgb(10, 11, 12); }
+      } }`, sheet.cssRules.length);
+    const media = sheet.cssRules[mediaIndex];
+    const nested = media.cssRules[0];
+    const nestedIndex = nested.insertRule(
+      `.${prefix} { color: rgb(13, 14, 15); }`, nested.cssRules.length);
+    const nestedMutation = {
+      index: nestedIndex,
+      constructor: nested.constructor.name,
+      layer: nested instanceof view.CSSLayerBlockRule,
+      name: nested.name,
+      parentRule: nested.parentRule === media,
+      parentStyleSheet: nested.parentStyleSheet === sheet,
+      length: nested.cssRules.length,
+      color: view.getComputedStyle(target).color,
+      parentSerialized: media.cssText.includes("rgb(13, 14, 15)"),
+      textStable: style.textContent === authoredText
+    };
+
+    const anonymousIndex = sheet.insertRule(
+      `@layer { .${prefix} { color: rgb(16, 17, 18); } }`,
+      sheet.cssRules.length);
+    const anonymous = sheet.cssRules[anonymousIndex];
+    const anonymousState = {
+      constructor: anonymous.constructor.name,
+      name: anonymous.name,
+      layer: anonymous instanceof view.CSSLayerBlockRule,
+      type: anonymous.type,
+      color: view.getComputedStyle(target).color,
+      textStable: style.textContent === authoredText
+    };
+
+    sheet.deleteRule(2);
+    group.insertRule(
+      `.${prefix} { color: rgb(19, 20, 21); }`, group.cssRules.length);
+    const detached = {
+      parentStyleSheet: group.parentStyleSheet,
+      name: group.name,
+      length: group.cssRules.length,
+      serialized: group.cssText.includes("rgb(19, 20, 21)"),
+      color: view.getComputedStyle(target).color,
+      textStable: style.textContent === authoredText
+    };
+
+    style.remove();
+    target.remove();
+    return { initial, readonly, errors, afterInsert, afterDelete,
+      nestedMutation, anonymousState, detached };
+  }
+
+  try {
+    const frame = document.createElement("iframe");
+    document.body.appendChild(frame);
+    const main = exercise(document, window, "layer-main");
+    const nested = exercise(
+      frame.contentDocument, frame.contentWindow, "layer-frame");
+    const both = predicate => predicate(main) && predicate(nested);
+
+    record("layer blocks expose browser-shaped grouping identity and names",
+      both(value => value.initial.constructor === "CSSLayerBlockRule"
+          && value.initial.layer && value.initial.grouping && value.initial.rule
+          && value.initial.type === 0
+          && value.initial.constantType === "undefined"
+          && value.initial.name === "theme" && value.initial.identity
+          && value.initial.childParentRule && value.initial.childParentSheet
+          && value.initial.color === "rgb(4, 5, 6)")
+        ? null : new Error(JSON.stringify({ main: main.initial, nested: nested.initial })));
+    record("layer names are readonly and anonymous layers expose an empty name",
+      both(value => value.readonly.name === "theme"
+          && value.readonly.assignmentError === ""
+          && value.anonymousState.constructor === "CSSLayerBlockRule"
+          && value.anonymousState.name === "" && value.anonymousState.layer
+          && value.anonymousState.type === 0
+          && value.anonymousState.color === "rgb(16, 17, 18)"
+          && value.anonymousState.textStable)
+        ? null : new Error(JSON.stringify({ main, nested })));
+    record("layer grouping mutation reports browser exception names",
+      both(value => value.errors.missingInsert === "TypeError"
+          && value.errors.missingDelete === "TypeError"
+          && value.errors.range === "IndexSizeError"
+          && value.errors.multiple === "SyntaxError"
+          && value.errors.imported === "HierarchyRequestError"
+          && value.errors.namespace === "HierarchyRequestError")
+        ? null : new Error(JSON.stringify({ main: main.errors, nested: nested.errors })));
+    record("layer insertRule and deleteRule publish synchronous cascade winners",
+      both(value => value.afterInsert.index === 1
+          && value.afterInsert.length === 2 && value.afterInsert.identity
+          && value.afterInsert.childParentRule
+          && value.afterInsert.childParentSheet
+          && value.afterInsert.color === "rgb(7, 8, 9)"
+          && value.afterInsert.serialized && value.afterInsert.textStable
+          && value.afterDelete.length === 1
+          && value.afterDelete.parentRule === null
+          && value.afterDelete.parentStyleSheet === null
+          && value.afterDelete.color === "rgb(4, 5, 6)"
+          && value.afterDelete.textStable)
+        ? null : new Error(JSON.stringify({ main, nested })));
+    record("layer mutation reserializes and publishes through a media parent",
+      both(value => value.nestedMutation.index === 1
+          && value.nestedMutation.constructor === "CSSLayerBlockRule"
+          && value.nestedMutation.layer && value.nestedMutation.name === "nested"
+          && value.nestedMutation.parentRule
+          && value.nestedMutation.parentStyleSheet
+          && value.nestedMutation.length === 2
+          && value.nestedMutation.color === "rgb(13, 14, 15)"
+          && value.nestedMutation.parentSerialized
+          && value.nestedMutation.textStable)
+        ? null : new Error(JSON.stringify({
+            main: main.nestedMutation, nested: nested.nestedMutation
+          })));
+    record("detached layer blocks mutate without recascading their former document",
+      both(value => value.detached.parentStyleSheet === null
+          && value.detached.name === "theme" && value.detached.length === 2
+          && value.detached.serialized
+          && value.detached.color === "rgb(16, 17, 18)"
+          && value.detached.textStable)
+        ? null : new Error(JSON.stringify({ main: main.detached, nested: nested.detached })));
+    state.diagnostics.push(JSON.stringify({ main, nested }));
+    frame.remove();
+  } catch (error) {
+    record("CSSLayerBlockRule mutation setup", error);
+  }
+
+  const failure = state.results.find(result => result.status !== "PASS");
+  state.harness = failure
+    ? { status: 1, message: failure.message, stack: failure.stack }
+    : { status: 0, message: null, stack: null };
+  state.complete = true;
+  const evidence = document.createElement("pre");
+  evidence.id = "cssom-layer-block-rule-mutation-evidence";
+  evidence.hidden = true;
+  evidence.textContent = JSON.stringify(state);
+  document.body.appendChild(evidence);
+</script>

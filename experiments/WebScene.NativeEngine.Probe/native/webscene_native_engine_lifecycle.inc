@@ -138,6 +138,12 @@
         script_work_.emplace_back(std::move(completion));
         signal_worker();
     }
+    void complete_file_grant_durable_request_v2(
+        webscene_native::file_grant_durable_completion_data_v2 completion) {
+        std::lock_guard lock(script_mutex_);
+        script_work_.emplace_back(std::move(completion));
+        signal_worker();
+    }
     void complete_file_grant_read_request_v2(
         webscene_native::file_grant_read_completion_data_v2 completion) {
         std::lock_guard lock(script_mutex_);

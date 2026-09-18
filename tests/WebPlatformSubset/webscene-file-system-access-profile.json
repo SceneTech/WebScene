@@ -40,7 +40,16 @@
         "file-system-handle-structured-clone",
         "file-system-handle-weak-lifetime"
       ],
-      "reason": "Chromium/WPT oracle creates an origin-private filesystem handle; the native runner receives a host-issued opaque grant and exercises equivalent distinct branded clone, shared authority, weak wrapper, exactly-once release, same-origin and navigation retirement behavior through the host release bridge. IndexedDB remains blocked on durable AppScene authority."
+      "reason": "Chromium/WPT oracle creates an origin-private filesystem handle; the native runner receives a host-issued opaque grant and exercises equivalent distinct branded clone, shared authority, weak wrapper, exactly-once release, same-origin and navigation retirement behavior through the host release bridge."
+    },
+    {
+      "path": "contracts/file-system-access-handle-indexeddb.html",
+      "type": "testharness",
+      "capabilities": [
+        "file-system-handle-indexeddb-persistence",
+        "opaque-file-grant-durable-restore"
+      ],
+      "reason": "Chromium/WPT oracle covers IndexedDB snapshot, later transaction retrieval, cursor retrieval, same-entry identity and neighboring Blob preservation. The native runner exercises the equivalent opaque export, restart restore, partition/origin binding, deletion revoke, stale-generation rejection and bounded lifecycle through the durable host bridge."
     },
     {
       "path": "contracts/file-system-access-directory-existing.html",

@@ -45,6 +45,22 @@ if(BUILD_TESTING)
         COMMAND webscene_file_grant_ancestry_header_tests)
     set_tests_properties(webscene_file_grant_ancestry_header_tests PROPERTIES
         LABELS "native;file-system-access;abi;c11" TIMEOUT 10)
+    add_executable(webscene_file_grant_durable_contract_tests
+        tests/file_grant_durable_contract_tests.cpp)
+    target_compile_features(webscene_file_grant_durable_contract_tests PRIVATE cxx_std_20)
+    target_include_directories(webscene_file_grant_durable_contract_tests PRIVATE native)
+    add_test(NAME webscene_file_grant_durable_contract_tests
+        COMMAND webscene_file_grant_durable_contract_tests)
+    set_tests_properties(webscene_file_grant_durable_contract_tests PROPERTIES
+        LABELS "native;file-system-access;indexeddb;security;lifecycle;performance" TIMEOUT 20)
+    add_executable(webscene_file_grant_durable_header_tests
+        tests/file_grant_durable_header_tests.c)
+    target_compile_features(webscene_file_grant_durable_header_tests PRIVATE c_std_11)
+    target_include_directories(webscene_file_grant_durable_header_tests PRIVATE native)
+    add_test(NAME webscene_file_grant_durable_header_tests
+        COMMAND webscene_file_grant_durable_header_tests)
+    set_tests_properties(webscene_file_grant_durable_header_tests PROPERTIES
+        LABELS "native;file-system-access;indexeddb;abi;c11" TIMEOUT 10)
     add_executable(webscene_file_grant_read_contract_tests
         tests/file_grant_read_contract_tests.cpp)
     target_compile_features(webscene_file_grant_read_contract_tests PRIVATE cxx_std_20)

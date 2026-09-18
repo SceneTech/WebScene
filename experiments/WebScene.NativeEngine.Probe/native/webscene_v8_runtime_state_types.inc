@@ -75,6 +75,9 @@
         std::vector<std::shared_ptr<file_grant_owner>> file_system_handles;
     };
 
+    using durable_file_grant_locator = std::array<std::uint8_t,
+        WEBSCENE_FILE_GRANT_DURABLE_LOCATOR_BYTES_V2>;
+
     struct binary_object_url final {
         std::string bytes;
         std::string origin;
@@ -192,10 +195,44 @@
         v8::Global<v8::Promise::Resolver> resolver;
     };
 
+    enum class indexeddb_operation_kind : std::uint8_t {
+        load,
+        store,
+        erase
+    };
+    enum class indexeddb_operation_phase : std::uint8_t {
+        load_storage,
+        export_handles,
+        commit_storage,
+        restore_handles,
+        erase_storage,
+        revoke_locators
+    };
     struct pending_indexeddb_promise final {
         v8::Global<v8::Context> context;
         v8::Global<v8::Promise::Resolver> resolver;
         bool deserialize_data{false};
+        indexeddb_operation_kind operation{indexeddb_operation_kind::load};
+        indexeddb_operation_phase phase{indexeddb_operation_phase::load_storage};
+        std::string origin;
+        std::string database;
+        std::uint64_t revision{};
+        clone_packet packet;
+        std::vector<durable_file_grant_locator> locators;
+        std::vector<durable_file_grant_locator> prior_locators;
+        std::size_t next_durable_index{};
+        std::size_t active_durable_requests{};
+        std::optional<indexeddb_storage_result> terminal_result;
+        std::string failure_message;
+        std::string failure_name;
+        bool cleanup_after_failure{};
+    };
+
+    struct indexeddb_durable_request_target final {
+        std::uint64_t indexeddb_operation_id{};
+        std::size_t index{};
+        std::uint32_t action{};
+        std::string serialized_origin;
     };
 
     struct indexeddb_completion final {

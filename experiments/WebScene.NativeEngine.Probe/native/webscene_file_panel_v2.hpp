@@ -10,6 +10,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -861,6 +862,264 @@ private:
 
     mutable std::mutex mutex_;
     std::deque<std::unique_ptr<file_grant_ancestry_request_lease_v2>> queued_;
+    std::unordered_map<std::uint64_t, pending_request> pending_;
+    std::size_t retained_input_bytes_{};
+    std::uint64_t completed_requests_{};
+    std::uint64_t retired_requests_{};
+    std::uint64_t copied_completion_bytes_{};
+    std::uint64_t rejected_operations_{};
+    bool retiring_{};
+};
+
+struct file_grant_durable_request_lease_v2 final {
+    webscene_file_grant_durable_request_v2 view{};
+    std::vector<std::uint8_t> grant_id;
+    std::vector<std::uint8_t> locator;
+    std::string storage_partition;
+    std::string serialized_origin;
+
+    void bind() {
+        view.struct_size = sizeof(view);
+        view.version = 2;
+        view.grant_id = {grant_id.empty() ? nullptr : grant_id.data(),
+            grant_id.size()};
+        view.locator = {locator.empty() ? nullptr : locator.data(),
+            locator.size()};
+        view.storage_partition = {storage_partition.data(),
+            storage_partition.size()};
+        view.serialized_origin = {serialized_origin.data(),
+            serialized_origin.size()};
+    }
+};
+static_assert(std::is_standard_layout_v<file_grant_durable_request_lease_v2>);
+static_assert(offsetof(file_grant_durable_request_lease_v2, view) == 0);
+
+struct file_grant_durable_completion_data_v2 final {
+    std::uint64_t request_id{};
+    std::uint32_t status{WEBSCENE_FILE_GRANT_DURABLE_IO_ERROR_V2};
+    std::uint32_t action{};
+    std::vector<std::uint8_t> locator;
+    std::vector<std::uint8_t> grant_id;
+    std::uint32_t kind{};
+    std::uint32_t capabilities{};
+    std::string display_name;
+    std::string error_code;
+};
+
+using file_grant_durable_completion_callback_v2 =
+    std::function<void(file_grant_durable_completion_data_v2&&)>;
+
+struct file_grant_durable_metrics_v2 final {
+    std::size_t queued_requests{};
+    std::size_t pending_requests{};
+    std::size_t retained_input_bytes{};
+    std::uint64_t completed_requests{};
+    std::uint64_t retired_requests{};
+    std::uint64_t copied_completion_bytes{};
+    std::uint64_t rejected_operations{};
+};
+
+class file_grant_durable_broker_v2 final {
+public:
+    bool queue(const webscene_file_grant_durable_request_v2& source,
+               file_grant_durable_completion_callback_v2 callback) {
+        auto lease = copy_request(source);
+        if (!lease) { reject(); return false; }
+        const auto id = lease->view.request_id;
+        const auto retained = lease->grant_id.size() + lease->locator.size()
+            + lease->storage_partition.size() + lease->serialized_origin.size();
+        std::lock_guard lock(mutex_);
+        if (retiring_
+            || pending_.size()
+                >= WEBSCENE_FILE_GRANT_DURABLE_MAXIMUM_PENDING_OPERATIONS_V2
+            || pending_.contains(id)) {
+            ++rejected_operations_;
+            return false;
+        }
+        pending_.emplace(id, pending_request{retained, std::move(callback)});
+        retained_input_bytes_ += retained;
+        queued_.push_back(std::move(lease));
+        return true;
+    }
+
+    std::unique_ptr<file_grant_durable_request_lease_v2> take() {
+        std::lock_guard lock(mutex_);
+        if (queued_.empty()) return {};
+        auto result = std::move(queued_.front());
+        queued_.pop_front();
+        result->bind();
+        return result;
+    }
+
+    bool complete(const webscene_file_grant_durable_completion_v2& source) {
+        file_grant_durable_completion_callback_v2 callback;
+        std::optional<file_grant_durable_completion_data_v2> completion;
+        {
+            std::lock_guard lock(mutex_);
+            const auto found = pending_.find(source.request_id);
+            if (found == pending_.end()
+                || !(completion = copy_completion(source))) {
+                ++rejected_operations_;
+                return false;
+            }
+            callback = std::move(found->second.callback);
+            retained_input_bytes_ -= found->second.retained_bytes;
+            pending_.erase(found);
+            copied_completion_bytes_ += completion->locator.size()
+                + completion->grant_id.size() + completion->display_name.size()
+                + completion->error_code.size();
+            ++completed_requests_;
+        }
+        if (callback) {
+            try { callback(std::move(*completion)); }
+            catch (...) { }
+        }
+        return true;
+    }
+
+    void retire() {
+        std::vector<std::pair<std::uint64_t, pending_request>> pending;
+        {
+            std::lock_guard lock(mutex_);
+            if (retiring_) return;
+            retiring_ = true;
+            pending.reserve(pending_.size());
+            for (auto& [id, request] : pending_)
+                pending.emplace_back(id, std::move(request));
+            retired_requests_ += pending_.size();
+            pending_.clear();
+            queued_.clear();
+            retained_input_bytes_ = 0;
+        }
+        for (auto& [id, request] : pending) {
+            if (!request.callback) continue;
+            try {
+                request.callback(file_grant_durable_completion_data_v2{
+                    id, WEBSCENE_FILE_GRANT_DURABLE_CANCELLED_V2, 0U,
+                    {}, {}, 0U, 0U, {}, {}});
+            } catch (...) { }
+        }
+        std::lock_guard lock(mutex_);
+        retiring_ = false;
+    }
+
+    file_grant_durable_metrics_v2 metrics() const {
+        std::lock_guard lock(mutex_);
+        return {queued_.size(), pending_.size(), retained_input_bytes_,
+            completed_requests_, retired_requests_, copied_completion_bytes_,
+            rejected_operations_};
+    }
+
+private:
+    struct pending_request final {
+        std::size_t retained_bytes{};
+        file_grant_durable_completion_callback_v2 callback;
+    };
+
+    static bool valid_token(webscene_file_panel_token_v2 token) {
+        return token.data != nullptr && token.byte_count != 0
+            && token.byte_count <= file_panel_maximum_token_bytes_v2;
+    }
+    static bool empty_token(webscene_file_panel_token_v2 token) {
+        return token.data == nullptr && token.byte_count == 0;
+    }
+    void reject() { std::lock_guard lock(mutex_); ++rejected_operations_; }
+
+    static std::unique_ptr<file_grant_durable_request_lease_v2> copy_request(
+        const webscene_file_grant_durable_request_v2& source) {
+        if (source.struct_size < sizeof(source) || source.version != 2
+            || source.request_id == 0 || source.reserved != 0
+            || source.action < WEBSCENE_FILE_GRANT_DURABLE_EXPORT_V2
+            || source.action > WEBSCENE_FILE_GRANT_DURABLE_REVOKE_V2)
+            return {};
+        const auto partition = file_panel_string_view_v2(source.storage_partition,
+            WEBSCENE_FILE_GRANT_DURABLE_MAXIMUM_PARTITION_BYTES_V2);
+        const auto origin = file_panel_string_view_v2(source.serialized_origin,
+            WEBSCENE_FILE_GRANT_DURABLE_MAXIMUM_ORIGIN_BYTES_V2);
+        if (!partition || partition->empty() || !origin || origin->empty()
+            || *origin == "null") return {};
+        const bool exporting =
+            source.action == WEBSCENE_FILE_GRANT_DURABLE_EXPORT_V2;
+        if (exporting
+                ? (!valid_token(source.grant_id) || !empty_token(source.locator))
+                : (!empty_token(source.grant_id)
+                    || source.locator.data == nullptr
+                    || source.locator.byte_count
+                        != WEBSCENE_FILE_GRANT_DURABLE_LOCATOR_BYTES_V2))
+            return {};
+        auto result = std::make_unique<file_grant_durable_request_lease_v2>();
+        result->view = source;
+        if (exporting) result->grant_id.assign(source.grant_id.data,
+            source.grant_id.data + source.grant_id.byte_count);
+        else result->locator.assign(source.locator.data,
+            source.locator.data + source.locator.byte_count);
+        result->storage_partition.assign(*partition);
+        result->serialized_origin.assign(*origin);
+        result->bind();
+        return result;
+    }
+
+    static std::optional<file_grant_durable_completion_data_v2>
+    copy_completion(const webscene_file_grant_durable_completion_v2& source) {
+        if (source.struct_size < sizeof(source) || source.version != 2
+            || source.request_id == 0
+            || source.status > WEBSCENE_FILE_GRANT_DURABLE_LIMIT_V2
+            || source.action < WEBSCENE_FILE_GRANT_DURABLE_EXPORT_V2
+            || source.action > WEBSCENE_FILE_GRANT_DURABLE_REVOKE_V2)
+            return std::nullopt;
+        const auto locator = source.locator.byte_count == 0
+            ? std::optional<std::span<const std::uint8_t>>(std::span<const std::uint8_t>{})
+            : source.locator.data != nullptr
+                && source.locator.byte_count
+                    == WEBSCENE_FILE_GRANT_DURABLE_LOCATOR_BYTES_V2
+                ? std::optional<std::span<const std::uint8_t>>(
+                    std::span<const std::uint8_t>{source.locator.data,
+                        source.locator.byte_count})
+                : std::nullopt;
+        const auto grant = source.grant_id.byte_count == 0
+            ? std::optional<std::span<const std::uint8_t>>(std::span<const std::uint8_t>{})
+            : valid_token(source.grant_id)
+                ? std::optional<std::span<const std::uint8_t>>(
+                    std::span<const std::uint8_t>{source.grant_id.data,
+                        source.grant_id.byte_count})
+                : std::nullopt;
+        const auto name = file_panel_string_view_v2(source.display_name,
+            file_panel_maximum_metadata_bytes_v2);
+        const auto error = file_panel_string_view_v2(source.error_code,
+            file_panel_maximum_error_code_bytes_v2);
+        if (!locator || !grant || !name || !error) return std::nullopt;
+        const bool success = source.status == WEBSCENE_FILE_GRANT_DURABLE_SUCCESS_V2;
+        if (!success) {
+            if (!locator->empty() || !grant->empty() || !name->empty()
+                || source.kind != 0 || source.capabilities != 0)
+                return std::nullopt;
+        } else if (source.action == WEBSCENE_FILE_GRANT_DURABLE_REVOKE_V2) {
+            if (locator->size() != WEBSCENE_FILE_GRANT_DURABLE_LOCATOR_BYTES_V2
+                || !grant->empty() || !name->empty() || source.kind != 0
+                || source.capabilities != 0) return std::nullopt;
+        } else {
+            if (locator->size() != WEBSCENE_FILE_GRANT_DURABLE_LOCATOR_BYTES_V2
+                || (source.action == WEBSCENE_FILE_GRANT_DURABLE_EXPORT_V2
+                        ? !grant->empty() : grant->empty())
+                || (source.kind != WEBSCENE_FILE_PANEL_ENTRY_FILE_V2
+                    && source.kind != WEBSCENE_FILE_PANEL_ENTRY_DIRECTORY_V2)
+                || !file_panel_safe_display_name_v2(*name)) return std::nullopt;
+        }
+        file_grant_durable_completion_data_v2 result;
+        result.request_id = source.request_id;
+        result.status = source.status;
+        result.action = source.action;
+        result.locator.assign(locator->begin(), locator->end());
+        result.grant_id.assign(grant->begin(), grant->end());
+        result.kind = source.kind;
+        result.capabilities = source.capabilities;
+        result.display_name.assign(*name);
+        result.error_code.assign(*error);
+        return result;
+    }
+
+    mutable std::mutex mutex_;
+    std::deque<std::unique_ptr<file_grant_durable_request_lease_v2>> queued_;
     std::unordered_map<std::uint64_t, pending_request> pending_;
     std::size_t retained_input_bytes_{};
     std::uint64_t completed_requests_{};

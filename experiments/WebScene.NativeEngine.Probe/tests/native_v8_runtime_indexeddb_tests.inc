@@ -72,6 +72,265 @@ void wait_for_indexeddb_flag(webscene_engine* engine, std::string_view expressio
         "IndexedDB operation did not settle: " + std::string(expression));
 }
 
+const webscene_file_grant_durable_request_v2*
+take_indexeddb_durable_request(webscene_engine* engine)
+{
+    const webscene_file_grant_durable_request_v2* request = nullptr;
+    for (int attempt = 0; attempt < 500 && request == nullptr; ++attempt) {
+        request = webscene_engine_take_file_grant_durable_request_v2(engine);
+        if (request == nullptr) {
+            (void)evaluate(engine, "true", "indexeddb-durable-pump.js");
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+    }
+    require(request != nullptr, "durable file grant request was not published");
+    return request;
+}
+
+bool complete_indexeddb_durable_request(
+    webscene_engine* engine,
+    std::uint64_t request_id,
+    std::uint32_t action,
+    std::uint32_t status,
+    const std::array<std::uint8_t,
+        WEBSCENE_FILE_GRANT_DURABLE_LOCATOR_BYTES_V2>& locator,
+    const std::vector<std::uint8_t>& grant = {},
+    std::string_view name = {})
+{
+    const bool success = status == WEBSCENE_FILE_GRANT_DURABLE_SUCCESS_V2;
+    const bool revoke = action == WEBSCENE_FILE_GRANT_DURABLE_REVOKE_V2;
+    const webscene_file_grant_durable_completion_v2 completion{
+        sizeof(completion), 2U, request_id, status, action,
+        {success ? locator.data() : nullptr, success ? locator.size() : 0U},
+        {success && !grant.empty() ? grant.data() : nullptr,
+            success ? grant.size() : 0U},
+        success && !revoke ? WEBSCENE_FILE_PANEL_ENTRY_FILE_V2 : 0U,
+        success && !revoke ? WEBSCENE_FILE_PANEL_GRANT_READ_V2 : 0U,
+        {success && !revoke ? name.data() : nullptr,
+            success && !revoke ? name.size() : 0U}, {}};
+    return webscene_engine_complete_file_grant_durable_request_v2(
+        engine, &completion) != 0;
+}
+
+void test_indexeddb_file_system_handle_persistence()
+{
+    const auto root = std::filesystem::temp_directory_path()
+        / ("webscene-indexeddb-file-handles-"
+            + std::to_string(std::chrono::steady_clock::now()
+                .time_since_epoch().count()));
+    std::filesystem::create_directories(root);
+    const auto cleanup = [&] {
+        std::error_code error;
+        std::filesystem::remove_all(root, error);
+    };
+    constexpr std::string_view partition{"code-oss-durable-profile"};
+    constexpr std::string_view expected_origin{"http://loopback"};
+    const std::vector<std::uint8_t> live_grant{1U, 0U, 2U, 255U};
+    const std::vector<std::uint8_t> restored_grant{9U, 0U, 8U, 7U};
+    std::array<std::uint8_t, WEBSCENE_FILE_GRANT_DURABLE_LOCATOR_BYTES_V2>
+        locator{};
+    for (std::size_t index = 0; index < locator.size(); ++index)
+        locator[index] = static_cast<std::uint8_t>(index + 11U);
+
+    auto* engine = create_indexeddb_engine(root, partition, 43001U);
+    require(engine != nullptr, "durable IndexedDB engine creation failed");
+    const webscene_input_event activation{
+        WEBSCENE_INPUT_POINTER_DOWN, 1U | (1U << 8U), 43001U,
+        1.0, 1.0, 0.0, 0.0};
+    require(webscene_engine_enqueue(engine, &activation) != 0,
+        "durable picker activation was rejected");
+    require(evaluate(engine, "true", "indexeddb-picker-activation.js") == "true",
+        "durable picker activation did not drain");
+    execute(engine, R"JS(
+      globalThis.__durablePicker='pending';
+      showOpenFilePicker().then(handles=>{
+        globalThis.__durableHandle=handles[0];
+        __durablePicker='ready';
+      }, error=>{__durablePicker=error.name});
+    )JS", "indexeddb-durable-picker.js");
+    const webscene_file_panel_request_v2* panel = nullptr;
+    for (int attempt = 0; attempt < 250 && panel == nullptr; ++attempt) {
+        panel = webscene_engine_take_file_panel_request_v2(engine);
+        if (panel == nullptr)
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    require(panel != nullptr, "durable picker request was not published");
+    const auto panel_id = panel->request_id;
+    webscene_file_panel_request_release_v2(panel);
+    constexpr std::string_view file_name{"durable🙂.txt"};
+    const webscene_file_panel_entry_v2 entry{
+        sizeof(entry), 2U, WEBSCENE_FILE_PANEL_ENTRY_FILE_V2,
+        WEBSCENE_FILE_PANEL_GRANT_READ_V2,
+        {file_name.data(), file_name.size()},
+        {live_grant.data(), live_grant.size()}};
+    const webscene_file_panel_completion_v2 opened{
+        sizeof(opened), 2U, panel_id, WEBSCENE_FILE_PANEL_SUCCESS_V2, 0U,
+        &entry, 1U, {}, {}};
+    require(webscene_engine_complete_file_panel_request_v2(engine, &opened) != 0,
+        "durable picker completion was rejected");
+    require(evaluate_until_equals(engine, "__durablePicker",
+                "indexeddb-durable-picker-result.js", "\"ready\"", 2500)
+            == "\"ready\"",
+        "durable picker did not produce a handle");
+
+    execute_and_wait(engine, R"JS(
+      globalThis.__durableStore={done:false};
+      (async()=>{
+        const opened=await new Promise((resolve,reject)=>{
+          const request=indexedDB.open('handles',1);
+          request.onupgradeneeded=()=>request.result.createObjectStore('store');
+          request.onsuccess=()=>resolve(request.result);
+          request.onerror=()=>reject(request.error);
+        });
+        const tx=opened.transaction('store','readwrite');
+        tx.objectStore('store').put(
+          {handle:__durableHandle,bytes:new Uint8Array([7,8])},'key');
+        await new Promise((resolve,reject)=>{
+          tx.oncomplete=resolve; tx.onabort=tx.onerror=()=>reject(tx.error);
+        });
+        opened.close();
+        __durableStore={done:true};
+      })().catch(error=>{__durableStore={done:true,error:error.name}});
+    )JS", "indexeddb-durable-store.js");
+    auto* durable = take_indexeddb_durable_request(engine);
+    require(durable->action == WEBSCENE_FILE_GRANT_DURABLE_EXPORT_V2
+            && durable->grant_id.byte_count == live_grant.size()
+            && std::memcmp(durable->grant_id.data,
+                live_grant.data(), live_grant.size()) == 0
+            && std::string_view(durable->storage_partition.data,
+                durable->storage_partition.byte_count) == partition
+            && std::string_view(durable->serialized_origin.data,
+                durable->serialized_origin.byte_count) == expected_origin,
+        "durable export lost its opaque grant or storage binding");
+    auto durable_id = durable->request_id;
+    webscene_file_grant_durable_request_release_v2(durable);
+    require(complete_indexeddb_durable_request(engine, durable_id,
+            WEBSCENE_FILE_GRANT_DURABLE_EXPORT_V2,
+            WEBSCENE_FILE_GRANT_DURABLE_SUCCESS_V2, locator, {}, file_name),
+        "durable export completion was rejected");
+    wait_for_indexeddb_flag(engine, "__durableStore.done===true");
+    require(evaluate(engine, "!__durableStore.error",
+                "indexeddb-durable-store-result.js") == "true",
+        "IndexedDB durable store failed");
+    webscene_engine_destroy(engine);
+
+    engine = create_indexeddb_engine(root, partition, 43002U);
+    require(engine != nullptr, "durable IndexedDB restart engine failed");
+    execute_and_wait(engine, R"JS(
+      globalThis.__durableLoad={done:false};
+      (async()=>{
+        const opened=await new Promise((resolve,reject)=>{
+          const request=indexedDB.open('handles');
+          request.onsuccess=()=>resolve(request.result);
+          request.onerror=()=>reject(request.error);
+        });
+        const tx=opened.transaction('store');
+        const value=await new Promise((resolve,reject)=>{
+          const request=tx.objectStore('store').get('key');
+          request.onsuccess=()=>resolve(request.result);
+          request.onerror=()=>reject(request.error);
+        });
+        globalThis.__restoredHandle=value.handle;
+        __durableLoad={done:true,file:value.handle instanceof FileSystemFileHandle,
+          name:value.handle.name,bytes:Array.from(value.bytes)};
+        opened.close();
+      })().catch(error=>{__durableLoad={done:true,error:error.name}});
+    )JS", "indexeddb-durable-load.js");
+    durable = take_indexeddb_durable_request(engine);
+    require(durable->action == WEBSCENE_FILE_GRANT_DURABLE_RESTORE_V2
+            && durable->locator.byte_count == locator.size()
+            && std::memcmp(durable->locator.data,
+                locator.data(), locator.size()) == 0
+            && std::string_view(durable->storage_partition.data,
+                durable->storage_partition.byte_count) == partition
+            && std::string_view(durable->serialized_origin.data,
+                durable->serialized_origin.byte_count) == expected_origin,
+        "durable restore lost its locator or storage binding");
+    durable_id = durable->request_id;
+    webscene_file_grant_durable_request_release_v2(durable);
+    require(complete_indexeddb_durable_request(engine, durable_id,
+            WEBSCENE_FILE_GRANT_DURABLE_RESTORE_V2,
+            WEBSCENE_FILE_GRANT_DURABLE_SUCCESS_V2, locator,
+            restored_grant, file_name),
+        "durable restore completion was rejected");
+    wait_for_indexeddb_flag(engine, "__durableLoad.done===true");
+    const auto durable_load_result = evaluate(engine,
+        "__durableLoad.file===true&&__durableLoad.name==='durable🙂.txt'"
+        "&&JSON.stringify(__durableLoad.bytes)==='[7,8]'",
+        "indexeddb-durable-load-result.js");
+    require(durable_load_result == "true",
+        "IndexedDB did not rehydrate the file handle after restart: "
+            + durable_load_result);
+
+    execute_and_wait(engine, R"JS(
+      globalThis.__durableDelete={done:false};
+      const request=indexedDB.deleteDatabase('handles');
+      request.onsuccess=()=>{__durableDelete={done:true}};
+      request.onerror=()=>{__durableDelete={done:true,error:request.error?.name}};
+    )JS", "indexeddb-durable-delete.js");
+    durable = take_indexeddb_durable_request(engine);
+    if (durable->action == WEBSCENE_FILE_GRANT_DURABLE_RESTORE_V2) {
+        durable_id = durable->request_id;
+        webscene_file_grant_durable_request_release_v2(durable);
+        require(complete_indexeddb_durable_request(engine, durable_id,
+                WEBSCENE_FILE_GRANT_DURABLE_RESTORE_V2,
+                WEBSCENE_FILE_GRANT_DURABLE_SUCCESS_V2, locator,
+                restored_grant, file_name),
+            "durable delete preflight restore was rejected");
+        durable = take_indexeddb_durable_request(engine);
+    }
+    require(durable->action == WEBSCENE_FILE_GRANT_DURABLE_REVOKE_V2
+            && durable->locator.byte_count == locator.size(),
+        "IndexedDB deletion did not revoke its durable locator: action="
+            + std::to_string(durable->action) + " locator="
+            + std::to_string(durable->locator.byte_count));
+    durable_id = durable->request_id;
+    webscene_file_grant_durable_request_release_v2(durable);
+    require(complete_indexeddb_durable_request(engine, durable_id,
+            WEBSCENE_FILE_GRANT_DURABLE_REVOKE_V2,
+            WEBSCENE_FILE_GRANT_DURABLE_SUCCESS_V2, locator),
+        "durable revoke completion was rejected");
+    wait_for_indexeddb_flag(engine, "__durableDelete.done===true");
+    require(evaluate(engine, "!__durableDelete.error",
+                "indexeddb-durable-delete-result.js") == "true",
+        "IndexedDB durable deletion failed");
+
+    execute_and_wait(engine, R"JS(
+      globalThis.__staleDurable={done:false};
+      (async()=>{
+        const opened=await new Promise((resolve,reject)=>{
+          const request=indexedDB.open('stale-handles',1);
+          request.onupgradeneeded=()=>request.result.createObjectStore('store');
+          request.onsuccess=()=>resolve(request.result);
+          request.onerror=()=>reject(request.error);
+        });
+        const tx=opened.transaction('store','readwrite');
+        tx.objectStore('store').put(__restoredHandle,'key');
+        tx.oncomplete=()=>{__staleDurable={done:true};opened.close()};
+        tx.onabort=tx.onerror=()=>{__staleDurable={done:true,error:tx.error?.name}};
+      })().catch(error=>{__staleDurable={done:true,error:error.name}});
+    )JS", "indexeddb-durable-stale-store.js");
+    durable = take_indexeddb_durable_request(engine);
+    require(durable->action == WEBSCENE_FILE_GRANT_DURABLE_EXPORT_V2,
+        "stale-generation fixture did not export its handle");
+    durable_id = durable->request_id;
+    webscene_file_grant_durable_request_release_v2(durable);
+    constexpr std::string_view navigated{"http://127.0.0.1:43003/"};
+    require(webscene_engine_load_url(
+                engine, navigated.data(), navigated.size()) != 0U
+            && evaluate_until_equals(engine, "location.href",
+                   "indexeddb-durable-stale-navigation.js",
+                   "\"http://127.0.0.1:43003/\"", 2500)
+                == "\"http://127.0.0.1:43003/\"",
+        "stale-generation fixture did not navigate");
+    require(!complete_indexeddb_durable_request(engine, durable_id,
+            WEBSCENE_FILE_GRANT_DURABLE_EXPORT_V2,
+            WEBSCENE_FILE_GRANT_DURABLE_SUCCESS_V2, locator, {}, file_name),
+        "stale export completion crossed the retired generation");
+    webscene_engine_destroy(engine);
+    cleanup();
+}
+
 void test_indexeddb_persistence_and_transaction_contract()
 {
     const auto root = std::filesystem::temp_directory_path()
@@ -346,4 +605,5 @@ void test_indexeddb_runtime_contract()
 {
     test_indexeddb_persistence_and_transaction_contract();
     test_indexeddb_quota_and_corruption_failures();
+    test_indexeddb_file_system_handle_persistence();
 }

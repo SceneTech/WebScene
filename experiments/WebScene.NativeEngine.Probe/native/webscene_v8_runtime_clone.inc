@@ -277,16 +277,18 @@
                     isolate, "File system handle authority is unavailable"));
                 return v8::Nothing<bool>();
             }
-            if (for_storage) {
-                ThrowDataCloneError(js_string(isolate,
-                    "Persistent file system handles require durable native authority"));
-                return v8::Nothing<bool>();
-            }
             if (handle->owner->origin == "null"
                 || runtime->registered_file_system_origin(
                     isolate->GetCurrentContext()) != handle->owner->origin) {
                 ThrowDataCloneError(js_string(isolate,
                     "File system handles require a matching non-opaque origin"));
+                return v8::Nothing<bool>();
+            }
+            if (for_storage
+                && (runtime->storage_partition_key.empty()
+                    || !runtime->file_grant_durable_request_sink)) {
+                ThrowDataCloneError(js_string(isolate,
+                    "Persistent file system handle authority is unavailable"));
                 return v8::Nothing<bool>();
             }
             if (packet.file_system_handles.size()

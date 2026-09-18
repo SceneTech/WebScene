@@ -34,7 +34,9 @@
 
     const head = await fetch('head', {method:'HEAD'});
     const method = await fetch('method', {
-      method:'POST', headers:{'X-Broker-Token':'method-token'}, body:'payload'
+      method:'POST', headers:{
+        'X-Broker-Token':'method-token', 'X-CSRF-Token':'csrf-probe'
+      }, body:'payload'
     });
     record('HEAD and rejected methods preserve method and empty-body semantics',
       head.status === 200 && await head.text() === ''
@@ -72,7 +74,8 @@
         && observed('conditional')?.validator === '"cache-v1"'
         && observed('head')?.method === 'HEAD'
         && observed('method')?.method === 'POST'
-        && observed('method')?.token === 'method-token',
+        && observed('method')?.token === 'method-token'
+        && observed('method')?.csrf === 'csrf-probe',
       JSON.stringify(report));
     state.diagnostics.push(`bulk32MiB=${bulkDuration.toFixed(3)}ms`);
     await registration.unregister();

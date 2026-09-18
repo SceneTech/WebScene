@@ -70,7 +70,8 @@
                 const std::string& entity_tag,
                 int64_t last_modified_unix_seconds,
                 webscene_native::v8_dom_runtime::resource_response& response) {
-                if (resource_load_callback_v4_ == nullptr
+                if (resource_load_callback_v5_ == nullptr
+                    && resource_load_callback_v4_ == nullptr
                     && resource_load_callback_v3_ == nullptr
                     && resource_load_callback_v2_ == nullptr
                     && resource_load_callback_ == nullptr) return false;
@@ -157,11 +158,44 @@
                     request_context.credentials,
                     request_context.cookie.data(),
                     request_context.cookie.size()};
+                std::vector<webscene_resource_header_v4> native_request_headers;
+                native_request_headers.reserve(request_context.headers.size());
+                for (const auto& [name, value] : request_context.headers) {
+                    native_request_headers.push_back(webscene_resource_header_v4{
+                        sizeof(webscene_resource_header_v4),
+                        name.data(), name.size(), value.data(), value.size()});
+                }
+                const webscene_resource_request_context_v5 native_context_v5{
+                    sizeof(webscene_resource_request_context_v5),
+                    request_context.initiator,
+                    request_context.origin.data(),
+                    request_context.origin.size(),
+                    request_context.referrer.data(),
+                    request_context.referrer.size(),
+                    request_context.mode,
+                    request_context.destination,
+                    request_context.method.data(),
+                    request_context.method.size(),
+                    request_context.body.data(),
+                    request_context.body.size(),
+                    request_context.content_type.data(),
+                    request_context.content_type.size(),
+                    request_context.credentials,
+                    request_context.cookie.data(),
+                    request_context.cookie.size(),
+                    native_request_headers.data(),
+                    native_request_headers.size()};
                 webscene_resource_response_v4 native_response{};
                 const auto invoke = [&](char* destination, size_t capacity) {
                     native_response = {};
                     native_response.struct_size = sizeof(native_response);
-                    return resource_load_callback_v4_ != nullptr
+                    return resource_load_callback_v5_ != nullptr
+                        ? resource_load_callback_v5_(
+                            resource_load_v5_user_data_, kind, url.data(), url.size(),
+                            entity_tag.data(), entity_tag.size(),
+                            last_modified_unix_seconds, &native_context_v5,
+                            &native_response, destination, capacity)
+                        : resource_load_callback_v4_ != nullptr
                         ? resource_load_callback_v4_(
                             resource_load_v4_user_data_, kind, url.data(), url.size(),
                             entity_tag.data(), entity_tag.size(),
@@ -231,7 +265,8 @@
                 response.content.assign(
                     buffer + envelope_header_size + response_tag_length,
                     required - envelope_header_size - response_tag_length);
-                if (resource_load_callback_v4_ != nullptr) {
+                if (resource_load_callback_v5_ != nullptr
+                    || resource_load_callback_v4_ != nullptr) {
                     response.has_http_metadata = true;
                     constexpr size_t maximum_response_headers = 64U;
                     constexpr size_t maximum_response_metadata_bytes = 64U * 1024U;

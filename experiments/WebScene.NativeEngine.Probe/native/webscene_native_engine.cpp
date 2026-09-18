@@ -565,6 +565,8 @@ private:
     void* resource_load_v3_user_data_{nullptr};
     webscene_resource_load_callback_v4 resource_load_callback_v4_{nullptr};
     void* resource_load_v4_user_data_{nullptr};
+    webscene_resource_load_callback_v5 resource_load_callback_v5_{nullptr};
+    void* resource_load_v5_user_data_{nullptr};
     webscene_stylesheet_consumed_callback stylesheet_consumed_callback_{nullptr};
     void* stylesheet_consumed_user_data_{nullptr};
     webscene_webgpu_policy_callback webgpu_policy_callback_{nullptr};
@@ -1125,6 +1127,11 @@ webscene_engine* webscene_engine_create_with_options(const webscene_engine_optio
             + sizeof(void*);
         const auto has_navigation_policy = options->struct_size
             >= navigation_policy_options_size;
+        constexpr auto resource_callback_v5_options_size =
+            offsetof(webscene_engine_options, resource_load_v5_user_data)
+            + sizeof(void*);
+        const auto has_resource_callback_v5 = options->struct_size
+            >= resource_callback_v5_options_size;
         if (has_storage_options && options->storage_directory != nullptr
             && options->storage_directory_length > 0U) {
             storage_directory.assign(
@@ -1151,6 +1158,8 @@ webscene_engine* webscene_engine_create_with_options(const webscene_engine_optio
             has_resource_callback_v3 ? options->resource_load_v3_user_data : nullptr,
             has_resource_callback_v4 ? options->resource_load_callback_v4 : nullptr,
             has_resource_callback_v4 ? options->resource_load_v4_user_data : nullptr,
+            has_resource_callback_v5 ? options->resource_load_callback_v5 : nullptr,
+            has_resource_callback_v5 ? options->resource_load_v5_user_data : nullptr,
             has_scene_published_callback ? options->scene_published_callback : nullptr,
             has_scene_published_callback ? options->scene_published_user_data : nullptr,
             has_text_measure_callback ? options->text_measure_callback : nullptr,

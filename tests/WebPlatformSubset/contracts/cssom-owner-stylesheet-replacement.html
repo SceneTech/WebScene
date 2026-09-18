@@ -1,0 +1,218 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Owner-backed stylesheets reject constructed-only replacement</title>
+<body>
+<script>
+  const state = window.__webSceneWptState = {
+    complete: false, harness: null, results: [], errors: [], diagnostics: []
+  };
+
+  function record(name, error) {
+    state.results.push({
+      name,
+      status: error ? "FAIL" : "PASS",
+      message: error ? String(error && error.message || error) : null,
+      stack: error && error.stack ? String(error.stack) : null
+    });
+  }
+
+  async function exercise(document, view, prefix) {
+    const style = document.createElement("style");
+    const target = document.createElement("div");
+    style.textContent = `.${prefix} { color: rgb(17, 23, 31); }`;
+    target.className = prefix;
+    document.head.appendChild(style);
+    document.body.appendChild(target);
+    const sheet = style.sheet;
+    const rules = sheet.cssRules;
+    const rule = rules[0];
+    const authoredText = style.textContent;
+    const cssText = rule.cssText;
+    const observer = new MutationObserver(() => {});
+    observer.observe(style, { childList: true, characterData: true, subtree: true });
+
+    const syncErrors = [];
+    for (const invoke of [
+      () => sheet.replaceSync(),
+      () => sheet.replaceSync(Symbol("css")),
+      () => sheet.replaceSync(`.${prefix} { color: red; }`)
+    ]) {
+      try { invoke(); syncErrors.push({ name: "none", realm: false }); }
+      catch (error) {
+        syncErrors.push({
+          name: error.name,
+          realm: (typeof view.Error !== "function" || error instanceof view.Error)
+            || (typeof view.DOMException === "function"
+              && error instanceof view.DOMException)
+        });
+      }
+    }
+
+    const operations = [];
+    for (const invoke of [
+      () => sheet.replace(),
+      () => sheet.replace(Symbol("css")),
+      () => sheet.replace(`.${prefix} { color: blue; }`)
+    ]) {
+      try {
+        const promise = invoke();
+        operations.push({ promise, synchronous: "returned",
+          realmPromise: typeof promise.then === "function" });
+      } catch (error) {
+        operations.push({ synchronous: error.name, realmPromise: false });
+      }
+    }
+    const asyncErrors = await Promise.all(operations.map(async operation => {
+      if (!operation.promise) return { name: operation.synchronous, realm: false };
+      try { await operation.promise; return { name: "none", realm: false }; }
+      catch (error) {
+        return {
+          name: error.name,
+          realm: (typeof view.Error !== "function" || error instanceof view.Error)
+            || (typeof view.DOMException === "function"
+              && error instanceof view.DOMException)
+        };
+      }
+    }));
+
+    const promiseConstructor = operations[0].promise?.constructor;
+    const realmPromises = operations.every(operation => operation.promise
+      && operation.promise.constructor === promiseConstructor
+      && (typeof view.Promise !== "function"
+        || operation.promise instanceof view.Promise));
+    const attached = {
+      methods: [typeof sheet.replaceSync, typeof sheet.replace],
+      lengths: [sheet.replaceSync.length, sheet.replace.length],
+      syncErrors,
+      asyncErrors,
+      returnedPromises: operations.every(operation =>
+        operation.synchronous === "returned" && operation.realmPromise)
+        && realmPromises,
+      stable: sheet.cssRules === rules && rules[0] === rule
+        && rule.cssText === cssText && style.textContent === authoredText,
+      color: view.getComputedStyle(target).color,
+      mutationRecords: observer.takeRecords().length
+    };
+
+    style.remove();
+    let detachedSync = { name: "none", realm: false };
+    try { sheet.replaceSync(`.${prefix} { color: green; }`); }
+    catch (error) {
+      detachedSync = {
+        name: error.name,
+        realm: typeof view.DOMException !== "function"
+          || error instanceof view.DOMException
+      };
+    }
+    const detachedPromise = sheet.replace(`.${prefix} { color: green; }`);
+    let detachedAsync = { name: "none", realm: false };
+    try { await detachedPromise; }
+    catch (error) {
+      detachedAsync = {
+        name: error.name,
+        realm: typeof view.DOMException !== "function"
+          || error instanceof view.DOMException
+      };
+    }
+    const detached = {
+      ownerSheetNull: style.sheet === null,
+      sync: detachedSync,
+      async: detachedAsync,
+      realmPromise: detachedPromise.constructor === promiseConstructor
+        && (typeof view.Promise !== "function"
+          || detachedPromise instanceof view.Promise),
+      stable: sheet.cssRules === rules && rules[0] === rule
+        && rule.cssText === cssText && style.textContent === authoredText,
+      color: view.getComputedStyle(target).color,
+      mutationRecords: observer.takeRecords().length
+    };
+
+    document.head.appendChild(style);
+    const reattached = {
+      retainedStable: sheet.cssRules === rules && rules[0] === rule,
+      activeRuleText: style.sheet.cssRules[0].cssText,
+      color: view.getComputedStyle(target).color,
+      textStable: style.textContent === authoredText
+    };
+    observer.disconnect();
+    style.remove();
+    target.remove();
+    return { attached, detached, reattached };
+  }
+
+  (async () => {
+    try {
+      const frame = document.createElement("iframe");
+      document.body.appendChild(frame);
+      const main = await exercise(document, window, "replace-main");
+      const nested = await exercise(
+        frame.contentDocument, frame.contentWindow, "replace-frame");
+
+      const methodsPass = value => value.attached.methods[0] === "function"
+        && value.attached.methods[1] === "function"
+        && value.attached.lengths[0] === 1 && value.attached.lengths[1] === 1;
+      const errorsPass = (actual, expected) => actual.length === expected.length
+        && actual.every((error, index) => error.name === expected[index]
+          && error.realm);
+      const syncPass = value => errorsPass(
+        value.attached.syncErrors,
+        ["TypeError", "TypeError", "NotAllowedError"]);
+      const asyncPass = value => value.attached.returnedPromises && errorsPass(
+        value.attached.asyncErrors,
+        ["TypeError", "TypeError", "NotAllowedError"]);
+      const attachedPass = value => value.attached.stable
+        && value.attached.color === "rgb(17, 23, 31)"
+        && value.attached.mutationRecords === 0;
+      const detachedPass = value => value.detached.ownerSheetNull
+        && value.detached.sync.name === "NotAllowedError"
+        && value.detached.sync.realm
+        && value.detached.async.name === "NotAllowedError"
+        && value.detached.async.realm
+        && value.detached.realmPromise
+        && value.detached.stable
+        && value.detached.color === "rgb(0, 0, 0)"
+        && value.detached.mutationRecords === 0;
+      const reattachedPass = value => value.reattached.retainedStable
+        && value.reattached.activeRuleText.includes("rgb(17, 23, 31)")
+        && value.reattached.color === "rgb(17, 23, 31)"
+        && value.reattached.textStable;
+
+      record("owner-backed sheets expose replacement methods with Web IDL arity",
+        methodsPass(main) && methodsPass(nested)
+          ? null : new Error(JSON.stringify({ main: main.attached, nested: nested.attached })));
+      record("replaceSync throws conversion and constructed-only errors synchronously",
+        syncPass(main) && syncPass(nested)
+          ? null : new Error(JSON.stringify({ main: main.attached.syncErrors,
+            nested: nested.attached.syncErrors })));
+      record("replace returns realm-local promises rejected with matching errors",
+        asyncPass(main) && asyncPass(nested)
+          ? null : new Error(JSON.stringify({ main: main.attached,
+            nested: nested.attached })));
+      record("denied replacement preserves rules, style, owner text, and DOM records",
+        attachedPass(main) && attachedPass(nested)
+          ? null : new Error(JSON.stringify({ main: main.attached, nested: nested.attached })));
+      record("detached owner sheets continue to reject without changing retained rules",
+        detachedPass(main) && detachedPass(nested)
+          ? null : new Error(JSON.stringify({ main: main.detached, nested: nested.detached })));
+      record("reattachment preserves authored rules and style after denied replacement",
+        reattachedPass(main) && reattachedPass(nested)
+          ? null : new Error(JSON.stringify({ main: main.reattached,
+            nested: nested.reattached })));
+      state.diagnostics.push(JSON.stringify({ main, nested }));
+      frame.remove();
+    } catch (error) {
+      record("owner stylesheet replacement setup", error);
+    }
+
+    const failure = state.results.find(result => result.status !== "PASS");
+    state.harness = failure
+      ? { status: 1, message: failure.message, stack: failure.stack }
+      : { status: 0, message: null, stack: null };
+    state.complete = true;
+    const evidence = document.createElement("pre");
+    evidence.id = "cssom-owner-stylesheet-replacement-evidence";
+    evidence.hidden = true;
+    evidence.textContent = JSON.stringify(state);
+    document.body.appendChild(evidence);
+  })();
+</script>

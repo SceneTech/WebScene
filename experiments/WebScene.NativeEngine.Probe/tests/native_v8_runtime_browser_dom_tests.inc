@@ -1695,12 +1695,117 @@ void test_native_mutable_stylesheet_cssom(webscene_engine* engine)
             == R"JSON({"main":{"inserted":[1,2,".monaco-main","none",true,true,true,"SyntaxError"],"mutated":[2,"inline-block","inline-block"],"media":[2,true,true,true,4,"(min-width: 1px)",true,2,true,true,true,true,"grid",true],"mediaReflection":[true,true,"(min-width: 1px)",1,"(min-width: 1px)","(min-width: 1px)","(min-width: 1px)"],"mediaForwarded":[true,"(max-width: 1px)","(max-width: 1px)","block",true],"mediaAppended":["(max-width: 1px), screen",2,"(max-width: 1px), screen","grid"],"mediaListDeleted":["(max-width: 1px)",1,"(max-width: 1px)","NotFoundError","block"],"mediaDeleted":[1,true,true,"inline-block"],"reconnected":[true,"grid",true],"disabled":[true,"block"],"enabled":[false,"grid"],"mediaMiss":["(max-width: 1px)",1,"(max-width: 1px)","block"],"mediaMatch":["(min-width: 1px)","grid"],"deleted":[2,true,0,true]},"frame":{"inserted":[1,2,".monaco-frame","none",true,true,true,"SyntaxError"],"mutated":[2,"inline-flex","inline-flex"],"media":[2,true,true,true,4,"(min-width: 1px)",true,2,true,true,true,true,"grid",true],"mediaReflection":[true,true,"(min-width: 1px)",1,"(min-width: 1px)","(min-width: 1px)","(min-width: 1px)"],"mediaForwarded":[true,"(max-width: 1px)","(max-width: 1px)","block",true],"mediaAppended":["(max-width: 1px), screen",2,"(max-width: 1px), screen","grid"],"mediaListDeleted":["(max-width: 1px)",1,"(max-width: 1px)","NotFoundError","block"],"mediaDeleted":[1,true,true,"inline-flex"],"reconnected":[true,"grid",true],"disabled":[true,"block"],"enabled":[false,"grid"],"mediaMiss":["(max-width: 1px)",1,"(max-width: 1px)","block"],"mediaMatch":["(min-width: 1px)","grid"],"deleted":[2,true,0,true]}})JSON",
         "mutable stylesheet CSSOM did not recascade main/frame styles: "
             + result);
+
+    execute(engine, R"JS((async () => {
+      globalThis.__ownerSheetReplacement = { status: 'pending' };
+      try {
+        const exercise = async (document, view, className) => {
+          const style = document.createElement('style');
+          const target = document.createElement('div');
+          style.textContent = `.${className} { color: rgb(17, 23, 31); }`;
+          target.className = className;
+          document.head.appendChild(style);
+          document.body.appendChild(target);
+          const sheet = style.sheet;
+          const rules = sheet.cssRules;
+          const rule = rules[0];
+          const authoredText = style.textContent;
+          const initialCssText = rule.cssText;
+          const syncErrors = [];
+          for (const invoke of [
+            () => sheet.replaceSync(),
+            () => sheet.replaceSync(Symbol('css')),
+            () => sheet.replaceSync(`.${className} { color: red; }`)
+          ]) {
+            try { invoke(); syncErrors.push('none'); }
+            catch (error) {
+              syncErrors.push(error.name);
+            }
+          }
+          const asyncOperations = [
+            sheet.replace(),
+            sheet.replace(Symbol('css')),
+            sheet.replace(`.${className} { color: blue; }`)
+          ];
+          if (!asyncOperations.every(operation => operation
+              && typeof operation.then === 'function'
+              && operation.constructor === asyncOperations[0].constructor))
+            throw new Error('replace did not return consistent Promise objects');
+          const asyncErrors = await Promise.all(asyncOperations.map(operation =>
+            operation.then(() => 'none', error => error.name)));
+          style.remove();
+          let detachedSync = '';
+          try { sheet.replaceSync(`.${className} { color: green; }`); }
+          catch (error) { detachedSync = error.name; }
+          const detachedAsync = await sheet.replace(`.${className} { color: green; }`)
+            .then(() => 'none', error => error.name);
+          const stable = sheet.cssRules === rules
+            && rules[0] === rule
+            && rule.cssText === initialCssText
+            && style.textContent === authoredText
+            && style.sheet === null;
+          document.head.appendChild(style);
+          const reattached = style.sheet === sheet
+            && view.getComputedStyle(target).color === 'rgb(17, 23, 31)';
+          style.remove();
+          target.remove();
+          return {
+            syncErrors, asyncErrors, detachedSync, detachedAsync, stable,
+            reattached, lengths: [sheet.replaceSync.length, sheet.replace.length]
+          };
+        };
+        const frame = document.createElement('iframe');
+        document.body.appendChild(frame);
+        const main = await exercise(document, window, 'replace-main');
+        const nested = await exercise(
+          frame.contentDocument, frame.contentWindow, 'replace-frame');
+        frame.remove();
+        const pass = value => JSON.stringify(value.syncErrors)
+              === JSON.stringify(['TypeError', 'TypeError', 'NotAllowedError'])
+            && JSON.stringify(value.asyncErrors)
+              === JSON.stringify(['TypeError', 'TypeError', 'NotAllowedError'])
+            && value.detachedSync === 'NotAllowedError'
+            && value.detachedAsync === 'NotAllowedError'
+            && value.stable && value.reattached
+            && value.lengths[0] === 1 && value.lengths[1] === 1;
+        if (!pass(main) || !pass(nested))
+          throw new Error(JSON.stringify({ main, nested }));
+        globalThis.__ownerSheetReplacement = { status: 'passed', main, nested };
+      } catch (error) {
+        globalThis.__ownerSheetReplacement = {
+          status: 'failed', error: String(error), stack: String(error?.stack || '')
+        };
+      }
+    })())JS", "native-owner-stylesheet-replacement.js");
+    const auto replacement_status = evaluate_until_equals(
+        engine,
+        "globalThis.__ownerSheetReplacement?.status ?? 'pending'",
+        "native-owner-stylesheet-replacement-status.js",
+        R"("passed")",
+        500);
+    require(replacement_status == R"("passed")",
+        "owner stylesheet replacement rejection diverged: "
+            + evaluate(engine, "globalThis.__ownerSheetReplacement",
+                "native-owner-stylesheet-replacement-result.js"));
 }
 
 void test_batched_stylesheet_rule_mutation_performance()
 {
     auto* engine = webscene_engine_create(0);
     require(engine != nullptr, "stylesheet mutation performance engine creation failed");
+    const auto acknowledge_latest_scene = [&](std::string_view failure) {
+        const webscene_scene_view* scene = nullptr;
+        for (auto attempt = 0; attempt < 100 && scene == nullptr; ++attempt) {
+            scene = webscene_engine_acquire_latest_scene(engine);
+            if (scene == nullptr) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            }
+        }
+        require(scene != nullptr, failure);
+        require(webscene_scene_acknowledge(scene) != 0,
+            "stylesheet mutation scene acknowledgement failed");
+        webscene_scene_release(scene);
+    };
     resize(engine, 800, 600, 1U);
     wait_for_consumed_inputs(
         engine, 1U, "stylesheet mutation performance viewport was not consumed");
@@ -1722,6 +1827,119 @@ void test_batched_stylesheet_rule_mutation_performance()
         "oversized stylesheet source low-memory request was rejected");
     require(webscene_engine_set_runtime_work_metrics_enabled(engine, 1U) != 0,
         "stylesheet mutation runtime-work metrics could not be enabled");
+    execute_and_wait(engine, R"JS((() => {
+      const style = document.createElement('style');
+      const target = document.createElement('div');
+      style.textContent = Array.from({ length: 64 }, (_, index) =>
+        `.replacement-rule-${index} { width: ${index + 1}px; }`).join('\n');
+      target.className = 'replacement-rule-63';
+      document.head.appendChild(style);
+      document.body.appendChild(target);
+      if (getComputedStyle(target).width !== '64px')
+        throw new Error('replacement performance fixture did not settle');
+      globalThis.__replacementPerformanceFixture = { style, target };
+    })())JS", "owner-stylesheet-replacement-performance-setup.js");
+    acknowledge_latest_scene(
+        "owner stylesheet replacement performance fixture had no scene");
+    webscene_engine_metrics replacement_engine_before{};
+    webscene_engine_get_metrics(engine, &replacement_engine_before);
+    webscene_runtime_work_metrics replacement_work_before{
+        sizeof(webscene_runtime_work_metrics)};
+    require(webscene_engine_get_runtime_work_metrics(
+                engine, &replacement_work_before) != 0,
+        "owner stylesheet replacement baseline work metrics were unavailable");
+    webscene_engine_memory_metrics replacement_memory_before{
+        sizeof(webscene_engine_memory_metrics)};
+    require(webscene_engine_get_memory_metrics(
+                engine, &replacement_memory_before) != 0,
+        "owner stylesheet replacement baseline memory metrics were unavailable");
+    execute(engine, R"JS((async () => {
+      globalThis.__ownerSheetReplacementPerformance = { status: 'pending' };
+      try {
+        const { style, target } = globalThis.__replacementPerformanceFixture;
+        const sheet = style.sheet;
+        const rules = sheet.cssRules;
+        const first = rules[0], last = rules[63];
+        const authoredText = style.textContent;
+        const durations = [];
+        for (let cycle = 0; cycle < 20; cycle++) {
+          const started = performance.now();
+          let syncError = '';
+          try { sheet.replaceSync(`.replacement-${cycle} { width: 1px; }`); }
+          catch (error) { syncError = error.name; }
+          const asyncError = await sheet.replace(
+            `.replacement-${cycle} { width: 2px; }`)
+            .then(() => 'none', error => error.name);
+          if (syncError !== 'NotAllowedError'
+              || asyncError !== 'NotAllowedError') {
+            throw new Error(`replacement denial diverged: ${syncError}/${asyncError}`);
+          }
+          durations.push(performance.now() - started);
+        }
+        const ordered = durations.slice().sort((left, right) => left - right);
+        const p95 = ordered[18], maximum = ordered[19];
+        if (p95 > 16 || maximum > 500)
+          throw new Error(`replacement denial latency exceeded ${p95}/${maximum}`);
+        if (sheet.cssRules !== rules || rules.length !== 64
+            || rules[0] !== first || rules[63] !== last
+            || style.textContent !== authoredText
+            || getComputedStyle(target).width !== '64px') {
+          throw new Error('denied replacement changed sheet or computed style state');
+        }
+        globalThis.__ownerSheetReplacementPerformance = {
+          status: 'passed', cycles: durations.length, ruleCount: rules.length,
+          p95, max: maximum, authoredTextStable: style.textContent === authoredText
+        };
+      } catch (error) {
+        globalThis.__ownerSheetReplacementPerformance = {
+          status: 'failed', error: String(error), stack: String(error?.stack || '')
+        };
+      }
+    })())JS", "owner-stylesheet-replacement-performance.js");
+    const auto replacement_performance_status = evaluate_until_equals(
+        engine,
+        "globalThis.__ownerSheetReplacementPerformance?.status ?? 'pending'",
+        "owner-stylesheet-replacement-performance-status.js",
+        R"("passed")",
+        500);
+    require(replacement_performance_status == R"("passed")",
+        "owner stylesheet replacement performance workload failed: "
+            + evaluate(engine, "globalThis.__ownerSheetReplacementPerformance",
+                "owner-stylesheet-replacement-performance-result.js"));
+    const auto replacement_metrics = evaluate(
+        engine,
+        "globalThis.__ownerSheetReplacementPerformance",
+        "owner-stylesheet-replacement-performance-metrics.js");
+    webscene_engine_metrics replacement_engine_after{};
+    webscene_engine_get_metrics(engine, &replacement_engine_after);
+    webscene_runtime_work_metrics replacement_work_after{
+        sizeof(webscene_runtime_work_metrics)};
+    require(webscene_engine_get_runtime_work_metrics(
+                engine, &replacement_work_after) != 0,
+        "owner stylesheet replacement final work metrics were unavailable");
+    webscene_engine_memory_metrics replacement_memory_after{
+        sizeof(webscene_engine_memory_metrics)};
+    require(webscene_engine_get_memory_metrics(
+                engine, &replacement_memory_after) != 0,
+        "owner stylesheet replacement final memory metrics were unavailable");
+    require(
+        replacement_engine_after.layout_passes
+                == replacement_engine_before.layout_passes
+            && replacement_engine_after.published_scenes
+                == replacement_engine_before.published_scenes
+            && replacement_work_after.scene_builds
+                == replacement_work_before.scene_builds
+            && replacement_memory_after.native_css_rule_count
+                == replacement_memory_before.native_css_rule_count
+            && replacement_memory_after.pending_scene_count
+                == replacement_memory_before.pending_scene_count,
+        "denied stylesheet replacement caused invalidation, publication, or native rule churn");
+    execute_and_wait(engine, R"JS((() => {
+      const fixture = globalThis.__replacementPerformanceFixture;
+      fixture.style.remove();
+      fixture.target.remove();
+      delete globalThis.__replacementPerformanceFixture;
+    })())JS", "owner-stylesheet-replacement-performance-cleanup.js");
     webscene_engine_metrics engine_before{};
     webscene_engine_get_metrics(engine, &engine_before);
     webscene_runtime_work_metrics work_before{sizeof(webscene_runtime_work_metrics)};
@@ -1755,7 +1973,7 @@ void test_batched_stylesheet_rule_mutation_performance()
       const observer = new MutationObserver(() => {});
       observer.observe(style, { childList: true, characterData: true, subtree: true });
       globalThis.__stylesheetMutationResult = null;
-      setTimeout(() => {
+      setTimeout(async () => {
         try {
           const sheet = style.sheet;
           const rules = sheet.cssRules;
@@ -1894,11 +2112,30 @@ void test_batched_stylesheet_rule_mutation_performance()
             throw new Error(`MediaList mutation latency exceeded ${mediaMutationP95}/${mediaMutationMax}`);
           }
           while (rules.length) sheet.deleteRule(0);
+          const replacementPromises = [];
+          const expectSyncReplacementDenial = (candidate, label) => {
+            try { candidate.replaceSync(`.${label} { display: none; }`); }
+            catch (error) {
+              if (error.name === 'NotAllowedError') return;
+              throw error;
+            }
+            throw new Error(`${label} replaceSync unexpectedly succeeded`);
+          };
+          const expectAsyncReplacementDenial = (candidate, label) =>
+            candidate.replace(`.${label} { display: none; }`).then(
+              () => { throw new Error(`${label} replace unexpectedly succeeded`); },
+              error => {
+                if (error.name !== 'NotAllowedError') throw error;
+                return true;
+              });
           for (let cycle = 0; cycle < 100; cycle++) {
             const lifecycleStyle = document.createElement('style');
             lifecycleStyle.textContent = '@media (min-width: 1px) {}';
             document.head.appendChild(lifecycleStyle);
-            const lifecycleGroup = lifecycleStyle.sheet.cssRules[0];
+            const lifecycleSheet = lifecycleStyle.sheet;
+            const lifecycleGroup = lifecycleSheet.cssRules[0];
+            expectSyncReplacementDenial(
+              lifecycleSheet, `lifecycle-attached-${cycle}`);
             const lifecycleMedia = lifecycleGroup.media;
             lifecycleGroup.media = '(max-width:1px)';
             lifecycleMedia.appendMedium('screen');
@@ -1929,6 +2166,8 @@ void test_batched_stylesheet_rule_mutation_performance()
             lifecycleStyle.remove();
             document.head.appendChild(lifecycleStyle);
             lifecycleStyle.remove();
+            replacementPromises.push(expectAsyncReplacementDenial(
+              lifecycleSheet, `lifecycle-detached-${cycle}`));
 
             const realm = document.createElement('iframe');
             document.body.appendChild(realm);
@@ -1942,8 +2181,10 @@ void test_batched_stylesheet_rule_mutation_performance()
             realmDocument.head.appendChild(realmStyle);
             realmDocument.body.appendChild(realmTarget);
             const realmGroup = realmStyle.sheet.cssRules[0];
+            const realmSheet = realmStyle.sheet;
             const realmMedia = realmGroup.media;
             const realmRule = realmGroup.cssRules[0];
+            expectSyncReplacementDenial(realmSheet, `realm-attached-${cycle}`);
             realmGroup.media = '(max-width: 1px)';
             realmMedia.appendMedium('screen');
             realmRule.selectorText = `.realm-after-${cycle}`;
@@ -1954,7 +2195,10 @@ void test_batched_stylesheet_rule_mutation_performance()
               throw new Error('iframe MediaList or selector mutation lost realm ownership');
             }
             realm.remove();
+            replacementPromises.push(expectAsyncReplacementDenial(
+              realmSheet, `realm-detached-${cycle}`));
           }
+          await Promise.all(replacementPromises);
           target.className = 'theme-target';
           sheet.insertRule('.theme-target { display: none; }', 0);
           const order = ['sync'];
@@ -1985,6 +2229,7 @@ void test_batched_stylesheet_rule_mutation_performance()
                 selectorMutations: selectorMutationDurations.length,
                 mediaMutationP95, mediaMutationMax,
                 mediaMutations: mediaMutationDurations.length,
+                replacementRejections: replacementPromises.length,
                 lifecycleCycles: 100,
                 realmLifecycleCycles: 100,
                 authoredTextStable: style.textContent === authoredText,
@@ -2068,6 +2313,7 @@ void test_batched_stylesheet_rule_mutation_performance()
             && work_after.timers_fired >= work_before.timers_fired + 2U,
         "stylesheet mutation workload exceeded layout, scene, queue, or task bounds");
     std::cout << "stylesheet-mutation-profile=" << metrics
+              << " ownerReplacementProfile=" << replacement_metrics
               << " layoutDelta=" << (engine_after.layout_passes - engine_before.layout_passes)
               << " sceneDelta=" << (engine_after.published_scenes - engine_before.published_scenes)
               << " heapBefore=" << memory_before.v8_used_heap_bytes

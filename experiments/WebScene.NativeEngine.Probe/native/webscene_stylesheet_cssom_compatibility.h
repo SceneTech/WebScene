@@ -460,6 +460,34 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
         }
       },
       media: { configurable: true, enumerable: true, get() { stateFor(this); return media; } },
+      replaceSync: {
+        configurable: true, writable: true,
+        value: function replaceSync(cssText) {
+          if (arguments.length === 0)
+            throw new TypeError('CSSStyleSheet.replaceSync requires one argument');
+          stateFor(this);
+          text(cssText);
+          // CSSOM replacement is restricted to constructed sheets. Native
+          // owner-backed sheets must retain their rules and publication state.
+          exception('Cannot replace a non-constructed stylesheet', 'NotAllowedError');
+        }
+      },
+      replace: {
+        configurable: true, writable: true,
+        value: function replace(cssText) {
+          try {
+            if (arguments.length === 0)
+              throw new TypeError('CSSStyleSheet.replace requires one argument');
+            stateFor(this);
+            text(cssText);
+            exception('Cannot replace a non-constructed stylesheet', 'NotAllowedError');
+          } catch (error) {
+            // Promise-returning Web IDL operations report argument conversion
+            // and operation errors through a realm-local rejected Promise.
+            return Promise.reject(error);
+          }
+        }
+      },
       insertRule: { configurable: true, writable: true, value(rule, index = 0) {
         if (arguments.length === 0) throw new TypeError('A CSS rule is required');
         const current = stateFor(this);

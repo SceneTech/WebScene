@@ -1,0 +1,53 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>File System Access create file child browser oracle</title>
+<!-- Cases follow WPT fs/script-tests/FileSystemDirectoryHandle-getFileHandle.js
+     at revision 2c705104a295c48053eeddf7fe0170d790a4e853. -->
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<body>
+<script>
+  const withDirectory = (label, body) => promise_test(async t => {
+    assert_true(Boolean(navigator.storage && navigator.storage.getDirectory),
+      "origin-private file system is unavailable");
+    const root = await navigator.storage.getDirectory();
+    const fixture = `webscene-create-file-${Date.now()}-${Math.random()}`;
+    const directory = await root.getDirectoryHandle(fixture, {create:true});
+    t.add_cleanup(() => root.removeEntry(fixture, {recursive:true}));
+    await body(directory, t);
+  }, label);
+
+  withDirectory("create:true creates a missing empty file with its requested name",
+    async directory => {
+      const handle = await directory.getFileHandle("created-🙂.txt", {create:true});
+      assert_true(handle instanceof FileSystemFileHandle);
+      assert_equals(handle.kind, "file");
+      assert_equals(handle.name, "created-🙂.txt");
+      const file = await handle.getFile();
+      assert_equals(file.size, 0);
+      assert_equals(await file.text(), "");
+    });
+
+  withDirectory("create:true returns an existing file without truncating it",
+    async directory => {
+      const original = await directory.getFileHandle("existing.txt", {create:true});
+      const writable = await original.createWritable();
+      await writable.write("preserved");
+      await writable.close();
+      const reopened = await directory.getFileHandle("existing.txt", {create:true});
+      assert_true(await reopened.isSameEntry(original));
+      assert_equals(await (await reopened.getFile()).text(), "preserved");
+    });
+
+  withDirectory("create:true rejects a directory collision and unsafe names",
+    async (directory, t) => {
+      await directory.getDirectoryHandle("collision", {create:true});
+      await promise_rejects_dom(t, "TypeMismatchError",
+        directory.getFileHandle("collision", {create:true}));
+      for (const name of ["", ".", "..", "nested/child", "nested\\child"]) {
+        await promise_rejects_js(t, TypeError,
+          directory.getFileHandle(name, {create:true}));
+      }
+    });
+</script>
+</body>

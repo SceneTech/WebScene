@@ -177,6 +177,20 @@ take_file_grant_release_request(webscene_engine* engine)
     return request;
 }
 
+const webscene_file_grant_create_file_request_v2*
+take_file_grant_create_file_request(webscene_engine* engine)
+{
+    const webscene_file_grant_create_file_request_v2* request = nullptr;
+    for (int attempt = 0; attempt < 250 && request == nullptr; ++attempt) {
+        request = webscene_engine_take_file_grant_create_file_request_v2(engine);
+        if (request == nullptr)
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    require(request != nullptr,
+        "native file grant create-file request was not published");
+    return request;
+}
+
 struct directory_completion_entry final {
     std::string name;
     std::vector<uint8_t> grant;
@@ -210,6 +224,29 @@ bool complete_file_grant_directory(
         {cursor.empty() ? nullptr : cursor.data(), cursor.size()},
         skipped_symlinks};
     return webscene_engine_complete_file_grant_directory_request_v2(
+        engine, &completion) != 0;
+}
+
+bool complete_file_grant_create_file(
+    webscene_engine* engine, uint64_t request_id, uint32_t status,
+    std::string_view name = {}, const std::vector<uint8_t>& grant = {},
+    uint64_t byte_count = 0)
+{
+    webscene_file_grant_create_file_completion_v2 completion{};
+    completion.struct_size = sizeof(completion);
+    completion.version = 2U;
+    completion.request_id = request_id;
+    completion.status = status;
+    if (status == WEBSCENE_FILE_GRANT_CREATE_FILE_SUCCESS_V2) {
+        completion.capabilities = WEBSCENE_FILE_PANEL_GRANT_READ_V2
+            | WEBSCENE_FILE_PANEL_GRANT_WRITE_V2;
+        completion.metadata = {sizeof(webscene_file_grant_metadata_v2), 2U,
+            byte_count, 1700000000999000000LL,
+            WEBSCENE_FILE_PANEL_ENTRY_FILE_V2, 0U};
+        completion.display_name = {name.data(), name.size()};
+        completion.grant_id = {grant.data(), grant.size()};
+    }
+    return webscene_engine_complete_file_grant_create_file_request_v2(
         engine, &completion) != 0;
 }
 
@@ -821,6 +858,127 @@ void test_native_file_system_access_picker_and_handle_contract()
                 "file-directory-lookup-result.js")
             == "\"file:alpha.txt\"",
         "existing file lookup changed");
+
+    execute(engine.get(), R"JS(
+      globalThis.__createdFile='pending';
+      __directoryHandle.getFileHandle('created-🙂.txt', {create:true}).then(
+        value=>{globalThis.__createdHandle=value;
+          __createdFile=`${value.kind}:${value.name}`},
+        error=>{__createdFile=error.name});
+    )JS", "file-directory-create-file.js");
+    auto* create_file_request =
+        take_file_grant_create_file_request(engine.get());
+    require(create_file_request->directory_grant_id.byte_count
+                == directory_grant.size()
+            && std::memcmp(create_file_request->directory_grant_id.data,
+                directory_grant.data(), directory_grant.size()) == 0
+            && std::string_view(create_file_request->display_name.data,
+                   create_file_request->display_name.byte_count)
+                == "created-🙂.txt",
+        "create-file request lost its parent grant or UTF-8 name");
+    auto create_file_request_id = create_file_request->request_id;
+    webscene_file_grant_create_file_request_release_v2(create_file_request);
+    const std::vector<uint8_t> created_grant{52U, 53U};
+    require(complete_file_grant_create_file(engine.get(),
+                create_file_request_id,
+                WEBSCENE_FILE_GRANT_CREATE_FILE_SUCCESS_V2,
+                "created-🙂.txt", created_grant),
+        "create-file success completion was rejected");
+    require(evaluate(engine.get(), "__createdFile",
+                "file-directory-create-file-result.js")
+            == "\"file:created-🙂.txt\"",
+        "create=true did not produce a file handle");
+
+    execute(engine.get(), R"JS(
+      globalThis.__createdContents='pending';
+      __createdHandle.getFile().then(
+        file=>file.text()).then(value=>{__createdContents=value},
+        error=>{__createdContents=error.name});
+    )JS", "file-directory-created-read.js");
+    auto* created_read = take_file_grant_read_request(engine.get());
+    require(created_read->grant_id.byte_count == created_grant.size()
+            && std::memcmp(created_read->grant_id.data, created_grant.data(),
+                created_grant.size()) == 0,
+        "created handle did not retain its derived opaque grant");
+    const auto created_read_id = created_read->request_id;
+    webscene_file_grant_read_request_release_v2(created_read);
+    const std::vector<uint8_t> preserved_bytes{'p','r','e','s','e','r','v','e','d'};
+    require(complete_file_grant_read(engine.get(), created_read_id,
+                WEBSCENE_FILE_GRANT_READ_SUCCESS_V2, preserved_bytes.size(),
+                1700000000999000000LL, 0,
+                {preserved_bytes[0]}, false),
+        "created handle metadata completion was rejected");
+    created_read = take_file_grant_read_request(engine.get());
+    require(created_read->offset == 0
+            && created_read->maximum_bytes == preserved_bytes.size(),
+        "created File text read did not request its exact bounded range");
+    const auto created_contents_read_id = created_read->request_id;
+    webscene_file_grant_read_request_release_v2(created_read);
+    require(complete_file_grant_read(engine.get(), created_contents_read_id,
+                WEBSCENE_FILE_GRANT_READ_SUCCESS_V2, preserved_bytes.size(),
+                1700000000999000000LL, 0, preserved_bytes, true),
+        "created handle contents completion was rejected");
+    require(evaluate(engine.get(), "__createdContents",
+                "file-directory-created-read-result.js") == "\"preserved\"",
+        "get-or-create handle did not preserve native file contents");
+
+    struct create_file_status_case {
+        uint32_t status;
+        const char* expected_name;
+    };
+    constexpr create_file_status_case create_file_status_cases[] = {
+        {WEBSCENE_FILE_GRANT_CREATE_FILE_CANCELLED_V2, "AbortError"},
+        {WEBSCENE_FILE_GRANT_CREATE_FILE_DENIED_V2, "NotAllowedError"},
+        {WEBSCENE_FILE_GRANT_CREATE_FILE_NOT_FOUND_V2, "NotFoundError"},
+        {WEBSCENE_FILE_GRANT_CREATE_FILE_TYPE_MISMATCH_V2,
+            "TypeMismatchError"},
+        {WEBSCENE_FILE_GRANT_CREATE_FILE_CHANGED_V2, "InvalidStateError"},
+        {WEBSCENE_FILE_GRANT_CREATE_FILE_IO_ERROR_V2, "NotReadableError"},
+        {WEBSCENE_FILE_GRANT_CREATE_FILE_LIMIT_V2, "QuotaExceededError"}};
+    for (const auto& status_case : create_file_status_cases) {
+        execute(engine.get(), R"JS(
+          globalThis.__createFileFailure='pending';
+          __directoryHandle.getFileHandle('failure.txt', {create:true}).then(
+            ()=>{__createFileFailure='unexpected'},
+            error=>{__createFileFailure=error.name});
+        )JS", "file-directory-create-file-status.js");
+        create_file_request = take_file_grant_create_file_request(engine.get());
+        create_file_request_id = create_file_request->request_id;
+        webscene_file_grant_create_file_request_release_v2(create_file_request);
+        require(complete_file_grant_create_file(engine.get(),
+                    create_file_request_id, status_case.status),
+            "create-file error completion was rejected");
+        require(evaluate(engine.get(), "__createFileFailure",
+                    "file-directory-create-file-status-result.js")
+                == std::string("\"") + status_case.expected_name + "\"",
+            "create-file status mapped to the wrong DOMException");
+        require(!complete_file_grant_create_file(engine.get(),
+                    create_file_request_id, status_case.status),
+            "create-file operation completed more than once");
+    }
+    execute(engine.get(), "globalThis.__createdHandle=null",
+        "file-directory-created-release.js");
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        require(webscene_engine_request_low_memory(engine.get()) != 0
+                && evaluate(engine.get(), "true",
+                    "file-directory-created-release-gc.js") == "true",
+            "created file handle collection barrier failed");
+    }
+    std::size_t created_release_count = 0;
+    while (const auto* released =
+        webscene_engine_take_file_grant_release_request_v2(engine.get())) {
+        if (released->grant_id.byte_count == created_grant.size()
+            && std::memcmp(released->grant_id.data,
+                created_grant.data(), created_grant.size()) == 0) {
+            ++created_release_count;
+        }
+        webscene_file_grant_release_request_release_v2(released);
+    }
+    require(created_release_count == 1,
+        "created wrapper release count changed: "
+            + std::to_string(created_release_count));
+    if (std::getenv("WEBSCENE_TEST_FILE_GRANT_CREATE_FILE_ONLY") != nullptr)
+        return;
 
     execute(engine.get(), R"JS(
       globalThis.__resolveSame='pending';
@@ -1763,6 +1921,9 @@ void test_native_file_system_access_lifecycle_and_performance()
         "file read request queue did not drain after 100 cycles");
     require(webscene_engine_take_file_grant_write_request_v2(engine.get()) == nullptr,
         "file write request queue did not drain after 100 cycles");
+    require(webscene_engine_take_file_grant_create_file_request_v2(engine.get())
+                == nullptr,
+        "file create request queue did not drain after 100 cycles");
 
     activate_file_picker(engine.get(), 51999U);
     execute(engine.get(), R"JS(
@@ -1812,7 +1973,9 @@ void test_native_file_system_access_lifecycle_and_performance()
     require(complete_file_panel_success(
             engine.get(), directory_picker_id,
             WEBSCENE_FILE_PANEL_ENTRY_DIRECTORY_V2,
-            WEBSCENE_FILE_PANEL_GRANT_ENUMERATE_V2,
+            WEBSCENE_FILE_PANEL_GRANT_ENUMERATE_V2
+                | WEBSCENE_FILE_PANEL_GRANT_CREATE_V2
+                | WEBSCENE_FILE_PANEL_GRANT_WRITE_V2,
             "lifetime", directory_grant),
         "lifetime directory picker completion was rejected");
     require(evaluate(engine.get(), "__directoryHandle.name",
@@ -1868,6 +2031,16 @@ void test_native_file_system_access_lifecycle_and_performance()
     const auto stale_directory_id = stale_directory->request_id;
     webscene_file_grant_directory_request_release_v2(stale_directory);
     execute(engine.get(), R"JS(
+      globalThis.__retiredCreateFile='pending';
+      __directoryHandle.getFileHandle('stale.txt', {create:true}).then(
+        ()=>{__retiredCreateFile='unexpected'},
+        error=>{__retiredCreateFile=error.name});
+    )JS", "file-picker-create-file-before-navigation.js");
+    const auto* stale_create_file =
+        take_file_grant_create_file_request(engine.get());
+    const auto stale_create_file_id = stale_create_file->request_id;
+    webscene_file_grant_create_file_request_release_v2(stale_create_file);
+    execute(engine.get(), R"JS(
       globalThis.__retiredAncestry='pending';
       __directoryHandle.resolve(__stableHandle).then(
         ()=>{__retiredAncestry='unexpected'},
@@ -1912,6 +2085,11 @@ void test_native_file_system_access_lifecycle_and_performance()
                 WEBSCENE_FILE_GRANT_DIRECTORY_ENUMERATE_V2,
                 WEBSCENE_FILE_GRANT_DIRECTORY_SUCCESS_V2),
         "stale directory completion survived navigation retirement");
+    require(!complete_file_grant_create_file(engine.get(),
+                stale_create_file_id,
+                WEBSCENE_FILE_GRANT_CREATE_FILE_SUCCESS_V2,
+                "stale.txt", {99U}),
+        "stale create-file completion survived navigation retirement");
     require(!complete_file_grant_ancestry(engine.get(), stale_ancestry_id,
                 WEBSCENE_FILE_GRANT_ANCESTRY_SUCCESS_V2,
                 {"stable.txt"}),

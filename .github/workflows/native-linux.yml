@@ -40,6 +40,16 @@ jobs:
           mkdir -p "$job_tmp"
           echo "TMPDIR=$job_tmp" >> "$GITHUB_ENV"
           echo "WEBSCENE_JOB_TMP=$job_tmp" >> "$GITHUB_ENV"
+      - name: Diagnose constrained runner filesystem
+        if: failure()
+        timeout-minutes: 2
+        shell: bash
+        run: |
+          df -B1 / /tmp "$RUNNER_TEMP"
+          sudo du -x -B1 --max-depth=1 /var /home/danw 2>/dev/null | sort -nr | head -30 || true
+          if command -v docker >/dev/null 2>&1; then
+            sudo docker system df || true
+          fi
       - name: Install pinned build tools
         run: |
           sudo flock /var/lock/webscene-apt.lock bash -c '

@@ -1501,7 +1501,7 @@ struct v8_dom_runtime::implementation final {
         const auto notify = self->runtime_work_available;
         std::shared_ptr<service_worker_fetch_request> controlled_request;
         auto controlled_fetch = self->enqueue_controlled_service_worker_fetch(
-            resolved, request_context, &controlled_request);
+            resolved, request_context, &controlled_request, redirect);
         if (controlled_request != nullptr) {
             pending.cancel = [request = controlled_request] { request->cancel(); };
         }

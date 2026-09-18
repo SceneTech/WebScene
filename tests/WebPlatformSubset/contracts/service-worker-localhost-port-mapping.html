@@ -1,0 +1,112 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Service Worker localhost port mapping</title>
+<script>
+  const state = window.__webSceneWptState = {
+    complete:false, harness:null, results:[], errors:[], diagnostics:[]
+  };
+  const record = (name, condition, detail = 'Contract failed') => state.results.push({
+    name, status:condition ? 'PASS' : 'FAIL',
+    message:condition ? null : detail, stack:null
+  });
+  (async () => {
+    const changed = new Promise(resolve => navigator.serviceWorker.addEventListener(
+      'controllerchange', resolve, {once:true}));
+    const registration = await navigator.serviceWorker.register(
+      'service-worker-localhost-port-mapping-worker.js');
+    if (!navigator.serviceWorker.controller) await changed;
+    const worker = navigator.serviceWorker.controller || registration.active;
+    const requests = [];
+    let mappingMode = 'valid';
+    navigator.serviceWorker.addEventListener('message', event => {
+      const request = event.data || {};
+      if (request.channel !== 'load-localhost') return;
+      requests.push(request);
+      worker.postMessage({channel:'did-load-localhost', data:{
+        id:request.id,
+        origin:request.origin,
+        location:request.origin.startsWith('http://localhost:')
+          ? mappingMode === 'valid' ? location.origin
+            : mappingMode === 'loop' ? request.origin
+              : mappingMode === 'malformed' ? 'http://[' : undefined
+          : undefined
+      }});
+    });
+    const source = `http://localhost:${location.port}`;
+    const target = `${location.origin}/contracts/service-worker-localhost-target.txt`;
+    const suffix = '/contracts/service-worker-localhost-target.txt?token=7';
+    const mapped = await fetch(source + suffix);
+    const mappedBody = await mapped.text();
+    record('host-authorized localhost redirect preserves path and query',
+      mapped.status === 200 && mappedBody.trim() === 'mapped-localhost-body'
+        && mapped.url === target + '?token=7' && mapped.redirected,
+      JSON.stringify({status:mapped.status, body:mappedBody,
+        url:mapped.url, redirected:mapped.redirected}));
+    let errored = false;
+    try { await fetch(source + suffix, {redirect:'error'}); }
+    catch { errored = true; }
+    record('redirect error mode fails closed', errored);
+    const manual = await fetch(source + suffix, {redirect:'manual'});
+    record('manual redirects are opaque',
+      manual.status === 0 && manual.type === 'opaqueredirect'
+        && manual.url === source + suffix && manual.headers.get('location') === null,
+      JSON.stringify({status:manual.status, type:manual.type,
+        url:manual.url, location:manual.headers.get('location')}));
+    mappingMode = 'none';
+    const unmapped = await fetch(source + suffix, {mode:'no-cors'});
+    record('missing host mapping falls back to the original request',
+      unmapped.status === 0 && unmapped.type === 'opaque',
+      JSON.stringify({status:unmapped.status, type:unmapped.type}));
+    mappingMode = 'malformed';
+    let malformedError = false;
+    try { await fetch(source + suffix); }
+    catch { malformedError = true; }
+    record('malformed host mapping fails closed', malformedError);
+    mappingMode = 'loop';
+    let loopError = false;
+    try { await fetch(source + suffix); }
+    catch { loopError = true; }
+    record('redirect loops fail closed', loopError);
+    mappingMode = 'valid';
+    const durations = [];
+    for (let cycle = 0; cycle < 100; ++cycle) {
+      const started = performance.now();
+      const response = await fetch(`${source}${suffix}&cycle=${cycle}`);
+      if (response.status !== 200
+          || (await response.text()).trim() !== 'mapped-localhost-body') {
+        throw new Error(`mapped cycle ${cycle} failed`);
+      }
+      durations.push(performance.now() - started);
+    }
+    const report = await new Promise(resolve => {
+      const listener = event => {
+        if (event.data?.channel !== 'localhost-mapping-report') return;
+        navigator.serviceWorker.removeEventListener('message', listener);
+        resolve(event.data);
+      };
+      navigator.serviceWorker.addEventListener('message', listener);
+      worker.postMessage({channel:'report'});
+    });
+    const ordered = [...durations].sort((a, b) => a - b);
+    const p95 = ordered[Math.ceil(ordered.length * .95) - 1];
+    state.diagnostics.push(JSON.stringify({
+      name:'localhost-mapping-cycles', cycles:100, p95,
+      requests:requests.length, report
+    }));
+    record('100 mapped cycles meet latency and drain request state',
+      p95 <= 250 && report.pending === 0
+        && report.observations.mapped >= 105
+        && report.observations.unmapped === 1,
+      JSON.stringify({p95, report}));
+    await registration.unregister();
+  })().catch(error => {
+    state.errors.push(String(error && error.stack || error));
+    record('contract completed', false, state.errors[0]);
+  }).finally(() => {
+    const failure = state.results.find(result => result.status !== 'PASS');
+    state.harness = failure
+      ? {status:1, message:failure.message, stack:failure.stack}
+      : {status:0, message:null, stack:null};
+    state.complete = true;
+  });
+</script>

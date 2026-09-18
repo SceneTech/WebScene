@@ -34,6 +34,9 @@
         std::string url;
         std::string method{"GET"};
         uint32_t destination{WEBSCENE_REQUEST_DESTINATION_NONE};
+        uint32_t mode{WEBSCENE_FETCH_MODE_NONE};
+        uint32_t credentials{WEBSCENE_FETCH_CREDENTIALS_SAME_ORIGIN};
+        uint32_t redirect{};
         std::vector<std::pair<std::string, std::string>> headers;
         std::string client_id;
         uint64_t client_generation{};
@@ -579,9 +582,76 @@
                           await Promise.all(state.pending);
                           return response;
                         };
+)JS",
+                        R"JS(
                         const dispatchFetchRecord = async init => {
-                          const response = await dispatchFetch(init);
+                          let response = await dispatchFetch(init);
                           if (response === undefined) return {handled:false};
+                          let responseUrl = response.url;
+                          let responseRedirected = response.redirected;
+                          const redirectStatuses = new Set([301, 302, 303, 307, 308]);
+                          if (redirectStatuses.has(response.status)) {
+                            if (init.request.redirect === 'error') {
+                              throw new TypeError('Service worker redirect is disallowed');
+                            }
+                            if (init.request.redirect === 'manual') {
+                              if (response.body !== null && !response.body.locked) {
+                                await response.body.cancel('Returning opaque redirect');
+                              }
+                              return {handled:true, status:0, statusText:'', headers:[],
+                                body:new Uint8Array(), url:'', redirected:false,
+                                type:'opaqueredirect'};
+                            }
+                            if (init.request.redirect === 'follow') {
+                              let currentUrl = init.request.url;
+                              let method = init.request.method;
+                              const headers = new Headers(init.request.headers);
+                              const visited = new Set([currentUrl]);
+                              for (let redirects = 0; redirectStatuses.has(response.status);
+                                   ++redirects) {
+                                if (redirects >= 20) {
+                                  throw new TypeError('Service worker redirect limit exceeded');
+                                }
+                                const location = response.headers.get('location');
+                                if (location === null) break;
+                                let target;
+                                try { target = new URL(location, currentUrl); }
+                                catch { throw new TypeError('Invalid service worker redirect'); }
+                                if (target.protocol !== 'http:' && target.protocol !== 'https:') {
+                                  throw new TypeError('Invalid service worker redirect protocol');
+                                }
+                                if (visited.has(target.href)) {
+                                  throw new TypeError('Service worker redirect loop');
+                                }
+                                visited.add(target.href);
+                                if (response.body !== null && !response.body.locked) {
+                                  await response.body.cancel('Following service worker redirect');
+                                }
+                                if (response.status === 303
+                                    || ((response.status === 301 || response.status === 302)
+                                      && method === 'POST')) {
+                                  method = 'GET';
+                                  for (const name of ['content-encoding', 'content-language',
+                                    'content-length', 'content-location', 'content-type']) {
+                                    headers.delete(name);
+                                  }
+                                }
+                                if (new URL(currentUrl).origin !== target.origin) {
+                                  for (const name of ['authorization', 'proxy-authorization',
+                                    'cookie', 'cookie2']) headers.delete(name);
+                                }
+                                currentUrl = target.href;
+                                response = await fetch(currentUrl, {
+                                  method, headers,
+                                  credentials:init.request.credentials,
+                                  mode:init.request.mode,
+                                  redirect:'manual'
+                                });
+                                responseUrl = response.url || currentUrl;
+                                responseRedirected = true;
+                              }
+                            }
+                          }
                           const chunks = [];
                           let bodyLength = 0;
                           if (response.body !== null) {
@@ -618,8 +688,8 @@
                             statusText:response.statusText,
                             headers:[...response.headers],
                             body,
-                            url:response.url,
-                            redirected:response.redirected,
+                            url:responseUrl,
+                            redirected:responseRedirected,
                             type:response.type
                           };
                         };
@@ -1026,6 +1096,22 @@
                                 realm,
                                 js_string(child->isolate, "destination"),
                                 js_string(child->isolate, destination)).Check();
+                            const auto mode = fetch_request->mode
+                                    == WEBSCENE_FETCH_MODE_SAME_ORIGIN ? "same-origin"
+                                : fetch_request->mode == WEBSCENE_FETCH_MODE_NO_CORS
+                                    ? "no-cors" : "cors";
+                            const auto credentials = fetch_request->credentials
+                                    == WEBSCENE_FETCH_CREDENTIALS_OMIT ? "omit"
+                                : fetch_request->credentials == WEBSCENE_FETCH_CREDENTIALS_INCLUDE
+                                    ? "include" : "same-origin";
+                            const auto redirect = fetch_request->redirect == 1U ? "error"
+                                : fetch_request->redirect == 2U ? "manual" : "follow";
+                            options->Set(realm, js_string(child->isolate, "mode"),
+                                js_string(child->isolate, mode)).Check();
+                            options->Set(realm, js_string(child->isolate, "credentials"),
+                                js_string(child->isolate, credentials)).Check();
+                            options->Set(realm, js_string(child->isolate, "redirect"),
+                                js_string(child->isolate, redirect)).Check();
                             auto headers = v8::Array::New(
                                 child->isolate,
                                 static_cast<int>(fetch_request->headers.size()));
@@ -1814,7 +1900,8 @@
     enqueue_controlled_service_worker_fetch(
         const std::string& url,
         const resource_request_context& request_context,
-        std::shared_ptr<service_worker_fetch_request>* request_handle = nullptr)
+        std::shared_ptr<service_worker_fetch_request>* request_handle = nullptr,
+        uint32_t redirect = 0U)
     {
         if (request_handle != nullptr) request_handle->reset();
         if (service_worker_realm || isolate == nullptr || context.IsEmpty()) {
@@ -1851,6 +1938,9 @@
         request->method = request_context.method.empty()
             ? "GET" : request_context.method;
         request->destination = request_context.destination;
+        request->mode = request_context.mode;
+        request->credentials = request_context.credentials;
+        request->redirect = redirect;
         request->headers = request_context.headers;
         const auto contains_header = [&](std::string_view name) {
             return std::ranges::any_of(request->headers, [&](const auto& header) {

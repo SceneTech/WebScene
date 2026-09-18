@@ -1,0 +1,110 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Nested Service Worker admitted resource client</title>
+<script>
+  const needsId = !new URL(location.href).searchParams.has('id');
+  if (needsId && location.protocol !== 'file:') {
+    const prepared = new URL(location.href);
+    prepared.searchParams.set('id', 'webview-1');
+    location.replace(prepared);
+  } else {
+  if (needsId) {
+    const prepared = new URL(location.href);
+    prepared.searchParams.set('id', 'webview-1');
+    history.replaceState(null, '', prepared);
+  }
+  const state = window.__webSceneWptState = {
+    complete:false, harness:null, results:[], errors:[], diagnostics:[],
+    requests:[], durations:[], p95:0
+  };
+  const record = (name, condition, detail = 'Contract failed') => state.results.push({
+    name, status:condition ? 'PASS' : 'FAIL',
+    message:condition ? null : detail, stack:null
+  });
+  let resolveReport;
+  navigator.serviceWorker.addEventListener('message', event => {
+    const message = event.data || {};
+    if (message.channel === 'load-resource') {
+      state.requests.push(message);
+      const source = "parent.__nestedAdmittedResourceFinished('broker');";
+      const bytes = new TextEncoder().encode(source);
+      const split = Math.max(1, Math.floor(bytes.byteLength / 2));
+      const first = bytes.slice(0, split);
+      const second = bytes.slice(split);
+      event.source.postMessage({channel:'resource-response', id:message.id,
+        contentType:'text/javascript', chunks:[first, second]},
+        [first.buffer, second.buffer]);
+    } else if (message.channel === 'report' && resolveReport) {
+      resolveReport(message);
+      resolveReport = undefined;
+    }
+  });
+
+  (async () => {
+    const changed = new Promise(resolve => navigator.serviceWorker.addEventListener(
+      'controllerchange', resolve, {once:true}));
+    const registration = await navigator.serviceWorker.register(
+      'service-worker-nested-admitted-resource-worker.js');
+    if (!navigator.serviceWorker.controller) await changed;
+
+    const runCycle = cycle => new Promise((resolve, reject) => {
+      const frame = document.createElement('iframe');
+      const timeout = setTimeout(() => {
+        frame.remove();
+        reject(new Error(`nested admitted resource cycle ${cycle} timed out`));
+      }, 5000);
+      globalThis.__nestedAdmittedResourceFinished = source => {
+        clearTimeout(timeout);
+        frame.remove();
+        resolve(source);
+      };
+      frame.src = 'fixtures/service-worker-nested-admitted-resource-frame.html?id=webview-1';
+      document.body.append(frame);
+    });
+
+    for (let cycle = 0; cycle < 100; ++cycle) {
+      const started = performance.now();
+      const source = await runCycle(cycle);
+      if (source !== 'broker') throw new Error(`cycle ${cycle} used ${source}`);
+      state.durations.push(performance.now() - started);
+    }
+    delete globalThis.__nestedAdmittedResourceFinished;
+    await new Promise(resolve => setTimeout(resolve, 20));
+    const report = await new Promise(resolve => {
+      resolveReport = resolve;
+      navigator.serviceWorker.controller.postMessage({channel:'report'});
+    });
+    const ordered = [...state.durations].sort((left, right) => left - right);
+    const p95 = ordered[Math.ceil(ordered.length * .95) - 1];
+    state.p95 = p95;
+    state.diagnostics.push(JSON.stringify({name:'nested-resource-cycles', cycles:100, p95,
+      requests:state.requests.length, clients:report.clients.length}));
+    record('nested FetchEvent keeps a distinct controlled WindowClient',
+      report.requests.length === 100
+        && report.requests.every(request => request.clientId
+          && request.clientId !== report.outerClientId
+          && request.frameType === 'nested'), JSON.stringify(report));
+    record('outer admitted-resource owner is discovered by id and URL',
+      report.requests.every(request => request.webviewId === 'webview-1'
+        && request.outerClientId === report.outerClientId)
+        && (location.protocol === 'file:'
+          || report.outerUrl.includes('id=webview-1')), JSON.stringify(report));
+    record('streamed nested scripts never execute the host fallback',
+      state.requests.length === 100 && !globalThis.__nestedAdmittedHostFallback,
+      JSON.stringify(state.requests));
+    record('nested clients retire across 100 bounded resource cycles',
+      report.pending === 0 && report.clients.length === 1 && p95 <= 100,
+      JSON.stringify({pending:report.pending, clients:report.clients, p95}));
+    await registration.unregister();
+  })().catch(error => {
+    state.errors.push(String(error && error.stack || error));
+    record('contract completed', false, state.errors[0]);
+  }).finally(() => {
+    const failure = state.results.find(result => result.status !== 'PASS');
+    state.harness = failure
+      ? {status:1, message:failure.message, stack:failure.stack}
+      : {status:0, message:null, stack:null};
+    state.complete = true;
+  });
+  }
+</script>

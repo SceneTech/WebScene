@@ -38,6 +38,43 @@ bool complete_file_grant_same_entry(
         engine, &completion) != 0;
 }
 
+const webscene_file_grant_read_request_v2*
+take_file_grant_read_request(webscene_engine* engine)
+{
+    const webscene_file_grant_read_request_v2* request = nullptr;
+    for (int attempt = 0; attempt < 250 && request == nullptr; ++attempt) {
+        request = webscene_engine_take_file_grant_read_request_v2(engine);
+        if (request == nullptr)
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    require(request != nullptr, "native file grant read request was not published");
+    return request;
+}
+
+bool complete_file_grant_read(
+    webscene_engine* engine,
+    uint64_t request_id,
+    uint32_t status,
+    uint64_t total_bytes,
+    int64_t modification_time_ns,
+    uint64_t offset,
+    const std::vector<uint8_t>& bytes,
+    bool eof)
+{
+    const bool success = status == WEBSCENE_FILE_GRANT_READ_SUCCESS_V2;
+    const webscene_file_grant_metadata_v2 metadata = success
+        ? webscene_file_grant_metadata_v2{sizeof(metadata), 2U, total_bytes,
+            modification_time_ns, WEBSCENE_FILE_PANEL_ENTRY_FILE_V2, 0U}
+        : webscene_file_grant_metadata_v2{};
+    const webscene_file_grant_read_completion_v2 completion{
+        sizeof(completion), 2U, request_id, status, 0U, metadata, offset,
+        success && !bytes.empty() ? bytes.data() : nullptr,
+        success ? bytes.size() : 0U,
+        static_cast<uint8_t>(success && eof), {}};
+    return webscene_engine_complete_file_grant_read_request_v2(
+        engine, &completion) != 0;
+}
+
 void activate_file_picker(webscene_engine* engine, uint64_t sequence)
 {
     pointer_button(
@@ -233,6 +270,196 @@ void test_native_file_system_access_picker_and_handle_contract()
             == "[true,false,true,\"TypeError\"]",
         "same-entry did not use opaque native identity");
 
+    constexpr int64_t file_modified_ns = 1700000000123000000LL;
+    const std::vector<uint8_t> file_bytes{0U, 1U, 2U, 255U, 65U, 66U};
+    execute(engine.get(), R"JS(
+      globalThis.__getFileState='pending';
+      __openHandles[0].getFile().then(file => {
+        globalThis.__readFile=file;
+        __getFileState={name:file.name,size:file.size,
+          modified:file.lastModified,instance:file instanceof File};
+      }, error => { __getFileState=error.name; });
+    )JS", "file-handle-get-file.js");
+    auto* read_request = take_file_grant_read_request(engine.get());
+    require(read_request->offset == 0U && read_request->maximum_bytes == 1U
+            && read_request->grant_id.byte_count == first_grant.size()
+            && std::memcmp(read_request->grant_id.data,
+                first_grant.data(), first_grant.size()) == 0,
+        "getFile metadata read lost its bounded opaque grant request");
+    const auto metadata_read_id = read_request->request_id;
+    webscene_file_grant_read_request_release_v2(read_request);
+    require(complete_file_grant_read(engine.get(), metadata_read_id,
+            WEBSCENE_FILE_GRANT_READ_SUCCESS_V2, file_bytes.size(),
+            file_modified_ns, 0U, {file_bytes[0]}, false),
+        "getFile metadata completion was rejected");
+    const auto get_file_state = evaluate(engine.get(), "__getFileState",
+        "file-handle-get-file-result.js");
+    require(get_file_state.find("\"name\":\"café.json\"") != std::string::npos
+            && get_file_state.find("\"size\":6") != std::string::npos
+            && get_file_state.find("\"modified\":1700000000123") != std::string::npos
+            && get_file_state.find("\"instance\":true") != std::string::npos,
+        "getFile did not expose immutable File metadata: " + get_file_state);
+
+    execute(engine.get(), R"JS(
+      globalThis.__fileBytes='pending';
+      __readFile.arrayBuffer().then(buffer => {
+        __fileBytes=Array.from(new Uint8Array(buffer));
+      }, error => { __fileBytes=error.name; });
+    )JS", "file-handle-get-file-bytes.js");
+    read_request = take_file_grant_read_request(engine.get());
+    require(read_request->offset == 0U
+            && read_request->maximum_bytes == file_bytes.size(),
+        "File.arrayBuffer did not request an exact bounded range");
+    const auto bytes_read_id = read_request->request_id;
+    webscene_file_grant_read_request_release_v2(read_request);
+    require(complete_file_grant_read(engine.get(), bytes_read_id,
+            WEBSCENE_FILE_GRANT_READ_SUCCESS_V2, file_bytes.size(),
+            file_modified_ns, 0U, file_bytes, true),
+        "File.arrayBuffer completion was rejected");
+    require(evaluate(engine.get(), "__fileBytes",
+                "file-handle-get-file-bytes-result.js")
+            == "[0,1,2,255,65,66]",
+        "File.arrayBuffer did not preserve binary bytes");
+
+    execute(engine.get(), R"JS(
+      globalThis.__fileSlice='pending';
+      __readFile.slice(1,5).arrayBuffer().then(buffer => {
+        __fileSlice=Array.from(new Uint8Array(buffer));
+      }, error => { __fileSlice=error.name; });
+    )JS", "file-handle-get-file-slice.js");
+    read_request = take_file_grant_read_request(engine.get());
+    require(read_request->offset == 1U && read_request->maximum_bytes == 4U,
+        "File.slice did not preserve the native range offset");
+    const auto slice_read_id = read_request->request_id;
+    webscene_file_grant_read_request_release_v2(read_request);
+    require(complete_file_grant_read(engine.get(), slice_read_id,
+            WEBSCENE_FILE_GRANT_READ_SUCCESS_V2, file_bytes.size(),
+            file_modified_ns, 1U, {1U, 2U, 255U, 65U}, false),
+        "File.slice completion was rejected");
+    require(evaluate(engine.get(), "__fileSlice",
+                "file-handle-get-file-slice-result.js") == "[1,2,255,65]",
+        "File.slice did not preserve binary bytes");
+
+    constexpr std::size_t streamed_size = 64U * 1024U + 1U;
+    std::vector<uint8_t> streamed_bytes(streamed_size);
+    uint64_t streamed_sum{};
+    for (std::size_t index = 0; index < streamed_bytes.size(); ++index) {
+        streamed_bytes[index] = static_cast<uint8_t>(index % 251U);
+        streamed_sum += streamed_bytes[index];
+    }
+    execute(engine.get(), R"JS(
+      globalThis.__streamedFile='pending';
+      __openHandles[0].getFile().then(async file => {
+        const reader=file.stream().getReader();
+        let length=0,sum=0;
+        for (;;) {
+          const {done,value}=await reader.read();
+          if (done) break;
+          length += value.byteLength;
+          for (const byte of value) sum += byte;
+        }
+        __streamedFile={length,sum};
+      }, error => { __streamedFile=error.name; });
+    )JS", "file-handle-get-file-stream.js");
+    read_request = take_file_grant_read_request(engine.get());
+    const auto stream_metadata_id = read_request->request_id;
+    webscene_file_grant_read_request_release_v2(read_request);
+    require(complete_file_grant_read(engine.get(), stream_metadata_id,
+            WEBSCENE_FILE_GRANT_READ_SUCCESS_V2, streamed_bytes.size(),
+            file_modified_ns, 0U, {streamed_bytes[0]}, false),
+        "stream metadata completion was rejected");
+    read_request = take_file_grant_read_request(engine.get());
+    require(read_request->offset == 0U && read_request->maximum_bytes == 64U * 1024U,
+        "File.stream did not enforce the 64 KiB backpressure chunk");
+    const auto first_stream_read_id = read_request->request_id;
+    webscene_file_grant_read_request_release_v2(read_request);
+    const std::vector<uint8_t> first_stream_chunk(
+        streamed_bytes.begin(), streamed_bytes.begin() + 64U * 1024U);
+    require(complete_file_grant_read(engine.get(), first_stream_read_id,
+            WEBSCENE_FILE_GRANT_READ_SUCCESS_V2, streamed_bytes.size(),
+            file_modified_ns, 0U, first_stream_chunk, false),
+        "first stream chunk completion was rejected");
+    read_request = take_file_grant_read_request(engine.get());
+    require(read_request->offset == 64U * 1024U
+            && read_request->maximum_bytes == 1U,
+        "File.stream did not advance its bounded native range");
+    const auto final_stream_read_id = read_request->request_id;
+    webscene_file_grant_read_request_release_v2(read_request);
+    require(complete_file_grant_read(engine.get(), final_stream_read_id,
+            WEBSCENE_FILE_GRANT_READ_SUCCESS_V2, streamed_bytes.size(),
+            file_modified_ns, 64U * 1024U, {streamed_bytes.back()}, true),
+        "final stream chunk completion was rejected");
+    require(evaluate(engine.get(), "__streamedFile.length",
+                "file-handle-get-file-stream-length.js")
+                == std::to_string(streamed_size)
+            && evaluate(engine.get(), "__streamedFile.sum",
+                "file-handle-get-file-stream-sum.js")
+                == std::to_string(streamed_sum),
+        "File.stream did not preserve ordered bytes");
+
+    execute(engine.get(), R"JS(
+      globalThis.__mutatedFile='pending';
+      __openHandles[0].getFile().then(file => {
+        globalThis.__mutationSnapshot=file;
+        __mutatedFile='acquired';
+      });
+    )JS", "file-handle-get-file-mutation-acquire.js");
+    read_request = take_file_grant_read_request(engine.get());
+    const auto mutation_metadata_id = read_request->request_id;
+    webscene_file_grant_read_request_release_v2(read_request);
+    require(complete_file_grant_read(engine.get(), mutation_metadata_id,
+            WEBSCENE_FILE_GRANT_READ_SUCCESS_V2, file_bytes.size(),
+            file_modified_ns, 0U, {file_bytes[0]}, false),
+        "mutation snapshot metadata completion was rejected");
+    require(evaluate(engine.get(), "__mutatedFile",
+                "file-handle-get-file-mutation-acquired.js") == "\"acquired\"",
+        "mutation snapshot was not acquired");
+    execute(engine.get(), R"JS(
+      __mutatedFile='pending';
+      __mutationSnapshot.text().then(
+        () => { __mutatedFile='unexpected'; },
+        error => { __mutatedFile=error.name; });
+    )JS", "file-handle-get-file-mutation-read.js");
+    read_request = take_file_grant_read_request(engine.get());
+    const auto mutation_read_id = read_request->request_id;
+    webscene_file_grant_read_request_release_v2(read_request);
+    require(complete_file_grant_read(engine.get(), mutation_read_id,
+            WEBSCENE_FILE_GRANT_READ_SUCCESS_V2, file_bytes.size(),
+            file_modified_ns + 1, 0U, file_bytes, true),
+        "mutation read completion was rejected");
+    require(evaluate(engine.get(), "__mutatedFile",
+                "file-handle-get-file-mutation-result.js")
+            == "\"NotReadableError\"",
+        "a mutated native file did not invalidate its File snapshot");
+
+    struct read_status_case { uint32_t status; const char* expected_name; };
+    constexpr read_status_case read_status_cases[] = {
+        {WEBSCENE_FILE_GRANT_READ_CANCELLED_V2, "AbortError"},
+        {WEBSCENE_FILE_GRANT_READ_DENIED_V2, "NotAllowedError"},
+        {WEBSCENE_FILE_GRANT_READ_NOT_FOUND_V2, "NotFoundError"},
+        {WEBSCENE_FILE_GRANT_READ_IO_ERROR_V2, "NotReadableError"}};
+    for (const auto& status_case : read_status_cases) {
+        execute(engine.get(), R"JS(
+          globalThis.__readFailure='pending';
+          __openHandles[0].getFile().then(
+            () => { __readFailure='unexpected'; },
+            error => { __readFailure=error.name; });
+        )JS", "file-handle-get-file-status.js");
+        read_request = take_file_grant_read_request(engine.get());
+        const auto read_id = read_request->request_id;
+        webscene_file_grant_read_request_release_v2(read_request);
+        require(complete_file_grant_read(engine.get(), read_id,
+                status_case.status, 0U, 0, 0U, {}, false),
+            "native file read error completion was rejected");
+        require(evaluate(engine.get(), "__readFailure",
+                    "file-handle-get-file-status-result.js")
+                == std::string("\"") + status_case.expected_name + "\"",
+            "native file read status mapped to the wrong DOMException");
+        require(!complete_file_grant_read(engine.get(), read_id,
+                status_case.status, 0U, 0, 0U, {}, false),
+            "native file read completed more than once");
+    }
+
     activate_file_picker(engine.get(), 50003U);
     execute(engine.get(), R"JS(
       globalThis.__directoryState = 'pending';
@@ -326,13 +553,27 @@ void test_native_file_system_access_picker_and_handle_contract()
     require(evaluate(engine.get(), "__saveState", "file-picker-save-result.js")
             == "\"file:drawing.json:true\"",
         "save picker handle contract changed");
+    execute(engine.get(), R"JS(
+      globalThis.__writeOnlyRead='pending';
+      __saveHandle.getFile().then(
+        () => { __writeOnlyRead='unexpected'; },
+        error => { __writeOnlyRead=error.name; });
+    )JS", "file-handle-write-only-read.js");
+    require(evaluate(engine.get(), "__writeOnlyRead",
+                "file-handle-write-only-read-result.js") == "\"NotAllowedError\"",
+        "write-only native grant was allowed to read file content");
+    require(webscene_engine_take_file_grant_read_request_v2(engine.get()) == nullptr,
+        "write-only getFile reached the native read broker");
 
     const auto descriptor_state = evaluate(engine.get(), R"JS((()=>{
       const kind=Object.getOwnPropertyDescriptor(FileSystemHandle.prototype,'kind');
       const same=Object.getOwnPropertyDescriptor(FileSystemHandle.prototype,'isSameEntry');
+      const getFile=Object.getOwnPropertyDescriptor(FileSystemFileHandle.prototype,'getFile');
       return {
         hiddenBridge: typeof __webSceneRequestFilePanel,
         hiddenIdentityBridge: typeof __webSceneCompareFileGrants,
+        hiddenReadBridge: typeof __webSceneReadFileGrant,
+        hiddenFileFactory: typeof __webSceneCreateNativeFile,
         opaqueHandle: Reflect.ownKeys(__openHandles[0]).length === 0,
         illegal: (()=>{try{new FileSystemHandle();return false}catch(e){return e.name==='TypeError'}})(),
         kindEnumerable: kind.enumerable,
@@ -340,12 +581,19 @@ void test_native_file_system_access_picker_and_handle_contract()
         sameEnumerable: same.enumerable,
         sameConfigurable: same.configurable,
         sameWritable: same.writable,
+        getFileEnumerable: getFile.enumerable,
+        getFileConfigurable: getFile.configurable,
+        getFileWritable: getFile.writable,
         inheritance: Object.getPrototypeOf(FileSystemFileHandle.prototype)===FileSystemHandle.prototype
       };
     })())JS", "file-picker-idl-result.js");
     require(descriptor_state.find("\"hiddenBridge\":\"undefined\"")
                 != std::string::npos
             && descriptor_state.find("\"hiddenIdentityBridge\":\"undefined\"")
+                != std::string::npos
+            && descriptor_state.find("\"hiddenReadBridge\":\"undefined\"")
+                != std::string::npos
+            && descriptor_state.find("\"hiddenFileFactory\":\"undefined\"")
                 != std::string::npos
             && descriptor_state.find("\"opaqueHandle\":true") != std::string::npos
             && descriptor_state.find("\"illegal\":true") != std::string::npos
@@ -354,6 +602,9 @@ void test_native_file_system_access_picker_and_handle_contract()
             && descriptor_state.find("\"sameEnumerable\":true") != std::string::npos
             && descriptor_state.find("\"sameConfigurable\":true") != std::string::npos
             && descriptor_state.find("\"sameWritable\":true") != std::string::npos
+            && descriptor_state.find("\"getFileEnumerable\":true") != std::string::npos
+            && descriptor_state.find("\"getFileConfigurable\":true") != std::string::npos
+            && descriptor_state.find("\"getFileWritable\":true") != std::string::npos
             && descriptor_state.find("\"inheritance\":true") != std::string::npos,
         "File System Access IDL descriptors changed: " + descriptor_state);
 
@@ -471,8 +722,11 @@ void test_native_file_system_access_lifecycle_and_performance()
             const handle=handles[0];
             if (__stableHandle === null) __stableHandle=handle;
             if (__stableHandle !== handle) throw new Error('unstable grant identity');
-            return __stableHandle.isSameEntry(handle).then(same => {
+            return __stableHandle.isSameEntry(handle).then(async same => {
               if (!same) throw new Error('stable native entry identity changed');
+              const file=await __stableHandle.getFile();
+              if (file.size !== 1 || file.name !== 'stable.txt')
+                throw new Error('stable native file metadata changed');
               ++__pickerCycles;
             });
           });
@@ -494,6 +748,16 @@ void test_native_file_system_access_lifecycle_and_performance()
         require(complete_file_grant_same_entry(
             engine.get(), comparison_id, true, true),
             "same-entry lifecycle completion was rejected");
+        const auto* read = take_file_grant_read_request(engine.get());
+        require(read->grant_id.byte_count == stable_grant.size()
+                && read->offset == 0U && read->maximum_bytes == 1U,
+            "getFile lifecycle query lost its bounded stable grant");
+        const auto read_id = read->request_id;
+        webscene_file_grant_read_request_release_v2(read);
+        require(complete_file_grant_read(engine.get(), read_id,
+                WEBSCENE_FILE_GRANT_READ_SUCCESS_V2, 1U,
+                1700000000000000000LL, 0U, {42U}, true),
+            "getFile lifecycle completion was rejected");
     }
     require(evaluate(engine.get(), "__pickerCycles",
                 "file-picker-cycle-result.js") == "100",
@@ -516,6 +780,8 @@ void test_native_file_system_access_lifecycle_and_performance()
     require(webscene_engine_take_file_grant_same_entry_request_v2(engine.get())
                 == nullptr,
         "same-entry request queue did not drain after 100 cycles");
+    require(webscene_engine_take_file_grant_read_request_v2(engine.get()) == nullptr,
+        "file read request queue did not drain after 100 cycles");
 
     activate_file_picker(engine.get(), 52000U);
     execute(engine.get(), R"JS(
@@ -537,6 +803,15 @@ void test_native_file_system_access_lifecycle_and_performance()
         take_file_grant_same_entry_request(engine.get());
     const auto stale_identity_id = stale_identity->request_id;
     webscene_file_grant_same_entry_request_release_v2(stale_identity);
+    execute(engine.get(), R"JS(
+      globalThis.__retiredRead='pending';
+      __stableHandle.getFile().then(
+        ()=>{__retiredRead='unexpected'},
+        error=>{__retiredRead=error.name});
+    )JS", "file-picker-read-before-navigation.js");
+    const auto* stale_read = take_file_grant_read_request(engine.get());
+    const auto stale_read_id = stale_read->request_id;
+    webscene_file_grant_read_request_release_v2(stale_read);
     const auto path = std::filesystem::temp_directory_path()
         / ("webscene-picker-navigation-"
             + std::to_string(std::chrono::steady_clock::now()
@@ -559,6 +834,10 @@ void test_native_file_system_access_lifecycle_and_performance()
     require(!complete_file_grant_same_entry(
                 engine.get(), stale_identity_id, true, true),
         "stale same-entry completion survived navigation retirement");
+    require(!complete_file_grant_read(engine.get(), stale_read_id,
+                WEBSCENE_FILE_GRANT_READ_SUCCESS_V2, 1U,
+                1700000000000000000LL, 0U, {42U}, true),
+        "stale file read completion survived navigation retirement");
     std::filesystem::remove(path);
     std::cout << "File System Access lifecycle gate: cycles=100 elapsedSeconds="
               << elapsed << " heapDelta="

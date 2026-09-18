@@ -25,6 +25,14 @@
   ],
   "harnessBlocked": [
     {
+      "path": "contracts/file-system-access-get-file.html",
+      "type": "testharness",
+      "capabilities": [
+        "file-system-file-handle-get-file"
+      ],
+      "reason": "Chromium/WPT oracle uses origin-private filesystem handles; the native runner receives host-issued opaque grants and exercises equivalent chunked snapshot, metadata, error and lifecycle behavior through the host read bridge."
+    },
+    {
       "path": "contracts/file-system-access-is-same-entry.html",
       "type": "testharness",
       "capabilities": [

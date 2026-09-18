@@ -2502,6 +2502,7 @@
             if (!dispatch_input_event_type(input, "beforeinput", *target, &prevented)) return false;
             if (prevented) return true;
             ensure_form_value(*target);
+            const auto previous_value = target->form_control().value;
             const auto text = utf8_scalar(static_cast<uint32_t>(input.x));
             const forms::utf8_selection_offset start{
                 std::min(target->mutable_form_control().selection_start,
@@ -2537,7 +2538,8 @@
             target->mutable_form_control().selection_explicitly_set = true;
             target->mutable_form_control().caret_visible = true;
             caret_blink_epoch_ms = last_animation_frame_timestamp_ms;
-            document.mark_dirty();
+            recascade_form_value_selector_transition(
+                *target, previous_value, target->form_control().value);
             return dispatch_input_event_type(input, "input", *target);
         }
 
@@ -2750,6 +2752,7 @@
                 return false;
             }
             if (!before_input_prevented) {
+                const auto previous_value = target->form_control().value;
                 if (inserting_line_break) {
                     target->mutable_form_control().value.replace(start, end - start, "\n");
                     ++start;
@@ -2763,6 +2766,8 @@
                 target->mutable_form_control().selection_end_utf16_suboffset = 0U;
                 target->mutable_form_control().selection_direction = text_selection_direction::none;
                 target->mutable_form_control().selection_explicitly_set = true;
+                recascade_form_value_selector_transition(
+                    *target, previous_value, target->form_control().value);
                 if (!dispatch_input_event_type(input, "input", *target)) return false;
             }
         }

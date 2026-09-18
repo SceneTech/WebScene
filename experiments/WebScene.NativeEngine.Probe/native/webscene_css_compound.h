@@ -305,13 +305,21 @@ inline bool compound_matches(const Host& host,const dom_node& node,
                 if (!form_control || node.tag == "fieldset" || node.tag == "optgroup"
                     || node.tag == "option") return false;
                 if (node.attributes.contains("required")) {
-                    const auto value = node.attributes.find("value");
-                    if (value == node.attributes.end() || value->second.empty()) return false;
+                    if (forms::supports_text_selection(&node)
+                        ? forms::text_value_empty(node)
+                        : !node.attributes.contains("value")
+                            || node.attributes.at("value").empty()) return false;
                 }
             } else if (name == "invalid") {
                 if (!form_control || !node.attributes.contains("required")) return false;
-                const auto value = node.attributes.find("value");
-                if (value != node.attributes.end() && !value->second.empty()) return false;
+                if (forms::supports_text_selection(&node)
+                    ? !forms::text_value_empty(node)
+                    : node.attributes.contains("value")
+                        && !node.attributes.at("value").empty()) return false;
+            } else if (name == "placeholder-shown") {
+                if (!forms::supports_placeholder_selector(node)
+                    || !node.attributes.contains("placeholder")
+                    || !forms::text_value_empty(node)) return false;
             } else if (name == "lang") {
                 if (!css::language_matches(document,node,argument)) return false;
             } else if (name == "dir") {

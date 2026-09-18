@@ -706,6 +706,35 @@
             : std::move(raw_name);
     }
 
+    static std::optional<std::string> input_live_value_before_attribute_change(
+        dom_node& node, std::string_view name)
+    {
+        if (node.tag != "input" || name != "value") return std::nullopt;
+        forms::ensure_text_value(node);
+        return node.form_control().value;
+    }
+
+    void finish_input_value_attribute_change(
+        dom_node& node,
+        const std::optional<std::string>& previous_live_value,
+        const std::optional<std::string>& current_default_value)
+    {
+        if (!previous_live_value.has_value()
+            || node.form_control().dirty_value) return;
+        auto& control = node.mutable_form_control();
+        control.value = current_default_value.value_or(std::string{});
+        control.value_initialized = true;
+        control.selection_start = control.value.size();
+        control.selection_end = control.value.size();
+        control.selection_start_utf16_suboffset = 0U;
+        control.selection_end_utf16_suboffset = 0U;
+        control.selection_direction = text_selection_direction::none;
+        if (is_connected(node)) {
+            recascade_form_value_selector_transition(
+                node, *previous_live_value, control.value);
+        }
+    }
+
     static void set_attribute(const v8::FunctionCallbackInfo<v8::Value>& info)
     {
         auto* self = current(info.GetIsolate());
@@ -721,6 +750,8 @@
         const std::optional<std::string> old_value = previous == node->attributes.end()
             ? std::nullopt
             : std::optional<std::string>(previous->second);
+        const auto previous_live_value = input_live_value_before_attribute_change(
+            *node, name);
 #if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
         if (self->resize_profile_active) {
             ++self->last_resize_attribute_counts[name];
@@ -740,19 +771,6 @@
         if ((name == "width" || name == "height")) reset_canvas_backing_store(*self, *node);
         if (name == "id") node->id_attribute = value;
         else if (name == "class") node->class_name = value;
-        else if (name == "value" && node->tag == "input") {
-            auto& control = node->mutable_form_control();
-            const auto previous_default = old_value.value_or(std::string{});
-            if (!control.value_initialized || control.value == previous_default) {
-                control.value = value;
-                control.value_initialized = true;
-                control.selection_start = value.size();
-                control.selection_end = value.size();
-                control.selection_start_utf16_suboffset = 0U;
-                control.selection_end_utf16_suboffset = 0U;
-                control.selection_direction = text_selection_direction::none;
-            }
-        }
         else if (name == "style") {
             node->clear_authored_style();
             node->style.clear_grid();
@@ -804,6 +822,8 @@
         } else {
             self->document.mark_dirty();
         }
+        self->finish_input_value_attribute_change(
+            *node, previous_live_value, value);
         self->notify_custom_element_attribute(*node, name, old_value, value);
     }
 
@@ -824,6 +844,9 @@
         const std::optional<std::string> old_value = previous == node->attributes.end()
             ? std::nullopt
             : std::optional<std::string>(previous->second);
+        const auto previous_live_value = (!namespace_uri || namespace_uri->empty())
+            ? input_live_value_before_attribute_change(*node, name)
+            : std::nullopt;
         self->record_html_attribute_feature(name, "setAttributeNS");
         node->attributes[name] = value;
         if ((!namespace_uri || namespace_uri->empty())
@@ -844,6 +867,8 @@
         } else {
             self->document.mark_dirty();
         }
+        self->finish_input_value_attribute_change(
+            *node, previous_live_value, value);
         self->notify_custom_element_attribute(
             *node, name, old_value, value, namespace_uri);
     }
@@ -860,6 +885,8 @@
             return;
         }
         const auto old_value = std::optional<std::string>(node->attributes.at(name));
+        const auto previous_live_value = input_live_value_before_attribute_change(
+            *node, name);
         self->detach_attr(*node, name, *old_value);
         node->attributes.erase(name);
         if (node->tag == "base" && name == "href") {
@@ -889,6 +916,8 @@
         } else {
             self->document.mark_dirty();
         }
+        self->finish_input_value_attribute_change(
+            *node, previous_live_value, std::nullopt);
         self->notify_custom_element_attribute(
             *node, name, old_value, std::nullopt);
     }
@@ -940,6 +969,9 @@
         const auto match = node->attributes.find(name);
         if (match == node->attributes.end()) return;
         const auto old_value = std::optional<std::string>(match->second);
+        const auto previous_live_value = (!namespace_uri || namespace_uri->empty())
+            ? input_live_value_before_attribute_change(*node, name)
+            : std::nullopt;
         self->detach_attr(*node, name, *old_value);
         node->attributes.erase(name);
         if ((!namespace_uri || namespace_uri->empty())
@@ -968,6 +1000,8 @@
         } else {
             self->document.mark_dirty();
         }
+        self->finish_input_value_attribute_change(
+            *node, previous_live_value, std::nullopt);
         self->notify_custom_element_attribute(
             *node, name, old_value, std::nullopt, namespace_uri);
     }
@@ -983,6 +1017,8 @@
         const auto old_value = present
             ? std::optional<std::string>(node->attributes.at(name))
             : std::nullopt;
+        const auto previous_live_value = input_live_value_before_attribute_change(
+            *node, name);
         const bool force_present = info.Length() < 2 || info[1]->IsUndefined()
             ? !present
             : info[1]->BooleanValue(info.GetIsolate());
@@ -1020,6 +1056,12 @@
         } else {
             self->document.mark_dirty();
         }
+        self->finish_input_value_attribute_change(
+            *node,
+            previous_live_value,
+            force_present
+                ? std::optional<std::string>(std::string{})
+                : std::nullopt);
         // Queue invalidation before author callbacks: they may synchronously
         // read styles or replace this attribute with another value.
         self->notify_custom_element_attribute(*node, name, old_value,

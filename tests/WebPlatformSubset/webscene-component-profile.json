@@ -1278,16 +1278,16 @@
       "capabilities": ["css-class-index-lookup", "multi-class-compound-cascade", "class-mutation-invalidation", "compiled-subject-index", "escaped-selector-identifiers"],
       "evidence": ["direct-chrome-neutral-contract", "native-neutral-contract", "bounded-class-lookup-allocation-benchmark", "native-subject-candidate-scaling"],
       "reason": "Required after all four checks pass in Chrome and native. Covers long class-token lookup, className/classList mutation, mandatory subject features after functional pseudos, escaped class/ID/attribute/tag identifiers, selector alternatives, stylesheet replacement and removal. Native gates separately bound class lookup allocation and prove candidate work does not grow with unrelated pseudo-prefixed rules. This does not claim general functional-selector indexing or complete selector grammar support."
-    }
-  ],
-  "candidate": [
+    },
     {
       "path": "contracts/css-textarea-dynamic-state.html",
       "type": "testharness",
       "capabilities": ["textarea-validity-selector", "placeholder-shown-selector", "dynamic-state-invalidation"],
-      "evidence": ["css-structural-mutation-audit", "css-dynamic-state-workstream-242"],
-      "reason": "Known pre-existing dynamic-state gaps retained for #237/#242: textarea :invalid uses the value attribute rather than live value; :placeholder-shown is unsupported. Must pass before this part of the broader CSS plan is complete."
-    },
+      "evidence": ["direct-chrome-neutral-contract", "native-neutral-contract", "bounded-live-form-state-invalidation"],
+      "reason": "Required after the unchanged six-case contract passes 6/6 in Chrome and native. :valid, :invalid, and :placeholder-shown consume the live input/textarea value while preserving dirty-value behavior across character-data mutation. Focused native coverage also proves programmatic value, native input, value/placeholder/required attribute mutation, reset, detach/reattach, and 4,096-control bounded cascade/layout/heap/RSS behavior. Remaining form pseudo-classes and complete constraint validation stay outside this contract."
+    }
+  ],
+  "candidate": [
     {
       "path": "contracts/css-grid-auto-fill-minmax-custom-property.html",
       "type": "testharness",

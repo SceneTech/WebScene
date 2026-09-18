@@ -1,0 +1,60 @@
+name: macOS final-bundle audit contracts
+
+on:
+  pull_request:
+    paths:
+      - 'src/WebScene.Sdk/CMakeLists.txt'
+      - 'src/WebScene.Sdk/tools/audit_macos_bundle.py'
+      - 'src/WebScene.Sdk/tools/package_macos.py'
+      - 'src/WebScene.Sdk/schemas/webscene-macho-audit.schema.json'
+      - 'eng/sdk/test-macos-bundle-audit.py'
+      - 'eng/sdk/test-installed-macos-bundle-audit.py'
+      - '.github/workflows/macos-bundle-audit.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-bundle-audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  portable-contract:
+    name: Portable source and schema (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux
+            runner: ubuntu-24.04
+          - name: Windows
+            runner: windows-2022
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run portable bundle-audit contracts
+        run: python eng/sdk/test-macos-bundle-audit.py
+
+  installed-macos-consumer:
+    name: Installed SDK macOS consumer
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          developer_dir=/Applications/Xcode.app/Contents/Developer
+          test -d "$developer_dir"
+          echo "DEVELOPER_DIR=$developer_dir" >> "$GITHUB_ENV"
+          DEVELOPER_DIR="$developer_dir" xcrun clang --version
+      - name: Run portable contracts
+        run: python3 eng/sdk/test-macos-bundle-audit.py
+      - name: Exercise installed SDK tool against real Mach-O files
+        run: python3 eng/sdk/test-installed-macos-bundle-audit.py

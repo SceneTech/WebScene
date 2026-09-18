@@ -1230,14 +1230,20 @@
     void destroy_detached_frame_contexts(dom_node& root)
     {
         std::unordered_set<uint32_t> node_ids;
+        std::unordered_map<uint32_t, dom_node*> detached_frames;
         std::vector<v8::Local<v8::Context>> detached_contexts;
-        visit_subtree(root, [&](const dom_node& node) {
+        visit_subtree(root, [&](dom_node& node) {
             node_ids.insert(node.id);
+            if (node.tag == "iframe") detached_frames.emplace(node.id, &node);
         });
         for (const auto id : node_ids) {
             const auto found = actual_frame_contexts.find(id);
             if (found != actual_frame_contexts.end()
                 && !found->second.IsEmpty()) {
+                if (const auto frame = detached_frames.find(id);
+                    frame != detached_frames.end()) {
+                    dispatch_iframe_pagehide(*frame->second);
+                }
                 const auto local_context = found->second.Get(isolate);
                 const auto* frame_root = static_cast<const dom_node*>(
                     local_context->GetAlignedPointerFromEmbedderData(
@@ -1263,6 +1269,7 @@
             actual_frame_contexts.erase(id);
             frame_hydration_states.erase(id);
             retire_iframe_navigation(id);
+            frame_pagehide_dispatched.erase(id);
             actual_frame_windows.erase(id);
             actual_frame_documents.erase(id);
             frame_session_storage.erase(id);
@@ -1820,6 +1827,7 @@
             actual_frame_contexts.erase(id);
             frame_hydration_states.erase(id);
             retire_iframe_navigation(id);
+            frame_pagehide_dispatched.erase(id);
             actual_frame_documents.erase(id);
             frame_session_storage.erase(id);
             frame_load_listeners.erase(id);
@@ -2388,8 +2396,38 @@
             .first->second;
     }
 
+    void dispatch_iframe_pagehide(dom_node& frame)
+    {
+        const auto known = actual_frame_contexts.find(frame.id);
+        if (known == actual_frame_contexts.end() || known->second.IsEmpty()
+            || frame_pagehide_dispatched.contains(frame.id)) return;
+        frame_pagehide_dispatched.insert(frame.id);
+        auto local_context = known->second.Get(isolate);
+        v8::Context::Scope context_scope(local_context);
+        auto target = local_context->Global();
+        v8::Local<v8::Value> dispatcher;
+        if (!target->Get(local_context, js_string(isolate, "dispatchEvent"))
+                .ToLocal(&dispatcher)
+            || !dispatcher->IsFunction()) return;
+        auto event = create_event_instance(local_context);
+        event->Set(local_context, js_string(isolate, "type"),
+            js_string(isolate, "pagehide")).Check();
+        event->Set(local_context, js_string(isolate, "bubbles"),
+            v8::False(isolate)).Check();
+        event->Set(local_context, js_string(isolate, "cancelable"),
+            v8::False(isolate)).Check();
+        event->Set(local_context, js_string(isolate, "persisted"),
+            v8::False(isolate)).Check();
+        v8::TryCatch try_catch(isolate);
+        v8::Local<v8::Value> arguments[] = {event};
+        static_cast<void>(dispatcher.As<v8::Function>()->Call(
+            local_context, target, 1, arguments));
+        perform_microtask_checkpoint();
+    }
+
     void begin_iframe_navigation(dom_node& frame)
     {
+        dispatch_iframe_pagehide(frame);
         {
             std::lock_guard lock(document_generation_mutex);
             ++frame_navigation_generations.try_emplace(frame.id, 0U)

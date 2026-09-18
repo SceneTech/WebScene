@@ -298,6 +298,7 @@
         frame_window_scroll_offsets.clear();
         frame_load_listeners.clear();
         frame_dom_content_loaded_listeners.clear();
+        frame_pagehide_dispatched.clear();
         frame_event_listeners.clear();
         window_selections.clear();
         focused_document_owner_id = 0U;

@@ -1,0 +1,2 @@
+@import url("cssom-import-grandchild.css");
+.cssom-import-child { color: rgb(10, 20, 30); }

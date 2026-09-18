@@ -112,10 +112,54 @@ test('invalid indices and malformed or unsupported rules fail before native muta
   for (const value of ['', '.a {} .b {}', '.a {', '.a {content: "unterminated}', 'color: red;']) {
     assert.throws(() => sheet.insertRule(value), { name: 'SyntaxError' });
   }
-  assert.throws(() => sheet.insertRule('@import "other.css";'), { name: 'NotSupportedError' });
+  assert.throws(() => sheet.insertRule('@namespace svg "urn:svg";'), { name: 'NotSupportedError' });
   assert.throws(() => sheet.insertRule(), { name: 'TypeError' });
   assert.throws(() => sheet.deleteRule(), { name: 'TypeError' });
   assert.equal(style.writes.length, 0);
+});
+
+test('import rules expose live child sheets and publish flattened native rules', () => {
+  const { createStyle, realm } = setup();
+  const staged = [];
+  const style = createStyle(style => {
+    style.nativeSheet.__webSceneBaseURL = 'https://example.test/css/main.css';
+    style.nativeSheet.__webSceneLoadImport = (href, base) => {
+      const url = new URL(href, base).href;
+      if (url.endsWith('/theme.css')) return {
+        url,
+        source: '@import "nested/colors.css" screen; .theme { color: red; }'
+      };
+      if (url.endsWith('/nested/colors.css')) return {
+        url,
+        source: '.colors { background: blue; }'
+      };
+      return null;
+    };
+    style.nativeSheet.__webSceneStageRules = source => {
+      staged.push(source);
+      return true;
+    };
+  });
+  style.textContent = '@import url("theme.css") layer(editor) supports(display: grid) screen; .local { width: 1px; }';
+  style.writes.length = 0;
+  const imported = style.sheet.cssRules[0];
+  assert.equal(imported instanceof realm.CSSImportRule, true);
+  assert.equal(imported.type, 3);
+  assert.equal(imported.href, 'https://example.test/css/theme.css');
+  assert.equal(imported.layerName, 'editor');
+  assert.equal(imported.supportsText, 'display: grid');
+  assert.equal(imported.media.mediaText, 'screen');
+  assert.equal(imported.styleSheet.ownerRule, imported);
+  assert.equal(imported.styleSheet.cssRules[0].href,
+    'https://example.test/css/nested/colors.css');
+  assert.equal(imported.styleSheet.cssRules[1].selectorText, '.theme');
+  imported.styleSheet.cssRules[1].style.setProperty('color', 'green');
+  assert.equal(style.writes.length, 0, 'CSSOM publication must not rewrite owner text');
+  assert.match(staged.at(-1), /@layer editor/);
+  assert.match(staged.at(-1), /@supports \(display: grid\)/);
+  assert.match(staged.at(-1), /@media screen/);
+  assert.match(staged.at(-1), /\.colors \{ background: blue; \}/);
+  assert.match(staged.at(-1), /\.theme \{ color: green; \}/);
 });
 
 test('rule declarations use the native parser and publish native declaration mutations', () => {

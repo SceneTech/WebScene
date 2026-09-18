@@ -21,7 +21,9 @@ const int _domPolygonClipResource = 1 << 31;
 const int _domPolygonClipIndexMask = _domPolygonClipResource - 1;
 const int _domBrightnessFilter = 1 << 31;
 const int _domGrayscaleFilter = 1 << 30;
-const int _domColorFilterMask = _domBrightnessFilter | _domGrayscaleFilter;
+const int _domContrastFilter = 1 << 29;
+const int _domColorFilterMask =
+    _domBrightnessFilter | _domGrayscaleFilter | _domContrastFilter;
 
 final class SceneApplyResult {
   const SceneApplyResult({
@@ -966,19 +968,30 @@ final class WebSceneSceneProjector extends ChangeNotifier {
         ..color = ui.Color.fromARGB(command.rgba & 0xff, 255, 255, 255);
     }
     final amount = command.strokeWidth.clamp(0.0, double.infinity).toDouble();
-    final matrix = command.flags & _domBrightnessFilter != 0
-        ? <double>[
-            amount, 0, 0, 0, 0,
-            0, amount, 0, 0, 0,
-            0, 0, amount, 0, 0,
-            0, 0, 0, 1, 0,
-          ]
-        : <double>[
-            1 - 0.7874 * amount, 0.7152 * amount, 0.0722 * amount, 0, 0,
-            0.2126 * amount, 1 - 0.2848 * amount, 0.0722 * amount, 0, 0,
-            0.2126 * amount, 0.7152 * amount, 1 - 0.9278 * amount, 0, 0,
-            0, 0, 0, 1, 0,
-          ];
+    final List<double> matrix;
+    if (command.flags & _domBrightnessFilter != 0) {
+      matrix = <double>[
+        amount, 0, 0, 0, 0,
+        0, amount, 0, 0, 0,
+        0, 0, amount, 0, 0,
+        0, 0, 0, 1, 0,
+      ];
+    } else if (command.flags & _domGrayscaleFilter != 0) {
+      matrix = <double>[
+        1 - 0.7874 * amount, 0.7152 * amount, 0.0722 * amount, 0, 0,
+        0.2126 * amount, 1 - 0.2848 * amount, 0.0722 * amount, 0, 0,
+        0.2126 * amount, 0.7152 * amount, 1 - 0.9278 * amount, 0, 0,
+        0, 0, 0, 1, 0,
+      ];
+    } else {
+      final intercept = 127.5 * (1 - amount);
+      matrix = <double>[
+        amount, 0, 0, 0, intercept,
+        0, amount, 0, 0, intercept,
+        0, 0, amount, 0, intercept,
+        0, 0, 0, 1, 0,
+      ];
+    }
     return ui.Paint()
       ..colorFilter = ui.ColorFilter.matrix(matrix);
   }

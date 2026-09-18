@@ -1,0 +1,26 @@
+{
+  "profile": "webscene-service-worker-cache-replacement-1",
+  "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+  "runtime": "v8",
+  "viewport": {
+    "width": 800,
+    "height": 600,
+    "deviceScaleFactor": 1
+  },
+  "required": [
+    {
+      "path": "contracts/service-worker-cache-replacement.html",
+      "type": "contract",
+      "capabilities": [
+        "service-worker-cache-storage",
+        "service-worker-active-worker-replacement",
+        "service-worker-cache-response-clone"
+      ],
+      "evidence": ["vscode-webview-cache-replacement-376"],
+      "reason": "WPT-derived two-worker replacement contract for CacheStorage name, response metadata/body continuity, deletion, and 100-cycle latency. The native companion gate runs the pinned unchanged Code OSS v6 worker through streamed 200 then cached 304 reuse after replacement.",
+      "nativeNavigation": true
+    }
+  ],
+  "harnessBlocked": [],
+  "excluded": []
+}

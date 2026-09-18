@@ -7,8 +7,8 @@ namespace webscene_native {
 // owner's parsed native rules. Bridge dynamic CSSOM operations to a native
 // staged rule-set replacement so one task publishes each owner's final rules
 // and recascades once.
-// This is a bounded adapter, not a complete CSSOM implementation: constructed
-// sheets and imported-sheet inspection remain unsupported.
+// This is a bounded adapter, not a complete CSSOM implementation: adopted
+// sheet publication and imported-sheet inspection remain unsupported.
 // Semantics: https://www.w3.org/TR/cssom-1/
 inline constexpr std::string_view cssCompatibilityScript = R"JS(
 // SCENETECH_CSS_COMPATIBILITY_V1
@@ -16,6 +16,7 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
   'use strict';
   if (typeof globalThis.__webSceneAugmentStyleSheet === 'function') return;
   const sheets = new WeakMap();
+  const styleSheetInstances = new WeakSet();
   const exception = (message, name) => { throw new DOMException(message, name); };
   const text = value => {
     if (typeof value === 'symbol') throw new TypeError('A CSS rule cannot be a Symbol');
@@ -31,6 +32,7 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
   const layerStatementRuleInstances = new WeakSet();
   const mediaListInstances = new WeakSet();
   const ruleListInstances = new WeakSet();
+  let makeConstructedStyleSheet;
   const interfaceConstructor = (name, instances, parent) => {
     const constructor = { [name]: function() {
       throw new TypeError('Illegal constructor');
@@ -44,6 +46,15 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
     return constructor;
   };
   const CSSRuleInterface = interfaceConstructor('CSSRule', ruleInstances);
+  const CSSStyleSheetInterface = {
+    CSSStyleSheet: function CSSStyleSheet(options = undefined) {
+      if (!new.target) throw new TypeError('CSSStyleSheet must be constructed');
+      return makeConstructedStyleSheet(options);
+    }
+  }.CSSStyleSheet;
+  Object.defineProperty(CSSStyleSheetInterface, Symbol.hasInstance, {
+    value: value => styleSheetInstances.has(value)
+  });
   const CSSStyleRuleInterface = interfaceConstructor(
     'CSSStyleRule', styleRuleInstances, CSSRuleInterface);
   const CSSGroupingRuleInterface = interfaceConstructor(
@@ -63,6 +74,7 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
   const installInterfaces = view => {
     for (const [name, constructor] of [
       ['CSSRule', CSSRuleInterface],
+      ['CSSStyleSheet', CSSStyleSheetInterface],
       ['CSSStyleRule', CSSStyleRuleInterface],
       ['CSSGroupingRule', CSSGroupingRuleInterface],
       ['CSSConditionRule', CSSConditionRuleInterface],
@@ -246,6 +258,165 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
     if (!parseLayerStatementNames(parsed.cssText))
       exception('The layer statement is invalid', 'SyntaxError');
   };
+  const declarationNames = declaration => {
+    // The native declaration owns parsing and canonical serialization. Walk
+    // that serialized form only to provide CSSStyleDeclaration's indexed Web
+    // IDL surface, which the native binding does not expose yet.
+    const source = declaration.cssText || '';
+    const names = [];
+    let start = 0, parentheses = 0, quote = '', comment = false;
+    for (let index = 0; index <= source.length; index++) {
+      const character = source[index], next = source[index + 1];
+      if (comment) {
+        if (character === '*' && next === '/') { comment = false; index++; }
+        continue;
+      }
+      if (quote) {
+        if (character === '\\') index++;
+        else if (character === quote) quote = '';
+        continue;
+      }
+      if (character === '/' && next === '*') { comment = true; index++; continue; }
+      if (character === '"' || character === "'") { quote = character; continue; }
+      if (character === '(') parentheses++;
+      else if (character === ')' && parentheses) parentheses--;
+      if ((character === ';' || index === source.length) && parentheses === 0) {
+        const declarationText = source.slice(start, index).trim();
+        const colon = declarationText.indexOf(':');
+        if (colon > 0) names.push(declarationText.slice(0, colon).trim());
+        start = index + 1;
+      }
+    }
+    return names;
+  };
+  const splitDeclarationText = source => {
+    const declarations = [];
+    let start = 0, parentheses = 0, brackets = 0, quote = '', comment = false;
+    for (let index = 0; index <= source.length; index++) {
+      const character = source[index], next = source[index + 1];
+      if (comment) {
+        if (character === '*' && next === '/') { comment = false; index++; }
+        continue;
+      }
+      if (quote) {
+        if (character === '\\') index++;
+        else if (character === quote) quote = '';
+        continue;
+      }
+      if (character === '/' && next === '*') { comment = true; index++; continue; }
+      if (character === '"' || character === "'") { quote = character; continue; }
+      if (character === '(') parentheses++;
+      else if (character === ')' && parentheses) parentheses--;
+      else if (character === '[') brackets++;
+      else if (character === ']' && brackets) brackets--;
+      if ((character === ';' || index === source.length)
+          && parentheses === 0 && brackets === 0) {
+        declarations.push(source.slice(start, index).trim());
+        start = index + 1;
+      }
+    }
+    return declarations;
+  };
+  const makeConstructedDeclaration = (initial, commit) => {
+    const names = [], values = new Map(), priorities = new Map();
+    const canonicalName = value => text(value).trim().toLowerCase();
+    const assign = (rawName, rawValue, rawPriority = '') => {
+      const name = canonicalName(rawName);
+      let value = text(rawValue).trim();
+      let priority = text(rawPriority).trim().toLowerCase();
+      if (!name || (!name.startsWith('--')
+          && !/^-?[a-z][a-z0-9-]*$/.test(name))) return;
+      const important = /\s*!important\s*$/i.exec(value);
+      if (important) {
+        value = value.slice(0, important.index).trim();
+        priority = 'important';
+      }
+      if (priority && priority !== 'important') return;
+      if (!value) {
+        const index = names.indexOf(name);
+        if (index >= 0) names.splice(index, 1);
+        values.delete(name); priorities.delete(name);
+        return;
+      }
+      if (!values.has(name)) names.push(name);
+      values.set(name, value);
+      priorities.set(name, priority);
+    };
+    const replace = source => {
+      names.length = 0; values.clear(); priorities.clear();
+      for (const candidate of splitDeclarationText(text(source))) {
+        let colon = -1, parentheses = 0, brackets = 0, quote = '';
+        for (let index = 0; index < candidate.length; index++) {
+          const character = candidate[index];
+          if (quote) {
+            if (character === '\\') index++;
+            else if (character === quote) quote = '';
+            continue;
+          }
+          if (character === '"' || character === "'") { quote = character; continue; }
+          if (character === '(') parentheses++;
+          else if (character === ')' && parentheses) parentheses--;
+          else if (character === '[') brackets++;
+          else if (character === ']' && brackets) brackets--;
+          else if (character === ':' && !parentheses && !brackets) {
+            colon = index; break;
+          }
+        }
+        if (colon > 0) assign(candidate.slice(0, colon), candidate.slice(colon + 1));
+      }
+    };
+    const serialize = () => names.map(name => name + ': ' + values.get(name)
+      + (priorities.get(name) ? ' !important' : '') + ';').join(' ');
+    const target = {};
+    Object.defineProperties(target, {
+      cssText: {
+        enumerable: true,
+        get: serialize,
+        set(value) { replace(value); commit(); }
+      },
+      length: { enumerable: true, get: () => names.length },
+      item: { value: index => names[Number(index) >>> 0] || '' },
+      getPropertyValue: {
+        value: name => values.get(canonicalName(name)) || ''
+      },
+      getPropertyPriority: {
+        value: name => priorities.get(canonicalName(name)) || ''
+      },
+      setProperty: { value(name, value, priority = '') {
+        assign(name, value, priority); commit();
+      } },
+      removeProperty: { value(name) {
+        name = canonicalName(name);
+        const previous = values.get(name) || '';
+        const index = names.indexOf(name);
+        if (index >= 0) names.splice(index, 1);
+        values.delete(name); priorities.delete(name); commit();
+        return previous;
+      } }
+    });
+    replace(initial || '');
+    return new Proxy(target, {
+      get(target, key, receiver) {
+        if (typeof key === 'string' && /^(?:0|[1-9][0-9]*)$/.test(key))
+          return names[Number(key)];
+        if (typeof key === 'string' && !(key in target)) {
+          const name = key === 'cssFloat' ? 'float'
+            : key.replace(/[A-Z]/g, character => '-' + character.toLowerCase());
+          return values.get(name) || '';
+        }
+        return Reflect.get(target, key, receiver);
+      },
+      set(target, key, value, receiver) {
+        if (typeof key === 'string' && !(key in target)
+            && !/^(?:0|[1-9][0-9]*)$/.test(key)) {
+          const name = key === 'cssFloat' ? 'float'
+            : key.replace(/[A-Z]/g, character => '-' + character.toLowerCase());
+          assign(name, value); commit(); return true;
+        }
+        return Reflect.set(target, key, value, receiver);
+      }
+    });
+  };
   const makeMediaList = (read, write) => {
     const target = {};
     const queries = () => parseMediaList(read());
@@ -300,7 +471,10 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
     const publishedSource = state.disabled ? ''
       : state.mediaText.trim() ? `@media ${state.mediaText} {\n${source}\n}`
       : source;
-    if (typeof state.sheet.__webSceneStageRules === 'function') {
+    if (state.constructed) {
+      // An unadopted constructed sheet is pure CSSOM state. A later adoption
+      // slice will bind it to explicit document/shadow-root registries.
+    } else if (typeof state.sheet.__webSceneStageRules === 'function') {
       // CSSOM mutation does not replace the style element's DOM text nodes.
       // Stage the final serialized rule set in native state; synchronous
       // style/layout reads and the browser-task boundary flush it.
@@ -510,7 +684,7 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
               // Element.matches() and stylesheet parsing share WebScene's
               // native selector parser. CSSOM ignores invalid selectorText
               // assignments instead of surfacing the parser's SyntaxError.
-              state.owner.ownerDocument.createElement('span').matches(candidate);
+              state.document.createElement('span').matches(candidate);
             } catch (error) {
               if (error?.name === 'SyntaxError') return;
               throw error;
@@ -528,11 +702,7 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
         },
         style: { enumerable: true, get() {
           if (style) return style;
-          // Reuse WebScene's real CSSStyleDeclaration parser/property methods.
-          // The scratch element remains detached; only the owning style element
-          // is published when callers mutate this declaration.
-          const declaration = state.owner.ownerDocument.createElement('span').style;
-          declaration.cssText = parsed.body;
+          let declaration;
           const commit = () => {
             synchronize(state);
             cssText = selectorText + ' {' + declaration.cssText + '}';
@@ -542,8 +712,32 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
               publish(state);
             }
           };
+          if (state.constructed) {
+            // An unadopted sheet is pure CSSOM state. A detached native element
+            // would still dirty the document when its inline style changes, so
+            // retain the declaration in JS until a later adoption slice gives
+            // the sheet a native publication authority.
+            declaration = makeConstructedDeclaration(parsed.body, commit);
+            style = declaration;
+            return style;
+          }
+          // Owner-backed rules reuse WebScene's real CSSStyleDeclaration
+          // parser/property methods and publish through their <style> owner.
+          declaration = state.document.createElement('span').style;
+          declaration.cssText = parsed.body;
           style = new Proxy(declaration, {
             get(target, key) {
+              // WebScene's native declaration exposes item(index), length and
+              // named properties, but does not yet install Web IDL indexed
+              // getters. CSSStyleDeclaration[index] is used by Code OSS's
+              // Markdown sanitizer and is equivalent to item(index).
+              if (typeof key === 'string' && /^(?:0|[1-9][0-9]*)$/.test(key))
+                return declarationNames(target)[Number(key)];
+              if (key === 'length') return declarationNames(target).length;
+              if (key === 'item') return index => {
+                const name = declarationNames(target)[Number(index) >>> 0];
+                return name === undefined ? '' : name;
+              };
               const value = Reflect.get(target, key, target);
               if (typeof value !== 'function') return value;
               return (...args) => {
@@ -574,6 +768,7 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
     return rule;
   };
   const synchronize = state => {
+    if (state.constructed) return;
     const source = state.owner.textContent || '';
     if (source === state.ownerSource) return;
     const parsed = splitRules(source);
@@ -582,26 +777,38 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
     state.source = source;
     state.ownerSource = source;
   };
-  const augment = sheet => {
-    if (!sheet || typeof sheet.insertRule === 'function') return sheet;
-    installInterfaces(sheet.ownerNode?.ownerDocument?.defaultView || globalThis);
-    const state = {
-      sheet, owner: sheet.ownerNode,
-      source: undefined, ownerSource: undefined, rules: [], disabled: false,
-      mediaText: typeof sheet.ownerNode?.getAttribute === 'function'
-        ? sheet.ownerNode.getAttribute('media') || ''
-        : ''
-    };
+  const replaceConstructedRules = (state, source) => {
+    let parsed;
+    try {
+      parsed = splitRules(source);
+    } catch (error) {
+      // CSS stylesheet parsing is forgiving. A syntactically unusable
+      // replacement produces an empty sheet rather than surfacing SyntaxError.
+      if (error?.name !== 'SyntaxError') throw error;
+      parsed = [];
+    }
+    // Constructed-sheet replacement ignores imports and never fetches them.
+    parsed = parsed.filter(rule => !/^@import\b/i.test(rule.cssText));
+    for (const rule of state.rules) rule.detach();
+    state.rules = parsed.map(rule => makeRule(state, rule));
+    publish(state);
+  };
+  const initializeSheet = state => {
+    const { sheet } = state;
     const list = makeList(() => state.rules, () => synchronize(state));
     const media = makeMediaList(() => state.mediaText, value => {
       state.mediaText = value;
-      if (state.mediaText) state.owner.setAttribute('media', state.mediaText);
-      else state.owner.removeAttribute('media');
+      if (!state.constructed) {
+        if (state.mediaText) state.owner.setAttribute('media', state.mediaText);
+        else state.owner.removeAttribute('media');
+      }
       publish(state);
     });
     sheets.set(sheet, state);
+    styleSheetInstances.add(sheet);
     Object.defineProperties(sheet, {
       cssRules: { configurable: true, enumerable: true, get() { stateFor(this); return list; } },
+      rules: { configurable: true, enumerable: true, get() { stateFor(this); return list; } },
       disabled: {
         configurable: true, enumerable: true,
         get() { return stateFor(this).disabled; },
@@ -618,11 +825,13 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
         value: function replaceSync(cssText) {
           if (arguments.length === 0)
             throw new TypeError('CSSStyleSheet.replaceSync requires one argument');
-          stateFor(this);
-          text(cssText);
+          const current = stateFor(this);
+          const source = text(cssText);
           // CSSOM replacement is restricted to constructed sheets. Native
           // owner-backed sheets must retain their rules and publication state.
-          exception('Cannot replace a non-constructed stylesheet', 'NotAllowedError');
+          if (!current.constructed)
+            exception('Cannot replace a non-constructed stylesheet', 'NotAllowedError');
+          replaceConstructedRules(current, source);
         }
       },
       replace: {
@@ -631,9 +840,12 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
           try {
             if (arguments.length === 0)
               throw new TypeError('CSSStyleSheet.replace requires one argument');
-            stateFor(this);
-            text(cssText);
-            exception('Cannot replace a non-constructed stylesheet', 'NotAllowedError');
+            const current = stateFor(this);
+            const source = text(cssText);
+            if (!current.constructed)
+              exception('Cannot replace a non-constructed stylesheet', 'NotAllowedError');
+            replaceConstructedRules(current, source);
+            return Promise.resolve(this);
           } catch (error) {
             // Promise-returning Web IDL operations report argument conversion
             // and operation errors through a realm-local rejected Promise.
@@ -650,8 +862,13 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
         if (parsed.length !== 1) exception('Exactly one CSS rule is required', 'SyntaxError');
         validateLayerStatement(parsed[0]);
         // Imported sheets cannot be represented by the native owner-text bridge.
-        if (/^@(import|namespace)\b/i.test(parsed[0].cssText))
-          exception('Imported and namespace rules require native CSSOM support', 'NotSupportedError');
+        if (/^@import\b/i.test(parsed[0].cssText)) {
+          if (current.constructed)
+            exception('Constructed stylesheets cannot contain imports', 'SyntaxError');
+          exception('Imported rules require native CSSOM support', 'NotSupportedError');
+        }
+        if (/^@namespace\b/i.test(parsed[0].cssText))
+          exception('Namespace rules require native CSSOM support', 'NotSupportedError');
         current.rules.splice(index, 0, makeRule(current, parsed[0]));
         publish(current);
         return index;
@@ -667,6 +884,59 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
     });
     return sheet;
   };
+  makeConstructedStyleSheet = options => {
+    if (options !== undefined && options !== null
+        && typeof options !== 'object' && typeof options !== 'function') {
+      throw new TypeError('CSSStyleSheet options must be a dictionary');
+    }
+    const dictionary = options == null ? {} : options;
+    const mediaText = dictionary.media === undefined
+      ? '' : parseMediaList(dictionary.media).join(', ');
+    let baseURL = globalThis.document?.baseURI || globalThis.location?.href || '';
+    if (dictionary.baseURL !== undefined) {
+      try {
+        const candidate = text(dictionary.baseURL);
+        // WebScene's general URL shim is intentionally forgiving about an
+        // alphabetic port. CSSStyleSheetInit instead requires URL-parser
+        // failure to surface as NotAllowedError, matching the pinned WPT.
+        const port = /^[a-z][a-z0-9+.-]*:\/\/(?:[^/?#@]*@)?(?:\[[^\]]+\]|[^:/?#]+):([^/?#]*)/i
+          .exec(candidate)?.[1];
+        if (port !== undefined && port !== ''
+            && (!/^[0-9]+$/.test(port) || Number(port) > 65535)) throw new Error();
+        baseURL = new URL(candidate, baseURL).href;
+      } catch {
+        exception('The stylesheet base URL is invalid', 'NotAllowedError');
+      }
+    }
+    const sheet = Object.create(CSSStyleSheetInterface.prototype);
+    Object.defineProperties(sheet, {
+      ownerNode: { enumerable: true, value: null },
+      ownerRule: { enumerable: true, value: null },
+      href: { enumerable: true, value: null },
+      title: { enumerable: true, value: null },
+      type: { enumerable: true, value: 'text/css' }
+    });
+    return initializeSheet({
+      sheet, owner: null, document: globalThis.document,
+      source: '', ownerSource: undefined, rules: [],
+      disabled: Boolean(dictionary.disabled), mediaText,
+      baseURL, constructed: true
+    });
+  };
+  const augment = sheet => {
+    if (!sheet || typeof sheet.insertRule === 'function') return sheet;
+    const document = sheet.ownerNode?.ownerDocument || globalThis.document;
+    installInterfaces(document?.defaultView || globalThis);
+    return initializeSheet({
+      sheet, owner: sheet.ownerNode, document,
+      source: undefined, ownerSource: undefined, rules: [], disabled: false,
+      mediaText: typeof sheet.ownerNode?.getAttribute === 'function'
+        ? sheet.ownerNode.getAttribute('media') || ''
+        : '',
+      constructed: false
+    });
+  };
+  installInterfaces(globalThis);
   Object.defineProperty(globalThis, '__webSceneAugmentStyleSheet', {
     value: augment, configurable: true
   });

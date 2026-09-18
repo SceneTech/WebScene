@@ -2685,6 +2685,118 @@
             });
     }
 
+    void rebuild_cascade_layer_order_for_stylesheet(
+        uint32_t owner_id,
+        const std::vector<std::string>& replacement_names)
+    {
+        const auto previous_orders = css_cascade_layer_orders;
+        std::vector<std::pair<uint32_t, std::string>> ordered_pairs;
+        ordered_pairs.reserve(previous_orders.size());
+        for (const auto& [name, order] : previous_orders) {
+            ordered_pairs.emplace_back(order, name);
+        }
+        std::sort(ordered_pairs.begin(), ordered_pairs.end());
+        std::vector<std::string> ordered_names;
+        ordered_names.reserve(ordered_pairs.size() + replacement_names.size());
+        for (const auto& [order, name] : ordered_pairs) {
+            static_cast<void>(order);
+            ordered_names.push_back(name);
+        }
+
+        const auto known_owner = css_stylesheet_layer_names.find(owner_id);
+        const auto previous_names = known_owner == css_stylesheet_layer_names.end()
+            ? std::vector<std::string>{} : known_owner->second;
+        const auto owner_scope = cascade_layer_scope_id(owner_id);
+        std::vector<std::string> previous_keys;
+        previous_keys.reserve(previous_names.size());
+        for (const auto& name : previous_names) {
+            previous_keys.push_back(
+                std::to_string(owner_scope) + ':' + name);
+        }
+        std::unordered_set<std::string> declared_elsewhere;
+        for (const auto& [candidate_owner, names] : css_stylesheet_layer_names) {
+            if (candidate_owner == owner_id
+                || cascade_layer_scope_id(candidate_owner) != owner_scope) {
+                continue;
+            }
+            for (const auto& name : names) {
+                declared_elsewhere.insert(
+                    std::to_string(owner_scope) + ':' + name);
+            }
+        }
+
+        auto insertion = std::numeric_limits<size_t>::max();
+        std::vector<std::string> retained;
+        retained.reserve(ordered_names.size() + replacement_names.size());
+        for (const auto& name : ordered_names) {
+            const auto owned = std::find(
+                previous_keys.begin(), previous_keys.end(), name)
+                != previous_keys.end();
+            if (owned && insertion == std::numeric_limits<size_t>::max()) {
+                insertion = retained.size();
+            }
+            if (owned && !declared_elsewhere.contains(name)) continue;
+            retained.push_back(name);
+        }
+        if (insertion == std::numeric_limits<size_t>::max()) {
+            insertion = retained.size();
+        }
+        insertion = std::min(insertion, retained.size());
+        for (const auto& name : replacement_names) {
+            const auto key = std::to_string(owner_scope) + ':' + name;
+            if (name.empty()
+                || std::find(retained.begin(), retained.end(), key)
+                    != retained.end()) {
+                continue;
+            }
+            retained.insert(retained.begin() + static_cast<std::ptrdiff_t>(insertion), key);
+            ++insertion;
+        }
+
+        if (replacement_names.empty()) css_stylesheet_layer_names.erase(owner_id);
+        else css_stylesheet_layer_names.insert_or_assign(owner_id, replacement_names);
+        css_cascade_layer_orders.clear();
+        uint32_t next_order = 1U;
+        for (const auto& name : retained) {
+            css_cascade_layer_orders.emplace(name, next_order++);
+        }
+
+        std::unordered_map<uint32_t, std::string> previous_names_by_order;
+        for (const auto& [name, order] : previous_orders) {
+            previous_names_by_order.emplace(order, name);
+        }
+        std::vector<uint32_t> anonymous_orders;
+        for (const auto& rule : css_rules) {
+            if (rule.cascade_layer_order != 0U
+                && !previous_names_by_order.contains(rule.cascade_layer_order)
+                && std::find(
+                    anonymous_orders.begin(), anonymous_orders.end(),
+                    rule.cascade_layer_order) == anonymous_orders.end()) {
+                anonymous_orders.push_back(rule.cascade_layer_order);
+            }
+        }
+        std::sort(anonymous_orders.begin(), anonymous_orders.end());
+        std::unordered_map<uint32_t, uint32_t> remapped_anonymous_orders;
+        for (const auto old_order : anonymous_orders) {
+            remapped_anonymous_orders.emplace(old_order, next_order++);
+        }
+        for (auto& rule : css_rules) {
+            if (rule.cascade_layer_order == 0U) continue;
+            if (const auto named = previous_names_by_order.find(
+                    rule.cascade_layer_order);
+                named != previous_names_by_order.end()) {
+                const auto remapped = css_cascade_layer_orders.find(named->second);
+                rule.cascade_layer_order = remapped == css_cascade_layer_orders.end()
+                    ? 0U : remapped->second;
+            } else if (const auto anonymous = remapped_anonymous_orders.find(
+                    rule.cascade_layer_order);
+                anonymous != remapped_anonymous_orders.end()) {
+                rule.cascade_layer_order = anonymous->second;
+            }
+        }
+        next_css_cascade_layer_order = next_order;
+    }
+
     void flush_pending_stylesheet_replacements()
     {
         if (pending_stylesheet_replacements.empty()) return;
@@ -2718,6 +2830,13 @@
             std::erase_if(css_rules, [&](const auto& rule) {
                 return owners.contains(rule.stylesheet_owner_id);
             });
+            for (const auto& replacement : pending) {
+                if (replacement.cascade_root_id == root->id
+                    && owners.contains(replacement.owner_id)) {
+                    rebuild_cascade_layer_order_for_stylesheet(
+                        replacement.owner_id, replacement.layer_names);
+                }
+            }
             for (auto& replacement : pending) {
                 auto* owner = document.find_by_native_id(replacement.owner_id);
                 if (replacement.cascade_root_id != root->id

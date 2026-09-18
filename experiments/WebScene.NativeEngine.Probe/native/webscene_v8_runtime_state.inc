@@ -121,6 +121,7 @@
         uint32_t cascade_root_id{0U};
         std::string base_address;
         std::string source;
+        std::vector<std::string> layer_names;
     };
     std::vector<pending_stylesheet_replacement> pending_stylesheet_replacements;
     size_t pending_stylesheet_replacement_bytes{0U};
@@ -437,6 +438,9 @@
     std::unordered_map<std::string, std::string> css_variables;
     std::unordered_set<std::string> important_css_variables;
     std::unordered_map<std::string, uint32_t> css_cascade_layer_orders;
+    std::unordered_map<uint32_t, std::vector<std::string>>
+        css_stylesheet_layer_names;
+    std::vector<std::string>* active_stylesheet_layer_names{nullptr};
     uint32_t next_css_cascade_layer_order{1U};
     const dom_node* active_css_cascade_root{nullptr};
     std::unordered_map<const dom_node*, css_cascade_state> inactive_css_cascades;

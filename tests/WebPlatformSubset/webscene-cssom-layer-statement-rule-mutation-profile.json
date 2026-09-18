@@ -1,0 +1,28 @@
+{
+  "profile": "webscene-cssom-layer-statement-rule-mutation-1",
+  "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+  "runtime": "v8",
+  "viewport": {
+    "width": 800,
+    "height": 600,
+    "deviceScaleFactor": 1
+  },
+  "required": [
+    {
+      "path": "contracts/cssom-layer-statement-rule-mutation.html",
+      "type": "contract",
+      "capabilities": [
+        "cssom-layer-statement-rule-identity",
+        "cssom-layer-statement-frozen-name-list",
+        "cssom-layer-statement-grammar",
+        "cssom-layer-order-recascade",
+        "cssom-layer-statement-nested-ownership",
+        "cssom-layer-statement-cross-document-lifecycle"
+      ],
+      "evidence": ["cssom-layer-statement-rule-mutation-393"],
+      "reason": "Chrome- and WPT-derived CSS Cascade regression for live owner-backed CSSLayerStatementRule identity, frozen dotted name-list reflection, nested ownership, layer-order mutation, synchronous recascade, serialization, and lifecycle ownership."
+    }
+  ],
+  "harnessBlocked": [],
+  "excluded": []
+}

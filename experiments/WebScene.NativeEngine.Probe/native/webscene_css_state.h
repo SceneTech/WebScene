@@ -287,6 +287,8 @@ struct compiled_css_selector final {
         std::unordered_map<std::string, std::string> variables;
         std::unordered_set<std::string> important_variables;
         std::unordered_map<std::string, uint32_t> cascade_layer_orders;
+        std::unordered_map<uint32_t, std::vector<std::string>>
+            stylesheet_layer_names;
         uint32_t next_cascade_layer_order{1U};
     };
 

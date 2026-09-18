@@ -479,6 +479,69 @@
         }
     }
 
+    static void request_file_grant_remove(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        auto isolate = info.GetIsolate();
+        auto local_context = isolate->GetCurrentContext();
+        auto resolver = v8::Promise::Resolver::New(local_context).ToLocalChecked();
+        info.GetReturnValue().Set(resolver->GetPromise());
+        const auto reject = [&](std::string_view message, std::string_view name) {
+            reject_file_panel_promise(
+                isolate, local_context, resolver, message, name);
+        };
+        if (self == nullptr || !self->file_grant_remove_request_sink) {
+            reject("Native entry removal is unavailable", "NotSupportedError");
+            return;
+        }
+        if (info.Length() != 3 || !info[0]->IsUint8Array()
+            || !info[1]->IsString() || !info[2]->IsBoolean()) {
+            reject("Malformed native entry removal request", "TypeError");
+            return;
+        }
+        if (self->file_grant_remove_promise_targets.size()
+            >= WEBSCENE_FILE_GRANT_REMOVE_MAXIMUM_PENDING_OPERATIONS_V2) {
+            reject("Too many pending entry removal operations",
+                "QuotaExceededError");
+            return;
+        }
+        file_grant_remove_request_lease_v2 request;
+        request.view.request_id = ++self->next_host_request_id;
+        const auto token = info[0].As<v8::Uint8Array>();
+        if (token->ByteLength() == 0
+            || token->ByteLength() > file_panel_maximum_token_bytes_v2) {
+            reject("Malformed opaque directory token", "DataError");
+            return;
+        }
+        const auto store = token->Buffer()->GetBackingStore();
+        const auto* first = static_cast<const std::uint8_t*>(store->Data())
+            + token->ByteOffset();
+        request.directory_grant_id.assign(first, first + token->ByteLength());
+        v8::String::Utf8Value name(isolate, info[1]);
+        if (*name == nullptr || name.length() <= 0
+            || static_cast<std::size_t>(name.length())
+                > WEBSCENE_FILE_GRANT_REMOVE_MAXIMUM_NAME_BYTES_V2) {
+            reject("Malformed entry name", "TypeError");
+            return;
+        }
+        request.display_name.assign(*name,
+            static_cast<std::size_t>(name.length()));
+        request.view.recursive = info[2]->BooleanValue(isolate) ? 1U : 0U;
+        request.bind();
+        file_grant_remove_promise_target target;
+        target.context.Reset(isolate, local_context);
+        target.resolver.Reset(isolate, resolver);
+        self->file_grant_remove_promise_targets.emplace(
+            request.view.request_id, std::move(target));
+        if (!self->file_grant_remove_request_sink(request.view)) {
+            self->file_grant_remove_promise_targets.erase(
+                request.view.request_id);
+            reject("The native removal authority rejected the request",
+                "NotAllowedError");
+        }
+    }
+
     static void request_file_panel(
         const v8::FunctionCallbackInfo<v8::Value>& info)
     {
@@ -1173,6 +1236,56 @@
         perform_microtask_checkpoint();
     }
 
+    void complete_native_file_grant_remove(
+        file_grant_remove_completion_data_v2& completion)
+    {
+        const auto found = file_grant_remove_promise_targets.find(
+            completion.request_id);
+        if (found == file_grant_remove_promise_targets.end()) return;
+        auto target = std::move(found->second);
+        file_grant_remove_promise_targets.erase(found);
+        auto local_context = target.context.Get(isolate);
+        auto resolver = target.resolver.Get(isolate);
+        if (local_context.IsEmpty() || resolver.IsEmpty()) return;
+        v8::Context::Scope context_scope(local_context);
+        if (completion.status != WEBSCENE_FILE_GRANT_REMOVE_SUCCESS_V2) {
+            const auto name = completion.status
+                    == WEBSCENE_FILE_GRANT_REMOVE_CANCELLED_V2
+                ? "AbortError"
+                : completion.status == WEBSCENE_FILE_GRANT_REMOVE_DENIED_V2
+                    ? "NotAllowedError"
+                    : completion.status == WEBSCENE_FILE_GRANT_REMOVE_NOT_FOUND_V2
+                        ? "NotFoundError"
+                        : completion.status
+                                == WEBSCENE_FILE_GRANT_REMOVE_INVALID_MODIFICATION_V2
+                            ? "InvalidModificationError"
+                            : completion.status == WEBSCENE_FILE_GRANT_REMOVE_CHANGED_V2
+                                ? "InvalidStateError"
+                                : completion.status == WEBSCENE_FILE_GRANT_REMOVE_LIMIT_V2
+                                    ? "QuotaExceededError"
+                                    : "NotReadableError";
+            reject_file_panel_promise(isolate, local_context, resolver,
+                "The native entry removal operation failed", name);
+            perform_microtask_checkpoint();
+            return;
+        }
+        resolver->Resolve(local_context, v8::Undefined(isolate)).Check();
+        perform_microtask_checkpoint();
+    }
+    void cancel_file_grant_remove_promises(const char* message)
+    {
+        for (auto& [_, target] : file_grant_remove_promise_targets) {
+            auto local_context = target.context.Get(isolate);
+            auto resolver = target.resolver.Get(isolate);
+            if (local_context.IsEmpty() || resolver.IsEmpty()) continue;
+            v8::Context::Scope context_scope(local_context);
+            reject_file_panel_promise(
+                isolate, local_context, resolver, message, "AbortError");
+        }
+        file_grant_remove_promise_targets.clear();
+        perform_microtask_checkpoint();
+    }
+
     void install_file_system_access_api(v8::Local<v8::Context> local_context)
     {
         auto global = local_context->Global();
@@ -1207,6 +1320,10 @@
             v8::Function::New(local_context, request_file_grant_create_directory)
                 .ToLocalChecked()).Check();
         global->Set(local_context,
+            js_string(isolate, "__webSceneRemoveFileGrantEntry"),
+            v8::Function::New(local_context, request_file_grant_remove)
+                .ToLocalChecked()).Check();
+        global->Set(local_context,
             js_string(isolate, "__webSceneRegisterFileSystemHandle"),
             v8::Function::New(local_context, register_file_system_handle)
                 .ToLocalChecked()).Check();
@@ -1229,6 +1346,7 @@
             const createFileGrant = globalThis.__webSceneCreateFileGrant;
             const createDirectoryGrant =
               globalThis.__webSceneCreateDirectoryGrant;
+            const removeGrantEntry = globalThis.__webSceneRemoveFileGrantEntry;
             const registerHandle = globalThis.__webSceneRegisterFileSystemHandle;
             const registerHandleRealm =
               globalThis.__webSceneRegisterFileSystemHandleRealm;
@@ -1242,6 +1360,7 @@
             delete globalThis.__webSceneDirectoryGrant;
             delete globalThis.__webSceneCreateFileGrant;
             delete globalThis.__webSceneCreateDirectoryGrant;
+            delete globalThis.__webSceneRemoveFileGrantEntry;
             delete globalThis.__webSceneRegisterFileSystemHandle;
             delete globalThis.__webSceneRegisterFileSystemHandleRealm;
             delete globalThis.__webSceneFileSystemHandleState;
@@ -1668,7 +1787,16 @@
               catch (error) { return Promise.reject(error); }
             }
             function removeEntry(name, options = {}) {
-              stateFor(this); return unavailable('removeEntry');
+              try {
+                const state = directoryState(this);
+                name = validateEntryName(name);
+                if (options == null) options = {};
+                if (typeof options !== 'object') {
+                  throw new TypeError('Handle options must be an object');
+                }
+                return removeGrantEntry(
+                  state.token, name, Boolean(options.recursive));
+              } catch (error) { return Promise.reject(error); }
             }
             function resolve(possibleDescendant) {
               try {

@@ -36,6 +36,7 @@
         file_grant_directory_broker_v2_.retire();
         file_grant_create_file_broker_v2_.retire();
         file_grant_create_directory_broker_v2_.retire();
+        file_grant_remove_broker_v2_.retire();
         file_grant_release_broker_v2_.retire();
         // V8 cleanup must stay on its owning worker even after a terminal throw.
         retire_file_runtime();
@@ -409,6 +410,15 @@
                         complete_file_grant_create_directory_request_v2(
                             std::move(completion));
                     });
+            },
+            [this](const webscene_file_grant_remove_request_v2& request) {
+                return queue_file_grant_remove_request_v2(
+                    request,
+                    [this](webscene_native::file_grant_remove_completion_data_v2&&
+                            completion) {
+                        complete_file_grant_remove_request_v2(
+                            std::move(completion));
+                    });
             });
         runtime_->set_work_metrics_enabled(
             runtime_work_metrics_enabled_.load(std::memory_order_acquire));
@@ -444,6 +454,7 @@
             file_grant_directory_broker_v2_.retire();
             file_grant_create_file_broker_v2_.retire();
             file_grant_create_directory_broker_v2_.retire();
+            file_grant_remove_broker_v2_.retire();
             retire_file_runtime();
         } else {
             { std::lock_guard lock(file_runtime_mutex_); file_runtime_ready_=true; }
@@ -1214,6 +1225,14 @@
                     changed = true;
                     continue;
                 }
+                if (auto* remove = std::get_if<
+                        webscene_native::file_grant_remove_completion_data_v2>(
+                            &request)) {
+                    if (runtime_)
+                        runtime_->complete_file_grant_remove_request(*remove);
+                    changed = true;
+                    continue;
+                }
                 if (auto* host = std::get_if<webscene_native::native_host_completion>(&request)) {
                     if (runtime_) runtime_->complete_host_request(*host);
                     changed = true;
@@ -1247,6 +1266,7 @@
                     file_grant_directory_broker_v2_.retire();
                     file_grant_create_file_broker_v2_.retire();
                     file_grant_create_directory_broker_v2_.retire();
+                    file_grant_remove_broker_v2_.retire();
                     file_grant_release_broker_v2_.retire();
                     if (url->initial_viewport) apply(*url->initial_viewport);
                     bool loaded = false;
@@ -1644,6 +1664,7 @@
         file_grant_directory_broker_v2_.retire();
         file_grant_create_file_broker_v2_.retire();
         file_grant_create_directory_broker_v2_.retire();
+        file_grant_remove_broker_v2_.retire();
         file_grant_release_broker_v2_.retire();
         retire_file_runtime();
 #endif

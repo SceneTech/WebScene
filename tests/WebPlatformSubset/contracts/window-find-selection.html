@@ -1,0 +1,107 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Window.find and live Selection contract</title>
+<main><p id="a">Alpha beta alpha BETA alphabet</p><p id="b">omega beta</p><p id="c">café 😀 target</p></main>
+<script>
+  const state = globalThis.__webSceneWptState = {
+    complete:false, harness:null, results:[], errors:[], diagnostics:[]
+  };
+  const record = (name, condition, detail = null) => state.results.push({
+    name, status:condition ? "PASS" : "FAIL",
+    message:condition ? null : String(detail || "Contract failed"), stack:null
+  });
+  const snap = selection => ({
+    text:selection.toString(),
+    parent:selection.anchorNode?.parentElement?.id || null,
+    anchor:selection.anchorOffset,
+    focus:selection.focusOffset,
+    count:selection.rangeCount,
+    collapsed:selection.isCollapsed
+  });
+  const finish = error => {
+    if (error) state.errors.push(String(error && error.stack || error));
+    const failed = state.results.find(result => result.status !== "PASS");
+    state.harness = error || failed
+      ? {status:1,message:error ? String(error) : failed.message,stack:null}
+      : {status:0,message:null,stack:null};
+    state.complete = true;
+  };
+  try {
+    const selection = getSelection();
+    record("getSelection returns stable live identity",
+      selection === getSelection() && selection.rangeCount === 0
+        && selection.anchorNode === null && selection.isCollapsed);
+    const first = find("alpha", false, false, true, false, false, false);
+    const firstState = snap(selection);
+    const second = find("alpha", false, false, true, false, false, false);
+    const secondState = snap(selection);
+    const third = find("alpha", false, false, true, false, false, false);
+    const thirdState = snap(selection);
+    record("forward repeated find advances in document order",
+      first && second && third
+        && firstState.text === "Alpha" && firstState.anchor === 0
+        && secondState.text === "alpha" && secondState.anchor === 11
+        && thirdState.text === "alpha" && thirdState.anchor === 22,
+      JSON.stringify({firstState,secondState,thirdState}));
+    const caseFirst = find("BETA", true, false, true, false, false, false);
+    const caseFirstState = snap(selection);
+    const caseSecond = find("BETA", true, false, true, false, false, false);
+    record("case-sensitive find wraps to its only exact match",
+      caseFirst && caseSecond && caseFirstState.text === "BETA"
+        && caseFirstState.anchor === 17 && selection.anchorOffset === 17);
+    selection.removeAllRanges();
+    record("removeAllRanges clears the live selection",
+      selection.rangeCount === 0 && selection.anchorNode === null
+        && selection.toString() === "" && selection.isCollapsed);
+    const backwardFirst = find("beta", false, true, true, false, false, false);
+    const backwardFirstState = snap(selection);
+    const backwardSecond = find("beta", false, true, true, false, false, false);
+    const backwardSecondState = snap(selection);
+    record("backward find begins at the document end and repeats backward",
+      backwardFirst && backwardSecond
+        && backwardFirstState.parent === "b" && backwardFirstState.anchor === 6
+        && backwardSecondState.parent === "a" && backwardSecondState.anchor === 17,
+      JSON.stringify({backwardFirstState,backwardSecondState}));
+    selection.empty();
+    const wholeFirst = find("alpha", false, false, true, true, false, false);
+    const wholeFirstState = snap(selection);
+    const wholeSecond = find("alpha", false, false, true, true, false, false);
+    const wholeSecondState = snap(selection);
+    const wholeThird = find("alpha", false, false, true, true, false, false);
+    const wholeThirdState = snap(selection);
+    record("whole-word find excludes the alphabet substring and wraps",
+      wholeFirst && wholeSecond && wholeThird
+        && wholeFirstState.anchor === 0 && wholeSecondState.anchor === 11
+        && wholeThirdState.anchor === 0,
+      JSON.stringify({wholeFirstState,wholeSecondState,wholeThirdState}));
+    const beforeMiss = selection.toString();
+    record("a miss preserves the current selection",
+      !find("absent", false, false, true, false, false, false)
+        && selection.toString() === beforeMiss);
+    const range = selection.getRangeAt(0);
+    record("getRangeAt reflects the active match",
+      range.startContainer === selection.anchorNode
+        && range.endContainer === selection.focusNode
+        && range.startOffset === selection.anchorOffset
+        && range.endOffset === selection.focusOffset);
+    selection.collapse(selection.anchorNode);
+    const collapsedState = snap(selection);
+    const afterCollapse = find("beta", false, false, true, false, false, false);
+    record("collapse resets the forward search position",
+      collapsedState.collapsed && collapsedState.count === 1
+        && afterCollapse && selection.toString() === "beta"
+        && selection.anchorOffset === 6,
+      JSON.stringify({collapsedState,after:snap(selection)}));
+    selection.removeAllRanges();
+    const unicode = find("😀", true, false, false, true, false, false);
+    record("find and Selection offsets preserve UTF-16 code units",
+      unicode && selection.toString() === "😀"
+        && selection.anchorNode?.parentElement?.id === "c"
+        && selection.anchorOffset === 5 && selection.focusOffset === 7,
+      JSON.stringify(snap(selection)));
+    state.diagnostics.push(JSON.stringify({
+      selection:snap(selection), identity:selection===getSelection()
+    }));
+    finish();
+  } catch (error) { finish(error); }
+</script>

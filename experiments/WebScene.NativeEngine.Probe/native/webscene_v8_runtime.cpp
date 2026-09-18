@@ -3778,6 +3778,11 @@ struct v8_dom_runtime::implementation final {
             local_context,
             js_string(isolate, "getSelection"),
             v8::Function::New(local_context, get_selection).ToLocalChecked()).Check();
+        global
+            ->Set(
+                local_context, js_string(isolate, "find"),
+                v8::Function::New(local_context, window_find).ToLocalChecked())
+            .Check();
         global->Set(
             local_context,
             js_string(isolate, "__webSceneCreateObjectUrl"),

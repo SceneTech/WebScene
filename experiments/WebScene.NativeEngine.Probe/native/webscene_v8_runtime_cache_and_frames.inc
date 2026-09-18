@@ -1406,6 +1406,11 @@
             local_context,
             js_string(isolate, "getSelection"),
             v8::Function::New(local_context, get_selection).ToLocalChecked()).Check();
+        global
+            ->Set(
+                local_context, js_string(isolate, "find"),
+                v8::Function::New(local_context, window_find).ToLocalChecked())
+            .Check();
         global->Set(local_context, js_string(isolate, "atob"),
             v8::Function::New(local_context, window_atob).ToLocalChecked()).Check();
         global->Set(local_context, js_string(isolate, "btoa"),
@@ -2589,12 +2594,15 @@
             auto* previous_root = static_cast<dom_node*>(previous_context->GetAlignedPointerFromEmbedderData(
                 1, v8::kEmbedderDataTypeTagDefault));
             if (previous_root != nullptr && previous_root->parent == &frame) {
-                previous_root->mutable_authored_style().declarations["display"] = "none";
-                previous_root->style.inline_property_mask |= inline_display;
-                previous_root->style.display = display_mode::none;
-                previous_root->visible = false;
-                static_cast<void>(deactivate_connected_stylesheets(*previous_root, false));
-                cancel_detached_frame_context_tasks(previous_context);
+              window_selections.erase(previous_root->id);
+              previous_root->mutable_authored_style().declarations["display"] =
+                  "none";
+              previous_root->style.inline_property_mask |= inline_display;
+              previous_root->style.display = display_mode::none;
+              previous_root->visible = false;
+              static_cast<void>(
+                  deactivate_connected_stylesheets(*previous_root, false));
+              cancel_detached_frame_context_tasks(previous_context);
             }
         }
         auto& frame_body = document.create_element("body");

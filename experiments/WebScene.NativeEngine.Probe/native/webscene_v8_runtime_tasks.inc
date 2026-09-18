@@ -436,9 +436,20 @@
                 js_string(isolate, "origin")).ToLocal(&origin_value)) {
             current_target_origin = to_utf8(isolate, origin_value);
         }
+        const auto canonical_origin = [](std::string value) {
+            std::transform(value.begin(), value.end(), value.begin(),
+                [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            if (value.starts_with("https://") && value.ends_with(":443")) {
+                value.resize(value.size() - 4U);
+            } else if (value.starts_with("http://") && value.ends_with(":80")) {
+                value.resize(value.size() - 3U);
+            }
+            return value;
+        };
         if (!task.target_origin.empty()
             && task.target_origin != "*"
-            && task.target_origin != current_target_origin) {
+            && canonical_origin(task.target_origin)
+                != canonical_origin(current_target_origin)) {
             return true;
         }
 
@@ -466,10 +477,29 @@
             target_context,
             js_string(isolate, "origin"),
             js_string(isolate, task.source_origin.c_str())).Check();
+        v8::Local<v8::Value> source_window = source_context->Global();
+        if (target_context == context.Get(isolate)) {
+            for (const auto& [frame_id, persistent_context] : actual_frame_contexts) {
+                if (persistent_context.Get(isolate) != source_context) continue;
+                if (auto* frame = find_node_by_native_id(document.body(), frame_id);
+                    frame != nullptr) {
+                    source_window = frame_window(*frame);
+                }
+                break;
+            }
+        } else if (source_context == context.Get(isolate)) {
+            v8::Local<v8::Value> parent_value;
+            if (target_global->Get(
+                    target_context,
+                    js_string(isolate, "parent")).ToLocal(&parent_value)
+                && !parent_value->IsNullOrUndefined()) {
+                source_window = parent_value;
+            }
+        }
         event->Set(
             target_context,
             js_string(isolate, "source"),
-            source_context->Global()).Check();
+            source_window).Check();
         event->Set(
             target_context,
             js_string(isolate, "lastEventId"),

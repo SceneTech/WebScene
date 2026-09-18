@@ -11,12 +11,43 @@
   });
   const wait = duration => new Promise(resolve => setTimeout(resolve, duration));
   (async () => {
+    record('AbortSignal is globally constructible through AbortController',
+      typeof AbortSignal === 'function'
+        && new AbortController().signal instanceof AbortSignal
+        && AbortSignal.abort().aborted);
+    const timeoutSignal = AbortSignal.timeout(1);
+    await new Promise(resolve => timeoutSignal.addEventListener('abort', resolve));
+    record('AbortSignal.timeout aborts with a TimeoutError reason',
+      timeoutSignal.aborted && timeoutSignal.reason?.name === 'TimeoutError');
     const changed = new Promise(resolve => navigator.serviceWorker.addEventListener(
       'controllerchange', resolve, {once:true}));
     const registration = await navigator.serviceWorker.register(
       'service-worker-controlled-fetch-abort-worker.js');
     if (!navigator.serviceWorker.controller) await changed;
     const controller = navigator.serviceWorker.controller;
+
+    const xhrResult = await new Promise(resolve => {
+      const request = new XMLHttpRequest();
+      request.open('POST', 'controlled-xhr');
+      request.setRequestHeader('content-type', 'text/plain');
+      request.addEventListener('load', () => resolve({
+        status: request.status, body: request.responseText
+      }));
+      request.addEventListener('error', () => resolve({status: 0, body: ''}));
+      request.send('login-probe');
+    });
+    record('XMLHttpRequest POST preserves body, status, and asynchronous completion',
+      xhrResult.status === 201 && xhrResult.body === 'POST:login-probe',
+      JSON.stringify(xhrResult));
+
+    const binarySource = new Uint8Array([0, 1, 2, 127, 128, 255]);
+    const binaryResponse = await fetch('controlled-binary', {
+      method: 'POST', body: binarySource,
+      headers: {'content-type': 'application/octet-stream'}
+    });
+    record('fetch preserves typed-array request bodies byte-for-byte',
+      binaryResponse.status === 202
+        && await binaryResponse.text() === '0,1,2,127,128,255');
 
     const pre = new AbortController();
     pre.abort();

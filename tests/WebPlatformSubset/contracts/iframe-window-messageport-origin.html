@@ -11,6 +11,37 @@ window.finish = () => {
   s.complete=true;
 };
 
+const testOpaqueFrameProxy = () => {
+  const frame = document.createElement('iframe');
+  frame.setAttribute('sandbox', 'allow-scripts');
+  const listener = event => {
+    if (event.data === 'opaque-ready') {
+      let documentDenied = false;
+      try { documentDenied = event.source.document === undefined; }
+      catch (error) { documentDenied = error?.name === 'SecurityError'; }
+      record('Opaque iframe exposes a restricted non-null WindowProxy',
+        frame.contentWindow !== null && frame.contentDocument === null
+          && event.source === frame.contentWindow && documentDenied
+          && typeof event.source.postMessage === 'function');
+      const channel = new MessageChannel();
+      channel.port1.onmessage = response => {
+        record('Opaque iframe accepts a transferred MessagePort',
+          response.data === 42);
+        channel.port1.close();
+        removeEventListener('message', listener);
+        frame.remove();
+        finish();
+      };
+      event.source.postMessage(
+        {kind:'opaque-init', port:channel.port2}, '*', [channel.port2]);
+      channel.port1.postMessage(41);
+    }
+  };
+  addEventListener('message', listener);
+  frame.src = 'iframe-window-messageport-opaque-frame.html';
+  document.body.appendChild(frame);
+};
+
 addEventListener('message', event => {
   if (event.data !== 'iframe-ready') return;
   const frame = document.querySelector('iframe');
@@ -20,13 +51,20 @@ addEventListener('message', event => {
   channel.port1.onmessage = response => {
     record('Iframe receives transferred MessagePort and returns ordered data', response.data === 42);
     channel.port1.close();
-    finish();
+    testOpaqueFrameProxy();
   };
   event.source.postMessage({kind:'vscode.init',port:channel.port2}, origin, [channel.port2]);
   channel.port1.postMessage(41);
 });
 
 try {
+  const blank = document.createElement('iframe');
+  document.body.appendChild(blank);
+  record('Initial about:blank WindowProxy exposes ECMAScript intrinsics synchronously',
+    blank.contentWindow.JSON.parse('{"ready":true}').ready
+      && blank.contentWindow.JSON.stringify({ready:true}) === '{"ready":true}');
+  blank.remove();
+
   const frame = document.createElement('iframe');
   document.body.appendChild(frame);
   const child = frame.contentDocument;

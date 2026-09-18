@@ -1234,11 +1234,25 @@
                     js_string(isolate, "document"),
                     frame_document_value).Check();
             }
+        } else {
+            const auto proxy_entry = frame_windows.find(frame.id);
+            if (proxy_entry != frame_windows.end() && !proxy_entry->second.IsEmpty()) {
+                auto owner_context = context.Get(isolate);
+                v8::Context::Scope owner_scope(owner_context);
+                auto proxy = proxy_entry->second.Get(isolate);
+                proxy->Delete(owner_context, js_string(isolate, "document")).FromMaybe(false);
+                proxy->Delete(owner_context, js_string(isolate, "location")).FromMaybe(false);
+                proxy->Set(owner_context, js_string(isolate, "postMessage"),
+                    v8::Function::New(owner_context, window_post_message)
+                        .ToLocalChecked()).Check();
+            }
         }
         global->Set(local_context, js_string(isolate, "name"), js_string(isolate, frame.attributes["name"].c_str())).Check();
         v8::Local<v8::Value> parent_window = v8::Null(isolate);
+        v8::Local<v8::Value> top_window = v8::Null(isolate);
         if (same_origin_access) {
             parent_window = context.Get(isolate)->Global();
+            top_window = context.Get(isolate)->Global();
             for (auto* ancestor = frame.parent;
                 ancestor != nullptr;
                 ancestor = ancestor->parent) {
@@ -1250,14 +1264,34 @@
                 }
                 break;
             }
+        } else {
+            // Cross-origin WindowProxy objects intentionally expose only the small
+            // surface that is safe across origins.  In particular, parent/top are
+            // never null in a browser and postMessage remains available.  Several
+            // embedded identity and challenge providers rely on that contract.
+            auto cross_origin_proxy = v8::Object::New(isolate);
+            cross_origin_proxy->Set(
+                local_context,
+                js_string(isolate, "postMessage"),
+                v8::Function::New(
+                    local_context,
+                    window_post_message).ToLocalChecked()).Check();
+            cross_origin_proxy->Set(
+                local_context,
+                js_string(isolate, "parent"),
+                cross_origin_proxy).Check();
+            cross_origin_proxy->Set(
+                local_context,
+                js_string(isolate, "top"),
+                cross_origin_proxy).Check();
+            parent_window = cross_origin_proxy;
+            top_window = cross_origin_proxy;
         }
         global->Set(local_context, js_string(isolate, "parent"), parent_window).Check();
         global->Set(
             local_context,
             js_string(isolate, "top"),
-            same_origin_access
-                ? v8::Local<v8::Value>(context.Get(isolate)->Global())
-                : v8::Local<v8::Value>(v8::Null(isolate))).Check();
+            top_window).Check();
         global->Set(
             local_context,
             js_string(isolate, "frameElement"),
@@ -1907,6 +1941,31 @@
                     else entry.listener.handleEvent(event);
                     if (entry.once) this.removeEventListener('abort', entry.listener);
                   }
+                }
+                static abort(reason) {
+                  const controller = new WebSceneAbortController();
+                  controller.abort(reason);
+                  return controller.signal;
+                }
+                static timeout(milliseconds) {
+                  const controller = new WebSceneAbortController();
+                  const delay = Math.max(0, Number(milliseconds) || 0);
+                  setTimeout(() => controller.abort(
+                    new WebSceneDOMException('The operation timed out', 'TimeoutError')),
+                    delay);
+                  return controller.signal;
+                }
+                static any(signals) {
+                  const controller = new WebSceneAbortController();
+                  for (const signal of signals) {
+                    if (signal?.aborted) {
+                      controller.abort(signal.reason);
+                      return controller.signal;
+                    }
+                    signal?.addEventListener?.(
+                      'abort', () => controller.abort(signal.reason), { once: true });
+                  }
+                  return controller.signal;
                 }
               }
               class WebSceneAbortController {

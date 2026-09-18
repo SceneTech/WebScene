@@ -27,6 +27,15 @@
     const script = document.createElement('script');
     script.src = 'connected-script.js';
     await load(script); script.remove();
+    const insertedScript = document.createElement('script');
+    insertedScript.src = 'insert-before-script.js';
+    await new Promise((resolve, reject) => {
+      insertedScript.onload = resolve;
+      insertedScript.onerror = () => reject(new Error('insertBefore script failed'));
+      const reference = document.getElementsByTagName('script')[0];
+      reference.parentNode.insertBefore(insertedScript, reference);
+    });
+    insertedScript.remove();
     const link = document.createElement('link');
     link.rel = 'stylesheet'; link.href = 'connected-style.css';
     await load(link);
@@ -42,16 +51,18 @@
       navigator.serviceWorker.controller.postMessage('destinations');
     });
     record('controller supplies connected script, stylesheet, and image bodies',
-      __connectedScript === 1
+      __connectedScript === 1 && __insertBeforeScript === 1
         && getComputedStyle(document.getElementById('styled')).color === 'rgb(12, 34, 56)'
         && image.naturalWidth === 4 && image.naturalHeight === 3,
       JSON.stringify({script:globalThis.__connectedScript,
+        insertBeforeScript:globalThis.__insertBeforeScript,
         color:getComputedStyle(document.getElementById('styled')).color,
         width:image.naturalWidth,height:image.naturalHeight}));
     link.remove();
     image.remove();
     record('FetchEvent Request carries element destinations',
       destinations[new URL('connected-script.js', location.href).pathname] === 'script'
+        && destinations[new URL('insert-before-script.js', location.href).pathname] === 'script'
         && destinations[new URL('connected-style.css', location.href).pathname] === 'style'
         && destinations[new URL('connected-image.svg', location.href).pathname] === 'image',
       JSON.stringify(destinations));

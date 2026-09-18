@@ -126,11 +126,22 @@ void test_same_origin_iframe_navigation_document_replacement()
         "https://iframe-navigation.test/index.html"};
     resource_server server{.content = {
         {std::string{address}, "<!doctype html><title>frame navigation</title><body></body>"},
+        {"https://iframe-navigation.test/worker.js",
+            "importScripts('https://worker-cdn.test/imported.js');"
+            "postMessage(globalThis.__crossOriginImportMarker);"},
+        {"https://worker-cdn.test/imported.js",
+            "globalThis.__crossOriginImportMarker='loaded';"},
         {"https://iframe-navigation.test/fake.html?id=markdown-preview",
             "<!doctype html><title>Fake</title><body></body>"},
         {"https://cross-origin.test/fake.html",
             "<!doctype html><title>Cross origin</title><body>"
-            "<script>parent.__crossOriginEscape=true;</script></body>"}
+            "<script>"
+            "parent.postMessage({kind:'cross-origin-ready',"
+            "parentPresent:parent!==null,"
+            "postMessageType:typeof parent.postMessage},"
+            "'https://iframe-navigation.test:443');"
+            "try{parent.__crossOriginEscape=true;}catch(error){}"
+            "</script></body>"}
     }};
     webscene_engine_options options{};
     options.struct_size = sizeof(options);
@@ -144,6 +155,16 @@ void test_same_origin_iframe_navigation_document_replacement()
             R"("https://iframe-navigation.test/index.html")", 2'500)
             == R"("https://iframe-navigation.test/index.html")",
         "iframe navigation outer document did not become ready");
+
+    require(evaluate(engine, R"JS((() => {
+          const frame = document.createElement('iframe');
+          document.body.append(frame);
+          const result = frame.contentWindow.JSON.parse('{"ready":true}').ready
+            && frame.contentWindow.JSON.stringify({ready:true}) === '{"ready":true}';
+          frame.remove();
+          return result;
+        })())JS", "iframe-initial-window-intrinsics.js") == "true",
+        "initial about:blank WindowProxy did not expose ECMAScript intrinsics synchronously");
 
     execute(engine, R"JS(
       globalThis.__iframeNavigation = {
@@ -225,16 +246,44 @@ void test_same_origin_iframe_navigation_document_replacement()
     execute(engine, R"JS(
       globalThis.__iframeLifecycleGate = {
         complete:false, error:null, cycles:0, maximumLiveFrames:0,
-        p95:0, opaqueDenied:false, crossOriginDenied:false
+        p95:0, opaqueDenied:false, crossOriginDenied:false,
+        crossOriginMessage:false, crossOriginWorkerImport:false
       };
       (async () => {
         try {
+          __iframeLifecycleGate.crossOriginWorkerImport = await new Promise(
+            (resolve, reject) => {
+              const worker = new Worker('worker.js');
+              const message = event => {
+                worker.removeEventListener('message', message);
+                worker.removeEventListener('error', error);
+                worker.terminate();
+                resolve(event.data === 'loaded');
+              };
+              const error = event => {
+                worker.removeEventListener('message', message);
+                worker.removeEventListener('error', error);
+                worker.terminate();
+                reject(new Error(event.message || 'worker import failed'));
+              };
+              worker.addEventListener('message', message);
+              worker.addEventListener('error', error);
+            });
+          const crossOriginMessage = event => {
+            if (event.data?.kind !== 'cross-origin-ready') return;
+            __iframeLifecycleGate.crossOriginMessage =
+              event.data.parentPresent && event.data.postMessageType === 'function';
+          };
+          addEventListener('message', crossOriginMessage);
           const denied = document.createElement('iframe');
           denied.setAttribute('sandbox', 'allow-scripts');
           denied.src = './fake.html?id=markdown-preview';
           document.body.appendChild(denied);
           __iframeLifecycleGate.opaqueDenied =
-            denied.contentWindow === null && denied.contentDocument === null;
+            denied.contentWindow !== null
+              && typeof denied.contentWindow.postMessage === 'function'
+              && denied.contentWindow.document === undefined
+              && denied.contentDocument === null;
           denied.remove();
 
           const crossOrigin = document.createElement('iframe');
@@ -244,8 +293,12 @@ void test_same_origin_iframe_navigation_document_replacement()
           document.body.appendChild(crossOrigin);
           await new Promise(resolve => setTimeout(resolve, 150));
           __iframeLifecycleGate.crossOriginDenied =
-            crossOrigin.contentWindow === null && crossOrigin.contentDocument === null
+            crossOrigin.contentWindow !== null
+              && typeof crossOrigin.contentWindow.postMessage === 'function'
+              && crossOrigin.contentWindow.document === undefined
+              && crossOrigin.contentDocument === null
               && globalThis.__crossOriginEscape === false;
+          removeEventListener('message', crossOriginMessage);
           crossOrigin.remove();
 
           for (let cycle = 0; cycle < 100; ++cycle) {
@@ -324,7 +377,9 @@ void test_same_origin_iframe_navigation_document_replacement()
     require(evaluate(engine, R"JS((() => {
       const s=__iframeLifecycleGate;
       return s.error===null && s.cycles===100 && s.maximumLiveFrames===1
-        && s.opaqueDenied && s.crossOriginDenied && s.p95 <= 250;
+        && s.opaqueDenied && s.crossOriginDenied && s.crossOriginMessage
+        && s.crossOriginWorkerImport
+        && s.p95 <= 250;
     })())JS", "iframe-navigation-lifecycle-gate-result.js") == "true",
         "iframe navigation security/lifecycle/performance gate diverged: "
             + evaluate(engine, "JSON.stringify(__iframeLifecycleGate)",
@@ -996,6 +1051,73 @@ void test_tradingview_save_acknowledgement_uses_multipart_post()
     require(
         observed_zero_height_clip,
         "zero-height overflow viewport did not clip retained save status text");
+
+    execute(engine, R"JS(
+      globalThis.__xhrPost = {complete:false, error:null, status:0, response:''};
+      const request = new XMLHttpRequest();
+      request.open('POST', 'https://saveload.test/1.1/charts?client=terminal&user=public');
+      request.setRequestHeader('content-type', 'application/x-www-form-urlencoded');
+      request.addEventListener('load', () => {
+        __xhrPost.status = request.status;
+        __xhrPost.response = request.responseText;
+        __xhrPost.complete = true;
+      });
+      request.addEventListener('error', () => {
+        __xhrPost.error = 'request failed';
+        __xhrPost.complete = true;
+      });
+      request.send('email=webscene-login-probe%40example.invalid');
+    )JS", "xhr-post-regression.js");
+    require(evaluate_until_equals(engine, "__xhrPost.complete",
+            "xhr-post-complete.js", "true", 2'500) == "true",
+        "XMLHttpRequest POST did not complete: " + last_error(engine));
+    require(server.method == "POST"
+            && server.content_type == "application/x-www-form-urlencoded"
+            && server.body == "email=webscene-login-probe%40example.invalid",
+        "XMLHttpRequest POST did not preserve method, content type, and body");
+    require(evaluate(engine, R"JS(
+          __xhrPost.error === null && __xhrPost.status === 200
+            && __xhrPost.response === '{"status":"ok","id":"layout-42"}'
+        )JS", "xhr-post-result.js") == "true",
+        "XMLHttpRequest POST did not expose the asynchronous response lifecycle: "
+            + evaluate(engine, "JSON.stringify(__xhrPost)", "xhr-post-detail.js"));
+
+    execute(engine, R"JS(
+      globalThis.__binaryPost = {complete:false, error:null, requestBytes:''};
+      (async () => {
+        try {
+          const source = new Uint8Array([0, 1, 2, 127, 128, 255]);
+          const request = new Request('https://saveload.test/binary', {
+            method:'POST', body:source.subarray(1, 5),
+            headers:{'content-type':'application/octet-stream'}
+          });
+          __binaryPost.requestBytes = Array.from(
+            new Uint8Array(await request.clone().arrayBuffer())).join(',');
+          await fetch('https://saveload.test/1.1/charts?client=terminal&user=public', {
+            method:'POST', body:source,
+            headers:{'content-type':'application/octet-stream'}
+          });
+        } catch (error) {
+          __binaryPost.error = String(error && error.stack || error);
+        } finally {
+          __binaryPost.complete = true;
+        }
+      })();
+    )JS", "binary-fetch-post-regression.js");
+    require(evaluate_until_equals(engine, "__binaryPost.complete",
+            "binary-fetch-post-complete.js", "true", 2'500) == "true",
+        "binary fetch POST did not complete: " + last_error(engine));
+    require(server.method == "POST"
+            && server.content_type == "application/octet-stream"
+            && server.body == std::string("\0\1\2\x7f\x80\xff", 6),
+        "fetch did not preserve an ArrayBufferView body byte-for-byte");
+    require(evaluate(engine, R"JS(
+          __binaryPost.error === null
+            && __binaryPost.requestBytes === '1,2,127,128'
+        )JS", "binary-fetch-post-result.js") == "true",
+        "Request.arrayBuffer did not preserve a typed-array view: "
+            + evaluate(engine, "JSON.stringify(__binaryPost)",
+                "binary-fetch-post-detail.js"));
     webscene_engine_destroy(engine);
 }
 

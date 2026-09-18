@@ -217,6 +217,19 @@
             }
             break;
         }
+        if (target_context == self->context.Get(isolate)) {
+            for (const auto& [frame_id, persistent_window] : self->frame_windows) {
+                auto frame_window = persistent_window.Get(isolate);
+                if (frame_window.IsEmpty() || !frame_window->StrictEquals(info.This())) {
+                    continue;
+                }
+                const auto frame_context = self->actual_frame_contexts.find(frame_id);
+                if (frame_context != self->actual_frame_contexts.end()) {
+                    target_context = frame_context->second.Get(isolate);
+                }
+                break;
+            }
+        }
         auto source_context = isolate->GetIncumbentContext();
         if (target_context.IsEmpty()) return;
         if (source_context.IsEmpty()) source_context = target_context;
@@ -327,10 +340,7 @@
                 break;
             }
             if (direct_owner_id != owner_frame_id) continue;
-            const auto actual = self->actual_frame_windows.find(frame->id);
-            auto frame_window = actual != self->actual_frame_windows.end()
-                ? actual->second.Get(isolate)
-                : self->frame_window(*frame);
+            auto frame_window = self->frame_window(*frame);
             if (!frame_window.IsEmpty()) children.push_back(frame_window);
         }
         auto result = v8::Array::New(isolate, static_cast<int>(children.size()));
@@ -1229,22 +1239,27 @@
         self->record_feature(
             "web-api",
             "AbortController.constructor",
-            "partially-supported",
-            "abort state, reason, listener delivery, and EventTarget listener cleanup; static AbortSignal composition helpers are not implemented",
+            "supported",
+            "abort state, reason, listener delivery, EventTarget listener cleanup, and AbortSignal composition helpers",
             "web-api-binding");
         auto isolate = info.GetIsolate();
         auto local_context = isolate->GetCurrentContext();
         auto controller = info.This();
-        v8::Local<v8::Value> event_target_value;
+        v8::Local<v8::Value> signal_constructor_value;
         if (!local_context->Global()->Get(
                 local_context,
-                js_string(isolate, "EventTarget")).ToLocal(&event_target_value)
-            || !event_target_value->IsFunction()) {
+                js_string(isolate, "AbortSignal")).ToLocal(&signal_constructor_value)
+            || !signal_constructor_value->IsFunction()) {
+            static_cast<void>(local_context->Global()->Get(
+                local_context,
+                js_string(isolate, "EventTarget")).ToLocal(&signal_constructor_value));
+        }
+        if (!signal_constructor_value->IsFunction()) {
             isolate->ThrowException(v8::Exception::TypeError(
-                js_string(isolate, "AbortController requires EventTarget")));
+                js_string(isolate, "AbortController requires AbortSignal or EventTarget")));
             return;
         }
-        auto signal = event_target_value.As<v8::Function>()->NewInstance(
+        auto signal = signal_constructor_value.As<v8::Function>()->NewInstance(
             local_context, 0, nullptr).ToLocalChecked();
         signal->Set(local_context, js_string(isolate, "aborted"), v8::False(isolate)).Check();
         signal->Set(local_context, js_string(isolate, "reason"), v8::Undefined(isolate)).Check();

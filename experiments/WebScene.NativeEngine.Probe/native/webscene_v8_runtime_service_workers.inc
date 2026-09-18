@@ -62,6 +62,7 @@
         uint32_t credentials{WEBSCENE_FETCH_CREDENTIALS_SAME_ORIGIN};
         uint32_t redirect{};
         std::vector<std::pair<std::string, std::string>> headers;
+        std::string body;
         std::string client_id;
         uint64_t client_generation{};
         std::promise<service_worker_fetch_result> promise;
@@ -1427,6 +1428,21 @@
                             }
                             options->Set(
                                 realm, js_string(child->isolate, "headers"), headers).Check();
+                            if (fetch_request->method != "GET"
+                                && fetch_request->method != "HEAD"
+                                && !fetch_request->body.empty()) {
+                                auto body = v8::ArrayBuffer::New(
+                                    child->isolate,
+                                    fetch_request->body.size());
+                                std::memcpy(
+                                    body->GetBackingStore()->Data(),
+                                    fetch_request->body.data(),
+                                    fetch_request->body.size());
+                                options->Set(
+                                    realm,
+                                    js_string(child->isolate, "body"),
+                                    body).Check();
+                            }
                             v8::Local<v8::Value> request_arguments[]{
                                 js_dom_string(child->isolate, fetch_request->url), options};
                             v8::Local<v8::Object> request_value;
@@ -2239,6 +2255,7 @@
         request->credentials = request_context.credentials;
         request->redirect = redirect;
         request->headers = request_context.headers;
+        request->body = request_context.body;
         const auto contains_header = [&](std::string_view name) {
             return std::ranges::any_of(request->headers, [&](const auto& header) {
                 return header.first == name;

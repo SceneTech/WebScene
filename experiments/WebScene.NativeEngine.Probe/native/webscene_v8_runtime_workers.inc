@@ -209,22 +209,24 @@
             const auto url = resolve_resource_url(
                 to_utf8(info.GetIsolate(),info[index]),
                 self->current_base_address());
-            if (resource_origin(url) != self->current_security_origin()) {
-                throw_dom_exception(info,"Worker script must be same origin","SecurityError");
-                return;
-            }
+            const auto cross_origin =
+                resource_origin(url) != self->current_security_origin();
             std::string source,resolved,error;
             const resource_request_context request_context{
                 WEBSCENE_RESOURCE_INITIATOR_SUBRESOURCE,
                 self->current_security_origin(),
                 self->current_base_address(),
-                WEBSCENE_FETCH_MODE_SAME_ORIGIN,
+                cross_origin
+                    ? WEBSCENE_FETCH_MODE_CORS
+                    : WEBSCENE_FETCH_MODE_SAME_ORIGIN,
                 WEBSCENE_REQUEST_DESTINATION_SCRIPT,
                 "GET", {}, {}, WEBSCENE_FETCH_CREDENTIALS_SAME_ORIGIN, {}};
-            if (!self->load_text_resource(
-                    url, {}, WEBSCENE_RESOURCE_SCRIPT, source, resolved,
-                    nullptr, request_context)
-                || !self->execute_in_context(realm,source,resolved,error)) {
+            const auto loaded = self->load_text_resource(
+                url, {}, WEBSCENE_RESOURCE_SCRIPT, source, resolved,
+                nullptr, request_context);
+            const auto executed = loaded
+                && self->execute_in_context(realm,source,resolved,error);
+            if (!executed) {
                 info.GetIsolate()->ThrowException(v8::Exception::Error(
                     js_dom_string(info.GetIsolate(),
                         error.empty() ? "Unable to load worker script: "+url : error)));
@@ -281,8 +283,9 @@
                 }
                 else continue;
             }
-            return dispatch_worker_message(state->realm.Get(isolate),state->wrapper.Get(isolate),
-                packet ? &*packet : nullptr,error);
+            return dispatch_worker_message(
+                state->realm.Get(isolate), state->wrapper.Get(isolate),
+                packet ? &*packet : nullptr, error);
         }
         return true;
     }
@@ -419,8 +422,9 @@
                     if(!embedded_source && !child->load_text_resource(
                             url, {}, WEBSCENE_RESOURCE_SCRIPT, source, resolved,
                             nullptr, request_context))report("Unable to load worker: "+url);
-                    else if(!(module ? child->execute_module(realm,source,resolved,error)
-                                      : child->execute_in_context(realm,source,resolved,error)))report(error);
+                    else if (!(module ? child->execute_module(realm,source,resolved,error)
+                                      : child->execute_in_context(realm,source,resolved,error)))
+                        report(error);
                 }
                 while(true) {
                     std::optional<clone_packet> packet;

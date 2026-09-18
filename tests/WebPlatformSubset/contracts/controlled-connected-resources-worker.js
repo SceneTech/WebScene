@@ -14,6 +14,10 @@ self.addEventListener('fetch', event => {
     event.respondWith(new Response(
       'globalThis.__connectedScript=(globalThis.__connectedScript||0)+1;',
       {headers:{'content-type':'text/javascript'}}));
+  } else if (url.pathname.endsWith('/insert-before-script.js')) {
+    event.respondWith(new Response(
+      'globalThis.__insertBeforeScript=(globalThis.__insertBeforeScript||0)+1;',
+      {headers:{'content-type':'text/javascript'}}));
   } else if (url.pathname.endsWith('/connected-style.css')) {
     event.respondWith(new Response('#styled{color:rgb(12, 34, 56)}',
       {headers:{'content-type':'text/css'}}));

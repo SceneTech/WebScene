@@ -73,9 +73,11 @@
       "capabilities": [
         "iframe-window-postmessage",
         "same-origin-event-origin",
-        "messageport-transfer"
+        "messageport-transfer",
+        "initial-about-blank-windowproxy-intrinsics",
+        "restricted-cross-origin-windowproxy"
       ],
-      "reason": "Focused Code OSS iframe bootstrap candidate matching the extension-host MessagePort handoff.",
+      "reason": "Focused Code OSS iframe bootstrap candidate matching the extension-host MessagePort handoff. It also protects immediate same-origin access to standard ECMAScript intrinsics on a newly appended about:blank frame, the frame's stable WindowProxy identity across navigation, and restricted access after a cross-origin transition.",
       "nativeNavigation": true
     },
     {

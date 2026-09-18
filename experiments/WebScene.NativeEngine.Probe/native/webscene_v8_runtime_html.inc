@@ -689,7 +689,29 @@
             || context_entry->second.IsEmpty()
             || window_entry == self->actual_frame_windows.end()
             || window_entry->second.IsEmpty()) {
-            return v8::Intercepted::kNo;
+            // An appended about:blank iframe has a synchronously observable
+            // initial Window even before its first navigation task runs. Keep
+            // the stable WindowProxy useful during that interval for standard
+            // ECMAScript intrinsics. Auth/challenge libraries access those
+            // objects synchronously before the first navigation task runs.
+            const auto name = to_utf8(info.GetIsolate(), property.As<v8::Value>());
+            static const std::unordered_set<std::string> initial_intrinsics{
+                "JSON", "Object", "Array", "Math", "Promise", "RegExp",
+                "Date", "Error", "TypeError", "Map", "Set", "WeakMap",
+                "WeakSet", "Symbol", "Reflect", "Proxy", "ArrayBuffer",
+                "DataView", "Uint8Array", "Uint16Array", "Uint32Array",
+                "Int8Array", "Int16Array", "Int32Array", "Float32Array",
+                "Float64Array", "TextEncoder", "TextDecoder"};
+            if (!initial_intrinsics.contains(name)) return v8::Intercepted::kNo;
+            auto owner_context = self->context.Get(info.GetIsolate());
+            v8::Context::Scope owner_scope(owner_context);
+            v8::Local<v8::Value> value;
+            if (!owner_context->Global()->Get(owner_context, property).ToLocal(&value)
+                || value->IsUndefined()) {
+                return v8::Intercepted::kNo;
+            }
+            info.GetReturnValue().Set(value);
+            return v8::Intercepted::kYes;
         }
         auto frame_context = context_entry->second.Get(info.GetIsolate());
         v8::Context::Scope frame_scope(frame_context);
@@ -714,10 +736,10 @@
             return;
         }
         if (!self->iframe_owner_allows_same_origin_access(*node)) {
-            // WebScene does not yet expose a restricted cross-origin
-            // WindowProxy. Fail closed instead of returning the privileged
-            // same-origin object. #267 owns that broader proxy surface.
-            info.GetReturnValue().Set(v8::Null(info.GetIsolate()));
+            // Cross-origin browsing contexts expose a restricted WindowProxy.
+            // It intentionally omits document/location access while retaining
+            // the postMessage channel required by embedded identity providers.
+            info.GetReturnValue().Set(self->frame_window(*node));
             return;
         }
         // A browsing context keeps one WindowProxy while navigation replaces

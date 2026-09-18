@@ -17,6 +17,15 @@ self.addEventListener('fetch', event => {
       status: 200,
       headers: {'content-type': 'text/plain'}
     }));
+  } else if (path.endsWith('/controlled-xhr')) {
+    event.respondWith((async () => new Response(
+      `${event.request.method}:${await event.request.text()}`,
+      {status: 201, headers: {'content-type': 'text/plain'}}))());
+  } else if (path.endsWith('/controlled-binary')) {
+    event.respondWith((async () => new Response(Array.from(
+      new Uint8Array(await event.request.arrayBuffer())).join(','), {
+        status: 202, headers: {'content-type': 'text/plain'}
+      }))());
   }
 });
 

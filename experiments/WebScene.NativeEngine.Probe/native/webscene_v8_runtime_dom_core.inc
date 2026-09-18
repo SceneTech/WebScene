@@ -2328,11 +2328,18 @@
             0,
             &node,
             v8::kEmbedderDataTypeTagDefault);
-        auto location = v8::Object::New(isolate);
-        const auto source = node.attributes.contains("src") ? node.attributes["src"] : "about:blank";
-        location->Set(local_context, js_string(isolate, "href"), js_string(isolate, source.c_str())).Check();
-        object->Set(local_context, js_string(isolate, "location"), location).Check();
-        object->Set(local_context, js_string(isolate, "document"), frame_document(node)).Check();
+        if (iframe_owner_allows_same_origin_access(node)) {
+            auto location = v8::Object::New(isolate);
+            const auto source = node.attributes.contains("src")
+                ? node.attributes["src"] : "about:blank";
+            location->Set(local_context, js_string(isolate, "href"),
+                js_string(isolate, source.c_str())).Check();
+            object->Set(local_context, js_string(isolate, "location"), location).Check();
+            object->Set(local_context, js_string(isolate, "document"),
+                frame_document(node)).Check();
+        }
+        object->Set(local_context, js_string(isolate, "postMessage"),
+            v8::Function::New(local_context, window_post_message).ToLocalChecked()).Check();
         object->Set(local_context, js_string(isolate, "window"), object).Check();
         object->Set(local_context, js_string(isolate, "self"), object).Check();
         object->Set(local_context, js_string(isolate, "parent"), local_context->Global()).Check();
@@ -5788,6 +5795,11 @@
             for (auto* fragment_child : children) {
                 if (fragment_child == nullptr || fragment_child->parent != parent) continue;
                 self->activate_connected_stylesheet(*fragment_child);
+                self->enqueue_connected_resources_subtree(
+                    *fragment_child,
+                    self->wrap_node(*fragment_child),
+                    info.GetIsolate()->GetCurrentContext());
+                self->enqueue_iframe_hydration_if_needed(*fragment_child);
                 self->notify_custom_elements_subtree(
                     *fragment_child, "connected");
             }
@@ -5848,6 +5860,11 @@
                     self->recascade_changed_child_list(*previous_parent);
                 self->recascade_changed_child_list(*parent, child);
                 self->activate_connected_stylesheet(*child);
+                self->enqueue_connected_resources_subtree(
+                    *child,
+                    info[0].As<v8::Object>(),
+                    info.GetIsolate()->GetCurrentContext());
+                self->enqueue_iframe_hydration_if_needed(*child);
                 self->notify_custom_elements_subtree(*child, "connected");
                 if (self->subtree_contains_base(*child)) {
                     if (previous_root != nullptr)
@@ -5870,6 +5887,11 @@
             self->recascade_changed_child_list(*previous_parent);
         self->recascade_changed_child_list(*parent, child);
         self->activate_connected_stylesheet(*child);
+        self->enqueue_connected_resources_subtree(
+            *child,
+            info[0].As<v8::Object>(),
+            info.GetIsolate()->GetCurrentContext());
+        self->enqueue_iframe_hydration_if_needed(*child);
         self->notify_custom_elements_subtree(*child, "connected");
         if (self->subtree_contains_base(*child)) {
             if (previous_root != nullptr) self->invalidate_document_base_root(previous_root);

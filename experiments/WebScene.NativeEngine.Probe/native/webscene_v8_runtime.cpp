@@ -1376,9 +1376,27 @@ struct v8_dom_runtime::implementation final {
         std::transform(method.begin(), method.end(), method.begin(), [](unsigned char value) {
             return static_cast<char>(std::toupper(value));
         });
-        const auto body = info.Length() > 2
-            ? to_utf8(info.GetIsolate(), info[2])
-            : std::string{};
+        std::string body;
+        if (info.Length() > 2) {
+            if (info[2]->IsArrayBuffer()) {
+                const auto store = info[2].As<v8::ArrayBuffer>()->GetBackingStore();
+                if (store->ByteLength() != 0U) {
+                    body.assign(
+                        static_cast<const char*>(store->Data()),
+                        store->ByteLength());
+                }
+            } else if (info[2]->IsArrayBufferView()) {
+                const auto view = info[2].As<v8::ArrayBufferView>();
+                const auto store = view->Buffer()->GetBackingStore();
+                if (view->ByteLength() != 0U) {
+                    body.assign(
+                        static_cast<const char*>(store->Data()) + view->ByteOffset(),
+                        view->ByteLength());
+                }
+            } else {
+                body = to_utf8(info.GetIsolate(), info[2]);
+            }
+        }
         const auto content_type = info.Length() > 3
             ? to_utf8(info.GetIsolate(), info[3])
             : std::string{};
@@ -4265,12 +4283,49 @@ struct v8_dom_runtime::implementation final {
                 this.code = legacyCodes[this.name] || 0;
               }
             }
+            class WebSceneAbortSignal extends EventTarget {
+              constructor() {
+                super();
+                this.aborted = false;
+                this.reason = undefined;
+                this.onabort = null;
+              }
+              throwIfAborted() {
+                if (this.aborted) throw this.reason;
+              }
+              static abort(reason) {
+                const controller = new AbortController();
+                controller.abort(reason);
+                return controller.signal;
+              }
+              static timeout(milliseconds) {
+                const controller = new AbortController();
+                const delay = Math.max(0, Number(milliseconds) || 0);
+                setTimeout(() => controller.abort(
+                  new WebSceneDOMException('The operation timed out', 'TimeoutError')),
+                  delay);
+                return controller.signal;
+              }
+              static any(signals) {
+                const controller = new AbortController();
+                for (const signal of signals) {
+                  if (signal?.aborted) {
+                    controller.abort(signal.reason);
+                    return controller.signal;
+                  }
+                  signal?.addEventListener?.(
+                    'abort', () => controller.abort(signal.reason), { once: true });
+                }
+                return controller.signal;
+              }
+            }
             Object.defineProperties(globalThis, {
               Blob: { value: WebSceneBlob, configurable: true },
               URL: { value: WebSceneURL, configurable: true },
               URLSearchParams: { value: WebSceneURLSearchParams, configurable: true },
               FormData: { value: WebSceneFormData, configurable: true },
-              DOMException: { value: WebSceneDOMException, configurable: true }
+              DOMException: { value: WebSceneDOMException, configurable: true },
+              AbortSignal: { value: WebSceneAbortSignal, configurable: true }
             });
         )JS"};
         std::string crypto_source;
@@ -5040,10 +5095,47 @@ struct v8_dom_runtime::implementation final {
                 this.headers = new WebSceneHeaders(
                   options.headers ?? input?.headers);
                 this.body = options.body ?? input?.body ?? null;
+                this._bodyUsed = false;
                 this.credentials = String(options.credentials ?? input?.credentials ?? 'same-origin');
                 this.mode = String(options.mode ?? input?.mode ?? 'cors');
                 this.redirect = String(options.redirect ?? input?.redirect ?? 'follow');
                 this.destination = String(options.destination ?? input?.destination ?? '');
+              }
+              get bodyUsed() { return this._bodyUsed; }
+              async text() {
+                if (this._bodyUsed) throw new TypeError('Request body already used');
+                this._bodyUsed = true;
+                if (this.body === null) return '';
+                if (this.body instanceof Blob) return this.body.text();
+                if (this.body instanceof ReadableStream) {
+                  const holder = {_bodyUsed:false, body:this.body};
+                  return new TextDecoder().decode(await consumeBody(holder));
+                }
+                return new TextDecoder().decode(bodyBytes(this.body));
+              }
+              async json() { return JSON.parse(await this.text()); }
+              async arrayBuffer() {
+                if (this._bodyUsed) throw new TypeError('Request body already used');
+                this._bodyUsed = true;
+                if (this.body === null) return new ArrayBuffer(0);
+                if (this.body instanceof ReadableStream) {
+                  const holder = {_bodyUsed:false, body:this.body};
+                  return (await consumeBody(holder)).buffer;
+                }
+                return bodyBytes(this.body).buffer;
+              }
+              async blob() {
+                return new Blob([await this.arrayBuffer()], {
+                  type:this.headers.get('content-type') || ''
+                });
+              }
+              clone() {
+                if (this.bodyUsed) throw new TypeError('Request body already used');
+                return new WebSceneRequest(this, {
+                  method:this.method, headers:this.headers, body:this.body,
+                  credentials:this.credentials, mode:this.mode,
+                  redirect:this.redirect, destination:this.destination
+                });
               }
             }
 
@@ -5080,10 +5172,13 @@ struct v8_dom_runtime::implementation final {
                           'application/x-www-form-urlencoded;charset=UTF-8');
                       }
                     } else if (request.body instanceof Blob) {
-                      body = request.body.toString();
+                      body = request.body._bytes.slice();
                       if (request.body.type && !request.headers.has('content-type')) {
                         request.headers.set('content-type', request.body.type);
                       }
+                    } else if (request.body instanceof ArrayBuffer
+                        || ArrayBuffer.isView(request.body)) {
+                      body = bodyBytes(request.body);
                     } else if (request.body !== null) {
                       body = String(request.body);
                       if (!request.headers.has('content-type')) {
@@ -5190,34 +5285,47 @@ struct v8_dom_runtime::implementation final {
               overrideMimeType(value) {
                 this._mimeType = String(value);
               }
-              send() {
-                if (this._method !== 'GET') {
-                  throw new TypeError(`WebScene XMLHttpRequest does not support ${this._method}`);
-                }
+              send(body = null) {
                 queueMicrotask(() => {
-                  try {
-                    const requestUrl = globalThis.__webSceneDocumentBasePath
-                        && !this._url.startsWith('/')
-                        && !/^[a-z][a-z0-9+.-]*:/i.test(this._url)
-                      ? globalThis.__webSceneDocumentBasePath + this._url
-                      : this._url;
-                    const body = __webSceneFetchText(requestUrl);
-                    this.responseText = body;
-                    this.response = body;
+                  const requestUrl = globalThis.__webSceneDocumentBasePath
+                      && !this._url.startsWith('/')
+                      && !/^[a-z][a-z0-9+.-]*:/i.test(this._url)
+                    ? globalThis.__webSceneDocumentBasePath + this._url
+                    : this._url;
+                  const options = {
+                    method: this._method,
+                    headers: this._headers,
+                    credentials: this.withCredentials ? 'include' : 'same-origin'
+                  };
+                  if (this._method !== 'GET' && this._method !== 'HEAD' && body !== null) {
+                    options.body = body;
+                  }
+                  webSceneFetch(requestUrl, options).then(async response => {
+                    this.status = response.status;
+                    this.statusText = response.statusText;
+                    this.responseURL = response.url;
+                    this.readyState = 2;
+                    this._dispatch('readystatechange');
+                    const responseBody = await response.text();
+                    this.readyState = 3;
+                    this._dispatch('readystatechange');
+                    this.responseText = responseBody;
+                    this.response = responseBody;
                     if (this._mimeType.includes('xml')) {
-                      this.responseXML = new DOMParser().parseFromString(body, 'text/xml');
+                      this.responseXML = new DOMParser().parseFromString(
+                        responseBody, 'text/xml');
                     }
-                    this.status = 200;
-                    this.statusText = 'OK';
                     this.readyState = 4;
                     this._dispatch('readystatechange');
                     this._dispatch('load');
-                  } catch (error) {
+                    this._dispatch('loadend');
+                  }).catch(error => {
                     this.status = 0;
                     this.readyState = 4;
                     this._dispatch('readystatechange');
                     this._dispatch('error');
-                  }
+                    this._dispatch('loadend');
+                  });
                 });
               }
             }

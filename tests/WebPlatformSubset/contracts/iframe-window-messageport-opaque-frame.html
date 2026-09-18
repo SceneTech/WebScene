@@ -1,0 +1,13 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Opaque WindowProxy message fixture</title>
+<script>
+  addEventListener('message', event => {
+    if (event.data?.kind !== 'opaque-init') return;
+    const port = event.data.port;
+    if (event.ports[0] !== port || !(port instanceof MessagePort)) return;
+    port.onmessage = message => port.postMessage(message.data + 1);
+    port.start();
+  });
+  parent.postMessage('opaque-ready', '*');
+</script>

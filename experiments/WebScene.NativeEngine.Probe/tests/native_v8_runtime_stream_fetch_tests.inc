@@ -801,12 +801,20 @@ void test_controlled_fetch_abort_and_retirement()
     execute(engine, R"JS(
       globalThis.__fetchAbort = {
         complete:false, error:null, preAborted:false, customReason:false,
+        signalGlobal:false, timeoutReason:false,
         canceled:0, cycles:0, durations:[], releaseLatency:0,
         retireRejected:false, retireLatency:0
       };
       (async () => {
         const wait = duration => new Promise(resolve => setTimeout(resolve, duration));
         try {
+          __fetchAbort.signalGlobal = typeof AbortSignal === 'function'
+            && new AbortController().signal instanceof AbortSignal
+            && AbortSignal.abort().aborted;
+          const timeoutSignal = AbortSignal.timeout(1);
+          await new Promise(resolve => timeoutSignal.addEventListener('abort', resolve));
+          __fetchAbort.timeoutReason = timeoutSignal.aborted
+            && timeoutSignal.reason?.name === 'TimeoutError';
           const changed = new Promise(resolve => navigator.serviceWorker.addEventListener(
             'controllerchange', resolve, {once:true}));
           const registration = await navigator.serviceWorker.register('service-worker.js');
@@ -885,7 +893,8 @@ void test_controlled_fetch_abort_and_retirement()
             + evaluate(engine, "__fetchAbort.error", "fetch-abort-error-detail.js"));
     require(evaluate(engine, R"JS((() => {
       const value = __fetchAbort;
-      return value.preAborted && value.customReason && value.canceled === 32
+      return value.signalGlobal && value.timeoutReason
+        && value.preAborted && value.customReason && value.canceled === 32
         && value.cycles === 100 && value.releaseLatency <= 100
         && value.retireRejected && value.retireLatency <= 500;
     })())JS", "fetch-abort-semantics.js") == "true",
@@ -1138,6 +1147,12 @@ void test_controlled_connected_resource_interception()
                   {headers:{'content-type':'text/javascript'}}));
                 return;
               }
+              if (url.pathname === '/insert-before.js') {
+                event.respondWith(new Response(
+                  'globalThis.__insertBeforeScript=(globalThis.__insertBeforeScript||0)+1;',
+                  {headers:{'content-type':'text/javascript'}}));
+                return;
+              }
               if (url.pathname === '/controlled.css' || url.pathname === '/cycle.css') {
                 event.respondWith(new Response('#styled{color:rgb(12, 34, 56)}',
                   {headers:{'content-type':'text/css'}}));
@@ -1197,6 +1212,20 @@ void test_controlled_connected_resource_interception()
           await load(script); script.remove();
           if (__controlledScript !== 1) throw new Error('controlled script body not executed');
 
+          __connectedGate.phase = 'insert-before-script';
+          const insertedScript = document.createElement('script');
+          insertedScript.src = 'insert-before.js';
+          await new Promise((resolve, reject) => {
+            insertedScript.onload = resolve;
+            insertedScript.onerror = () => reject(new Error('insertBefore script failed'));
+            const reference = document.getElementById('styled');
+            reference.parentNode.insertBefore(insertedScript, reference);
+          });
+          insertedScript.remove();
+          if (__insertBeforeScript !== 1) {
+            throw new Error('insertBefore-connected script body not executed');
+          }
+
           __connectedGate.phase = 'controlled-style';
           const link = document.createElement('link');
           link.rel = 'stylesheet'; link.href = 'controlled.css';
@@ -1251,6 +1280,7 @@ void test_controlled_connected_resource_interception()
             navigator.serviceWorker.controller.postMessage('destinations');
           });
           if (__connectedGate.destinations['/controlled.js'] !== 'script'
+              || __connectedGate.destinations['/insert-before.js'] !== 'script'
               || __connectedGate.destinations['/controlled.css'] !== 'style'
               || __connectedGate.destinations['/controlled.svg'] !== 'image') {
             throw new Error(`resource destinations ${JSON.stringify(__connectedGate.destinations)}`);

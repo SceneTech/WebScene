@@ -31,6 +31,7 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
   const supportsRuleInstances = new WeakSet();
   const layerBlockRuleInstances = new WeakSet();
   const layerStatementRuleInstances = new WeakSet();
+  const nestedDeclarationsInstances = new WeakSet();
   const mediaListInstances = new WeakSet();
   const ruleListInstances = new WeakSet();
   let makeConstructedStyleSheet;
@@ -101,6 +102,8 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
     'CSSLayerBlockRule', layerBlockRuleInstances, CSSGroupingRuleInterface);
   const CSSLayerStatementRuleInterface = interfaceConstructor(
     'CSSLayerStatementRule', layerStatementRuleInstances, CSSRuleInterface);
+  const CSSNestedDeclarationsInterface = interfaceConstructor(
+    'CSSNestedDeclarations', nestedDeclarationsInstances, CSSRuleInterface);
   const MediaListInterface = interfaceConstructor('MediaList', mediaListInstances);
   const CSSRuleListInterface = interfaceConstructor('CSSRuleList', ruleListInstances);
   const installInterfaces = view => {
@@ -114,6 +117,7 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
       ['CSSSupportsRule', CSSSupportsRuleInterface],
       ['CSSLayerBlockRule', CSSLayerBlockRuleInterface],
       ['CSSLayerStatementRule', CSSLayerStatementRuleInterface],
+      ['CSSNestedDeclarations', CSSNestedDeclarationsInterface],
       ['MediaList', MediaListInterface],
       ['CSSRuleList', CSSRuleListInterface]
     ]) {
@@ -169,6 +173,92 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
     if (start >= 0 || braces || parentheses || brackets || quote || comment)
       exception('An incomplete CSS rule is unsupported', 'SyntaxError');
     return rules;
+  };
+  // CSS Nesting exposes rules inside a CSSStyleRule. Declarations before the
+  // first nested rule remain on CSSStyleRule.style; later declaration runs are
+  // represented by CSSNestedDeclarations entries in cssRules.
+  const splitStyleContents = source => {
+    const rules = [], leading = [];
+    let declarations = [], cursor = 0, parentheses = 0, brackets = 0;
+    let quote = '', comment = false, sawRule = false;
+    const flushDeclarations = () => {
+      const body = declarations.join(' ').trim();
+      declarations = [];
+      if (!body) return;
+      if (!sawRule) leading.push(body);
+      else rules.push({ nestedDeclarations: true, body, cssText: body });
+    };
+    for (let index = 0; index <= source.length; index++) {
+      const atEnd = index === source.length;
+      const character = atEnd ? '' : source[index];
+      const next = source[index + 1];
+      if (comment) {
+        if (character === '*' && next === '/') { comment = false; index++; }
+        continue;
+      }
+      if (quote) {
+        if (character === '\\') index++;
+        else if (character === quote) quote = '';
+        continue;
+      }
+      if (!atEnd && character === '/' && next === '*') {
+        comment = true; index++; continue;
+      }
+      if (!atEnd && character === '\\') { index++; continue; }
+      if (!atEnd && (character === '"' || character === "'")) {
+        quote = character; continue;
+      }
+      if (!atEnd && character === '(') parentheses++;
+      else if (!atEnd && character === ')' && parentheses) parentheses--;
+      else if (!atEnd && character === '[') brackets++;
+      else if (!atEnd && character === ']' && brackets) brackets--;
+      if (parentheses || brackets) continue;
+      if (!atEnd && character === ';') {
+        const statement = source.slice(cursor, index + 1).trim();
+        if (statement) declarations.push(statement);
+        cursor = index + 1;
+        continue;
+      }
+      if (!atEnd && character === '{') {
+        const prelude = source.slice(cursor, index).trim();
+        if (!prelude) exception('A nested rule requires a prelude', 'SyntaxError');
+        flushDeclarations();
+        let depth = 1, innerQuote = '', innerComment = false, close = index + 1;
+        for (; close < source.length && depth; close++) {
+          const inner = source[close], innerNext = source[close + 1];
+          if (innerComment) {
+            if (inner === '*' && innerNext === '/') { innerComment = false; close++; }
+            continue;
+          }
+          if (innerQuote) {
+            if (inner === '\\') close++;
+            else if (inner === innerQuote) innerQuote = '';
+            continue;
+          }
+          if (inner === '/' && innerNext === '*') { innerComment = true; close++; continue; }
+          if (inner === '"' || inner === "'") { innerQuote = inner; continue; }
+          if (inner === '{') depth++;
+          else if (inner === '}') depth--;
+        }
+        if (depth) exception('An incomplete nested rule is unsupported', 'SyntaxError');
+        const parsed = splitRules(source.slice(cursor, close));
+        if (parsed.length !== 1) exception('Exactly one nested rule is required', 'SyntaxError');
+        if (parsed[0].selectorText !== undefined
+            && !parsed[0].selectorText.includes('&')) {
+          parsed[0].selectorText = '& ' + parsed[0].selectorText;
+          parsed[0].cssText = parsed[0].selectorText + ' {' + parsed[0].body + '}';
+        }
+        rules.push(parsed[0]);
+        sawRule = true;
+        cursor = close;
+        index = close - 1;
+      } else if (atEnd) {
+        const tail = source.slice(cursor).trim();
+        if (tail) declarations.push(tail);
+        flushDeclarations();
+      }
+    }
+    return { leading: leading.join(' '), rules };
   };
   const stateFor = sheet => {
     const state = sheets.get(sheet);
@@ -449,6 +539,36 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
       }
     });
   };
+  const makeDeclaration = (state, initial, commit) => {
+    if (state.constructed) return makeConstructedDeclaration(initial, commit);
+    const declaration = state.document.createElement('span').style;
+    declaration.cssText = initial || '';
+    return new Proxy(declaration, {
+      get(target, key) {
+        // WebScene's native declaration exposes item(index), length and named
+        // properties, but does not install Web IDL indexed getters yet.
+        if (typeof key === 'string' && /^(?:0|[1-9][0-9]*)$/.test(key))
+          return declarationNames(target)[Number(key)];
+        if (key === 'length') return declarationNames(target).length;
+        if (key === 'item') return index => {
+          const name = declarationNames(target)[Number(index) >>> 0];
+          return name === undefined ? '' : name;
+        };
+        const value = Reflect.get(target, key, target);
+        if (typeof value !== 'function') return value;
+        return (...args) => {
+          const result = Reflect.apply(value, target, args);
+          if (key === 'setProperty' || key === 'removeProperty') commit();
+          return result;
+        };
+      },
+      set(target, key, value) {
+        const result = Reflect.set(target, key, value, target);
+        if (result) commit();
+        return result;
+      }
+    });
+  };
   const makeMediaList = (read, write) => {
     const target = {};
     const queries = () => parseMediaList(read());
@@ -559,13 +679,19 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
         if (qualified) collectLayerNames(rule.cssRules, qualified, names);
       } else if (groupingRuleInstances.has(rule)) {
         collectLayerNames(rule.cssRules, inheritedName, names);
+      } else if (styleRuleInstances.has(rule) && rule.__webSceneNestedRules) {
+        collectLayerNames(rule.__webSceneNestedRules, inheritedName, names);
       }
     }
     return names;
   };
-  const makeRule = (state, parsed, containingRule = null) => {
+  const makeRule = (state, parsed, containingRule = null, nestedStyleContext = false) => {
     let cssText = parsed.cssText;
     let selectorText = parsed.selectorText;
+    if (selectorText !== undefined && nestedStyleContext && !selectorText.includes('&')) {
+      selectorText = '& ' + selectorText;
+      cssText = selectorText + ' {' + (parsed.body || '') + '}';
+    }
     let parent = containingRule ? containingRule.parentStyleSheet : state.sheet;
     let style;
     let serializeGroup;
@@ -595,8 +721,12 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
       layerStatementRuleInstances.add(rule);
       Object.setPrototypeOf(rule, CSSLayerStatementRuleInterface.prototype);
       cssText = `@layer ${layerStatementNames.join(', ')};`;
+    } else if (parsed.nestedDeclarations) {
+      nestedDeclarationsInstances.add(rule);
+      Object.setPrototypeOf(rule, CSSNestedDeclarationsInterface.prototype);
     } else if (parsed.selectorText !== undefined) {
       styleRuleInstances.add(rule);
+      Object.setPrototypeOf(rule, CSSStyleRuleInterface.prototype);
     }
     Object.defineProperties(rule, {
       cssText: { enumerable: true, get: () => cssText },
@@ -604,7 +734,8 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
       parentRule: { enumerable: true, get: () => parent ? containingRule : null }
     });
     if (groupingMatch) {
-      let children = splitRules(parsed.body || '').map(child => makeRule(state, child, rule));
+      let children = splitRules(parsed.body || '').map(child =>
+        makeRule(state, child, rule, nestedStyleContext));
       const isMedia = Boolean(mediaMatch);
       const isSupports = Boolean(supportsMatch);
       let preludeText = isMedia
@@ -643,7 +774,8 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
           validateLayerStatement(parsedChildren[0]);
           if (/^@(import|namespace)\b/i.test(parsedChildren[0].cssText))
             exception('Imported and namespace rules are not allowed in grouping rules', 'HierarchyRequestError');
-          children.splice(index, 0, makeRule(state, parsedChildren[0], rule));
+          children.splice(index, 0,
+            makeRule(state, parsedChildren[0], rule, nestedStyleContext));
           serialize();
           if (parent && containingRule?.__webSceneSerialize)
             containingRule.__webSceneSerialize();
@@ -702,7 +834,50 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
         },
         detach: { value: () => { parent = null; } }
       });
+    } else if (parsed.nestedDeclarations) {
+      let declaration;
+      const serialize = () => { cssText = declaration.cssText; };
+      const attached = () => parent && containingRule
+        && Array.from(containingRule.cssRules || []).includes(rule);
+      const commit = () => {
+        synchronize(state);
+        serialize();
+        if (containingRule?.__webSceneSerialize)
+          containingRule.__webSceneSerialize();
+        if (attached()) publish(state);
+      };
+      Object.defineProperties(rule, {
+        type: { enumerable: true, value: 0 },
+        style: { enumerable: true, get() {
+          if (!declaration)
+            declaration = makeDeclaration(state, parsed.body || '', commit);
+          return declaration;
+        } },
+        detach: { value: () => { parent = null; } }
+      });
+      declaration = makeDeclaration(state, parsed.body || '', commit);
+      serialize();
     } else if (parsed.selectorText !== undefined) {
+      const contents = splitStyleContents(parsed.body || '');
+      let children = contents.rules.map(child => makeRule(state, child, rule, true));
+      let declaration;
+      const list = makeList(() => children, () => synchronize(state));
+      const attached = () => parent && (containingRule
+        ? Array.from(containingRule.cssRules || []).includes(rule)
+        : state.rules.includes(rule));
+      const serialize = () => {
+        const declarations = declaration ? declaration.cssText : contents.leading;
+        const body = [declarations, ...children.map(child => child.cssText)]
+          .filter(Boolean).join(' ');
+        cssText = selectorText + ' {' + body + '}';
+      };
+      const commit = () => {
+        synchronize(state);
+        serialize();
+        if (containingRule?.__webSceneSerialize)
+          containingRule.__webSceneSerialize();
+        if (attached()) publish(state);
+      };
       Object.defineProperties(rule, {
         type: { enumerable: true, value: 1 },
         selectorText: {
@@ -710,83 +885,81 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
           get: () => selectorText,
           set(value) {
             synchronize(state);
-            const candidate = text(value).trim();
+            let candidate = text(value).trim();
+            if (nestedStyleContext && !candidate.includes('&')) candidate = '& ' + candidate;
             try {
               // Element.matches() and stylesheet parsing share WebScene's
               // native selector parser. CSSOM ignores invalid selectorText
               // assignments instead of surfacing the parser's SyntaxError.
-              state.document.createElement('span').matches(candidate);
+              state.document.createElement('span').matches(
+                candidate.replace(/&/g, '*'));
             } catch (error) {
               if (error?.name === 'SyntaxError') return;
               throw error;
             }
             if (candidate === selectorText) return;
             selectorText = candidate;
-            cssText = selectorText + ' {'
-              + (style ? style.cssText : parsed.body || '') + '}';
-            if (parent && (containingRule || state.rules.includes(rule))) {
-              if (containingRule && typeof containingRule.__webSceneSerialize === 'function')
-                containingRule.__webSceneSerialize();
-              publish(state);
-            }
+            commit();
           }
         },
+        cssRules: { enumerable: true, get: () => list },
+        insertRule: { writable: true, value(ruleText, index = 0) {
+          if (arguments.length === 0) throw new TypeError('A CSS rule is required');
+          synchronize(state);
+          index = Number(index) >>> 0;
+          if (index > children.length)
+            exception('Rule index is out of bounds', 'IndexSizeError');
+          const source = text(ruleText);
+          let child;
+          try {
+            const parsedChildren = splitRules(source);
+            if (parsedChildren.length !== 1)
+              exception('Exactly one CSS rule is required', 'SyntaxError');
+            child = parsedChildren[0];
+          } catch (error) {
+            if (error?.name !== 'SyntaxError') throw error;
+            const probe = state.document.createElement('span').style;
+            probe.cssText = source;
+            if (!probe.cssText) throw error;
+            child = { nestedDeclarations: true, body: source, cssText: source };
+          }
+          if (/^@(import|namespace)\b/i.test(child.cssText))
+            exception('Imported and namespace rules are not allowed in style rules',
+              'HierarchyRequestError');
+          validateLayerStatement(child);
+          children.splice(index, 0, makeRule(state, child, rule, true));
+          commit();
+          return index;
+        } },
+        deleteRule: { writable: true, value(index) {
+          if (arguments.length === 0) throw new TypeError('A rule index is required');
+          synchronize(state);
+          index = Number(index) >>> 0;
+          if (index >= children.length)
+            exception('Rule index is out of bounds', 'IndexSizeError');
+          children.splice(index, 1)[0].detach();
+          commit();
+        } },
         style: { enumerable: true, get() {
           if (style) return style;
-          let declaration;
-          const commit = () => {
-            synchronize(state);
-            cssText = selectorText + ' {' + declaration.cssText + '}';
-            if (parent && (containingRule || state.rules.includes(rule))) {
-              if (containingRule && typeof containingRule.__webSceneSerialize === 'function')
-                containingRule.__webSceneSerialize();
-              publish(state);
-            }
-          };
-          if (state.constructed) {
-            // An unadopted sheet is pure CSSOM state. A detached native element
-            // would still dirty the document when its inline style changes, so
-            // retain the declaration in JS until a later adoption slice gives
-            // the sheet a native publication authority.
-            declaration = makeConstructedDeclaration(parsed.body, commit);
-            style = declaration;
-            return style;
-          }
-          // Owner-backed rules reuse WebScene's real CSSStyleDeclaration
-          // parser/property methods and publish through their <style> owner.
-          declaration = state.document.createElement('span').style;
-          declaration.cssText = parsed.body;
-          style = new Proxy(declaration, {
-            get(target, key) {
-              // WebScene's native declaration exposes item(index), length and
-              // named properties, but does not yet install Web IDL indexed
-              // getters. CSSStyleDeclaration[index] is used by Code OSS's
-              // Markdown sanitizer and is equivalent to item(index).
-              if (typeof key === 'string' && /^(?:0|[1-9][0-9]*)$/.test(key))
-                return declarationNames(target)[Number(key)];
-              if (key === 'length') return declarationNames(target).length;
-              if (key === 'item') return index => {
-                const name = declarationNames(target)[Number(index) >>> 0];
-                return name === undefined ? '' : name;
-              };
-              const value = Reflect.get(target, key, target);
-              if (typeof value !== 'function') return value;
-              return (...args) => {
-                const result = Reflect.apply(value, target, args);
-                if (key === 'setProperty' || key === 'removeProperty') commit();
-                return result;
-              };
-            },
-            set(target, key, value) {
-              const result = Reflect.set(target, key, value, target);
-              if (result) commit();
-              return result;
-            }
-          });
+          declaration = makeDeclaration(state, contents.leading, commit);
+          style = declaration;
           return style;
         } },
-        detach: { value: () => { parent = null; } }
+        detach: { value: () => {
+          parent = null;
+          for (const child of children) child.detach();
+        } }
       });
+      serialize();
+      Object.defineProperty(rule, '__webSceneSerialize', {
+        value: () => {
+          serialize();
+          if (containingRule?.__webSceneSerialize)
+            containingRule.__webSceneSerialize();
+        }
+      });
+      Object.defineProperty(rule, '__webSceneNestedRules', { value: children });
     } else {
       Object.defineProperty(rule, 'detach', { value: () => { parent = null; } });
     }

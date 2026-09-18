@@ -203,6 +203,10 @@ int main()
             test_batched_stylesheet_rule_mutation_performance();
             return 0;
         }
+        if (selected == "nested-style-rule-cssom") {
+            test_nested_style_rule_cssom_performance_and_lifecycle();
+            return 0;
+        }
         if (selected == "adopted-stylesheets") {
             test_adopted_stylesheet_multi_root_contract_and_lifecycle();
             return 0;

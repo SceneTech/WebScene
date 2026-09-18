@@ -5,7 +5,7 @@
 namespace webscene_native::css {
 template<typename Decision,typename Protected>
 bool apply_decoration_value(dom_node& node,const std::string& name,const std::string& value,
-    Decision& decision,Protected&& is_inline)
+    Decision& decision,Protected&& is_inline,bool defer_transition_configuration = false)
 {
         const auto parse_declared_color = [&](const std::string& color_value) {
             return native_document::parse_color(color_value);
@@ -131,23 +131,26 @@ bool apply_decoration_value(dom_node& node,const std::string& name,const std::st
             }
             return true;
         } else if (name == "transition") {
-            apply_transition_shorthand(node.style, value);
+            apply_transition_shorthand(
+                node.style,
+                value,
+                !defer_transition_configuration);
             return true;
         } else if (name == "transition-property") {
             node.style.mutable_animations().transition_property_value = value;
-            configure_style_transitions(node.style);
+            if (!defer_transition_configuration) configure_style_transitions(node.style);
             return true;
         } else if (name == "transition-duration") {
             node.style.mutable_animations().transition_duration_value = value;
-            configure_style_transitions(node.style);
+            if (!defer_transition_configuration) configure_style_transitions(node.style);
             return true;
         } else if (name == "transition-delay") {
             node.style.mutable_animations().transition_delay_value = value;
-            configure_style_transitions(node.style);
+            if (!defer_transition_configuration) configure_style_transitions(node.style);
             return true;
         } else if (name == "transition-timing-function") {
             node.style.mutable_animations().transition_timing_function_value = value;
-            configure_style_transitions(node.style);
+            if (!defer_transition_configuration) configure_style_transitions(node.style);
             return true;
         } else if (name == "animation") {
             apply_animation_shorthand(node.style, value);

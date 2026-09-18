@@ -377,6 +377,9 @@
         std::string classification{"supported"};
         std::string semantic_slice;
         std::string source;
+        std::string_view css_property;
+
+        struct css_property_tag final {};
 
         feature_decision(
             implementation& owner_value,
@@ -390,11 +393,27 @@
         {
         }
 
+        feature_decision(
+            implementation& owner_value,
+            css_property_tag,
+            std::string_view property_value)
+            : owner(owner_value),
+              css_property(property_value)
+        {
+        }
+
         feature_decision(const feature_decision&) = delete;
         feature_decision& operator=(const feature_decision&) = delete;
 
         ~feature_decision()
         {
+            if (!css_property.empty()) {
+                owner.record_css_property_feature(
+                    css_property,
+                    std::move(classification),
+                    std::move(semantic_slice));
+                return;
+            }
             owner.record_feature(
                 std::move(category),
                 std::move(feature),
@@ -649,6 +668,56 @@
         static_cast<void>(classification);
         static_cast<void>(semantic_slice);
         static_cast<void>(source);
+#endif
+    }
+
+    void record_css_property_feature(
+        std::string_view property,
+        std::string classification,
+        std::string semantic_slice)
+    {
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+        // Supported declarations are the hot cascade path. Preserve exact
+        // feature-use counts while avoiding five temporary strings and a
+        // composite-key allocation for every declaration replay.
+        if (classification == "supported" && semantic_slice.empty()) {
+            if (const auto cached =
+                    supported_css_property_observation_writer_cache.find(property);
+                cached != supported_css_property_observation_writer_cache.end()) {
+                cached->second->count.fetch_add(1U, std::memory_order_relaxed);
+                return;
+            }
+            auto category = std::string("css");
+            auto feature = std::string("property:");
+            feature.append(property);
+            auto source = std::string("style-application");
+            const auto key = category + '\x1f' + feature + "\x1fsupported\x1f\x1f"
+                + source;
+            std::lock_guard lock(feature_observation_mutex);
+            auto [entry, inserted] = feature_observations.try_emplace(
+                key,
+                std::move(category),
+                std::move(feature),
+                std::string("supported"),
+                std::string{},
+                std::move(source));
+            static_cast<void>(inserted);
+            feature_observation_writer_cache.emplace(key, &entry->second);
+            supported_css_property_observation_writer_cache.emplace(
+                std::string(property), &entry->second);
+            entry->second.count.fetch_add(1U, std::memory_order_relaxed);
+            return;
+        }
+        record_feature(
+            "css",
+            "property:" + std::string(property),
+            std::move(classification),
+            std::move(semantic_slice),
+            "style-application");
+#else
+        static_cast<void>(property);
+        static_cast<void>(classification);
+        static_cast<void>(semantic_slice);
 #endif
     }
 

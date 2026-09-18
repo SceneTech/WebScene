@@ -412,6 +412,45 @@ int main()
             test_runtime_diagnostics_frame_and_failure();
             return 0;
         }
+        if (selected == "feature-use") {
+            auto* focused_engine = webscene_engine_create(0);
+            require(focused_engine != nullptr,
+                "feature-use test engine creation failed");
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+            execute(focused_engine, R"JS(
+                (() => {
+                  const style = document.createElement('style');
+                  style.textContent = '.feature-use-cache-probe { display: flex; }';
+                  document.head.appendChild(style);
+                  for (let index = 0; index < 2; ++index) {
+                    const target = document.createElement('div');
+                    target.className = 'feature-use-cache-probe';
+                    document.body.appendChild(target);
+                  }
+                })()
+            )JS", "feature-use-cache-probe.js");
+            require(
+                evaluate(focused_engine,
+                    "document.querySelector('.feature-use-cache-probe').offsetWidth >= 0",
+                    "feature-use-cache-barrier.js") == "true",
+                "feature-use cache fixture did not settle");
+            const auto report = feature_use(focused_engine);
+            const auto observation = report.find(
+                R"("feature":"property:display","classification":"supported","count":2,"source":"style-application")");
+            require(
+                observation != std::string::npos
+                    && report.find(
+                        R"("feature":"property:display","classification":"supported")",
+                        observation + 1U) == std::string::npos,
+                "repeated supported CSS declarations did not retain one structured observation: "
+                    + report);
+#else
+            test_unsupported_features_are_reported_at_native_decision_points(
+                focused_engine);
+#endif
+            webscene_engine_destroy(focused_engine);
+            return 0;
+        }
 #if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
         if (selected == "css-style-template-install") {
             test_css_style_template_installation_guard();

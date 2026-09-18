@@ -167,7 +167,11 @@
         return effective_document_base(root);
     }
 
-    void apply_css_declaration(dom_node& node, const css_declaration& declaration, bool inline_origin = false)
+    void apply_css_declaration(
+        dom_node& node,
+        const css_declaration& declaration,
+        bool inline_origin = false,
+        bool defer_transition_configuration = false)
     {
 #if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
         if (profile_css) {
@@ -185,7 +189,11 @@
             auto normalized = declaration;
             normalized.name = name.starts_with("grid-")
                 ? canonical_css_property_name(name) : "transform";
-            apply_css_declaration(node, normalized, inline_origin);
+            apply_css_declaration(
+                node,
+                normalized,
+                inline_origin,
+                defer_transition_configuration);
             return;
         }
         if (name.starts_with("--")) {
@@ -193,19 +201,21 @@
             record_feature("css","custom-property","supported",{},"style-application");
             return;
         }
-        auto resolved_declaration = declaration;
+        const auto* resolved_declaration = &declaration;
+        std::optional<css_declaration> resolved_resource_declaration;
         if ((name == "background" || name == "background-image")
             && first_css_url(declaration.value).has_value()) {
-            resolved_declaration.value = resolve_css_resource_urls(
+            resolved_resource_declaration = declaration;
+            resolved_resource_declaration->value = resolve_css_resource_urls(
                 declaration.value,
                 current_css_base_address(node));
+            resolved_declaration = &*resolved_resource_declaration;
         }
         feature_decision decision(
             *this,
-            "css",
-            "property:" + name,
-            "style-application");
-        css::apply_declaration(document,node,resolved_declaration,css_variables,inline_origin,decision,
+            feature_decision::css_property_tag{},
+            name);
+        css::apply_declaration(document,node,*resolved_declaration,css_variables,inline_origin,decision,
             [this,&node](const std::string& url,std::string& markup,std::string& resolved,std::string& view_box) {
                 auto resource_context = isolate->GetCurrentContext();
                 if (resource_context.IsEmpty()) resource_context = context_for_node(node);
@@ -221,7 +231,7 @@
             },[&](bool contains_variable) {
                 if(contains_variable && is_paint_property(name))
                     record_composition("css-custom-property-to-paint",node.id);
-            });
+            },defer_transition_configuration);
     }
 
     void recompute_inline_font_relative_metrics(dom_node& node)
@@ -312,8 +322,12 @@
         const css::cascaded_rule_order cascade_order(matched_rules);
         css::apply_matched_declarations(node,cascade_order,
             [&](const css_declaration& declaration,bool inline_origin) {
-                apply_css_declaration(node,declaration,inline_origin);
+                apply_css_declaration(node,declaration,inline_origin,true);
             });
+        // Transition longhands share one computed transition table. During a
+        // full cascade, configure it once after every winning declaration has
+        // landed instead of reparsing its four lists after each longhand.
+        css::configure_style_transitions(node.style);
         // Inline relative line-height is authored at a higher origin, but its
         // computed pixel value depends on the winning font-size. Re-resolve it
         // only after stylesheet declarations have completed their cascade.

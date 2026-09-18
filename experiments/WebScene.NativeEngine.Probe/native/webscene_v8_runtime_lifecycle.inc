@@ -290,6 +290,7 @@
         connected_resources.clear();
         resize_observers.clear();
         frame_hydration_states.clear();
+        frame_navigation_generations.clear();
         inactive_css_cascades.clear();
         active_css_cascade_root = nullptr;
         frame_documents.clear();

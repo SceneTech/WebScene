@@ -1262,6 +1262,7 @@
             }
             actual_frame_contexts.erase(id);
             frame_hydration_states.erase(id);
+            retire_iframe_navigation(id);
             actual_frame_windows.erase(id);
             actual_frame_documents.erase(id);
             frame_session_storage.erase(id);
@@ -1818,6 +1819,7 @@
             }
             actual_frame_contexts.erase(id);
             frame_hydration_states.erase(id);
+            retire_iframe_navigation(id);
             actual_frame_documents.erase(id);
             frame_session_storage.erase(id);
             frame_load_listeners.erase(id);
@@ -2377,6 +2379,50 @@
         node.attributes["data-webscene-embed-fallback"] = "youtube";
         node.attributes["data-webscene-remote-result"] = "loaded";
         return true;
+    }
+
+    uint64_t current_iframe_navigation_generation(uint32_t frame_id)
+    {
+        std::lock_guard lock(document_generation_mutex);
+        return frame_navigation_generations.try_emplace(frame_id, 1U)
+            .first->second;
+    }
+
+    void begin_iframe_navigation(dom_node& frame)
+    {
+        {
+            std::lock_guard lock(document_generation_mutex);
+            ++frame_navigation_generations.try_emplace(frame.id, 0U)
+                .first->second;
+        }
+        frame.attributes.erase("object-html");
+        frame.attributes.erase("frame-html");
+        frame.attributes.erase("data-webscene-remote-result");
+        if (auto preparation = pending_frame_preparations.find(frame.id);
+            preparation != pending_frame_preparations.end()) {
+            if (preparation->second.future.valid()) {
+                retired_frame_preparations.push_back(
+                    std::move(preparation->second.future));
+            }
+            pending_frame_preparations.erase(preparation);
+        }
+        std::erase(pending_frame_hydrations, &frame);
+    }
+
+    void retire_iframe_navigation(uint32_t frame_id)
+    {
+        {
+            std::lock_guard lock(document_generation_mutex);
+            frame_navigation_generations.erase(frame_id);
+        }
+        if (auto preparation = pending_frame_preparations.find(frame_id);
+            preparation != pending_frame_preparations.end()) {
+            if (preparation->second.future.valid()) {
+                retired_frame_preparations.push_back(
+                    std::move(preparation->second.future));
+            }
+            pending_frame_preparations.erase(preparation);
+        }
     }
 
     void enqueue_iframe_hydration_if_needed(dom_node& node)

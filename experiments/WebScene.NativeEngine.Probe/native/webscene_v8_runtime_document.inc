@@ -765,6 +765,9 @@
             return;
         }
         node->attributes[name] = value;
+        if (name == "src" && node->tag == "iframe") {
+            self->begin_iframe_navigation(*node);
+        }
         if (node->tag == "base" && name == "href") {
             self->invalidate_document_base(*node);
         }

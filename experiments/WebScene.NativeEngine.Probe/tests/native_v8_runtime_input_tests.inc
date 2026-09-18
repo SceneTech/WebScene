@@ -1209,6 +1209,55 @@ void test_enter_dispatches_browser_keypress_for_interval_commit(webscene_engine*
         "preventDefault on keypress did not suppress the textarea Enter default action");
 }
 
+void test_pointer_submit_button_runs_form_default_action(webscene_engine* engine)
+{
+    resize(engine, 360, 180, 517U);
+    execute(engine, R"JS(
+        (() => {
+          document.body.innerHTML = `<style>
+            body { margin: 0; }
+            button { position:absolute; left:20px; width:180px; height:40px; }
+            #continue { top:20px; }
+            #cancelled { top:80px; }
+          </style>
+          <form id="login">
+            <button id="continue"><span>Continue</span></button>
+            <button id="cancelled"><span>Cancelled</span></button>
+          </form>`;
+          globalThis.__pointerSubmitState = { clicks: [], submissions: [] };
+          const form = document.getElementById('login');
+          const proceed = document.getElementById('continue');
+          const cancelled = document.getElementById('cancelled');
+          proceed.addEventListener('click', () => __pointerSubmitState.clicks.push('continue'));
+          cancelled.addEventListener('click', event => {
+            __pointerSubmitState.clicks.push('cancelled');
+            event.preventDefault();
+          });
+          form.addEventListener('submit', event => {
+            __pointerSubmitState.submissions.push(event.submitter?.id || null);
+            event.preventDefault();
+          });
+        })()
+    )JS", "native-pointer-submit-setup.js");
+    require(
+        evaluate(engine, "document.getElementById('continue').getBoundingClientRect().width",
+            "native-pointer-submit-layout.js") == "180",
+        "pointer submit fixture was not laid out");
+
+    pointer_button(engine, WEBSCENE_INPUT_POINTER_DOWN, 60, 40, 518U, true);
+    pointer_button(engine, WEBSCENE_INPUT_POINTER_UP, 60, 40, 519U, false);
+    pointer_button(engine, WEBSCENE_INPUT_POINTER_DOWN, 60, 100, 520U, true);
+    pointer_button(engine, WEBSCENE_INPUT_POINTER_UP, 60, 100, 521U, false);
+
+    const auto state = evaluate(
+        engine,
+        "JSON.stringify(__pointerSubmitState)",
+        "native-pointer-submit-result.js");
+    require(
+        state == R"("{\"clicks\":[\"continue\",\"cancelled\"],\"submissions\":[\"continue\"]}")",
+        "pointer submit-button default action diverged: " + state);
+}
+
 void test_collapsed_single_select_native_activation(webscene_engine* engine)
 {
     resize(engine, 340, 230, 600U);

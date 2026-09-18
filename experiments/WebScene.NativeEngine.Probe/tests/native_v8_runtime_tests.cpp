@@ -292,6 +292,14 @@ int main()
             webscene_engine_destroy(focused_engine);
             return 0;
         }
+        if (selected == "pointer-submit-button") {
+            auto* focused_engine = webscene_engine_create(0);
+            require(focused_engine != nullptr,
+                "pointer submit-button engine creation failed");
+            test_pointer_submit_button_runs_form_default_action(focused_engine);
+            webscene_engine_destroy(focused_engine);
+            return 0;
+        }
         if (selected == "shortcut-activation") {
             auto* focused_engine = webscene_engine_create(0);
             require(focused_engine != nullptr,
@@ -1349,6 +1357,7 @@ int main()
         webscene_engine_destroy(close_engine);
     }
     test_enter_dispatches_browser_keypress_for_interval_commit(engine);
+    test_pointer_submit_button_runs_form_default_action(engine);
     test_css_linear_gradient_reaches_the_retained_scene(engine);
     {
         auto* file_engine=webscene_engine_create(0);

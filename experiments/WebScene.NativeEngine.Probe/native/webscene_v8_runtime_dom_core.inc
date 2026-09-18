@@ -4522,7 +4522,10 @@
                     form_control_changed = checkable_activation.changed;
                 }
             }
-            if (!default_prevented) self->queue_external_navigation(*node);
+            if (!default_prevented) {
+                if (!self->perform_submit_button_click_default(synthetic, *node)) return;
+                self->queue_external_navigation(*node);
+            }
             if (form_control_changed && self->is_connected(*node)) {
                 self->dispatch_input_event_type(synthetic, "input", *node);
                 self->dispatch_input_event_type(synthetic, "change", *node);

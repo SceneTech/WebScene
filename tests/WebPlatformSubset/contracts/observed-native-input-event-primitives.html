@@ -11,7 +11,7 @@
   body {
     margin: 0;
     width: 360px;
-    height: 140px;
+    height: 200px;
   }
 
   #target,
@@ -32,12 +32,26 @@
     width: 160px;
     height: 40px;
   }
+
+  #submit-form {
+    position: fixed;
+    left: 200px;
+    top: 85px;
+  }
+
+  #submit-button {
+    width: 140px;
+    height: 40px;
+  }
 </style>
 <button id="target">Target</button>
 <button id="outside">Outside</button>
 <div id="propagation-parent">
   <button id="propagation-target">Propagation target</button>
 </div>
+<form id="submit-form">
+  <button id="submit-button"><span id="submit-content">Continue</span></button>
+</form>
 <script>
   const target = document.getElementById("target");
   const outside = document.getElementById("outside");
@@ -165,4 +179,20 @@
       ["first-target"],
       "stopImmediatePropagation must stop later target and ancestor listeners");
   }, "native mouseup honors stopImmediatePropagation across overlapping recognizers");
+
+  promise_test(async () => {
+    const form = document.getElementById("submit-form");
+    const button = document.getElementById("submit-button");
+    const content = document.getElementById("submit-content");
+    const submissions = [];
+    form.addEventListener("submit", event => {
+      submissions.push(event.submitter);
+      event.preventDefault();
+    });
+
+    await test_driver.click(content);
+
+    assert_array_equals(submissions, [button],
+      "activating content inside a submit button must run the form default action once");
+  }, "native primary activation runs a submit button's form default action");
 </script>

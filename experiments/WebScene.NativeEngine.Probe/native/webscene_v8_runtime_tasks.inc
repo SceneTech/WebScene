@@ -2259,6 +2259,15 @@
         return node->tag == "input" && (type == "submit" || type == "image");
     }
 
+    dom_node* submit_button_for_click(dom_node& target)
+    {
+        for (auto* candidate = &target; candidate != nullptr;
+            candidate = document.composed_parent(*candidate)) {
+            if (is_submit_button(candidate)) return candidate;
+        }
+        return nullptr;
+    }
+
     void collect_form_controls(dom_node& node, dom_node& form, std::vector<dom_node*>& controls)
     {
         for (auto& child : node.children) {
@@ -2288,6 +2297,16 @@
             form,
             &submit_prevented,
             submitter);
+    }
+
+    bool perform_submit_button_click_default(
+        const webscene_input_event& input,
+        dom_node& click_target)
+    {
+        auto* submitter = submit_button_for_click(click_target);
+        if (submitter == nullptr) return true;
+        auto* form = form_owner(*submitter);
+        return form == nullptr || dispatch_form_submit(input, *form, submitter);
     }
 
     bool perform_implicit_submission(
@@ -3781,6 +3800,13 @@
                 && !activate_label_control_after_click
                 && select_popup_is_candidate(*activated_form_control)) {
                 static_cast<void>(open_select_popup(*activated_form_control));
+            }
+            if (!click_default_prevented
+                && !perform_submit_button_click_default(input, *click_target)) {
+                last_error = "Native submit-button default action failed: "
+                    + describe_reported_exception(try_catch, local_context);
+                report_input_exception();
+                return false;
             }
             if (!click_default_prevented && !queue_external_navigation(*click_target)) {
                 last_error = "Native external navigation host request could not be queued";

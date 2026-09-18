@@ -1820,9 +1820,9 @@
     {
       "path": "contracts/observed-native-input-event-primitives.html",
       "type": "testharness",
-      "capabilities": ["native-pointer-movement", "pointer-and-mouse-entry-order", "pointer-coordinate-fields", "primary-pointer-activation-order", "mouse-button-fields", "click-legacy-fields", "pointer-and-mouse-exit-order", "boundary-related-target", "native-stop-immediate-propagation"],
+      "capabilities": ["native-pointer-movement", "pointer-and-mouse-entry-order", "pointer-coordinate-fields", "primary-pointer-activation-order", "mouse-button-fields", "click-legacy-fields", "pointer-and-mouse-exit-order", "boundary-related-target", "native-stop-immediate-propagation", "submit-button-pointer-default-action"],
       "evidence": ["observed-hosted-component-native-input-feature-audit", "volume-menu-child-submenus", "price-axis-scale-drag"],
-      "reason": "Product-neutral exact event-lifecycle reduction for native pointer and mouse event families observed in complex hosted components. It independently requires movement, entry, primary activation, exit, event ordering, coordinate/button fields, relatedTarget, and stopImmediatePropagation across same-target and ancestor mouseup recognizers. Native evidence passes 4/4: artifacts/web-platform-native-input-propagation-v2-20260723/results.json. Managed passes 3/4 and retains the existing explicit adapter gap because its testdriver bridge does not synthesize the initial movement event: artifacts/web-platform-managed-input-propagation-v4-20260723/results.json."
+      "reason": "Product-neutral exact event-lifecycle reduction for native pointer and mouse event families observed in complex hosted components. It independently requires movement, entry, primary activation, exit, event ordering, coordinate/button fields, relatedTarget, stopImmediatePropagation across same-target and ancestor mouseup recognizers, and the HTML submit-button default action after activating descendant content."
     },
     {
       "path": "contracts/observed-dom-runtime-primitives.html",

@@ -231,8 +231,14 @@ void test_indexeddb_file_system_handle_persistence()
           request.onerror=()=>reject(request.error);
         });
         globalThis.__restoredHandle=value.handle;
+        const permissions=await Promise.all([
+          value.handle.queryPermission(),
+          value.handle.queryPermission({mode:'readwrite'}),
+          value.handle.requestPermission(),
+          value.handle.requestPermission({mode:'readwrite'})
+        ]);
         __durableLoad={done:true,file:value.handle instanceof FileSystemFileHandle,
-          name:value.handle.name,bytes:Array.from(value.bytes)};
+          name:value.handle.name,bytes:Array.from(value.bytes),permissions};
         opened.close();
       })().catch(error=>{__durableLoad={done:true,error:error.name}});
     )JS", "indexeddb-durable-load.js");
@@ -256,7 +262,9 @@ void test_indexeddb_file_system_handle_persistence()
     wait_for_indexeddb_flag(engine, "__durableLoad.done===true");
     const auto durable_load_result = evaluate(engine,
         "__durableLoad.file===true&&__durableLoad.name==='durable🙂.txt'"
-        "&&JSON.stringify(__durableLoad.bytes)==='[7,8]'",
+        "&&JSON.stringify(__durableLoad.bytes)==='[7,8]'"
+        "&&JSON.stringify(__durableLoad.permissions)==="
+        "'[\"granted\",\"denied\",\"granted\",\"denied\"]'",
         "indexeddb-durable-load-result.js");
     require(durable_load_result == "true",
         "IndexedDB did not rehydrate the file handle after restart: "

@@ -976,13 +976,21 @@
             delete globalThis.__webSceneCreateNativeFile;
             const states = new WeakMap();
             const textEncoder = new TextEncoder();
-            const permission = (state, mode) => {
+            const permissionMode = options => {
+              if (options == null) return 'read';
+              const value = options.mode;
+              if (value === undefined) return 'read';
+              const mode = String(value);
               if (mode !== 'read' && mode !== 'readwrite') {
                 throw new TypeError(`Unsupported permission mode ${mode}`);
               }
-              const read = (state.capabilities & 5) !== 0;
-              const write = (state.capabilities & 26) !== 0;
-              return mode === 'read' ? read : write;
+              return mode;
+            };
+            const permission = (state, mode) => {
+              const readCapability = state.kind === 'file' ? 1 : 4;
+              const read = (state.capabilities & readCapability) !== 0;
+              const write = (state.capabilities & 2) !== 0;
+              return mode === 'read' ? read : read && write;
             };
             const stateFor = value => {
               let state = states.get(value);
@@ -1022,14 +1030,14 @@
             function queryPermission(options = {}) {
               return Promise.resolve().then(() => {
                 const state = stateFor(this);
-                return permission(state, String(options.mode || 'read'))
+                return permission(state, permissionMode(options))
                   ? 'granted' : 'denied';
               });
             }
             function requestPermission(options = {}) {
               return Promise.resolve().then(() => {
                 const state = stateFor(this);
-                return permission(state, String(options.mode || 'read'))
+                return permission(state, permissionMode(options))
                   ? 'granted' : 'denied';
               });
             }

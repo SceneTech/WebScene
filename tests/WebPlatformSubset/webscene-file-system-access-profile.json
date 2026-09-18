@@ -1,6 +1,6 @@
 {
   "profile": "file-system-access-picker-handles",
-  "wptRevision": "76fdb39425f8319118cba6c0c961e1d835c2879f",
+  "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
   "runtime": "v8",
   "viewport": {
     "width": 800,
@@ -24,6 +24,15 @@
     }
   ],
   "harnessBlocked": [
+    {
+      "path": "contracts/file-system-access-handle-permissions.html",
+      "type": "testharness",
+      "capabilities": [
+        "file-system-handle-permissions",
+        "opaque-file-grant-capabilities"
+      ],
+      "reason": "Chromium/WPT oracle creates origin-private filesystem handles with read and readwrite permission. The native runner receives host-issued opaque grants and exercises equivalent file and directory read/readwrite decisions, invalid descriptors, borrowed receivers, clone and durable restore parity, and terminal no-prompt behavior from exact grant capabilities."
+    },
     {
       "path": "contracts/file-system-access-directory-resolve.html",
       "type": "testharness",

@@ -186,6 +186,10 @@ int main()
             test_native_file_system_access_lifecycle_and_performance();
             return 0;
         }
+        if (selected == "file-system-handle-lifetime") {
+            test_native_file_system_access_lifecycle_and_performance();
+            return 0;
+        }
         if (selected == "service-worker-lifecycle") {
             test_service_worker_lifecycle_performance_and_teardown_gate();
             return 0;

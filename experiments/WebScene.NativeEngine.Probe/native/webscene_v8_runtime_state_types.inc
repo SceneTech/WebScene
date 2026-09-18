@@ -20,10 +20,59 @@
 
     struct message_port_endpoint;
 
+    struct file_grant_release_dispatcher final {
+        std::mutex mutex;
+        v8_dom_runtime::file_grant_release_request_sink_v2 sink;
+        bool stopped{false};
+
+        bool release(const std::vector<std::uint8_t>& token)
+        {
+            std::lock_guard lock(mutex);
+            if (stopped || !sink || token.empty()) return false;
+            webscene_file_grant_release_request_v2 request{
+                sizeof(webscene_file_grant_release_request_v2), 2,
+                {token.data(), token.size()}, 0, 0};
+            return sink(request);
+        }
+
+        void stop()
+        {
+            std::lock_guard lock(mutex);
+            stopped = true;
+            sink = {};
+        }
+    };
+
+    struct file_grant_owner final {
+        std::vector<std::uint8_t> token;
+        std::string origin;
+        std::string name;
+        std::uint32_t kind{};
+        std::uint32_t capabilities{};
+        std::shared_ptr<file_grant_release_dispatcher> dispatcher;
+        std::atomic<bool> released{false};
+
+        void release()
+        {
+            if (released.exchange(true, std::memory_order_acq_rel)) return;
+            if (dispatcher != nullptr) dispatcher->release(token);
+        }
+
+        ~file_grant_owner() { release(); }
+    };
+
+    struct file_system_handle_binding final {
+        std::shared_ptr<file_grant_owner> owner;
+        v8::Global<v8::Context> context;
+        v8::Global<v8::Object> wrapper;
+        bool reclaimed{false};
+    };
+
     struct clone_packet {
         std::vector<uint8_t> bytes;
         std::vector<std::shared_ptr<v8::BackingStore>> transfers;
         std::vector<std::shared_ptr<message_port_endpoint>> port_transfers;
+        std::vector<std::shared_ptr<file_grant_owner>> file_system_handles;
     };
 
     struct binary_object_url final {

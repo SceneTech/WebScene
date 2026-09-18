@@ -129,6 +129,19 @@ take_file_grant_directory_request(webscene_engine* engine)
     return request;
 }
 
+const webscene_file_grant_release_request_v2*
+take_file_grant_release_request(webscene_engine* engine)
+{
+    const webscene_file_grant_release_request_v2* request = nullptr;
+    for (int attempt = 0; attempt < 250 && request == nullptr; ++attempt) {
+        request = webscene_engine_take_file_grant_release_request_v2(engine);
+        if (request == nullptr)
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    require(request != nullptr, "native file grant release was not published");
+    return request;
+}
+
 struct directory_completion_entry final {
     std::string name;
     std::vector<uint8_t> grant;
@@ -1297,7 +1310,8 @@ void test_native_file_system_access_lifecycle_and_performance()
           showOpenFilePicker().then(handles => {
             const handle=handles[0];
             if (__stableHandle === null) __stableHandle=handle;
-            if (__stableHandle !== handle) throw new Error('unstable grant identity');
+            else if (__stableHandle === handle)
+              throw new Error('a fresh picker result reused its wrapper');
             return __stableHandle.isSameEntry(handle).then(async same => {
               if (!same) throw new Error('stable native entry identity changed');
               const file=await __stableHandle.getFile();
@@ -1376,6 +1390,54 @@ void test_native_file_system_access_lifecycle_and_performance()
     require(evaluate(engine.get(), "__pickerCycles",
                 "file-picker-cycle-result.js") == "100",
         "file picker lifecycle promises did not settle exactly once");
+    const auto clone_state = evaluate(engine.get(), R"JS((() => {
+      globalThis.__lifetimeClone=structuredClone(__stableHandle);
+      return {
+        distinct:__lifetimeClone!==__stableHandle,
+        instance:__lifetimeClone instanceof FileSystemFileHandle,
+        base:__lifetimeClone instanceof FileSystemHandle,
+        tag:Object.prototype.toString.call(__lifetimeClone),
+        name:__lifetimeClone.name,
+        kind:__lifetimeClone.kind,
+        keys:Object.keys(__lifetimeClone).length,
+        release:typeof __lifetimeClone.release
+      };
+    })())JS", "file-handle-structured-clone.js");
+    require(clone_state.find("\"distinct\":true") != std::string::npos
+            && clone_state.find("\"instance\":true") != std::string::npos
+            && clone_state.find("\"base\":true") != std::string::npos
+            && clone_state.find("[object FileSystemFileHandle]") != std::string::npos
+            && clone_state.find("\"name\":\"stable.txt\"") != std::string::npos
+            && clone_state.find("\"kind\":\"file\"") != std::string::npos
+            && clone_state.find("\"keys\":0") != std::string::npos
+            && clone_state.find("\"release\":\"undefined\"")
+                != std::string::npos,
+        "structured clone diverged from Chrome FileSystemHandle semantics");
+    execute(engine.get(), R"JS(
+      globalThis.__cloneSame='pending';
+      __lifetimeClone.isSameEntry(__stableHandle).then(
+        value=>{__cloneSame=value}, error=>{__cloneSame=error.name});
+    )JS", "file-handle-clone-same-entry.js");
+    const auto* clone_comparison = take_file_grant_same_entry_request(engine.get());
+    require(clone_comparison->first_grant_id.byte_count == stable_grant.size()
+            && clone_comparison->second_grant_id.byte_count == stable_grant.size(),
+        "structured clone lost its shared opaque authority");
+    const auto clone_comparison_id = clone_comparison->request_id;
+    webscene_file_grant_same_entry_request_release_v2(clone_comparison);
+    require(complete_file_grant_same_entry(
+            engine.get(), clone_comparison_id, true, true),
+        "structured-clone identity completion was rejected");
+    require(evaluate(engine.get(), "__cloneSame",
+                "file-handle-clone-same-entry-result.js") == "true",
+        "structured clone no longer identifies the same native entry");
+    execute(engine.get(), "globalThis.__lifetimeClone=null",
+        "file-handle-clone-release-reference.js");
+    require(webscene_engine_request_low_memory(engine.get()) != 0,
+        "file handle weak-owner collection request failed");
+    require(evaluate(engine.get(), "true", "file-handle-gc-barrier.js") == "true",
+        "file handle GC barrier failed");
+    require(webscene_engine_take_file_grant_release_request_v2(engine.get()) == nullptr,
+        "shared grant released while its stable wrapper was still alive");
     const auto elapsed = std::chrono::duration<double>(
         std::chrono::steady_clock::now() - started).count();
     require(elapsed < 5.0, "100 file picker cycles exceeded five seconds");
@@ -1398,6 +1460,61 @@ void test_native_file_system_access_lifecycle_and_performance()
         "file read request queue did not drain after 100 cycles");
     require(webscene_engine_take_file_grant_write_request_v2(engine.get()) == nullptr,
         "file write request queue did not drain after 100 cycles");
+
+    activate_file_picker(engine.get(), 51999U);
+    execute(engine.get(), R"JS(
+      globalThis.__weakHandle=null;
+      showOpenFilePicker().then(handles=>{__weakHandle=handles[0]});
+    )JS", "file-handle-weak-owner-picker.js");
+    const auto* weak_picker = take_file_panel_request(engine.get());
+    const auto weak_picker_id = weak_picker->request_id;
+    webscene_file_panel_request_release_v2(weak_picker);
+    const std::vector<uint8_t> weak_grant{91U, 0U, 92U, 93U};
+    require(complete_file_panel_success(
+            engine.get(), weak_picker_id, WEBSCENE_FILE_PANEL_ENTRY_FILE_V2,
+            WEBSCENE_FILE_PANEL_GRANT_READ_V2, "weak.txt", weak_grant),
+        "weak-owner picker completion was rejected");
+    require(evaluate(engine.get(), "__weakHandle.name",
+                "file-handle-weak-owner-ready.js") == "\"weak.txt\"",
+        "weak-owner handle did not settle");
+    execute(engine.get(), "globalThis.__weakHandle=null",
+        "file-handle-weak-owner-drop.js");
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        require(webscene_engine_request_low_memory(engine.get()) != 0,
+            "weak-owner low-memory collection request failed");
+        require(evaluate(engine.get(), "true", "file-handle-weak-owner-gc.js")
+                == "true",
+            "weak-owner GC barrier failed");
+    }
+    const auto* weak_release = take_file_grant_release_request(engine.get());
+    require(weak_release->grant_id.byte_count == weak_grant.size()
+            && std::memcmp(weak_release->grant_id.data,
+                weak_grant.data(), weak_grant.size()) == 0,
+        "final weak wrapper released the wrong grant");
+    webscene_file_grant_release_request_release_v2(weak_release);
+    require(webscene_engine_take_file_grant_release_request_v2(engine.get()) == nullptr,
+        "weak wrapper released its grant more than once");
+
+    activate_file_picker(engine.get(), 51998U);
+    execute(engine.get(), R"JS(
+      globalThis.__directoryHandle=null;
+      showDirectoryPicker().then(handle=>{__directoryHandle=handle});
+    )JS", "file-handle-lifetime-directory-picker.js");
+    const auto* directory_picker = take_file_panel_request(engine.get());
+    require(directory_picker->kind == WEBSCENE_FILE_PANEL_OPEN_DIRECTORY_V2,
+        "lifetime directory picker changed kind");
+    const auto directory_picker_id = directory_picker->request_id;
+    webscene_file_panel_request_release_v2(directory_picker);
+    const std::vector<uint8_t> directory_grant{71U, 0U, 72U};
+    require(complete_file_panel_success(
+            engine.get(), directory_picker_id,
+            WEBSCENE_FILE_PANEL_ENTRY_DIRECTORY_V2,
+            WEBSCENE_FILE_PANEL_GRANT_ENUMERATE_V2,
+            "lifetime", directory_grant),
+        "lifetime directory picker completion was rejected");
+    require(evaluate(engine.get(), "__directoryHandle.name",
+                "file-handle-lifetime-directory-ready.js") == "\"lifetime\"",
+        "lifetime directory handle did not settle");
 
     activate_file_picker(engine.get(), 52000U);
     execute(engine.get(), R"JS(
@@ -1482,6 +1599,23 @@ void test_native_file_system_access_lifecycle_and_performance()
                 WEBSCENE_FILE_GRANT_DIRECTORY_ENUMERATE_V2,
                 WEBSCENE_FILE_GRANT_DIRECTORY_SUCCESS_V2),
         "stale directory completion survived navigation retirement");
+    bool released_stable = false;
+    bool released_directory = false;
+    for (int index = 0; index < 2; ++index) {
+        const auto* released = take_file_grant_release_request(engine.get());
+        const auto matches = [&](const std::vector<uint8_t>& expected) {
+            return released->grant_id.byte_count == expected.size()
+                && std::memcmp(released->grant_id.data,
+                    expected.data(), expected.size()) == 0;
+        };
+        released_stable = released_stable || matches(stable_grant);
+        released_directory = released_directory || matches(directory_grant);
+        webscene_file_grant_release_request_release_v2(released);
+    }
+    require(released_stable && released_directory,
+        "navigation did not release each live opaque grant exactly once");
+    require(webscene_engine_take_file_grant_release_request_v2(engine.get()) == nullptr,
+        "navigation released the same grant more than once");
     std::filesystem::remove(path);
     std::cout << "File System Access lifecycle gate: cycles=100 elapsedSeconds="
               << elapsed << " heapDelta="

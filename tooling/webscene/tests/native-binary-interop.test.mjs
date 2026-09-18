@@ -67,6 +67,8 @@ test('native engine publishes only the versioned leased interop surface', async 
     'webscene_engine_take_file_grant_directory_request_v2',
     'webscene_file_grant_directory_request_release_v2',
     'webscene_engine_complete_file_grant_directory_request_v2',
+    'webscene_engine_take_file_grant_release_request_v2',
+    'webscene_file_grant_release_request_release_v2',
     'webscene_engine_complete_host_request_v1',
     'webscene_engine_discard_host_request_v1',
     'webscene_engine_set_window_focused_v1',

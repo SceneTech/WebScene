@@ -138,7 +138,8 @@
             const auto revision = info[2].As<v8::BigInt>()->Uint64Value(&lossless);
             clone_packet packet;
             if (!lossless || !serialize_clone(
-                    info, info[3], v8::Undefined(info.GetIsolate()), packet)) {
+                    info, info[3], v8::Undefined(info.GetIsolate()), packet,
+                    maximum_clone_packet_bytes, true)) {
                 self->pending_indexeddb_promises.erase(id);
                 return;
             }

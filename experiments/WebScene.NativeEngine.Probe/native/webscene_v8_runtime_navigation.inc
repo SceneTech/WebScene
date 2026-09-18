@@ -102,6 +102,7 @@
         stop_workers();
         dedicated_workers.clear();
         reset_message_ports_for_navigation();
+        retire_file_system_handles_for_contexts(retired_contexts);
         terminal_pagehide_dispatched = false;
         file_targets.clear();
         { std::lock_guard lock(file_requests_mutex); file_requests.clear(); }

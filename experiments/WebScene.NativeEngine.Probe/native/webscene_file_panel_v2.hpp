@@ -14,6 +14,7 @@
 #include <string_view>
 #include <type_traits>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -1431,6 +1432,118 @@ private:
     std::uint64_t completed_requests_{};
     std::uint64_t retired_requests_{};
     std::uint64_t copied_completion_bytes_{};
+    std::uint64_t rejected_operations_{};
+    bool retiring_{};
+};
+
+struct file_grant_release_request_lease_v2 final {
+    webscene_file_grant_release_request_v2 view{};
+    std::vector<std::uint8_t> grant_id;
+
+    void bind() {
+        view.struct_size = sizeof(view);
+        view.version = 2;
+        view.grant_id = {
+            grant_id.empty() ? nullptr : grant_id.data(), grant_id.size()};
+    }
+};
+static_assert(std::is_standard_layout_v<file_grant_release_request_lease_v2>);
+static_assert(offsetof(file_grant_release_request_lease_v2, view) == 0);
+
+struct file_grant_release_metrics_v2 final {
+    std::size_t queued_requests{};
+    std::size_t retained_input_bytes{};
+    std::uint64_t delivered_requests{};
+    std::uint64_t retired_requests{};
+    std::uint64_t copied_request_bytes{};
+    std::uint64_t rejected_operations{};
+};
+
+class file_grant_release_broker_v2 final {
+public:
+    bool queue(const webscene_file_grant_release_request_v2& source) {
+        auto lease = copy_request(source);
+        if (!lease) { reject(); return false; }
+        const std::string key(
+            reinterpret_cast<const char*>(lease->grant_id.data()),
+            lease->grant_id.size());
+        std::lock_guard lock(mutex_);
+        if (retiring_
+            || queued_.size() >= WEBSCENE_FILE_GRANT_RELEASE_MAXIMUM_QUEUED_V2
+            || !seen_.insert(key).second) {
+            ++rejected_operations_;
+            return false;
+        }
+        retained_input_bytes_ += lease->grant_id.size();
+        copied_request_bytes_ += lease->grant_id.size();
+        queued_.push_back(std::move(lease));
+        return true;
+    }
+
+    std::unique_ptr<file_grant_release_request_lease_v2> take() {
+        std::lock_guard lock(mutex_);
+        if (queued_.empty()) return {};
+        auto result = std::move(queued_.front());
+        queued_.pop_front();
+        retained_input_bytes_ -= result->grant_id.size();
+        delivered_keys_.emplace_back(
+            reinterpret_cast<const char*>(result->grant_id.data()),
+            result->grant_id.size());
+        if (delivered_keys_.size()
+            > WEBSCENE_FILE_GRANT_RELEASE_MAXIMUM_QUEUED_V2) {
+            seen_.erase(delivered_keys_.front());
+            delivered_keys_.pop_front();
+        }
+        ++delivered_requests_;
+        result->bind();
+        return result;
+    }
+
+    void retire() {
+        std::lock_guard lock(mutex_);
+        if (retiring_) return;
+        retiring_ = true;
+        retired_requests_ += queued_.size();
+        queued_.clear();
+        seen_.clear();
+        delivered_keys_.clear();
+        retained_input_bytes_ = 0;
+        retiring_ = false;
+    }
+
+    file_grant_release_metrics_v2 metrics() const {
+        std::lock_guard lock(mutex_);
+        return {queued_.size(), retained_input_bytes_, delivered_requests_,
+            retired_requests_, copied_request_bytes_, rejected_operations_};
+    }
+
+private:
+    static std::unique_ptr<file_grant_release_request_lease_v2> copy_request(
+        const webscene_file_grant_release_request_v2& source) {
+        if (source.struct_size < sizeof(source) || source.version != 2
+            || source.reserved != 0 || source.reserved2 != 0
+            || source.grant_id.data == nullptr || source.grant_id.byte_count == 0
+            || source.grant_id.byte_count > file_panel_maximum_token_bytes_v2)
+            return {};
+        auto result = std::make_unique<file_grant_release_request_lease_v2>();
+        result->view = source;
+        result->grant_id.assign(
+            source.grant_id.data,
+            source.grant_id.data + source.grant_id.byte_count);
+        result->bind();
+        return result;
+    }
+
+    void reject() { std::lock_guard lock(mutex_); ++rejected_operations_; }
+
+    mutable std::mutex mutex_;
+    std::deque<std::unique_ptr<file_grant_release_request_lease_v2>> queued_;
+    std::unordered_set<std::string> seen_;
+    std::deque<std::string> delivered_keys_;
+    std::size_t retained_input_bytes_{};
+    std::uint64_t delivered_requests_{};
+    std::uint64_t retired_requests_{};
+    std::uint64_t copied_request_bytes_{};
     std::uint64_t rejected_operations_{};
     bool retiring_{};
 };

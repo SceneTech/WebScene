@@ -20,7 +20,9 @@
         v8_dom_runtime::file_grant_write_request_sink_v2
             file_grant_write_request_sink_value,
         v8_dom_runtime::file_grant_directory_request_sink_v2
-            file_grant_directory_request_sink_value)
+            file_grant_directory_request_sink_value,
+        v8_dom_runtime::file_grant_release_request_sink_v2
+            file_grant_release_request_sink_value)
         : document(document_value)
         , viewport_provider(std::move(viewport_provider_value))
         , load_resource_callback(std::move(resource_loader_value))
@@ -37,6 +39,8 @@
             std::move(file_grant_write_request_sink_value))
         , file_grant_directory_request_sink(
             std::move(file_grant_directory_request_sink_value))
+        , file_grant_release_request_sink(
+            std::move(file_grant_release_request_sink_value))
         , interop_callback_available(std::move(interop_callback_available_value))
         , interop_callback_sink(std::move(interop_callback_sink_value))
         , runtime_work_available(std::move(runtime_work_available_value))
@@ -64,6 +68,8 @@
         , profile_css(std::getenv("WEBSCENE_PROBE_PROFILE_CSS") != nullptr)
 #endif
     {
+        file_grant_releases = std::make_shared<file_grant_release_dispatcher>();
+        file_grant_releases->sink = file_grant_release_request_sink;
         if (!storage_directory.empty() && !storage_partition_key.empty()) {
             indexeddb = std::make_unique<indexeddb_storage>(
                 std::filesystem::path(storage_directory),
@@ -205,6 +211,8 @@
         pending_window_messages.clear();
         pending_window_message_bytes = 0U;
         message_port_bindings.clear();
+        release_all_file_system_handles();
+        if (file_grant_releases != nullptr) file_grant_releases->stop();
         pending_dialog_close_events.clear();
         pending_programmatic_scroll_events.clear();
         pending_interop_promises.clear();

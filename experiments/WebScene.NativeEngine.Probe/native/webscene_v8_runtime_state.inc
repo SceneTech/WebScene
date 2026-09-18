@@ -29,6 +29,7 @@
     std::unordered_map<uint32_t, pending_frame_preparation>
         pending_frame_preparations;
     std::unordered_map<uint32_t, uint64_t> frame_navigation_generations;
+    std::unordered_set<uint32_t> frame_pagehide_dispatched;
     std::vector<std::shared_future<std::shared_ptr<const prepared_frame>>>
         retired_frame_preparations;
     std::mutex document_generation_mutex;

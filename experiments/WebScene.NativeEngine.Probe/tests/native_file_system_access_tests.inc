@@ -75,6 +75,44 @@ bool complete_file_grant_read(
         engine, &completion) != 0;
 }
 
+const webscene_file_grant_write_request_v2*
+take_file_grant_write_request(webscene_engine* engine)
+{
+    const webscene_file_grant_write_request_v2* request = nullptr;
+    for (int attempt = 0; attempt < 250 && request == nullptr; ++attempt) {
+        request = webscene_engine_take_file_grant_write_request_v2(engine);
+        if (request == nullptr)
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    require(request != nullptr, "native file grant write request was not published");
+    return request;
+}
+
+bool complete_file_grant_write(
+    webscene_engine* engine,
+    uint64_t request_id,
+    uint32_t action,
+    uint32_t status,
+    const std::vector<uint8_t>& transaction = {},
+    uint64_t offset = 0,
+    size_t byte_count = 0,
+    uint64_t final_byte_count = 0)
+{
+    const bool committed = status == WEBSCENE_FILE_GRANT_WRITE_SUCCESS_V2
+        && action == WEBSCENE_FILE_GRANT_WRITE_COMMIT_V2;
+    const webscene_file_grant_metadata_v2 metadata = committed
+        ? webscene_file_grant_metadata_v2{sizeof(metadata), 2U,
+            final_byte_count, 1700000000999000000LL,
+            WEBSCENE_FILE_PANEL_ENTRY_FILE_V2, 0U}
+        : webscene_file_grant_metadata_v2{};
+    const webscene_file_grant_write_completion_v2 completion{
+        sizeof(completion), 2U, request_id, status, action,
+        {transaction.empty() ? nullptr : transaction.data(), transaction.size()},
+        metadata, offset, byte_count};
+    return webscene_engine_complete_file_grant_write_request_v2(
+        engine, &completion) != 0;
+}
+
 void activate_file_picker(webscene_engine* engine, uint64_t sequence)
 {
     pointer_button(
@@ -565,6 +603,209 @@ void test_native_file_system_access_picker_and_handle_contract()
     require(webscene_engine_take_file_grant_read_request_v2(engine.get()) == nullptr,
         "write-only getFile reached the native read broker");
 
+    const std::vector<uint8_t> write_transaction(16U, 0x5aU);
+    execute(engine.get(), R"JS(
+      globalThis.__writeState='pending';
+      __saveHandle.createWritable().then(async stream => {
+        globalThis.__writeStream=stream;
+        const tag=Object.prototype.toString.call(stream);
+        const instance=stream instanceof FileSystemWritableFileStream
+          && stream instanceof WritableStream;
+        await stream.write('abc');
+        await stream.seek(5);
+        await stream.write(new Uint8Array([0,255]));
+        await stream.truncate(8);
+        await stream.close();
+        __writeState={tag,instance,closed:true};
+      }, error => { __writeState=error.name; });
+    )JS", "file-handle-create-writable.js");
+    auto* write_request = take_file_grant_write_request(engine.get());
+    require(write_request->action == WEBSCENE_FILE_GRANT_WRITE_BEGIN_V2
+            && write_request->grant_id.byte_count == save_grant.size()
+            && std::memcmp(write_request->grant_id.data,
+                save_grant.data(), save_grant.size()) == 0,
+        "createWritable begin lost its opaque grant");
+    auto write_id = write_request->request_id;
+    webscene_file_grant_write_request_release_v2(write_request);
+    require(complete_file_grant_write(engine.get(), write_id,
+            WEBSCENE_FILE_GRANT_WRITE_BEGIN_V2,
+            WEBSCENE_FILE_GRANT_WRITE_SUCCESS_V2, write_transaction),
+        "createWritable begin completion was rejected");
+    write_request = take_file_grant_write_request(engine.get());
+    require(write_request->action == WEBSCENE_FILE_GRANT_WRITE_CHUNK_V2
+            && write_request->offset == 0U && write_request->byte_count == 3U
+            && std::string_view(reinterpret_cast<const char*>(write_request->data),
+                write_request->byte_count) == "abc",
+        "string write lost its encoded native range");
+    write_id = write_request->request_id;
+    webscene_file_grant_write_request_release_v2(write_request);
+    require(complete_file_grant_write(engine.get(), write_id,
+            WEBSCENE_FILE_GRANT_WRITE_CHUNK_V2,
+            WEBSCENE_FILE_GRANT_WRITE_SUCCESS_V2, {}, 0U, 3U),
+        "string write completion was rejected");
+    write_request = take_file_grant_write_request(engine.get());
+    require(write_request->action == WEBSCENE_FILE_GRANT_WRITE_CHUNK_V2
+            && write_request->offset == 5U && write_request->byte_count == 2U
+            && write_request->data[0] == 0U && write_request->data[1] == 255U,
+        "seek/binary write lost its native offset or bytes");
+    write_id = write_request->request_id;
+    webscene_file_grant_write_request_release_v2(write_request);
+    require(complete_file_grant_write(engine.get(), write_id,
+            WEBSCENE_FILE_GRANT_WRITE_CHUNK_V2,
+            WEBSCENE_FILE_GRANT_WRITE_SUCCESS_V2, {}, 5U, 2U),
+        "binary write completion was rejected");
+    write_request = take_file_grant_write_request(engine.get());
+    require(write_request->action == WEBSCENE_FILE_GRANT_WRITE_COMMIT_V2
+            && write_request->final_byte_count == 8U,
+        "truncate/close lost the final atomic byte count");
+    write_id = write_request->request_id;
+    webscene_file_grant_write_request_release_v2(write_request);
+    require(complete_file_grant_write(engine.get(), write_id,
+            WEBSCENE_FILE_GRANT_WRITE_COMMIT_V2,
+            WEBSCENE_FILE_GRANT_WRITE_SUCCESS_V2, {}, 0U, 0U, 8U),
+        "atomic commit completion was rejected");
+    const auto write_state = evaluate(engine.get(), "__writeState",
+        "file-handle-create-writable-result.js");
+    require(write_state.find("[object FileSystemWritableFileStream]")
+                != std::string::npos
+            && write_state.find("\"instance\":true") != std::string::npos
+            && write_state.find("\"closed\":true") != std::string::npos,
+        "createWritable stream identity or close changed: " + write_state);
+    require(evaluate(engine.get(), R"JS((async()=>{
+      try { await __writeStream.write('late'); return 'unexpected'; }
+      catch (error) { return error.name; }
+    })())JS", "file-handle-write-after-close.js") == "\"TypeError\"",
+        "write after close did not reject TypeError");
+
+    activate_file_picker(engine.get(), 50005U);
+    execute(engine.get(), R"JS(
+      globalThis.__readWriteHandle=null;
+      showOpenFilePicker().then(handles => { __readWriteHandle=handles[0]; });
+    )JS", "file-handle-readwrite-picker.js");
+    request = take_file_panel_request(engine.get());
+    const auto readwrite_picker_id = request->request_id;
+    webscene_file_panel_request_release_v2(request);
+    const std::vector<uint8_t> readwrite_grant{21U, 0U, 22U};
+    require(complete_file_panel_success(engine.get(), readwrite_picker_id,
+            WEBSCENE_FILE_PANEL_ENTRY_FILE_V2,
+            WEBSCENE_FILE_PANEL_GRANT_READ_V2
+                | WEBSCENE_FILE_PANEL_GRANT_WRITE_V2,
+            "existing.txt", readwrite_grant),
+        "read/write picker completion was rejected");
+    execute(engine.get(), R"JS(
+      globalThis.__keepExisting='pending';
+      __readWriteHandle.createWritable({keepExistingData:true}).then(async stream => {
+        await stream.seek(3);
+        await stream.write('d');
+        await stream.close();
+        __keepExisting='closed';
+      }, error => { __keepExisting=error.name; });
+    )JS", "file-handle-create-writable-keep-existing.js");
+    write_request = take_file_grant_write_request(engine.get());
+    write_id = write_request->request_id;
+    webscene_file_grant_write_request_release_v2(write_request);
+    require(complete_file_grant_write(engine.get(), write_id,
+            WEBSCENE_FILE_GRANT_WRITE_BEGIN_V2,
+            WEBSCENE_FILE_GRANT_WRITE_SUCCESS_V2, write_transaction),
+        "keepExistingData begin completion was rejected");
+    read_request = take_file_grant_read_request(engine.get());
+    require(read_request->offset == 0U
+            && read_request->maximum_bytes == 1024U * 1024U,
+        "keepExistingData did not request a bounded snapshot chunk");
+    const auto keep_read_id = read_request->request_id;
+    webscene_file_grant_read_request_release_v2(read_request);
+    const std::vector<uint8_t> existing_bytes{'a','b','c'};
+    require(complete_file_grant_read(engine.get(), keep_read_id,
+            WEBSCENE_FILE_GRANT_READ_SUCCESS_V2, existing_bytes.size(),
+            file_modified_ns, 0U, existing_bytes, true),
+        "keepExistingData snapshot completion was rejected");
+    write_request = take_file_grant_write_request(engine.get());
+    require(write_request->action == WEBSCENE_FILE_GRANT_WRITE_CHUNK_V2
+            && write_request->offset == 0U && write_request->byte_count == 3U,
+        "keepExistingData did not stage the existing bytes");
+    write_id = write_request->request_id;
+    webscene_file_grant_write_request_release_v2(write_request);
+    require(complete_file_grant_write(engine.get(), write_id,
+            WEBSCENE_FILE_GRANT_WRITE_CHUNK_V2,
+            WEBSCENE_FILE_GRANT_WRITE_SUCCESS_V2, {}, 0U, 3U),
+        "keepExistingData staging completion was rejected");
+    write_request = take_file_grant_write_request(engine.get());
+    require(write_request->action == WEBSCENE_FILE_GRANT_WRITE_CHUNK_V2
+            && write_request->offset == 3U && write_request->byte_count == 1U
+            && write_request->data[0] == 'd',
+        "keepExistingData append lost its cursor or byte");
+    write_id = write_request->request_id;
+    webscene_file_grant_write_request_release_v2(write_request);
+    require(complete_file_grant_write(engine.get(), write_id,
+            WEBSCENE_FILE_GRANT_WRITE_CHUNK_V2,
+            WEBSCENE_FILE_GRANT_WRITE_SUCCESS_V2, {}, 3U, 1U),
+        "keepExistingData append completion was rejected");
+    write_request = take_file_grant_write_request(engine.get());
+    require(write_request->action == WEBSCENE_FILE_GRANT_WRITE_COMMIT_V2
+            && write_request->final_byte_count == 4U,
+        "keepExistingData commit lost final length");
+    write_id = write_request->request_id;
+    webscene_file_grant_write_request_release_v2(write_request);
+    require(complete_file_grant_write(engine.get(), write_id,
+            WEBSCENE_FILE_GRANT_WRITE_COMMIT_V2,
+            WEBSCENE_FILE_GRANT_WRITE_SUCCESS_V2, {}, 0U, 0U, 4U),
+        "keepExistingData commit completion was rejected");
+    require(evaluate(engine.get(), "__keepExisting",
+                "file-handle-create-writable-keep-existing-result.js")
+            == "\"closed\"",
+        "keepExistingData writer did not close");
+
+    execute(engine.get(), R"JS(
+      globalThis.__abortedWrite='pending';
+      __saveHandle.createWritable().then(async stream => {
+        await stream.abort('discard');
+        __abortedWrite='aborted';
+      }, error => { __abortedWrite=error.name; });
+    )JS", "file-handle-create-writable-abort.js");
+    write_request = take_file_grant_write_request(engine.get());
+    write_id = write_request->request_id;
+    webscene_file_grant_write_request_release_v2(write_request);
+    require(complete_file_grant_write(engine.get(), write_id,
+            WEBSCENE_FILE_GRANT_WRITE_BEGIN_V2,
+            WEBSCENE_FILE_GRANT_WRITE_SUCCESS_V2, write_transaction),
+        "abort fixture begin completion was rejected");
+    write_request = take_file_grant_write_request(engine.get());
+    require(write_request->action == WEBSCENE_FILE_GRANT_WRITE_ABORT_V2
+            && write_request->transaction_id.byte_count
+                == write_transaction.size(),
+        "stream abort did not carry only its opaque transaction");
+    write_id = write_request->request_id;
+    webscene_file_grant_write_request_release_v2(write_request);
+    require(complete_file_grant_write(engine.get(), write_id,
+            WEBSCENE_FILE_GRANT_WRITE_ABORT_V2,
+            WEBSCENE_FILE_GRANT_WRITE_SUCCESS_V2),
+        "stream abort completion was rejected");
+    require(evaluate(engine.get(), "__abortedWrite",
+                "file-handle-create-writable-abort-result.js") == "\"aborted\"",
+        "stream abort did not preserve terminal state");
+
+    execute(engine.get(), R"JS(
+      globalThis.__writeFailure='pending';
+      __saveHandle.createWritable().then(
+        () => { __writeFailure='unexpected'; },
+        error => { __writeFailure=error.name; });
+    )JS", "file-handle-create-writable-denied.js");
+    write_request = take_file_grant_write_request(engine.get());
+    write_id = write_request->request_id;
+    webscene_file_grant_write_request_release_v2(write_request);
+    require(complete_file_grant_write(engine.get(), write_id,
+            WEBSCENE_FILE_GRANT_WRITE_BEGIN_V2,
+            WEBSCENE_FILE_GRANT_WRITE_DENIED_V2),
+        "denied writer completion was rejected");
+    require(evaluate(engine.get(), "__writeFailure",
+                "file-handle-create-writable-denied-result.js")
+            == "\"NotAllowedError\"",
+        "native writer denial mapped to the wrong DOMException");
+    require(!complete_file_grant_write(engine.get(), write_id,
+            WEBSCENE_FILE_GRANT_WRITE_BEGIN_V2,
+            WEBSCENE_FILE_GRANT_WRITE_DENIED_V2),
+        "native writer completed more than once");
+
     const auto descriptor_state = evaluate(engine.get(), R"JS((()=>{
       const kind=Object.getOwnPropertyDescriptor(FileSystemHandle.prototype,'kind');
       const same=Object.getOwnPropertyDescriptor(FileSystemHandle.prototype,'isSameEntry');
@@ -573,6 +814,7 @@ void test_native_file_system_access_picker_and_handle_contract()
         hiddenBridge: typeof __webSceneRequestFilePanel,
         hiddenIdentityBridge: typeof __webSceneCompareFileGrants,
         hiddenReadBridge: typeof __webSceneReadFileGrant,
+        hiddenWriteBridge: typeof __webSceneWriteFileGrant,
         hiddenFileFactory: typeof __webSceneCreateNativeFile,
         opaqueHandle: Reflect.ownKeys(__openHandles[0]).length === 0,
         illegal: (()=>{try{new FileSystemHandle();return false}catch(e){return e.name==='TypeError'}})(),
@@ -592,6 +834,8 @@ void test_native_file_system_access_picker_and_handle_contract()
             && descriptor_state.find("\"hiddenIdentityBridge\":\"undefined\"")
                 != std::string::npos
             && descriptor_state.find("\"hiddenReadBridge\":\"undefined\"")
+                != std::string::npos
+            && descriptor_state.find("\"hiddenWriteBridge\":\"undefined\"")
                 != std::string::npos
             && descriptor_state.find("\"hiddenFileFactory\":\"undefined\"")
                 != std::string::npos

@@ -113,6 +113,8 @@
             "The document navigated before the entry comparison completed");
         cancel_file_grant_read_promises(
             "The document navigated before the file read completed");
+        cancel_file_grant_write_promises(
+            "The document navigated before the file write completed");
         fullscreen_element = nullptr;
         document_fullscreen = false;
         { std::lock_guard lock(host_request_mutex); host_requests.clear(); }

@@ -12,6 +12,25 @@ This gate covers the first product-neutral slice of issue #256:
 Retained-scene mask, clip, filter, and backdrop painting is outside this slice
 and remains separately qualified by later issue #256 work.
 
+## Backdrop command extension — 19 September 2026
+
+Issue #503 extends this contract with a bounded kind-48 retained command. The
+resource preserves authored `blur()`/`saturate()` order, the command carries
+rounded output bounds and maximum blur sigma, and localized damage includes a
+backdrop when earlier sampled content changes. The producer forces these boxes
+into the foreground phase so reference presenters execute the command after
+retained canvas/GPU layers and before the element background.
+
+The native regression now authors 4,096 backdrop commands, the WebKit alias,
+the Code OSS `blur(8px) saturate(1.08)` sequence, phase metadata, and resource
+bounds. Avalonia 12 records Skia backdrop save layers; Flutter replays bounded
+prior content through nested filters. AppScene #174 owns the packaged native
+Skia/Graphite consumer.
+
+These additions have not been executed under the current fast-merge directive.
+Build, WPT, pixels, runtime, performance, memory, and package results remain
+deferred and must not be inferred from the historical results below.
+
 ## Direct gates
 
 | Gate | Denominator | Result |

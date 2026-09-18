@@ -467,6 +467,132 @@ void native_document::append_scene(
         }
         return result;
     }();
+    struct retained_backdrop_effect final {
+        bool present{};
+        std::string resource;
+        float maximum_blur_sigma{};
+    };
+    const auto backdrop_effect = [&]() {
+        retained_backdrop_effect result{};
+        const auto& effects = node.style.textual().effect_values;
+        const auto known = effects.find("backdrop-filter");
+        if (known == effects.end()) return result;
+        auto remaining = std::string_view{known->second};
+        const auto trim = [](std::string_view value) {
+            while (!value.empty()
+                && std::isspace(static_cast<unsigned char>(value.front()))) {
+                value.remove_prefix(1U);
+            }
+            while (!value.empty()
+                && std::isspace(static_cast<unsigned char>(value.back()))) {
+                value.remove_suffix(1U);
+            }
+            return value;
+        };
+        const auto equals_ascii_case_insensitive = [](std::string_view left,
+            std::string_view right) {
+            if (left.size() != right.size()) return false;
+            for (size_t index = 0U; index < left.size(); ++index) {
+                const auto character = static_cast<unsigned char>(left[index]);
+                const auto lower = character >= 'A' && character <= 'Z'
+                    ? static_cast<char>(character - 'A' + 'a')
+                    : static_cast<char>(character);
+                if (lower != right[index]) return false;
+            }
+            return true;
+        };
+        remaining = trim(remaining);
+        if (remaining.empty()
+            || equals_ascii_case_insensitive(remaining, "none")) {
+            return result;
+        }
+        result.present = true;
+        const auto invalid = [&]() {
+            result.resource = "webscene-backdrop-invalid-v1";
+            result.maximum_blur_sigma = 0.0F;
+            return result;
+        };
+        std::ostringstream resource;
+        resource << "webscene-backdrop-v1\t";
+        constexpr size_t maximum_filter_functions = 16U;
+        size_t function_count = 0U;
+        while (!remaining.empty()) {
+            if (++function_count > maximum_filter_functions) return invalid();
+            const auto opening = remaining.find('(');
+            auto closing = std::string_view::npos;
+            if (opening != std::string_view::npos) {
+                auto depth = 1U;
+                for (auto index = opening + 1U; index < remaining.size(); ++index) {
+                    if (remaining[index] == '(') ++depth;
+                    else if (remaining[index] == ')' && --depth == 0U) {
+                        closing = index;
+                        break;
+                    }
+                }
+            }
+            if (opening == 0U || opening == std::string_view::npos
+                || closing == std::string_view::npos) {
+                return invalid();
+            }
+            const auto name = trim(remaining.substr(0U, opening));
+            const auto argument = trim(
+                remaining.substr(opening + 1U, closing - opening - 1U));
+            float amount = -1.0F;
+            if (equals_ascii_case_insensitive(name, "blur")) {
+                const auto length = parse_length(std::string{argument});
+                switch (length.unit) {
+                case length_unit::pixels:
+                case length_unit::em:
+                case length_unit::rem:
+                case length_unit::viewport_width:
+                case length_unit::viewport_height:
+                case length_unit::viewport_width_capped:
+                case length_unit::viewport_height_capped:
+                case length_unit::viewport_width_floored:
+                case length_unit::viewport_height_floored:
+                case length_unit::container_inline:
+                case length_unit::container_block:
+                case length_unit::container_min:
+                case length_unit::container_max:
+                    amount = resolve_length(node, length, 0.0F, -1.0F);
+                    break;
+                default:
+                    break;
+                }
+                constexpr auto maximum_backdrop_blur_sigma = 64.0F;
+                if (!std::isfinite(amount) || amount < 0.0F
+                    || amount > maximum_backdrop_blur_sigma) {
+                    return invalid();
+                }
+                result.maximum_blur_sigma = std::max(
+                    result.maximum_blur_sigma, amount);
+                resource << (function_count == 1U ? "" : ";")
+                    << "blur=" << amount;
+            } else if (equals_ascii_case_insensitive(name, "saturate")) {
+                const auto parsed = css::parse_ascii_number_prefix(argument);
+                if (!parsed.has_value() || parsed->value < 0.0F) return invalid();
+                const auto suffix = argument.substr(parsed->consumed);
+                amount = suffix.empty()
+                    ? parsed->value
+                    : suffix == "%" ? parsed->value / 100.0F : -1.0F;
+                if (!std::isfinite(amount) || amount < 0.0F || amount > 10.0F) {
+                    return invalid();
+                }
+                resource << (function_count == 1U ? "" : ";")
+                    << "saturate=" << amount;
+            } else {
+                return invalid();
+            }
+            remaining.remove_prefix(closing + 1U);
+            if (!remaining.empty()
+                && !std::isspace(static_cast<unsigned char>(remaining.front()))) {
+                return invalid();
+            }
+            remaining = trim(remaining);
+        }
+        result.resource = resource.str();
+        return result;
+    }();
     const auto mask_resource = [&]() -> std::optional<uint32_t> {
         const auto& effects = node.style.textual().effect_values;
         const auto known = effects.find("mask-image");
@@ -1280,7 +1406,9 @@ void native_document::append_scene(
             // backgrounds must be emitted after retained chart canvases, just
             // like their text and SVG foreground commands.
         }
-        return is_in_modal_layer(node) || node.paints_after_retained_canvas || fixed_layer || outermost_z_index > 0;
+        return backdrop_effect.present || is_in_modal_layer(node)
+            || node.paints_after_retained_canvas || fixed_layer
+            || outermost_z_index > 0;
     }();
     struct resolved_radii final {
         float top_left;
@@ -1707,6 +1835,29 @@ void native_document::append_scene(
         node.style.border_bottom_left_radius_y(),
         node.layout.width,
         node.layout.height);
+    if (paint_self && backdrop_effect.present
+        && node.layout.width > 0.0F && node.layout.height > 0.0F) {
+        append_ellipse_metadata(
+            radii,
+            node.layout.x,
+            node.layout.y,
+            node.layout.width,
+            node.layout.height);
+        commands.push_back(webscene_scene_command{
+            48U,
+            append_scene_string(backdrop_effect.resource, strings, string_bytes),
+            node.layout.x,
+            node.layout.y,
+            node.layout.width,
+            node.layout.height,
+            1U,
+            node.id,
+            radii.top_left,
+            radii.top_right,
+            radii.bottom_right,
+            radii.bottom_left,
+            backdrop_effect.maximum_blur_sigma});
+    }
     if (paint_self
         && node.style.box_shadow_present && !node.style.box_shadow_inset
         && node.layout.width > 0

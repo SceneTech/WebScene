@@ -672,6 +672,13 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
                         DrawDomMask(backdrop, view, command);
                         DrawDomMask(overlay, view, command);
                         break;
+                    case 48:
+                        ApplyDomBackdropFilter(
+                            overlay,
+                            command,
+                            ResolveDomCornerRadii(commands, commandIndex),
+                            DomStringAt(view, command.Flags));
+                        break;
                     case 15:
                         ApplyScale(backdrop, command);
                         ApplyScale(overlay, command);
@@ -933,6 +940,119 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
         canvas.RotateDegrees(command.StrokeWidth);
         canvas.Translate(-command.X, -command.Y);
     }
+
+    private static void ApplyDomBackdropFilter(
+        SKCanvas canvas,
+        in SceneCommand command,
+        in DomCornerRadii radii,
+        string resource)
+    {
+#if WEBSCENE_AVALONIA12
+        using var filter = CreateDomBackdropFilter(resource);
+        if (filter is null
+            || !float.IsFinite(command.X)
+            || !float.IsFinite(command.Y)
+            || !float.IsFinite(command.Width)
+            || !float.IsFinite(command.Height)
+            || command.Width <= 0 || command.Height <= 0
+            || command.Width * command.Height > 67_108_864f)
+        {
+            return;
+        }
+        var save = canvas.Save();
+        try
+        {
+            ClipDomRoundedRect(canvas, command, radii);
+            var bounds = new SKRect(
+                command.X,
+                command.Y,
+                command.X + command.Width,
+                command.Y + command.Height);
+            var layer = new SKCanvasSaveLayerRec
+            {
+                Bounds = bounds,
+                Backdrop = filter,
+                Flags = SKCanvasSaveLayerRecFlags.None
+            };
+            canvas.SaveLayer(layer);
+            canvas.Restore();
+        }
+        finally
+        {
+            canvas.RestoreToCount(save);
+        }
+#endif
+    }
+
+#if WEBSCENE_AVALONIA12
+    private static SKImageFilter? CreateDomBackdropFilter(string resource)
+    {
+        const string prefix = "webscene-backdrop-v1\t";
+        if (!resource.StartsWith(prefix, StringComparison.Ordinal)) return null;
+        SKImageFilter? current = null;
+        var count = 0;
+        SKImageFilter? Reject()
+        {
+            current?.Dispose();
+            current = null;
+            return null;
+        }
+        try
+        {
+            foreach (var component in resource[prefix.Length..].Split(';'))
+            {
+                if (++count > 16) return Reject();
+                var separator = component.IndexOf('=');
+                if (separator <= 0
+                    || !float.TryParse(
+                        component[(separator + 1)..],
+                        NumberStyles.Float,
+                        CultureInfo.InvariantCulture,
+                        out var amount)
+                    || !float.IsFinite(amount)
+                    || amount < 0)
+                {
+                    return Reject();
+                }
+                SKImageFilter? next;
+                if (component.AsSpan(0, separator).Equals("blur", StringComparison.Ordinal))
+                {
+                    if (amount > 64) return Reject();
+                    next = SKImageFilter.CreateBlur(
+                        amount,
+                        amount,
+                        SKShaderTileMode.Clamp,
+                        current);
+                }
+                else if (component.AsSpan(0, separator).Equals("saturate", StringComparison.Ordinal))
+                {
+                    if (amount > 10) return Reject();
+                    var inverse = 1 - amount;
+                    float[] matrix = [
+                        0.2126f + 0.7874f * amount, 0.7152f * inverse, 0.0722f * inverse, 0, 0,
+                        0.2126f * inverse, 0.7152f + 0.2848f * amount, 0.0722f * inverse, 0, 0,
+                        0.2126f * inverse, 0.7152f * inverse, 0.0722f + 0.9278f * amount, 0, 0,
+                        0, 0, 0, 1, 0
+                    ];
+                    using var color = SKColorFilter.CreateColorMatrix(matrix);
+                    next = SKImageFilter.CreateColorFilter(color, current);
+                }
+                else
+                {
+                    return Reject();
+                }
+                current?.Dispose();
+                current = next;
+            }
+            return count == 0 ? null : current;
+        }
+        catch
+        {
+            current?.Dispose();
+            throw;
+        }
+    }
+#endif
 
     internal readonly record struct DomCornerRadii(
         SKPoint TopLeft,

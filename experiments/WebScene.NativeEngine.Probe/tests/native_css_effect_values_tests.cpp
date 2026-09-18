@@ -59,11 +59,13 @@ struct clip_scene_counts final {
     uint32_t blur_filter_begins{};
     uint32_t functional_blur_begins{};
     uint32_t linear_mask_commands{};
+    uint32_t backdrop_filter_commands{};
     uint32_t command_count{};
     bool transform_clip_nested{};
     bool compound_filter_ordered{};
     bool path_clip_metadata{};
     bool url_clip_metadata{};
+    bool compound_backdrop_ordered{};
 };
 
 clip_scene_counts wait_for_inset_clip_scene(
@@ -181,6 +183,23 @@ clip_scene_counts wait_for_inset_clip_scene(
                         ++latest.functional_blur_begins;
                     } else if (command.kind == 47U) {
                         ++latest.linear_mask_commands;
+                    } else if (command.kind == 48U) {
+                        ++latest.backdrop_filter_commands;
+                        if (command.flags < scene->string_count) {
+                            const auto& resource = scene->strings[command.flags];
+                            if (resource.byte_offset <= scene->string_byte_count
+                                && resource.byte_length
+                                    <= scene->string_byte_count - resource.byte_offset) {
+                                const auto data = std::string_view(
+                                    scene->string_bytes + resource.byte_offset,
+                                    resource.byte_length);
+                                if (data == "webscene-backdrop-v1\tblur=8;saturate=1.08"
+                                    && std::abs(command.stroke_width - 8.0F) < 0.01F
+                                    && command.rgba == 1U) {
+                                    latest.compound_backdrop_ordered = true;
+                                }
+                            }
+                        }
                     }
                 }
                 webscene_scene_acknowledge_v3(lease);
@@ -305,6 +324,7 @@ int main()
           #url-clip { clip-path: url(#local-clip); }
           #functional-blur { filter: blur(max(4px, calc(8px * 0.25))); }
           #compound-filter { filter: blur(2px) saturate(1.08) contrast(1.5) grayscale(0.25); }
+          #compound-backdrop { -webkit-backdrop-filter: blur(8px) saturate(1.08); }
           #effects > span:last-child { filter: blur(2px); }
         `;
         document.head.appendChild(rules);
@@ -318,6 +338,7 @@ int main()
         host.children[3].id = 'url-clip';
         host.children[4093].id = 'functional-blur';
         host.children[4094].id = 'compound-filter';
+        host.children[4092].id = 'compound-backdrop';
         document.body.appendChild(host);
         const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
         svg.style.display = 'none';
@@ -356,6 +377,10 @@ int main()
         if (getComputedStyle(document.getElementById('functional-blur')).getPropertyValue('filter')
             !== 'blur(max(4px, calc(8px * 0.25)))') {
           throw new Error('initial functional blur value failed');
+        }
+        if (getComputedStyle(document.getElementById('compound-backdrop'))
+              .getPropertyValue('backdrop-filter') !== 'blur(8px) saturate(1.08)') {
+          throw new Error('prefixed compound backdrop filter did not canonicalize');
         }
         if (getComputedStyle(document.getElementById('ellipse-clip')).getPropertyValue('clip-path')
             !== 'ellipse(25% 50% at 50% 50%)') {
@@ -449,6 +474,9 @@ int main()
         "retained scene did not resolve the functional blur radius");
     require(initial_clip_scene.linear_mask_commands == 4096U,
         "retained scene did not emit all linear-gradient mask commands");
+    require(initial_clip_scene.backdrop_filter_commands == 4096U
+            && initial_clip_scene.compound_backdrop_ordered,
+        "retained scene did not emit bounded authored-order backdrop filters");
     const auto initial_scene_command_bytes =
         static_cast<uint64_t>(initial_clip_scene.command_count)
             * sizeof(webscene_scene_command);
@@ -584,6 +612,8 @@ int main()
               << " blur-filter-begins=" << initial_clip_scene.blur_filter_begins
               << " functional-blur-begins=" << initial_clip_scene.functional_blur_begins
               << " linear-mask-commands=" << initial_clip_scene.linear_mask_commands
+              << " backdrop-filter-commands=" << initial_clip_scene.backdrop_filter_commands
+              << " compound-backdrop-ordered=" << initial_clip_scene.compound_backdrop_ordered
               << " compound-filter-ordered=" << initial_clip_scene.compound_filter_ordered
               << " transform-clip-nested=" << initial_clip_scene.transform_clip_nested
               << " initial-scene-command-bytes=" << initial_scene_command_bytes

@@ -168,6 +168,13 @@ typedef struct webscene_scene_header {
 // webscene-mask-svg-v1 tiled SVG resource to the current isolated layer using
 // destination-in before kind 31 restores it. webscene-mask-invalid-v1 clears
 // the isolated layer for failed or unsupported authored masks.
+// DOM kind 48 applies one bounded backdrop effect before the element's own
+// background and descendants. flags indexes a webscene-backdrop-v1 resource
+// containing the authored blur/saturate sequence; rgba is the paint phase,
+// the box and corner radii bound output, and stroke_width is the maximum blur
+// sigma used to bound sampling and damage. Consumers must sample pixels already
+// painted at this exact command position, including retained canvas/GPU output.
+// webscene-backdrop-invalid-v1 is an explicit fail-closed no-op.
 typedef struct webscene_scene_command {
     uint32_t kind;
     uint32_t flags;

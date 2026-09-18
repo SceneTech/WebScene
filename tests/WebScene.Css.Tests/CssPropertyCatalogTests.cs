@@ -96,6 +96,7 @@ public sealed class CssPropertyCatalogTests
     [InlineData("filter", "brightness(0.5) blur(2px)", true)]
     [InlineData("filter", "unknown(1)", false)]
     [InlineData("backdrop-filter", "none", true)]
+    [InlineData("backdrop-filter", "blur(8px) saturate(1.08)", true)]
     public void ValidatesCssomValuesWithoutFrameworkKnowledge(string name, string value, bool expected)
         => Assert.Equal(expected, CssPropertyCatalog.IsValidCssomValue(name, value));
 }

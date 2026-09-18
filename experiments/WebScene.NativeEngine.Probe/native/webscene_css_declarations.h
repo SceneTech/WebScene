@@ -25,6 +25,7 @@ inline void append_declaration(
         const auto custom = name.starts_with("--");
         if (custom && !valid_custom_property_name(name)) return;
         if (name == "-webkit-mask") name = "mask";
+        else if (name == "-webkit-backdrop-filter") name = "backdrop-filter";
         else if (name == "-webkit-mask-image") name = "mask-image";
         else if (name == "-webkit-mask-position") name = "mask-position";
         else if (name == "-webkit-mask-size") name = "mask-size";

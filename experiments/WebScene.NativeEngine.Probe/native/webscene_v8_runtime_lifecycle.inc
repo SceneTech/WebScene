@@ -340,6 +340,7 @@
         html_style_element_template.Reset();
         shadow_root_template.Reset();
         document_fragment_template.Reset();
+        document_type_template.Reset();
         processing_instruction_template.Reset();
         comment_template.Reset();
         text_template.Reset();

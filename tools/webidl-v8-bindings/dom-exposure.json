@@ -152,6 +152,19 @@
       "constants": []
     },
     {
+      "name": "DocumentType",
+      "template": "document_type_template",
+      "constructor": "illegal_dom_constructor",
+      "parent": "Node",
+      "attributes": [
+        { "name": "name", "getter": "get_document_type_name" },
+        { "name": "publicId", "getter": "get_document_type_public_id" },
+        { "name": "systemId", "getter": "get_document_type_system_id" }
+      ],
+      "methods": [],
+      "constants": []
+    },
+    {
       "name": "DocumentFragment",
       "template": "document_fragment_template",
       "constructor": "illegal_dom_constructor",

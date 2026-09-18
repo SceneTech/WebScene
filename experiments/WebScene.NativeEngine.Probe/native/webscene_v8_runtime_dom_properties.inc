@@ -84,7 +84,9 @@
         binding_callback_timer binding_timer(self->profile(binding_category::dom_property));
         auto* node = unwrap_node(info.Holder());
         if (node == nullptr) return;
-        auto tag = node->tag;
+        auto tag = node->kind == dom_node_kind::document_type
+            ? node->text_content
+            : node->tag;
         const auto html = node->namespace_uri().empty()
             || node->namespace_uri() == dom_node::html_namespace_uri;
         if (!node->xml_mode && html && node->kind == dom_node_kind::element) {
@@ -131,6 +133,43 @@
             info.GetReturnValue().Set(js_dom_string(
                 info.GetIsolate(), node->namespace_prefix()));
         }
+    }
+
+    static void get_document_type_name(
+        v8::Local<v8::Name>,
+        const v8::PropertyCallbackInfo<v8::Value>& info)
+    {
+        auto* node = unwrap_node(info.Holder());
+        if (node != nullptr) {
+            info.GetReturnValue().Set(js_dom_string(
+                info.GetIsolate(), node->text_content));
+        }
+    }
+
+    static void get_document_type_identifier(
+        const v8::PropertyCallbackInfo<v8::Value>& info,
+        const char* name)
+    {
+        auto* node = unwrap_node(info.Holder());
+        if (node == nullptr) return;
+        const auto found = node->attributes.find(name);
+        info.GetReturnValue().Set(js_dom_string(
+            info.GetIsolate(),
+            found == node->attributes.end() ? std::string_view{} : found->second));
+    }
+
+    static void get_document_type_public_id(
+        v8::Local<v8::Name>,
+        const v8::PropertyCallbackInfo<v8::Value>& info)
+    {
+        get_document_type_identifier(info, "publicId");
+    }
+
+    static void get_document_type_system_id(
+        v8::Local<v8::Name>,
+        const v8::PropertyCallbackInfo<v8::Value>& info)
+    {
+        get_document_type_identifier(info, "systemId");
     }
 
     static void get_native_node_id(
@@ -200,6 +239,10 @@
     {
         auto* node = unwrap_node(info.Holder());
         if (node == nullptr) return;
+        if (node->kind == dom_node_kind::document_type) {
+            info.GetReturnValue().Set(v8::Null(info.GetIsolate()));
+            return;
+        }
         if (node->kind == dom_node_kind::comment
             || node->kind == dom_node_kind::processing_instruction) {
             info.GetReturnValue().Set(js_dom_string(info.GetIsolate(), node->text_content));

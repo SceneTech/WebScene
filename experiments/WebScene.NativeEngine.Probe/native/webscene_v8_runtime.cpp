@@ -2503,20 +2503,34 @@ struct v8_dom_runtime::implementation final {
         script->Run(local_context).ToLocalChecked();
     }
 
+    static void queue_microtask_callback(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* isolate = info.GetIsolate();
+        if (info.Length() == 0 || !info[0]->IsFunction()) {
+            isolate->ThrowException(v8::Exception::TypeError(
+                js_string(isolate, "queueMicrotask requires a function")));
+            return;
+        }
+        isolate->EnqueueMicrotask(info[0].As<v8::Function>());
+    }
+
     void install_editor_web_platform_globals(v8::Local<v8::Context> local_context)
     {
+        auto native_queue_microtask =
+            v8::Function::New(local_context, queue_microtask_callback).ToLocalChecked();
+        native_queue_microtask->SetName(js_string(isolate, "queueMicrotask"));
+        local_context->Global()->Set(
+            local_context,
+            js_string(isolate, "queueMicrotask"),
+            native_queue_microtask).Check();
         if constexpr (bootstrap_snapshot_enabled) return;
         // These are general browser primitives used by Monaco and other
         // component runtimes. Keep them inside WebScene's native realm so
         // applications do not have to patch third-party bundles.
         constexpr std::string_view source_parts[] = {R"JS(
           (() => {
-            const enqueueMicrotask = callback => {
-              if (typeof callback !== 'function') {
-                throw new TypeError('queueMicrotask requires a function');
-              }
-              Promise.resolve().then(callback);
-            };
+            const enqueueMicrotask = globalThis.queueMicrotask;
 
             class WebSceneTextEncoder {
               constructor() {
@@ -3780,6 +3794,7 @@ struct v8_dom_runtime::implementation final {
         global->Set(local_context, js_string(isolate, "HTMLInputElement"), element_constructor).Check();
         global->Set(local_context, js_string(isolate, "HTMLParagraphElement"), element_constructor).Check();
         global->Set(local_context, js_string(isolate, "SVGElement"), element_constructor).Check();
+        global->Set(local_context, js_string(isolate, "DocumentType"), element_constructor).Check();
         global->Set(local_context, js_string(isolate, "DocumentFragment"), element_constructor).Check();
         global->Set(local_context, js_string(isolate, "Window"), element_constructor).Check();
 #endif

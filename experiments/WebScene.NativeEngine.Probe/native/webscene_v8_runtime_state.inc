@@ -56,6 +56,7 @@
     v8::Global<v8::FunctionTemplate> text_template;
     v8::Global<v8::FunctionTemplate> comment_template;
     v8::Global<v8::FunctionTemplate> processing_instruction_template;
+    v8::Global<v8::FunctionTemplate> document_type_template;
     v8::Global<v8::FunctionTemplate> document_fragment_template;
     v8::Global<v8::FunctionTemplate> shadow_root_template;
 #endif

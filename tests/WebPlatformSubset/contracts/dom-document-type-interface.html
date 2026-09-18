@@ -1,0 +1,32 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>DocumentType global and parsed doctype wrapper</title>
+<link rel="help" href="https://dom.spec.whatwg.org/#interface-documenttype">
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<script>
+test(() => {
+  assert_equals(typeof DocumentType, "function");
+  assert_equals(Object.getPrototypeOf(DocumentType.prototype), Node.prototype);
+  assert_throws_js(TypeError, () => new DocumentType());
+}, "DocumentType is exposed as a non-constructible Node interface");
+
+test(() => {
+  const doctype = document.doctype;
+  assert_not_equals(doctype, null, "parsed doctype");
+  assert_true(doctype instanceof DocumentType);
+  assert_true(doctype instanceof Node);
+  assert_equals(doctype.nodeType, Node.DOCUMENT_TYPE_NODE);
+  assert_equals(doctype.nodeName, "html");
+  assert_equals(doctype.name, "html");
+  assert_equals(doctype.publicId, "");
+  assert_equals(doctype.systemId, "");
+  assert_equals(doctype.nodeValue, null);
+  assert_equals(doctype.textContent, null);
+}, "A parsed HTML doctype has the DocumentType brand and identifiers");
+
+test(() => {
+  assert_true(Object.prototype.hasOwnProperty.call(Node.prototype, "remove"));
+  assert_equals(typeof DocumentType.prototype.remove, "function");
+}, "DocumentType inherits the ChildNode removal operation used by DOM shims");
+</script>

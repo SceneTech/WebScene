@@ -154,6 +154,14 @@
       "reason": "Spotify submits a completed six-digit OTP with form.requestSubmit(); the native DOM must dispatch one cancellable submit event without a synthetic click."
     },
     {
+      "path": "contracts/dom-document-type-interface.html",
+      "type": "testharness",
+      "nativeNavigation": true,
+      "capabilities": ["document-type-global", "document-type-wrapper", "document-type-identifiers"],
+      "evidence": ["spotify-authenticated-status-bootstrap"],
+      "reason": "Spotify's post-login SSO bundle extends DocumentType.prototype while installing DOM compatibility methods; the global and parsed doctype wrapper must have the standard interface shape."
+    },
+    {
       "path": "contracts/css-zero-height-overflow-hidden-paint.html",
       "type": "reftest",
       "reference": "contracts/css-zero-height-overflow-hidden-paint-ref.html",

@@ -158,6 +158,14 @@
   });
 
   const microtaskOrder = ["sync"];
+  const nativePromise = Promise;
+  let promiseResolveCalls = 0;
+  globalThis.Promise = {
+    resolve() {
+      promiseResolveCalls += 1;
+      throw new Error("queueMicrotask must not be implemented through Promise.resolve");
+    }
+  };
   queueMicrotask(() => {
     microtaskOrder.push("microtask");
     test("queueMicrotask runs after the current script", () => {
@@ -165,11 +173,17 @@
         microtaskOrder.join(",") === "sync,microtask",
         `microtask order was ${microtaskOrder.join(",")}`);
     });
+    test("queueMicrotask is independent of the replaceable Promise global", () => {
+      assert(
+        promiseResolveCalls === 0,
+        `Promise.resolve was called ${promiseResolveCalls} times`);
+    });
     const failure = state.results.find(result => result.status !== "PASS");
     state.harness = failure
       ? { status: 1, message: failure.message, stack: failure.stack }
       : { status: 0, message: null, stack: null };
     state.complete = true;
   });
+  globalThis.Promise = nativePromise;
 </script>
 </body>

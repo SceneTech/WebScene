@@ -1891,6 +1891,8 @@
                     ? text_template.Get(isolate)
                     : node.kind == dom_node_kind::comment
                         ? comment_template.Get(isolate)
+                        : node.kind == dom_node_kind::document_type
+                            ? document_type_template.Get(isolate)
                         : node.kind == dom_node_kind::processing_instruction
                             ? processing_instruction_template.Get(isolate)
                             : node_template.Get(isolate);
@@ -3066,7 +3068,10 @@
             0,
             v8::kEmbedderDataTypeTagDefault));
         if (root == nullptr) root = &self->active_root();
-        auto* container = root->tag == "html" ? root->parent : root;
+        auto* container = root;
+        while (container != nullptr && container->parent != nullptr) {
+            container = container->parent;
+        }
         if (container != nullptr) {
             for (auto* child : container->children) {
                 if (child != nullptr && child->kind == dom_node_kind::document_type) {

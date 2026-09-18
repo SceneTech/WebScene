@@ -79,6 +79,15 @@
       "reason": "Chromium/WPT oracle covers missing-file creation, existing-file preservation, same-entry identity, Unicode names, directory collisions and unsafe component names. The native runner uses an opaque parent directory grant and exercises the equivalent derived-grant, status, cancellation, retirement and bounded lifecycle behavior through the native create-file bridge."
     },
     {
+      "path": "contracts/file-system-access-directory-create-directory.html",
+      "type": "testharness",
+      "capabilities": [
+        "file-system-directory-handle-create-directory",
+        "opaque-directory-grant-derived-create-authority"
+      ],
+      "reason": "Chromium/WPT oracle covers missing-directory creation, existing-content preservation, Unicode names, file collisions and unsafe component names. The native runner uses an opaque parent directory grant and exercises equivalent derived-grant, status, cancellation, retirement and bounded lifecycle behavior through the native create-directory bridge."
+    },
+    {
       "path": "contracts/file-system-access-create-writable.html",
       "type": "testharness",
       "capabilities": [

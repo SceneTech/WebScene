@@ -417,6 +417,68 @@
         }
     }
 
+    static void request_file_grant_create_directory(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        auto isolate = info.GetIsolate();
+        auto local_context = isolate->GetCurrentContext();
+        auto resolver = v8::Promise::Resolver::New(local_context).ToLocalChecked();
+        info.GetReturnValue().Set(resolver->GetPromise());
+        const auto reject = [&](std::string_view message, std::string_view name) {
+            reject_file_panel_promise(
+                isolate, local_context, resolver, message, name);
+        };
+        if (self == nullptr || !self->file_grant_create_directory_request_sink) {
+            reject("Native directory creation is unavailable", "NotSupportedError");
+            return;
+        }
+        if (info.Length() != 2 || !info[0]->IsUint8Array()
+            || !info[1]->IsString()) {
+            reject("Malformed native directory creation request", "TypeError");
+            return;
+        }
+        if (self->file_grant_create_directory_promise_targets.size()
+            >= WEBSCENE_FILE_GRANT_CREATE_DIRECTORY_MAXIMUM_PENDING_OPERATIONS_V2) {
+            reject("Too many pending directory creation operations",
+                "QuotaExceededError");
+            return;
+        }
+        file_grant_create_directory_request_lease_v2 request;
+        request.view.request_id = ++self->next_host_request_id;
+        const auto token = info[0].As<v8::Uint8Array>();
+        if (token->ByteLength() == 0
+            || token->ByteLength() > file_panel_maximum_token_bytes_v2) {
+            reject("Malformed opaque directory token", "DataError");
+            return;
+        }
+        const auto store = token->Buffer()->GetBackingStore();
+        const auto* first = static_cast<const std::uint8_t*>(store->Data())
+            + token->ByteOffset();
+        request.directory_grant_id.assign(first, first + token->ByteLength());
+        v8::String::Utf8Value name(isolate, info[1]);
+        if (*name == nullptr || name.length() <= 0
+            || static_cast<std::size_t>(name.length())
+                > WEBSCENE_FILE_GRANT_CREATE_DIRECTORY_MAXIMUM_NAME_BYTES_V2) {
+            reject("Malformed directory child name", "TypeError");
+            return;
+        }
+        request.display_name.assign(*name,
+            static_cast<std::size_t>(name.length()));
+        request.bind();
+        file_grant_create_directory_promise_target target;
+        target.context.Reset(isolate, local_context);
+        target.resolver.Reset(isolate, resolver);
+        self->file_grant_create_directory_promise_targets.emplace(
+            request.view.request_id, std::move(target));
+        if (!self->file_grant_create_directory_request_sink(request.view)) {
+            self->file_grant_create_directory_promise_targets.erase(
+                request.view.request_id);
+            reject("The native directory creation authority rejected the request",
+                "NotAllowedError");
+        }
+    }
+
     static void request_file_panel(
         const v8::FunctionCallbackInfo<v8::Value>& info)
     {
@@ -1044,6 +1106,73 @@
         perform_microtask_checkpoint();
     }
 
+    void complete_native_file_grant_create_directory(
+        file_grant_create_directory_completion_data_v2& completion)
+    {
+        const auto found = file_grant_create_directory_promise_targets.find(
+            completion.request_id);
+        if (found == file_grant_create_directory_promise_targets.end()) return;
+        auto target = std::move(found->second);
+        file_grant_create_directory_promise_targets.erase(found);
+        auto local_context = target.context.Get(isolate);
+        auto resolver = target.resolver.Get(isolate);
+        if (local_context.IsEmpty() || resolver.IsEmpty()) return;
+        v8::Context::Scope context_scope(local_context);
+        if (completion.status != WEBSCENE_FILE_GRANT_CREATE_DIRECTORY_SUCCESS_V2) {
+            const auto name = completion.status
+                    == WEBSCENE_FILE_GRANT_CREATE_DIRECTORY_CANCELLED_V2
+                ? "AbortError"
+                : completion.status == WEBSCENE_FILE_GRANT_CREATE_DIRECTORY_DENIED_V2
+                    ? "NotAllowedError"
+                    : completion.status
+                            == WEBSCENE_FILE_GRANT_CREATE_DIRECTORY_NOT_FOUND_V2
+                        ? "NotFoundError"
+                        : completion.status
+                                == WEBSCENE_FILE_GRANT_CREATE_DIRECTORY_TYPE_MISMATCH_V2
+                            ? "TypeMismatchError"
+                            : completion.status
+                                    == WEBSCENE_FILE_GRANT_CREATE_DIRECTORY_CHANGED_V2
+                                ? "InvalidStateError"
+                                : completion.status
+                                        == WEBSCENE_FILE_GRANT_CREATE_DIRECTORY_LIMIT_V2
+                                    ? "QuotaExceededError"
+                                    : "NotReadableError";
+            reject_file_panel_promise(isolate, local_context, resolver,
+                "The native directory creation operation failed", name);
+            perform_microtask_checkpoint();
+            return;
+        }
+        auto result = v8::Object::New(isolate);
+        result->Set(local_context, js_string(isolate, "kind"),
+            v8::Integer::NewFromUnsigned(isolate, completion.kind)).Check();
+        result->Set(local_context, js_string(isolate, "capabilities"),
+            v8::Integer::NewFromUnsigned(isolate, completion.capabilities))
+            .Check();
+        result->Set(local_context, js_string(isolate, "name"),
+            js_string(isolate, completion.display_name.c_str())).Check();
+        auto grant = v8::ArrayBuffer::New(isolate, completion.grant_id.size());
+        if (!completion.grant_id.empty()) std::memcpy(
+            grant->GetBackingStore()->Data(), completion.grant_id.data(),
+            completion.grant_id.size());
+        result->Set(local_context, js_string(isolate, "grant"),
+            v8::Uint8Array::New(grant, 0, completion.grant_id.size())).Check();
+        resolver->Resolve(local_context, result).Check();
+        perform_microtask_checkpoint();
+    }
+    void cancel_file_grant_create_directory_promises(const char* message)
+    {
+        for (auto& [_, target] : file_grant_create_directory_promise_targets) {
+            auto local_context = target.context.Get(isolate);
+            auto resolver = target.resolver.Get(isolate);
+            if (local_context.IsEmpty() || resolver.IsEmpty()) continue;
+            v8::Context::Scope context_scope(local_context);
+            reject_file_panel_promise(
+                isolate, local_context, resolver, message, "AbortError");
+        }
+        file_grant_create_directory_promise_targets.clear();
+        perform_microtask_checkpoint();
+    }
+
     void install_file_system_access_api(v8::Local<v8::Context> local_context)
     {
         auto global = local_context->Global();
@@ -1074,6 +1203,10 @@
             v8::Function::New(local_context, request_file_grant_create_file)
                 .ToLocalChecked()).Check();
         global->Set(local_context,
+            js_string(isolate, "__webSceneCreateDirectoryGrant"),
+            v8::Function::New(local_context, request_file_grant_create_directory)
+                .ToLocalChecked()).Check();
+        global->Set(local_context,
             js_string(isolate, "__webSceneRegisterFileSystemHandle"),
             v8::Function::New(local_context, register_file_system_handle)
                 .ToLocalChecked()).Check();
@@ -1094,6 +1227,8 @@
             const writeFileGrant = globalThis.__webSceneWriteFileGrant;
             const directoryGrant = globalThis.__webSceneDirectoryGrant;
             const createFileGrant = globalThis.__webSceneCreateFileGrant;
+            const createDirectoryGrant =
+              globalThis.__webSceneCreateDirectoryGrant;
             const registerHandle = globalThis.__webSceneRegisterFileSystemHandle;
             const registerHandleRealm =
               globalThis.__webSceneRegisterFileSystemHandleRealm;
@@ -1106,6 +1241,7 @@
             delete globalThis.__webSceneWriteFileGrant;
             delete globalThis.__webSceneDirectoryGrant;
             delete globalThis.__webSceneCreateFileGrant;
+            delete globalThis.__webSceneCreateDirectoryGrant;
             delete globalThis.__webSceneRegisterFileSystemHandle;
             delete globalThis.__webSceneRegisterFileSystemHandleRealm;
             delete globalThis.__webSceneFileSystemHandleState;
@@ -1484,12 +1620,10 @@
               }
               const create = Boolean(options.create);
               if (create) {
-                if (kind !== 'file') {
-                  throw new DOMException(
-                    'Creating directories requires native create authority',
-                    'NotSupportedError');
-                }
-                return createHandle(await createFileGrant(state.token, name));
+                const created = kind === 'file'
+                  ? await createFileGrant(state.token, name)
+                  : await createDirectoryGrant(state.token, name);
+                return createHandle(created);
               }
               let cursor = new Uint8Array();
               let total = 0;

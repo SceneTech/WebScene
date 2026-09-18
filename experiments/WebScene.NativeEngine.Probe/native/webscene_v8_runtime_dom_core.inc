@@ -5127,6 +5127,52 @@
         info.GetReturnValue().Set(false);
     }
 
+    static void document_query_command_supported(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* isolate = info.GetIsolate();
+        auto* self = current(isolate);
+        bool document_receiver = self != nullptr
+            && self->is_document_object(info.This());
+        if (self != nullptr && !document_receiver) {
+            for (const auto& [_, value] : self->detached_documents) {
+                if (!value.IsEmpty() && info.This()->StrictEquals(value.Get(isolate))) {
+                    document_receiver = true;
+                    break;
+                }
+            }
+        }
+        if (!document_receiver || info.Length() == 0) {
+            isolate->ThrowException(v8::Exception::TypeError(js_string(
+                isolate,
+                "Document.queryCommandSupported requires a Document receiver and a command argument")));
+            return;
+        }
+        const auto context = isolate->GetCurrentContext();
+        v8::Local<v8::String> command;
+        if (!info[0]->ToString(context).ToLocal(&command)) return;
+        auto* root = unwrap_node(info.This());
+        if (root != nullptr && (root->xml_mode || root->tag == "#document-root")) {
+            info.GetReturnValue().Set(false);
+            return;
+        }
+        v8::String::Utf8Value command_utf8(isolate, command);
+        std::string command_name = *command_utf8 == nullptr
+            ? std::string{} : std::string(*command_utf8, command_utf8.length());
+        std::transform(
+            command_name.begin(), command_name.end(), command_name.begin(),
+            [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
+        const auto supported = command_name == "copy" || command_name == "cut"
+            || command_name == "paste" || command_name == "selectall";
+        if (supported) {
+            self->record_feature(
+                "web-api", "Document.queryCommandSupported", "supported",
+                "reports only bounded legacy editing commands implemented by WebScene",
+                "web-api-binding");
+        }
+        info.GetReturnValue().Set(supported);
+    }
+
     static void return_empty_string(const v8::FunctionCallbackInfo<v8::Value>& info)
     {
         info.GetReturnValue().Set(js_string(info.GetIsolate(), ""));

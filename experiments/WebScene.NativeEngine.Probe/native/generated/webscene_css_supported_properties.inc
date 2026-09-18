@@ -23,6 +23,7 @@ inline constexpr std::array cssom_supported_property_catalog{
     cssom_supported_property_metadata{"animation-play-state", "animationPlayState"},
     cssom_supported_property_metadata{"animation-timing-function", "animationTimingFunction"},
     cssom_supported_property_metadata{"appearance", "appearance"},
+    cssom_supported_property_metadata{"aspect-ratio", "aspectRatio"},
     cssom_supported_property_metadata{"backdrop-filter", "backdropFilter"},
     cssom_supported_property_metadata{"background", "background"},
     cssom_supported_property_metadata{"background-attachment", "backgroundAttachment"},
@@ -237,4 +238,4 @@ inline constexpr std::array cssom_supported_property_catalog{
     cssom_supported_property_metadata{"zoom", "zoom"},
 };
 
-inline constexpr auto cssom_style_template_property_accessor_count = 418U;
+inline constexpr auto cssom_style_template_property_accessor_count = 420U;

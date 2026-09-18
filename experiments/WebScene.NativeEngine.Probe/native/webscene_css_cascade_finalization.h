@@ -37,6 +37,8 @@ inline bool pseudo_layout_equal(
             && left.align_self == right.align_self
             && left.font_size == right.font_size
             && left.line_height == right.line_height
+            && left.aspect_ratio_width == right.aspect_ratio_width
+            && left.aspect_ratio_height == right.aspect_ratio_height
             && left.font_family == right.font_family
             && left.content == right.content
             && left.generated == right.generated
@@ -142,6 +144,8 @@ inline bool computed_layout_style_equal(
             && left.overflow_y == right.overflow_y
             && left.flex_grow == right.flex_grow
             && left.flex_shrink == right.flex_shrink
+            && left.aspect_ratio_width == right.aspect_ratio_width
+            && left.aspect_ratio_height == right.aspect_ratio_height
             && left.font_size == right.font_size
             && left.line_height == right.line_height
             && left.font_weight == right.font_weight

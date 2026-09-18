@@ -144,6 +144,8 @@ dom_node make_pseudo_layout_node(
     result.style.border_right_width = pseudo.border_right_width;
     result.style.border_bottom_width = pseudo.border_bottom_width;
     result.style.border_box = pseudo.border_box;
+    result.style.aspect_ratio_width = pseudo.aspect_ratio_width;
+    result.style.aspect_ratio_height = pseudo.aspect_ratio_height;
     result.style.display = pseudo.display_none ? display_mode::none : pseudo.display;
     result.style.position = pseudo.position;
     result.style.align_self = pseudo.align_self;

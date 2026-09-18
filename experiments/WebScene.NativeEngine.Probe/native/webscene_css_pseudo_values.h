@@ -158,6 +158,13 @@ inline property_result apply_pseudo_value(node_style::pseudo_element& pseudo,
             pseudo.border_box = value == "inherit"
                 ? parent_border_box
                 : value == "border-box";
+        } else if (name == "aspect-ratio") {
+            if (!parse_preferred_aspect_ratio(
+                    value,
+                    pseudo.aspect_ratio_width,
+                    pseudo.aspect_ratio_height)) {
+                decision.classification = "invalid-authoring";
+            }
         } else if (canonical_property_name(name).starts_with("border")
             && name.find("radius") == std::string::npos) {
             node_style border_style{};

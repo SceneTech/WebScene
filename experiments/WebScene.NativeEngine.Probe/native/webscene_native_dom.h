@@ -131,6 +131,8 @@ struct node_style final {
     struct opacity_keyframe final {
         float offset{0};
         float opacity{1};
+        float aspect_ratio_width{0};
+        float aspect_ratio_height{0};
     };
     struct rotation_keyframe final {
         float offset{0};
@@ -526,6 +528,8 @@ struct node_style final {
     float transform_rotate_degrees{0};
     float flex_grow{0};
     float flex_shrink{1};
+    float aspect_ratio_width{0};
+    float aspect_ratio_height{0};
     css_length flex_basis{};
     float opacity{1};
     uint32_t background_rgba{0};
@@ -816,6 +820,9 @@ struct node_style final {
     bool table_layout_fixed : 1 {false};
     uint64_t inline_property_mask{0};
     uint64_t important_property_mask{0};
+    bool aspect_ratio_inline{false};
+    bool aspect_ratio_inline_important{false};
+    bool aspect_ratio_important{false};
 private:
     void ensure_unique_pseudo_elements()
     {

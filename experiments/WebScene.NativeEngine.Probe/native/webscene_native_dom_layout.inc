@@ -1252,6 +1252,32 @@ void native_document::layout_children(dom_node& parent)
             horizontal_axis ? node.style.width : node.style.height,
             available);
     };
+    const auto apply_preferred_aspect_ratio = [&](const dom_node& node,
+        float& width, float& height, float available_width, float available_height,
+        bool width_definite, bool height_definite) {
+        if (node.style.aspect_ratio_width <= 0
+            || node.style.aspect_ratio_height <= 0
+            || width_definite == height_definite) return;
+        const auto horizontal_edges = node.style.border_box ? 0.0F
+            : resolve_length(node, node.style.padding_left, available_width, 0)
+                + resolve_length(node, node.style.padding_right, available_width, 0)
+                + resolve_length(node, node.style.border_left_width, available_width, 0)
+                + resolve_length(node, node.style.border_right_width, available_width, 0);
+        const auto vertical_edges = node.style.border_box ? 0.0F
+            : resolve_vertical_padding(node, node.style.padding_top, available_height, 0)
+                + resolve_vertical_padding(node, node.style.padding_bottom, available_height, 0)
+                + resolve_length(node, node.style.border_top_width, available_height, 0)
+                + resolve_length(node, node.style.border_bottom_width, available_height, 0);
+        if (width_definite) {
+            height = std::max(0.0F, width - horizontal_edges)
+                * node.style.aspect_ratio_height / node.style.aspect_ratio_width
+                + vertical_edges;
+        } else {
+            width = std::max(0.0F, height - vertical_edges)
+                * node.style.aspect_ratio_width / node.style.aspect_ratio_height
+                + horizontal_edges;
+        }
+    };
     const auto positioned_auto_start_margin = [](float available, float start, float end,
         float size, float start_margin, float end_margin, bool start_auto, bool end_auto,
         bool horizontal_axis) {
@@ -1336,6 +1362,14 @@ void native_document::layout_children(dom_node& parent)
                 ? std::max(0.0F, containing.height - top - bottom
                     - margin_top - margin_bottom)
                 : intrinsic_size(child, false, containing.height);
+        apply_preferred_aspect_ratio(
+            child,
+            assigned.width,
+            assigned.height,
+            containing.width,
+            containing.height,
+            is_specified(child.style.width),
+            is_specified(child.style.height));
         const auto constrain_positioned_size = [&](bool horizontal, float size) {
             const auto available = horizontal ? containing.width : containing.height;
             const auto& minimum = horizontal
@@ -2562,6 +2596,14 @@ void native_document::layout_children(dom_node& parent)
                     : alignment == align_mode::stretch && !auto_vertical_margin
                         ? std::max(0.0F, available_height - margin_top - margin_bottom)
                         : intrinsic_size(*child, false, available_height);
+                apply_preferred_aspect_ratio(
+                    *child,
+                    width,
+                    height,
+                    available_width,
+                    available_height,
+                    is_specified(child->style.width),
+                    is_specified(child->style.height));
                 if (child->style.grid().subgrid_columns) {
                     auto& inherited = child->mutable_grid_layout();
                     inherited.column_widths.assign(
@@ -3162,6 +3204,14 @@ void native_document::layout_children(dom_node& parent)
             auto height = is_specified(child->style.height)
                 ? outer_authored_size(*child, false, content.height)
                 : intrinsic_size(*child, false, content.height);
+            apply_preferred_aspect_ratio(
+                *child,
+                width,
+                height,
+                content.width,
+                content.height,
+                is_specified(child->style.width),
+                is_specified(child->style.height));
             width = constrain_size(*child, true, width, content.width);
             height = constrain_size(*child, false, height, content.height);
             const auto outer_width = margin_left + width + margin_right;
@@ -3304,6 +3354,14 @@ void native_document::layout_children(dom_node& parent)
                     ? std::max(0.0F, containing.height - top - bottom
                         - margin_top - margin_bottom)
                     : intrinsic_height;
+            apply_preferred_aspect_ratio(
+                *child,
+                assigned.width,
+                assigned.height,
+                containing.width,
+                containing.height,
+                is_specified(child->style.width),
+                is_specified(child->style.height));
             if (child->tag == "img" && !is_specified(child->style.height)
                 && child->replaced_image().natural_width > 0
                 && child->replaced_image().natural_height > 0) {
@@ -3476,6 +3534,14 @@ void native_document::layout_children(dom_node& parent)
                 height = width * child->replaced_image().natural_height
                     / child->replaced_image().natural_width;
             }
+            apply_preferred_aspect_ratio(
+                *child,
+                width,
+                height,
+                content.width,
+                content.height,
+                is_specified(child->style.width),
+                definite_authored_height);
             height = constrain_size(*child, false, height, content.height);
             assigned_height_is_definite = definite_authored_height
                 || (flex_container
@@ -3580,6 +3646,14 @@ void native_document::layout_children(dom_node& parent)
                         intrinsic_width)
                     : std::max(0.0F, content.width - margin_left - margin_right);
             width = constrain_size(*child, true, width, content.width);
+            apply_preferred_aspect_ratio(
+                *child,
+                width,
+                height,
+                content.width,
+                content.height,
+                is_specified(child->style.width),
+                is_specified(child->style.height));
             if (child->tag == "img" && !is_specified(child->style.height)
                 && child->replaced_image().natural_width > 0
                 && child->replaced_image().natural_height > 0) {

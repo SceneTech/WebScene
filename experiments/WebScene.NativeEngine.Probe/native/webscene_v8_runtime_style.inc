@@ -224,6 +224,12 @@
                 && !authored.declarations.contains("border-collapse")) {
                 node.style.inline_property_mask &= ~inline_table_border_model;
             }
+        } else if (name == "aspectRatio" || name == "aspect-ratio") {
+            node.style.aspect_ratio_width = 0;
+            node.style.aspect_ratio_height = 0;
+            node.style.aspect_ratio_inline = false;
+            node.style.aspect_ratio_inline_important = false;
+            node.style.aspect_ratio_important = false;
         } else if (name == "boxSizing" || name == "box-sizing") {
             node.style.border_box = false;
             node.style.inline_property_mask &= ~inline_box_sizing;
@@ -874,6 +880,14 @@
         } else if (name == "border-collapse") {
             node->style.mutable_table().border_collapsed = value == "collapse";
             node->style.inline_property_mask |= inline_table_border_model;
+        } else if (name == "aspect-ratio") {
+            if (parse_preferred_aspect_ratio(
+                    value,
+                    node->style.aspect_ratio_width,
+                    node->style.aspect_ratio_height)) {
+                node->style.aspect_ratio_inline = true;
+                node->style.aspect_ratio_inline_important = important;
+            }
         } else if (name == "box-sizing") {
             node->style.border_box = value == "border-box";
             node->style.inline_property_mask |= inline_box_sizing;
@@ -1899,6 +1913,12 @@
             value = node->style.textual().vertical_align.empty()
                 ? "baseline"
                 : node->style.textual().vertical_align;
+        } else if (name == "aspectRatio") {
+            value = node->style.aspect_ratio_width > 0
+                    && node->style.aspect_ratio_height > 0
+                ? serialize_css_number(node->style.aspect_ratio_width) + " / "
+                    + serialize_css_number(node->style.aspect_ratio_height)
+                : "auto";
         } else if (name == "boxSizing") {
             value = node->style.border_box ? "border-box" : "content-box";
         } else if (name == "borderRadius") {
@@ -2445,6 +2465,14 @@
         } else if (name == "borderCollapse") {
             node->style.mutable_table().border_collapsed = value == "collapse";
             node->style.inline_property_mask |= inline_table_border_model;
+        } else if (name == "aspectRatio") {
+            if (parse_preferred_aspect_ratio(
+                    value,
+                    node->style.aspect_ratio_width,
+                    node->style.aspect_ratio_height)) {
+                node->style.aspect_ratio_inline = true;
+                node->style.aspect_ratio_inline_important = false;
+            }
         } else if (name == "boxSizing") {
             node->style.border_box = value == "border-box";
             node->style.inline_property_mask |= inline_box_sizing;

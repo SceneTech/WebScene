@@ -75,6 +75,33 @@ void apply_resolved_declaration(native_document& document,dom_node& node,
                 && ((node.style.inline_property_mask | node.style.important_property_mask)
                     & property) != 0U;
         };
+        if (name == "aspect-ratio") {
+            const auto inline_wins = !inline_origin && node.style.aspect_ratio_inline
+                && (!declaration.important || node.style.aspect_ratio_inline_important);
+            if (inline_wins
+                || (!inline_origin && !declaration.important
+                    && node.style.aspect_ratio_important)) return;
+            auto ratio_width = 0.0F;
+            auto ratio_height = 0.0F;
+            if (value == "inherit" && node.parent != nullptr) {
+                ratio_width = node.parent->style.aspect_ratio_width;
+                ratio_height = node.parent->style.aspect_ratio_height;
+            } else if (!parse_preferred_aspect_ratio(
+                    value,
+                    ratio_width,
+                    ratio_height)) {
+                decision.classification = "invalid-authoring";
+                return;
+            }
+            node.style.aspect_ratio_width = ratio_width;
+            node.style.aspect_ratio_height = ratio_height;
+            node.style.aspect_ratio_important = declaration.important;
+            if (inline_origin) {
+                node.style.aspect_ratio_inline = true;
+                node.style.aspect_ratio_inline_important = declaration.important;
+            }
+            return;
+        }
         // Stylesheet preparation already parses fixed lengths into immutable
         // specified-value IR. Reuse those values during large recascades
         // instead of parsing the same authored token for every matched node.

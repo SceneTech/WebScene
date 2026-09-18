@@ -268,10 +268,19 @@
     struct frame_script final {
         std::string source;
         std::string code;
+        std::string nonce;
         bool defer{false};
         size_t index{0};
+        size_t document_offset{0};
         bool module{false};
         std::string compiled_name;
+    };
+
+    struct frame_script_content_security_policy final {
+        bool present{false};
+        bool restrict_scripts{false};
+        size_t effective_offset{0};
+        std::vector<std::string> sources;
     };
 
     enum class reflected_token_list_kind : uint8_t {
@@ -345,6 +354,7 @@
     struct frame_hydration_state final {
         dom_node* body{nullptr};
         std::vector<frame_script> scripts;
+        frame_script_content_security_policy script_policy;
         std::string body_opening;
         std::string base_address;
         v8::Global<v8::Context> context;
@@ -739,6 +749,7 @@
         std::string body_opening;
         std::vector<std::string> stylesheets;
         std::vector<frame_script> scripts;
+        frame_script_content_security_policy script_policy;
         std::chrono::steady_clock::time_point started{};
         std::chrono::steady_clock::time_point completed{};
     };

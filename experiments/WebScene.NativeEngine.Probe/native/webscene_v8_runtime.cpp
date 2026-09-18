@@ -859,6 +859,11 @@ struct v8_dom_runtime::implementation final {
             js_string(isolate, "execCommand"),
             v8::FunctionTemplate::New(isolate, document_exec_command, {}, {}, 1,
                 v8::ConstructorBehavior::kThrow));
+        frame_document->Set(
+            js_string(isolate, "queryCommandSupported"),
+            v8::FunctionTemplate::New(
+                isolate, document_query_command_supported, {}, {}, 1,
+                v8::ConstructorBehavior::kThrow));
         frame_document->SetNativeDataProperty(
             js_string(isolate, "body"), get_body);
         frame_document->SetNativeDataProperty(
@@ -1722,6 +1727,12 @@ struct v8_dom_runtime::implementation final {
             js_string(isolate, "prototype")).ToLocalChecked().As<v8::Object>();
         prototype->Set(local_context, js_string(isolate, "execCommand"),
             v8::Function::New(local_context, document_exec_command, {}, 1,
+                v8::ConstructorBehavior::kThrow).ToLocalChecked()).Check();
+        prototype->Set(
+            local_context,
+            js_string(isolate, "queryCommandSupported"),
+            v8::Function::New(
+                local_context, document_query_command_supported, {}, 1,
                 v8::ConstructorBehavior::kThrow).ToLocalChecked()).Check();
         const auto cookie_name = js_string(isolate, "cookie");
         auto cookie_getter = v8::Function::New(

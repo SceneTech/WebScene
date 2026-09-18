@@ -849,6 +849,7 @@
         event->Set(local_context, js_string(isolate, "bubbles"), v8::False(isolate)).Check();
         event->Set(local_context, js_string(isolate, "cancelable"), v8::False(isolate)).Check();
         event->Set(local_context, js_string(isolate, "composed"), v8::False(isolate)).Check();
+        event->Set(local_context, js_string(isolate, "isTrusted"), v8::False(isolate)).Check();
         event->Set(
             local_context,
             js_string(isolate, "__webSceneComposedPath"),

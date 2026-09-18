@@ -518,6 +518,7 @@ int main()
         }
         if (selected == "websocket-file-reader") {
             test_native_websocket_browser_api();
+            test_native_websocket_protocol_handshake_timing();
             return 0;
         }
         if (selected == "stylesheet-cssom") {
@@ -1198,6 +1199,7 @@ int main()
     test_engine_memory_metrics_are_worker_snapshots(engine);
     test_hidden_engine_reclamation_is_debounced_and_cancelable(engine);
     test_native_websocket_browser_api();
+    test_native_websocket_protocol_handshake_timing();
     execute(
         engine,
         "if (typeof IntersectionObserver !== 'function' || "

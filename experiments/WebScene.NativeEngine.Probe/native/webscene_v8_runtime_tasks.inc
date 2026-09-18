@@ -607,6 +607,26 @@
         return false;
     }
 
+    bool drain_due_timer_task()
+    {
+        const auto now_time = std::chrono::steady_clock::now();
+        const auto next = std::min_element(
+            timers.begin(),
+            timers.end(),
+            [](const auto& left, const auto& right) {
+                return left.deadline < right.deadline;
+            });
+        if (next == timers.end() || next->deadline > now_time) return true;
+        auto task = std::move(*next);
+        timers.erase(next);
+        // Allow one ready task from another source before the next due timer.
+        // This keeps a self-refilling timer source from starving transport,
+        // worker, resource, and DOM event tasks in the opposite direction.
+        prefer_timer_task = false;
+        prefer_frame_hydration_task = true;
+        return execute_timer_task(std::move(task), now_time);
+    }
+
     bool drain_tasks()
     {
         // Native DOM objects are retained by JavaScript wrappers, so report
@@ -618,6 +638,17 @@
         // compilation and optimization work. An embedder must service that
         // queue; otherwise hot application code remains on its initial tier.
         pump_v8_platform_tasks();
+        const auto timer_due = has_due_timer();
+        // Browser task-source selection is implementation-defined, but it
+        // cannot permanently strand one ready source. Alternate a due timer
+        // with all other observable task sources instead of placing timers
+        // behind every Worker, ServiceWorker, MessagePort, WebSocket, fetch,
+        // crypto, dialog, scroll, frame, resource, and observer task.
+        if (timer_due && prefer_timer_task) {
+            return drain_due_timer_task();
+        }
+        const auto alternate_other_task = timer_due && !prefer_timer_task;
+        if (alternate_other_task) prefer_timer_task = true;
         if (indexeddb_work_ready.load(std::memory_order_acquire)) {
             return drain_indexeddb_completion();
         }
@@ -680,7 +711,6 @@
         if (!pending_programmatic_scroll_events.empty()) {
             return drain_programmatic_scroll_event_task();
         }
-        const auto timer_due = has_due_timer();
 #if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
         const auto cooperative_frames = cooperative_iframe_hydration;
 #else
@@ -701,7 +731,7 @@
         // browser task sources. Do not starve React/datafeed timers behind an
         // entire Webpack resource wave; alternate when both are ready.
         if (connected_resource_ready
-            && (!timer_due || !prefer_timer_task)) {
+            && (!timer_due || alternate_other_task)) {
             // Preparing a large warm-cache resource wave can itself take a few
             // milliseconds. Only do that work once this task source has won
             // the fairness decision, so an already-due timer runs promptly.
@@ -713,12 +743,7 @@
             ensure_layout();
             return deliver_resize_observer_checkpoint();
         }
-        const auto now_time = std::chrono::steady_clock::now();
-        const auto next = std::min_element(
-            timers.begin(),
-            timers.end(),
-            [](const auto& left, const auto& right) { return left.deadline < right.deadline; });
-        if (next == timers.end() || next->deadline > now_time) {
+        if (!has_due_timer()) {
             // Detached DOM reclamation is maintenance work. Run one bounded
             // slice only after all observable browser task sources have had
             // priority, so broadening a search cannot delay its input event or
@@ -726,11 +751,7 @@
             collect_detached_dom_if_requested();
             return true;
         }
-        auto task = std::move(*next);
-        timers.erase(next);
-        prefer_timer_task = false;
-        prefer_frame_hydration_task = true;
-        return execute_timer_task(std::move(task), now_time);
+        return drain_due_timer_task();
     }
 
     bool has_due_timer() const noexcept

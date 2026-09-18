@@ -1,0 +1,28 @@
+{
+  "profile": "webscene-remote-protocol-handshake-1",
+  "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+  "runtime": "v8",
+  "viewport": {
+    "width": 800,
+    "height": 600,
+    "deviceScaleFactor": 1
+  },
+  "required": [
+    {
+      "path": "contracts/remote-protocol-handshake-timing.html",
+      "type": "contract",
+      "capabilities": [
+        "cross-task-source-timer-fairness",
+        "remote-protocol-handshake-timing",
+        "websocket-filereader-worker-messageport-fairness"
+      ],
+      "evidence": [
+        "vscode-remote-extension-host-handshake-289",
+        "chromium-task-source-control"
+      ],
+      "reason": "A product-shaped 1,071,438-byte framed protocol write remains bounded across twenty cold/warm cycles while Worker, MessagePort, window-message, WebSocket, and FileReader work stays continuously ready. Due timers alternate with other observable task sources, preserving run-to-completion and microtask checkpoints while preventing protocol flush starvation."
+    }
+  ],
+  "harnessBlocked": [],
+  "excluded": []
+}

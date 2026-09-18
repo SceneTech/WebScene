@@ -174,6 +174,17 @@ if(BUILD_TESTING)
         COMMAND webscene_indexeddb_storage_tests)
     set_tests_properties(webscene_indexeddb_storage_tests PROPERTIES
         LABELS "storage;durability;performance" TIMEOUT 20)
+    add_executable(webscene_profile_storage_tests
+        tests/profile_storage_tests.cpp
+        native/webscene_profile_storage.cpp)
+    target_compile_features(webscene_profile_storage_tests PRIVATE cxx_std_20)
+    target_include_directories(webscene_profile_storage_tests PRIVATE native)
+    target_link_libraries(webscene_profile_storage_tests PRIVATE Threads::Threads)
+    add_test(NAME webscene_profile_storage_tests
+        COMMAND webscene_profile_storage_tests)
+    set_tests_properties(webscene_profile_storage_tests PROPERTIES
+        LABELS "storage;cookies;web-storage;durability;security;performance"
+        TIMEOUT 20)
     add_executable(webscene_graphics_scene_abi_layout_tests tests/graphics_scene_abi_layout_tests.c)
     target_compile_features(webscene_graphics_scene_abi_layout_tests PRIVATE c_std_11)
     target_include_directories(webscene_graphics_scene_abi_layout_tests PRIVATE native)
@@ -250,7 +261,8 @@ endif()
 add_library(webscene_native_engine ${webscene_runtime_kind}
     native/webscene_native_engine.cpp
     native/webscene_secure_random.cpp
-    native/webscene_indexeddb_storage.cpp)
+    native/webscene_indexeddb_storage.cpp
+    native/webscene_profile_storage.cpp)
 if(TARGET webscene_core)
     target_link_libraries(webscene_native_engine PRIVATE webscene_core)
 else()

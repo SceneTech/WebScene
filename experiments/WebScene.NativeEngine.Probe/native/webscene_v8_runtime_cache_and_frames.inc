@@ -1209,7 +1209,18 @@
         auto& frame_storage = frame_session_storage.try_emplace(
             frame.id,
             std::make_unique<session_storage_state>()).first->second;
+        auto& frame_local = frame_local_storage.try_emplace(
+            frame.id,
+            std::make_unique<session_storage_state>()).first->second;
         const auto same_origin_access = iframe_owner_allows_same_origin_access(frame);
+        frame_local->local = true;
+        frame_local->origin = same_origin_access
+            ? outer_storage_origin : resource_origin(frame_base_addresses[&frame_body]);
+        frame_local->quota_bytes = storage_quota_bytes == 0U
+            ? 5U * 1024U * 1024U
+            : std::min<uint64_t>(storage_quota_bytes, 5U * 1024U * 1024U);
+        frame_local->accessible = !frame_local->origin.empty()
+            && frame_local->origin != "null";
         global->Set(
             local_context,
             js_string(isolate, "sessionStorage"),
@@ -1219,7 +1230,7 @@
             js_string(isolate, "localStorage"),
             create_session_storage(
                 local_context,
-                same_origin_access ? outer_local_storage : *frame_storage)).Check();
+                same_origin_access ? outer_local_storage : *frame_local)).Check();
         actual_frame_windows[frame.id].Reset(isolate, global);
         actual_frame_contexts[frame.id].Reset(isolate, local_context);
         actual_frame_documents[frame.id].Reset(isolate, frame_document_value);

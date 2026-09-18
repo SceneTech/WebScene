@@ -70,11 +70,10 @@
     }
 
     static void throw_dom_exception(
-        const v8::FunctionCallbackInfo<v8::Value>& info,
+        v8::Isolate* isolate,
         const char* message,
         const char* name)
     {
-        auto* isolate = info.GetIsolate();
         auto local_context = isolate->GetCurrentContext();
         auto exception = v8::Object::New(isolate);
         exception->Set(
@@ -103,6 +102,14 @@
             }
         }
         isolate->ThrowException(exception);
+    }
+
+    static void throw_dom_exception(
+        const v8::FunctionCallbackInfo<v8::Value>& info,
+        const char* message,
+        const char* name)
+    {
+        throw_dom_exception(info.GetIsolate(), message, name);
     }
 
     static void attach_shadow(const v8::FunctionCallbackInfo<v8::Value>& info)
@@ -1273,6 +1280,7 @@
             actual_frame_windows.erase(id);
             actual_frame_documents.erase(id);
             frame_session_storage.erase(id);
+            frame_local_storage.erase(id);
             frame_load_listeners.erase(id);
             frame_dom_content_loaded_listeners.erase(id);
         }
@@ -1830,6 +1838,7 @@
             frame_pagehide_dispatched.erase(id);
             actual_frame_documents.erase(id);
             frame_session_storage.erase(id);
+            frame_local_storage.erase(id);
             frame_load_listeners.erase(id);
             frame_dom_content_loaded_listeners.erase(id);
             window_selections.erase(id);

@@ -199,6 +199,7 @@
         frame_load_listeners.clear();
         frame_dom_content_loaded_listeners.clear();
         frame_event_listeners.clear();
+        window_selections.clear();
 #if defined(WEBSCENE_NATIVE_ENGINE_WITH_V8_INSPECTOR)
         for (auto& [id, frame] : actual_frame_contexts) {
             static_cast<void>(id);

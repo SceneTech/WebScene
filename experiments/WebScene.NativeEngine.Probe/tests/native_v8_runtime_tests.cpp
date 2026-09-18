@@ -169,6 +169,10 @@ int main()
             test_same_origin_iframe_navigation_document_replacement();
             return 0;
         }
+        if (selected == "window-find-selection") {
+          test_nested_window_find_selection();
+          return 0;
+        }
         if (selected == "idle-v8-platform") {
             test_idle_v8_foreground_completion();
             return 0;

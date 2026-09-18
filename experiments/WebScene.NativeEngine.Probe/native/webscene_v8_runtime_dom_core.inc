@@ -1459,9 +1459,10 @@
         auto stylesheets_changed = false;
         for (auto* child : children) {
             if (child != nullptr) {
-                if (is_connected(*child)) {
-                    notify_custom_elements_subtree(*child, "disconnected");
-                }
+              clear_selections_containing(*child);
+              if (is_connected(*child)) {
+                notify_custom_elements_subtree(*child, "disconnected");
+              }
                 stylesheets_changed |= deactivate_connected_stylesheets(*child, false);
             }
         }
@@ -1676,7 +1677,14 @@
             frame_session_storage.erase(id);
             frame_load_listeners.erase(id);
             frame_dom_content_loaded_listeners.erase(id);
+            window_selections.erase(id);
         }
+        std::erase_if(window_selections, [&](const auto &entry) {
+          const auto &selection = entry.second;
+          return node_ids.contains(entry.first) ||
+                 node_ids.contains(selection.anchor_node_id) ||
+                 node_ids.contains(selection.focus_node_id);
+        });
         if (!frame_context.IsEmpty()) {
             auto local_frame_context = frame_context.Get(isolate);
             auto* frame_root = static_cast<dom_node*>(
@@ -5267,20 +5275,650 @@
         info.GetReturnValue().Set(v8::Null(info.GetIsolate()));
     }
 
+    static uint32_t selection_root_id(v8::Local<v8::Object> receiver) {
+      if (receiver.IsEmpty() || receiver->InternalFieldCount() == 0)
+        return 0U;
+      auto data = receiver->GetInternalField(0);
+      if (!data->IsValue())
+        return 0U;
+      auto value = data.As<v8::Value>();
+      return value->IsUint32() ? value.As<v8::Uint32>()->Value() : 0U;
+    }
+
+    window_selection_state *selection_for(v8::Local<v8::Object> receiver) {
+      const auto root_id = selection_root_id(receiver);
+      const auto found = window_selections.find(root_id);
+      return found == window_selections.end() ? nullptr : &found->second;
+    }
+
+    static bool selection_contains_node(const dom_node &root,
+                                        const dom_node &node) {
+      for (auto *current_node = &node; current_node != nullptr;
+           current_node = current_node->parent) {
+        if (current_node == &root)
+          return true;
+      }
+      return false;
+    }
+
+    bool validate_selection(window_selection_state &selection) {
+      if (!selection.has_range)
+        return false;
+      auto *root = document.find_by_native_id(selection.root_id);
+      auto *anchor = document.find_by_native_id(selection.anchor_node_id);
+      auto *focus = document.find_by_native_id(selection.focus_node_id);
+      if (root == nullptr || anchor == nullptr || focus == nullptr ||
+          !selection_contains_node(*root, *anchor) ||
+          !selection_contains_node(*root, *focus)) {
+        selection.has_range = false;
+        selection.anchor_node_id = 0U;
+        selection.focus_node_id = 0U;
+        selection.anchor_offset = 0U;
+        selection.focus_offset = 0U;
+        return false;
+      }
+      const auto anchor_length =
+          decode_wtf8_to_utf16(anchor->text_content).size();
+      const auto focus_length =
+          decode_wtf8_to_utf16(focus->text_content).size();
+      selection.anchor_offset =
+          std::min(selection.anchor_offset, anchor_length);
+      selection.focus_offset = std::min(selection.focus_offset, focus_length);
+      return true;
+    }
+
+    v8::Local<v8::Object> wrap_selection_node(dom_node &node) {
+      auto node_context = context_for_node(node);
+      v8::Context::Scope node_scope(node_context);
+      return wrap_node(node);
+    }
+
+    void clear_selections_containing(const dom_node &subtree) {
+      for (auto &[root_id, selection] : window_selections) {
+        static_cast<void>(root_id);
+        selection.text_generation = std::numeric_limits<uint64_t>::max();
+        selection.text_nodes.clear();
+        if (!selection.has_range)
+          continue;
+        auto *anchor = document.find_by_native_id(selection.anchor_node_id);
+        auto *focus = document.find_by_native_id(selection.focus_node_id);
+        if ((anchor != nullptr && subtree_contains(subtree, anchor)) ||
+            (focus != nullptr && subtree_contains(subtree, focus))) {
+          selection.has_range = false;
+          selection.anchor_node_id = 0U;
+          selection.focus_node_id = 0U;
+          selection.anchor_offset = 0U;
+          selection.focus_offset = 0U;
+        }
+      }
+    }
+
+    static window_selection_state *
+    selection_callback_state(v8::Isolate *isolate,
+                             v8::Local<v8::Object> receiver) {
+      auto *self = current(isolate);
+      return self == nullptr ? nullptr : self->selection_for(receiver);
+    }
+
+    static void
+    selection_anchor_node_get(v8::Local<v8::Name>,
+                              const v8::PropertyCallbackInfo<v8::Value> &info) {
+      auto *self = current(info.GetIsolate());
+      auto *selection =
+          self == nullptr ? nullptr : self->selection_for(info.Holder());
+      if (selection == nullptr || !self->validate_selection(*selection)) {
+        info.GetReturnValue().Set(v8::Null(info.GetIsolate()));
+        return;
+      }
+      auto *node = self->document.find_by_native_id(selection->anchor_node_id);
+      info.GetReturnValue().Set(self->wrap_selection_node(*node));
+    }
+
+    static void
+    selection_focus_node_get(v8::Local<v8::Name>,
+                             const v8::PropertyCallbackInfo<v8::Value> &info) {
+      auto *self = current(info.GetIsolate());
+      auto *selection =
+          self == nullptr ? nullptr : self->selection_for(info.Holder());
+      if (selection == nullptr || !self->validate_selection(*selection)) {
+        info.GetReturnValue().Set(v8::Null(info.GetIsolate()));
+        return;
+      }
+      auto *node = self->document.find_by_native_id(selection->focus_node_id);
+      info.GetReturnValue().Set(self->wrap_selection_node(*node));
+    }
+
+    static void selection_anchor_offset_get(
+        v8::Local<v8::Name>, const v8::PropertyCallbackInfo<v8::Value> &info) {
+      auto *selection =
+          selection_callback_state(info.GetIsolate(), info.Holder());
+      auto *self = current(info.GetIsolate());
+      const auto offset =
+          selection != nullptr && self->validate_selection(*selection)
+              ? selection->anchor_offset
+              : 0U;
+      info.GetReturnValue().Set(v8::Number::New(info.GetIsolate(), offset));
+    }
+
+    static void selection_focus_offset_get(
+        v8::Local<v8::Name>, const v8::PropertyCallbackInfo<v8::Value> &info) {
+      auto *selection =
+          selection_callback_state(info.GetIsolate(), info.Holder());
+      auto *self = current(info.GetIsolate());
+      const auto offset =
+          selection != nullptr && self->validate_selection(*selection)
+              ? selection->focus_offset
+              : 0U;
+      info.GetReturnValue().Set(v8::Number::New(info.GetIsolate(), offset));
+    }
+
+    static void
+    selection_range_count_get(v8::Local<v8::Name>,
+                              const v8::PropertyCallbackInfo<v8::Value> &info) {
+      auto *selection =
+          selection_callback_state(info.GetIsolate(), info.Holder());
+      auto *self = current(info.GetIsolate());
+      info.GetReturnValue().Set(v8::Integer::New(
+          info.GetIsolate(),
+          selection != nullptr && self->validate_selection(*selection) ? 1
+                                                                       : 0));
+    }
+
+    static void selection_is_collapsed_get(
+        v8::Local<v8::Name>, const v8::PropertyCallbackInfo<v8::Value> &info) {
+      auto *selection =
+          selection_callback_state(info.GetIsolate(), info.Holder());
+      auto *self = current(info.GetIsolate());
+      const auto valid =
+          selection != nullptr && self->validate_selection(*selection);
+      info.GetReturnValue().Set(v8::Boolean::New(
+          info.GetIsolate(),
+          !valid || (selection->anchor_node_id == selection->focus_node_id &&
+                     selection->anchor_offset == selection->focus_offset)));
+    }
+
+    static void
+    selection_type_get(v8::Local<v8::Name>,
+                       const v8::PropertyCallbackInfo<v8::Value> &info) {
+      auto *selection =
+          selection_callback_state(info.GetIsolate(), info.Holder());
+      auto *self = current(info.GetIsolate());
+      const auto valid =
+          selection != nullptr && self->validate_selection(*selection);
+      const auto collapsed =
+          !valid || (selection->anchor_node_id == selection->focus_node_id &&
+                     selection->anchor_offset == selection->focus_offset);
+      info.GetReturnValue().Set(js_string(info.GetIsolate(), !valid ? "None"
+                                                             : collapsed
+                                                                 ? "Caret"
+                                                                 : "Range"));
+    }
+
+    static void selection_remove_all_ranges(
+        const v8::FunctionCallbackInfo<v8::Value> &info) {
+      auto *selection =
+          selection_callback_state(info.GetIsolate(), info.This());
+      if (selection == nullptr)
+        return;
+      selection->has_range = false;
+      selection->anchor_node_id = 0U;
+      selection->focus_node_id = 0U;
+      selection->anchor_offset = 0U;
+      selection->focus_offset = 0U;
+    }
+
+    static void
+    selection_collapse(const v8::FunctionCallbackInfo<v8::Value> &info) {
+      auto *self = current(info.GetIsolate());
+      auto *selection =
+          self == nullptr ? nullptr : self->selection_for(info.This());
+      if (selection == nullptr)
+        return;
+      if (info.Length() == 0 || info[0]->IsNullOrUndefined()) {
+        selection_remove_all_ranges(info);
+        return;
+      }
+      auto *node =
+          info[0]->IsObject() ? unwrap_node(info[0].As<v8::Object>()) : nullptr;
+      auto *root = self->document.find_by_native_id(selection->root_id);
+      if (node == nullptr || root == nullptr ||
+          !selection_contains_node(*root, *node)) {
+        info.GetIsolate()->ThrowException(v8::Exception::TypeError(
+            js_string(info.GetIsolate(),
+                      "Selection.collapse node is outside this document")));
+        return;
+      }
+      const auto requested =
+          info.Length() > 1
+              ? info[1]
+                    ->IntegerValue(info.GetIsolate()->GetCurrentContext())
+                    .FromMaybe(0)
+              : 0;
+      const auto maximum = node->kind == dom_node_kind::text
+                               ? decode_wtf8_to_utf16(node->text_content).size()
+                               : node->children.size();
+      if (requested < 0 || static_cast<size_t>(requested) > maximum) {
+        info.GetIsolate()->ThrowException(v8::Exception::RangeError(
+            js_string(info.GetIsolate(),
+                      "Selection.collapse offset is outside the node")));
+        return;
+      }
+      selection->has_range = true;
+      selection->anchor_node_id = node->id;
+      selection->focus_node_id = node->id;
+      selection->anchor_offset = static_cast<size_t>(requested);
+      selection->focus_offset = static_cast<size_t>(requested);
+    }
+
+    static void
+    selection_to_string(const v8::FunctionCallbackInfo<v8::Value> &info) {
+      auto *self = current(info.GetIsolate());
+      auto *selection =
+          self == nullptr ? nullptr : self->selection_for(info.This());
+      if (selection == nullptr || !self->validate_selection(*selection) ||
+          selection->anchor_node_id != selection->focus_node_id) {
+        info.GetReturnValue().Set(js_string(info.GetIsolate(), ""));
+        return;
+      }
+      auto *node = self->document.find_by_native_id(selection->anchor_node_id);
+      auto units = decode_wtf8_to_utf16(node->text_content);
+      const auto start =
+          std::min(selection->anchor_offset, selection->focus_offset);
+      const auto end =
+          std::max(selection->anchor_offset, selection->focus_offset);
+      if (end <= start) {
+        info.GetReturnValue().Set(js_string(info.GetIsolate(), ""));
+        return;
+      }
+      info.GetReturnValue().Set(
+          v8::String::NewFromTwoByte(info.GetIsolate(), units.data() + start,
+                                     v8::NewStringType::kNormal,
+                                     static_cast<int>(end - start))
+              .ToLocalChecked());
+    }
+
+    static void
+    selection_get_range_at(const v8::FunctionCallbackInfo<v8::Value> &info) {
+      auto *self = current(info.GetIsolate());
+      auto *selection =
+          self == nullptr ? nullptr : self->selection_for(info.This());
+      const auto index =
+          info.Length() > 0
+              ? info[0]
+                    ->IntegerValue(info.GetIsolate()->GetCurrentContext())
+                    .FromMaybe(-1)
+              : -1;
+      if (index != 0 || selection == nullptr ||
+          !self->validate_selection(*selection)) {
+        info.GetIsolate()->ThrowException(v8::Exception::RangeError(js_string(
+            info.GetIsolate(), "Selection range index is out of bounds")));
+        return;
+      }
+      auto local_context = info.GetIsolate()->GetCurrentContext();
+      auto range = v8::Object::New(info.GetIsolate());
+      auto *anchor =
+          self->document.find_by_native_id(selection->anchor_node_id);
+      auto *focus = self->document.find_by_native_id(selection->focus_node_id);
+      range
+          ->Set(local_context, js_string(info.GetIsolate(), "startContainer"),
+                self->wrap_selection_node(*anchor))
+          .Check();
+      range
+          ->Set(local_context, js_string(info.GetIsolate(), "startOffset"),
+                v8::Number::New(info.GetIsolate(), selection->anchor_offset))
+          .Check();
+      range
+          ->Set(local_context, js_string(info.GetIsolate(), "endContainer"),
+                self->wrap_selection_node(*focus))
+          .Check();
+      range
+          ->Set(local_context, js_string(info.GetIsolate(), "endOffset"),
+                v8::Number::New(info.GetIsolate(), selection->focus_offset))
+          .Check();
+      range
+          ->Set(local_context, js_string(info.GetIsolate(), "collapsed"),
+                v8::Boolean::New(
+                    info.GetIsolate(),
+                    selection->anchor_node_id == selection->focus_node_id &&
+                        selection->anchor_offset == selection->focus_offset))
+          .Check();
+      info.GetReturnValue().Set(range);
+    }
+
+    v8::Local<v8::Object> ensure_selection(dom_node &root) {
+      auto [entry, inserted] = window_selections.try_emplace(root.id);
+      auto &selection = entry->second;
+      selection.root_id = root.id;
+      if (!inserted && !selection.object.IsEmpty()) {
+        return selection.object.Get(isolate);
+      }
+      auto local_context = isolate->GetCurrentContext();
+      auto object_template = v8::ObjectTemplate::New(isolate);
+      object_template->SetInternalFieldCount(1);
+      object_template->SetNativeDataProperty(js_string(isolate, "anchorNode"),
+                                             selection_anchor_node_get);
+      object_template->SetNativeDataProperty(js_string(isolate, "baseNode"),
+                                             selection_anchor_node_get);
+      object_template->SetNativeDataProperty(js_string(isolate, "focusNode"),
+                                             selection_focus_node_get);
+      object_template->SetNativeDataProperty(js_string(isolate, "extentNode"),
+                                             selection_focus_node_get);
+      object_template->SetNativeDataProperty(js_string(isolate, "anchorOffset"),
+                                             selection_anchor_offset_get);
+      object_template->SetNativeDataProperty(js_string(isolate, "baseOffset"),
+                                             selection_anchor_offset_get);
+      object_template->SetNativeDataProperty(js_string(isolate, "focusOffset"),
+                                             selection_focus_offset_get);
+      object_template->SetNativeDataProperty(js_string(isolate, "extentOffset"),
+                                             selection_focus_offset_get);
+      object_template->SetNativeDataProperty(js_string(isolate, "rangeCount"),
+                                             selection_range_count_get);
+      object_template->SetNativeDataProperty(js_string(isolate, "isCollapsed"),
+                                             selection_is_collapsed_get);
+      object_template->SetNativeDataProperty(js_string(isolate, "type"),
+                                             selection_type_get);
+      object_template->Set(
+          js_string(isolate, "removeAllRanges"),
+          v8::FunctionTemplate::New(isolate, selection_remove_all_ranges));
+      object_template->Set(
+          js_string(isolate, "empty"),
+          v8::FunctionTemplate::New(isolate, selection_remove_all_ranges));
+      object_template->Set(
+          js_string(isolate, "removeRange"),
+          v8::FunctionTemplate::New(isolate, selection_remove_all_ranges));
+      object_template->Set(
+          js_string(isolate, "collapse"),
+          v8::FunctionTemplate::New(isolate, selection_collapse));
+      object_template->Set(
+          js_string(isolate, "getRangeAt"),
+          v8::FunctionTemplate::New(isolate, selection_get_range_at));
+      object_template->Set(
+          js_string(isolate, "toString"),
+          v8::FunctionTemplate::New(isolate, selection_to_string));
+      auto object =
+          object_template->NewInstance(local_context).ToLocalChecked();
+      object->SetInternalField(0,
+                               v8::Integer::NewFromUnsigned(isolate, root.id));
+      selection.object.Reset(isolate, object);
+      return object;
+    }
+
     static void get_selection(const v8::FunctionCallbackInfo<v8::Value>& info)
     {
-        auto context = info.GetIsolate()->GetCurrentContext();
-        auto selection = v8::Object::New(info.GetIsolate());
-        auto no_op = v8::Function::New(context, console_log).ToLocalChecked();
-        selection->Set(context, js_string(info.GetIsolate(), "removeAllRanges"), no_op).Check();
-        selection->Set(context, js_string(info.GetIsolate(), "empty"), no_op).Check();
-        selection->Set(context, js_string(info.GetIsolate(), "collapse"), no_op).Check();
-        selection->Set(
-            context,
-            js_string(info.GetIsolate(), "toString"),
-            v8::Function::New(context, return_empty_string).ToLocalChecked()).Check();
-        selection->Set(context, js_string(info.GetIsolate(), "rangeCount"), v8::Integer::New(info.GetIsolate(), 0)).Check();
-        info.GetReturnValue().Set(selection);
+      auto *self = current(info.GetIsolate());
+      if (self == nullptr) {
+        info.GetReturnValue().Set(v8::Null(info.GetIsolate()));
+        return;
+      }
+      auto local_context = info.GetIsolate()->GetCurrentContext();
+      auto *root = static_cast<dom_node *>(
+          local_context->GetAlignedPointerFromEmbedderData(
+              1, v8::kEmbedderDataTypeTagDefault));
+      if (root == nullptr)
+        root = &self->document.body();
+      info.GetReturnValue().Set(self->ensure_selection(*root));
+    }
+
+    static bool window_find_word_unit(uint16_t unit) {
+      return (unit >= '0' && unit <= '9') || (unit >= 'A' && unit <= 'Z') ||
+             (unit >= 'a' && unit <= 'z') || unit == '_' || unit >= 0x80U;
+    }
+
+    static uint16_t window_find_fold_ascii(uint16_t unit) {
+      return unit >= 'A' && unit <= 'Z'
+                 ? static_cast<uint16_t>(unit + ('a' - 'A'))
+                 : unit;
+    }
+
+    static bool window_find_matches(const std::vector<uint16_t> &text,
+                                    const std::vector<uint16_t> &query,
+                                    size_t offset, bool case_sensitive,
+                                    bool whole_word) {
+      if (query.empty() || offset > text.size() ||
+          query.size() > text.size() - offset)
+        return false;
+      for (size_t index = 0U; index < query.size(); ++index) {
+        const auto left = case_sensitive
+                              ? text[offset + index]
+                              : window_find_fold_ascii(text[offset + index]);
+        const auto right = case_sensitive
+                               ? query[index]
+                               : window_find_fold_ascii(query[index]);
+        if (left != right)
+          return false;
+      }
+      if (!whole_word)
+        return true;
+      const auto before_word =
+          offset > 0U && window_find_word_unit(text[offset - 1U]);
+      const auto after = offset + query.size();
+      const auto after_word =
+          after < text.size() && window_find_word_unit(text[after]);
+      return !before_word && !after_word;
+    }
+
+    static bool window_find_matches_ascii(std::string_view text,
+                                          std::string_view query, size_t offset,
+                                          bool case_sensitive,
+                                          bool whole_word) {
+      if (query.empty() || offset > text.size() ||
+          query.size() > text.size() - offset)
+        return false;
+      for (size_t index = 0U; index < query.size(); ++index) {
+        const auto left = static_cast<uint16_t>(
+            static_cast<unsigned char>(text[offset + index]));
+        const auto right =
+            static_cast<uint16_t>(static_cast<unsigned char>(query[index]));
+        if ((case_sensitive ? left : window_find_fold_ascii(left)) !=
+            (case_sensitive ? right : window_find_fold_ascii(right))) {
+          return false;
+        }
+      }
+      if (!whole_word)
+        return true;
+      const auto before_word =
+          offset > 0U &&
+          window_find_word_unit(static_cast<uint8_t>(text[offset - 1U]));
+      const auto after = offset + query.size();
+      const auto after_word =
+          after < text.size() &&
+          window_find_word_unit(static_cast<uint8_t>(text[after]));
+      return !before_word && !after_word;
+    }
+
+    static void window_find(const v8::FunctionCallbackInfo<v8::Value> &info) {
+      auto *self = current(info.GetIsolate());
+      if (self == nullptr || info.Length() == 0) {
+        info.GetReturnValue().Set(v8::False(info.GetIsolate()));
+        return;
+      }
+      const auto query_text = to_wtf8(info.GetIsolate(), info[0]);
+      const auto query = decode_wtf8_to_utf16(query_text);
+      constexpr size_t maximum_query_units = 1024U * 1024U;
+      if (query.empty() || query.size() > maximum_query_units) {
+        info.GetReturnValue().Set(v8::False(info.GetIsolate()));
+        return;
+      }
+      const auto case_sensitive =
+          info.Length() > 1 && info[1]->BooleanValue(info.GetIsolate());
+      const auto backwards =
+          info.Length() > 2 && info[2]->BooleanValue(info.GetIsolate());
+      const auto wrap_around =
+          info.Length() > 3 && info[3]->BooleanValue(info.GetIsolate());
+      const auto whole_word =
+          info.Length() > 4 && info[4]->BooleanValue(info.GetIsolate());
+      auto local_context = info.GetIsolate()->GetCurrentContext();
+      auto *root = static_cast<dom_node *>(
+          local_context->GetAlignedPointerFromEmbedderData(
+              1, v8::kEmbedderDataTypeTagDefault));
+      if (root == nullptr)
+        root = &self->document.body();
+      auto &selection =
+          self->window_selections.try_emplace(root->id).first->second;
+      selection.root_id = root->id;
+      static_cast<void>(self->validate_selection(selection));
+
+      if (selection.text_generation != self->document.scene_generation()) {
+        selection.text_nodes.clear();
+        const auto collect = [&](const auto &recurse, dom_node &node,
+                                 bool hidden) -> void {
+          hidden = hidden || !node.visible ||
+                   node.style.display == display_mode::none ||
+                   node.attributes.contains("hidden") || node.tag == "script" ||
+                   node.tag == "style" || node.tag == "noscript" ||
+                   node.tag == "template";
+          if (hidden)
+            return;
+          if (node.kind == dom_node_kind::text && !node.text_content.empty()) {
+            selection.text_nodes.push_back(&node);
+          }
+          for (auto *child : node.children) {
+            if (child != nullptr)
+              recurse(recurse, *child, hidden);
+          }
+        };
+        collect(collect, *root, false);
+        selection.text_generation = self->document.scene_generation();
+      }
+      const auto &text_nodes = selection.text_nodes;
+      if (text_nodes.empty()) {
+        info.GetReturnValue().Set(v8::False(info.GetIsolate()));
+        return;
+      }
+
+      const auto ascii_query =
+          std::all_of(query_text.begin(), query_text.end(),
+                      [](unsigned char value) { return value < 0x80U; });
+      const auto text_length = [&](const dom_node &node) {
+        if (ascii_query &&
+            std::all_of(node.text_content.begin(), node.text_content.end(),
+                        [](unsigned char value) { return value < 0x80U; })) {
+          return node.text_content.size();
+        }
+        return decode_wtf8_to_utf16(node.text_content).size();
+      };
+      size_t current_index = backwards ? text_nodes.size() - 1U : 0U;
+      size_t current_offset =
+          backwards ? text_length(*text_nodes[current_index]) : 0U;
+      auto has_current = false;
+      if (selection.has_range) {
+        const auto current = std::find_if(
+            text_nodes.begin(), text_nodes.end(), [&](const auto *node) {
+              return node->id == (backwards ? selection.anchor_node_id
+                                            : selection.focus_node_id);
+            });
+        if (current != text_nodes.end()) {
+          current_index = static_cast<size_t>(current - text_nodes.begin());
+          current_offset =
+              backwards ? selection.anchor_offset : selection.focus_offset;
+          has_current = true;
+        }
+      }
+
+      struct match_result {
+        size_t node_index;
+        size_t offset;
+      };
+      std::optional<match_result> match;
+      const auto find_forward = [&](size_t first_node, size_t first_offset,
+                                    size_t last_node,
+                                    std::optional<size_t> last_limit) {
+        for (size_t node_index = first_node;
+             !match.has_value() && node_index <= last_node; ++node_index) {
+          const auto &raw = text_nodes[node_index]->text_content;
+          const auto ascii_text =
+              ascii_query &&
+              std::all_of(raw.begin(), raw.end(),
+                          [](unsigned char value) { return value < 0x80U; });
+          const auto units =
+              ascii_text ? std::vector<uint16_t>{} : decode_wtf8_to_utf16(raw);
+          const auto text_size = ascii_text ? raw.size() : units.size();
+          const auto start = node_index == first_node ? first_offset : 0U;
+          const auto limit = last_limit.has_value() && node_index == last_node
+                                 ? std::min(*last_limit, text_size)
+                                 : text_size;
+          for (size_t offset = std::min(start, text_size);
+               offset + query.size() <= limit; ++offset) {
+            const auto matches =
+                ascii_text
+                    ? window_find_matches_ascii(raw, query_text, offset,
+                                                case_sensitive, whole_word)
+                    : window_find_matches(units, query, offset, case_sensitive,
+                                          whole_word);
+            if (matches) {
+              match = match_result{node_index, offset};
+              break;
+            }
+          }
+        }
+      };
+      const auto find_backward = [&](size_t first_node, size_t first_limit,
+                                     size_t last_node,
+                                     std::optional<size_t> last_floor) {
+        for (size_t node_index = first_node; !match.has_value();) {
+          const auto &raw = text_nodes[node_index]->text_content;
+          const auto ascii_text =
+              ascii_query &&
+              std::all_of(raw.begin(), raw.end(),
+                          [](unsigned char value) { return value < 0x80U; });
+          const auto units =
+              ascii_text ? std::vector<uint16_t>{} : decode_wtf8_to_utf16(raw);
+          const auto text_size = ascii_text ? raw.size() : units.size();
+          auto limit = node_index == first_node
+                           ? std::min(first_limit, text_size)
+                           : text_size;
+          const auto floor = last_floor.has_value() && node_index == last_node
+                                 ? std::min(*last_floor, text_size)
+                                 : 0U;
+          while (limit >= query.size() && limit - query.size() >= floor) {
+            const auto offset = limit - query.size();
+            const auto matches =
+                ascii_text
+                    ? window_find_matches_ascii(raw, query_text, offset,
+                                                case_sensitive, whole_word)
+                    : window_find_matches(units, query, offset, case_sensitive,
+                                          whole_word);
+            if (matches) {
+              match = match_result{node_index, offset};
+              break;
+            }
+            if (limit == 0U)
+              break;
+            --limit;
+          }
+          if (match.has_value() || node_index == last_node)
+            break;
+          --node_index;
+        }
+      };
+
+      if (!backwards) {
+        find_forward(current_index, current_offset, text_nodes.size() - 1U,
+                     std::nullopt);
+        if (!match.has_value() && wrap_around && has_current) {
+          find_forward(0U, 0U, current_index, current_offset);
+        } else if (!match.has_value() && wrap_around && !has_current) {
+          find_forward(0U, 0U, text_nodes.size() - 1U, std::nullopt);
+        }
+      } else {
+        find_backward(current_index, current_offset, 0U, std::nullopt);
+        if (!match.has_value() && wrap_around && has_current) {
+          const auto last_index = text_nodes.size() - 1U;
+          const auto last_size = text_length(*text_nodes[last_index]);
+          find_backward(last_index, last_size, current_index, current_offset);
+        }
+      }
+      if (!match.has_value()) {
+        info.GetReturnValue().Set(v8::False(info.GetIsolate()));
+        return;
+      }
+      auto *node = text_nodes[match->node_index];
+      selection.has_range = true;
+      selection.anchor_node_id = node->id;
+      selection.focus_node_id = node->id;
+      selection.anchor_offset = match->offset;
+      selection.focus_offset = match->offset + query.size();
+      info.GetReturnValue().Set(v8::True(info.GetIsolate()));
     }
 
     static bool insertion_would_create_cycle(
@@ -5451,6 +6089,7 @@
         if (self->is_connected(*child)) {
             self->notify_custom_elements_subtree(*child, "disconnected");
         }
+        self->clear_selections_containing(*child);
         self->deactivate_connected_stylesheets(*child);
         const auto changes_base = self->subtree_contains_base(*child);
         std::erase(parent->children, child);
@@ -5522,6 +6161,7 @@
         if (self->is_connected(*previous)) {
             self->notify_custom_elements_subtree(*previous, "disconnected");
         }
+        self->clear_selections_containing(*previous);
         self->deactivate_connected_stylesheets(*previous, false);
         const auto insertion_index = static_cast<size_t>(
             iterator - parent->children.begin());
@@ -5570,6 +6210,7 @@
         if (self->is_connected(*node)) {
             self->notify_custom_elements_subtree(*node, "disconnected");
         }
+        self->clear_selections_containing(*node);
         self->deactivate_connected_stylesheets(*node);
         const auto changes_base = self->subtree_contains_base(*node);
         std::erase(node->parent->children, node);

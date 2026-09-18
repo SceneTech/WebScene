@@ -6,6 +6,18 @@
         dom_node* owner{nullptr};
     };
 
+    struct window_selection_state final {
+      uint32_t root_id{0U};
+      uint32_t anchor_node_id{0U};
+      uint32_t focus_node_id{0U};
+      size_t anchor_offset{0U};
+      size_t focus_offset{0U};
+      bool has_range{false};
+      uint64_t text_generation{std::numeric_limits<uint64_t>::max()};
+      std::vector<dom_node *> text_nodes;
+      v8::Global<v8::Object> object;
+    };
+
     struct timer_task final {
         uint32_t id;
         bool animation_frame;

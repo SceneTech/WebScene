@@ -1,0 +1,22 @@
+{
+  "profile": "webscene-window-find-selection-1",
+  "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+  "runtime": "v8",
+  "viewport": { "width": 800, "height": 600, "deviceScaleFactor": 1 },
+  "required": [
+    {
+      "path": "contracts/window-find-selection.html",
+      "type": "contract",
+      "capabilities": [
+        "window-find",
+        "live-selection",
+        "find-repeat-wrap-case-whole-word",
+        "selection-range-reflection"
+      ],
+      "evidence": ["code-oss-markdown-find-405"],
+      "reason": "Chrome authority and native regression for the unchanged Code OSS Markdown find/find-stop bridge."
+    }
+  ],
+  "harnessBlocked": [],
+  "excluded": []
+}

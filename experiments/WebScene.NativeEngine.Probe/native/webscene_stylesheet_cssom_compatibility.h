@@ -7,8 +7,8 @@ namespace webscene_native {
 // owner's parsed native rules. Bridge dynamic CSSOM operations to a native
 // staged rule-set replacement so one task publishes each owner's final rules
 // and recascades once.
-// This is a bounded adapter, not a complete CSSOM implementation: imported-
-// sheet inspection remains unsupported.
+// Imported sheets use the host stylesheet loader and keep their authored CSSOM
+// tree separate from the flattened native publication payload.
 // Semantics: https://www.w3.org/TR/cssom-1/
 inline constexpr std::string_view cssCompatibilityScript = R"JS(
 // SCENETECH_CSS_COMPATIBILITY_V1
@@ -25,6 +25,7 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
   };
   const ruleInstances = new WeakSet();
   const styleRuleInstances = new WeakSet();
+  const importRuleInstances = new WeakSet();
   const groupingRuleInstances = new WeakSet();
   const conditionRuleInstances = new WeakSet();
   const mediaRuleInstances = new WeakSet();
@@ -35,8 +36,10 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
   const mediaListInstances = new WeakSet();
   const ruleListInstances = new WeakSet();
   let makeConstructedStyleSheet;
+  const publishedRuleText = rule => typeof rule?.__webScenePublishedText === 'function'
+    ? rule.__webScenePublishedText() : rule.cssText;
   const publishedSource = state => {
-    const source = state.rules.map(rule => rule.cssText).join('\n');
+    const source = state.rules.map(publishedRuleText).join('\n');
     return state.disabled ? ''
       : state.mediaText.trim() ? `@media ${state.mediaText} {\n${source}\n}`
       : source;
@@ -90,6 +93,8 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
   });
   const CSSStyleRuleInterface = interfaceConstructor(
     'CSSStyleRule', styleRuleInstances, CSSRuleInterface);
+  const CSSImportRuleInterface = interfaceConstructor(
+    'CSSImportRule', importRuleInstances, CSSRuleInterface);
   const CSSGroupingRuleInterface = interfaceConstructor(
     'CSSGroupingRule', groupingRuleInstances, CSSRuleInterface);
   const CSSConditionRuleInterface = interfaceConstructor(
@@ -111,6 +116,7 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
       ['CSSRule', CSSRuleInterface],
       ['CSSStyleSheet', CSSStyleSheetInterface],
       ['CSSStyleRule', CSSStyleRuleInterface],
+      ['CSSImportRule', CSSImportRuleInterface],
       ['CSSGroupingRule', CSSGroupingRuleInterface],
       ['CSSConditionRule', CSSConditionRuleInterface],
       ['CSSMediaRule', CSSMediaRuleInterface],
@@ -125,6 +131,8 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
         Object.defineProperty(view, name, { value: constructor, configurable: true });
     }
     for (const target of [view.CSSRule, view.CSSRule?.prototype]) {
+      if (target && !('IMPORT_RULE' in target)) Object.defineProperty(
+        target, 'IMPORT_RULE', { value: 3, enumerable: true });
       if (target && !('SUPPORTS_RULE' in target)) Object.defineProperty(
         target, 'SUPPORTS_RULE', { value: 12, enumerable: true });
     }
@@ -620,10 +628,13 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
   };
   const publish = state => {
     const source = state.rules.map(rule => rule.cssText).join('\n');
+    const publicationSource = state.rules.map(publishedRuleText).join('\n');
     const nativeSource = state.disabled ? ''
-      : state.mediaText.trim() ? `@media ${state.mediaText} {\n${source}\n}`
-      : source;
-    if (state.constructed) {
+      : state.mediaText.trim() ? `@media ${state.mediaText} {\n${publicationSource}\n}`
+      : publicationSource;
+    if (state.imported) {
+      if (typeof state.parentPublish === 'function') state.parentPublish();
+    } else if (state.constructed) {
       notifyAdopters(state.sheet);
     } else if (typeof state.sheet.__webSceneStageRules === 'function') {
       // CSSOM mutation does not replace the style element's DOM text nodes.
@@ -631,6 +642,7 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
       // style/layout reads and the browser-task boundary flush it.
       state.sheet.__webSceneStageRules(
         nativeSource, collectLayerNames(state.rules));
+      if (typeof state.getSource === 'function') state.ownerSource = nativeSource;
     } else {
       state.owner.textContent = nativeSource;
       state.ownerSource = nativeSource;
@@ -685,6 +697,130 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
     }
     return names;
   };
+  const parseImportRule = cssText => {
+    const match = /^@import\b([\s\S]*);$/i.exec(cssText.trim());
+    if (!match) return null;
+    const source = match[1];
+    let cursor = 0;
+    const whitespace = () => {
+      while (/\s/.test(source[cursor] || '')) cursor++;
+    };
+    whitespace();
+    let href = '';
+    const quoted = source[cursor] === '"' || source[cursor] === "'";
+    if (quoted) {
+      const quote = source[cursor++];
+      while (cursor < source.length && source[cursor] !== quote) {
+        if (source[cursor] === '\\' && cursor + 1 < source.length) cursor++;
+        href += source[cursor++];
+      }
+      if (source[cursor] !== quote) return null;
+      cursor++;
+    } else if (/^url\s*\(/i.test(source.slice(cursor))) {
+      cursor += /^url\s*\(/i.exec(source.slice(cursor))[0].length;
+      whitespace();
+      const quote = source[cursor] === '"' || source[cursor] === "'"
+        ? source[cursor++] : '';
+      while (cursor < source.length
+          && (quote ? source[cursor] !== quote : source[cursor] !== ')')) {
+        if (source[cursor] === '\\' && cursor + 1 < source.length) cursor++;
+        href += source[cursor++];
+      }
+      if (quote) {
+        if (source[cursor] !== quote) return null;
+        cursor++;
+      }
+      whitespace();
+      if (source[cursor] !== ')') return null;
+      cursor++;
+      href = href.trim();
+    } else {
+      return null;
+    }
+    whitespace();
+    let remainder = source.slice(cursor).trim();
+    let layerName = null;
+    const layer = /^layer(?:\s*\(\s*([^)]*?)\s*\))?(?:\s+|$)/i.exec(remainder);
+    if (layer) {
+      layerName = layer[1] === undefined ? '' : layer[1];
+      remainder = remainder.slice(layer[0].length).trim();
+    }
+    let supportsText = null;
+    if (/^supports\s*\(/i.test(remainder)) {
+      const open = remainder.indexOf('(');
+      let depth = 1, quote = '', close = open + 1;
+      for (; close < remainder.length && depth; close++) {
+        const character = remainder[close];
+        if (quote) {
+          if (character === '\\') close++;
+          else if (character === quote) quote = '';
+        } else if (character === '"' || character === "'") quote = character;
+        else if (character === '(') depth++;
+        else if (character === ')') depth--;
+      }
+      if (depth) return null;
+      supportsText = remainder.slice(open + 1, close - 1).trim();
+      remainder = remainder.slice(close).trim();
+    }
+    return {
+      href,
+      layerName,
+      supportsText,
+      mediaText: parseMediaList(remainder).join(', ')
+    };
+  };
+  const escapeCssString = value => String(value)
+    .replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  const absolutizeCssUrls = (source, baseURL) => {
+    let result = '', quote = '', comment = false;
+    for (let index = 0; index < source.length;) {
+      const character = source[index], next = source[index + 1];
+      if (comment) {
+        result += character;
+        index++;
+        if (character === '*' && next === '/') {
+          result += next;
+          index++;
+          comment = false;
+        }
+        continue;
+      }
+      if (quote) {
+        result += character;
+        index++;
+        if (character === '\\' && index < source.length) result += source[index++];
+        else if (character === quote) quote = '';
+        continue;
+      }
+      if (character === '/' && next === '*') {
+        result += '/*'; index += 2; comment = true; continue;
+      }
+      if (character === '"' || character === "'") {
+        quote = character; result += character; index++; continue;
+      }
+      const match = /^url\s*\(/i.exec(source.slice(index));
+      if (!match) { result += character; index++; continue; }
+      const open = index + match[0].length - 1;
+      let close = open + 1, urlQuote = '';
+      for (; close < source.length; close++) {
+        const current = source[close];
+        if (urlQuote) {
+          if (current === '\\') close++;
+          else if (current === urlQuote) urlQuote = '';
+        } else if (current === '"' || current === "'") urlQuote = current;
+        else if (current === ')') break;
+      }
+      if (close >= source.length) { result += source.slice(index); break; }
+      let raw = source.slice(open + 1, close).trim();
+      if (raw.length >= 2 && (raw[0] === '"' || raw[0] === "'")
+          && raw.at(-1) === raw[0]) raw = raw.slice(1, -1);
+      let resolved = raw;
+      try { resolved = new URL(raw, baseURL).href; } catch {}
+      result += `url("${escapeCssString(resolved)}")`;
+      index = close + 1;
+    }
+    return result;
+  };
   const makeRule = (state, parsed, containingRule = null, nestedStyleContext = false) => {
     let cssText = parsed.cssText;
     let selectorText = parsed.selectorText;
@@ -695,6 +831,7 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
     let parent = containingRule ? containingRule.parentStyleSheet : state.sheet;
     let style;
     let serializeGroup;
+    const importSpec = parseImportRule(parsed.cssText);
     const mediaMatch = /^@media(?:\s+([^\{]*?))?\s*\{/i.exec(parsed.cssText);
     const supportsMatch = /^@supports(?:\s+([^\{]*?))?\s*\{/i.exec(parsed.cssText);
     const layerBlockMatch = /^@layer(?:\s+([^\{]*?))?\s*\{/i.exec(parsed.cssText);
@@ -703,7 +840,10 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
     const groupingMatch = mediaMatch || supportsMatch || layerBlockMatch;
     const rule = {};
     ruleInstances.add(rule);
-    if (mediaMatch) {
+    if (importSpec) {
+      importRuleInstances.add(rule);
+      Object.setPrototypeOf(rule, CSSImportRuleInterface.prototype);
+    } else if (mediaMatch) {
       groupingRuleInstances.add(rule);
       conditionRuleInstances.add(rule);
       mediaRuleInstances.add(rule);
@@ -733,7 +873,108 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
       parentStyleSheet: { enumerable: true, get: () => parent },
       parentRule: { enumerable: true, get: () => parent ? containingRule : null }
     });
-    if (groupingMatch) {
+    if (importSpec) {
+      let mediaText = importSpec.mediaText;
+      let childState = null;
+      let resolvedHref = importSpec.href;
+      try { resolvedHref = new URL(importSpec.href, state.baseURL).href; } catch {}
+      const attached = () => parent && !containingRule && state.rules.includes(rule);
+      const serialize = () => {
+        cssText = `@import url("${escapeCssString(importSpec.href)}")`;
+        if (importSpec.layerName !== null)
+          cssText += importSpec.layerName ? ` layer(${importSpec.layerName})` : ' layer';
+        if (importSpec.supportsText !== null)
+          cssText += ` supports(${importSpec.supportsText})`;
+        if (mediaText) cssText += ` ${mediaText}`;
+        cssText += ';';
+      };
+      const commit = () => {
+        serialize();
+        if (attached()) publish(state);
+      };
+      const media = makeMediaList(() => mediaText, value => {
+        const normalized = parseMediaList(value).join(', ');
+        if (normalized === mediaText) return;
+        mediaText = normalized;
+        commit();
+      });
+      const childSheet = Object.create(CSSStyleSheetInterface.prototype);
+      Object.defineProperties(childSheet, {
+        ownerNode: { enumerable: true, value: null },
+        ownerRule: { enumerable: true, value: rule },
+        href: { enumerable: true, get: () => resolvedHref },
+        title: { enumerable: true, value: null },
+        type: { enumerable: true, value: 'text/css' }
+      });
+      const ancestors = new Set(state.importAncestors || []);
+      let loaded = null;
+      const budget = state.importBudget || { count: 0, bytes: 0 };
+      if (ancestors.size < 16 && budget.count < 1024
+          && !ancestors.has(resolvedHref) && typeof state.loadImport === 'function') {
+        budget.count++;
+        try { loaded = state.loadImport(importSpec.href, state.baseURL); } catch {}
+      }
+      if (typeof loaded?.source === 'string') {
+        const bytes = loaded.source.length * 3;
+        if (bytes > 32 * 1024 * 1024 - Math.min(budget.bytes, 32 * 1024 * 1024)) {
+          loaded = null;
+        } else {
+          budget.bytes += bytes;
+        }
+      }
+      if (loaded?.url) resolvedHref = String(loaded.url);
+      ancestors.add(resolvedHref);
+      childState = {
+        sheet: childSheet,
+        owner: null,
+        document: state.document,
+        source: '',
+        ownerSource: undefined,
+        rules: [],
+        disabled: false,
+        mediaText: '',
+        baseURL: resolvedHref,
+        constructed: false,
+        imported: true,
+        loadImport: state.loadImport,
+        importAncestors: ancestors,
+        importBudget: budget,
+        parentPublish: commit
+      };
+      initializeSheet(childState);
+      if (loaded && typeof loaded.source === 'string') {
+        childState.source = loaded.source;
+        childState.ownerSource = loaded.source;
+        try {
+          childState.rules = splitRules(loaded.source)
+            .map(child => makeRule(childState, child));
+        } catch (error) {
+          if (error?.name !== 'SyntaxError') throw error;
+          childState.rules = [];
+        }
+      }
+      Object.defineProperties(rule, {
+        type: { enumerable: true, value: 3 },
+        href: { enumerable: true, get: () => resolvedHref },
+        media: { enumerable: true, get: () => media },
+        layerName: { enumerable: true, get: () => importSpec.layerName },
+        supportsText: { enumerable: true, get: () => importSpec.supportsText },
+        styleSheet: { enumerable: true, get: () => childSheet },
+        detach: { value: () => { parent = null; } },
+        __webScenePublishedText: { value: () => {
+          if (!childState) return '';
+          let source = absolutizeCssUrls(
+            publishedSource(childState), childState.baseURL);
+          if (mediaText) source = `@media ${mediaText} {\n${source}\n}`;
+          if (importSpec.supportsText !== null)
+            source = `@supports (${importSpec.supportsText}) {\n${source}\n}`;
+          if (importSpec.layerName !== null)
+            source = `@layer${importSpec.layerName ? ' ' + importSpec.layerName : ''} {\n${source}\n}`;
+          return source;
+        } }
+      });
+      serialize();
+    } else if (groupingMatch) {
       let children = splitRules(parsed.body || '').map(child =>
         makeRule(state, child, rule, nestedStyleContext));
       const isMedia = Boolean(mediaMatch);
@@ -974,8 +1215,10 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
     return rule;
   };
   const synchronize = state => {
-    if (state.constructed) return;
-    const source = state.owner.textContent || '';
+    if (state.constructed || state.imported) return;
+    const source = typeof state.getSource === 'function'
+      ? String(state.getSource() || '')
+      : state.owner.textContent || '';
     if (source === state.ownerSource) return;
     const parsed = splitRules(source);
     for (const rule of state.rules) rule.detach();
@@ -1004,7 +1247,7 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
     const list = makeList(() => state.rules, () => synchronize(state));
     const media = makeMediaList(() => state.mediaText, value => {
       state.mediaText = value;
-      if (!state.constructed) {
+      if (!state.constructed && !state.imported) {
         if (state.mediaText) state.owner.setAttribute('media', state.mediaText);
         else state.owner.removeAttribute('media');
       }
@@ -1067,11 +1310,16 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
         const parsed = splitRules(text(rule));
         if (parsed.length !== 1) exception('Exactly one CSS rule is required', 'SyntaxError');
         validateLayerStatement(parsed[0]);
-        // Imported sheets cannot be represented by the native owner-text bridge.
         if (/^@import\b/i.test(parsed[0].cssText)) {
           if (current.constructed)
             exception('Constructed stylesheets cannot contain imports', 'SyntaxError');
-          exception('Imported rules require native CSSOM support', 'NotSupportedError');
+          if (!parseImportRule(parsed[0].cssText))
+            exception('The imported rule is invalid', 'SyntaxError');
+          if (current.rules.slice(0, index).some(existing =>
+              !importRuleInstances.has(existing)
+              && !layerStatementRuleInstances.has(existing))) {
+            exception('Imported rules must precede ordinary rules', 'HierarchyRequestError');
+          }
         }
         if (/^@namespace\b/i.test(parsed[0].cssText))
           exception('Namespace rules require native CSSOM support', 'NotSupportedError');
@@ -1283,14 +1531,29 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
     if (!sheet || typeof sheet.insertRule === 'function') return sheet;
     const document = sheet.ownerNode?.ownerDocument || globalThis.document;
     installInterfaces(document?.defaultView || globalThis);
-    return initializeSheet({
+    const baseURL = typeof sheet.__webSceneBaseURL === 'string'
+      ? sheet.__webSceneBaseURL
+      : document?.baseURI || globalThis.location?.href || '';
+    const state = {
       sheet, owner: sheet.ownerNode, document,
       source: undefined, ownerSource: undefined, rules: [], disabled: false,
       mediaText: typeof sheet.ownerNode?.getAttribute === 'function'
         ? sheet.ownerNode.getAttribute('media') || ''
         : '',
-      constructed: false
-    });
+      baseURL,
+      constructed: false,
+      imported: false,
+      getSource: sheet.__webSceneExternalSource === true
+          && typeof sheet.__webSceneGetRulesSource === 'function'
+        ? () => sheet.__webSceneGetRulesSource()
+        : null,
+      loadImport: typeof sheet.__webSceneLoadImport === 'function'
+        ? (href, base) => sheet.__webSceneLoadImport(href, base)
+        : null,
+      importAncestors: baseURL ? new Set([baseURL]) : new Set(),
+      importBudget: { count: 0, bytes: 0 }
+    };
+    return initializeSheet(state);
   };
   installInterfaces(globalThis);
   Object.defineProperty(globalThis, '__webSceneAugmentStyleSheet', {

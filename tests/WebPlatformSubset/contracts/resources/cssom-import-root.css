@@ -1,0 +1,2 @@
+@import url("cssom-import-child.css") layer(imported) screen;
+.cssom-import-parent { width: 37px; }

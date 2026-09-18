@@ -1,0 +1,111 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Live imported stylesheet CSSOM</title>
+<body>
+<script>
+  const state = window.__webSceneWptState = {
+    complete: false, harness: null, results: [], errors: [], diagnostics: []
+  };
+  const record = (name, error) => state.results.push({
+    name, status: error ? "FAIL" : "PASS",
+    message: error ? String(error.message || error) : null,
+    stack: error?.stack ? String(error.stack) : null
+  });
+  const check = (value, message) => { if (!value) throw new Error(message); };
+
+  (async () => {
+    try {
+      const target = document.createElement("div");
+      target.className = "cssom-import-parent cssom-import-child cssom-import-grandchild";
+      document.body.appendChild(target);
+      const link = document.createElement("link");
+      link.rel = "stylesheet";
+      link.href = "resources/cssom-import-root.css";
+      const loaded = new Promise((resolve, reject) => {
+        link.onload = resolve;
+        link.onerror = () => reject(new Error("linked stylesheet failed"));
+      });
+      document.head.appendChild(link);
+      await loaded;
+
+      const sheet = link.sheet;
+      const imported = sheet.cssRules[0];
+      const childSheet = imported.styleSheet;
+      const nested = childSheet.cssRules[0];
+      record("CSSImportRule and child stylesheet reflection", (() => {
+        try {
+          check(imported instanceof CSSImportRule && imported instanceof CSSRule,
+            "import rule brand");
+          check(imported.type === CSSRule.IMPORT_RULE && imported.type === 3,
+            "import rule type");
+          check(imported.parentRule === null && imported.parentStyleSheet === sheet,
+            "top-level parent links");
+          check(imported.href.endsWith("/resources/cssom-import-child.css"),
+            `resolved href ${imported.href}`);
+          check(imported.layerName === "imported"
+              && imported.supportsText === null
+              && imported.media === imported.media
+              && imported.media.mediaText === "screen", "qualifier reflection");
+          check(childSheet.ownerNode === null && childSheet.ownerRule === imported
+              && childSheet.href === imported.href, "child-sheet ownership");
+          check(nested instanceof CSSImportRule
+              && nested.href.endsWith("/resources/cssom-import-grandchild.css"),
+            "nested relative import");
+          check(getComputedStyle(target).width === "37px"
+              && getComputedStyle(target).color === "rgb(10, 20, 30)"
+              && getComputedStyle(target).height === "19px", "initial cascade");
+          return null;
+        } catch (error) { return error; }
+      })());
+
+      const childRule = childSheet.cssRules[1];
+      childRule.style.color = "rgb(40, 50, 60)";
+      nested.styleSheet.cssRules[0].style.height = "23px";
+      record("imported declaration mutation republishes owning cascade", (() => {
+        try {
+          check(getComputedStyle(target).color === "rgb(40, 50, 60)",
+            "child mutation");
+          check(getComputedStyle(target).height === "23px", "nested mutation");
+          return null;
+        } catch (error) { return error; }
+      })());
+
+      imported.media.mediaText = "print";
+      record("import media mutation removes and restores imported rules", (() => {
+        try {
+          check(getComputedStyle(target).color !== "rgb(40, 50, 60)",
+            "print import stayed active");
+          imported.media.mediaText = "screen";
+          check(getComputedStyle(target).color === "rgb(40, 50, 60)",
+            "screen import did not reactivate");
+          return null;
+        } catch (error) { return error; }
+      })());
+
+      sheet.deleteRule(0);
+      record("deletion detaches import and retires native rules", (() => {
+        try {
+          check(imported.parentStyleSheet === null && imported.parentRule === null,
+            "detached import parent links");
+          check(getComputedStyle(target).color !== "rgb(40, 50, 60)"
+              && getComputedStyle(target).height !== "23px", "imported cascade survived deletion");
+          check(getComputedStyle(target).width === "37px", "ordinary owner rule was removed");
+          return null;
+        } catch (error) { return error; }
+      })());
+      state.diagnostics.push(JSON.stringify({ href: imported.href, rules: sheet.cssRules.length }));
+    } catch (error) {
+      record("imported stylesheet setup", error);
+    }
+    const failure = state.results.find(result => result.status !== "PASS");
+    state.harness = failure
+      ? { status: 1, message: failure.message, stack: failure.stack }
+      : { status: 0, message: null, stack: null };
+    state.complete = true;
+    const evidence = document.createElement("pre");
+    evidence.id = "cssom-import-rule-live-evidence";
+    evidence.hidden = true;
+    evidence.textContent = JSON.stringify(state);
+    document.body.appendChild(evidence);
+  })();
+</script>

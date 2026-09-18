@@ -1,0 +1,28 @@
+{
+  "profile": "webscene-cssom-import-rule-live-1",
+  "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+  "runtime": "v8",
+  "viewport": {
+    "width": 800,
+    "height": 600,
+    "deviceScaleFactor": 1
+  },
+  "required": [
+    {
+      "path": "contracts/cssom-import-rule-live.html",
+      "type": "contract",
+      "capabilities": [
+        "cssom-import-rule-reflection",
+        "cssom-imported-sheet-ownership",
+        "cssom-import-nested-base-url",
+        "cssom-import-live-mutation",
+        "cssom-import-media-invalidation",
+        "cssom-import-retirement"
+      ],
+      "evidence": ["cssom-import-rule-live-480"],
+      "reason": "Browser-referenced contract for linked and nested CSS imports, child stylesheet reflection, live mutation, media invalidation, deletion, and native publication."
+    }
+  ],
+  "harnessBlocked": [],
+  "excluded": []
+}

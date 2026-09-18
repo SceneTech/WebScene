@@ -1696,6 +1696,98 @@ void test_native_mutable_stylesheet_cssom(webscene_engine* engine)
         "mutable stylesheet CSSOM did not recascade main/frame styles: "
             + result);
 
+    const auto supports_result = evaluate(engine, R"JS((() => {
+      const exercise = (document, view, className) => {
+        const style = document.createElement('style');
+        const target = document.createElement('div');
+        style.textContent = `@supports selector(:focus-visible) {
+          .${className} { display: grid; }
+        }`;
+        target.className = className;
+        document.head.appendChild(style);
+        document.body.appendChild(target);
+        const sheet = style.sheet;
+        const group = sheet.cssRules[0];
+        const rules = group.cssRules;
+        const original = rules[0];
+        const authoredText = style.textContent;
+        const initial = [
+          group.constructor.name,
+          group instanceof view.CSSSupportsRule,
+          group instanceof view.CSSConditionRule,
+          group instanceof view.CSSGroupingRule,
+          group instanceof view.CSSRule,
+          group.type,
+          view.CSSRule.SUPPORTS_RULE,
+          group.conditionText,
+          group.cssRules === rules,
+          original.parentRule === group,
+          original.parentStyleSheet === sheet,
+          view.getComputedStyle(target).display
+        ];
+        let assignmentError = '';
+        try { group.conditionText = '(display:none)'; }
+        catch (error) { assignmentError = error.name; }
+        const assignment = [group.conditionText, assignmentError];
+        const errors = [];
+        for (const invoke of [
+          () => group.insertRule(),
+          () => group.deleteRule(),
+          () => group.insertRule(`.${className} {}`, 99),
+          () => group.insertRule(`.${className} {} .other {}`, 0),
+          () => group.insertRule('@import url("x.css");', 0)
+        ]) {
+          try { invoke(); errors.push('none'); }
+          catch (error) { errors.push(error.name); }
+        }
+        const insertedIndex = group.insertRule(
+          `.${className} { display: none; }`, rules.length);
+        const inserted = rules[insertedIndex];
+        const afterInsert = [insertedIndex, rules.length,
+          inserted.parentRule === group,
+          inserted.parentStyleSheet === sheet,
+          view.getComputedStyle(target).display,
+          group.cssText.includes('display: none')];
+        group.deleteRule(insertedIndex);
+        const afterDelete = [rules.length, inserted.parentRule,
+          inserted.parentStyleSheet, view.getComputedStyle(target).display];
+        const mediaIndex = sheet.insertRule(
+          `@media (min-width:1px) { @supports selector(:focus-visible) {
+            .${className} { display: inline-grid; }
+          } }`, sheet.cssRules.length);
+        const media = sheet.cssRules[mediaIndex];
+        const nested = media.cssRules[0];
+        const nestedIndex = nested.insertRule(
+          `.${className} { display: block; }`, nested.cssRules.length);
+        const nestedState = [nestedIndex, nested.cssRules.length,
+          nested.parentRule === media,
+          nested.parentStyleSheet === sheet,
+          view.getComputedStyle(target).display,
+          media.cssText.includes('display: block')];
+        const textStable = style.textContent === authoredText;
+        style.remove();
+        target.remove();
+        return { initial, assignment, errors, afterInsert, afterDelete,
+          nestedState, textStable };
+      };
+      const frame = document.createElement('iframe');
+      document.body.appendChild(frame);
+      const value = {
+        main: exercise(document, window, 'supports-main'),
+        frame: exercise(frame.contentDocument, frame.contentWindow, 'supports-frame')
+      };
+      frame.remove();
+      return value;
+    })())JS", "native-css-supports-rule-mutation.js");
+    const auto supports_expected = [] {
+        return std::string{"{\"initial\":[\"CSSSupportsRule\",true,true,true,true,12,12,\"selector(:focus-visible)\",true,true,true,\"grid\"],\"assignment\":[\"selector(:focus-visible)\",\"\"],\"errors\":[\"TypeError\",\"TypeError\",\"IndexSizeError\",\"SyntaxError\",\"HierarchyRequestError\"],\"afterInsert\":[1,2,true,true,\"none\",true],\"afterDelete\":[1,null,null,\"grid\"],\"nestedState\":[1,2,true,true,\"block\",true],\"textStable\":true}"};
+    };
+    require(
+        supports_result == "{\"main\":" + supports_expected()
+                + ",\"frame\":" + supports_expected() + "}",
+        "CSSSupportsRule mutation diverged from the browser contract: "
+            + supports_result);
+
     execute(engine, R"JS((async () => {
       globalThis.__ownerSheetReplacement = { status: 'pending' };
       try {
@@ -2112,6 +2204,36 @@ void test_batched_stylesheet_rule_mutation_performance()
             throw new Error(`MediaList mutation latency exceeded ${mediaMutationP95}/${mediaMutationMax}`);
           }
           while (rules.length) sheet.deleteRule(0);
+          sheet.insertRule('.theme-target { width: 1px; }', 0);
+          const supportsIndex = sheet.insertRule('@supports selector(:focus-visible) {}', 1);
+          const supportsRule = rules[supportsIndex];
+          const supportsRules = supportsRule.cssRules;
+          const supportsMutationDurations = [];
+          target.className = 'theme-target supports-rule-63';
+          for (let cycle = 0; cycle < 20; cycle++) {
+            const started = performance.now();
+            while (supportsRules.length) supportsRule.deleteRule(0);
+            for (let index = 0; index < 64; index++) {
+              supportsRule.insertRule(
+                `.supports-rule-${index} { width: ${index + 1}px; }`, index);
+            }
+            if (!(supportsRule instanceof CSSSupportsRule)
+                || supportsRule.conditionText !== 'selector(:focus-visible)'
+                || supportsRule.cssRules !== supportsRules
+                || supportsRules.length !== 64
+                || getComputedStyle(target).width !== '64px') {
+              throw new Error('CSSSupportsRule mutation was not synchronously observable');
+            }
+            supportsMutationDurations.push(performance.now() - started);
+          }
+          const supportsMutations = supportsMutationDurations.slice()
+            .sort((a, b) => a - b);
+          const supportsMutationP95 = supportsMutations[18];
+          const supportsMutationMax = supportsMutations[19];
+          if (supportsMutationP95 > 16 || supportsMutationMax > 500) {
+            throw new Error(`CSSSupportsRule mutation latency exceeded ${supportsMutationP95}/${supportsMutationMax}`);
+          }
+          while (rules.length) sheet.deleteRule(0);
           const replacementPromises = [];
           const expectSyncReplacementDenial = (candidate, label) => {
             try { candidate.replaceSync(`.${label} { display: none; }`); }
@@ -2130,7 +2252,7 @@ void test_batched_stylesheet_rule_mutation_performance()
               });
           for (let cycle = 0; cycle < 100; cycle++) {
             const lifecycleStyle = document.createElement('style');
-            lifecycleStyle.textContent = '@media (min-width: 1px) {}';
+            lifecycleStyle.textContent = '@media (min-width: 1px) {} @supports selector(:focus-visible) {}';
             document.head.appendChild(lifecycleStyle);
             const lifecycleSheet = lifecycleStyle.sheet;
             const lifecycleGroup = lifecycleSheet.cssRules[0];
@@ -2145,6 +2267,17 @@ void test_batched_stylesheet_rule_mutation_performance()
                 || lifecycleGroup.conditionText !== '(min-width: 1px)') {
               throw new Error('lifecycle MediaList identity or condition was lost');
             }
+            const lifecycleSupports = lifecycleSheet.cssRules[1];
+            const supportsChildIndex = lifecycleSupports.insertRule(
+              `.lifecycle-supports-${cycle} { display: grid; }`, 0);
+            const supportsChild = lifecycleSupports.cssRules[supportsChildIndex];
+            lifecycleSupports.deleteRule(supportsChildIndex);
+            if (!(lifecycleSupports instanceof CSSSupportsRule)
+                || lifecycleSupports.conditionText !== 'selector(:focus-visible)'
+                || supportsChild.parentRule !== null
+                || supportsChild.parentStyleSheet !== null) {
+              throw new Error('lifecycle supports rule identity or ownership was lost');
+            }
             const childIndex = lifecycleGroup.insertRule(
               `.lifecycle-${cycle} { display: block; }`, 0);
             const child = lifecycleGroup.cssRules[childIndex];
@@ -2153,7 +2286,8 @@ void test_batched_stylesheet_rule_mutation_performance()
               throw new Error('deleted nested rule retained its parents');
             }
             const selectorIndex = lifecycleStyle.sheet.insertRule(
-              `.lifecycle-before-${cycle} { display: block; }`, 1);
+              `.lifecycle-before-${cycle} { display: block; }`,
+              lifecycleStyle.sheet.cssRules.length);
             const selectorRule = lifecycleStyle.sheet.cssRules[selectorIndex];
             selectorRule.selectorText = `.lifecycle-after-${cycle}`;
             if (selectorRule.selectorText !== `.lifecycle-after-${cycle}`) {
@@ -2175,7 +2309,9 @@ void test_batched_stylesheet_rule_mutation_performance()
             const realmStyle = realmDocument.createElement('style');
             const realmTarget = realmDocument.createElement('div');
             realmStyle.textContent = `@media (min-width: 1px) {
-              .realm-before-${cycle} { height: 7px; }
+              @supports selector(:focus-visible) {
+                .realm-before-${cycle} { height: 7px; }
+              }
             }`;
             realmTarget.className = `realm-after-${cycle}`;
             realmDocument.head.appendChild(realmStyle);
@@ -2183,16 +2319,20 @@ void test_batched_stylesheet_rule_mutation_performance()
             const realmGroup = realmStyle.sheet.cssRules[0];
             const realmSheet = realmStyle.sheet;
             const realmMedia = realmGroup.media;
-            const realmRule = realmGroup.cssRules[0];
+            const realmSupports = realmGroup.cssRules[0];
+            const realmRule = realmSupports.cssRules[0];
             expectSyncReplacementDenial(realmSheet, `realm-attached-${cycle}`);
             realmGroup.media = '(max-width: 1px)';
             realmMedia.appendMedium('screen');
             realmRule.selectorText = `.realm-after-${cycle}`;
             if (!(realmMedia instanceof realm.contentWindow.MediaList)
                 || realmGroup.media !== realmMedia
+                || !(realmSupports instanceof realm.contentWindow.CSSSupportsRule)
+                || realmSupports.parentRule !== realmGroup
                 || !(realmRule instanceof realm.contentWindow.CSSStyleRule)
-                || realmRule.selectorText !== `.realm-after-${cycle}`) {
-              throw new Error('iframe MediaList or selector mutation lost realm ownership');
+                || realmRule.selectorText !== `.realm-after-${cycle}`
+                || realm.contentWindow.getComputedStyle(realmTarget).height !== '7px') {
+              throw new Error('iframe MediaList, supports, or selector mutation lost realm ownership');
             }
             realm.remove();
             replacementPromises.push(expectAsyncReplacementDenial(
@@ -2229,6 +2369,8 @@ void test_batched_stylesheet_rule_mutation_performance()
                 selectorMutations: selectorMutationDurations.length,
                 mediaMutationP95, mediaMutationMax,
                 mediaMutations: mediaMutationDurations.length,
+                supportsMutationP95, supportsMutationMax,
+                supportsMutations: supportsMutationDurations.length,
                 replacementRejections: replacementPromises.length,
                 lifecycleCycles: 100,
                 realmLifecycleCycles: 100,
@@ -2307,7 +2449,7 @@ void test_batched_stylesheet_rule_mutation_performance()
     }
     require(rss_before == 0U || rss_after <= rss_before + 64U * 1024U * 1024U,
         "stylesheet mutation workload exceeded the 64 MiB peak RSS budget");
-    require(engine_after.layout_passes <= engine_before.layout_passes + 95U
+    require(engine_after.layout_passes <= engine_before.layout_passes + 120U
             && engine_after.published_scenes <= engine_before.published_scenes + 2U
             && memory_after.pending_scene_count <= 2U
             && work_after.timers_fired >= work_before.timers_fired + 2U,

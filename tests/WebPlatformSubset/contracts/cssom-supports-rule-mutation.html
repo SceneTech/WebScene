@@ -1,0 +1,209 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>CSSSupportsRule grouping mutation stays live and synchronous</title>
+<body>
+<script>
+  const state = window.__webSceneWptState = {
+    complete: false, harness: null, results: [], errors: [], diagnostics: []
+  };
+
+  function record(name, error) {
+    state.results.push({
+      name,
+      status: error ? "FAIL" : "PASS",
+      message: error ? String(error && error.message || error) : null,
+      stack: error && error.stack ? String(error.stack) : null
+    });
+  }
+
+  function exercise(document, view, prefix) {
+    const style = document.createElement("style");
+    const target = document.createElement("div");
+    style.textContent = `@supports selector(:focus-visible) {
+      .${prefix} { display: grid; color: rgb(17, 23, 31); }
+    }`;
+    target.className = prefix;
+    document.head.appendChild(style);
+    document.body.appendChild(target);
+
+    const sheet = style.sheet;
+    const group = sheet.cssRules[0];
+    const rules = group.cssRules;
+    const original = rules[0];
+    const authoredText = style.textContent;
+    const initial = {
+      constructor: group.constructor.name,
+      supports: typeof view.CSSSupportsRule === "function"
+        && group instanceof view.CSSSupportsRule,
+      condition: typeof view.CSSConditionRule === "function"
+        && group instanceof view.CSSConditionRule,
+      grouping: typeof view.CSSGroupingRule === "function"
+        && group instanceof view.CSSGroupingRule,
+      rule: group instanceof view.CSSRule,
+      type: group.type,
+      constant: view.CSSRule.SUPPORTS_RULE,
+      conditionText: group.conditionText,
+      identity: group.cssRules === rules,
+      childParentRule: original.parentRule === group,
+      childParentSheet: original.parentStyleSheet === sheet,
+      display: view.getComputedStyle(target).display
+    };
+
+    let assignmentError = "";
+    try { group.conditionText = "(display:none)"; }
+    catch (error) { assignmentError = error.name; }
+    const readonly = {
+      conditionText: group.conditionText,
+      assignmentError,
+      display: view.getComputedStyle(target).display
+    };
+
+    const errors = {};
+    for (const [name, invoke] of Object.entries({
+      missingInsert: () => group.insertRule(),
+      missingDelete: () => group.deleteRule(),
+      range: () => group.insertRule(`.${prefix} {}`, 99),
+      multiple: () => group.insertRule(`.${prefix} {} .other {}`, 0),
+      imported: () => group.insertRule('@import url("x.css");', 0)
+    })) {
+      try { invoke(); errors[name] = "none"; }
+      catch (error) { errors[name] = error.name; }
+    }
+
+    const index = group.insertRule(
+      `.${prefix} { display: none; }`, rules.length);
+    const inserted = rules[index];
+    const afterInsert = {
+      index,
+      length: rules.length,
+      identity: group.cssRules === rules,
+      childParentRule: inserted.parentRule === group,
+      childParentSheet: inserted.parentStyleSheet === sheet,
+      display: view.getComputedStyle(target).display,
+      serialized: group.cssText.includes("display: none"),
+      textStable: style.textContent === authoredText
+    };
+
+    group.deleteRule(index);
+    const afterDelete = {
+      length: rules.length,
+      parentRule: inserted.parentRule,
+      parentStyleSheet: inserted.parentStyleSheet,
+      display: view.getComputedStyle(target).display,
+      textStable: style.textContent === authoredText
+    };
+
+    const mediaIndex = sheet.insertRule(
+      `@media (min-width:1px) { @supports selector(:focus-visible) {
+        .${prefix} { display: inline-grid; }
+      } }`, sheet.cssRules.length);
+    const media = sheet.cssRules[mediaIndex];
+    const nested = media.cssRules[0];
+    const nestedIndex = nested.insertRule(
+      `.${prefix} { display: block; }`, nested.cssRules.length);
+    const nestedMutation = {
+      index: nestedIndex,
+      constructor: nested.constructor.name,
+      supports: nested instanceof view.CSSSupportsRule,
+      parentRule: nested.parentRule === media,
+      parentStyleSheet: nested.parentStyleSheet === sheet,
+      length: nested.cssRules.length,
+      display: view.getComputedStyle(target).display,
+      parentSerialized: media.cssText.includes("display: block"),
+      textStable: style.textContent === authoredText
+    };
+
+    sheet.deleteRule(0);
+    group.insertRule(`.${prefix} { display: none; }`, group.cssRules.length);
+    const detached = {
+      parentStyleSheet: group.parentStyleSheet,
+      conditionText: group.conditionText,
+      length: group.cssRules.length,
+      serialized: group.cssText.includes("display: none"),
+      display: view.getComputedStyle(target).display,
+      textStable: style.textContent === authoredText
+    };
+
+    style.remove();
+    target.remove();
+    return { initial, readonly, errors, afterInsert, afterDelete,
+      nestedMutation, detached };
+  }
+
+  try {
+    const frame = document.createElement("iframe");
+    document.body.appendChild(frame);
+    const main = exercise(document, window, "supports-main");
+    const nested = exercise(
+      frame.contentDocument, frame.contentWindow, "supports-frame");
+    const both = predicate => predicate(main) && predicate(nested);
+
+    record("supports rules expose browser-shaped conditional grouping identity",
+      both(value => value.initial.constructor === "CSSSupportsRule"
+          && value.initial.supports && value.initial.condition
+          && value.initial.grouping && value.initial.rule
+          && value.initial.type === 12 && value.initial.constant === 12
+          && value.initial.conditionText === "selector(:focus-visible)"
+          && value.initial.identity && value.initial.childParentRule
+          && value.initial.childParentSheet && value.initial.display === "grid")
+        ? null : new Error(JSON.stringify({ main: main.initial, nested: nested.initial })));
+    record("conditionText is readonly and keeps the active condition",
+      both(value => value.readonly.conditionText === "selector(:focus-visible)"
+          && value.readonly.assignmentError === ""
+          && value.readonly.display === "grid")
+        ? null : new Error(JSON.stringify({ main: main.readonly, nested: nested.readonly })));
+    record("grouping mutation reports browser exception names",
+      both(value => value.errors.missingInsert === "TypeError"
+          && value.errors.missingDelete === "TypeError"
+          && value.errors.range === "IndexSizeError"
+          && value.errors.multiple === "SyntaxError"
+          && value.errors.imported === "HierarchyRequestError")
+        ? null : new Error(JSON.stringify({ main: main.errors, nested: nested.errors })));
+    record("insertRule and deleteRule publish synchronously with live identities",
+      both(value => value.afterInsert.index === 1
+          && value.afterInsert.length === 2 && value.afterInsert.identity
+          && value.afterInsert.childParentRule
+          && value.afterInsert.childParentSheet
+          && value.afterInsert.display === "none"
+          && value.afterInsert.serialized && value.afterInsert.textStable
+          && value.afterDelete.length === 1
+          && value.afterDelete.parentRule === null
+          && value.afterDelete.parentStyleSheet === null
+          && value.afterDelete.display === "grid"
+          && value.afterDelete.textStable)
+        ? null : new Error(JSON.stringify({ main, nested })));
+    record("supports mutation reserializes and publishes through a media parent",
+      both(value => value.nestedMutation.index === 1
+          && value.nestedMutation.constructor === "CSSSupportsRule"
+          && value.nestedMutation.supports && value.nestedMutation.parentRule
+          && value.nestedMutation.parentStyleSheet
+          && value.nestedMutation.length === 2
+          && value.nestedMutation.display === "block"
+          && value.nestedMutation.parentSerialized
+          && value.nestedMutation.textStable)
+        ? null : new Error(JSON.stringify({
+            main: main.nestedMutation, nested: nested.nestedMutation
+          })));
+    record("detached supports groups mutate without recascading their former document",
+      both(value => value.detached.parentStyleSheet === null
+          && value.detached.conditionText === "selector(:focus-visible)"
+          && value.detached.length === 2 && value.detached.serialized
+          && value.detached.display === "block" && value.detached.textStable)
+        ? null : new Error(JSON.stringify({ main: main.detached, nested: nested.detached })));
+    state.diagnostics.push(JSON.stringify({ main, nested }));
+    frame.remove();
+  } catch (error) {
+    record("CSSSupportsRule mutation setup", error);
+  }
+
+  const failure = state.results.find(result => result.status !== "PASS");
+  state.harness = failure
+    ? { status: 1, message: failure.message, stack: failure.stack }
+    : { status: 0, message: null, stack: null };
+  state.complete = true;
+  const evidence = document.createElement("pre");
+  evidence.id = "cssom-supports-rule-mutation-evidence";
+  evidence.hidden = true;
+  evidence.textContent = JSON.stringify(state);
+  document.body.appendChild(evidence);
+</script>

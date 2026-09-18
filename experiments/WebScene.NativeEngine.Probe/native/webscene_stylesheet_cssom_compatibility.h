@@ -26,6 +26,7 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
   const groupingRuleInstances = new WeakSet();
   const conditionRuleInstances = new WeakSet();
   const mediaRuleInstances = new WeakSet();
+  const supportsRuleInstances = new WeakSet();
   const mediaListInstances = new WeakSet();
   const ruleListInstances = new WeakSet();
   const interfaceConstructor = (name, instances, parent) => {
@@ -49,6 +50,8 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
     'CSSConditionRule', conditionRuleInstances, CSSGroupingRuleInterface);
   const CSSMediaRuleInterface = interfaceConstructor(
     'CSSMediaRule', mediaRuleInstances, CSSConditionRuleInterface);
+  const CSSSupportsRuleInterface = interfaceConstructor(
+    'CSSSupportsRule', supportsRuleInstances, CSSConditionRuleInterface);
   const MediaListInterface = interfaceConstructor('MediaList', mediaListInstances);
   const CSSRuleListInterface = interfaceConstructor('CSSRuleList', ruleListInstances);
   const installInterfaces = view => {
@@ -58,11 +61,16 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
       ['CSSGroupingRule', CSSGroupingRuleInterface],
       ['CSSConditionRule', CSSConditionRuleInterface],
       ['CSSMediaRule', CSSMediaRuleInterface],
+      ['CSSSupportsRule', CSSSupportsRuleInterface],
       ['MediaList', MediaListInterface],
       ['CSSRuleList', CSSRuleListInterface]
     ]) {
       if (typeof view[name] !== 'function')
         Object.defineProperty(view, name, { value: constructor, configurable: true });
+    }
+    for (const target of [view.CSSRule, view.CSSRule?.prototype]) {
+      if (target && !('SUPPORTS_RULE' in target)) Object.defineProperty(
+        target, 'SUPPORTS_RULE', { value: 12, enumerable: true });
     }
   };
   // Split only at top-level CSS rule boundaries. Quoted strings, escaped
@@ -257,16 +265,24 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
   const makeRule = (state, parsed, containingRule = null) => {
     let cssText = parsed.cssText;
     let selectorText = parsed.selectorText;
-    let parent = state.sheet;
+    let parent = containingRule ? containingRule.parentStyleSheet : state.sheet;
     let style;
     let serializeGroup;
     const mediaMatch = /^@media(?:\s+([^\{]*?))?\s*\{/i.exec(parsed.cssText);
+    const supportsMatch = /^@supports(?:\s+([^\{]*?))?\s*\{/i.exec(parsed.cssText);
+    const groupingMatch = mediaMatch || supportsMatch;
     const rule = {};
     ruleInstances.add(rule);
     if (mediaMatch) {
       groupingRuleInstances.add(rule);
       conditionRuleInstances.add(rule);
       mediaRuleInstances.add(rule);
+      Object.setPrototypeOf(rule, CSSMediaRuleInterface.prototype);
+    } else if (supportsMatch) {
+      groupingRuleInstances.add(rule);
+      conditionRuleInstances.add(rule);
+      supportsRuleInstances.add(rule);
+      Object.setPrototypeOf(rule, CSSSupportsRuleInterface.prototype);
     } else if (parsed.selectorText !== undefined) {
       styleRuleInstances.add(rule);
     }
@@ -275,14 +291,17 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
       parentStyleSheet: { enumerable: true, get: () => parent },
       parentRule: { enumerable: true, get: () => parent ? containingRule : null }
     });
-    if (mediaMatch) {
+    if (groupingMatch) {
       let children = splitRules(parsed.body || '').map(child => makeRule(state, child, rule));
-      let conditionText = parseMediaList(mediaMatch[1] || '').join(', ');
+      const isMedia = Boolean(mediaMatch);
+      let conditionText = isMedia
+        ? parseMediaList(mediaMatch[1] || '').join(', ')
+        : (supportsMatch[1] || '').trim();
       const attached = () => parent && (containingRule
         ? containingRule.cssRules && Array.from(containingRule.cssRules).includes(rule)
         : state.rules.includes(rule));
       const serialize = () => {
-        cssText = `@media ${conditionText} {${children.map(child => child.cssText).join('')}}`;
+        cssText = `@${isMedia ? 'media' : 'supports'} ${conditionText} {${children.map(child => child.cssText).join('')}}`;
       };
       const commitCondition = value => {
         const normalized = parseMediaList(value).join(', ');
@@ -295,25 +314,9 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
       };
       serializeGroup = serialize;
       const list = makeList(() => children, () => synchronize(state));
-      const media = makeMediaList(() => conditionText, commitCondition);
-      Object.defineProperties(rule, {
-        type: { enumerable: true, value: 4 },
-        conditionText: {
-          enumerable: true,
-          get: () => conditionText,
-          set(value) {
-            synchronize(state);
-            commitCondition(value);
-          }
-        },
-        media: {
-          enumerable: true,
-          get: () => media,
-          set(value) {
-            synchronize(state);
-            media.mediaText = value;
-          }
-        },
+      const descriptors = {
+        type: { enumerable: true, value: isMedia ? 4 : 12 },
+        conditionText: { enumerable: true, get: () => conditionText },
         cssRules: { enumerable: true, get: () => list },
         insertRule: { writable: true, value(ruleText, index = 0) {
           if (arguments.length === 0) throw new TypeError('A CSS rule is required');
@@ -323,9 +326,11 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
           const parsedChildren = splitRules(text(ruleText));
           if (parsedChildren.length !== 1) exception('Exactly one CSS rule is required', 'SyntaxError');
           if (/^@(import|namespace)\b/i.test(parsedChildren[0].cssText))
-            exception('Imported and namespace rules require native CSSOM support', 'NotSupportedError');
+            exception('Imported and namespace rules are not allowed in grouping rules', 'HierarchyRequestError');
           children.splice(index, 0, makeRule(state, parsedChildren[0], rule));
           serialize();
+          if (parent && containingRule?.__webSceneSerialize)
+            containingRule.__webSceneSerialize();
           if (attached()) publish(state);
           return index;
         } },
@@ -336,13 +341,31 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
           if (index >= children.length) exception('Rule index is out of bounds', 'IndexSizeError');
           children.splice(index, 1)[0].detach();
           serialize();
+          if (parent && containingRule?.__webSceneSerialize)
+            containingRule.__webSceneSerialize();
           if (attached()) publish(state);
         } },
         detach: { value: () => {
           parent = null;
           for (const child of children) child.detach();
         } }
-      });
+      };
+      if (isMedia) {
+        const media = makeMediaList(() => conditionText, commitCondition);
+        descriptors.conditionText.set = value => {
+          synchronize(state);
+          commitCondition(value);
+        };
+        descriptors.media = {
+          enumerable: true,
+          get: () => media,
+          set(value) {
+            synchronize(state);
+            media.mediaText = value;
+          }
+        };
+      }
+      Object.defineProperties(rule, descriptors);
       serialize();
     } else if (parsed.selectorText !== undefined) {
       Object.defineProperties(rule, {
@@ -412,7 +435,7 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
     } else {
       Object.defineProperty(rule, 'detach', { value: () => { parent = null; } });
     }
-    if (mediaMatch) Object.defineProperty(rule, '__webSceneSerialize', {
+    if (groupingMatch) Object.defineProperty(rule, '__webSceneSerialize', {
       value: () => {
         serializeGroup();
         if (containingRule?.__webSceneSerialize) containingRule.__webSceneSerialize();

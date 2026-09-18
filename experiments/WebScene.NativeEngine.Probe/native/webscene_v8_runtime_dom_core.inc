@@ -785,6 +785,11 @@
 
     uint32_t cascade_layer_scope_id(uint32_t stylesheet_owner_id)
     {
+        if (const auto adopted = adopted_stylesheet_owner_scopes.find(
+                stylesheet_owner_id);
+            adopted != adopted_stylesheet_owner_scopes.end()) {
+            return adopted->second;
+        }
         if (stylesheet_owner_id != 0U) {
             auto* owner = document.find_by_native_id(stylesheet_owner_id);
             if (owner != nullptr) {
@@ -808,6 +813,141 @@
         }
         return active_css_cascade_root == nullptr
             ? document.body().id : active_css_cascade_root->id;
+    }
+
+    uint32_t allocate_adopted_stylesheet_owner_id()
+    {
+        while (next_adopted_stylesheet_owner_id != 0U) {
+            const auto candidate = next_adopted_stylesheet_owner_id++;
+            if (document.find_by_native_id(candidate) == nullptr
+                && !adopted_stylesheet_owner_scopes.contains(candidate)) {
+                return candidate;
+            }
+        }
+        next_adopted_stylesheet_owner_id = 0xf0000000U;
+        return allocate_adopted_stylesheet_owner_id();
+    }
+
+    void erase_adopted_stylesheet_rules(
+        adopted_stylesheet_publication& publication)
+    {
+        std::unordered_set<uint32_t> owners;
+        for (const auto& entry : publication.entries) owners.insert(entry.owner_id);
+        std::erase_if(css_rules, [&](const auto& rule) {
+            return owners.contains(rule.stylesheet_owner_id);
+        });
+        for (const auto& entry : publication.entries) {
+            rebuild_cascade_layer_order_for_stylesheet(entry.owner_id, {});
+            adopted_stylesheet_owner_scopes.erase(entry.owner_id);
+        }
+    }
+
+    void append_adopted_stylesheet_rules(
+        adopted_stylesheet_publication& publication)
+    {
+        for (auto& entry : publication.entries) {
+            adopted_stylesheet_owner_scopes.insert_or_assign(
+                entry.owner_id, publication.root_id);
+            if (!entry.source.empty()) {
+                add_stylesheet(
+                    entry.source,
+                    publication.base_address,
+                    entry.owner_id,
+                    publication.shadow_scope_root_id);
+            }
+        }
+    }
+
+    void reappend_adopted_stylesheets_for_cascade_root(uint32_t cascade_root_id)
+    {
+        std::vector<adopted_stylesheet_publication*> publications;
+        for (auto& [root_id, publication] : adopted_stylesheet_publications) {
+            static_cast<void>(root_id);
+            if (publication.cascade_root_id == cascade_root_id) {
+                publications.push_back(&publication);
+            }
+        }
+        std::sort(publications.begin(), publications.end(), [](const auto* left, const auto* right) {
+            return left->root_id < right->root_id;
+        });
+        for (auto* publication : publications) erase_adopted_stylesheet_rules(*publication);
+        for (auto* publication : publications) append_adopted_stylesheet_rules(*publication);
+    }
+
+    static void publish_adopted_stylesheets(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        auto* root = unwrap_node(info.This());
+        if (self == nullptr || root == nullptr
+            || (root != &self->document.body()
+                && !self->document.is_shadow_root(*root))
+            || info.Length() < 1 || !info[0]->IsArray()) {
+            info.GetReturnValue().Set(v8::False(info.GetIsolate()));
+            return;
+        }
+        constexpr auto maximum_sheets = uint32_t{1024U};
+        constexpr auto maximum_bytes = size_t{32U * 1024U * 1024U};
+        const auto input = info[0].As<v8::Array>();
+        if (input->Length() > maximum_sheets) {
+            info.GetReturnValue().Set(v8::False(info.GetIsolate()));
+            return;
+        }
+        std::vector<std::string> sources;
+        sources.reserve(input->Length());
+        size_t bytes = 0U;
+        const auto context = info.GetIsolate()->GetCurrentContext();
+        for (uint32_t index = 0; index < input->Length(); ++index) {
+            v8::Local<v8::Value> value;
+            v8::Local<v8::String> string;
+            if (!input->Get(context, index).ToLocal(&value)
+                || !value->ToString(context).ToLocal(&string)) {
+                return;
+            }
+            auto source = to_wtf8(info.GetIsolate(), string);
+            if (source.size() > maximum_bytes - std::min(bytes, maximum_bytes)) {
+                info.GetReturnValue().Set(v8::False(info.GetIsolate()));
+                return;
+            }
+            bytes += source.size();
+            sources.push_back(std::move(source));
+        }
+
+        self->flush_pending_stylesheet_replacements();
+        auto* cascade_root = self->css_cascade_root_for_node(*root);
+        if (cascade_root == nullptr) {
+            info.GetReturnValue().Set(v8::False(info.GetIsolate()));
+            return;
+        }
+        auto* previous_root = const_cast<dom_node*>(self->active_css_cascade_root);
+        self->activate_css_cascade(cascade_root);
+        auto& publication = self->adopted_stylesheet_publications[root->id];
+        self->erase_adopted_stylesheet_rules(publication);
+        publication.root_id = root->id;
+        publication.cascade_root_id = cascade_root->id;
+        publication.shadow_scope_root_id = self->document.is_shadow_root(*root)
+            ? root->id : 0U;
+        publication.base_address = self->effective_document_base(cascade_root);
+        while (publication.entries.size() < sources.size()) {
+            publication.entries.push_back({
+                self->allocate_adopted_stylesheet_owner_id(), {}});
+        }
+        publication.entries.resize(sources.size());
+        for (size_t index = 0; index < sources.size(); ++index) {
+            publication.entries[index].source = std::move(sources[index]);
+        }
+        if (publication.entries.empty()) {
+            self->adopted_stylesheet_publications.erase(root->id);
+        } else {
+            self->append_adopted_stylesheet_rules(publication);
+        }
+        self->rebuild_css_rule_indexes_and_root_variables();
+        self->schedule_style_recascade(*cascade_root, true, "adopted-stylesheet-change");
+        self->document.mark_dirty();
+        if (previous_root != nullptr && previous_root != cascade_root) {
+            self->activate_css_cascade(previous_root);
+        }
+        info.GetReturnValue().Set(v8::True(info.GetIsolate()));
     }
 
     std::string cascade_layer_registration_key(
@@ -1625,6 +1765,11 @@
         for (const auto id : node_ids) {
             erase_pending_stylesheet_replacement(id);
             stylesheet_cssom_sources.erase(id);
+            if (auto adopted = adopted_stylesheet_publications.find(id);
+                adopted != adopted_stylesheet_publications.end()) {
+                erase_adopted_stylesheet_rules(adopted->second);
+                adopted_stylesheet_publications.erase(adopted);
+            }
         }
         std::erase_if(canvas_states, [&](const auto& entry) {
             return node_ids.contains(static_cast<uint32_t>(entry.first));

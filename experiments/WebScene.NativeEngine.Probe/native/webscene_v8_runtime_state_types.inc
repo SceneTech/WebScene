@@ -1106,3 +1106,16 @@
     {
         return optional_isolate_locker(isolate, shared_isolate != nullptr);
     }
+    struct adopted_stylesheet_entry final
+    {
+        uint32_t owner_id{0U};
+        std::string source;
+    };
+    struct adopted_stylesheet_publication final
+    {
+        uint32_t root_id{0U};
+        uint32_t cascade_root_id{0U};
+        uint32_t shadow_scope_root_id{0U};
+        std::string base_address;
+        std::vector<adopted_stylesheet_entry> entries;
+    };

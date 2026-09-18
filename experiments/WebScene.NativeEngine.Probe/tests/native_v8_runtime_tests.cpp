@@ -195,6 +195,10 @@ int main()
             test_batched_stylesheet_rule_mutation_performance();
             return 0;
         }
+        if (selected == "adopted-stylesheets") {
+            test_adopted_stylesheet_multi_root_contract_and_lifecycle();
+            return 0;
+        }
         if (selected == "iframe-sandbox") {
             test_iframe_sandbox_dom_token_list_security_and_lifecycle_gate();
             return 0;

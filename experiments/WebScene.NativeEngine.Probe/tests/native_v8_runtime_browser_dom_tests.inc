@@ -2245,6 +2245,248 @@ void test_native_mutable_stylesheet_cssom(webscene_engine* engine)
                 "native-constructed-stylesheet-contract-result.js"));
 }
 
+void test_adopted_stylesheet_multi_root_contract_and_lifecycle()
+{
+    auto* engine = webscene_engine_create(0);
+    require(engine != nullptr, "adopted stylesheet engine creation failed");
+    resize(engine, 800, 600, 1U);
+    wait_for_consumed_inputs(
+        engine, 1U, "adopted stylesheet viewport was not consumed");
+    const webscene_scene_view* initial_scene = nullptr;
+    for (auto attempt = 0; attempt < 100 && initial_scene == nullptr; ++attempt) {
+        initial_scene = webscene_engine_acquire_latest_scene(engine);
+        if (initial_scene == nullptr) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+    }
+    require(initial_scene != nullptr,
+        "adopted stylesheet initial scene was not published");
+    require(webscene_scene_acknowledge(initial_scene) != 0,
+        "adopted stylesheet initial scene acknowledgement failed");
+    webscene_scene_release(initial_scene);
+    require(webscene_engine_set_runtime_work_metrics_enabled(engine, 1U) != 0,
+        "adopted stylesheet runtime-work metrics could not be enabled");
+    webscene_engine_metrics engine_before{};
+    webscene_engine_get_metrics(engine, &engine_before);
+    webscene_runtime_work_metrics work_before{
+        sizeof(webscene_runtime_work_metrics)};
+    require(webscene_engine_get_runtime_work_metrics(engine, &work_before) != 0,
+        "adopted stylesheet baseline work metrics were unavailable");
+    webscene_engine_memory_metrics memory_before{
+        sizeof(webscene_engine_memory_metrics)};
+    require(webscene_engine_get_memory_metrics(engine, &memory_before) != 0,
+        "adopted stylesheet baseline memory metrics were unavailable");
+    const auto rss_before = file_system_access_test_peak_rss_bytes();
+
+    const auto result = evaluate(engine, R"JS((() => {
+      const failures = [];
+      const expect = (condition, message) => {
+        if (!condition) failures.push(message);
+      };
+      const errorName = callback => {
+        try { callback(); return 'none'; }
+        catch (error) { return error.name; }
+      };
+      const author = document.createElement('style');
+      author.textContent = '.adopted-target { color: rgb(255, 0, 0); width: 10px; }';
+      document.head.appendChild(author);
+      const target = document.createElement('div');
+      target.className = 'adopted-target';
+      document.body.appendChild(target);
+      const host = document.createElement('section');
+      document.body.appendChild(host);
+      const shadow = host.attachShadow({ mode: 'open' });
+      shadow.innerHTML = '<style>.adopted-target{color:rgb(1,2,3)}</style>'
+        + '<div class="adopted-target"></div>';
+      const shadowTarget = shadow.querySelector('.adopted-target');
+      const first = new CSSStyleSheet();
+      const second = new CSSStyleSheet();
+      first.replaceSync('.adopted-target { color: rgb(0, 0, 255); width: 20px; }');
+      second.replaceSync('.adopted-target { color: rgb(0, 128, 0); width: 30px; }');
+      const documentList = document.adoptedStyleSheets;
+      expect(Array.isArray(documentList), 'document list is not an Array');
+      expect(documentList === document.adoptedStyleSheets, 'document list lost SameObject');
+      document.adoptedStyleSheets = [first, second];
+      expect(document.adoptedStyleSheets === documentList, 'assignment replaced list identity');
+      expect(getComputedStyle(target).color === 'rgb(0, 128, 0)',
+        'adopted order or author-after-adopted cascade diverged');
+      documentList.reverse();
+      expect(getComputedStyle(target).color === 'rgb(0, 0, 255)',
+        'observable reverse did not republish order');
+      documentList.splice(0, documentList.length, first, second, first);
+      expect(documentList.length === 3 && getComputedStyle(target).color === 'rgb(0, 0, 255)',
+        'duplicates or splice ordering diverged');
+      documentList.pop();
+      documentList.length = 12;
+      documentList[8] = first;
+      expect(documentList.length === 2,
+        'observable list accepted a length gap');
+      documentList[2] = first;
+      expect(documentList.length === 3 && documentList[2] === first,
+        'observable list rejected next-index append');
+      delete documentList[1];
+      expect(documentList.length === 3 && documentList[1] === second,
+        'observable list deleted a non-final index');
+      delete documentList[2];
+      expect(documentList.length === 2,
+        'observable list did not delete its final index');
+      documentList.splice(0, documentList.length, first, second);
+      second.cssRules[0].style.color = 'rgb(255, 255, 0)';
+      expect(getComputedStyle(target).color === 'rgb(255, 255, 0)',
+        'live declaration mutation did not invalidate adopter');
+      second.disabled = true;
+      expect(getComputedStyle(target).color === 'rgb(0, 0, 255)',
+        'disabled constructed sheet remained published');
+      second.disabled = false;
+      second.media.mediaText = 'print';
+      expect(getComputedStyle(target).color === 'rgb(0, 0, 255)',
+        'nonmatching adopted media remained active');
+      second.media.mediaText = 'all';
+      expect(getComputedStyle(target).color === 'rgb(255, 255, 0)',
+        'media mutation did not restore publication');
+
+      const shadowList = shadow.adoptedStyleSheets;
+      shadow.adoptedStyleSheets = [first];
+      expect(Array.isArray(shadowList) && shadowList === shadow.adoptedStyleSheets,
+        'shadow list identity diverged');
+      expect(getComputedStyle(shadowTarget).color === 'rgb(0, 0, 255)',
+        'shadow-root publication did not override shadow author style');
+      host.remove();
+      document.body.appendChild(host);
+      expect(shadow.adoptedStyleSheets[0] === first
+          && getComputedStyle(shadowTarget).color === 'rgb(0, 0, 255)',
+        'disconnect/reconnect lost shadow adoption');
+      shadowList.length = 0;
+      expect(getComputedStyle(shadowTarget).color === 'rgb(1, 2, 3)',
+        'shadow adoption removal did not restore author style');
+
+      const ownerStyle = document.createElement('style');
+      document.head.appendChild(ownerStyle);
+      const errors = [
+        errorName(() => document.adoptedStyleSheets = [ownerStyle.sheet]),
+        errorName(() => document.adoptedStyleSheets = [42])
+      ];
+      expect(errors.join('|') === 'NotAllowedError|TypeError',
+        `adoption validation diverged: ${errors.join('|')}`);
+      expect(documentList.length === 2,
+        'failed assignment partially mutated the observable list');
+      const frame = document.createElement('iframe');
+      document.body.appendChild(frame);
+      if (typeof frame.contentWindow.CSSStyleSheet === 'function') {
+        const foreign = new frame.contentWindow.CSSStyleSheet();
+        expect(errorName(() => document.adoptedStyleSheets = [foreign])
+            === 'NotAllowedError',
+          'cross-document constructed sheet did not reject with NotAllowedError');
+      }
+      frame.remove();
+
+      const durations = [];
+      const performanceSheet = new CSSStyleSheet();
+      performanceSheet.replaceSync(Array.from({ length: 64 }, (_, index) =>
+        `.adopted-perf-${index}{width:${index + 1}px}`).join('\n'));
+      documentList.push(performanceSheet);
+      shadowList.push(performanceSheet);
+      for (let cycle = 0; cycle < 20; cycle++) {
+        const started = performance.now();
+        performanceSheet.replaceSync(Array.from({ length: 64 }, (_, index) =>
+          `.adopted-perf-${index}{width:${index + cycle + 1}px}`).join('\n'));
+        durations.push(performance.now() - started);
+      }
+      const ordered = durations.slice().sort((left, right) => left - right);
+      const p95 = ordered[18], max = ordered[19];
+      expect(p95 <= 50 && max <= 500,
+        `adopted replacement latency exceeded ${p95}/${max}`);
+      document.adoptedStyleSheets = [];
+      shadow.adoptedStyleSheets = [];
+      for (let cycle = 0; cycle < 100; cycle++) {
+        const lifecycleHost = document.createElement('div');
+        document.body.appendChild(lifecycleHost);
+        const lifecycleRoot = lifecycleHost.attachShadow({ mode: 'open' });
+        lifecycleRoot.innerHTML = `<div class="lifecycle-${cycle}"></div>`;
+        const lifecycleSheet = new CSSStyleSheet();
+        lifecycleSheet.replaceSync(
+          `.lifecycle-${cycle}{display:block;width:${cycle + 1}px}`);
+        lifecycleRoot.adoptedStyleSheets = [lifecycleSheet];
+        expect(getComputedStyle(lifecycleRoot.firstChild).width === `${cycle + 1}px`,
+          `lifecycle publication ${cycle} diverged`);
+        lifecycleRoot.adoptedStyleSheets = [];
+        lifecycleHost.remove();
+      }
+      ownerStyle.remove();
+      host.remove();
+      target.remove();
+      author.remove();
+      if (failures.length) throw new Error(failures.join('; '));
+      return { status: 'passed', errors, p95, max, cycles: 100 };
+    })())JS", "adopted-stylesheet-contract.js");
+    require(result.find(R"("status":"passed")") != std::string::npos,
+        "adopted stylesheet contract failed: " + result);
+    for (auto attempt = 0; attempt < 100; ++attempt) {
+        webscene_engine_metrics current{};
+        webscene_engine_get_metrics(engine, &current);
+        if (current.published_scenes > engine_before.published_scenes) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    const webscene_scene_view* final_scene = nullptr;
+    for (auto attempt = 0; attempt < 100 && final_scene == nullptr; ++attempt) {
+        final_scene = webscene_engine_acquire_latest_scene(engine);
+        if (final_scene == nullptr) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+    }
+    require(final_scene != nullptr,
+        "adopted stylesheet changes did not publish a scene");
+    require(webscene_scene_acknowledge(final_scene) != 0,
+        "adopted stylesheet final scene acknowledgement failed");
+    webscene_scene_release(final_scene);
+    webscene_engine_metrics engine_after{};
+    webscene_engine_get_metrics(engine, &engine_after);
+    webscene_runtime_work_metrics work_after{
+        sizeof(webscene_runtime_work_metrics)};
+    require(webscene_engine_get_runtime_work_metrics(engine, &work_after) != 0,
+        "adopted stylesheet final work metrics were unavailable");
+    std::cout << "Adopted stylesheet publication work: layout="
+              << engine_before.layout_passes << "/" << engine_after.layout_passes
+              << " scenes=" << engine_before.published_scenes << "/"
+              << engine_after.published_scenes << " builds="
+              << work_before.scene_builds << "/" << work_after.scene_builds << '\n';
+    require(engine_after.layout_passes <= engine_before.layout_passes + 1024U,
+        "adopted stylesheet invalidation did not remain bounded");
+    require(engine_after.published_scenes > engine_before.published_scenes
+            && work_after.scene_builds <= work_before.scene_builds + 16U,
+        "adopted stylesheet scene publication did not coalesce");
+    require(webscene_engine_request_low_memory(engine) != 0,
+        "adopted stylesheet low-memory request was rejected");
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    webscene_engine_memory_metrics memory_after{
+        sizeof(webscene_engine_memory_metrics)};
+    require(webscene_engine_get_memory_metrics(engine, &memory_after) != 0,
+        "adopted stylesheet final memory metrics were unavailable");
+    const auto rss_after = file_system_access_test_peak_rss_bytes();
+    require(memory_after.native_css_rule_count
+            <= memory_before.native_css_rule_count + 8U,
+        "adopted stylesheet teardown retained native CSS rules");
+    require(memory_after.v8_used_heap_bytes
+            <= memory_before.v8_used_heap_bytes + 12U * 1024U * 1024U,
+        "100 adopted stylesheet cycles retained more than 12 MiB of V8 heap");
+    require(rss_before == 0U
+            || rss_after <= rss_before + 96U * 1024U * 1024U,
+        "100 adopted stylesheet cycles increased peak RSS by more than 96 MiB");
+    std::cout << "Adopted stylesheet gate: " << result
+              << " rules=" << memory_before.native_css_rule_count << "/"
+              << memory_after.native_css_rule_count
+              << " heap=" << memory_before.v8_used_heap_bytes << "/"
+              << memory_after.v8_used_heap_bytes
+              << " rss=" << rss_before << "/" << rss_after
+              << " layout=" << engine_before.layout_passes << "/"
+              << engine_after.layout_passes
+              << " scenes=" << engine_before.published_scenes << "/"
+              << engine_after.published_scenes
+              << " builds=" << work_before.scene_builds << "/"
+              << work_after.scene_builds << '\n';
+    webscene_engine_destroy(engine);
+}
+
 void test_batched_stylesheet_rule_mutation_performance()
 {
     auto* engine = webscene_engine_create(0);

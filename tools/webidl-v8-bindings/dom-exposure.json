@@ -180,7 +180,15 @@
         { "name": "activeElement", "getter": "get_active_element" },
         { "name": "styleSheets", "getter": "get_shadow_style_sheets" }
       ],
-      "methods": [],
+      "methods": [
+        {
+          "name": "__webScenePublishAdoptedStyleSheets",
+          "callback": "publish_adopted_stylesheets",
+          "length": 1,
+          "extension": true,
+          "attributes": ["DontEnum"]
+        }
+      ],
       "constants": []
     },
     {

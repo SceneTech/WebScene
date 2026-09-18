@@ -1,0 +1,174 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Constructed stylesheet adoption across document and shadow roots</title>
+<style>.adopted-target { color: rgb(255, 0, 0); width: 10px; }</style>
+<div id="document-target" class="adopted-target"></div>
+<script>
+  const state = window.__webSceneWptState = {
+    complete: false, harness: null, results: [], errors: [], diagnostics: []
+  };
+  const check = (value, message) => { if (!value) throw new Error(message); };
+  const record = (name, callback) => {
+    try { callback(); state.results.push({ name, status: "PASS", message: null }); }
+    catch (error) { state.results.push({
+      name, status: "FAIL", message: String(error.message || error),
+      stack: error.stack ? String(error.stack) : null
+    }); }
+  };
+  const errorName = callback => {
+    try { callback(); return "none"; } catch (error) { return error.name; }
+  };
+
+  (async () => {
+    try {
+      const target = document.getElementById("document-target");
+      const first = new CSSStyleSheet();
+      const second = new CSSStyleSheet();
+      first.replaceSync(".adopted-target{color:rgb(0,0,255);width:20px}");
+      second.replaceSync(".adopted-target{color:rgb(0,128,0);width:30px}");
+      const list = document.adoptedStyleSheets;
+      document.adoptedStyleSheets = [first, second];
+      record("Document adoption is SameObject Array and follows author sheets", () => {
+        check(Array.isArray(list) && list === document.adoptedStyleSheets,
+          "observable list identity");
+        check(getComputedStyle(target).color === "rgb(0, 128, 0)",
+          "document adoption cascade order");
+      });
+
+      list.reverse();
+      list.splice(0, list.length, first, second, first);
+      record("ObservableArray mutation and duplicate ordering republish atomically", () => {
+        check(list.length === 3 && getComputedStyle(target).color === "rgb(0, 0, 255)",
+          "reverse/splice/duplicate order");
+        list.pop();
+        check(getComputedStyle(target).color === "rgb(0, 128, 0)", "pop order");
+        const before = list.length;
+        list.length = before + 8;
+        list[before + 4] = first;
+        check(list.length === before, "ObservableArray accepted a gap");
+        list[before] = first;
+        delete list[1];
+        check(list.length === before + 1 && list[1] === second,
+          "non-final indexed delete");
+        delete list[before];
+        check(list.length === before, "final indexed delete");
+      });
+      document.adoptedStyleSheets = [first, second];
+
+      second.cssRules[0].style.color = "rgb(255, 255, 0)";
+      record("Live declaration, disabled, media, and replacement mutation invalidate adopters", () => {
+        check(getComputedStyle(target).color === "rgb(255, 255, 0)",
+          "declaration mutation");
+        second.disabled = true;
+        check(getComputedStyle(target).color === "rgb(0, 0, 255)", "disabled");
+        second.disabled = false;
+        second.media.mediaText = "print";
+        check(getComputedStyle(target).color === "rgb(0, 0, 255)", "media off");
+        second.media.mediaText = "all";
+        second.replaceSync(".adopted-target{color:rgb(2,4,6);width:32px}");
+        check(getComputedStyle(target).color === "rgb(2, 4, 6)", "replacement");
+      });
+
+      const host = document.createElement("section");
+      document.body.appendChild(host);
+      const shadow = host.attachShadow({ mode: "open" });
+      shadow.innerHTML = "<style>.adopted-target{color:rgb(1,2,3)}</style>"
+        + "<div class=\"adopted-target\"></div>";
+      const shadowTarget = shadow.querySelector(".adopted-target");
+      const shadowList = shadow.adoptedStyleSheets;
+      shadow.adoptedStyleSheets = [first];
+      record("ShadowRoot adoption is isolated, reconnectable, and removable", () => {
+        check(Array.isArray(shadowList) && shadowList === shadow.adoptedStyleSheets,
+          "shadow SameObject Array");
+        check(getComputedStyle(shadowTarget).color === "rgb(0, 0, 255)",
+          "shadow author/adopted order");
+        host.remove(); document.body.appendChild(host);
+        check(getComputedStyle(shadowTarget).color === "rgb(0, 0, 255)", "reconnect");
+        shadow.adoptedStyleSheets = [];
+        check(getComputedStyle(shadowTarget).color === "rgb(1, 2, 3)", "removal");
+      });
+
+      const owner = document.createElement("style");
+      document.head.appendChild(owner);
+      const primitiveError = errorName(() => document.adoptedStyleSheets = [42]);
+      const ownerError = errorName(() => document.adoptedStyleSheets = [owner.sheet]);
+      document.adoptedStyleSheets = [first];
+      const frame = document.createElement("iframe");
+      document.body.appendChild(frame);
+      const frameConstructedSheets = typeof frame.contentWindow.CSSStyleSheet === "function";
+      const crossDocumentError = frameConstructedSheets
+        ? errorName(() => document.adoptedStyleSheets = [
+            new frame.contentWindow.CSSStyleSheet()
+          ])
+        : "unavailable";
+      record("Adoption validates brands, owner backing, and constructor document", () => {
+        check(primitiveError === "TypeError", `primitive: ${primitiveError}`);
+        check(ownerError === "NotAllowedError", `owner: ${ownerError}`);
+        check(crossDocumentError === "NotAllowedError" || !frameConstructedSheets,
+          `cross-document: ${crossDocumentError}`);
+      });
+      frame.remove(); owner.remove();
+
+      const durations = [];
+      const performanceSheet = new CSSStyleSheet();
+      document.adoptedStyleSheets = [performanceSheet];
+      shadow.adoptedStyleSheets = [performanceSheet];
+      for (let cycle = 0; cycle < 20; cycle++) {
+        const source = Array.from({ length: 64 }, (_, index) =>
+          `.adopted-perf-${index}{width:${index + cycle + 1}px}`).join("\n");
+        const started = performance.now();
+        performanceSheet.replaceSync(source);
+        durations.push(performance.now() - started);
+      }
+      const ordered = durations.slice().sort((left, right) => left - right);
+      record("64-rule multi-root replacement remains bounded", () => {
+        check(ordered[18] <= 50 && ordered[19] <= 500,
+          `latency ${ordered[18]}/${ordered[19]}`);
+      });
+      document.adoptedStyleSheets = [];
+      shadow.adoptedStyleSheets = [];
+
+      for (let cycle = 0; cycle < 100; cycle++) {
+        const cycleHost = document.createElement("div");
+        document.body.appendChild(cycleHost);
+        const cycleRoot = cycleHost.attachShadow({ mode: "open" });
+        cycleRoot.innerHTML = `<div class="cycle-${cycle}"></div>`;
+        const cycleSheet = new CSSStyleSheet();
+        cycleSheet.replaceSync(`.cycle-${cycle}{width:${cycle + 1}px}`);
+        cycleRoot.adoptedStyleSheets = [cycleSheet];
+        check(getComputedStyle(cycleRoot.firstChild).width === `${cycle + 1}px`,
+          `main lifecycle ${cycle}`);
+        cycleRoot.adoptedStyleSheets = [];
+        cycleHost.remove();
+
+        const cycleFrame = document.createElement("iframe");
+        document.body.appendChild(cycleFrame);
+        const frameDocument = cycleFrame.contentDocument;
+        if (typeof cycleFrame.contentWindow.CSSStyleSheet === "function") {
+          const frameSheet = new cycleFrame.contentWindow.CSSStyleSheet();
+          frameDocument.body.innerHTML = `<div class="frame-${cycle}"></div>`;
+          frameSheet.replaceSync(`.frame-${cycle}{height:${cycle + 1}px}`);
+          frameDocument.adoptedStyleSheets = [frameSheet];
+          check(cycleFrame.contentWindow.getComputedStyle(frameDocument.body.firstChild).height
+              === `${cycle + 1}px`, `iframe lifecycle ${cycle}`);
+          frameDocument.adoptedStyleSheets = [];
+        }
+        cycleFrame.remove();
+      }
+      record("100 main and iframe root cycles retire publication authority", () => {});
+      host.remove();
+      state.diagnostics.push(JSON.stringify({
+        errors: { primitiveError, ownerError, crossDocumentError },
+        mutationP95: ordered[18], mutationMax: ordered[19], lifecycleCycles: 100,
+        frameConstructedSheets
+      }));
+    } catch (error) {
+      state.results.push({ name: "adopted stylesheet setup", status: "FAIL",
+        message: String(error.message || error), stack: String(error.stack || "") });
+    }
+    const failure = state.results.find(result => result.status !== "PASS");
+    state.harness = failure ? { status: 1, message: failure.message, stack: failure.stack }
+      : { status: 0, message: null, stack: null };
+    state.complete = true;
+  })();
+</script>

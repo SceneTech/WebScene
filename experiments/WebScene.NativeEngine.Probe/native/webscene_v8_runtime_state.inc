@@ -126,6 +126,13 @@
     std::vector<pending_stylesheet_replacement> pending_stylesheet_replacements;
     size_t pending_stylesheet_replacement_bytes{0U};
     std::unordered_map<uint32_t, std::string> stylesheet_cssom_sources;
+    std::unordered_map<uint32_t, adopted_stylesheet_publication>
+        adopted_stylesheet_publications;
+    // Constructed sheets have no DOM owner. Synthetic owner IDs let the
+    // existing parser, layer registry and invalidation machinery distinguish
+    // repeated occurrences without creating observable <style> nodes.
+    std::unordered_map<uint32_t, uint32_t> adopted_stylesheet_owner_scopes;
+    uint32_t next_adopted_stylesheet_owner_id{0xf0000000U};
     std::unordered_map<uint64_t, v8::Global<v8::Object>> computed_style_wrappers;
     std::unordered_map<std::string, service_worker_registration_state>
         service_worker_registrations;

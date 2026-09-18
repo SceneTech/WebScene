@@ -853,6 +853,9 @@ struct v8_dom_runtime::implementation final {
             js_string(isolate, "createEvent"),
             v8::FunctionTemplate::New(isolate, document_create_event));
         frame_document->Set(
+            js_string(isolate, "__webScenePublishAdoptedStyleSheets"),
+            v8::FunctionTemplate::New(isolate, publish_adopted_stylesheets));
+        frame_document->Set(
             js_string(isolate, "execCommand"),
             v8::FunctionTemplate::New(isolate, document_exec_command, {}, {}, 1,
                 v8::ConstructorBehavior::kThrow));
@@ -983,6 +986,9 @@ struct v8_dom_runtime::implementation final {
             get_document_fullscreen_enabled);
         document_template->SetNativeDataProperty(js_string(isolate, "links"), get_document_links);
         document_template->SetNativeDataProperty(js_string(isolate, "styleSheets"), get_document_style_sheets);
+        document_template->Set(
+            js_string(isolate, "__webScenePublishAdoptedStyleSheets"),
+            v8::FunctionTemplate::New(isolate, publish_adopted_stylesheets));
         document_template->SetNativeDataProperty(
             js_string(isolate, "cookie"),
             get_document_cookie,

@@ -32,6 +32,73 @@
         return v8::Private::ForApi(isolate, js_string(isolate, "WebScene.MessagePort.Peer"));
     }
 
+    static v8::Local<v8::Private> message_port_handler_private(
+        v8::Isolate* isolate,
+        bool error_handler)
+    {
+        return v8::Private::ForApi(isolate, js_string(
+            isolate,
+            error_handler
+                ? "WebScene.MessagePort.onmessageerror"
+                : "WebScene.MessagePort.onmessage"));
+    }
+
+    static bool message_port_error_handler(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        return info.Data()->BooleanValue(info.GetIsolate());
+    }
+
+    static bool validate_message_port_handler_receiver(
+        const v8::FunctionCallbackInfo<v8::Value>& info,
+        implementation*& runtime)
+    {
+        runtime = current(info.GetIsolate());
+        auto realm = info.GetIsolate()->GetCurrentContext();
+        if (runtime != nullptr && info.This()->IsObject()
+            && runtime->message_port_binding_from_object(
+                realm, info.This().As<v8::Object>()) != nullptr) {
+            return true;
+        }
+        info.GetIsolate()->ThrowException(v8::Exception::TypeError(
+            js_string(info.GetIsolate(), "Illegal invocation")));
+        return false;
+    }
+
+    static void message_port_handler_get(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        implementation* runtime = nullptr;
+        if (!validate_message_port_handler_receiver(info, runtime)) return;
+        auto realm = info.GetIsolate()->GetCurrentContext();
+        v8::Local<v8::Value> value;
+        if (info.This().As<v8::Object>()->GetPrivate(
+                realm,
+                message_port_handler_private(
+                    info.GetIsolate(), message_port_error_handler(info))).ToLocal(&value)
+            && !value->IsUndefined()) {
+            info.GetReturnValue().Set(value);
+        } else {
+            info.GetReturnValue().Set(v8::Null(info.GetIsolate()));
+        }
+    }
+
+    static void message_port_handler_set(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        implementation* runtime = nullptr;
+        if (!validate_message_port_handler_receiver(info, runtime)) return;
+        auto realm = info.GetIsolate()->GetCurrentContext();
+        auto value = info.Length() > 0 && info[0]->IsObject()
+            ? info[0]
+            : v8::Local<v8::Value>(v8::Null(info.GetIsolate()));
+        info.This().As<v8::Object>()->SetPrivate(
+            realm,
+            message_port_handler_private(
+                info.GetIsolate(), message_port_error_handler(info)),
+            value).Check();
+    }
+
     static void unlink_local_message_port_peer(
         v8::Isolate* isolate,
         message_port_binding& binding)
@@ -177,12 +244,6 @@
             js_string(isolate, "close"),
             v8::Function::New(realm, message_port_close, external)
                 .ToLocalChecked()).Check();
-        wrapper->Set(realm, js_string(isolate, "onmessage"), v8::Null(isolate)).Check();
-        wrapper->Set(
-            realm,
-            js_string(isolate, "onmessageerror"),
-            v8::Null(isolate)).Check();
-
         {
             std::lock_guard lock(raw->endpoint->channel->mutex);
             raw->endpoint->channel->wake[raw->endpoint->side] = message_port_wake;
@@ -766,6 +827,23 @@
             port_prototype.As<v8::Object>()->SetPrototype(
                 realm,
                 event_target_prototype).Check();
+        }
+        if (!port_prototype.IsEmpty() && port_prototype->IsObject()) {
+            for (const auto& [name, error_handler] : {
+                     std::pair{"onmessage", false},
+                     std::pair{"onmessageerror", true}}) {
+                auto data = v8::Boolean::New(isolate, error_handler);
+                auto getter = v8::Function::New(
+                    realm, message_port_handler_get, data).ToLocalChecked();
+                auto setter = v8::Function::New(
+                    realm, message_port_handler_set, data, 1).ToLocalChecked();
+                getter->SetName(js_string(
+                    isolate, (std::string("get ") + name).c_str()));
+                setter->SetName(js_string(
+                    isolate, (std::string("set ") + name).c_str()));
+                port_prototype.As<v8::Object>()->SetAccessorProperty(
+                    js_string(isolate, name), getter, setter, v8::None);
+            }
         }
         global->DefineOwnProperty(
             realm,

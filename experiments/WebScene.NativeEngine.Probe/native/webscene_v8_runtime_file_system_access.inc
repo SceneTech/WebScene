@@ -789,12 +789,12 @@
               if (value instanceof Blob) return new Uint8Array(await value.arrayBuffer());
               throw new TypeError('Unsupported file write data');
             };
-            const abortWriterState = async state => {
+            const abortWriterState = async (state, suppressFailure = false) => {
               const transaction = state.transaction;
               state.transaction = undefined;
               if (transaction) {
                 try { await writeFileGrant(4, null, transaction, 0, null, 0); }
-                catch { }
+                catch (error) { if (!suppressFailure) throw error; }
               }
             };
             const performWriterCommand = async (state, command) => {
@@ -847,7 +847,7 @@
                 state.cursor = offset + bytes.byteLength;
                 state.size = Math.max(state.size, state.cursor);
               } catch (error) {
-                await abortWriterState(state);
+                await abortWriterState(state, true);
                 throw error;
               }
             };
@@ -946,7 +946,7 @@
                     writerStates.set(stream, writerState);
                     return stream;
                   } catch (error) {
-                    await abortWriterState(writerState);
+                    await abortWriterState(writerState, true);
                     throw error;
                   }
                 });

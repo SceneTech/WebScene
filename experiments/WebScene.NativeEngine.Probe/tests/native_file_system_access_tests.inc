@@ -971,6 +971,9 @@ void test_native_file_system_access_lifecycle_and_performance()
               const file=await __stableHandle.getFile();
               if (file.size !== 1 || file.name !== 'stable.txt')
                 throw new Error('stable native file metadata changed');
+              const writer=await __stableHandle.createWritable();
+              await writer.write(new Uint8Array([__pickerCycles & 255]));
+              await writer.close();
               ++__pickerCycles;
             });
           });
@@ -980,7 +983,9 @@ void test_native_file_system_access_lifecycle_and_performance()
         webscene_file_panel_request_release_v2(request);
         require(complete_file_panel_success(
             engine.get(), request_id, WEBSCENE_FILE_PANEL_ENTRY_FILE_V2,
-            WEBSCENE_FILE_PANEL_GRANT_READ_V2, "stable.txt", stable_grant),
+            WEBSCENE_FILE_PANEL_GRANT_READ_V2
+                | WEBSCENE_FILE_PANEL_GRANT_WRITE_V2,
+            "stable.txt", stable_grant),
             "file picker lifecycle completion was rejected");
         const auto* comparison =
             take_file_grant_same_entry_request(engine.get());
@@ -1002,6 +1007,39 @@ void test_native_file_system_access_lifecycle_and_performance()
                 WEBSCENE_FILE_GRANT_READ_SUCCESS_V2, 1U,
                 1700000000000000000LL, 0U, {42U}, true),
             "getFile lifecycle completion was rejected");
+        const auto* write_begin = take_file_grant_write_request(engine.get());
+        require(write_begin->action == WEBSCENE_FILE_GRANT_WRITE_BEGIN_V2
+                && write_begin->grant_id.byte_count == stable_grant.size(),
+            "writer lifecycle begin lost the stable grant");
+        const auto write_begin_id = write_begin->request_id;
+        webscene_file_grant_write_request_release_v2(write_begin);
+        const std::vector<uint8_t> transaction(16U,
+            static_cast<uint8_t>(cycle));
+        require(complete_file_grant_write(engine.get(), write_begin_id,
+                WEBSCENE_FILE_GRANT_WRITE_BEGIN_V2,
+                WEBSCENE_FILE_GRANT_WRITE_SUCCESS_V2, transaction),
+            "writer lifecycle begin completion was rejected");
+        const auto* write_chunk = take_file_grant_write_request(engine.get());
+        require(write_chunk->action == WEBSCENE_FILE_GRANT_WRITE_CHUNK_V2
+                && write_chunk->offset == 0U && write_chunk->byte_count == 1U
+                && write_chunk->data[0] == static_cast<uint8_t>(cycle),
+            "writer lifecycle chunk changed");
+        const auto write_chunk_id = write_chunk->request_id;
+        webscene_file_grant_write_request_release_v2(write_chunk);
+        require(complete_file_grant_write(engine.get(), write_chunk_id,
+                WEBSCENE_FILE_GRANT_WRITE_CHUNK_V2,
+                WEBSCENE_FILE_GRANT_WRITE_SUCCESS_V2, {}, 0U, 1U),
+            "writer lifecycle chunk completion was rejected");
+        const auto* write_commit = take_file_grant_write_request(engine.get());
+        require(write_commit->action == WEBSCENE_FILE_GRANT_WRITE_COMMIT_V2
+                && write_commit->final_byte_count == 1U,
+            "writer lifecycle commit changed");
+        const auto write_commit_id = write_commit->request_id;
+        webscene_file_grant_write_request_release_v2(write_commit);
+        require(complete_file_grant_write(engine.get(), write_commit_id,
+                WEBSCENE_FILE_GRANT_WRITE_COMMIT_V2,
+                WEBSCENE_FILE_GRANT_WRITE_SUCCESS_V2, {}, 0U, 0U, 1U),
+            "writer lifecycle commit completion was rejected");
     }
     require(evaluate(engine.get(), "__pickerCycles",
                 "file-picker-cycle-result.js") == "100",
@@ -1026,6 +1064,8 @@ void test_native_file_system_access_lifecycle_and_performance()
         "same-entry request queue did not drain after 100 cycles");
     require(webscene_engine_take_file_grant_read_request_v2(engine.get()) == nullptr,
         "file read request queue did not drain after 100 cycles");
+    require(webscene_engine_take_file_grant_write_request_v2(engine.get()) == nullptr,
+        "file write request queue did not drain after 100 cycles");
 
     activate_file_picker(engine.get(), 52000U);
     execute(engine.get(), R"JS(
@@ -1056,6 +1096,15 @@ void test_native_file_system_access_lifecycle_and_performance()
     const auto* stale_read = take_file_grant_read_request(engine.get());
     const auto stale_read_id = stale_read->request_id;
     webscene_file_grant_read_request_release_v2(stale_read);
+    execute(engine.get(), R"JS(
+      globalThis.__retiredWrite='pending';
+      __stableHandle.createWritable().then(
+        ()=>{__retiredWrite='unexpected'},
+        error=>{__retiredWrite=error.name});
+    )JS", "file-picker-write-before-navigation.js");
+    const auto* stale_write = take_file_grant_write_request(engine.get());
+    const auto stale_write_id = stale_write->request_id;
+    webscene_file_grant_write_request_release_v2(stale_write);
     const auto path = std::filesystem::temp_directory_path()
         / ("webscene-picker-navigation-"
             + std::to_string(std::chrono::steady_clock::now()
@@ -1082,6 +1131,11 @@ void test_native_file_system_access_lifecycle_and_performance()
                 WEBSCENE_FILE_GRANT_READ_SUCCESS_V2, 1U,
                 1700000000000000000LL, 0U, {42U}, true),
         "stale file read completion survived navigation retirement");
+    require(!complete_file_grant_write(engine.get(), stale_write_id,
+                WEBSCENE_FILE_GRANT_WRITE_BEGIN_V2,
+                WEBSCENE_FILE_GRANT_WRITE_SUCCESS_V2,
+                std::vector<uint8_t>(16U, 9U)),
+        "stale file write completion survived navigation retirement");
     std::filesystem::remove(path);
     std::cout << "File System Access lifecycle gate: cycles=100 elapsedSeconds="
               << elapsed << " heapDelta="

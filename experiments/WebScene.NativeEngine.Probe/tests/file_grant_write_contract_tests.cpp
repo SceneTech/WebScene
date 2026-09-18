@@ -105,6 +105,8 @@ int main() {
     require(broker.complete(wrote) && callbacks == 2
             && observed.written_byte_count == 4,
         "chunk completion lost exact range");
+    chunk.data = payload.data();
+    chunk.byte_count = 1U;
 
     webscene_file_grant_write_request_v2 commit{sizeof(commit), 2, 3,
         WEBSCENE_FILE_GRANT_WRITE_COMMIT_V2, 0, {},

@@ -1,3 +1,5 @@
+uint64_t file_system_access_test_peak_rss_bytes();
+
 const webscene_file_panel_request_v2* take_file_panel_request(
     webscene_engine* engine)
 {
@@ -110,6 +112,56 @@ bool complete_file_grant_write(
         {transaction.empty() ? nullptr : transaction.data(), transaction.size()},
         metadata, offset, byte_count};
     return webscene_engine_complete_file_grant_write_request_v2(
+        engine, &completion) != 0;
+}
+
+const webscene_file_grant_directory_request_v2*
+take_file_grant_directory_request(webscene_engine* engine)
+{
+    const webscene_file_grant_directory_request_v2* request = nullptr;
+    for (int attempt = 0; attempt < 250 && request == nullptr; ++attempt) {
+        request = webscene_engine_take_file_grant_directory_request_v2(engine);
+        if (request == nullptr)
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    require(request != nullptr,
+        "native file grant directory request was not published");
+    return request;
+}
+
+struct directory_completion_entry final {
+    std::string name;
+    std::vector<uint8_t> grant;
+    uint32_t kind{WEBSCENE_FILE_PANEL_ENTRY_FILE_V2};
+    uint32_t capabilities{WEBSCENE_FILE_PANEL_GRANT_READ_V2};
+};
+
+bool complete_file_grant_directory(
+    webscene_engine* engine,
+    uint64_t request_id,
+    uint32_t action,
+    uint32_t status,
+    const std::vector<directory_completion_entry>& source_entries = {},
+    const std::vector<uint8_t>& cursor = {},
+    uint64_t skipped_symlinks = 0)
+{
+    std::vector<webscene_file_grant_directory_entry_v2> entries;
+    entries.reserve(source_entries.size());
+    for (const auto& source : source_entries) {
+        entries.push_back({sizeof(webscene_file_grant_directory_entry_v2), 2U,
+            {sizeof(webscene_file_grant_metadata_v2), 2U,
+                source.kind == WEBSCENE_FILE_PANEL_ENTRY_FILE_V2 ? 3U : 0U,
+                1700000000999000000LL, source.kind, 0U},
+            source.capabilities, 0U,
+            {source.name.data(), source.name.size()},
+            {source.grant.data(), source.grant.size()}});
+    }
+    const webscene_file_grant_directory_completion_v2 completion{
+        sizeof(completion), 2U, request_id, status, action,
+        entries.empty() ? nullptr : entries.data(), entries.size(),
+        {cursor.empty() ? nullptr : cursor.data(), cursor.size()},
+        skipped_symlinks};
+    return webscene_engine_complete_file_grant_directory_request_v2(
         engine, &completion) != 0;
 }
 
@@ -556,6 +608,283 @@ void test_native_file_system_access_picker_and_handle_contract()
                 != std::string::npos,
         "directory picker handle contract changed: " + directory_state);
 
+    execute(engine.get(), R"JS(
+      globalThis.__directoryIteration='pending';
+      (async()=>{
+        const values=[];
+        for await (const [name, handle] of __directoryHandle) {
+          values.push(`${name}:${handle.kind}:${handle.name}`);
+        }
+        __directoryIteration=values.join('|');
+      })().catch(error=>{__directoryIteration=error.name});
+    )JS", "file-directory-iteration.js");
+    auto* directory_request = take_file_grant_directory_request(engine.get());
+    require(directory_request->action
+                == WEBSCENE_FILE_GRANT_DIRECTORY_ENUMERATE_V2
+            && directory_request->directory_grant_id.byte_count
+                == directory_grant.size()
+            && directory_request->cursor.byte_count == 0
+            && directory_request->maximum_entries == 32,
+        "initial directory page lost grant or bounds");
+    auto directory_request_id = directory_request->request_id;
+    webscene_file_grant_directory_request_release_v2(directory_request);
+    const std::vector<uint8_t> directory_cursor{31U, 32U};
+    require(complete_file_grant_directory(engine.get(), directory_request_id,
+            WEBSCENE_FILE_GRANT_DIRECTORY_ENUMERATE_V2,
+            WEBSCENE_FILE_GRANT_DIRECTORY_SUCCESS_V2,
+            {{"alpha.txt", {41U}, WEBSCENE_FILE_PANEL_ENTRY_FILE_V2,
+                 WEBSCENE_FILE_PANEL_GRANT_READ_V2},
+                {"資料", {42U}, WEBSCENE_FILE_PANEL_ENTRY_DIRECTORY_V2,
+                 WEBSCENE_FILE_PANEL_GRANT_ENUMERATE_V2}},
+            directory_cursor, 1U),
+        "first directory page completion was rejected");
+    directory_request = take_file_grant_directory_request(engine.get());
+    require(directory_request->action
+                == WEBSCENE_FILE_GRANT_DIRECTORY_ENUMERATE_V2
+            && directory_request->cursor.byte_count == directory_cursor.size()
+            && std::memcmp(directory_request->cursor.data,
+                directory_cursor.data(), directory_cursor.size()) == 0,
+        "directory continuation lost its opaque cursor");
+    directory_request_id = directory_request->request_id;
+    webscene_file_grant_directory_request_release_v2(directory_request);
+    require(complete_file_grant_directory(engine.get(), directory_request_id,
+            WEBSCENE_FILE_GRANT_DIRECTORY_ENUMERATE_V2,
+            WEBSCENE_FILE_GRANT_DIRECTORY_SUCCESS_V2,
+            {{"zeta.bin", {43U}, WEBSCENE_FILE_PANEL_ENTRY_FILE_V2,
+                 WEBSCENE_FILE_PANEL_GRANT_READ_V2}}),
+        "final directory page completion was rejected");
+    const auto iteration_state = evaluate(engine.get(), "__directoryIteration",
+        "file-directory-iteration-result.js");
+    require(iteration_state
+            == "\"alpha.txt:file:alpha.txt|資料:directory:資料|zeta.bin:file:zeta.bin\"",
+        "async directory iteration changed: " + iteration_state);
+
+    const auto large_directory_rss_before = file_system_access_test_peak_rss_bytes();
+    const auto large_directory_started = std::chrono::steady_clock::now();
+    execute(engine.get(), R"JS(
+      globalThis.__largeDirectory='pending';
+      (async()=>{
+        let count=0;
+        for await (const handle of __directoryHandle.values()) {
+          if (!(handle instanceof FileSystemFileHandle)) throw new Error('kind');
+          ++count;
+        }
+        __largeDirectory=count;
+      })().catch(error=>{__largeDirectory=error.name});
+    )JS", "file-directory-10000.js");
+    for (uint32_t first = 0; first < 10000U; first += 32U) {
+        directory_request = take_file_grant_directory_request(engine.get());
+        require(directory_request->action
+                == WEBSCENE_FILE_GRANT_DIRECTORY_ENUMERATE_V2,
+            "large directory requested the wrong action");
+        directory_request_id = directory_request->request_id;
+        webscene_file_grant_directory_request_release_v2(directory_request);
+        const auto count = std::min(32U, 10000U - first);
+        std::vector<directory_completion_entry> page_entries;
+        page_entries.reserve(count);
+        for (uint32_t offset = 0; offset < count; ++offset) {
+            const auto index = first + offset;
+            page_entries.push_back({"entry-" + std::to_string(index),
+                {50U, static_cast<uint8_t>(index & 0xffU),
+                    static_cast<uint8_t>((index >> 8U) & 0xffU)},
+                WEBSCENE_FILE_PANEL_ENTRY_FILE_V2,
+                WEBSCENE_FILE_PANEL_GRANT_READ_V2});
+        }
+        const auto next = first + count < 10000U
+            ? std::vector<uint8_t>{51U,
+                static_cast<uint8_t>(first & 0xffU),
+                static_cast<uint8_t>((first >> 8U) & 0xffU)}
+            : std::vector<uint8_t>{};
+        require(complete_file_grant_directory(engine.get(), directory_request_id,
+                WEBSCENE_FILE_GRANT_DIRECTORY_ENUMERATE_V2,
+                WEBSCENE_FILE_GRANT_DIRECTORY_SUCCESS_V2,
+                page_entries, next),
+            "large directory page completion was rejected");
+    }
+    require(evaluate(engine.get(), "__largeDirectory",
+                "file-directory-10000-result.js") == "10000",
+        "10,000-entry directory iteration did not complete");
+    const auto large_directory_elapsed = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - large_directory_started).count();
+    const auto large_directory_rss_after = file_system_access_test_peak_rss_bytes();
+    require(large_directory_elapsed < 10.0,
+        "10,000-entry directory iteration exceeded 10 seconds");
+    require(large_directory_rss_before == 0 || large_directory_rss_after
+            <= large_directory_rss_before + 64U * 1024U * 1024U,
+        "10,000-entry directory iteration exceeded 64 MiB peak RSS growth");
+    std::cout << "Directory paging gate: entries=10000 elapsedSeconds="
+              << large_directory_elapsed << " rssDelta="
+              << (large_directory_rss_after >= large_directory_rss_before
+                    ? large_directory_rss_after - large_directory_rss_before : 0)
+              << '\n';
+
+    execute(engine.get(), R"JS(
+      globalThis.__directoryLookup='pending';
+      __directoryHandle.getFileHandle('alpha.txt').then(
+        value=>{__directoryLookup=`${value.kind}:${value.name}`},
+        error=>{__directoryLookup=error.name});
+    )JS", "file-directory-lookup.js");
+    directory_request = take_file_grant_directory_request(engine.get());
+    directory_request_id = directory_request->request_id;
+    webscene_file_grant_directory_request_release_v2(directory_request);
+    const std::vector<uint8_t> lookup_cursor{44U};
+    require(complete_file_grant_directory(engine.get(), directory_request_id,
+            WEBSCENE_FILE_GRANT_DIRECTORY_ENUMERATE_V2,
+            WEBSCENE_FILE_GRANT_DIRECTORY_SUCCESS_V2,
+            {{"alpha.txt", {41U}, WEBSCENE_FILE_PANEL_ENTRY_FILE_V2,
+                 WEBSCENE_FILE_PANEL_GRANT_READ_V2}}, lookup_cursor),
+        "directory lookup page completion was rejected");
+    directory_request = take_file_grant_directory_request(engine.get());
+    require(directory_request->action
+                == WEBSCENE_FILE_GRANT_DIRECTORY_RELEASE_CURSOR_V2
+            && directory_request->directory_grant_id.byte_count == 0
+            && directory_request->cursor.byte_count == lookup_cursor.size(),
+        "successful lookup did not release its unfinished cursor");
+    directory_request_id = directory_request->request_id;
+    webscene_file_grant_directory_request_release_v2(directory_request);
+    require(complete_file_grant_directory(engine.get(), directory_request_id,
+            WEBSCENE_FILE_GRANT_DIRECTORY_RELEASE_CURSOR_V2,
+            WEBSCENE_FILE_GRANT_DIRECTORY_SUCCESS_V2),
+        "lookup cursor release completion was rejected");
+    require(evaluate(engine.get(), "__directoryLookup",
+                "file-directory-lookup-result.js")
+            == "\"file:alpha.txt\"",
+        "existing file lookup changed");
+
+    execute(engine.get(), R"JS(
+      globalThis.__directoryErrors='pending';
+      Promise.all([
+        __directoryHandle.getFileHandle('../bad').catch(e=>e.name),
+        __directoryHandle.getDirectoryHandle('new', {create:true}).catch(e=>e.name),
+        __directoryHandle.resolve(__directoryHandle).catch(e=>e.name)
+      ]).then(values=>{__directoryErrors=values.join(':')});
+    )JS", "file-directory-errors.js");
+    require(evaluate(engine.get(), "__directoryErrors",
+                "file-directory-errors-result.js")
+            == "\"TypeError:NotSupportedError:NotSupportedError\"",
+        "directory authority boundaries changed");
+
+    execute(engine.get(), R"JS(
+      globalThis.__directoryMismatch='pending';
+      __directoryHandle.getDirectoryHandle('alpha.txt').then(
+        ()=>{__directoryMismatch='unexpected'},
+        error=>{__directoryMismatch=error.name});
+    )JS", "file-directory-kind-mismatch.js");
+    directory_request = take_file_grant_directory_request(engine.get());
+    directory_request_id = directory_request->request_id;
+    webscene_file_grant_directory_request_release_v2(directory_request);
+    require(complete_file_grant_directory(engine.get(), directory_request_id,
+            WEBSCENE_FILE_GRANT_DIRECTORY_ENUMERATE_V2,
+            WEBSCENE_FILE_GRANT_DIRECTORY_SUCCESS_V2,
+            {{"alpha.txt", {41U}, WEBSCENE_FILE_PANEL_ENTRY_FILE_V2,
+                 WEBSCENE_FILE_PANEL_GRANT_READ_V2}}),
+        "wrong-kind directory page was rejected");
+    require(evaluate(engine.get(), "__directoryMismatch",
+                "file-directory-kind-mismatch-result.js")
+            == "\"TypeMismatchError\"",
+        "wrong-kind lookup did not reject TypeMismatchError");
+
+    execute(engine.get(), R"JS(
+      globalThis.__directoryMissing='pending';
+      __directoryHandle.getFileHandle('missing.txt').then(
+        ()=>{__directoryMissing='unexpected'},
+        error=>{__directoryMissing=error.name});
+    )JS", "file-directory-missing.js");
+    directory_request = take_file_grant_directory_request(engine.get());
+    directory_request_id = directory_request->request_id;
+    webscene_file_grant_directory_request_release_v2(directory_request);
+    require(complete_file_grant_directory(engine.get(), directory_request_id,
+            WEBSCENE_FILE_GRANT_DIRECTORY_ENUMERATE_V2,
+            WEBSCENE_FILE_GRANT_DIRECTORY_SUCCESS_V2),
+        "empty lookup page was rejected");
+    require(evaluate(engine.get(), "__directoryMissing",
+                "file-directory-missing-result.js") == "\"NotFoundError\"",
+        "missing lookup did not reject NotFoundError");
+
+    struct directory_status_case { uint32_t status; const char* expected_name; };
+    constexpr directory_status_case directory_status_cases[] = {
+        {WEBSCENE_FILE_GRANT_DIRECTORY_CANCELLED_V2, "AbortError"},
+        {WEBSCENE_FILE_GRANT_DIRECTORY_DENIED_V2, "NotAllowedError"},
+        {WEBSCENE_FILE_GRANT_DIRECTORY_NOT_FOUND_V2, "NotFoundError"},
+        {WEBSCENE_FILE_GRANT_DIRECTORY_CHANGED_V2, "InvalidStateError"},
+        {WEBSCENE_FILE_GRANT_DIRECTORY_IO_ERROR_V2, "NotReadableError"},
+        {WEBSCENE_FILE_GRANT_DIRECTORY_LIMIT_V2, "QuotaExceededError"}};
+    for (const auto& status_case : directory_status_cases) {
+        execute(engine.get(), R"JS(
+          globalThis.__directoryFailure='pending';
+          __directoryHandle.entries().next().then(
+            ()=>{__directoryFailure='unexpected'},
+            error=>{__directoryFailure=error.name});
+        )JS", "file-directory-status.js");
+        directory_request = take_file_grant_directory_request(engine.get());
+        directory_request_id = directory_request->request_id;
+        webscene_file_grant_directory_request_release_v2(directory_request);
+        require(complete_file_grant_directory(engine.get(), directory_request_id,
+                WEBSCENE_FILE_GRANT_DIRECTORY_ENUMERATE_V2,
+                status_case.status),
+            "directory error completion was rejected");
+        require(evaluate(engine.get(), "__directoryFailure",
+                    "file-directory-status-result.js")
+                == std::string("\"") + status_case.expected_name + "\"",
+            "directory status mapped to the wrong DOMException");
+        require(!complete_file_grant_directory(engine.get(), directory_request_id,
+                WEBSCENE_FILE_GRANT_DIRECTORY_ENUMERATE_V2,
+                status_case.status),
+            "directory operation completed more than once");
+    }
+
+    execute(engine.get(), R"JS(
+      globalThis.__directoryEarly='pending';
+      (async()=>{
+        for await (const value of __directoryHandle.values()) {
+          __directoryEarly=value.name;
+          break;
+        }
+      })().catch(error=>{__directoryEarly=error.name});
+    )JS", "file-directory-early-return.js");
+    directory_request = take_file_grant_directory_request(engine.get());
+    directory_request_id = directory_request->request_id;
+    webscene_file_grant_directory_request_release_v2(directory_request);
+    const std::vector<uint8_t> early_cursor{45U};
+    require(complete_file_grant_directory(engine.get(), directory_request_id,
+            WEBSCENE_FILE_GRANT_DIRECTORY_ENUMERATE_V2,
+            WEBSCENE_FILE_GRANT_DIRECTORY_SUCCESS_V2,
+            {{"early.txt", {46U}, WEBSCENE_FILE_PANEL_ENTRY_FILE_V2,
+                 WEBSCENE_FILE_PANEL_GRANT_READ_V2}}, early_cursor),
+        "early-return directory page was rejected");
+    directory_request = take_file_grant_directory_request(engine.get());
+    require(directory_request->action
+            == WEBSCENE_FILE_GRANT_DIRECTORY_RELEASE_CURSOR_V2,
+        "early iterator return did not release its cursor");
+    directory_request_id = directory_request->request_id;
+    webscene_file_grant_directory_request_release_v2(directory_request);
+    require(complete_file_grant_directory(engine.get(), directory_request_id,
+            WEBSCENE_FILE_GRANT_DIRECTORY_RELEASE_CURSOR_V2,
+            WEBSCENE_FILE_GRANT_DIRECTORY_SUCCESS_V2),
+        "early iterator cursor release was rejected");
+    require(evaluate(engine.get(), "__directoryEarly",
+                "file-directory-early-return-result.js") == "\"early.txt\"",
+        "early iterator result changed");
+
+    for (unsigned cycle = 0; cycle < 100; ++cycle) {
+        execute(engine.get(),
+            "globalThis.__directoryCycle='pending';"
+            "__directoryHandle.entries().next().then(value=>{"
+            "__directoryCycle=value.done?'done':'unexpected'},"
+            "error=>{__directoryCycle=error.name});",
+            "file-directory-lifecycle-cycle.js");
+        directory_request = take_file_grant_directory_request(engine.get());
+        directory_request_id = directory_request->request_id;
+        webscene_file_grant_directory_request_release_v2(directory_request);
+        require(complete_file_grant_directory(engine.get(), directory_request_id,
+                WEBSCENE_FILE_GRANT_DIRECTORY_ENUMERATE_V2,
+                WEBSCENE_FILE_GRANT_DIRECTORY_SUCCESS_V2),
+            "directory lifecycle completion was rejected");
+        require(evaluate(engine.get(), "__directoryCycle",
+                    "file-directory-lifecycle-result.js") == "\"done\"",
+            "directory lifecycle iteration did not drain");
+    }
+
     activate_file_picker(engine.get(), 50004U);
     execute(engine.get(), R"JS(
       globalThis.__saveState = 'pending';
@@ -815,6 +1144,7 @@ void test_native_file_system_access_picker_and_handle_contract()
         hiddenIdentityBridge: typeof __webSceneCompareFileGrants,
         hiddenReadBridge: typeof __webSceneReadFileGrant,
         hiddenWriteBridge: typeof __webSceneWriteFileGrant,
+        hiddenDirectoryBridge: typeof __webSceneDirectoryGrant,
         hiddenFileFactory: typeof __webSceneCreateNativeFile,
         opaqueHandle: Reflect.ownKeys(__openHandles[0]).length === 0,
         illegal: (()=>{try{new FileSystemHandle();return false}catch(e){return e.name==='TypeError'}})(),
@@ -836,6 +1166,8 @@ void test_native_file_system_access_picker_and_handle_contract()
             && descriptor_state.find("\"hiddenReadBridge\":\"undefined\"")
                 != std::string::npos
             && descriptor_state.find("\"hiddenWriteBridge\":\"undefined\"")
+                != std::string::npos
+            && descriptor_state.find("\"hiddenDirectoryBridge\":\"undefined\"")
                 != std::string::npos
             && descriptor_state.find("\"hiddenFileFactory\":\"undefined\"")
                 != std::string::npos
@@ -1105,6 +1437,16 @@ void test_native_file_system_access_lifecycle_and_performance()
     const auto* stale_write = take_file_grant_write_request(engine.get());
     const auto stale_write_id = stale_write->request_id;
     webscene_file_grant_write_request_release_v2(stale_write);
+    execute(engine.get(), R"JS(
+      globalThis.__retiredDirectory='pending';
+      __directoryHandle.entries().next().then(
+        ()=>{__retiredDirectory='unexpected'},
+        error=>{__retiredDirectory=error.name});
+    )JS", "file-picker-directory-before-navigation.js");
+    const auto* stale_directory =
+        take_file_grant_directory_request(engine.get());
+    const auto stale_directory_id = stale_directory->request_id;
+    webscene_file_grant_directory_request_release_v2(stale_directory);
     const auto path = std::filesystem::temp_directory_path()
         / ("webscene-picker-navigation-"
             + std::to_string(std::chrono::steady_clock::now()
@@ -1136,6 +1478,10 @@ void test_native_file_system_access_lifecycle_and_performance()
                 WEBSCENE_FILE_GRANT_WRITE_SUCCESS_V2,
                 std::vector<uint8_t>(16U, 9U)),
         "stale file write completion survived navigation retirement");
+    require(!complete_file_grant_directory(engine.get(), stale_directory_id,
+                WEBSCENE_FILE_GRANT_DIRECTORY_ENUMERATE_V2,
+                WEBSCENE_FILE_GRANT_DIRECTORY_SUCCESS_V2),
+        "stale directory completion survived navigation retirement");
     std::filesystem::remove(path);
     std::cout << "File System Access lifecycle gate: cycles=100 elapsedSeconds="
               << elapsed << " heapDelta="

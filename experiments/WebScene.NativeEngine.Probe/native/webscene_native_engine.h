@@ -1693,6 +1693,62 @@ WEBSCENE_API uint8_t webscene_engine_complete_file_grant_write_request_v2(
     webscene_engine* engine,
     const webscene_file_grant_write_completion_v2* completion);
 
+/* Bounded deterministic directory pages over an opaque directory grant.
+ * ENUMERATE starts with an empty cursor and continues with the returned opaque
+ * cursor. RELEASE_CURSOR explicitly discards an unfinished snapshot. Requests
+ * and completions are copied at the ABI boundary. Names and child grants are
+ * relative display metadata and opaque authority only; paths never cross this
+ * interface. Limits: 64 pending operations, 32 entries/page, 10,000 entries
+ * and 1 MiB of UTF-8 names per native snapshot, 1 KiB grant/cursor tokens. */
+enum {
+    WEBSCENE_FILE_GRANT_DIRECTORY_ENUMERATE_V2 = 1,
+    WEBSCENE_FILE_GRANT_DIRECTORY_RELEASE_CURSOR_V2 = 2
+};
+enum {
+    WEBSCENE_FILE_GRANT_DIRECTORY_SUCCESS_V2 = 0,
+    WEBSCENE_FILE_GRANT_DIRECTORY_CANCELLED_V2 = 1,
+    WEBSCENE_FILE_GRANT_DIRECTORY_DENIED_V2 = 2,
+    WEBSCENE_FILE_GRANT_DIRECTORY_NOT_FOUND_V2 = 3,
+    WEBSCENE_FILE_GRANT_DIRECTORY_CHANGED_V2 = 4,
+    WEBSCENE_FILE_GRANT_DIRECTORY_IO_ERROR_V2 = 5,
+    WEBSCENE_FILE_GRANT_DIRECTORY_LIMIT_V2 = 6,
+    WEBSCENE_FILE_GRANT_DIRECTORY_MAXIMUM_PAGE_ENTRIES_V2 = 32,
+    WEBSCENE_FILE_GRANT_DIRECTORY_MAXIMUM_SNAPSHOT_ENTRIES_V2 = 10000,
+    WEBSCENE_FILE_GRANT_DIRECTORY_MAXIMUM_NAME_BYTES_V2 = 1024 * 1024,
+    WEBSCENE_FILE_GRANT_DIRECTORY_MAXIMUM_PENDING_OPERATIONS_V2 = 64
+};
+typedef struct webscene_file_grant_directory_request_v2 {
+    uint32_t struct_size, version;
+    uint64_t request_id;
+    uint32_t action, reserved;
+    webscene_file_panel_token_v2 directory_grant_id;
+    webscene_file_panel_token_v2 cursor;
+    uint32_t maximum_entries, reserved_entries;
+} webscene_file_grant_directory_request_v2;
+typedef struct webscene_file_grant_directory_entry_v2 {
+    uint32_t struct_size, version;
+    webscene_file_grant_metadata_v2 metadata;
+    uint32_t capabilities, reserved;
+    webscene_file_panel_string_v2 display_name;
+    webscene_file_panel_token_v2 grant_id;
+} webscene_file_grant_directory_entry_v2;
+typedef struct webscene_file_grant_directory_completion_v2 {
+    uint32_t struct_size, version;
+    uint64_t request_id;
+    uint32_t status, action;
+    const webscene_file_grant_directory_entry_v2* entries;
+    size_t entry_count;
+    webscene_file_panel_token_v2 next_cursor;
+    uint64_t skipped_symlinks;
+} webscene_file_grant_directory_completion_v2;
+WEBSCENE_API const webscene_file_grant_directory_request_v2*
+webscene_engine_take_file_grant_directory_request_v2(webscene_engine* engine);
+WEBSCENE_API void webscene_file_grant_directory_request_release_v2(
+    const webscene_file_grant_directory_request_v2* request);
+WEBSCENE_API uint8_t webscene_engine_complete_file_grant_directory_request_v2(
+    webscene_engine* engine,
+    const webscene_file_grant_directory_completion_v2* completion);
+
 /* Typed native desktop request ABI. Request memory is immutable and remains
  * valid until release. Byte payloads are capped at 16 MiB, strings are UTF-8,
  * and at most 16 completion-bearing operations may be pending per document. */

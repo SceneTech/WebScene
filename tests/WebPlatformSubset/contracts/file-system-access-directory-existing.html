@@ -1,0 +1,91 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>File System Access existing directory children browser oracle</title>
+<!-- Cases follow WPT fs/script-tests/FileSystemDirectoryHandle-iteration.js,
+     FileSystemDirectoryHandle-getFileHandle.js and
+     FileSystemDirectoryHandle-getDirectoryHandle.js at revision
+     2c705104a295c48053eeddf7fe0170d790a4e853. -->
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<body>
+<script>
+  const withDirectory = (label, body) => promise_test(async t => {
+    assert_true(Boolean(navigator.storage && navigator.storage.getDirectory),
+      "origin-private file system is unavailable");
+    const root = await navigator.storage.getDirectory();
+    const fixture = `webscene-directory-${Date.now()}-${Math.random()}`;
+    const directory = await root.getDirectoryHandle(fixture, {create:true});
+    t.add_cleanup(() => root.removeEntry(fixture, {recursive:true}));
+    await directory.getFileHandle("alpha.txt", {create:true});
+    await directory.getFileHandle("資料.txt", {create:true});
+    await directory.getDirectoryHandle("nested", {create:true});
+    await body(directory, t);
+  }, label);
+
+  withDirectory("@@asyncIterator and entries expose matching name/handle pairs",
+    async directory => {
+      const implicit = [];
+      for await (const entry of directory) {
+        assert_true(Array.isArray(entry));
+        assert_equals(entry.length, 2);
+        assert_equals(entry[0], entry[1].name);
+        implicit.push(`${entry[0]}:${entry[1].kind}`);
+      }
+      const explicit = [];
+      for await (const [name, handle] of directory.entries()) {
+        assert_equals(name, handle.name);
+        explicit.push(`${name}:${handle.kind}`);
+      }
+      assert_array_equals(implicit.sort(), explicit.sort());
+      assert_array_equals(explicit,
+        ["alpha.txt:file", "nested:directory", "資料.txt:file"].sort());
+    });
+
+  withDirectory("keys and values expose the same existing children",
+    async directory => {
+      const keys = [];
+      for await (const name of directory.keys()) keys.push(name);
+      const values = [];
+      for await (const handle of directory.values()) {
+        assert_true(handle instanceof FileSystemHandle);
+        values.push(handle.name);
+      }
+      assert_array_equals(keys.sort(), values.sort());
+      assert_array_equals(keys,
+        ["alpha.txt", "nested", "資料.txt"].sort());
+    });
+
+  withDirectory("returning early from directory iteration is supported",
+    async directory => {
+      let count = 0;
+      for await (const value of directory.values()) {
+        assert_true(value instanceof FileSystemHandle);
+        ++count;
+        break;
+      }
+      assert_equals(count, 1);
+    });
+
+  withDirectory("existing file and directory lookup preserve kind and name",
+    async directory => {
+      const file = await directory.getFileHandle("alpha.txt");
+      const nested = await directory.getDirectoryHandle("nested", {create:false});
+      assert_true(file instanceof FileSystemFileHandle);
+      assert_true(nested instanceof FileSystemDirectoryHandle);
+      assert_equals(file.name, "alpha.txt");
+      assert_equals(nested.name, "nested");
+    });
+
+  withDirectory("lookup rejects missing wrong-kind and invalid component names",
+    async (directory, t) => {
+      await promise_rejects_dom(t, "NotFoundError",
+        directory.getFileHandle("missing.txt"));
+      await promise_rejects_dom(t, "TypeMismatchError",
+        directory.getDirectoryHandle("alpha.txt"));
+      for (const name of ["", ".", "..", "nested/child", "nested\\child"]) {
+        await promise_rejects_js(t, TypeError,
+          directory.getFileHandle(name));
+      }
+    });
+</script>
+</body>

@@ -125,7 +125,7 @@ class PrepareRunnerDiskTests(unittest.TestCase):
 
     def test_cli_fails_when_cleanup_cannot_reach_minimum_free_space(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            result = ReclaimResult(0, 0, 0, 0, 0, 1, 2)
+            result = ReclaimResult(0, 0, 0, 0, 0, 0, 1, 2)
             arguments = [
                 "prepare_runner_disk.py",
                 directory,
@@ -151,6 +151,42 @@ class PrepareRunnerDiskTests(unittest.TestCase):
                 with mock.patch("sys.argv", arguments):
                     self.assertEqual(main(), 0)
             self.assertFalse(dotnet.exists())
+
+    def test_privileged_cleanup_is_limited_to_named_direct_children(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            allowed = root / "appscene-headless-old"
+            denied = root / "unrelated-old"
+            allowed.mkdir()
+            denied.mkdir()
+            now = time.time()
+            os.utime(allowed, (now - 3600, now - 3600))
+            os.utime(denied, (now - 3600, now - 3600))
+
+            original = __import__("prepare_runner_disk")._remove_entry
+
+            def remove(path: Path, *, privileged: bool) -> None:
+                if path.name == allowed.name:
+                    self.assertTrue(privileged)
+                    path.rmdir()
+                    return
+                if path.name == denied.name:
+                    self.assertFalse(privileged)
+                    raise PermissionError
+                original(path, privileged=privileged)
+
+            with mock.patch("prepare_runner_disk._remove_entry", side_effect=remove):
+                result = reclaim_stale_entries(
+                    root,
+                    stale_seconds=1800,
+                    now=now,
+                    privileged_prefixes=("appscene-headless-",),
+                )
+
+            self.assertFalse(allowed.exists())
+            self.assertTrue(denied.exists())
+            self.assertEqual(result.removed, 1)
+            self.assertEqual(result.skipped_permission, 1)
 
 
 if __name__ == "__main__":

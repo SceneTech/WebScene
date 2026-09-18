@@ -881,7 +881,7 @@
               try {
                 state = stateFor(this);
                 if (state.kind !== 'file') throw new TypeError('Illegal invocation');
-                if (!permission(state, 'readwrite')) {
+                if ((state.capabilities & 2) === 0) {
                   throw new DOMException(
                     'The file handle does not grant write access', 'NotAllowedError');
                 }

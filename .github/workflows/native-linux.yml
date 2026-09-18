@@ -35,7 +35,7 @@ jobs:
       - name: Reclaim stale runner temporary data
         shell: bash
         run: |
-          python3 scripts/prepare_runner_disk.py "$RUNNER_TEMP" --minimum-free-bytes 6442450944
+          python3 scripts/prepare_runner_disk.py "$RUNNER_TEMP" --system-temp /tmp --minimum-free-bytes 6442450944
           job_tmp="$RUNNER_TEMP/webscene-job-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${GITHUB_JOB//[^A-Za-z0-9_.-]/_}"
           mkdir -p "$job_tmp"
           echo "TMPDIR=$job_tmp" >> "$GITHUB_ENV"
@@ -43,6 +43,7 @@ jobs:
       - name: Install pinned build tools
         run: |
           sudo flock /var/lock/webscene-apt.lock bash -c '
+            apt-get clean
             apt-get update
             apt-get install -y ninja-build patchelf
           '

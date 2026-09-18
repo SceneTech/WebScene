@@ -129,6 +129,8 @@ class PrepareRunnerDiskTests(unittest.TestCase):
             arguments = [
                 "prepare_runner_disk.py",
                 directory,
+                "--system-temp",
+                "/tmp",
                 "--minimum-free-bytes",
                 "3",
             ]
@@ -144,13 +146,40 @@ class PrepareRunnerDiskTests(unittest.TestCase):
             arguments = [
                 "prepare_runner_disk.py",
                 directory,
+                "--system-temp",
+                "/tmp",
                 "--minimum-free-bytes",
                 "1",
             ]
+            result = ReclaimResult(0, 0, 0, 0, 0, 0, 4, 4)
             with mock.patch.dict(os.environ, {"RUNNER_TEMP": directory}, clear=False):
                 with mock.patch("sys.argv", arguments):
-                    self.assertEqual(main(), 0)
+                    with mock.patch("prepare_runner_disk.reclaim_stale_entries", return_value=result):
+                        self.assertEqual(main(), 0)
             self.assertFalse(dotnet.exists())
+
+    def test_prefix_filter_preserves_unrelated_system_temp_entries(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            removable = root / "rustc-old"
+            unrelated = root / "service-state"
+            removable.mkdir()
+            unrelated.mkdir()
+            now = time.time()
+            os.utime(removable, (now - 3600, now - 3600))
+            os.utime(unrelated, (now - 3600, now - 3600))
+
+            result = reclaim_stale_entries(
+                root,
+                stale_seconds=1800,
+                now=now,
+                allowed_prefixes=("rustc", "tmp"),
+            )
+
+            self.assertFalse(removable.exists())
+            self.assertTrue(unrelated.exists())
+            self.assertEqual(result.removed, 1)
+            self.assertEqual(result.skipped_protected, 1)
 
     def test_privileged_cleanup_is_limited_to_named_direct_children(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

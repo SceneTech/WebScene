@@ -72,6 +72,7 @@ def reclaim_stale_entries(
     now: float | None = None,
     owner_uid: int | None = None,
     privileged_prefixes: tuple[str, ...] = (),
+    allowed_prefixes: tuple[str, ...] = (),
 ) -> ReclaimResult:
     if stale_seconds < 0 or maximum_entries < 1 or maximum_seconds <= 0:
         raise ValueError("cleanup bounds must be positive")
@@ -97,6 +98,9 @@ def reclaim_stale_entries(
         if time.monotonic() > deadline:
             raise RuntimeError(f"runner cleanup exceeded {maximum_seconds:.1f} seconds")
         if entry in protected:
+            skipped_protected += 1
+            continue
+        if allowed_prefixes and not any(entry.name.startswith(prefix) for prefix in allowed_prefixes):
             skipped_protected += 1
             continue
 
@@ -132,6 +136,7 @@ def reclaim_stale_entries(
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("runner_temp", type=Path)
+    parser.add_argument("--system-temp", type=Path, required=True)
     parser.add_argument("--minimum-free-bytes", type=int, required=True)
     parser.add_argument("--stale-seconds", type=int, default=DEFAULT_STALE_SECONDS)
     parser.add_argument("--maximum-entries", type=int, default=DEFAULT_MAX_ENTRIES)
@@ -141,6 +146,8 @@ def main() -> int:
     declared = os.environ.get("RUNNER_TEMP")
     if declared is None or Path(declared).resolve(strict=False) != args.runner_temp.resolve(strict=False):
         raise SystemExit("runner_temp must exactly match the RUNNER_TEMP environment variable")
+    if args.system_temp.resolve(strict=True) != Path("/tmp").resolve(strict=True):
+        raise SystemExit("system_temp must resolve exactly to /tmp")
 
     protected = [
         Path(value)
@@ -159,7 +166,15 @@ def main() -> int:
         maximum_seconds=args.maximum_seconds,
         privileged_prefixes=("appscene-headless-",),
     )
+    system_result = reclaim_stale_entries(
+        args.system_temp,
+        stale_seconds=args.stale_seconds,
+        maximum_entries=args.maximum_entries,
+        maximum_seconds=args.maximum_seconds,
+        allowed_prefixes=("rustc", "tmp", "cmake-", "cargo-", "dotnet-"),
+    )
     reclaimed = max(0, result.free_after - result.free_before)
+    system_reclaimed = max(0, system_result.free_after - system_result.free_before)
     print(
         "Self-hosted runner disk preflight: "
         f"inspected={result.inspected} removed={result.removed} "
@@ -168,10 +183,19 @@ def main() -> int:
         f"free-before={result.free_before} "
         f"free-after={result.free_after} reclaimed={reclaimed}."
     )
-    if result.free_after < args.minimum_free_bytes:
+    print(
+        "System temporary disk preflight: "
+        f"inspected={system_result.inspected} removed={system_result.removed} "
+        f"recent={system_result.skipped_recent} owned-by-other={system_result.skipped_owned} "
+        f"permission-skipped={system_result.skipped_permission} "
+        f"protected={system_result.skipped_protected} free-before={system_result.free_before} "
+        f"free-after={system_result.free_after} reclaimed={system_reclaimed}."
+    )
+    available = min(result.free_after, system_result.free_after)
+    if available < args.minimum_free_bytes:
         print(
             "::error title=Insufficient runner disk::"
-            f"{result.free_after} bytes free after bounded cleanup; "
+            f"{available} bytes free on the most constrained checked filesystem after bounded cleanup; "
             f"{args.minimum_free_bytes} required. Host capacity cleanup is required."
         )
         return 2

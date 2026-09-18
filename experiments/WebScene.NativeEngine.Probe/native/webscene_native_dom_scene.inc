@@ -588,6 +588,7 @@ void native_document::append_scene(
         const std::string_view value = known->second;
         constexpr std::string_view inset_prefix = "inset(";
         constexpr std::string_view circle_prefix = "circle(";
+        constexpr std::string_view ellipse_prefix = "ellipse(";
         constexpr std::string_view polygon_prefix = "polygon(";
         if (value.empty() || value.back() != ')') return std::nullopt;
         const auto has_prefix = [&](std::string_view prefix) {
@@ -623,6 +624,80 @@ void native_document::append_scene(
                     radius * 2.0F,
                     radius * 2.0F},
                 radius};
+        }
+        if (has_prefix(ellipse_prefix)) {
+            auto arguments = value.substr(
+                ellipse_prefix.size(), value.size() - ellipse_prefix.size() - 1U);
+            const auto trim = [](std::string_view token) {
+                while (!token.empty()
+                    && std::isspace(static_cast<unsigned char>(token.front())))
+                    token.remove_prefix(1U);
+                while (!token.empty()
+                    && std::isspace(static_cast<unsigned char>(token.back())))
+                    token.remove_suffix(1U);
+                return token;
+            };
+            arguments = trim(arguments);
+            auto at = std::string_view::npos;
+            for (size_t index = 0U; index + 4U <= arguments.size(); ++index) {
+                if (std::isspace(static_cast<unsigned char>(arguments[index]))
+                    && ascii_equal(arguments[index + 1U], 'a')
+                    && ascii_equal(arguments[index + 2U], 't')
+                    && std::isspace(static_cast<unsigned char>(arguments[index + 3U]))) {
+                    at = index;
+                    break;
+                }
+            }
+            const auto radii = trim(arguments.substr(0U, at));
+            const auto position = at == std::string_view::npos
+                ? std::string_view{} : trim(arguments.substr(at + 4U));
+            const auto split_pair = [&](std::string_view pair)
+                -> std::optional<std::pair<css::ascii_inset_length, css::ascii_inset_length>> {
+                const auto separator = pair.find_first_of(" \t\r\n\f");
+                if (separator == std::string_view::npos) return std::nullopt;
+                const auto first = css::parse_ascii_inset_length(pair.substr(0U, separator));
+                const auto second_token = trim(pair.substr(separator + 1U));
+                if (!first.has_value() || second_token.empty()
+                    || second_token.find_first_of(" \t\r\n\f") != std::string_view::npos)
+                    return std::nullopt;
+                const auto second = css::parse_ascii_inset_length(second_token);
+                if (!second.has_value()) return std::nullopt;
+                return std::pair{*first, *second};
+            };
+            const auto parsed_radii = split_pair(radii);
+            if (!parsed_radii.has_value()
+                || parsed_radii->first.value < 0.0F
+                || parsed_radii->second.value < 0.0F) return std::nullopt;
+            const auto parsed_position = position.empty()
+                ? std::optional{std::pair{
+                    css::ascii_inset_length{50.0F, true},
+                    css::ascii_inset_length{50.0F, true}}}
+                : split_pair(position);
+            if (!parsed_position.has_value()) return std::nullopt;
+            const auto resolve = [](css::ascii_inset_length length, float available) {
+                return length.percent ? available * length.value / 100.0F : length.value;
+            };
+            const auto radius_x = resolve(parsed_radii->first, node.layout.width);
+            const auto radius_y = resolve(parsed_radii->second, node.layout.height);
+            const auto center_x = node.layout.x
+                + resolve(parsed_position->first, node.layout.width);
+            const auto center_y = node.layout.y
+                + resolve(parsed_position->second, node.layout.height);
+            std::ostringstream path;
+            path.precision(std::numeric_limits<float>::max_digits10);
+            path << "M " << center_x - radius_x << ' ' << center_y
+                << " A " << radius_x << ' ' << radius_y << " 0 1 0 "
+                << center_x + radius_x << ' ' << center_y
+                << " A " << radius_x << ' ' << radius_y << " 0 1 0 "
+                << center_x - radius_x << ' ' << center_y << " Z";
+            return effect_clip_geometry{
+                layout_rect{
+                    center_x - radius_x,
+                    center_y - radius_y,
+                    radius_x * 2.0F,
+                    radius_y * 2.0F},
+                0.0F,
+                path.str()};
         }
         if (has_prefix(polygon_prefix)) {
             auto arguments = value.substr(

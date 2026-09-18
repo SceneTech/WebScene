@@ -67,6 +67,13 @@
   }, 'clip-path exposes the supported inset syntax');
 
   test(() => {
+    effect.style.setProperty('clip-path', 'ellipse(25% 40% at 60% 30%)');
+    assert_equals(getComputedStyle(effect).getPropertyValue('clip-path'),
+      'ellipse(25% 40% at 60% 30%)');
+    effect.style.removeProperty('clip-path');
+  }, 'clip-path preserves explicit ellipse radii and center');
+
+  test(() => {
     assert_equals(getComputedStyle(effect).getPropertyValue('filter'),
       'brightness(0.5) grayscale(1)');
   }, 'foreground filter exposes its computed function list');

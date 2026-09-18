@@ -173,6 +173,29 @@ class NormalizationRunner:
         raise AssertionError(arguments)
 
 
+class InstallNameRunner:
+    def __init__(self, fixture):
+        self.fixture = fixture
+        self.calls = []
+
+    def runner(self, arguments):
+        self.calls.append(tuple(arguments))
+        if arguments[0] != "install_name_tool":
+            return self.fixture.runner(arguments)
+        if len(arguments) != 4 or arguments[1] != "-id":
+            raise AssertionError(arguments)
+        result = arguments[2]
+        relative = self.fixture.relative(arguments[3])
+        current = audit.parse_load_commands(self.fixture.commands[relative])
+        target = current["deploymentTargets"][0]
+        self.fixture.commands[relative] = load_commands(
+            target, current["rpaths"], identifier=result
+        )
+        path = Path(arguments[3])
+        path.write_bytes(path.read_bytes() + b"|relocated")
+        return ""
+
+
 class BundleAuditTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
@@ -382,6 +405,7 @@ class BundleAuditTests(unittest.TestCase):
 
     def test_packager_runs_audit_before_outer_signature(self):
         source = (ROOT / "src/WebScene.Sdk/tools/package_macos.py").read_text()
+        relocation_position = source.index("install_names = normalize_absolute_install_names(")
         normalization_position = source.index("normalization = normalize_single_architecture(")
         audit_position = source.index("pre_signature_evidence = audit_bundle(")
         evidence_position = source.index("evidence_path.write_bytes(")
@@ -391,6 +415,7 @@ class BundleAuditTests(unittest.TestCase):
         verification_position = source.index(
             "run('codesign', '--verify', '--deep', '--strict', str(bundle))"
         )
+        self.assertLess(relocation_position, normalization_position)
         self.assertLess(normalization_position, audit_position)
         self.assertLess(audit_position, evidence_position)
         self.assertLess(evidence_position, signature_position)
@@ -398,6 +423,50 @@ class BundleAuditTests(unittest.TestCase):
         for option in ("--architecture", "--maximum-deployment-target",
                        "--maximum-audit-entries", "--maximum-audit-evidence-bytes"):
             self.assertIn(option, source)
+
+    def test_absolute_application_install_names_are_relocated_before_audit(self):
+        absolute = "/Users/runner/work/product/release/deps/libsample.node"
+        relative = "Contents/PlugIns/sample.node"
+        self.fixture.commands[relative] = load_commands(
+            rpaths=("@loader_path/../Frameworks",), identifier=absolute
+        )
+        self.fixture.dependencies[relative].insert(0, absolute)
+        runner = InstallNameRunner(self.fixture)
+        original = self.fixture.extension.read_bytes()
+        evidence = audit.normalize_absolute_install_names(
+            self.fixture.bundle, runner=runner.runner
+        )
+        self.assertEqual(len(evidence), 1)
+        self.assertEqual(evidence[0]["path"], relative)
+        self.assertEqual(evidence[0]["original"], absolute)
+        self.assertEqual(evidence[0]["result"], "@rpath/libsample.node")
+        self.assertNotEqual(self.fixture.extension.read_bytes(), original)
+        self.fixture.dependencies[relative][0] = "@rpath/libsample.node"
+        audited = self.fixture.run()
+        extension = next(item for item in audited["binaries"]
+                         if item["path"] == relative)
+        self.assertEqual(extension["slices"][0]["installName"],
+                         "@rpath/libsample.node")
+        stable = self.fixture.extension.read_bytes()
+        self.assertEqual(audit.normalize_absolute_install_names(
+            self.fixture.bundle, runner=runner.runner
+        ), [])
+        self.assertEqual(self.fixture.extension.read_bytes(), stable)
+
+    def test_install_name_normalization_rejects_different_slice_identities(self):
+        fixture = Fixture(Path(self.temporary.name) / "different", ("arm64", "x86_64"))
+        relative = "Contents/PlugIns/sample.node"
+        fixture.commands[relative] = {
+            "arm64": load_commands(identifier="/tmp/one.node"),
+            "x86_64": load_commands(identifier="/tmp/two.node"),
+        }
+        original = fixture.extension.read_bytes()
+        runner = InstallNameRunner(fixture)
+        with self.assertRaisesRegex(audit.AuditError, "different dylib install names"):
+            audit.normalize_absolute_install_names(
+                fixture.bundle, runner=runner.runner
+            )
+        self.assertEqual(fixture.extension.read_bytes(), original)
 
     def test_packager_import_does_not_mutate_installed_tools(self):
         with tempfile.TemporaryDirectory(prefix="webscene immutable tools ") as temporary:

@@ -18,6 +18,7 @@ from audit_macos_bundle import (
     audit_bundle,
     default_deployment_target,
     encode_evidence,
+    normalize_absolute_install_names,
     normalize_single_architecture,
 )
 
@@ -101,6 +102,10 @@ def package(args):
     maximum_deployment_target = (
         args.maximum_deployment_target or default_deployment_target(bundle)
     )
+    install_names = normalize_absolute_install_names(
+        bundle,
+        maximum_entries=args.maximum_audit_entries,
+    )
     normalization = None
     if len(architectures) == 1:
         normalization = normalize_single_architecture(
@@ -115,6 +120,12 @@ def package(args):
         maximum_deployment_target,
         maximum_entries=args.maximum_audit_entries,
     )
+    normalization = (
+        pre_signature_evidence['normalization']
+        if normalization is None else normalization
+    )
+    normalization['installNames'] = install_names
+    normalization['summary']['relocatedInstallNames'] = len(install_names)
     for item in sorted(
             pre_signature_evidence['binaries'],
             key=lambda value: len(Path(value['path']).parts), reverse=True):

@@ -4,6 +4,8 @@ on:
     paths:
       - 'experiments/WebScene.NativeEngine.Probe/**'
       - 'src/WebScene.Sdk/**'
+      - 'scripts/prepare_runner_disk.py'
+      - 'scripts/tests/test_prepare_runner_disk.py'
       - '.github/workflows/precompiled-javascript.yml'
   workflow_dispatch:
 permissions:
@@ -14,6 +16,14 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+      - name: Reclaim stale runner temporary data
+        shell: bash
+        run: |
+          python3 scripts/prepare_runner_disk.py "$RUNNER_TEMP" --minimum-free-bytes 6442450944
+          job_tmp="$RUNNER_TEMP/webscene-job-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${GITHUB_JOB//[^A-Za-z0-9_.-]/_}"
+          mkdir -p "$job_tmp"
+          echo "TMPDIR=$job_tmp" >> "$GITHUB_ENV"
+          echo "WEBSCENE_JOB_TMP=$job_tmp" >> "$GITHUB_ENV"
       - uses: actions/setup-node@v4
         with:
           node-version: '22.16.0'
@@ -36,3 +46,10 @@ jobs:
         run: node experiments/WebScene.NativeEngine.Probe/tests/precompiled/test_v8.cjs
       - name: Build driver and CMake contracts
         run: python -m unittest discover -s experiments/WebScene.NativeEngine.Probe/tests/precompiled -p 'test_*.py' -v
+      - name: Release job temporary data
+        if: always()
+        shell: bash
+        run: |
+          if [[ -n "${WEBSCENE_JOB_TMP:-}" ]]; then
+            rm -rf -- "$WEBSCENE_JOB_TMP"
+          fi

@@ -29,9 +29,11 @@ on:
     - 'scripts/V8WindowsEnvironment.psm1'
     - 'scripts/pack-packages.sh'
     - 'scripts/prepare_dotnet_install.py'
+    - 'scripts/prepare_runner_disk.py'
     - 'scripts/verify-cross-rid-compatibility.py'
     - 'scripts/tests/test_native_runtime_workflow_policy.py'
     - 'scripts/tests/test_prepare_dotnet_install.py'
+    - 'scripts/tests/test_prepare_runner_disk.py'
     - 'scripts/tests/test_verify_cross_rid_compatibility.py'
     - 'scripts/tests/test_v8_windows_environment.ps1'
     - 'scripts/verify-release-packages.py'
@@ -60,11 +62,20 @@ jobs:
       publish: ${{ steps.version.outputs.publish }}
     steps:
     - uses: actions/checkout@v4
+    - name: Reclaim stale runner temporary data
+      shell: bash
+      run: |
+        python3 scripts/prepare_runner_disk.py "$RUNNER_TEMP" --minimum-free-bytes 6442450944
+        job_tmp="$RUNNER_TEMP/webscene-job-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${GITHUB_JOB//[^A-Za-z0-9_.-]/_}"
+        mkdir -p "$job_tmp"
+        echo "TMPDIR=$job_tmp" >> "$GITHUB_ENV"
+        echo "WEBSCENE_JOB_TMP=$job_tmp" >> "$GITHUB_ENV"
     - name: Test cross-RID evidence verifier
       run: |
         python3 -m unittest \
           scripts/tests/test_native_runtime_workflow_policy.py \
           scripts/tests/test_prepare_dotnet_install.py \
+          scripts/tests/test_prepare_runner_disk.py \
           scripts/tests/test_verify_cross_rid_compatibility.py
     - name: Repair incomplete .NET install
       shell: bash
@@ -104,6 +115,13 @@ jobs:
         fi
         echo "package-version=$version" >> "$GITHUB_OUTPUT"
         echo "publish=$publish" >> "$GITHUB_OUTPUT"
+    - name: Release job temporary data
+      if: always()
+      shell: bash
+      run: |
+        if [[ -n "${WEBSCENE_JOB_TMP:-}" ]]; then
+          rm -rf -- "$WEBSCENE_JOB_TMP"
+        fi
 
   release-ci-gate:
     name: Require successful CI for release commit

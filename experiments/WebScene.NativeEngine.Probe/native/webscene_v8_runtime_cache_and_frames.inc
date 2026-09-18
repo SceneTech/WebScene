@@ -2114,6 +2114,7 @@
         result.body_opening = opening_tag("body");
         result.stylesheets = parse_frame_stylesheets(result.html);
         result.scripts = parse_frame_scripts(result.html);
+        result.script_policy = parse_frame_script_policy(result.html);
         // Keep speculative host I/O for uncontrolled documents. A claimed
         // controller must see each request first, so controlled parser
         // resources wait until the nested client realm exists.
@@ -2125,7 +2126,9 @@
                 WEBSCENE_RESOURCE_STYLESHEET);
         }
         for (const auto& script : result.scripts) {
-            if (!script.source.empty()) {
+            if (!script.source.empty()
+                && frame_script_policy_allows(
+                    result.script_policy, script, result.base_address)) {
                 start_resource_prefetch(
                     script.source,
                     result.base_address,
@@ -2191,6 +2194,10 @@
         const frame_script& script)
     {
         if (!iframe_sandbox_allows(frame, "allow-scripts")) return true;
+        if (!frame_script_policy_allows(
+                hydration.script_policy, script, hydration.base_address)) {
+            return true;
+        }
         auto local_frame_context = hydration.context.Get(isolate);
         if (local_frame_context.IsEmpty()) {
             frame_last_error_value = "Iframe context was discarded during hydration";
@@ -2219,7 +2226,7 @@
             local_frame_context,
             js_string(isolate, "document")).ToLocalChecked().As<v8::Object>();
         if(script.module)document_value->Set(local_frame_context,js_string(isolate,"currentScript"),v8::Null(isolate)).Check();
-        else set_current_script(local_frame_context, document_value, name);
+        else set_current_script(local_frame_context, document_value, name, script.nonce);
         std::string error;
         const auto script_source = immutable_source != nullptr
             ? immutable_source->view()
@@ -2552,12 +2559,14 @@
         const auto preparation = take_frame_preparation(frame, html);
         std::vector<std::string> stylesheets;
         std::vector<frame_script> scripts;
+        frame_script_content_security_policy script_policy;
         std::string html_opening;
         std::string body_opening;
         if (preparation != nullptr) {
             frame_base_address = preparation->base_address;
             stylesheets = preparation->stylesheets;
             scripts = preparation->scripts;
+            script_policy = preparation->script_policy;
             html_opening = preparation->html_opening;
             body_opening = preparation->body_opening;
         } else {
@@ -2588,6 +2597,7 @@
             body_opening = opening_tag("body");
             stylesheets = parse_frame_stylesheets(html);
             scripts = parse_frame_scripts(html);
+            script_policy = parse_frame_script_policy(html);
         }
         // Navigation replaces the previous document's layout root. Preserve
         // existing JS references until the frame is disposed, but never stack
@@ -2826,6 +2836,7 @@
         frame_hydration_state hydration;
         hydration.body = &frame_body;
         hydration.scripts = std::move(scripts);
+        hydration.script_policy = std::move(script_policy);
         hydration.body_opening = std::move(body_opening);
         hydration.base_address = frame_base_address;
         hydration.context.Reset(isolate, local_frame_context);

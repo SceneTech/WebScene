@@ -363,7 +363,8 @@
         auto scripts = compiled ? std::vector<frame_script>{} : parse_frame_scripts(html);
         if (compiled) {
             for (const auto& entry : compiled->scripts)
-                scripts.push_back({entry.url, entry.source, entry.defer, scripts.size(), entry.module, entry.name});
+                scripts.push_back({entry.url, entry.source, {}, entry.defer,
+                    scripts.size(), 0U, entry.module, entry.name});
         }
         // Preserve parallel host prefetch for ordinary documents. Once a
         // controller is claimed, parser requests wait for the client realm and

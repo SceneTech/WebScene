@@ -878,6 +878,9 @@ struct v8_dom_runtime::implementation final {
         frame_document->SetNativeDataProperty(
             js_string(isolate, "activeElement"),
             get_provisional_frame_active_element);
+        frame_document->Set(
+            js_string(isolate, "hasFocus"),
+            v8::FunctionTemplate::New(isolate, document_has_focus));
         frame_document->SetNativeDataProperty(
             js_string(isolate, "defaultView"),
             get_provisional_frame_default_view);

@@ -608,6 +608,7 @@
     bool dispatching_user_input{false};
     bool executing_legacy_clipboard_command{false};
     dom_node* active_element{nullptr};
+    uint32_t focused_document_owner_id{0U};
     bool focus_visible{false};
     bool document_visible{true};
     bool document_focused{true};

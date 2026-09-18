@@ -243,6 +243,7 @@
         dispatching_user_input = false;
         executing_legacy_clipboard_command = false;
         active_element = nullptr;
+        focused_document_owner_id = 0U;
         focus_visible = false;
         last_user_activation = {};
         last_animation_frame_timestamp_ms = 0;

@@ -63,15 +63,30 @@
         };
         const auto clear_replacement_focus = [&](dom_node& root) {
             self->document.unregister_modal_subtree(root);
-            if (!self->subtree_contains(root, self->active_element)) return;
+            auto *focused_owner = self->focused_document_owner_id == 0U
+                                      ? nullptr
+                                      : self->document.find_by_native_id(
+                                            self->focused_document_owner_id);
+            const auto removes_focused_document =
+                focused_owner != nullptr &&
+                self->subtree_contains(root, focused_owner);
+            if (!self->subtree_contains(root, self->active_element) &&
+                !removes_focused_document)
+              return;
             // Removal clears focus without dispatching blur/focusout (also
             // Blink's RemoveFocusedElementOfSubtree with omitted blur events).
             // Do this before detachment so :focus-within ancestors are updated.
             auto* focused = self->active_element;
-            focused->mutable_form_control().input_focused = false;
-            focused->mutable_form_control().caret_visible = false;
-            self->active_element = nullptr;
-            self->recascade_focus_subject(*focused, "focus-replacement-removal");
+            if (self->subtree_contains(root, focused)) {
+              focused->mutable_form_control().input_focused = false;
+              focused->mutable_form_control().caret_visible = false;
+              self->active_element = nullptr;
+              self->recascade_focus_subject(*focused,
+                                            "focus-replacement-removal");
+            }
+            if (removes_focused_document) {
+              self->focused_document_owner_id = 0U;
+            }
             self->document.mark_dirty();
         };
         const auto detach = [&](dom_node* node) {

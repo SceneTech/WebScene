@@ -351,6 +351,23 @@
             "supported",
             {},
             "web-api-binding");
+        if (auto *frame = frame_owner_for_window(*self, info.This());
+            frame != nullptr) {
+          if (self->active_element != nullptr &&
+              self->focus_document_owner(self->active_element) != frame->id) {
+            webscene_input_event synthetic{};
+            if (!self->set_active_element(nullptr, synthetic))
+              return;
+            if (self->active_element != nullptr)
+              return;
+          }
+          if (!self->set_focus_document_owner(frame->id)) {
+            info.GetIsolate()->ThrowException(v8::Exception::Error(js_string(
+                info.GetIsolate(),
+                "WebScene could not focus the child browsing context")));
+          }
+          return;
+        }
         // A child browsing context may focus its own active element but must
         // not activate the top-level operating-system window.
         if (local_context != self->context.Get(info.GetIsolate())) return;
@@ -1572,42 +1589,70 @@
         auto isolate_locker = lock_shared_isolate();
         v8::Isolate::Scope isolate_scope(isolate);
         v8::HandleScope handle_scope(isolate);
-        auto local_context = context.Get(isolate);
-        if (local_context.IsEmpty()) return true;
-        v8::Context::Scope context_scope(local_context);
-        auto target = local_context->Global();
-        auto event = create_event_instance(local_context);
-        event->Set(
-            local_context,
-            js_string(isolate, "type"),
-            js_string(isolate, focused ? "focus" : "blur")).Check();
-        event->Set(
-            local_context,
-            js_string(isolate, "bubbles"),
-            v8::False(isolate)).Check();
-        event->Set(
-            local_context,
-            js_string(isolate, "cancelable"),
-            v8::False(isolate)).Check();
-        v8::Local<v8::Value> dispatcher;
-        if (!target->Get(
-                local_context,
-                js_string(isolate, "dispatchEvent")).ToLocal(&dispatcher)
-            || !dispatcher->IsFunction()) {
-            last_error = "Window focus dispatcher is unavailable";
-            return false;
+        return dispatch_window_focus_event(focused_document_owner_id, focused);
+    }
+
+    bool dispatch_window_focus_event(uint32_t owner_id, bool focused) {
+      auto local_context = context.Get(isolate);
+      if (owner_id != 0U) {
+        const auto found = actual_frame_contexts.find(owner_id);
+        if (found == actual_frame_contexts.end() || found->second.IsEmpty()) {
+          return true;
         }
-        v8::TryCatch try_catch(isolate);
-        v8::Local<v8::Value> arguments[] = {event};
-        if (dispatcher.As<v8::Function>()->Call(
-                local_context, target, 1, arguments).IsEmpty()) {
-            last_error = "Window focus dispatch failed: "
-                + describe_reported_exception(try_catch, local_context);
-            ++frame_script_error_count;
-            return false;
-        }
-        perform_microtask_checkpoint();
+        local_context = found->second.Get(isolate);
+      }
+      if (local_context.IsEmpty())
         return true;
+      v8::Context::Scope context_scope(local_context);
+      auto target = local_context->Global();
+      auto event = create_event_instance(local_context);
+      event
+          ->Set(local_context, js_string(isolate, "type"),
+                js_string(isolate, focused ? "focus" : "blur"))
+          .Check();
+      event
+          ->Set(local_context, js_string(isolate, "bubbles"),
+                v8::False(isolate))
+          .Check();
+      event
+          ->Set(local_context, js_string(isolate, "cancelable"),
+                v8::False(isolate))
+          .Check();
+      v8::Local<v8::Value> dispatcher;
+      if (!target->Get(local_context, js_string(isolate, "dispatchEvent"))
+               .ToLocal(&dispatcher) ||
+          !dispatcher->IsFunction()) {
+        last_error = "Window focus dispatcher is unavailable";
+        return false;
+      }
+      v8::TryCatch try_catch(isolate);
+      v8::Local<v8::Value> arguments[] = {event};
+      if (dispatcher.As<v8::Function>()
+              ->Call(local_context, target, 1, arguments)
+              .IsEmpty()) {
+        last_error = "Window focus dispatch failed: " +
+                     describe_reported_exception(try_catch, local_context);
+        ++frame_script_error_count;
+        return false;
+      }
+      perform_microtask_checkpoint();
+      return true;
+    }
+
+    bool set_focus_document_owner(uint32_t owner_id) {
+      if (focused_document_owner_id == owner_id)
+        return true;
+      const auto previous_owner_id = focused_document_owner_id;
+      if (document_focused &&
+          !dispatch_window_focus_event(previous_owner_id, false)) {
+        return false;
+      }
+      focused_document_owner_id = owner_id;
+      if (document_focused && !dispatch_window_focus_event(owner_id, true)) {
+        return false;
+      }
+      document.mark_dirty();
+      return true;
     }
 
     bool set_fullscreen(bool fullscreen)

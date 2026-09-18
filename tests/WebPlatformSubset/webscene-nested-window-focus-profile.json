@@ -1,0 +1,25 @@
+{
+  "profile": "webscene-nested-window-focus-1",
+  "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+  "runtime": "v8",
+  "viewport": {
+    "width": 800,
+    "height": 600,
+    "deviceScaleFactor": 1
+  },
+  "required": [
+    {
+      "path": "contracts/nested-window-focus.html",
+      "type": "contract",
+      "capabilities": [
+        "nested-window-focus"
+      ],
+      "evidence": [
+        "code-oss-webview-focus"
+      ],
+      "reason": "Chrome/native oracle for nested webview focus ownership."
+    }
+  ],
+  "harnessBlocked": [],
+  "excluded": []
+}

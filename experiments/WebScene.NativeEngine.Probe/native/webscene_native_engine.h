@@ -1304,8 +1304,8 @@ WEBSCENE_API uint8_t webscene_engine_request_low_memory(webscene_engine* engine)
  * worker; returning visible before the deadline cancels it.
  */
 WEBSCENE_API uint8_t webscene_engine_set_visible(webscene_engine* engine, uint8_t visible);
-/* Publishes native key-window focus to document.hasFocus() and standard
- * top-level focus/blur events. Repeated values are coalesced. */
+/* Publishes native key-window focus to document.hasFocus() and dispatches
+ * focus/blur on the selected browsing context. Repeated values are coalesced. */
 WEBSCENE_API uint8_t webscene_engine_set_window_focused_v1(
     webscene_engine* engine, uint8_t focused);
 /* Synchronizes fullscreen changes initiated by native window controls. Script

@@ -35,6 +35,8 @@
     const resourceUrl = name => `${resourceOrigin}/workspace/${name}`;
     const seen = new Map();
     const streamStarts = new Map();
+    const batchQueue = [];
+    let drainingBatch = false;
     const responseBytes = new TextEncoder();
     const pngBytes = new Uint8Array([
       137,80,78,71,13,10,26,10,0,0,0,13,73,72,68,82,0,0,0,1,0,0,0,1,
@@ -109,15 +111,43 @@
         etag, mtime:undefined
       }});
       const split = Math.max(1, Math.floor(bytes.byteLength / 2));
+      const first = bytes.slice(0, split);
+      const second = bytes.slice(split);
       brokerWorker.postMessage({channel:'did-load-resource-chunk', data:{
-        id:request.id, data:bytes.slice(0, split)
+        id:request.id, data:first
       }});
       brokerWorker.postMessage({channel:'did-load-resource-chunk', data:{
-        id:request.id, data:bytes.slice(split)
+        id:request.id, data:second
       }});
       brokerWorker.postMessage({channel:'did-load-resource-end', data:{
         id:request.id
       }});
+    };
+    const drainBatch = async () => {
+      if (drainingBatch) return;
+      drainingBatch = true;
+      while (batchQueue.length) {
+        const request = batchQueue.shift();
+        streamStarts.set(request.path, (streamStarts.get(request.path) || 0) + 1);
+        brokerWorker.postMessage({channel:'did-load-resource', data:{
+          status:200, id:request.id, path:request.path,
+          mime:'application/octet-stream'
+        }});
+        for (let chunk = 0; chunk < 16; ++chunk) {
+          brokerWorker.postMessage({channel:'did-load-resource-chunk', data:{
+            id:request.id, data:new Uint8Array(64 * 1024).fill(0x42)
+          }});
+        }
+        brokerWorker.postMessage({channel:'did-load-resource-end', data:{
+          id:request.id
+        }});
+        await new Promise(resolve => setTimeout(resolve, 0));
+      }
+      drainingBatch = false;
+    };
+    const queueBatch = request => {
+      batchQueue.push(request);
+      void drainBatch();
     };
     navigator.serviceWorker.addEventListener('message', event => {
       const request = event.data;
@@ -141,9 +171,11 @@
         });
         return;
       }
-      const resource = request.path.startsWith('/workspace/batch/')
-        ? {mime:'application/octet-stream', body:new Uint8Array(1024 * 1024).fill(0x42)}
-        : resourceBodies.get(request.path);
+      if (request.path.startsWith('/workspace/batch/')) {
+        queueBatch(request);
+        return;
+      }
+      const resource = resourceBodies.get(request.path);
       if (resource && request.path === '/workspace/stale.svg') {
         setTimeout(() => postStream(request, resource.mime, resource.body), 25);
       } else if (resource) postStream(request, resource.mime, resource.body, resource.etag);

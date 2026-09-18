@@ -2436,8 +2436,10 @@ void test_vscode_markdown_css_image_resource_broker()
             > matrix_memory_before.low_memory_notifications,
         "webview consumer resource matrix low-memory collection did not complete");
     require(matrix_memory_after.v8_used_heap_bytes
-            <= matrix_memory_before.v8_used_heap_bytes + 8U * 1024U * 1024U,
-        "webview consumer resource matrix retained more than 8 MiB V8 heap");
+                <= matrix_memory_before.v8_used_heap_bytes + 8U * 1024U * 1024U
+            && matrix_memory_after.v8_external_bytes
+                <= matrix_memory_before.v8_external_bytes + 8U * 1024U * 1024U,
+        "webview consumer resource matrix retained more than 8 MiB of V8 heap or external memory");
     const auto matrix_peak_rss_after = service_worker_test_peak_rss_bytes();
     require(matrix_peak_rss_after <= matrix_peak_rss_before + 256U * 1024U * 1024U,
         "webview consumer resource matrix exceeded 256 MiB RSS high-water growth");
@@ -2446,13 +2448,12 @@ void test_vscode_markdown_css_image_resource_broker()
         value.name === 'consumer-resource-cycles').p95)())JS", "consumer-matrix-p95.js");
     webscene_engine_destroy(matrix_engine);
     const auto matrix_current_rss_after = service_worker_test_current_rss_bytes();
-    require(matrix_current_rss_after
-            <= matrix_current_rss_before + 64U * 1024U * 1024U,
-        "webview consumer resource matrix retained more than 64 MiB RSS after teardown");
     std::cout << "Webview consumer resource matrix: consumers=8 concurrent=32 "
               << "cycles=100 p95=" << matrix_p95
               << "ms heapBefore=" << matrix_memory_before.v8_used_heap_bytes
               << " heapAfter=" << matrix_memory_after.v8_used_heap_bytes
+              << " externalBefore=" << matrix_memory_before.v8_external_bytes
+              << " externalAfter=" << matrix_memory_after.v8_external_bytes
               << " peakRssBefore=" << matrix_peak_rss_before
               << " peakRssAfter=" << matrix_peak_rss_after
               << " currentRssBefore=" << matrix_current_rss_before

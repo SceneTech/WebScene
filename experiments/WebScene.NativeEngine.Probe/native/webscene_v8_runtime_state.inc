@@ -4,6 +4,7 @@
     std::unordered_map<std::string, compiled_template_factory> compiled_templates;
     std::function<v8_dom_runtime::viewport_metrics()> viewport_provider;
     resource_loader load_resource_callback;
+    v8_dom_runtime::navigation_policy navigation_policy_callback;
     static constexpr size_t maximum_pending_fetches = 64U;
     std::vector<pending_fetch_task> pending_fetches;
     static constexpr size_t maximum_pending_digests = 32U;

@@ -319,6 +319,10 @@
         // only after stylesheet declarations have completed their cascade.
         css::recompute_cascaded_line_height(node, cascade_order, css_variables);
         recompute_inline_font_relative_metrics(node);
+        // This runtime always parses documents with scripting enabled. HTML
+        // requires NOSCRIPT fallback text to remain non-rendered in that mode,
+        // even when author rules try to give the element a box.
+        if (node.tag == "noscript") node.style.display = display_mode::none;
         // Pseudo-elements inherit the originating element's completed
         // computed style. Apply them only after its custom and ordinary
         // declarations so `::before { background:var(--active-bg) }` resolves

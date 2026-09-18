@@ -2418,7 +2418,7 @@ void test_pointer_cursor_and_external_anchor_host_handoff(webscene_engine* engin
               .horizontal-resize { display:block;width:180px;height:48px;cursor:ew-resize; }
               .vertical-resize { display:block;width:180px;height:48px;cursor:ns-resize; }
             </style>
-            <a id="badge" class="badge" href="https://example.com/?source=webscene">
+            <a id="badge" class="badge" target="_blank" href="https://example.com/?source=webscene">
               <span>Hosted chart</span>
             </a>
             <a id="cancelled" class="badge" href="https://example.invalid/blocked">blocked</a>
@@ -2803,6 +2803,75 @@ void test_pointer_cursor_and_external_anchor_host_handoff(webscene_engine* engin
     }
     require(released,
         "the exported screenshot canvas remained in later retained scenes");
+}
+
+void test_host_admitted_cross_origin_top_level_navigation()
+{
+    struct navigation_observation final {
+        unsigned calls{};
+        std::string source;
+        std::string target;
+        uint32_t flags{};
+    } observation;
+    webscene_engine_options options{};
+    options.struct_size = sizeof(options);
+    options.navigation_policy_callback_v1 = +[](
+        void* context,
+        const char* source,
+        size_t source_length,
+        const char* target,
+        size_t target_length,
+        uint32_t flags) -> uint8_t {
+        auto& state = *static_cast<navigation_observation*>(context);
+        ++state.calls;
+        state.source.assign(source, source_length);
+        state.target.assign(target, target_length);
+        state.flags = flags;
+        return state.target.starts_with("https://accounts.spotify.com/")
+            ? 1U : 0U;
+    };
+    options.navigation_policy_user_data_v1 = &observation;
+    auto* engine = webscene_engine_create_with_options(&options);
+    require(engine != nullptr, "navigation-policy engine creation failed");
+    resize(engine, 320, 240, 61'000U);
+    require(evaluate(engine,
+                "location.assign('https://accounts.spotify.com/login'); true",
+                "native-cross-origin-navigation-policy.js") == "true",
+        "admitted cross-origin Location navigation was rejected");
+    const auto scripted = take_typed_host_request(engine);
+    require(
+        scripted.kind == WEBSCENE_HOST_REQUEST_WINDOW_NAVIGATE_V1
+            && scripted.url == "https://accounts.spotify.com/login"
+            && observation.calls == 1U
+            && observation.source == "http://127.0.0.1/"
+            && observation.target == scripted.url
+            && observation.flags
+                == WEBSCENE_NAVIGATION_POLICY_CROSS_ORIGIN_V1,
+        "cross-origin Location navigation did not retain the host policy decision");
+
+    execute(engine, R"JS(
+        document.body.innerHTML = '<a id="login" href="https://accounts.spotify.com/login?continue=https%3A%2F%2Fopen.spotify.com%2F">Log in</a>';
+        const login = document.getElementById('login');
+        login.style.display = 'block';
+        login.style.width = '120px';
+        login.style.height = '48px';
+    )JS", "native-cross-origin-anchor-policy-setup.js");
+    require(evaluate(engine, "login.click(); true",
+                "native-cross-origin-anchor-policy-barrier.js")
+                == "true",
+        "admitted cross-origin anchor activation did not drain");
+    const auto activated = take_typed_host_request(engine);
+    require(
+        activated.kind == WEBSCENE_HOST_REQUEST_WINDOW_NAVIGATE_V1
+            && activated.url
+                == "https://accounts.spotify.com/login?continue=https%3A%2F%2Fopen.spotify.com%2F"
+            && observation.calls == 2U
+            && observation.target == activated.url
+            && observation.flags
+                == (WEBSCENE_NAVIGATION_POLICY_USER_ACTIVATION_V1
+                    | WEBSCENE_NAVIGATION_POLICY_CROSS_ORIGIN_V1),
+        "ordinary same-window anchor navigation bypassed the host policy or opened externally");
+    webscene_engine_destroy(engine);
 }
 
 void test_typed_window_host_request_performance(webscene_engine* engine)

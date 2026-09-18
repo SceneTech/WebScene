@@ -281,6 +281,10 @@ public:
         std::function<uint64_t(interop_callback_request_data_v3&&)>;
     using file_panel_request_sink_v2 =
         std::function<bool(const webscene_file_panel_request_v2&)>;
+    using navigation_policy = std::function<bool(
+        const std::string& source_url,
+        const std::string& target_url,
+        uint32_t flags)>;
     using inspector_message_sink =
         std::function<void(uint64_t, std::string_view)>;
 
@@ -320,6 +324,7 @@ public:
         std::vector<document_start_script> document_start_scripts = {});
     void set_resource_root(std::string resource_root);
     void set_stylesheet_consumer(std::function<void(const std::string&, const std::string&)> consumer);
+    void set_navigation_policy(navigation_policy policy);
     bool evaluate_interop_v3(
         const std::string& source,
         const std::string& document_name,

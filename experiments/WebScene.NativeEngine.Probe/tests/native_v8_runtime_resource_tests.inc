@@ -230,6 +230,71 @@ void test_initial_non_javascript_script_is_inert()
     webscene_engine_destroy(engine);
 }
 
+void test_module_capable_document_skips_nomodule_and_hides_noscript()
+{
+    contextual_resource_server server{
+        .resources = {.content = {
+            {"https://script-semantics.test/index.html", R"HTML(
+                <!doctype html><html><head>
+                  <style>noscript { display: block !important; }</style>
+                  <script>globalThis.__scriptSemantics = ['classic'];</script>
+                  <script nomodule src="/legacy.js"></script>
+                  <script NOMODULE>globalThis.__scriptSemantics.push('legacy-inline');</script>
+                  <script data-nomodule>globalThis.__scriptSemantics.push('data-attribute');</script>
+                  <script type="module">globalThis.__scriptSemantics.push('module');</script>
+                </head><body>
+                  <noscript id="fallback" style="display:block!important">
+                    <div id="fallback-child">Please enable JavaScript to continue.</div>
+                  </noscript>
+                </body></html>
+            )HTML"},
+            {"https://script-semantics.test/legacy.js",
+                "globalThis.__scriptSemantics.push('legacy-external');"}
+        }}
+    };
+    webscene_engine_options options{};
+    options.struct_size = sizeof(options);
+    options.resource_load_callback_v2 = load_contextual_test_resource;
+    options.resource_load_user_data = &server;
+    auto* engine = webscene_engine_create_with_options(&options);
+    require(engine != nullptr, "script semantics engine creation failed");
+    constexpr std::string_view address{
+        "https://script-semantics.test/index.html"};
+    require(
+        webscene_engine_load_url(engine, address.data(), address.size()) != 0U,
+        "script semantics navigation failed");
+    const auto result = evaluate_until_equals(
+        engine,
+        R"JS((() => {
+          const fallback = document.getElementById('fallback');
+          return {
+            executions: globalThis.__scriptSemantics,
+            noModuleAttribute: document.querySelector('script[nomodule]')?.hasAttribute('nomodule'),
+            fallbackDisplay: getComputedStyle(fallback).display,
+            fallbackWidth: fallback.offsetWidth,
+            fallbackHeight: fallback.offsetHeight,
+            fallbackChild: document.getElementById('fallback-child'),
+            fallbackText: fallback.textContent.includes('Please enable JavaScript')
+          };
+        })())JS",
+        "script-semantics-result.js",
+        R"({"executions":["classic","data-attribute","module"],"noModuleAttribute":true,"fallbackDisplay":"none","fallbackWidth":0,"fallbackHeight":0,"fallbackChild":null,"fallbackText":true})");
+    require(
+        result == R"({"executions":["classic","data-attribute","module"],"noModuleAttribute":true,"fallbackDisplay":"none","fallbackWidth":0,"fallbackHeight":0,"fallbackChild":null,"fallbackText":true})",
+        "nomodule or scripting-enabled noscript semantics regressed: " + result);
+    {
+        const std::scoped_lock lock(server.request_mutex);
+        require(
+            std::find(
+                server.requested_urls.begin(),
+                server.requested_urls.end(),
+                "https://script-semantics.test/legacy.js")
+                == server.requested_urls.end(),
+            "nomodule fallback script was fetched by a module-capable runtime");
+    }
+    webscene_engine_destroy(engine);
+}
+
 void test_initial_document_images_are_loaded()
 {
     constexpr std::array<unsigned char,70> raster_png{{

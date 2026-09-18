@@ -161,6 +161,7 @@
         size_t index{0};
         bool module{false};
         std::string compiled_name;
+        bool no_module{false};
     };
 
     enum class reflected_token_list_kind : uint8_t {

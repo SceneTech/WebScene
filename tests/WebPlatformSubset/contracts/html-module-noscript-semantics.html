@@ -1,0 +1,39 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Module-capable script selection and scripting-enabled noscript rendering</title>
+<script>
+window.__webSceneWptState = {complete:false,harness:null,results:[],errors:[],diagnostics:[]};
+window.record = (name, condition) => __webSceneWptState.results.push({
+    name,status:condition?'PASS':'FAIL',message:condition?null:'Contract failed',stack:null
+});
+window.__scriptSemantics = ['classic'];
+</script>
+<style>noscript { display: block !important; }</style>
+<script nomodule>window.__scriptSemantics.push('legacy-inline');</script>
+<script data-nomodule>window.__scriptSemantics.push('data-attribute');</script>
+<noscript id="fallback" style="display:block!important">
+  <div id="fallback-child">Please enable JavaScript to continue.</div>
+</noscript>
+<script type="module">
+try {
+    window.__scriptSemantics.push('module');
+    const fallback = document.getElementById('fallback');
+    record('nomodule classic scripts are inert when modules are supported',
+        JSON.stringify(window.__scriptSemantics) === JSON.stringify(['classic','data-attribute','module']));
+    record('nomodule is matched as an attribute, not as a substring',
+        document.querySelector('script[data-nomodule]') !== null);
+    record('noscript is non-rendered when scripting is enabled',
+        getComputedStyle(fallback).display === 'none'
+        && fallback.getBoundingClientRect().width === 0
+        && fallback.getBoundingClientRect().height === 0);
+    record('scripting-enabled noscript contents remain raw text',
+        document.getElementById('fallback-child') === null
+        && fallback.textContent.includes('Please enable JavaScript'));
+} catch (error) {
+    record('HTML script semantics workload completed', false);
+    __webSceneWptState.errors.push(String(error));
+}
+const state = window.__webSceneWptState;
+state.harness = {status:state.results.some(result => result.status !== 'PASS') ? 1 : 0,message:null,stack:null};
+state.complete = true;
+</script>

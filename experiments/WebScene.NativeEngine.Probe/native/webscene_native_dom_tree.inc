@@ -472,7 +472,7 @@ dom_node& native_document::create_node(dom_node_kind kind, std::string name)
     } else if (kind != dom_node_kind::element) {
         node->style.display = display_mode::none;
         node->visible = false;
-    } else if (node->tag == "style" || node->tag == "script" || node->tag == "head"
+    } else if (node->tag == "style" || node->tag == "script" || node->tag == "noscript" || node->tag == "head"
         || node->tag == "meta" || node->tag == "link" || node->tag == "title"
         || node->tag == "base" || node->tag == "template") {
         // HTML metadata and scripting nodes do not generate boxes. Keep this

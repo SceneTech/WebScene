@@ -447,6 +447,9 @@ private:
     void* stylesheet_consumed_user_data_{nullptr};
     webscene_webgpu_policy_callback webgpu_policy_callback_{nullptr};
     void* webgpu_policy_user_data_{nullptr};
+    webscene_navigation_policy_callback_v1
+        navigation_policy_callback_v1_{nullptr};
+    void* navigation_policy_user_data_v1_{nullptr};
     webscene_scene_published_callback scene_published_callback_{nullptr};
     void* scene_published_user_data_{nullptr};
     webscene_host_request_available_callback
@@ -982,6 +985,11 @@ webscene_engine* webscene_engine_create_with_options(const webscene_engine_optio
             + sizeof(uint64_t);
         const auto has_storage_options = options->struct_size
             >= storage_options_size;
+        constexpr auto navigation_policy_options_size =
+            offsetof(webscene_engine_options, navigation_policy_user_data_v1)
+            + sizeof(void*);
+        const auto has_navigation_policy = options->struct_size
+            >= navigation_policy_options_size;
         if (has_storage_options && options->storage_directory != nullptr
             && options->storage_directory_length > 0U) {
             storage_directory.assign(
@@ -1033,7 +1041,11 @@ webscene_engine* webscene_engine_create_with_options(const webscene_engine_optio
             has_stylesheet_consumed_callback ? options->stylesheet_consumed_callback : nullptr,
             has_stylesheet_consumed_callback ? options->stylesheet_consumed_user_data : nullptr,
             has_webgpu_policy ? options->webgpu_policy_callback : nullptr,
-            has_webgpu_policy ? options->webgpu_policy_user_data : nullptr);
+            has_webgpu_policy ? options->webgpu_policy_user_data : nullptr,
+            has_navigation_policy
+                ? options->navigation_policy_callback_v1 : nullptr,
+            has_navigation_policy
+                ? options->navigation_policy_user_data_v1 : nullptr);
     } catch (...) {
         return nullptr;
     }

@@ -351,7 +351,7 @@
                     WEBSCENE_RESOURCE_STYLESHEET);
             }
             for (const auto& script : scripts) {
-                if (!script.source.empty()) {
+                if (!script.no_module && !script.source.empty()) {
                     start_resource_prefetch(
                         script.source,
                         document_base_address,
@@ -654,6 +654,11 @@
         };
         const auto execute_group = [&](bool defer) {
             for (const auto& script : scripts) {
+                // V8 supports JavaScript modules, so HTML's `nomodule`
+                // contract makes classic fallback scripts inert. This check
+                // must precede resource loading: browsers do not fetch these
+                // legacy bundles merely to discard them after download.
+                if (script.no_module) continue;
                 if (script.defer != defer) continue;
                 std::string source = script.code;
                 std::shared_ptr<const immutable_text_source> immutable_source;

@@ -327,6 +327,21 @@
                     address.data(), address.size(), css.data(), css.size());
             });
         }
+        if (navigation_policy_callback_v1_ != nullptr) {
+            runtime_->set_navigation_policy(
+                [this](const std::string& source,
+                       const std::string& target,
+                       uint32_t flags) {
+                    try {
+                        return navigation_policy_callback_v1_(
+                            navigation_policy_user_data_v1_,
+                            source.data(), source.size(),
+                            target.data(), target.size(), flags) != 0U;
+                    } catch (...) {
+                        return false;
+                    }
+                });
+        }
 #if defined(WEBSCENE_NATIVE_ENGINE_ENABLE_GRAPHICS) && (defined(__APPLE__) || defined(_WIN32))
         if(webgpu_policy_callback_)runtime_->set_webgpu_policy(graphics_wake_,[this](const std::string& url) {
             const auto decision=webgpu_policy_callback_(webgpu_policy_user_data_,url.data(),url.size());

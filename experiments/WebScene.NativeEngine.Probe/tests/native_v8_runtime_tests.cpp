@@ -506,6 +506,7 @@ int main()
                 "desktop host capability engine creation failed");
             test_document_direction_and_visibility_are_native_properties();
             test_pointer_cursor_and_external_anchor_host_handoff(focused_engine);
+            test_host_admitted_cross_origin_top_level_navigation();
             test_table_cell_click_copies_text_to_host();
             test_youtube_embed_fallback();
             test_typed_window_host_request_performance(focused_engine);
@@ -516,6 +517,14 @@ int main()
             test_clipboard_small_round_trip_performance(focused_engine);
             test_fullscreen_host_completion(focused_engine);
             webscene_engine_destroy(focused_engine);
+            return 0;
+        }
+        if (selected == "navigation-policy") {
+            test_host_admitted_cross_origin_top_level_navigation();
+            return 0;
+        }
+        if (selected == "html-script-semantics") {
+            test_module_capable_document_skips_nomodule_and_hides_noscript();
             return 0;
         }
         if (selected == "host-driven-close-veto") {
@@ -1071,6 +1080,7 @@ int main()
     test_parallel_resource_prefetch();
     test_fetch_carries_document_origin_to_resource_host();
     test_initial_non_javascript_script_is_inert();
+    test_module_capable_document_skips_nomodule_and_hides_noscript();
     test_slow_fetch_does_not_block_loading_state_publication();
     test_tradingview_datafeed_iframe_symbol_search_round_trip();
     test_tradingview_save_acknowledgement_uses_multipart_post();
@@ -1237,6 +1247,7 @@ int main()
     test_inline_block_preserves_vertical_padding(engine);
     test_pointer_hit_targets_and_related_targets_are_elements(engine);
     test_pointer_cursor_and_external_anchor_host_handoff(engine);
+    test_host_admitted_cross_origin_top_level_navigation();
     test_typed_window_host_request_performance(engine);
     {
         auto* close_engine = webscene_engine_create(0);

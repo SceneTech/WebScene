@@ -1072,7 +1072,17 @@
             const auto close = html.find("</script>", open_end + 1U);
             if (close == std::string::npos) break;
             const auto attributes = html.substr(open, open_end - open + 1U);
-            auto type = lower_html_name(extract_html_attribute(attributes, "type"));
+            auto type = std::string{};
+            auto source = std::string{};
+            auto defer = false;
+            auto no_module = false;
+            for (auto [name, value] : parse_html_attributes(attributes, 7U)) {
+                name = lower_html_name(std::move(name));
+                if (name == "type") type = lower_html_name(std::move(value));
+                else if (name == "src") source = std::move(value);
+                else if (name == "defer") defer = true;
+                else if (name == "nomodule") no_module = true;
+            }
             const auto first = type.find_first_not_of(" \t\r\n\f");
             const auto last = type.find_last_not_of(" \t\r\n\f");
             type = first == std::string::npos
@@ -1085,11 +1095,13 @@
                 || type == "text/ecmascript";
             if (executable) {
                 result.push_back(frame_script{
-                    extract_html_attribute(attributes, "src"),
+                    std::move(source),
                     html.substr(open_end + 1U, close - open_end - 1U),
-                    attributes.find("defer") != std::string::npos || type == "module",
+                    defer || type == "module",
                     index,
-                    type == "module"});
+                    type == "module",
+                    {},
+                    no_module});
             }
             ++index;
             cursor = close + 9U;
@@ -1115,6 +1127,10 @@
             if (script.defer) {
                 record_html_attribute_feature("defer", "html-parser");
                 element.attributes["defer"] = std::string{};
+            }
+            if (script.no_module) {
+                record_html_attribute_feature("nomodule", "html-parser");
+                element.attributes["nomodule"] = std::string{};
             }
             element.text_content = script.code;
             apply_css_rules(element);

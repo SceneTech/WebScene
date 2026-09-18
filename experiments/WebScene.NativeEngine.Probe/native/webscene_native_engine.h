@@ -888,6 +888,23 @@ enum { WEBSCENE_WEBGPU_DISABLED = 0, WEBSCENE_WEBGPU_IOSURFACE = 1, WEBSCENE_WEB
 typedef uint32_t (*webscene_webgpu_policy_callback)(void* user_data,
     const char* document_url, size_t document_url_length);
 
+/* Optional host admission for cross-origin top-level navigation. Same-origin
+ * navigation remains available without a callback; cross-origin Location and
+ * ordinary same-window anchor navigation are admitted only when this callback
+ * returns non-zero. Buffers are borrowed for the callback only. */
+enum {
+    WEBSCENE_NAVIGATION_POLICY_REPLACE_V1 = 1U << 0U,
+    WEBSCENE_NAVIGATION_POLICY_USER_ACTIVATION_V1 = 1U << 1U,
+    WEBSCENE_NAVIGATION_POLICY_CROSS_ORIGIN_V1 = 1U << 2U
+};
+typedef uint8_t (*webscene_navigation_policy_callback_v1)(
+    void* user_data,
+    const char* source_url,
+    size_t source_url_length,
+    const char* target_url,
+    size_t target_url_length,
+    uint32_t flags);
+
 typedef struct webscene_engine_options {
     uint32_t struct_size;
     uint32_t simulated_chart_command_count;
@@ -927,6 +944,8 @@ typedef struct webscene_engine_options {
     const char* storage_partition_key;
     size_t storage_partition_key_length;
     uint64_t storage_quota_bytes;
+    webscene_navigation_policy_callback_v1 navigation_policy_callback_v1;
+    void* navigation_policy_user_data_v1;
 } webscene_engine_options;
 
 enum {

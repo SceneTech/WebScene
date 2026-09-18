@@ -2459,6 +2459,14 @@
       "evidence": ["wpt-service-workers-fetch-event", "chromium-153-direct-product-fixture", "vscode-oss-645f29c-unchanged-service-worker"],
       "reason": "Cumulative connected-resource acceptance for WebScene #266/#308. The unchanged VS Code 645f29c webview Service Worker performs CacheStorage empty-match, client load-resource messaging, and bounded chunk streaming for prelude script, extension stylesheet, element SVG, and stylesheet CSS url() SVG while the fixture renders content from the copied current vscode-demo README. The native companion gate covers controller-first CSS image routing, unhandled host fallback, handled failure closure, stale-style response rejection, teardown, 100 warm cycles at p95 <= 100 ms, <= 8 MiB retained V8 heap, <= 64 MiB post-warm RSS growth, and <= 256 MiB absolute high-water growth.",
       "nativeNavigation": true
+    },
+    {
+      "path": "contracts/html-module-noscript-semantics.html",
+      "type": "contract",
+      "capabilities": ["html-script-nomodule", "html-noscript-scripting-enabled"],
+      "evidence": ["html-script-element-nomodule-derived", "html-noscript-scripting-flag-derived", "spotify-accounts-login"],
+      "reason": "Regression coverage for a module-capable document selecting modern bundles without fetching or executing legacy nomodule fallbacks, and for scripting-enabled noscript fallback markup remaining non-rendered even when author declarations attempt to expose it.",
+      "nativeNavigation": true
     }
   ],
   "harnessBlocked": [],

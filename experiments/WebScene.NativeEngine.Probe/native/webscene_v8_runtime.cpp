@@ -5607,6 +5607,21 @@ struct v8_dom_runtime::implementation final {
                 "default-action");
             return enqueue_host_request(local_context, request);
         }
+        const auto target_attribute = anchor->attributes.find("target");
+        const auto target_name = target_attribute == anchor->attributes.end()
+            ? std::string{}
+            : lower_html_name(target_attribute->second);
+        const auto targets_current_context = target_name.empty()
+            || target_name == "_self"
+            || target_name == "_top"
+            || target_name == "_parent";
+        auto local_context = context_for_node(*anchor);
+        if (targets_current_context
+            && local_context == context.Get(isolate)
+            && queue_top_level_navigation(
+                local_context, authored->second, false, true)) {
+            return true;
+        }
         return queue_external_url(authored->second);
     }
 
@@ -5669,7 +5684,8 @@ struct v8_dom_runtime::implementation final {
     bool queue_top_level_navigation(
         v8::Local<v8::Context> local_context,
         std::string authored,
-        bool replace)
+        bool replace,
+        bool user_activation = false)
     {
         if (local_context != context.Get(isolate)) return true;
         constexpr size_t maximum_navigation_url_bytes = 8192U;
@@ -5679,12 +5695,24 @@ struct v8_dom_runtime::implementation final {
         }
         const auto& base = top_level_location_address;
         const auto resolved = resolve_resource_url(std::move(authored), base);
-        if (resolved.empty() || resolved.size() > maximum_navigation_url_bytes
-            || resource_origin(resolved) != resource_origin(base)) {
+        if (resolved.empty() || resolved.size() > maximum_navigation_url_bytes) {
             return false;
         }
         const auto scheme = resource_scheme(resolved);
         if (scheme != "http" && scheme != "https") return false;
+        const auto cross_origin = resource_origin(resolved) != resource_origin(base);
+        auto policy_flags = replace
+            ? uint32_t{WEBSCENE_NAVIGATION_POLICY_REPLACE_V1} : uint32_t{0U};
+        if (user_activation) {
+            policy_flags |= WEBSCENE_NAVIGATION_POLICY_USER_ACTIVATION_V1;
+        }
+        if (cross_origin) {
+            policy_flags |= WEBSCENE_NAVIGATION_POLICY_CROSS_ORIGIN_V1;
+            if (!navigation_policy_callback
+                || !navigation_policy_callback(base, resolved, policy_flags)) {
+                return false;
+            }
+        }
         auto request = std::make_unique<native_host_request>();
         request->view.kind = WEBSCENE_HOST_REQUEST_WINDOW_NAVIGATE_V1;
         request->view.flags = replace
@@ -5694,7 +5722,9 @@ struct v8_dom_runtime::implementation final {
             "web-api",
             replace ? "Location.replace" : "Location.assign",
             "supported",
-            "same-origin top-level navigation through the bounded native host request queue",
+            cross_origin
+                ? "host-admitted cross-origin top-level navigation through the bounded native host request queue"
+                : "same-origin top-level navigation through the bounded native host request queue",
             "web-api-binding");
         return enqueue_typed_host_request(std::move(request));
     }
@@ -5936,6 +5966,11 @@ void v8_dom_runtime::set_stylesheet_consumer(
     std::function<void(const std::string&, const std::string&)> consumer)
 {
     impl_->stylesheet_consumer = std::move(consumer);
+}
+
+void v8_dom_runtime::set_navigation_policy(navigation_policy policy)
+{
+    impl_->navigation_policy_callback = std::move(policy);
 }
 
 v8_dom_runtime::v8_dom_runtime(

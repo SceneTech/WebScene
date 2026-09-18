@@ -5,8 +5,8 @@
 namespace webscene_native {
 inline display_mode native_default_display_for_tag(std::string_view tag)
 {
-    constexpr std::array<std::string_view, 8> non_rendered_tags{
-        "base", "head", "link", "meta", "script", "style", "template", "title"};
+    constexpr std::array<std::string_view, 9> non_rendered_tags{
+        "base", "head", "link", "meta", "noscript", "script", "style", "template", "title"};
     if (std::find(non_rendered_tags.begin(), non_rendered_tags.end(), tag)
         != non_rendered_tags.end()) {
         return display_mode::none;

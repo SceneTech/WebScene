@@ -129,6 +129,7 @@
     std::vector<pending_stylesheet_replacement> pending_stylesheet_replacements;
     size_t pending_stylesheet_replacement_bytes{0U};
     std::unordered_map<uint32_t, std::string> stylesheet_cssom_sources;
+    std::unordered_map<uint32_t, std::string> stylesheet_cssom_addresses;
     std::unordered_map<uint32_t, adopted_stylesheet_publication>
         adopted_stylesheet_publications;
     // Constructed sheets have no DOM owner. Synthetic owner IDs let the

@@ -3342,7 +3342,7 @@
     {
         std::unordered_set<uint32_t> owners;
         visit_subtree(root, [&](const dom_node& node) {
-            if (node.tag == "style") owners.insert(node.id);
+            if (node.tag == "style" || node.tag == "link") owners.insert(node.id);
         });
         if (owners.empty()) return false;
         const auto previous_size = css_rules.size();
@@ -3358,41 +3358,47 @@
 
     void activate_connected_stylesheet(dom_node& node)
     {
-        std::vector<dom_node*> styles;
+        std::vector<dom_node*> stylesheet_owners;
         for (auto* ancestor = &node; ancestor != nullptr; ancestor = ancestor->parent) {
-            if (ancestor->tag != "style") continue;
-            styles.push_back(ancestor);
+            if (ancestor->tag != "style" && ancestor->tag != "link") continue;
+            stylesheet_owners.push_back(ancestor);
             break;
         }
-        if (styles.empty()) {
+        if (stylesheet_owners.empty()) {
             visit_subtree(node, [&](dom_node& candidate) {
-                if (candidate.tag == "style") styles.push_back(&candidate);
+                if (candidate.tag == "style" || candidate.tag == "link")
+                    stylesheet_owners.push_back(&candidate);
             });
         }
-        std::erase_if(styles, [&](const dom_node* style) {
-            return style == nullptr || !is_connected(*style);
+        std::erase_if(stylesheet_owners, [&](const dom_node* owner) {
+            return owner == nullptr || !is_connected(*owner);
         });
-        if (styles.empty()) return;
+        if (stylesheet_owners.empty()) return;
 
-        for (const auto* style : styles) {
-            if (style != nullptr) erase_pending_stylesheet_replacement(style->id);
+        for (const auto* owner : stylesheet_owners) {
+            if (owner != nullptr) erase_pending_stylesheet_replacement(owner->id);
         }
-        for (auto* style : styles) deactivate_connected_stylesheets(*style, false);
-        const auto& base = current_base_address();
-        for (auto* style : styles) {
+        for (auto* owner : stylesheet_owners)
+            deactivate_connected_stylesheets(*owner, false);
+        for (auto* owner : stylesheet_owners) {
             auto stylesheet = std::string{};
-            if (const auto staged = stylesheet_cssom_sources.find(style->id);
+            if (const auto staged = stylesheet_cssom_sources.find(owner->id);
                 staged != stylesheet_cssom_sources.end()) {
                 stylesheet = staged->second;
-            } else {
-                append_node_text(*style, stylesheet);
+            } else if (owner->tag == "style") {
+                append_node_text(*owner, stylesheet);
             }
             if (!stylesheet.empty()) {
-                const auto* shadow_root = document.containing_shadow_root(*style);
+                const auto* shadow_root = document.containing_shadow_root(*owner);
+                auto base = current_base_address();
+                if (const auto known = stylesheet_cssom_addresses.find(owner->id);
+                    known != stylesheet_cssom_addresses.end()) {
+                    base = known->second;
+                }
                 add_stylesheet(
                     std::move(stylesheet),
                     base,
-                    style->id,
+                    owner->id,
                     shadow_root == nullptr ? 0U : shadow_root->id);
             }
         }

@@ -346,6 +346,56 @@
         info.GetReturnValue().Set(result);
     }
 
+    static void get_style_sheet_rules_source(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        auto* owner = info.Data()->IsObject()
+            ? unwrap_node(info.Data().As<v8::Object>())
+            : nullptr;
+        if (self == nullptr || owner == nullptr) return;
+        std::string source;
+        if (const auto known = self->stylesheet_cssom_sources.find(owner->id);
+            known != self->stylesheet_cssom_sources.end()) {
+            source = known->second;
+        } else if (owner->tag == "style") {
+            append_node_text(*owner, source);
+        }
+        info.GetReturnValue().Set(js_string(info.GetIsolate(), source));
+    }
+
+    static void load_style_sheet_import(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        if (self == nullptr || info.Length() < 2) return;
+        const auto local_context = info.GetIsolate()->GetCurrentContext();
+        v8::Local<v8::String> href_value;
+        v8::Local<v8::String> base_value;
+        if (!info[0]->ToString(local_context).ToLocal(&href_value)
+            || !info[1]->ToString(local_context).ToLocal(&base_value)) {
+            return;
+        }
+        std::string source;
+        std::string resolved;
+        if (!self->load_parser_text_resource(
+                to_wtf8(info.GetIsolate(), href_value),
+                to_wtf8(info.GetIsolate(), base_value),
+                WEBSCENE_RESOURCE_STYLESHEET,
+                WEBSCENE_REQUEST_DESTINATION_STYLE,
+                source,
+                resolved)) {
+            info.GetReturnValue().Set(v8::Null(info.GetIsolate()));
+            return;
+        }
+        auto result = v8::Object::New(info.GetIsolate());
+        result->Set(local_context, js_string(info.GetIsolate(), "source"),
+            js_string(info.GetIsolate(), source)).Check();
+        result->Set(local_context, js_string(info.GetIsolate(), "url"),
+            js_string(info.GetIsolate(), resolved)).Check();
+        info.GetReturnValue().Set(result);
+    }
+
     v8::Local<v8::Object> style_sheet_for(dom_node& node)
     {
         const auto key = wrapper_key(node);
@@ -359,6 +409,59 @@
             local_context,
             js_string(isolate, "ownerNode"),
             wrap_node(node)).Check();
+        result->Set(local_context, js_string(isolate, "ownerRule"),
+            v8::Null(isolate)).Check();
+        result->Set(local_context, js_string(isolate, "type"),
+            js_string(isolate, "text/css")).Check();
+        const auto* cascade_root = css_cascade_root_for_node(node);
+        auto base_address = effective_document_base(cascade_root);
+        if (const auto known = stylesheet_cssom_addresses.find(node.id);
+            known != stylesheet_cssom_addresses.end()) {
+            base_address = known->second;
+        } else if (node.tag == "link") {
+            if (const auto href = node.attributes.find("href");
+                href != node.attributes.end()) {
+                base_address = resolve_resource_url(href->second, base_address);
+            }
+        }
+        result->Set(local_context, js_string(isolate, "href"),
+            node.tag == "link" ? js_string(isolate, base_address).As<v8::Value>()
+                               : v8::Null(isolate).As<v8::Value>()).Check();
+        result->Set(local_context, js_string(isolate, "title"),
+            node.attributes.contains("title")
+                ? js_string(isolate, node.attributes.at("title")).As<v8::Value>()
+                : v8::Null(isolate).As<v8::Value>()).Check();
+        result->DefineOwnProperty(
+            local_context,
+            js_string(isolate, "__webSceneBaseURL"),
+            js_string(isolate, base_address),
+            static_cast<v8::PropertyAttribute>(
+                v8::DontEnum | v8::DontDelete | v8::ReadOnly)).Check();
+        result->DefineOwnProperty(
+            local_context,
+            js_string(isolate, "__webSceneExternalSource"),
+            v8::Boolean::New(isolate, node.tag == "link"),
+            static_cast<v8::PropertyAttribute>(
+                v8::DontEnum | v8::DontDelete | v8::ReadOnly)).Check();
+        auto source_reader = v8::Function::New(
+            local_context,
+            get_style_sheet_rules_source,
+            wrap_node(node)).ToLocalChecked();
+        result->DefineOwnProperty(
+            local_context,
+            js_string(isolate, "__webSceneGetRulesSource"),
+            source_reader,
+            static_cast<v8::PropertyAttribute>(
+                v8::DontEnum | v8::DontDelete | v8::ReadOnly)).Check();
+        auto import_loader = v8::Function::New(
+            local_context,
+            load_style_sheet_import).ToLocalChecked();
+        result->DefineOwnProperty(
+            local_context,
+            js_string(isolate, "__webSceneLoadImport"),
+            import_loader,
+            static_cast<v8::PropertyAttribute>(
+                v8::DontEnum | v8::DontDelete | v8::ReadOnly)).Check();
         auto stage_rules = v8::Function::New(
             local_context,
             stage_style_sheet_rules,
@@ -419,6 +522,13 @@
             }
         }
         self->erase_pending_stylesheet_replacement(owner->id);
+        auto* cascade_root = self->css_cascade_root_for_node(*owner);
+        auto base_address = self->effective_document_base(cascade_root);
+        if (const auto known = self->stylesheet_cssom_addresses.find(owner->id);
+            known != self->stylesheet_cssom_addresses.end()) {
+            base_address = known->second;
+        }
+        self->stylesheet_cssom_addresses.insert_or_assign(owner->id, base_address);
         constexpr auto maximum_pending_owners = size_t{1024U};
         constexpr auto maximum_pending_bytes = size_t{32U * 1024U * 1024U};
         if (source.size() > maximum_pending_bytes) {
@@ -444,8 +554,6 @@
             self->flush_pending_stylesheet_replacements();
         }
         self->stylesheet_cssom_sources.insert_or_assign(owner->id, source);
-        auto* cascade_root = self->css_cascade_root_for_node(*owner);
-        const auto base_address = self->effective_document_base(cascade_root);
         self->pending_stylesheet_replacement_bytes += source.size();
         self->pending_stylesheet_replacements.push_back({
             owner->id,
@@ -1783,6 +1891,7 @@
         for (const auto id : node_ids) {
             erase_pending_stylesheet_replacement(id);
             stylesheet_cssom_sources.erase(id);
+            stylesheet_cssom_addresses.erase(id);
             if (auto adopted = adopted_stylesheet_publications.find(id);
                 adopted != adopted_stylesheet_publications.end()) {
                 erase_adopted_stylesheet_rules(adopted->second);

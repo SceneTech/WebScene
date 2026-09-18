@@ -85,6 +85,69 @@
         }
     }
 
+    static void request_file_grant_read(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        auto isolate = info.GetIsolate();
+        auto local_context = isolate->GetCurrentContext();
+        auto resolver = v8::Promise::Resolver::New(local_context).ToLocalChecked();
+        info.GetReturnValue().Set(resolver->GetPromise());
+        const auto reject = [&](std::string_view message, std::string_view name) {
+            reject_file_panel_promise(
+                isolate, local_context, resolver, message, name);
+        };
+        if (self == nullptr || !self->file_grant_read_request_sink) {
+            reject("Native file grant reads are unavailable", "NotSupportedError");
+            return;
+        }
+        if (info.Length() != 3 || !info[0]->IsUint8Array()
+            || !info[1]->IsNumber() || !info[2]->IsUint32()) {
+            reject("Malformed native file read", "TypeError");
+            return;
+        }
+        if (self->file_grant_read_promise_targets.size()
+            >= file_grant_read_maximum_pending_v2) {
+            reject("Too many pending file reads", "QuotaExceededError");
+            return;
+        }
+        const auto offset_value = info[1].As<v8::Number>()->Value();
+        const auto maximum_bytes = info[2].As<v8::Uint32>()->Value();
+        constexpr auto maximum_safe_integer = 9007199254740991.0;
+        if (!std::isfinite(offset_value) || offset_value < 0
+            || offset_value > maximum_safe_integer
+            || std::floor(offset_value) != offset_value
+            || maximum_bytes == 0
+            || maximum_bytes > WEBSCENE_FILE_GRANT_READ_MAXIMUM_BYTES_V2) {
+            reject("Native file read range is invalid", "TypeError");
+            return;
+        }
+        const auto token = info[0].As<v8::Uint8Array>();
+        if (token->ByteLength() == 0
+            || token->ByteLength() > file_panel_maximum_token_bytes_v2) {
+            reject("Malformed opaque file grant token", "DataError");
+            return;
+        }
+        file_grant_read_request_lease_v2 request;
+        request.view.request_id = ++self->next_host_request_id;
+        request.view.offset = static_cast<std::uint64_t>(offset_value);
+        request.view.maximum_bytes = maximum_bytes;
+        const auto store = token->Buffer()->GetBackingStore();
+        const auto* first = static_cast<const std::uint8_t*>(store->Data())
+            + token->ByteOffset();
+        request.grant_id.assign(first, first + token->ByteLength());
+        request.bind();
+        file_grant_read_promise_target target;
+        target.context.Reset(isolate, local_context);
+        target.resolver.Reset(isolate, resolver);
+        self->file_grant_read_promise_targets.emplace(
+            request.view.request_id, std::move(target));
+        if (!self->file_grant_read_request_sink(request.view)) {
+            self->file_grant_read_promise_targets.erase(request.view.request_id);
+            reject("The native file authority rejected the read", "NotAllowedError");
+        }
+    }
+
     static void request_file_panel(
         const v8::FunctionCallbackInfo<v8::Value>& info)
     {
@@ -367,6 +430,77 @@
         perform_microtask_checkpoint();
     }
 
+    void complete_native_file_grant_read(
+        file_grant_read_completion_data_v2& completion)
+    {
+        const auto found = file_grant_read_promise_targets.find(
+            completion.request_id);
+        if (found == file_grant_read_promise_targets.end()) return;
+        auto target = std::move(found->second);
+        file_grant_read_promise_targets.erase(found);
+        auto local_context = target.context.Get(isolate);
+        auto resolver = target.resolver.Get(isolate);
+        if (local_context.IsEmpty() || resolver.IsEmpty()) return;
+        v8::Context::Scope context_scope(local_context);
+        if (completion.status != WEBSCENE_FILE_GRANT_READ_SUCCESS_V2) {
+            const auto name = completion.status == WEBSCENE_FILE_GRANT_READ_CANCELLED_V2
+                ? "AbortError"
+                : completion.status == WEBSCENE_FILE_GRANT_READ_DENIED_V2
+                    ? "NotAllowedError"
+                    : completion.status == WEBSCENE_FILE_GRANT_READ_NOT_FOUND_V2
+                        ? "NotFoundError" : "NotReadableError";
+            reject_file_panel_promise(isolate, local_context, resolver,
+                "The native file read failed", name);
+            perform_microtask_checkpoint();
+            return;
+        }
+        constexpr std::uint64_t maximum_safe_integer = 9007199254740991ULL;
+        if (completion.byte_count > maximum_safe_integer) {
+            reject_file_panel_promise(isolate, local_context, resolver,
+                "The native file exceeds JavaScript's safe size range", "NotReadableError");
+            perform_microtask_checkpoint();
+            return;
+        }
+        auto result = v8::Object::New(isolate);
+        result->Set(local_context, js_string(isolate, "size"),
+            v8::Number::New(isolate,
+                static_cast<double>(completion.byte_count))).Check();
+        result->Set(local_context, js_string(isolate, "lastModified"),
+            v8::Number::New(isolate,
+                static_cast<double>(completion.modification_time_ns) / 1'000'000.0))
+            .Check();
+        result->Set(local_context, js_string(isolate, "modificationTimeNs"),
+            v8::BigInt::New(isolate, completion.modification_time_ns)).Check();
+        result->Set(local_context, js_string(isolate, "offset"),
+            v8::Number::New(isolate,
+                static_cast<double>(completion.offset))).Check();
+        auto buffer = v8::ArrayBuffer::New(isolate, completion.bytes.size());
+        if (!completion.bytes.empty()) {
+            std::memcpy(buffer->GetBackingStore()->Data(),
+                completion.bytes.data(), completion.bytes.size());
+        }
+        result->Set(local_context, js_string(isolate, "bytes"),
+            v8::Uint8Array::New(buffer, 0, completion.bytes.size())).Check();
+        result->Set(local_context, js_string(isolate, "eof"),
+            v8::Boolean::New(isolate, completion.eof)).Check();
+        resolver->Resolve(local_context, result).Check();
+        perform_microtask_checkpoint();
+    }
+
+    void cancel_file_grant_read_promises(const char* message)
+    {
+        for (auto& [_, target] : file_grant_read_promise_targets) {
+            auto local_context = target.context.Get(isolate);
+            auto resolver = target.resolver.Get(isolate);
+            if (local_context.IsEmpty() || resolver.IsEmpty()) continue;
+            v8::Context::Scope context_scope(local_context);
+            reject_file_panel_promise(
+                isolate, local_context, resolver, message, "AbortError");
+        }
+        file_grant_read_promise_targets.clear();
+        perform_microtask_checkpoint();
+    }
+
     void install_file_system_access_api(v8::Local<v8::Context> local_context)
     {
         auto global = local_context->Global();
@@ -376,12 +510,20 @@
             js_string(isolate, "__webSceneCompareFileGrants"),
             v8::Function::New(local_context, request_file_grant_same_entry)
                 .ToLocalChecked()).Check();
+        global->Set(local_context,
+            js_string(isolate, "__webSceneReadFileGrant"),
+            v8::Function::New(local_context, request_file_grant_read)
+                .ToLocalChecked()).Check();
         constexpr std::string_view source = R"JS(
           (() => {
             const requestPanel = globalThis.__webSceneRequestFilePanel;
             const compareGrants = globalThis.__webSceneCompareFileGrants;
+            const readFileGrant = globalThis.__webSceneReadFileGrant;
+            const createNativeFile = globalThis.__webSceneCreateNativeFile;
             delete globalThis.__webSceneRequestFilePanel;
             delete globalThis.__webSceneCompareFileGrants;
+            delete globalThis.__webSceneReadFileGrant;
+            delete globalThis.__webSceneCreateNativeFile;
             const states = new WeakMap();
             const handles = new Map();
             const textEncoder = new TextEncoder();
@@ -437,7 +579,37 @@
             });
             const unavailable = operation => Promise.reject(new DOMException(
               `${operation} requires the native grant operation stack`, 'NotSupportedError'));
-            function getFile() { stateFor(this); return unavailable('getFile'); }
+            function getFile() {
+              let state;
+              try {
+                state = stateFor(this);
+                if (state.kind !== 'file') throw new TypeError('Illegal invocation');
+                if (!permission(state, 'read')) {
+                  throw new DOMException(
+                    'The file handle does not grant read access', 'NotAllowedError');
+                }
+                if (typeof createNativeFile !== 'function') {
+                  throw new DOMException('Native File factory is unavailable', 'NotSupportedError');
+                }
+              } catch (error) { return Promise.reject(error); }
+              return readFileGrant(state.token, 0, 1).then(initial => {
+                const expectedSize = initial.size;
+                const expectedModified = initial.lastModified;
+                const expectedModifiedNs = initial.modificationTimeNs;
+                const read = async (offset, maximumBytes) => {
+                  const result = await readFileGrant(
+                    state.token, offset, maximumBytes);
+                  if (result.size !== expectedSize
+                      || result.modificationTimeNs !== expectedModifiedNs) {
+                    throw new DOMException(
+                      'The file changed after this File was acquired', 'NotReadableError');
+                  }
+                  return result;
+                };
+                return createNativeFile(
+                  state.name, expectedModified, expectedSize, read);
+              });
+            }
             function createWritable(options = {}) {
               stateFor(this); return unavailable('createWritable');
             }

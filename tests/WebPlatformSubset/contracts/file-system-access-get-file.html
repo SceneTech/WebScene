@@ -1,0 +1,77 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>File System Access getFile browser oracle</title>
+<!-- Core cases follow WPT fs/script-tests/FileSystemFileHandle-getFile.js
+     at the profile's pinned 2c705104a295c48053eeddf7fe0170d790a4e853. -->
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<body>
+<script>
+  const withFile = (name, bytes, body) => promise_test(async t => {
+    assert_true(Boolean(navigator.storage && navigator.storage.getDirectory),
+      "origin-private file system is unavailable");
+    const root = await navigator.storage.getDirectory();
+    const fixture = `webscene-get-file-${Date.now()}-${Math.random()}`;
+    const directory = await root.getDirectoryHandle(fixture, { create: true });
+    t.add_cleanup(() => root.removeEntry(fixture, { recursive: true }));
+    const handle = await directory.getFileHandle(name, { create: true });
+    const writer = await handle.createWritable();
+    await writer.write(bytes);
+    await writer.close();
+    await body(handle, t);
+  }, name);
+
+  withFile("getFile returns File metadata and sliceable Unicode content",
+    "hello żółw", async handle => {
+      const file = await handle.getFile();
+      assert_true(file instanceof File);
+      assert_equals(file.name, "getFile returns File metadata and sliceable Unicode content");
+      assert_equals(file.size, new TextEncoder().encode("hello żółw").byteLength);
+      assert_true(Number.isFinite(file.lastModified));
+      assert_equals(await file.slice(6).text(), "żółw");
+    });
+
+  withFile("getFile preserves empty and binary file bytes",
+    new Uint8Array([0, 255, 128, 1]), async handle => {
+      const file = await handle.getFile();
+      assert_array_equals(new Uint8Array(await file.arrayBuffer()),
+        [0, 255, 128, 1]);
+    });
+
+  withFile("getFile invalidates an earlier File after the entry changes", "before",
+    async (handle, t) => {
+      const before = await handle.getFile();
+      const writer = await handle.createWritable();
+      await writer.write("after");
+      await writer.close();
+      const after = await handle.getFile();
+      await promise_rejects_dom(t, "NotReadableError", before.text());
+      assert_equals(await after.text(), "after");
+      assert_greater_than_equal(after.lastModified, before.lastModified);
+    });
+
+  withFile("getFile File stream preserves ordered bytes", new Uint8Array(131073)
+    .map((_, index) => index % 251), async handle => {
+      const file = await handle.getFile();
+      const reader = file.stream().getReader();
+      const chunks = [];
+      let length = 0;
+      for (;;) {
+        const result = await reader.read();
+        if (result.done) break;
+        chunks.push(result.value);
+        length += result.value.byteLength;
+      }
+      const joined = new Uint8Array(length);
+      let offset = 0;
+      for (const chunk of chunks) {
+        joined.set(chunk, offset);
+        offset += chunk.byteLength;
+      }
+      assert_equals(joined.byteLength, 131073);
+      assert_equals(joined[0], 0);
+      assert_equals(joined[65536], 65536 % 251);
+      assert_equals(joined[131072], 131072 % 251);
+    });
+</script>
+</body>

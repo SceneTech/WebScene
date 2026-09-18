@@ -283,6 +283,8 @@ public:
         std::function<bool(const webscene_file_panel_request_v2&)>;
     using file_grant_same_entry_request_sink_v2 =
         std::function<bool(const webscene_file_grant_same_entry_request_v2&)>;
+    using file_grant_read_request_sink_v2 =
+        std::function<bool(const webscene_file_grant_read_request_v2&)>;
     using inspector_message_sink =
         std::function<void(uint64_t, std::string_view)>;
 
@@ -301,7 +303,8 @@ public:
         uint64_t storage_quota_bytes = 0,
         file_panel_request_sink_v2 file_panel_request_sink = {},
         file_grant_same_entry_request_sink_v2
-            file_grant_same_entry_request_sink = {});
+            file_grant_same_entry_request_sink = {},
+        file_grant_read_request_sink_v2 file_grant_read_request_sink = {});
     ~v8_dom_runtime();
 
     v8_dom_runtime(const v8_dom_runtime&) = delete;
@@ -348,6 +351,8 @@ public:
     void complete_file_panel_request(file_panel_completion_data_v2& completion);
     void complete_file_grant_same_entry_request(
         file_grant_same_entry_completion_data_v2& completion);
+    void complete_file_grant_read_request(
+        file_grant_read_completion_data_v2& completion);
     void complete_host_request(native_host_completion& completion);
     bool try_take_host_request(std::string& request);
     std::unique_ptr<native_host_request> take_typed_host_request();

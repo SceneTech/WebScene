@@ -3867,11 +3867,41 @@ struct v8_dom_runtime::implementation final {
         install_host_bridge(local_context);
 
         constexpr std::string_view crypto_source_parts[] = {R"JS(
+            const nativeBlobSources = new WeakMap();
+            const normalizeBlobIndex = (value, size, fallback) => {
+              value = value === undefined ? fallback : Number(value);
+              if (Number.isNaN(value)) value = 0;
+              value = value < 0 ? Math.max(size + Math.trunc(value), 0)
+                : Math.min(Math.trunc(value), size);
+              return value;
+            };
+            const readNativeBlob = async (source, start, length) => {
+              const bytes = new Uint8Array(length);
+              if (length === 0) {
+                await source.read(source.start + start, 1);
+                return bytes;
+              }
+              let offset = 0;
+              while (offset < length) {
+                const result = await source.read(source.start + start + offset,
+                  Math.min(1024 * 1024, length - offset));
+                if (!(result.bytes instanceof Uint8Array)
+                    || result.bytes.byteLength === 0) {
+                  throw new DOMException('The native file read ended early', 'NotReadableError');
+                }
+                bytes.set(result.bytes, offset);
+                offset += result.bytes.byteLength;
+                if (result.eof && offset !== length) {
+                  throw new DOMException('The native file size changed', 'NotReadableError');
+                }
+              }
+              return bytes;
+            };
             class WebSceneBlob {
               constructor(parts = [], options = {}) {
                 __webSceneRecordWebApi(
                   'Blob.constructor', 'partially-supported',
-                  'byte-preserving construction, type, size, object URLs, and downloads without slicing or streaming');
+                  'byte-preserving construction, type, size, slicing and bounded streams');
                 const chunks = [];
                 let size = 0;
                 for (const part of parts) {
@@ -3899,17 +3929,75 @@ struct v8_dom_runtime::implementation final {
                 this._text = Array.from(parts, String).join('');
               }
               toString() { return this._text; }
-              text() { return Promise.resolve(new TextDecoder().decode(this._bytes)); }
-              arrayBuffer() { return Promise.resolve(this._bytes.slice().buffer); }
-              slice(start=0,end=this.size,type='') {return new WebSceneBlob([this._bytes.slice(start,end)],{type});}
+              async text() {
+                return new TextDecoder().decode(await this.arrayBuffer());
+              }
+              async arrayBuffer() {
+                const source = nativeBlobSources.get(this);
+                const bytes = source
+                  ? await readNativeBlob(source, 0, this.size)
+                  : this._bytes.slice();
+                return bytes.buffer;
+              }
+              slice(start=0,end=this.size,type='') {
+                const first = normalizeBlobIndex(start, this.size, 0);
+                const last = Math.max(first,
+                  normalizeBlobIndex(end, this.size, this.size));
+                const source = nativeBlobSources.get(this);
+                if (!source) {
+                  return new WebSceneBlob([this._bytes.slice(first,last)],{type});
+                }
+                const result = new WebSceneBlob([], {type});
+                result.size = last - first;
+                nativeBlobSources.set(result, {
+                  read: source.read, start: source.start + first
+                });
+                return result;
+              }
+              stream() {
+                const source = nativeBlobSources.get(this);
+                const bytes = this._bytes;
+                const size = this.size;
+                let offset = 0;
+                return new ReadableStream({
+                  async pull(controller) {
+                    if (offset >= size) {
+                      if (source && offset === 0) {
+                        await readNativeBlob(source, 0, 0);
+                      }
+                      controller.close();
+                      return;
+                    }
+                    const length = Math.min(64 * 1024, size - offset);
+                    const chunk = source
+                      ? await readNativeBlob(source, offset, length)
+                      : bytes.slice(offset, offset + length);
+                    offset += chunk.byteLength;
+                    controller.enqueue(chunk);
+                    if (offset >= size) controller.close();
+                  }
+                });
+              }
             }
-            globalThis.File = class File extends WebSceneBlob {
+            class WebSceneFile extends WebSceneBlob {
               constructor(parts, name, options={}) {
                 super(parts,options);
                 this.name=String(name).replace(/[\/]/g, ':');
                 this.lastModified=Number(options.lastModified ?? Date.now());
               }
-            };
+            }
+            globalThis.File = WebSceneFile;
+            globalThis.__webSceneCreateNativeFile =
+              (name, lastModified, size, read) => {
+                if (!Number.isSafeInteger(size) || size < 0
+                    || !Number.isFinite(lastModified) || typeof read !== 'function') {
+                  throw new DOMException('Malformed native file metadata', 'DataError');
+                }
+                const file = new WebSceneFile([], name, {lastModified});
+                file.size = size;
+                nativeBlobSources.set(file, {read, start: 0});
+                return file;
+              };
             class WebSceneURLSearchParams {
               constructor(init = null) {
                 this._owner = init && typeof init === 'object'
@@ -6007,7 +6095,8 @@ v8_dom_runtime::v8_dom_runtime(
     std::string storage_partition_key,
     uint64_t storage_quota_bytes,
     file_panel_request_sink_v2 file_panel_request_sink,
-    file_grant_same_entry_request_sink_v2 file_grant_same_entry_request_sink)
+    file_grant_same_entry_request_sink_v2 file_grant_same_entry_request_sink,
+    file_grant_read_request_sink_v2 file_grant_read_request_sink)
     : impl_(std::make_unique<implementation>(
         document,
         std::move(viewport_provider),
@@ -6021,7 +6110,8 @@ v8_dom_runtime::v8_dom_runtime(
         std::move(storage_partition_key),
         storage_quota_bytes,
         std::move(file_panel_request_sink),
-        std::move(file_grant_same_entry_request_sink)))
+        std::move(file_grant_same_entry_request_sink),
+        std::move(file_grant_read_request_sink)))
 {
 }
 
@@ -7868,6 +7958,23 @@ void v8_dom_runtime::complete_file_grant_same_entry_request(
         if (impl_->console_messages.size() < 1024)
             impl_->console_messages.push_back(
                 "error\nNative file grant identity completion: "
+                + impl_->last_error);
+    }
+}
+void v8_dom_runtime::complete_file_grant_read_request(
+    file_grant_read_completion_data_v2& completion) {
+    if (impl_ == nullptr) return;
+    v8::Locker locker(impl_->isolate);
+    v8::Isolate::Scope isolate_scope(impl_->isolate);
+    v8::HandleScope handles(impl_->isolate);
+    v8::TryCatch caught(impl_->isolate);
+    impl_->complete_native_file_grant_read(completion);
+    if (caught.HasCaught()) {
+        impl_->last_error = impl_->describe_reported_exception(caught);
+        std::lock_guard lock(impl_->console_message_mutex);
+        if (impl_->console_messages.size() < 1024)
+            impl_->console_messages.push_back(
+                "error\nNative file grant read completion: "
                 + impl_->last_error);
     }
 }

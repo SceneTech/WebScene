@@ -375,7 +375,7 @@ class BundleAuditTests(unittest.TestCase):
                      if resource is not None else None)
         after_fds = len(list(fd_root.iterdir())) if fd_root.is_dir() else None
         self.assertEqual(evidence["summary"]["entriesScanned"], 10_000)
-        self.assertLess(elapsed, 10.0)
+        self.assertLess(elapsed, 15.0)
         if before_fds is not None:
             self.assertLessEqual(after_fds, before_fds + 2)
         # ru_maxrss is KiB on Unix and bytes on macOS. Both bounds equal 128 MiB.

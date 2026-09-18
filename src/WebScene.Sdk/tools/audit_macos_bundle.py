@@ -142,6 +142,10 @@ def snapshot_tree(root: Path, maximum_entries: int) -> dict[str, dict]:
 
 
 def stable_metadata(entry: dict) -> tuple:
+    if entry["type"] == "directory":
+        # Directory identity and timestamps are not stable across equivalent
+        # Windows scans. The entry inventory detects additions and removals.
+        return ("directory",)
     fields = ("type", "device", "inode", "mode", "size", "mtimeNs")
     return tuple(entry.get(field) for field in fields) + (
         entry.get("target"), entry.get("resolvedRelative"), entry.get("macho")

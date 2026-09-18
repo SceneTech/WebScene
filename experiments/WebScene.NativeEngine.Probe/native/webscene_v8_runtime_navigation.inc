@@ -589,6 +589,10 @@
         hover_selector_dependencies.clear();
         css_variables.clear();
         important_css_variables.clear();
+        css_cascade_layer_orders.clear();
+        css_stylesheet_layer_names.clear();
+        active_stylesheet_layer_names = nullptr;
+        next_css_cascade_layer_order = 1U;
 
 #if defined(WEBSCENE_NATIVE_ENGINE_HTML5EVER)
         for (auto stylesheet : compiled ? std::vector<std::string>{} : parsed_inline_stylesheets(html_element)) {

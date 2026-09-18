@@ -381,6 +381,36 @@
             return;
         }
         auto source = to_wtf8(info.GetIsolate(), converted);
+        std::vector<std::string> layer_names;
+        constexpr auto maximum_layer_names = uint32_t{4096U};
+        constexpr auto maximum_layer_name_bytes = size_t{1024U * 1024U};
+        auto layer_name_bytes = size_t{0U};
+        if (info.Length() > 1 && info[1]->IsArray()) {
+            const auto input = info[1].As<v8::Array>();
+            const auto count = std::min(input->Length(), maximum_layer_names);
+            layer_names.reserve(count);
+            for (uint32_t index = 0; index < count; ++index) {
+                v8::Local<v8::Value> value;
+                v8::Local<v8::String> name;
+                if (!input->Get(info.GetIsolate()->GetCurrentContext(), index)
+                        .ToLocal(&value)
+                    || !value->ToString(info.GetIsolate()->GetCurrentContext())
+                        .ToLocal(&name)) {
+                    return;
+                }
+                auto decoded = to_wtf8(info.GetIsolate(), name);
+                if (decoded.empty()
+                    || decoded.size() > maximum_layer_name_bytes - std::min(
+                        layer_name_bytes, maximum_layer_name_bytes)) {
+                    return;
+                }
+                layer_name_bytes += decoded.size();
+                if (std::find(layer_names.begin(), layer_names.end(), decoded)
+                    == layer_names.end()) {
+                    layer_names.push_back(std::move(decoded));
+                }
+            }
+        }
         self->erase_pending_stylesheet_replacement(owner->id);
         constexpr auto maximum_pending_owners = size_t{1024U};
         constexpr auto maximum_pending_bytes = size_t{32U * 1024U * 1024U};
@@ -390,6 +420,8 @@
             // connected owners immediately so the same bytes are never copied
             // into pending replacement storage as well.
             self->flush_pending_stylesheet_replacements();
+            self->rebuild_cascade_layer_order_for_stylesheet(
+                owner->id, layer_names);
             self->stylesheet_cssom_sources.insert_or_assign(
                 owner->id, std::move(source));
             self->activate_connected_stylesheet(*owner);
@@ -412,7 +444,8 @@
             owner->id,
             cascade_root == nullptr ? 0U : cascade_root->id,
             base_address,
-            std::move(source)});
+            std::move(source),
+            std::move(layer_names)});
         self->document.mark_dirty();
         info.GetReturnValue().Set(v8::True(info.GetIsolate()));
     }
@@ -664,6 +697,7 @@
         state.variables = std::move(css_variables);
         state.important_variables = std::move(important_css_variables);
         state.cascade_layer_orders = std::move(css_cascade_layer_orders);
+        state.stylesheet_layer_names = std::move(css_stylesheet_layer_names);
         state.next_cascade_layer_order = next_css_cascade_layer_order;
         next_css_cascade_layer_order = 1U;
         active_stylesheet_owner_id = 0U;
@@ -700,6 +734,7 @@
         css_variables = std::move(state.variables);
         important_css_variables = std::move(state.important_variables);
         css_cascade_layer_orders = std::move(state.cascade_layer_orders);
+        css_stylesheet_layer_names = std::move(state.stylesheet_layer_names);
         next_css_cascade_layer_order = state.next_cascade_layer_order;
     }
 
@@ -746,6 +781,40 @@
             }
         }
         return const_cast<dom_node*>(active_css_cascade_root);
+    }
+
+    uint32_t cascade_layer_scope_id(uint32_t stylesheet_owner_id)
+    {
+        if (stylesheet_owner_id != 0U) {
+            auto* owner = document.find_by_native_id(stylesheet_owner_id);
+            if (owner != nullptr) {
+                for (const auto& [frame_id, provisional_body] : provisional_frame_bodies) {
+                    const auto* frame = document.find_by_native_id(frame_id);
+                    auto* provisional_root = provisional_body;
+                    while (provisional_root != nullptr
+                        && provisional_root->parent != nullptr
+                        && provisional_root->parent != frame) {
+                        provisional_root = provisional_root->parent;
+                    }
+                    if (provisional_root != nullptr
+                        && subtree_contains(*provisional_root, owner)) {
+                        return provisional_root->id;
+                    }
+                }
+                if (auto* root = css_cascade_root_for_node(*owner); root != nullptr) {
+                    return root->id;
+                }
+            }
+        }
+        return active_css_cascade_root == nullptr
+            ? document.body().id : active_css_cascade_root->id;
+    }
+
+    std::string cascade_layer_registration_key(
+        std::string_view name, uint32_t stylesheet_owner_id)
+    {
+        return std::to_string(cascade_layer_scope_id(stylesheet_owner_id))
+            + ':' + std::string(name);
     }
 
     void register_document_base(

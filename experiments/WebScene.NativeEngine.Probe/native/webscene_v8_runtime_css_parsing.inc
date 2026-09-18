@@ -548,12 +548,23 @@
 
     uint32_t register_cascade_layer(const std::string& name)
     {
+        if (!name.empty() && active_stylesheet_layer_names != nullptr
+            && std::find(
+                active_stylesheet_layer_names->begin(),
+                active_stylesheet_layer_names->end(),
+                name) == active_stylesheet_layer_names->end()) {
+            active_stylesheet_layer_names->push_back(name);
+        }
         if (!name.empty()) {
-            const auto known = css_cascade_layer_orders.find(name);
+            const auto key = cascade_layer_registration_key(
+                name, active_stylesheet_owner_id);
+            const auto known = css_cascade_layer_orders.find(key);
             if (known != css_cascade_layer_orders.end()) return known->second;
+            const auto order = next_css_cascade_layer_order++;
+            css_cascade_layer_orders.emplace(key, order);
+            return order;
         }
         const auto order = next_css_cascade_layer_order++;
-        if (!name.empty()) css_cascade_layer_orders.emplace(name, order);
         return order;
     }
 
@@ -1481,6 +1492,9 @@
         binding_callback_timer timer(profile_startup ? &startup_css_parse : nullptr);
 #endif
         const auto first_new_rule = css_rules.size();
+        std::vector<std::string> stylesheet_layer_names;
+        auto* previous_layer_names = active_stylesheet_layer_names;
+        active_stylesheet_layer_names = &stylesheet_layer_names;
 #if defined(WEBSCENE_NATIVE_ENGINE_CSSPARSER)
         const auto previous_owner_id = active_stylesheet_owner_id;
         const auto previous_shadow_scope_root_id =
@@ -1509,6 +1523,18 @@
         active_stylesheet_owner_id = previous_owner_id;
         active_stylesheet_shadow_scope_root_id = previous_shadow_scope_root_id;
 #endif
+        active_stylesheet_layer_names = previous_layer_names;
+        if (stylesheet_owner_id == 0U) {
+            auto& known = css_stylesheet_layer_names[0U];
+            for (auto& name : stylesheet_layer_names) {
+                if (std::find(known.begin(), known.end(), name) == known.end()) {
+                    known.push_back(std::move(name));
+                }
+            }
+        } else {
+            css_stylesheet_layer_names.insert_or_assign(
+                stylesheet_owner_id, std::move(stylesheet_layer_names));
+        }
         css::rebuild_root_variables(
             css_rules, css_variables, important_css_variables);
         return first_new_rule;

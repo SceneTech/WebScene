@@ -1,0 +1,228 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>CSSLayerStatementRule reflection and layer ordering stay live</title>
+<body>
+<script>
+  const state = window.__webSceneWptState = {
+    complete: false, harness: null, results: [], errors: [], diagnostics: []
+  };
+
+  function record(name, error) {
+    state.results.push({
+      name,
+      status: error ? "FAIL" : "PASS",
+      message: error ? String(error && error.message || error) : null,
+      stack: error && error.stack ? String(error.stack) : null
+    });
+  }
+
+  function exercise(document, view, prefix) {
+    const style = document.createElement("style");
+    const target = document.createElement("div");
+    style.textContent = `@layer early, branch.base, late;
+      @layer late { .${prefix} { color: rgb(255, 0, 0); } }
+      @layer early { .${prefix} { color: rgb(0, 0, 255); } }`;
+    target.className = prefix;
+    document.head.appendChild(style);
+    document.body.appendChild(target);
+
+    const sheet = style.sheet;
+    const authoredText = style.textContent;
+    const statement = sheet.cssRules[0];
+    const firstNames = statement.nameList;
+    const secondNames = statement.nameList;
+    const initial = {
+      constructor: statement.constructor.name,
+      statement: typeof view.CSSLayerStatementRule === "function"
+        && statement instanceof view.CSSLayerStatementRule,
+      rule: statement instanceof view.CSSRule,
+      grouping: typeof view.CSSGroupingRule === "function"
+        && statement instanceof view.CSSGroupingRule,
+      type: statement.type,
+      constantType: typeof view.CSSRule.LAYER_STATEMENT_RULE,
+      names: Array.from(firstNames),
+      array: Array.isArray(firstNames),
+      frozen: Object.isFrozen(firstNames),
+      freshArray: firstNames !== secondNames,
+      parentSheet: statement.parentStyleSheet === sheet,
+      parentRule: statement.parentRule,
+      cssText: statement.cssText,
+      color: view.getComputedStyle(target).color
+    };
+
+    let assignmentError = "";
+    try { statement.nameList = ["changed"]; }
+    catch (error) { assignmentError = error.name; }
+    let pushError = "";
+    try { firstNames.push("changed"); }
+    catch (error) { pushError = error.name; }
+    const readonly = {
+      names: Array.from(statement.nameList),
+      firstNames: Array.from(firstNames),
+      assignmentError,
+      pushError
+    };
+
+    const errors = {};
+    for (const [name, source] of Object.entries({
+      empty: "@layer;",
+      trailingComma: "@layer invalid,;",
+      whitespace: "@layer invalid name;",
+      emptyComponent: "@layer invalid..name;"
+    })) {
+      try { sheet.insertRule(source, 0); errors[name] = "none"; }
+      catch (error) { errors[name] = error.name; }
+    }
+
+    sheet.deleteRule(0);
+    const afterDelete = {
+      color: view.getComputedStyle(target).color,
+      parentStyleSheet: statement.parentStyleSheet,
+      parentRule: statement.parentRule,
+      names: Array.from(statement.nameList),
+      cssText: statement.cssText,
+      textStable: style.textContent === authoredText
+    };
+
+    const insertedIndex = sheet.insertRule("@layer early, late;", 0);
+    const inserted = sheet.cssRules[insertedIndex];
+    const afterInsert = {
+      index: insertedIndex,
+      constructor: inserted.constructor.name,
+      statement: inserted instanceof view.CSSLayerStatementRule,
+      names: Array.from(inserted.nameList),
+      cssText: inserted.cssText,
+      color: view.getComputedStyle(target).color,
+      textStable: style.textContent === authoredText
+    };
+
+    const mediaIndex = sheet.insertRule("@media all {}", sheet.cssRules.length);
+    const media = sheet.cssRules[mediaIndex];
+    const nestedIndex = media.insertRule(
+      "@layer nested.one, nested.two;", media.cssRules.length);
+    const nested = media.cssRules[nestedIndex];
+    const nestedState = {
+      constructor: nested.constructor.name,
+      statement: nested instanceof view.CSSLayerStatementRule,
+      names: Array.from(nested.nameList),
+      parentRule: nested.parentRule === media,
+      parentStyleSheet: nested.parentStyleSheet === sheet,
+      serialized: media.cssText.includes("@layer nested.one, nested.two;"),
+      textStable: style.textContent === authoredText
+    };
+
+    const outerIndex = sheet.insertRule("@layer outer {}", sheet.cssRules.length);
+    const outer = sheet.cssRules[outerIndex];
+    const innerIndex = outer.insertRule("@layer inner.one, inner.two;", 0);
+    const inner = outer.cssRules[innerIndex];
+    const layerNestedState = {
+      statement: inner instanceof view.CSSLayerStatementRule,
+      names: Array.from(inner.nameList),
+      parentRule: inner.parentRule === outer,
+      parentStyleSheet: inner.parentStyleSheet === sheet,
+      serialized: outer.cssText.includes("@layer inner.one, inner.two;")
+    };
+
+    sheet.deleteRule(0);
+    const detached = {
+      parentStyleSheet: inserted.parentStyleSheet,
+      parentRule: inserted.parentRule,
+      names: Array.from(inserted.nameList),
+      cssText: inserted.cssText,
+      color: view.getComputedStyle(target).color,
+      textStable: style.textContent === authoredText
+    };
+
+    style.remove();
+    target.remove();
+    return { initial, readonly, errors, afterDelete, afterInsert,
+      nestedState, layerNestedState, detached };
+  }
+
+  try {
+    const frame = document.createElement("iframe");
+    document.body.appendChild(frame);
+    const main = exercise(document, window, "layer-statement-main");
+    const nested = exercise(
+      frame.contentDocument, frame.contentWindow, "layer-statement-frame");
+    const both = predicate => predicate(main) && predicate(nested);
+
+    record("layer statements expose browser-shaped identity and frozen name lists",
+      both(value => value.initial.constructor === "CSSLayerStatementRule"
+          && value.initial.statement && value.initial.rule && !value.initial.grouping
+          && value.initial.type === 0
+          && value.initial.constantType === "undefined"
+          && value.initial.names.join("|") === "early|branch.base|late"
+          && value.initial.array && value.initial.frozen
+          && value.initial.freshArray && value.initial.parentSheet
+          && value.initial.parentRule === null
+          && value.initial.cssText === "@layer early, branch.base, late;"
+          && value.initial.color === "rgb(255, 0, 0)")
+        ? null : new Error(JSON.stringify({ main: main.initial, nested: nested.initial })));
+    record("layer statement names are readonly frozen snapshots",
+      both(value => value.readonly.names.join("|") === "early|branch.base|late"
+          && value.readonly.firstNames.join("|") === "early|branch.base|late"
+          && value.readonly.assignmentError === ""
+          && value.readonly.pushError === "TypeError")
+        ? null : new Error(JSON.stringify({ main: main.readonly, nested: nested.readonly })));
+    record("invalid layer statement insertion reports SyntaxError",
+      both(value => Object.values(value.errors)
+        .every(name => name === "SyntaxError"))
+        ? null : new Error(JSON.stringify({ main: main.errors, nested: nested.errors })));
+    record("statement deletion and insertion publish layer-order cascade winners",
+      both(value => value.afterDelete.color === "rgb(0, 0, 255)"
+          && value.afterDelete.parentStyleSheet === null
+          && value.afterDelete.parentRule === null
+          && value.afterDelete.names.join("|") === "early|branch.base|late"
+          && value.afterDelete.cssText === "@layer early, branch.base, late;"
+          && value.afterDelete.textStable
+          && value.afterInsert.index === 0
+          && value.afterInsert.constructor === "CSSLayerStatementRule"
+          && value.afterInsert.statement
+          && value.afterInsert.names.join("|") === "early|late"
+          && value.afterInsert.cssText === "@layer early, late;"
+          && value.afterInsert.color === "rgb(255, 0, 0)"
+          && value.afterInsert.textStable)
+        ? null : new Error(JSON.stringify({ main, nested })));
+    record("conditional-group layer statements retain nested ownership and serialization",
+      both(value => value.nestedState.constructor === "CSSLayerStatementRule"
+          && value.nestedState.statement
+          && value.nestedState.names.join("|") === "nested.one|nested.two"
+          && value.nestedState.parentRule && value.nestedState.parentStyleSheet
+          && value.nestedState.serialized && value.nestedState.textStable)
+        ? null : new Error(JSON.stringify({ main: main.nestedState, nested: nested.nestedState })));
+    record("layer-block statements reflect relative dotted names",
+      both(value => value.layerNestedState.statement
+          && value.layerNestedState.names.join("|") === "inner.one|inner.two"
+          && value.layerNestedState.parentRule
+          && value.layerNestedState.parentStyleSheet
+          && value.layerNestedState.serialized)
+        ? null : new Error(JSON.stringify({
+            main: main.layerNestedState, nested: nested.layerNestedState
+          })));
+    record("detached statements preserve names without recascading",
+      both(value => value.detached.parentStyleSheet === null
+          && value.detached.parentRule === null
+          && value.detached.names.join("|") === "early|late"
+          && value.detached.cssText === "@layer early, late;"
+          && value.detached.color === "rgb(0, 0, 255)"
+          && value.detached.textStable)
+        ? null : new Error(JSON.stringify({ main: main.detached, nested: nested.detached })));
+
+    state.diagnostics.push(JSON.stringify({ main, nested }));
+    frame.remove();
+  } catch (error) {
+    record("CSSLayerStatementRule setup", error);
+  }
+
+  const failure = state.results.find(result => result.status !== "PASS");
+  state.harness = failure
+    ? { status: 1, message: failure.message, stack: failure.stack }
+    : { status: 0, message: null, stack: null };
+  state.complete = true;
+  const evidence = document.createElement("pre");
+  evidence.id = "cssom-layer-statement-rule-mutation-evidence";
+  evidence.hidden = true;
+  evidence.textContent = JSON.stringify(state);
+  document.body.appendChild(evidence);
+</script>

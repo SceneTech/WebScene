@@ -28,6 +28,7 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
   const mediaRuleInstances = new WeakSet();
   const supportsRuleInstances = new WeakSet();
   const layerBlockRuleInstances = new WeakSet();
+  const layerStatementRuleInstances = new WeakSet();
   const mediaListInstances = new WeakSet();
   const ruleListInstances = new WeakSet();
   const interfaceConstructor = (name, instances, parent) => {
@@ -55,6 +56,8 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
     'CSSSupportsRule', supportsRuleInstances, CSSConditionRuleInterface);
   const CSSLayerBlockRuleInterface = interfaceConstructor(
     'CSSLayerBlockRule', layerBlockRuleInstances, CSSGroupingRuleInterface);
+  const CSSLayerStatementRuleInterface = interfaceConstructor(
+    'CSSLayerStatementRule', layerStatementRuleInstances, CSSRuleInterface);
   const MediaListInterface = interfaceConstructor('MediaList', mediaListInstances);
   const CSSRuleListInterface = interfaceConstructor('CSSRuleList', ruleListInstances);
   const installInterfaces = view => {
@@ -66,6 +69,7 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
       ['CSSMediaRule', CSSMediaRuleInterface],
       ['CSSSupportsRule', CSSSupportsRuleInterface],
       ['CSSLayerBlockRule', CSSLayerBlockRuleInterface],
+      ['CSSLayerStatementRule', CSSLayerStatementRuleInterface],
       ['MediaList', MediaListInterface],
       ['CSSRuleList', CSSRuleListInterface]
     ]) {
@@ -176,6 +180,72 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
     return query.replace(/\b(and|or|not)\b/gi, keyword => keyword.toLowerCase());
   };
   const parseMediaList = value => splitMediaQueries(value).map(normalizeMediaQuery);
+  // Cascade layer statement names use <ident> components separated by dots,
+  // and a statement may declare a comma-separated list. Keep escaped dots and
+  // commas inside the identifier token, then use CSS.escape() to serialize the
+  // decoded identifier the same way as the browser CSSOM.
+  const splitLayerNames = (source, delimiter) => {
+    const values = [];
+    let start = 0;
+    for (let index = 0; index < source.length; index++) {
+      if (source[index] === '\\') {
+        let cursor = index + 1;
+        if (/[0-9a-f]/i.test(source[cursor] || '')) {
+          let digits = 0;
+          while (digits < 6 && /[0-9a-f]/i.test(source[cursor] || '')) {
+            cursor++; digits++;
+          }
+          if (/[\t\n\f\r ]/.test(source[cursor] || '')) cursor++;
+        } else if (cursor < source.length) {
+          cursor++;
+        }
+        index = cursor - 1;
+      } else if (source[index] === delimiter) {
+        values.push(source.slice(start, index));
+        start = index + 1;
+      }
+    }
+    values.push(source.slice(start));
+    return values;
+  };
+  const cssEscapeToken = String.raw`\\(?:[0-9a-f]{1,6}(?:[\t\n\f\r ]|\r\n)?|[^\n\r\f0-9a-f])`;
+  const cssIdentifierStart = `(?:[a-z_\\u0080-\\uffff]|${cssEscapeToken})`;
+  const cssIdentifierCharacter = `(?:[a-z0-9_-\\u0080-\\uffff]|${cssEscapeToken})`;
+  const cssIdentifierPattern = new RegExp(
+    `^(?:--|-?${cssIdentifierStart})${cssIdentifierCharacter}*$`, 'iu');
+  const decodeCssIdentifier = value => value.replace(
+    /\\([0-9a-f]{1,6})(?:\r\n|[\t\n\f\r ])?|\\([^\n\r\f0-9a-f])/giu,
+    (_, hexadecimal, escaped) => {
+      if (escaped !== undefined) return escaped;
+      const codePoint = Number.parseInt(hexadecimal, 16);
+      return codePoint === 0 || codePoint > 0x10ffff
+        ? '\ufffd' : String.fromCodePoint(codePoint);
+    });
+  const parseLayerStatementNames = cssText => {
+    const match = /^@layer\b([\s\S]*);$/i.exec(cssText);
+    if (!match) return undefined;
+    const source = match[1].replace(/\/\*[\s\S]*?\*\//g, '');
+    const serialized = [];
+    for (const candidate of splitLayerNames(source, ',')) {
+      const components = splitLayerNames(candidate.trim(), '.');
+      if (!components.length) return null;
+      const name = [];
+      for (const componentSource of components) {
+        const component = componentSource.trim();
+        if (!component || !cssIdentifierPattern.test(component)) return null;
+        const decoded = decodeCssIdentifier(component);
+        name.push(globalThis.CSS?.escape
+          ? globalThis.CSS.escape(decoded) : component);
+      }
+      serialized.push(name.join('.'));
+    }
+    return serialized.length && serialized.every(Boolean) ? serialized : null;
+  };
+  const validateLayerStatement = parsed => {
+    if (parsed.body !== undefined || !/^@layer\b/i.test(parsed.cssText)) return;
+    if (!parseLayerStatementNames(parsed.cssText))
+      exception('The layer statement is invalid', 'SyntaxError');
+  };
   const makeMediaList = (read, write) => {
     const target = {};
     const queries = () => parseMediaList(read());
@@ -234,7 +304,8 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
       // CSSOM mutation does not replace the style element's DOM text nodes.
       // Stage the final serialized rule set in native state; synchronous
       // style/layout reads and the browser-task boundary flush it.
-      state.sheet.__webSceneStageRules(publishedSource);
+      state.sheet.__webSceneStageRules(
+        publishedSource, collectLayerNames(state.rules));
     } else {
       state.owner.textContent = publishedSource;
       state.ownerSource = publishedSource;
@@ -266,6 +337,27 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
     ruleListInstances.add(list);
     return list;
   };
+  const collectLayerNames = (rules, inheritedName = '', names = []) => {
+    for (const rule of rules) {
+      if (layerStatementRuleInstances.has(rule)) {
+        for (const name of rule.nameList) {
+          const qualified = inheritedName ? `${inheritedName}.${name}` : name;
+          if (!names.includes(qualified)) names.push(qualified);
+        }
+      } else if (layerBlockRuleInstances.has(rule)) {
+        const qualified = rule.name
+          ? (inheritedName ? `${inheritedName}.${rule.name}` : rule.name)
+          : '';
+        if (qualified && !names.includes(qualified)) names.push(qualified);
+        // Names below an anonymous layer do not join the document's reusable
+        // named-layer registry, so only recurse through named layer blocks.
+        if (qualified) collectLayerNames(rule.cssRules, qualified, names);
+      } else if (groupingRuleInstances.has(rule)) {
+        collectLayerNames(rule.cssRules, inheritedName, names);
+      }
+    }
+    return names;
+  };
   const makeRule = (state, parsed, containingRule = null) => {
     let cssText = parsed.cssText;
     let selectorText = parsed.selectorText;
@@ -275,6 +367,8 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
     const mediaMatch = /^@media(?:\s+([^\{]*?))?\s*\{/i.exec(parsed.cssText);
     const supportsMatch = /^@supports(?:\s+([^\{]*?))?\s*\{/i.exec(parsed.cssText);
     const layerBlockMatch = /^@layer(?:\s+([^\{]*?))?\s*\{/i.exec(parsed.cssText);
+    const layerStatementNames = parsed.body === undefined
+      ? parseLayerStatementNames(parsed.cssText) : undefined;
     const groupingMatch = mediaMatch || supportsMatch || layerBlockMatch;
     const rule = {};
     ruleInstances.add(rule);
@@ -292,6 +386,10 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
       groupingRuleInstances.add(rule);
       layerBlockRuleInstances.add(rule);
       Object.setPrototypeOf(rule, CSSLayerBlockRuleInterface.prototype);
+    } else if (layerStatementNames) {
+      layerStatementRuleInstances.add(rule);
+      Object.setPrototypeOf(rule, CSSLayerStatementRuleInterface.prototype);
+      cssText = `@layer ${layerStatementNames.join(', ')};`;
     } else if (parsed.selectorText !== undefined) {
       styleRuleInstances.add(rule);
     }
@@ -337,6 +435,7 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
           if (index > children.length) exception('Rule index is out of bounds', 'IndexSizeError');
           const parsedChildren = splitRules(text(ruleText));
           if (parsedChildren.length !== 1) exception('Exactly one CSS rule is required', 'SyntaxError');
+          validateLayerStatement(parsedChildren[0]);
           if (/^@(import|namespace)\b/i.test(parsedChildren[0].cssText))
             exception('Imported and namespace rules are not allowed in grouping rules', 'HierarchyRequestError');
           children.splice(index, 0, makeRule(state, parsedChildren[0], rule));
@@ -389,6 +488,15 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
       }
       Object.defineProperties(rule, descriptors);
       serialize();
+    } else if (layerStatementNames) {
+      Object.defineProperties(rule, {
+        type: { enumerable: true, value: 0 },
+        nameList: {
+          enumerable: true,
+          get: () => Object.freeze(layerStatementNames.slice())
+        },
+        detach: { value: () => { parent = null; } }
+      });
     } else if (parsed.selectorText !== undefined) {
       Object.defineProperties(rule, {
         type: { enumerable: true, value: 1 },
@@ -540,6 +648,7 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
         if (index > current.rules.length) exception('Rule index is out of bounds', 'IndexSizeError');
         const parsed = splitRules(text(rule));
         if (parsed.length !== 1) exception('Exactly one CSS rule is required', 'SyntaxError');
+        validateLayerStatement(parsed[0]);
         // Imported sheets cannot be represented by the native owner-text bridge.
         if (/^@(import|namespace)\b/i.test(parsed[0].cssText))
           exception('Imported and namespace rules require native CSSOM support', 'NotSupportedError');

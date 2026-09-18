@@ -5080,6 +5080,44 @@
             info.GetReturnValue().Set(dispatched);
             return;
         }
+        if (command_name == "selectall") {
+            auto* selection_root = root;
+            if (selection_root == nullptr) {
+                selection_root = static_cast<dom_node*>(
+                    context->GetAlignedPointerFromEmbedderData(
+                        1, v8::kEmbedderDataTypeTagDefault));
+            }
+            if (selection_root == nullptr) {
+                selection_root = &self->document.body();
+            }
+            auto& selection = self->window_selections
+                .try_emplace(selection_root->id).first->second;
+            selection.root_id = selection_root->id;
+            self->refresh_selection_text_nodes(selection, *selection_root);
+            if (selection.text_nodes.empty()) {
+                selection.has_range = false;
+                selection.anchor_node_id = 0U;
+                selection.focus_node_id = 0U;
+                selection.anchor_offset = 0U;
+                selection.focus_offset = 0U;
+                info.GetReturnValue().Set(false);
+                return;
+            }
+            auto* first = selection.text_nodes.front();
+            auto* last = selection.text_nodes.back();
+            selection.has_range = true;
+            selection.anchor_node_id = first->id;
+            selection.focus_node_id = last->id;
+            selection.anchor_offset = 0U;
+            selection.focus_offset = decode_wtf8_to_utf16(
+                last->text_content).size();
+            self->record_feature(
+                "web-api", "Document.execCommand", "supported",
+                "selectAll publishes a realm-local Selection over visible document text",
+                "web-api-binding");
+            info.GetReturnValue().Set(true);
+            return;
+        }
         // Other legacy editing commands still have no executor. Return false
         // without mutating the DOM so callers can choose their supported
         // asynchronous or application-level fallback.
@@ -5500,6 +5538,31 @@
       return true;
     }
 
+    void refresh_selection_text_nodes(window_selection_state &selection,
+                                      dom_node &root) {
+      if (selection.text_generation == document.scene_generation())
+        return;
+      selection.text_nodes.clear();
+      const auto collect = [&](const auto &recurse, dom_node &node,
+                               bool hidden) -> void {
+        hidden = hidden || !node.visible ||
+                 node.style.display == display_mode::none ||
+                 node.attributes.contains("hidden") || node.tag == "script" ||
+                 node.tag == "style" || node.tag == "noscript" ||
+                 node.tag == "template";
+        if (hidden)
+          return;
+        if (node.kind == dom_node_kind::text && !node.text_content.empty())
+          selection.text_nodes.push_back(&node);
+        for (auto *child : node.children) {
+          if (child != nullptr)
+            recurse(recurse, *child, hidden);
+        }
+      };
+      collect(collect, root, false);
+      selection.text_generation = document.scene_generation();
+    }
+
     v8::Local<v8::Object> wrap_selection_node(dom_node &node) {
       auto node_context = context_for_node(node);
       v8::Context::Scope node_scope(node_context);
@@ -5688,25 +5751,70 @@
       auto *self = current(info.GetIsolate());
       auto *selection =
           self == nullptr ? nullptr : self->selection_for(info.This());
-      if (selection == nullptr || !self->validate_selection(*selection) ||
-          selection->anchor_node_id != selection->focus_node_id) {
+      if (selection == nullptr || !self->validate_selection(*selection)) {
         info.GetReturnValue().Set(js_string(info.GetIsolate(), ""));
         return;
       }
-      auto *node = self->document.find_by_native_id(selection->anchor_node_id);
-      auto units = decode_wtf8_to_utf16(node->text_content);
-      const auto start =
-          std::min(selection->anchor_offset, selection->focus_offset);
-      const auto end =
-          std::max(selection->anchor_offset, selection->focus_offset);
-      if (end <= start) {
+      auto *root = self->document.find_by_native_id(selection->root_id);
+      auto *anchor = self->document.find_by_native_id(selection->anchor_node_id);
+      auto *focus = self->document.find_by_native_id(selection->focus_node_id);
+      if (root == nullptr || anchor == nullptr || focus == nullptr) {
+        info.GetReturnValue().Set(js_string(info.GetIsolate(), ""));
+        return;
+      }
+      if (anchor == focus) {
+        auto units = decode_wtf8_to_utf16(anchor->text_content);
+        const auto start =
+            std::min(selection->anchor_offset, selection->focus_offset);
+        const auto end =
+            std::max(selection->anchor_offset, selection->focus_offset);
+        if (end <= start) {
+          info.GetReturnValue().Set(js_string(info.GetIsolate(), ""));
+          return;
+        }
+        info.GetReturnValue().Set(
+            v8::String::NewFromTwoByte(info.GetIsolate(), units.data() + start,
+                                       v8::NewStringType::kNormal,
+                                       static_cast<int>(end - start))
+                .ToLocalChecked());
+        return;
+      }
+      self->refresh_selection_text_nodes(*selection, *root);
+      const auto anchor_it = std::find(selection->text_nodes.begin(),
+                                       selection->text_nodes.end(), anchor);
+      const auto focus_it = std::find(selection->text_nodes.begin(),
+                                      selection->text_nodes.end(), focus);
+      if (anchor_it == selection->text_nodes.end() ||
+          focus_it == selection->text_nodes.end()) {
+        info.GetReturnValue().Set(js_string(info.GetIsolate(), ""));
+        return;
+      }
+      const auto forward = anchor_it < focus_it;
+      auto first_it = forward ? anchor_it : focus_it;
+      auto last_it = forward ? focus_it : anchor_it;
+      const auto first_offset = forward ? selection->anchor_offset
+                                        : selection->focus_offset;
+      const auto last_offset = forward ? selection->focus_offset
+                                       : selection->anchor_offset;
+      std::vector<uint16_t> selected;
+      for (auto it = first_it; it <= last_it; ++it) {
+        auto units = decode_wtf8_to_utf16((*it)->text_content);
+        const auto begin = it == first_it
+            ? std::min(first_offset, units.size()) : 0U;
+        const auto end = it == last_it
+            ? std::min(last_offset, units.size()) : units.size();
+        if (end > begin)
+          selected.insert(selected.end(), units.begin() + begin,
+                          units.begin() + end);
+      }
+      if (selected.empty()) {
         info.GetReturnValue().Set(js_string(info.GetIsolate(), ""));
         return;
       }
       info.GetReturnValue().Set(
-          v8::String::NewFromTwoByte(info.GetIsolate(), units.data() + start,
+          v8::String::NewFromTwoByte(info.GetIsolate(), selected.data(),
                                      v8::NewStringType::kNormal,
-                                     static_cast<int>(end - start))
+                                     static_cast<int>(selected.size()))
               .ToLocalChecked());
     }
 
@@ -5931,28 +6039,7 @@
       selection.root_id = root->id;
       static_cast<void>(self->validate_selection(selection));
 
-      if (selection.text_generation != self->document.scene_generation()) {
-        selection.text_nodes.clear();
-        const auto collect = [&](const auto &recurse, dom_node &node,
-                                 bool hidden) -> void {
-          hidden = hidden || !node.visible ||
-                   node.style.display == display_mode::none ||
-                   node.attributes.contains("hidden") || node.tag == "script" ||
-                   node.tag == "style" || node.tag == "noscript" ||
-                   node.tag == "template";
-          if (hidden)
-            return;
-          if (node.kind == dom_node_kind::text && !node.text_content.empty()) {
-            selection.text_nodes.push_back(&node);
-          }
-          for (auto *child : node.children) {
-            if (child != nullptr)
-              recurse(recurse, *child, hidden);
-          }
-        };
-        collect(collect, *root, false);
-        selection.text_generation = self->document.scene_generation();
-      }
+      self->refresh_selection_text_nodes(selection, *root);
       const auto &text_nodes = selection.text_nodes;
       if (text_nodes.empty()) {
         info.GetReturnValue().Set(v8::False(info.GetIsolate()));

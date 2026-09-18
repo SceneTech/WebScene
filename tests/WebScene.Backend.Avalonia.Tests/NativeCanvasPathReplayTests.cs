@@ -7,6 +7,23 @@ namespace WebScene.Backend.Avalonia.Tests;
 public sealed unsafe class NativeCanvasPathReplayTests
 {
     [Fact]
+    public void DomSvgPathClipUsesEvenOddFillRule()
+    {
+        using var bitmap = new SKBitmap(20, 20);
+        using var canvas = new SKCanvas(bitmap);
+        canvas.Clear(SKColors.Transparent);
+
+        NativeCanvasSceneRenderer.ClipDomPathForTest(
+            canvas,
+            "M0 0 H20 V20 H0 Z M5 5 H15 V15 H5 Z",
+            evenOdd: true);
+        canvas.DrawColor(SKColors.CornflowerBlue);
+
+        Assert.NotEqual(0, bitmap.GetPixel(2, 2).Alpha);
+        Assert.Equal(0, bitmap.GetPixel(10, 10).Alpha);
+    }
+
+    [Fact]
     public void PathGeometryRetainsTransformActiveDuringConstruction()
     {
         var commands = new[]

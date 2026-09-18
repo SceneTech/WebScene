@@ -698,6 +698,8 @@ void native_document::append_scene(
         layout_rect bounds;
         float radius{};
         std::string path;
+        bool even_odd{};
+        bool relative_path{};
     };
     const auto resolve_effect_clip = [&]() -> std::optional<effect_clip_geometry> {
         const auto& effects = node.style.textual().effect_values;
@@ -707,6 +709,7 @@ void native_document::append_scene(
         constexpr std::string_view inset_prefix = "inset(";
         constexpr std::string_view circle_prefix = "circle(";
         constexpr std::string_view ellipse_prefix = "ellipse(";
+        constexpr std::string_view path_prefix = "path(";
         constexpr std::string_view polygon_prefix = "polygon(";
         if (value.empty() || value.back() != ')') return std::nullopt;
         const auto has_prefix = [&](std::string_view prefix) {
@@ -817,6 +820,101 @@ void native_document::append_scene(
                 0.0F,
                 path.str()};
         }
+        if (has_prefix(path_prefix)) {
+            auto arguments = value.substr(
+                path_prefix.size(), value.size() - path_prefix.size() - 1U);
+            const auto trim = [](std::string_view token) {
+                while (!token.empty()
+                    && std::isspace(static_cast<unsigned char>(token.front()))) {
+                    token.remove_prefix(1U);
+                }
+                while (!token.empty()
+                    && std::isspace(static_cast<unsigned char>(token.back()))) {
+                    token.remove_suffix(1U);
+                }
+                return token;
+            };
+            arguments = trim(arguments);
+            auto even_odd = false;
+            constexpr auto even_odd_prefix = std::string_view{"evenodd"};
+            constexpr auto nonzero_prefix = std::string_view{"nonzero"};
+            const auto consume_fill_rule = [&](std::string_view prefix, bool value)
+                -> bool {
+                if (arguments.size() < prefix.size()) return false;
+                for (size_t index = 0U; index < prefix.size(); ++index) {
+                    if (!ascii_equal(arguments[index], prefix[index])) return false;
+                }
+                auto remaining = trim(arguments.substr(prefix.size()));
+                if (remaining.empty() || remaining.front() != ',') return false;
+                arguments = trim(remaining.substr(1U));
+                even_odd = value;
+                return true;
+            };
+            if (!consume_fill_rule(even_odd_prefix, true)) {
+                consume_fill_rule(nonzero_prefix, false);
+            }
+            if (arguments.size() < 2U
+                || (arguments.front() != '\'' && arguments.front() != '"')
+                || arguments.back() != arguments.front()) {
+                return std::nullopt;
+            }
+            const auto quote = arguments.front();
+            auto encoded = arguments.substr(1U, arguments.size() - 2U);
+            std::string decoded;
+            decoded.reserve(encoded.size());
+            for (size_t index = 0U; index < encoded.size(); ++index) {
+                const auto character = static_cast<unsigned char>(encoded[index]);
+                if (character == static_cast<unsigned char>(quote)
+                    || character == '\n' || character == '\r' || character == '\f') {
+                    return std::nullopt;
+                }
+                if (character != '\\') {
+                    decoded.push_back(static_cast<char>(character));
+                    continue;
+                }
+                if (++index == encoded.size()) return std::nullopt;
+                if (encoded[index] == '\n') continue;
+                if (encoded[index] == '\r') {
+                    if (index + 1U < encoded.size() && encoded[index + 1U] == '\n') ++index;
+                    continue;
+                }
+                auto hexadecimal = uint32_t{};
+                auto digits = size_t{};
+                for (; index < encoded.size() && digits < 6U; ++index, ++digits) {
+                    const auto byte = static_cast<unsigned char>(encoded[index]);
+                    uint32_t nibble = 0U;
+                    if (byte >= '0' && byte <= '9') nibble = byte - '0';
+                    else if (byte >= 'a' && byte <= 'f') nibble = byte - 'a' + 10U;
+                    else if (byte >= 'A' && byte <= 'F') nibble = byte - 'A' + 10U;
+                    else break;
+                    hexadecimal = hexadecimal * 16U + nibble;
+                }
+                if (digits != 0U) {
+                    if (hexadecimal == 0U || hexadecimal > 0x7FU) return std::nullopt;
+                    decoded.push_back(static_cast<char>(hexadecimal));
+                    if (index < encoded.size()
+                        && std::isspace(static_cast<unsigned char>(encoded[index]))) {
+                        if (encoded[index] == '\r' && index + 1U < encoded.size()
+                            && encoded[index + 1U] == '\n') ++index;
+                    } else if (index != 0U) {
+                        --index;
+                    }
+                    continue;
+                }
+                decoded.push_back(encoded[index]);
+            }
+            if (decoded.empty() || decoded.size() > 16384U) return std::nullopt;
+            return effect_clip_geometry{
+                layout_rect{
+                    node.layout.x,
+                    node.layout.y,
+                    node.layout.width,
+                    node.layout.height},
+                0.0F,
+                std::move(decoded),
+                even_odd,
+                true};
+        }
         if (has_prefix(polygon_prefix)) {
             auto arguments = value.substr(
                 polygon_prefix.size(), value.size() - polygon_prefix.size() - 1U);
@@ -831,6 +929,22 @@ void native_document::append_scene(
                 }
                 return token;
             };
+            auto even_odd = false;
+            const auto first_comma = arguments.find(',');
+            if (first_comma != std::string_view::npos) {
+                const auto possible_rule = trim(arguments.substr(0U, first_comma));
+                const auto is_rule = [&](std::string_view expected) {
+                    if (possible_rule.size() != expected.size()) return false;
+                    for (size_t index = 0U; index < expected.size(); ++index) {
+                        if (!ascii_equal(possible_rule[index], expected[index])) return false;
+                    }
+                    return true;
+                };
+                if (is_rule("evenodd") || is_rule("nonzero")) {
+                    even_odd = is_rule("evenodd");
+                    arguments = trim(arguments.substr(first_comma + 1U));
+                }
+            }
             std::ostringstream path;
             path.precision(std::numeric_limits<float>::max_digits10);
             size_t point_count = 0U;
@@ -873,7 +987,8 @@ void native_document::append_scene(
                     node.layout.width,
                     node.layout.height},
                 0.0F,
-                path.str()};
+                path.str(),
+                even_odd};
         }
         if (!has_prefix(inset_prefix)) return std::nullopt;
         const std::string_view arguments(value.data() + 6U, value.size() - 7U);
@@ -917,9 +1032,13 @@ void native_document::append_scene(
     const auto effect_clip = resolve_effect_clip();
     if (effect_clip.has_value()) {
         constexpr uint32_t polygon_clip_resource = 1U << 31U;
+        constexpr uint32_t clip_even_odd = 1U << 30U;
+        constexpr uint32_t clip_relative_path = 1U << 29U;
         const auto flags = effect_clip->path.empty()
             ? 0U
             : polygon_clip_resource
+                | (effect_clip->even_odd ? clip_even_odd : 0U)
+                | (effect_clip->relative_path ? clip_relative_path : 0U)
                 | append_scene_string(effect_clip->path, strings, string_bytes);
         commands.push_back(webscene_scene_command{
             12U,

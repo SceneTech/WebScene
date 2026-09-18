@@ -43,7 +43,10 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
     private const uint LayerUnchangedPrefix = 4;
     private const uint OffscreenCanvasLayer = 1u << 31;
     private const uint DomPolygonClipResource = 1u << 31;
-    private const uint DomPolygonClipIndexMask = ~DomPolygonClipResource;
+    private const uint DomClipEvenOdd = 1u << 30;
+    private const uint DomClipRelativePath = 1u << 29;
+    private const uint DomPolygonClipIndexMask =
+        ~(DomPolygonClipResource | DomClipEvenOdd | DomClipRelativePath);
     private const uint DomBrightnessFilter = 1u << 31;
     private const uint DomGrayscaleFilter = 1u << 30;
     private const uint DomContrastFilter = 1u << 29;
@@ -1979,10 +1982,33 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
             ClipDomRoundedRect(canvas, command, radii);
             return;
         }
-        ClipDomPath(canvas, DomStringAt(view, command.Flags & DomPolygonClipIndexMask));
+        var relative = (command.Flags & DomClipRelativePath) != 0;
+        if (relative)
+        {
+            canvas.Translate(command.X, command.Y);
+        }
+        try
+        {
+            ClipDomPath(
+                canvas,
+                DomStringAt(view, command.Flags & DomPolygonClipIndexMask),
+                (command.Flags & DomClipEvenOdd) != 0);
+        }
+        finally
+        {
+            // Restoring a saved canvas would also restore the prior clip. Undo
+            // only the matrix so the device-space clip remains active.
+            if (relative)
+            {
+                canvas.Translate(-command.X, -command.Y);
+            }
+        }
     }
 
-    private static void ClipDomPath(SKCanvas canvas, string pathData)
+    private static void ClipDomPath(
+        SKCanvas canvas,
+        string pathData,
+        bool evenOdd = false)
     {
         using var path = SKPath.ParseSvgPathData(pathData);
         if (path is null)
@@ -1990,8 +2016,15 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
             canvas.ClipRect(SKRect.Empty, SKClipOperation.Intersect, antialias: false);
             return;
         }
+        path.FillType = evenOdd ? SKPathFillType.EvenOdd : SKPathFillType.Winding;
         canvas.ClipPath(path, SKClipOperation.Intersect, antialias: true);
     }
+
+    internal static void ClipDomPathForTest(
+        SKCanvas canvas,
+        string pathData,
+        bool evenOdd = false)
+        => ClipDomPath(canvas, pathData, evenOdd);
 
     private void DrawDomText(
         SKCanvas canvas,

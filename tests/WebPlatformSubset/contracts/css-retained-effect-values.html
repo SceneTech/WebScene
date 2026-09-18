@@ -83,6 +83,13 @@
   }, 'clip-path preserves explicit ellipse radii and center');
 
   test(() => {
+    const value = 'path(evenodd, "M0 0 H120 V80 H0 Z M20 20 H100 V60 H20 Z")';
+    effect.style.setProperty('clip-path', value);
+    assert_equals(getComputedStyle(effect).getPropertyValue('clip-path'), value);
+    effect.style.removeProperty('clip-path');
+  }, 'clip-path preserves a bounded quoted SVG path and fill rule');
+
+  test(() => {
     assert_equals(getComputedStyle(effect).getPropertyValue('filter'),
       'brightness(0.5) grayscale(1)');
   }, 'foreground filter exposes its computed function list');

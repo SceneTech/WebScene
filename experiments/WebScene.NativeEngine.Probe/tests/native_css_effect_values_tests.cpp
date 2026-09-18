@@ -54,6 +54,7 @@ struct clip_scene_counts final {
     uint32_t inset_clip_begins{};
     uint32_t inset_clip_ends{};
     uint32_t ellipse_clip_begins{};
+    uint32_t path_clip_begins{};
     uint32_t clipped_fills{};
     uint32_t blur_filter_begins{};
     uint32_t functional_blur_begins{};
@@ -61,6 +62,7 @@ struct clip_scene_counts final {
     uint32_t command_count{};
     bool transform_clip_nested{};
     bool compound_filter_ordered{};
+    bool path_clip_metadata{};
 };
 
 clip_scene_counts wait_for_inset_clip_scene(
@@ -139,6 +141,26 @@ clip_scene_counts wait_for_inset_clip_scene(
                         && std::abs(command.width - 4.0F) < 0.01F
                         && std::abs(command.height - 2.0F) < 0.01F) {
                         ++latest.ellipse_clip_begins;
+                    } else if (command.kind == 12U
+                        && (command.flags & (1U << 31U)) != 0U
+                        && std::abs(command.width - 8.0F) < 0.01F
+                        && std::abs(command.height - 2.0F) < 0.01F) {
+                        ++latest.path_clip_begins;
+                        constexpr auto path_index_mask = (1U << 29U) - 1U;
+                        const auto path_index = command.flags & path_index_mask;
+                        if ((command.flags & (1U << 30U)) != 0U
+                            && (command.flags & (1U << 29U)) != 0U
+                            && path_index < scene->string_count) {
+                            const auto& resource = scene->strings[path_index];
+                            if (resource.byte_offset <= scene->string_byte_count
+                                && resource.byte_length
+                                    <= scene->string_byte_count - resource.byte_offset) {
+                                latest.path_clip_metadata = std::string_view(
+                                    scene->string_bytes + resource.byte_offset,
+                                    resource.byte_length)
+                                    == "M0 0 H8 V2 H0 Z M2 .5 H6 V1.5 H2 Z";
+                            }
+                        }
                     } else if (command.kind == 13U) {
                         ++latest.inset_clip_ends;
                     } else if ((command.kind == 1U || command.kind == 9U)
@@ -274,6 +296,7 @@ int main()
           #effects.alternate > span { clip-path: circle(25%); filter: contrast(2); }
           #effects > span:first-child { transform: scale(1.25) rotate(3deg); }
           #ellipse-clip { clip-path: ellipse(25% 50% at 50% 50%); }
+          #path-clip { clip-path: path(evenodd, "M0 0 H8 V2 H0 Z M2 .5 H6 V1.5 H2 Z"); }
           #functional-blur { filter: blur(max(4px, calc(8px * 0.25))); }
           #compound-filter { filter: blur(2px) saturate(1.08) contrast(1.5) grayscale(0.25); }
           #effects > span:last-child { filter: blur(2px); }
@@ -285,6 +308,7 @@ int main()
         for (let index = 0; index < 4096; index++) fragment.appendChild(document.createElement('span'));
         host.appendChild(fragment);
         host.children[1].id = 'ellipse-clip';
+        host.children[2].id = 'path-clip';
         host.children[4093].id = 'functional-blur';
         host.children[4094].id = 'compound-filter';
         document.body.appendChild(host);
@@ -314,6 +338,10 @@ int main()
         if (getComputedStyle(document.getElementById('ellipse-clip')).getPropertyValue('clip-path')
             !== 'ellipse(25% 50% at 50% 50%)') {
           throw new Error('initial ellipse clip value failed');
+        }
+        if (getComputedStyle(document.getElementById('path-clip')).getPropertyValue('clip-path')
+            !== 'path(evenodd, "M0 0 H8 V2 H0 Z M2 .5 H6 V1.5 H2 Z")') {
+          throw new Error('initial path clip value failed');
         }
       })()
     )JS", "native-effects-fixture.js");
@@ -372,9 +400,9 @@ int main()
         peak_memory.native_dom_textual_style_storage_bytes
             - before_memory.native_dom_textual_style_storage_bytes;
 
-    const auto initial_clip_scene = wait_for_inset_clip_scene(engine, 4095U, 4096U);
-    require(initial_clip_scene.inset_clip_begins == 4095U,
-        "retained scene did not emit 4095 inset clip begin commands");
+    const auto initial_clip_scene = wait_for_inset_clip_scene(engine, 4094U, 4096U);
+    require(initial_clip_scene.inset_clip_begins == 4094U,
+        "retained scene did not emit 4094 inset clip begin commands");
     require(initial_clip_scene.inset_clip_ends == 4096U,
         "retained scene did not emit 4096 balanced inset clip end commands");
     require(initial_clip_scene.clipped_fills == 4096U,
@@ -383,6 +411,9 @@ int main()
         "transform commands did not wrap the inset clip scope");
     require(initial_clip_scene.ellipse_clip_begins == 1U,
         "retained scene did not emit the explicit ellipse path clip");
+    require(initial_clip_scene.path_clip_begins == 1U
+            && initial_clip_scene.path_clip_metadata,
+        "retained scene did not emit the relative even-odd CSS path clip");
     require(initial_clip_scene.blur_filter_begins == 2U,
         "retained scene did not emit both bounded foreground blur groups");
     require(initial_clip_scene.compound_filter_ordered,
@@ -519,6 +550,8 @@ int main()
               << " clip-begins=" << initial_clip_scene.inset_clip_begins
               << " clip-ends=" << initial_clip_scene.inset_clip_ends
               << " ellipse-clip-begins=" << initial_clip_scene.ellipse_clip_begins
+              << " path-clip-begins=" << initial_clip_scene.path_clip_begins
+              << " path-clip-metadata=" << initial_clip_scene.path_clip_metadata
               << " clipped-fills=" << initial_clip_scene.clipped_fills
               << " blur-filter-begins=" << initial_clip_scene.blur_filter_begins
               << " functional-blur-begins=" << initial_clip_scene.functional_blur_begins

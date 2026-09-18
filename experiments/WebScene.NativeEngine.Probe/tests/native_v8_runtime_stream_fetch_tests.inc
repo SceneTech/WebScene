@@ -1667,10 +1667,20 @@ void test_vscode_markdown_css_image_resource_broker()
     constexpr std::string_view worker_address{
         "https://vscode-webview.test/service-worker.js?"
         "vscode-resource-base-authority=vscode-resource.test&platform=electron"};
+    constexpr std::array<unsigned char,70> admission_raster_png{{
+        0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,0x00,0x00,0x00,0x0d,
+        0x49,0x48,0x44,0x52,0x00,0x00,0x00,0x01,0x00,0x00,0x00,0x01,
+        0x08,0x06,0x00,0x00,0x00,0x1f,0x15,0xc4,0x89,0x00,0x00,0x00,
+        0x0d,0x49,0x44,0x41,0x54,0x78,0xda,0x63,0x90,0xdd,0x19,0xf2,
+        0x1f,0x00,0x04,0x4b,0x02,0x2a,0x81,0xeb,0x0d,0xbc,0x00,0x00,
+        0x00,0x00,0x49,0x45,0x4e,0x44,0xae,0x42,0x60,0x82}};
     resource_server admission_server{.content = {
         {std::string{admission_address},
             "<!doctype html><title>local resource admission</title><div id='root'></div>"},
-        {std::string{worker_address}, exact_worker}
+        {std::string{worker_address}, exact_worker},
+        {"https://external-resource.test/external.png", std::string(
+            reinterpret_cast<const char*>(admission_raster_png.data()),
+            admission_raster_png.size())}
     }};
     webscene_engine_options admission_options{};
     admission_options.struct_size = sizeof(admission_options);
@@ -1697,7 +1707,7 @@ void test_vscode_markdown_css_image_resource_broker()
     execute(admission_engine, R"JS(
       globalThis.__localResourceAdmission = {
         complete:false, error:null, phase:'register', durations:[], requests:[],
-        byteStarts:0, lateReplies:0
+        imageDurations:[], byteStarts:0, lateReplies:0
       };
       (async () => {
         const state = __localResourceAdmission;
@@ -1705,6 +1715,12 @@ void test_vscode_markdown_css_image_resource_broker()
         const root = '/workspace/allowed';
         const body = 'admitted-resource-body';
         const largeBody = 'x'.repeat(64 * 1024);
+        const png = new Uint8Array([
+          137,80,78,71,13,10,26,10,0,0,0,13,73,72,68,82,0,0,0,1,0,0,0,1,
+          8,6,0,0,0,31,21,196,137,0,0,0,13,73,68,65,84,120,218,99,144,221,
+          25,242,31,0,4,75,2,42,129,235,13,188,0,0,0,0,73,69,78,68,174,66,96,130
+        ]);
+        const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="3" height="2" viewBox="0 0 3 2"><rect width="3" height="2"/></svg>';
         let worker;
         const admit = request => {
           if (request.scheme !== 'file' || request.authority !== '') return false;
@@ -1716,13 +1732,14 @@ void test_vscode_markdown_css_image_resource_broker()
           if (parts.some(part => part === '..' || part === '.')) return false;
           return path.startsWith(root + '/');
         };
-        const postBody = (request, value, status = 200, range = undefined) => {
+        const postBody = (request, value, status = 200, range = undefined,
+          mime = 'text/plain') => {
           worker.postMessage({channel:'did-load-resource', data:{
-            id:request.id, status, path:request.path, mime:'text/plain',
+            id:request.id, status, path:request.path, mime,
             etag:'"admission-v1"', mtime:1700000000000,
             range
           }});
-          const bytes = encode(value);
+          const bytes = value instanceof Uint8Array ? value : encode(value);
           state.byteStarts++;
           worker.postMessage({channel:'did-load-resource-chunk', data:{
             id:request.id, data:bytes
@@ -1749,10 +1766,19 @@ void test_vscode_markdown_css_image_resource_broker()
             }
             return;
           }
-          if (request.path.endsWith('/missing.txt')) {
+          if (request.path.endsWith('/missing.txt')
+              || request.path.endsWith('/missing.png')) {
             worker.postMessage({channel:'did-load-resource', data:{
               id:request.id, status:404, path:request.path
             }});
+            return;
+          }
+          if (request.path.endsWith('/local.png')) {
+            postBody(request, png.slice(), 200, undefined, 'image/png');
+            return;
+          }
+          if (request.path.endsWith('/local.svg')) {
+            postBody(request, svg, 200, undefined, 'image/svg+xml');
             return;
           }
           if (request.ifNoneMatch === '"admission-v1"') {
@@ -1781,6 +1807,25 @@ void test_vscode_markdown_css_image_resource_broker()
           worker = navigator.serviceWorker.controller || registration.active;
           if (!worker) throw new Error('admission worker did not control the document');
           const resource = path => `https://file+.vscode-resource.test${path}`;
+          const loadImage = (url, expectError = false) => new Promise((resolve, reject) => {
+            const image = document.createElement('img');
+            image.onload = () => {
+              const result = {event:'load', width:image.naturalWidth,
+                height:image.naturalHeight};
+              image.remove();
+              expectError ? reject(new Error(`image unexpectedly loaded ${url}`))
+                : resolve(result);
+            };
+            image.onerror = () => {
+              const result = {event:'error', width:image.naturalWidth,
+                height:image.naturalHeight};
+              image.remove();
+              expectError ? resolve(result)
+                : reject(new Error(`image failed ${url}`));
+            };
+            image.src = url;
+            document.body.append(image);
+          });
           state.phase = 'admitted';
           const admitted = await fetch(resource('/workspace/allowed/asset.txt'));
           if (admitted.status !== 200 || await admitted.text() !== body) {
@@ -1841,6 +1886,43 @@ void test_vscode_markdown_css_image_resource_broker()
               && request.ifNoneMatch === '"admission-v1"');
           if (!cachedRequest) throw new Error('cache validator was not forwarded');
           if (state.lateReplies !== 2) throw new Error('late denial probe was not sent');
+          state.phase = 'image-matrix';
+          const localPng = await loadImage(resource('/workspace/allowed/local.png'));
+          const localSvg = await loadImage(resource('/workspace/allowed/local.svg'));
+          if (localPng.width !== 1 || localPng.height !== 1
+              || localSvg.width !== 3 || localSvg.height !== 2) {
+            throw new Error(`local image dimensions ${JSON.stringify({localPng, localSvg})}`);
+          }
+          const beforeFailures = state.byteStarts;
+          const missingImage = await loadImage(
+            resource('/workspace/allowed/missing.png'), true);
+          const deniedImage = await loadImage(
+            resource('/workspace/denied/out-of-root.png'), true);
+          if (missingImage.width !== 0 || missingImage.height !== 0
+              || deniedImage.width !== 0 || deniedImage.height !== 0
+              || state.byteStarts !== beforeFailures) {
+            throw new Error(`failed image opened bytes ${JSON.stringify({
+              missingImage, deniedImage, beforeFailures, byteStarts:state.byteStarts})}`);
+          }
+          const external = await loadImage(
+            'https://external-resource.test/external.png');
+          if (external.width !== 1 || external.height !== 1
+              || state.requests.some(request => request.path === '/external.png')) {
+            throw new Error(`external image broker mismatch ${JSON.stringify(external)}`);
+          }
+          for (let cycle = 0; cycle < 100; ++cycle) {
+            const started = performance.now();
+            const suffix = cycle % 2 === 0 ? 'local.png' : 'local.svg';
+            await loadImage(resource(
+              `/workspace/allowed/${suffix}?image-cycle=${cycle}`));
+            state.imageDurations.push(performance.now() - started);
+          }
+          const orderedImages = [...state.imageDurations].sort(
+            (left, right) => left - right);
+          state.imageP95 = orderedImages[Math.ceil(orderedImages.length * .95) - 1];
+          if (state.imageP95 > 100) {
+            throw new Error(`mixed image p95 ${state.imageP95}`);
+          }
           state.phase = 'cycles';
           for (let cycle = 0; cycle < 100; ++cycle) {
             const started = performance.now();
@@ -1879,7 +1961,7 @@ void test_vscode_markdown_css_image_resource_broker()
         "local resource admission contract failed: "
             + evaluate(admission_engine, "JSON.stringify(__localResourceAdmission)",
                 "admission-error-detail.js"));
-    require(admission_server.requests.load(std::memory_order_relaxed) == 2,
+    require(admission_server.requests.load(std::memory_order_relaxed) == 3,
         "controlled admission requests bypassed the Service Worker host broker");
     require(webscene_engine_request_low_memory(admission_engine) != 0,
         "local resource admission low-memory request rejected");
@@ -1906,6 +1988,9 @@ void test_vscode_markdown_css_image_resource_broker()
     std::cout << "Local resource admission gate: cycles=100 p95="
               << evaluate(admission_engine, "__localResourceAdmission.p95",
                     "admission-p95.js")
+              << "ms imageP95="
+              << evaluate(admission_engine, "__localResourceAdmission.imageP95",
+                    "admission-image-p95.js")
               << "ms requests="
               << evaluate(admission_engine, "__localResourceAdmission.requests.length",
                     "admission-request-count.js")

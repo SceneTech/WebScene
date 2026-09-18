@@ -35,6 +35,11 @@
     const resourceUrl = name => `${resourceOrigin}/workspace/${name}`;
     const seen = new Map();
     const responseBytes = new TextEncoder();
+    const pngBytes = new Uint8Array([
+      137,80,78,71,13,10,26,10,0,0,0,13,73,72,68,82,0,0,0,1,0,0,0,1,
+      8,6,0,0,0,31,21,196,137,0,0,0,13,73,68,65,84,120,218,99,144,221,
+      25,242,31,0,4,75,2,42,129,235,13,188,0,0,0,0,73,69,78,68,174,66,96,130
+    ]);
     const resourceBodies = new Map([
       ['/workspace/prelude.js', {
         mime:'text/javascript', body:'globalThis.__markdownPrelude=(globalThis.__markdownPrelude||0)+1;'
@@ -45,6 +50,9 @@
       ['/workspace/markdown-image.svg', {
         mime:'image/svg+xml', body:'<svg xmlns="http://www.w3.org/2000/svg" width="7" height="5" viewBox="0 0 7 5"><rect width="7" height="5" fill="#0c2238"/></svg>'
       }],
+      ['/workspace/markdown-image.png', {
+        mime:'image/png', body:pngBytes
+      }],
       ['/workspace/css-image.svg', {
         mime:'image/svg+xml', body:'<svg xmlns="http://www.w3.org/2000/svg" width="3" height="2" viewBox="0 0 3 2"><rect width="3" height="2" fill="#0c2238"/></svg>'
       }],
@@ -53,7 +61,7 @@
       }]
     ]);
     const postStream = (request, mime, body) => {
-      const bytes = responseBytes.encode(body);
+      const bytes = body instanceof Uint8Array ? body : responseBytes.encode(body);
       brokerWorker.postMessage({channel:'did-load-resource', data:{
         status:200, id:request.id, path:request.path, mime,
         etag:undefined, mtime:undefined
@@ -77,6 +85,20 @@
         postStream(request, 'text/markdown', readmeBody);
         return;
       }
+      if (request.path === '/workspace/missing.png') {
+        brokerWorker.postMessage({
+          channel:'did-load-resource', data:{status:404, id:request.id,
+            path:request.path}
+        });
+        return;
+      }
+      if (request.path === '/outside/denied.png') {
+        brokerWorker.postMessage({
+          channel:'did-load-resource', data:{status:401, id:request.id,
+            path:request.path}
+        });
+        return;
+      }
       const resource = resourceBodies.get(request.path);
       if (resource && request.path === '/workspace/stale.svg') {
         setTimeout(() => postStream(request, resource.mime, resource.body), 25);
@@ -89,6 +111,24 @@
       element.onload = resolve;
       element.onerror = () => reject(new Error(`resource failed: ${element.src || element.href}`));
       document.body.append(element);
+    });
+    const loadImage = (url, expectError = false) => new Promise((resolve, reject) => {
+      const image = document.createElement('img');
+      image.onload = () => {
+        const result = {event:'load', width:image.naturalWidth,
+          height:image.naturalHeight};
+        image.remove();
+        expectError ? reject(new Error(`image unexpectedly loaded ${url}`))
+          : resolve(result);
+      };
+      image.onerror = () => {
+        const result = {event:'error', width:image.naturalWidth,
+          height:image.naturalHeight};
+        image.remove();
+        expectError ? resolve(result) : reject(new Error(`image failed ${url}`));
+      };
+      image.src = url;
+      document.body.append(image);
     });
     (async () => {
       const changed = new Promise(resolve => navigator.serviceWorker.addEventListener(
@@ -152,6 +192,21 @@
         ['/workspace/prelude.js','/workspace/extension.css','/workspace/markdown-image.svg',
           '/workspace/css-image.svg'].every(path => seen.has(path)),
         JSON.stringify(Object.fromEntries(seen)));
+      state.phase = 'image-matrix';
+      const localPng = await loadImage(resourceUrl('markdown-image.png'));
+      const missing = await loadImage(resourceUrl('missing.png'), true);
+      const denied = await loadImage(`${resourceOrigin}/outside/denied.png`, true);
+      const ordinary = await loadImage('/__webscene_markdown_external.svg');
+      record('Markdown local binary image and ordinary host image load with dimensions',
+        localPng.width === 1 && localPng.height === 1
+          && ordinary.width === 2 && ordinary.height === 3,
+        JSON.stringify({localPng, ordinary}));
+      record('missing and out-of-root Markdown images fail closed',
+        missing.event === 'error' && missing.width === 0 && missing.height === 0
+          && denied.event === 'error' && denied.width === 0 && denied.height === 0
+          && seen.get('/workspace/missing.png') === 1
+          && seen.get('/outside/denied.png') === 1,
+        JSON.stringify({missing, denied, seen:Object.fromEntries(seen)}));
       const preview = document.getElementById('preview');
       state.phase = 'css-image-cycles';
       for (let cycle = 0; cycle < 100; ++cycle) {

@@ -154,6 +154,26 @@ inline bool supports_text_selection(const dom_node* node)
             && type->second != "color";
     }
 
+inline bool required_applies(const dom_node& node)
+    {
+        if (node.tag == "select" || node.tag == "textarea") return true;
+        if (node.tag != "input") return false;
+        const auto authored = node.attributes.find("type");
+        if (authored == node.attributes.end()) return true;
+        const auto equals = [&](std::string_view expected) {
+            if (authored->second.size() != expected.size()) return false;
+            for (size_t index = 0; index < expected.size(); ++index) {
+                auto character = authored->second[index];
+                if (character >= 'A' && character <= 'Z') character += 'a' - 'A';
+                if (character != expected[index]) return false;
+            }
+            return true;
+        };
+        return !equals("hidden") && !equals("range") && !equals("color")
+            && !equals("button") && !equals("submit") && !equals("reset")
+            && !equals("image");
+    }
+
 inline bool is_text_control(const dom_node* node)
     {
         return supports_text_selection(node)

@@ -111,7 +111,9 @@ inline std::vector<css_compound_dependencies> compile_invalidation_plan(
             } else if (pseudo.name == "required" || pseudo.name == "optional"
                 || pseudo.name == "valid" || pseudo.name == "invalid") {
                 add(output.attributes["required"], route);
-                if (pseudo.name == "valid" || pseudo.name == "invalid") {
+                if (pseudo.name == "required" || pseudo.name == "optional") {
+                    add(output.attributes["type"], route);
+                } else {
                     // Non-text controls retain their existing authored-value
                     // dependency while text controls also observe live value.
                     add(output.attributes["value"], route);

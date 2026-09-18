@@ -853,6 +853,143 @@ void test_message_port_event_handler_accessors()
               << " rssAfter=" << rss_after << '\n';
 }
 
+void test_worker_message_port_active_listener_gc()
+{
+    webscene_native::native_document document;
+    webscene_native::v8_dom_runtime runtime(document,
+        []{return webscene_native::v8_dom_runtime::viewport_metrics{640,480,1,0};});
+    unsigned armed = 0;
+    unsigned delivered = 0;
+    std::string worker_error;
+    runtime.register_compiled_template(
+        "worker-port-gc-result",
+        [&](auto& dom, const std::string& value) -> auto& {
+            if (value == "0") ++armed;
+            if (value == "1") ++delivered;
+            if (value.starts_with("error:")) worker_error = value;
+            return dom.create_element("span");
+        });
+    require(runtime.initialize(), "Worker MessagePort GC runtime failed");
+    require(runtime.execute(R"JS(
+        const portGcWorkerSource = `
+          let mode = 0;
+          onmessage = event => {
+            const port = event.data;
+            const currentMode = mode++;
+            const receive = message => {
+              if (message.data === 0) {
+                port.postMessage(0);
+                return;
+              }
+              port.postMessage(1);
+              if ((currentMode & 1) === 0) port.onmessage = null;
+              else port.removeEventListener('message', receive);
+              message.target.close();
+            };
+            if ((currentMode & 1) === 0) port.onmessage = receive;
+            else {
+              port.addEventListener('message', receive);
+              port.start();
+            }
+          };
+        `;
+        const workerUrl = URL.createObjectURL(new Blob(
+          [portGcWorkerSource], {type:'text/javascript'}));
+        globalThis.portGcWorker = new Worker(workerUrl);
+        URL.revokeObjectURL(workerUrl);
+        portGcWorker.onerror = event => {
+          document.createCompiledTemplate(
+            'worker-port-gc-result', `error:${event.message}`);
+        };
+        globalThis.attachWorkerPort = () => {
+          const channel = new MessageChannel();
+          const stale = () => {};
+          channel.port2.addEventListener('message', stale);
+          channel.port2.start();
+          globalThis.portGcSender = channel.port1;
+          portGcSender.onmessage = event => {
+            document.createCompiledTemplate(
+              'worker-port-gc-result', event.data);
+          };
+          portGcWorker.postMessage(channel.port2, [channel.port2]);
+        };
+    )JS", "worker-message-port-gc-bootstrap"), runtime.last_error().c_str());
+
+    const auto pump_until = [&](const auto& predicate, const char* message) {
+        const auto deadline = std::chrono::steady_clock::now()
+            + std::chrono::seconds(2);
+        while (!predicate() && std::chrono::steady_clock::now() < deadline) {
+            require(runtime.pump_task(), runtime.last_error().c_str());
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        require(predicate(), message);
+    };
+    const auto started = std::chrono::steady_clock::now();
+    const auto heap_before = runtime.read_memory_metrics().used_heap_bytes;
+    const auto rss_before = peak_rss_bytes();
+    for (unsigned cycle = 0; cycle < 100; ++cycle) {
+        require(runtime.execute(
+            "attachWorkerPort(); portGcSender.postMessage(0)",
+            "worker-message-port-gc-probe"), runtime.last_error().c_str());
+        pump_until([&] {
+                return armed == cycle + 1U || !worker_error.empty();
+            },
+            "Worker did not arm the transferred MessagePort");
+        require(worker_error.empty(), worker_error.c_str());
+        runtime.notify_low_memory();
+        require(runtime.execute(
+            "portGcSender.postMessage(1)",
+            "worker-message-port-gc-send"), runtime.last_error().c_str());
+        pump_until([&] { return delivered == cycle + 1U || !worker_error.empty(); },
+            "Worker lost an active MessagePort listener during forced GC");
+        require(worker_error.empty(), worker_error.c_str());
+        require(runtime.execute(
+            "portGcSender.onmessage = null; portGcSender.close(); portGcSender = null",
+            "worker-message-port-gc-release"), runtime.last_error().c_str());
+        runtime.notify_low_memory();
+    }
+    require(runtime.execute("attachWorkerPort(); portGcSender.postMessage(0)",
+        "worker-message-port-termination-attach"), runtime.last_error().c_str());
+    pump_until([&] { return armed == 101U || !worker_error.empty(); },
+        "Worker did not arm the termination MessagePort");
+    require(worker_error.empty(), worker_error.c_str());
+    runtime.notify_low_memory();
+    require(runtime.execute(R"JS(
+        portGcWorker.terminate();
+        portGcWorker = null;
+        portGcSender = null;
+    )JS", "worker-message-port-gc-terminate"), runtime.last_error().c_str());
+    runtime.notify_low_memory();
+    for (unsigned task = 0; task < 8; ++task)
+        require(runtime.pump_task(), runtime.last_error().c_str());
+    const auto heap_after = runtime.read_memory_metrics().used_heap_bytes;
+    const auto rss_after = peak_rss_bytes();
+    const auto ports = runtime.read_message_port_metrics();
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - started);
+    require(ports.queued_messages == 0U && ports.queued_bytes == 0U,
+        "Worker MessagePort GC cycles retained queued messages or bytes");
+    require(ports.retained_bindings == 0U,
+        "Worker MessagePort GC cycles retained transferred parent bindings");
+    require(ports.binding_slots <= 3U,
+        "Worker MessagePort GC cycles did not reuse parent binding slots");
+    require(heap_after <= heap_before + 8U * 1024U * 1024U,
+        "Worker MessagePort GC cycles retained more than 8 MiB of V8 heap");
+    require(rss_before == 0U || rss_after <= rss_before + 64U * 1024U * 1024U,
+        "Worker MessagePort GC cycles grew peak RSS by more than 64 MiB");
+    require(elapsed < std::chrono::seconds(10),
+        "100 Worker MessagePort GC cycles exceeded ten seconds");
+    std::cout << "[messageport-worker-gc] cycles=100 elapsedMs="
+              << elapsed.count() << " bindingSlots=" << ports.binding_slots
+              << " retainedBindings=" << ports.retained_bindings
+              << " queuedMessages=" << ports.queued_messages
+              << " queuedBytes=" << ports.queued_bytes
+              << " heapBefore=" << heap_before
+              << " heapAfter=" << heap_after
+              << " rssBefore=" << rss_before
+              << " rssAfter=" << rss_after << '\n';
+}
+
 void test_message_port_receiver_survives_gc() {
     webscene_native::native_document document;
     webscene_native::v8_dom_runtime runtime(document,
@@ -1664,6 +1801,7 @@ void test_worker_message_port_contracts() {
     test_worker_message_port_transfer_and_throughput();
     test_message_port_clone_and_queue_bounds();
     test_message_port_event_handler_accessors();
+    test_worker_message_port_active_listener_gc();
     test_message_port_binding_memory_is_bounded();
     test_iframe_worker_extension_host_port_bootstrap();
     test_editor_worker_rpc_and_ui_responsiveness();
@@ -1710,6 +1848,10 @@ int main() {
                 test_worker_message_port_contracts();
                 return 0;
             }
+            if (selected == "worker-messageport-basic") {
+                test_worker_message_port_transfer_and_throughput();
+                return 0;
+            }
             if (selected == "messageport-gc") {
                 test_message_port_receiver_survives_gc();
                 return 0;
@@ -1720,6 +1862,10 @@ int main() {
             }
             if (selected == "messageport-event-handlers") {
                 test_worker_message_port_contracts();
+                return 0;
+            }
+            if (selected == "messageport-worker-gc") {
+                test_worker_message_port_active_listener_gc();
                 return 0;
             }
         }

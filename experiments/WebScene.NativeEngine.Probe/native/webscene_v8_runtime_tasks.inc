@@ -765,6 +765,9 @@
 
     bool drain_tasks()
     {
+        if (message_port_wake->consume_reachability_change()) {
+            refresh_message_port_reachability();
+        }
         // Native DOM objects are retained by JavaScript wrappers, so report
         // their fixed object storage at browser task boundaries. V8 can then
         // schedule normal incremental/concurrent work from allocation pressure

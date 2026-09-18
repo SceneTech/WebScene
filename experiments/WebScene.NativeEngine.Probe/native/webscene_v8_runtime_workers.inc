@@ -7,6 +7,8 @@
         std::deque<std::string> errors;
         bool stopped{false};
         bool wake_requested{false};
+        uint64_t low_memory_requested{};
+        uint64_t low_memory_completed{};
         v8::Isolate* running_isolate{};
         std::function<void()> notify_parent;
         std::thread thread;
@@ -34,6 +36,30 @@
     static constexpr size_t maximum_worker_queue_bytes = 16U * 1024U * 1024U;
     static constexpr size_t maximum_worker_errors = 16U;
     static constexpr size_t maximum_worker_error_length = 4096U;
+
+    void request_worker_low_memory()
+    {
+        std::vector<std::pair<worker_state*, uint64_t>> pending;
+        for (const auto& worker : dedicated_workers) {
+            if (worker == nullptr) continue;
+            uint64_t generation = 0U;
+            {
+                std::lock_guard lock(worker->mutex);
+                if (worker->stopped || worker->running_isolate == nullptr) continue;
+                generation = ++worker->low_memory_requested;
+                worker->wake_requested = true;
+            }
+            pending.emplace_back(worker.get(), generation);
+            worker->ready.notify_all();
+        }
+        for (const auto& [worker, generation] : pending) {
+            std::unique_lock lock(worker->mutex);
+            worker->ready.wait(lock, [&] {
+                return worker->stopped
+                    || worker->low_memory_completed >= generation;
+            });
+        }
+    }
 
     void install_dedicated_worker_global_scope(v8::Local<v8::Context> realm) {
         constexpr std::string_view source = R"JS(
@@ -424,12 +450,17 @@
                 }
                 while(true) {
                     std::optional<clone_packet> packet;
+                    uint64_t low_memory_generation = 0U;
                     {
                         std::unique_lock lock(raw->mutex);
                         raw->ready.wait_for(lock,runtime.recommended_idle_wait(std::chrono::milliseconds(1000)),
-                            [&]{return raw->stopped||raw->wake_requested||!raw->incoming.empty();});
+                            [&]{return raw->stopped||raw->wake_requested
+                                ||raw->low_memory_requested>raw->low_memory_completed
+                                ||!raw->incoming.empty();});
                         raw->wake_requested=false;
                         if(raw->stopped)break;
+                        if (raw->low_memory_requested > raw->low_memory_completed)
+                            low_memory_generation = raw->low_memory_requested;
                         if(!raw->incoming.empty()){
                             packet=std::move(raw->incoming.front());raw->incoming.pop_front();
                             const auto bytes=clone_packet_size(*packet);
@@ -438,6 +469,19 @@
                     }
                     v8::Isolate::Scope entered(child->isolate);v8::HandleScope handles(child->isolate);
                     auto realm=child->context.Get(child->isolate);v8::Context::Scope scope(realm);
+                    if (low_memory_generation != 0U) {
+                        child->compact_retained_native_capacity();
+                        child->message_port_wake->consume_reachability_change();
+                        child->refresh_message_port_reachability();
+                        child->isolate->LowMemoryNotification();
+                        {
+                            std::lock_guard lock(raw->mutex);
+                            raw->low_memory_completed = std::max(
+                                raw->low_memory_completed,
+                                low_memory_generation);
+                        }
+                        raw->ready.notify_all();
+                    }
                     if(packet&&!child->dispatch_worker_message(realm,realm->Global(),&*packet))report(child->last_error);
                     child->drain_tasks();
                     child->perform_microtask_checkpoint();

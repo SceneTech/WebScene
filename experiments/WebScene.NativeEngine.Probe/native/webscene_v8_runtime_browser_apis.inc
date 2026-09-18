@@ -680,10 +680,14 @@
             }
             if (target_node_id != 0U
                 && target_node_id != std::numeric_limits<uint32_t>::max()
-                && unwrap_node(info.This()) != nullptr) {
+                && (unwrap_node(info.This()) != nullptr
+                    || self->message_port_binding_from_object(
+                        local_context, info.This()) != nullptr)) {
                 self->retain_dom_event_listener(registration, info.This());
             }
             registrations.push_back(std::move(registration));
+            self->update_message_port_reachability_from_object(
+                local_context, info.This());
         } else if (type == "resize") {
             const auto requested = info[1];
             for (const auto& registration : self->resize_listeners) {
@@ -789,6 +793,8 @@
                 self->clear_event_listener(registration);
                 break;
             }
+            self->update_message_port_reachability_from_object(
+                local_context, info.This());
             return;
         }
         if (type != "resize") return;
@@ -1282,6 +1288,7 @@
             remove_aborted(registrations);
         }
         remove_aborted(self->resize_listeners);
+        self->refresh_message_port_reachability();
 
         auto event = self->create_event_instance(local_context);
         event->Set(

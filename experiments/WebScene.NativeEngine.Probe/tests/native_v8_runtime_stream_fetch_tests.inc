@@ -1923,6 +1923,11 @@ void test_controlled_parser_and_nested_frame_resources()
             });
             __parserCycles.durations.push(performance.now() - started);
             ++__parserCycles.count;
+            // Let the retired frame and its controlled fetches reach the next
+            // task boundary before installing another browsing context. A
+            // single uninterrupted microtask chain can consume the host's
+            // bounded evaluation callback window on slower platforms.
+            await new Promise(resolve => setTimeout(resolve, 0));
           }
         } catch (error) {
           __parserCycles.error = String(error && error.stack || error);

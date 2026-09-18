@@ -439,11 +439,32 @@
             + '\n' + resolved_name
             + '\n' + effective_context.origin
             + '\n' + effective_context.cookie
+            + "\ncredentials:" + std::to_string(effective_context.credentials)
             + (effective_context.credentials == WEBSCENE_FETCH_CREDENTIALS_OMIT
+                    || !compilation_cache_directory.empty()
                 ? std::string{} : "\nengine:" + std::to_string(
                     reinterpret_cast<uintptr_t>(this)))
             + '\n' + entity_tag
             + '\n' + std::to_string(last_modified_unix_seconds);
+        const auto load_direct = [&]() {
+            resource_response response;
+            try {
+                loaded = load_resource_callback(
+                    kind,
+                    resolved_name,
+                    effective_context,
+                    entity_tag,
+                    last_modified_unix_seconds,
+                    response);
+            } catch (...) {
+                loaded = false;
+            }
+            if (loaded) {
+                accept_response_cookies(resolved_name, effective_context, response);
+                return std::make_shared<const resource_response>(std::move(response));
+            }
+            return std::shared_ptr<const resource_response>{};
+        };
         std::shared_ptr<process_resource_load_entry> entry;
         auto producer = false;
         {
@@ -459,6 +480,7 @@
                 entry->access = ++process_resource_load_access;
             } else {
                 entry = std::make_shared<process_resource_load_entry>();
+                entry->owner = this;
                 entry->access = ++process_resource_load_access;
                 process_resource_loads.emplace(key, entry);
                 producer = true;
@@ -474,34 +496,35 @@
                 });
             }
             loaded = entry->loaded;
-            if (loaded && entry->response != nullptr) {
+            const auto shareable = entry->owner == this
+                || entry->cross_engine_shareable;
+            if (shareable && loaded && entry->response != nullptr) {
                 ++process_resource_memory_hit_count;
                 process_resource_shared_byte_count += entry->response->content.size();
             }
-            return entry->response;
+            if (shareable) return entry->response;
+            lock.unlock();
+            ++process_resource_load_leader_count;
+            return load_direct();
         }
 
         ++process_resource_load_leader_count;
-        resource_response response;
-        try {
-            loaded = load_resource_callback(
-                kind,
-                resolved_name,
-                effective_context,
-                entity_tag,
-                last_modified_unix_seconds,
-                response);
-        } catch (...) {
-            loaded = false;
-        }
-        if (loaded) accept_response_cookies(resolved_name, effective_context, response);
-        auto shared_response = loaded
-            ? std::make_shared<const resource_response>(std::move(response))
-            : std::shared_ptr<const resource_response>{};
+        auto shared_response = load_direct();
+        const auto has_set_cookie = shared_response != nullptr
+            && std::any_of(
+                shared_response->headers.begin(),
+                shared_response->headers.end(),
+                [](const auto& header) {
+                    return lower_html_name(header.first) == "set-cookie";
+                });
         {
             std::lock_guard lock(entry->mutex);
             entry->loaded = loaded;
             entry->response = shared_response;
+            entry->cross_engine_shareable = loaded
+                && shared_response != nullptr
+                && shared_response->cacheable
+                && !has_set_cookie;
             entry->expires_at = std::chrono::steady_clock::now()
                 + (loaded && shared_response != nullptr && shared_response->cacheable
                     ? std::chrono::milliseconds(250)
@@ -615,6 +638,18 @@
         return settled;
     }
 
+    static std::array<uint8_t, 32> partitioned_resource_cache_key(
+        uint32_t kind,
+        const std::string& resolved_name,
+        const resource_request_context& request_context)
+    {
+        const auto representation_name = request_context.origin.empty()
+            ? resolved_name
+            : resolved_name + "\norigin:" + request_context.origin
+                + "\ncookie:" + request_context.cookie;
+        return resource_key_digest(kind, representation_name);
+    }
+
     bool load_text_resource(
         const std::string& value,
         const std::string& base,
@@ -664,11 +699,8 @@
             {},
             "resource-loader");
         ++resource_cache_request_count;
-        const auto representation_name = effective_request_context.origin.empty()
-            ? resolved_name
-            : resolved_name + "\norigin:" + effective_request_context.origin
-                + "\ncookie:" + effective_request_context.cookie;
-        const auto cache_key = resource_key_digest(kind, representation_name);
+        const auto cache_key = partitioned_resource_cache_key(
+            kind, resolved_name, effective_request_context);
         cached_text_resource cached;
         auto has_cached = false;
         auto has_prefetched = false;
@@ -866,7 +898,8 @@
         }
 
         cached_text_resource cached;
-        const auto cache_key = resource_key_digest(kind, resolved_name);
+        const auto cache_key = partitioned_resource_cache_key(
+            kind, resolved_name, request_context);
         const auto has_cached = read_resource_cache(cache_key, kind, cached);
         const auto now_unix_seconds = std::chrono::duration_cast<std::chrono::seconds>(
             std::chrono::system_clock::now().time_since_epoch()).count();

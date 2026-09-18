@@ -55,6 +55,8 @@ void require(bool condition, std::string_view message)
     if (!condition) fail(message);
 }
 
+uint64_t service_worker_test_current_rss_bytes();
+
 uint8_t measure_baseline_fixture_text(
     void*,
     const char* text,
@@ -192,6 +194,14 @@ int main()
         }
         if (selected == "file-system-directory-resolve") {
             test_native_file_system_access_picker_and_handle_contract();
+            return 0;
+        }
+        if (selected == "resource-cache-prefetch") {
+            test_resource_cache_reuse_across_engine_generations();
+            test_parser_resource_cache_partitioning();
+            test_process_wide_resource_load_single_flight();
+            test_cross_engine_single_flight_keeps_set_cookie_responses_private();
+            test_resource_cache_policy_matrix();
             return 0;
         }
         if (selected == "service-worker-lifecycle") {
@@ -1177,6 +1187,7 @@ int main()
     test_loaded_document_keeps_html_and_body_cascade_distinct();
     test_relative_stylesheet_background_uses_stylesheet_address();
     test_resource_cache_reuse_across_engine_generations();
+    test_parser_resource_cache_partitioning();
     test_parsed_css_rule_payloads_are_shared_across_live_engines();
     test_process_wide_resource_load_single_flight();
     test_resource_cache_policy_matrix();

@@ -55,6 +55,7 @@ struct clip_scene_counts final {
     uint32_t inset_clip_ends{};
     uint32_t clipped_fills{};
     uint32_t blur_filter_begins{};
+    uint32_t functional_blur_begins{};
     uint32_t command_count{};
     bool transform_clip_nested{};
     bool compound_filter_ordered{};
@@ -137,6 +138,10 @@ clip_scene_counts wait_for_inset_clip_scene(webscene_engine* engine, uint32_t ex
                         && (command.flags & (1U << 28U)) != 0U
                         && std::abs(command.stroke_width - 2.0F) < 0.01F) {
                         ++latest.blur_filter_begins;
+                    } else if (command.kind == 30U
+                        && (command.flags & (1U << 28U)) != 0U
+                        && std::abs(command.stroke_width - 4.0F) < 0.01F) {
+                        ++latest.functional_blur_begins;
                     }
                 }
                 webscene_scene_acknowledge_v3(lease);
@@ -209,6 +214,7 @@ int main()
             clip-path: inset(0px 1px); filter: brightness(0.5); backdrop-filter: blur(1px); }
           #effects.alternate > span { clip-path: circle(25%); filter: contrast(2); }
           #effects > span:first-child { transform: scale(1.25) rotate(3deg); }
+          #functional-blur { filter: blur(max(4px, calc(8px * 0.25))); }
           #compound-filter { filter: blur(2px) saturate(1.08) contrast(1.5) grayscale(0.25); }
           #effects > span:last-child { filter: blur(2px); }
         `;
@@ -218,6 +224,7 @@ int main()
         const fragment = document.createDocumentFragment();
         for (let index = 0; index < 4096; index++) fragment.appendChild(document.createElement('span'));
         host.appendChild(fragment);
+        host.children[4093].id = 'functional-blur';
         host.children[4094].id = 'compound-filter';
         document.body.appendChild(host);
         const first = host.firstElementChild;
@@ -234,6 +241,10 @@ int main()
         if (getComputedStyle(document.getElementById('compound-filter')).getPropertyValue('filter')
             !== 'blur(2px) saturate(1.08) contrast(1.5) grayscale(0.25)') {
           throw new Error('initial compound filter list failed');
+        }
+        if (getComputedStyle(document.getElementById('functional-blur')).getPropertyValue('filter')
+            !== 'blur(max(4px, calc(8px * 0.25)))') {
+          throw new Error('initial functional blur value failed');
         }
       })()
     )JS", "native-effects-fixture.js");
@@ -305,6 +316,8 @@ int main()
         "retained scene did not emit both bounded foreground blur groups");
     require(initial_clip_scene.compound_filter_ordered,
         "retained scene did not preserve compound foreground filter order");
+    require(initial_clip_scene.functional_blur_begins == 1U,
+        "retained scene did not resolve the functional blur radius");
     const auto initial_scene_command_bytes =
         static_cast<uint64_t>(initial_clip_scene.command_count)
             * sizeof(webscene_scene_command);
@@ -417,6 +430,7 @@ int main()
               << " clip-ends=" << initial_clip_scene.inset_clip_ends
               << " clipped-fills=" << initial_clip_scene.clipped_fills
               << " blur-filter-begins=" << initial_clip_scene.blur_filter_begins
+              << " functional-blur-begins=" << initial_clip_scene.functional_blur_begins
               << " compound-filter-ordered=" << initial_clip_scene.compound_filter_ordered
               << " transform-clip-nested=" << initial_clip_scene.transform_clip_nested
               << " initial-scene-command-bytes=" << initial_scene_command_bytes

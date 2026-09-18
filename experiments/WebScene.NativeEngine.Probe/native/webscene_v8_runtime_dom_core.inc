@@ -4754,7 +4754,9 @@
                 synthetic,
                 "click",
                 *node,
-                &default_prevented)) {
+                &default_prevented,
+                nullptr,
+                false)) {
             if (checkable_activation.active) {
                 if (default_prevented) {
                     self->restore_checkable_click_activation(checkable_activation);
@@ -4764,8 +4766,10 @@
             }
             if (!default_prevented) self->queue_external_navigation(*node);
             if (form_control_changed && self->is_connected(*node)) {
-                self->dispatch_input_event_type(synthetic, "input", *node);
-                self->dispatch_input_event_type(synthetic, "change", *node);
+                self->dispatch_input_event_type(
+                    synthetic, "input", *node, nullptr, nullptr, false);
+                self->dispatch_input_event_type(
+                    synthetic, "change", *node, nullptr, nullptr, false);
             }
         }
     }

@@ -1766,7 +1766,8 @@
         const char* type,
         dom_node& target,
         bool* default_prevented = nullptr,
-        dom_node* submitter = nullptr)
+        dom_node* submitter = nullptr,
+        std::optional<bool> trusted = std::nullopt)
     {
         webscene_frame_trace::scope trace(frame_trace, "event-start", "event-end", input.sequence);
         const auto previous_context = isolate->GetCurrentContext();
@@ -1826,6 +1827,10 @@
         event->Set(local_context, js_string(isolate, "bubbles"), v8::Boolean::New(isolate, bubbles)).Check();
         event->Set(local_context, js_string(isolate, "cancelable"), v8::Boolean::New(isolate, cancelable)).Check();
         event->Set(local_context, js_string(isolate, "defaultPrevented"), v8::False(isolate)).Check();
+        event->Set(
+            local_context,
+            js_string(isolate, "isTrusted"),
+            v8::Boolean::New(isolate, trusted.value_or(dispatching_user_input))).Check();
         if (type_view == "beforetoggle") {
             event->Set(local_context, js_string(isolate, "oldState"), js_string(isolate, "closed")).Check();
             event->Set(local_context, js_string(isolate, "newState"), js_string(isolate, "open")).Check();

@@ -6006,7 +6006,8 @@ v8_dom_runtime::v8_dom_runtime(
     std::string storage_directory,
     std::string storage_partition_key,
     uint64_t storage_quota_bytes,
-    file_panel_request_sink_v2 file_panel_request_sink)
+    file_panel_request_sink_v2 file_panel_request_sink,
+    file_grant_same_entry_request_sink_v2 file_grant_same_entry_request_sink)
     : impl_(std::make_unique<implementation>(
         document,
         std::move(viewport_provider),
@@ -6019,7 +6020,8 @@ v8_dom_runtime::v8_dom_runtime(
         std::move(storage_directory),
         std::move(storage_partition_key),
         storage_quota_bytes,
-        std::move(file_panel_request_sink)))
+        std::move(file_panel_request_sink),
+        std::move(file_grant_same_entry_request_sink)))
 {
 }
 
@@ -7840,6 +7842,24 @@ void v8_dom_runtime::complete_file_panel_request(
         if(impl_->console_messages.size()<1024)
             impl_->console_messages.push_back(
                 "error\nNative file panel completion: "+impl_->last_error);
+    }
+}
+
+void v8_dom_runtime::complete_file_grant_same_entry_request(
+    file_grant_same_entry_completion_data_v2& completion) {
+    if (impl_ == nullptr) return;
+    v8::Locker locker(impl_->isolate);
+    v8::Isolate::Scope isolate_scope(impl_->isolate);
+    v8::HandleScope handles(impl_->isolate);
+    v8::TryCatch caught(impl_->isolate);
+    impl_->complete_native_file_grant_same_entry(completion);
+    if (caught.HasCaught()) {
+        impl_->last_error = impl_->describe_reported_exception(caught);
+        std::lock_guard lock(impl_->console_message_mutex);
+        if (impl_->console_messages.size() < 1024)
+            impl_->console_messages.push_back(
+                "error\nNative file grant identity completion: "
+                + impl_->last_error);
     }
 }
 void v8_dom_runtime::complete_host_request(native_host_completion& completion) {

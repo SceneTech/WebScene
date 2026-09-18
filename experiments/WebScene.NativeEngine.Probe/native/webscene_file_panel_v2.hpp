@@ -29,6 +29,7 @@ inline constexpr std::size_t file_panel_maximum_token_bytes_v2 = 1024;
 inline constexpr std::size_t file_panel_maximum_filter_text_bytes_v2 = 256;
 inline constexpr std::size_t file_panel_maximum_extension_bytes_v2 = 64;
 inline constexpr std::size_t file_panel_maximum_error_code_bytes_v2 = 128;
+inline constexpr std::size_t file_grant_same_entry_maximum_pending_v2 = 64;
 
 inline bool file_panel_valid_utf8_v2(std::string_view value) noexcept {
     for (std::size_t offset = 0; offset < value.size();) {
@@ -459,6 +460,188 @@ private:
     std::deque<std::unique_ptr<file_panel_request_lease_v2>> queued_;
     std::unordered_map<std::uint64_t, pending_request> pending_;
     std::size_t retained_metadata_bytes_{};
+    std::uint64_t completed_requests_{};
+    std::uint64_t retired_requests_{};
+    std::uint64_t rejected_operations_{};
+    bool retiring_{};
+};
+
+struct file_grant_same_entry_request_lease_v2 final {
+    webscene_file_grant_same_entry_request_v2 view{};
+    std::vector<std::uint8_t> first_grant_id;
+    std::vector<std::uint8_t> second_grant_id;
+
+    void bind() {
+        view.struct_size = sizeof(view);
+        view.version = 2;
+        view.first_grant_id = {
+            first_grant_id.empty() ? nullptr : first_grant_id.data(),
+            first_grant_id.size()};
+        view.second_grant_id = {
+            second_grant_id.empty() ? nullptr : second_grant_id.data(),
+            second_grant_id.size()};
+    }
+};
+static_assert(std::is_standard_layout_v<file_grant_same_entry_request_lease_v2>);
+static_assert(offsetof(file_grant_same_entry_request_lease_v2, view) == 0);
+
+struct file_grant_same_entry_completion_data_v2 final {
+    std::uint64_t request_id{};
+    bool admitted{};
+    bool same_entry{};
+};
+
+using file_grant_same_entry_completion_callback_v2 =
+    std::function<void(file_grant_same_entry_completion_data_v2&&)>;
+
+struct file_grant_same_entry_metrics_v2 final {
+    std::size_t queued_requests{};
+    std::size_t pending_requests{};
+    std::size_t retained_token_bytes{};
+    std::uint64_t completed_requests{};
+    std::uint64_t retired_requests{};
+    std::uint64_t rejected_operations{};
+};
+
+class file_grant_same_entry_broker_v2 final {
+public:
+    bool queue(const webscene_file_grant_same_entry_request_v2& source,
+               file_grant_same_entry_completion_callback_v2 callback) {
+        auto lease = copy_request(source);
+        if (!lease) {
+            reject();
+            return false;
+        }
+        const auto id = lease->view.request_id;
+        const auto bytes = lease->first_grant_id.size()
+            + lease->second_grant_id.size();
+        std::lock_guard lock(mutex_);
+        if (retiring_
+            || pending_.size() >= file_grant_same_entry_maximum_pending_v2
+            || pending_.contains(id)) {
+            ++rejected_operations_;
+            return false;
+        }
+        pending_.emplace(id, pending_request{bytes, std::move(callback)});
+        retained_token_bytes_ += bytes;
+        queued_.push_back(std::move(lease));
+        return true;
+    }
+
+    std::unique_ptr<file_grant_same_entry_request_lease_v2> take() {
+        std::lock_guard lock(mutex_);
+        if (queued_.empty()) return {};
+        auto result = std::move(queued_.front());
+        queued_.pop_front();
+        result->bind();
+        return result;
+    }
+
+    bool complete(const webscene_file_grant_same_entry_completion_v2& source) {
+        file_grant_same_entry_completion_callback_v2 callback;
+        file_grant_same_entry_completion_data_v2 completion;
+        {
+            std::lock_guard lock(mutex_);
+            const auto found = pending_.find(source.request_id);
+            if (found == pending_.end() || !valid_completion(source)) {
+                ++rejected_operations_;
+                return false;
+            }
+            callback = std::move(found->second.callback);
+            retained_token_bytes_ -= found->second.token_bytes;
+            pending_.erase(found);
+            ++completed_requests_;
+            completion = {source.request_id, source.admitted != 0,
+                source.admitted != 0 && source.same_entry != 0};
+        }
+        if (callback) {
+            try {
+                callback(std::move(completion));
+            } catch (...) {
+                // The completion has been consumed exactly once.
+            }
+        }
+        return true;
+    }
+
+    void retire() {
+        std::vector<std::pair<std::uint64_t,
+            file_grant_same_entry_completion_callback_v2>> callbacks;
+        {
+            std::lock_guard lock(mutex_);
+            if (retiring_) return;
+            retiring_ = true;
+            callbacks.reserve(pending_.size());
+            for (auto& [id, request] : pending_)
+                callbacks.emplace_back(id, std::move(request.callback));
+            retired_requests_ += pending_.size();
+            pending_.clear();
+            queued_.clear();
+            retained_token_bytes_ = 0;
+        }
+        for (auto& [id, callback] : callbacks) {
+            if (!callback) continue;
+            try {
+                callback(file_grant_same_entry_completion_data_v2{
+                    id, false, false});
+            } catch (...) {
+                // One callback cannot prevent remaining requests from retiring.
+            }
+        }
+        std::lock_guard lock(mutex_);
+        retiring_ = false;
+    }
+
+    file_grant_same_entry_metrics_v2 metrics() const {
+        std::lock_guard lock(mutex_);
+        return {queued_.size(), pending_.size(), retained_token_bytes_,
+            completed_requests_, retired_requests_, rejected_operations_};
+    }
+
+private:
+    struct pending_request final {
+        std::size_t token_bytes{};
+        file_grant_same_entry_completion_callback_v2 callback;
+    };
+
+    void reject() {
+        std::lock_guard lock(mutex_);
+        ++rejected_operations_;
+    }
+
+    static std::unique_ptr<file_grant_same_entry_request_lease_v2> copy_request(
+        const webscene_file_grant_same_entry_request_v2& source) {
+        const auto valid_token = [](webscene_file_panel_token_v2 token) {
+            return token.data != nullptr && token.byte_count != 0
+                && token.byte_count <= file_panel_maximum_token_bytes_v2;
+        };
+        if (source.struct_size < sizeof(source) || source.version != 2
+            || source.request_id == 0 || !valid_token(source.first_grant_id)
+            || !valid_token(source.second_grant_id)) return {};
+        auto result = std::make_unique<file_grant_same_entry_request_lease_v2>();
+        result->view = source;
+        result->first_grant_id.assign(source.first_grant_id.data,
+            source.first_grant_id.data + source.first_grant_id.byte_count);
+        result->second_grant_id.assign(source.second_grant_id.data,
+            source.second_grant_id.data + source.second_grant_id.byte_count);
+        result->bind();
+        return result;
+    }
+
+    static bool valid_completion(
+        const webscene_file_grant_same_entry_completion_v2& source) {
+        return source.struct_size >= sizeof(source) && source.version == 2
+            && source.request_id != 0 && source.admitted <= 1
+            && source.same_entry <= 1
+            && (source.admitted != 0 || source.same_entry == 0)
+            && std::all_of(std::begin(source.reserved), std::end(source.reserved),
+                [](std::uint8_t value) { return value == 0; });
+    }
+
+    mutable std::mutex mutex_;
+    std::deque<std::unique_ptr<file_grant_same_entry_request_lease_v2>> queued_;
+    std::unordered_map<std::uint64_t, pending_request> pending_;
+    std::size_t retained_token_bytes_{};
     std::uint64_t completed_requests_{};
     std::uint64_t retired_requests_{};
     std::uint64_t rejected_operations_{};

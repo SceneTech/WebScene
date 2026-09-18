@@ -1562,6 +1562,30 @@ WEBSCENE_API uint8_t webscene_engine_complete_file_panel_request_v2(
     webscene_engine* engine,
     const webscene_file_panel_completion_v2* completion);
 
+/* File-system handle identity remains owned by the native grant authority.
+ * Request storage is immutable until release and contains only the two opaque
+ * grant tokens. A denied or unavailable comparison completes with admitted=0
+ * and same_entry=0 so callers cannot distinguish authority failure details. */
+typedef struct webscene_file_grant_same_entry_request_v2 {
+    uint32_t struct_size, version;
+    uint64_t request_id;
+    webscene_file_panel_token_v2 first_grant_id;
+    webscene_file_panel_token_v2 second_grant_id;
+} webscene_file_grant_same_entry_request_v2;
+typedef struct webscene_file_grant_same_entry_completion_v2 {
+    uint32_t struct_size, version;
+    uint64_t request_id;
+    uint8_t admitted, same_entry;
+    uint8_t reserved[6];
+} webscene_file_grant_same_entry_completion_v2;
+WEBSCENE_API const webscene_file_grant_same_entry_request_v2*
+webscene_engine_take_file_grant_same_entry_request_v2(webscene_engine* engine);
+WEBSCENE_API void webscene_file_grant_same_entry_request_release_v2(
+    const webscene_file_grant_same_entry_request_v2* request);
+WEBSCENE_API uint8_t webscene_engine_complete_file_grant_same_entry_request_v2(
+    webscene_engine* engine,
+    const webscene_file_grant_same_entry_completion_v2* completion);
+
 /* Typed native desktop request ABI. Request memory is immutable and remains
  * valid until release. Byte payloads are capped at 16 MiB, strings are UTF-8,
  * and at most 16 completion-bearing operations may be pending per document. */

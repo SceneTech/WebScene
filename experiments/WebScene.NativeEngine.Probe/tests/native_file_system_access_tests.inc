@@ -11,6 +11,33 @@ const webscene_file_panel_request_v2* take_file_panel_request(
     return request;
 }
 
+const webscene_file_grant_same_entry_request_v2*
+take_file_grant_same_entry_request(webscene_engine* engine)
+{
+    const webscene_file_grant_same_entry_request_v2* request = nullptr;
+    for (int attempt = 0; attempt < 250 && request == nullptr; ++attempt) {
+        request = webscene_engine_take_file_grant_same_entry_request_v2(engine);
+        if (request == nullptr)
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    require(request != nullptr,
+        "native file grant same-entry request was not published");
+    return request;
+}
+
+bool complete_file_grant_same_entry(
+    webscene_engine* engine,
+    uint64_t request_id,
+    bool admitted,
+    bool same_entry)
+{
+    const webscene_file_grant_same_entry_completion_v2 completion{
+        sizeof(completion), 2U, request_id,
+        static_cast<uint8_t>(admitted), static_cast<uint8_t>(same_entry), {}};
+    return webscene_engine_complete_file_grant_same_entry_request_v2(
+        engine, &completion) != 0;
+}
+
 void activate_file_picker(webscene_engine* engine, uint64_t sequence)
 {
     pointer_button(
@@ -159,6 +186,55 @@ void test_native_file_system_access_picker_and_handle_contract()
 
     activate_file_picker(engine.get(), 50002U);
     execute(engine.get(), R"JS(
+      globalThis.__repeatedHandle = null;
+      showOpenFilePicker().then(handles => { __repeatedHandle = handles[0]; });
+    )JS", "file-picker-repeated-entry.js");
+    request = take_file_panel_request(engine.get());
+    const auto repeated_id = request->request_id;
+    webscene_file_panel_request_release_v2(request);
+    const std::vector<uint8_t> repeated_grant{12U, 0U, 13U, 255U};
+    require(complete_file_panel_success(
+        engine.get(), repeated_id, WEBSCENE_FILE_PANEL_ENTRY_FILE_V2,
+        WEBSCENE_FILE_PANEL_GRANT_READ_V2, first_name, repeated_grant),
+        "repeated-entry picker completion was rejected");
+    execute(engine.get(), R"JS(
+      globalThis.__sameEntryState = 'pending';
+      Promise.all([
+        __openHandles[0].isSameEntry(__repeatedHandle),
+        __openHandles[0].isSameEntry(__openHandles[1]),
+        __openHandles[0].isSameEntry(__openHandles[0]),
+        __openHandles[0].isSameEntry({}).then(
+          () => 'unexpected', error => error.name)
+      ]).then(values => { __sameEntryState = values; });
+    )JS", "file-picker-same-entry.js");
+    for (int comparison_index = 0; comparison_index < 3; ++comparison_index) {
+        const auto* comparison = take_file_grant_same_entry_request(engine.get());
+        require(comparison->first_grant_id.byte_count == first_grant.size()
+                && std::memcmp(comparison->first_grant_id.data,
+                    first_grant.data(), first_grant.size()) == 0,
+            "same-entry comparison exposed the wrong first grant");
+        const auto token_equals = [&](const std::vector<uint8_t>& expected) {
+            return comparison->second_grant_id.byte_count == expected.size()
+                && std::memcmp(comparison->second_grant_id.data,
+                    expected.data(), expected.size()) == 0;
+        };
+        const bool same_entry =
+            token_equals(repeated_grant) || token_equals(first_grant);
+        require(same_entry || token_equals(second_grant),
+            "same-entry comparison exposed an unknown opaque grant");
+        const auto comparison_id = comparison->request_id;
+        webscene_file_grant_same_entry_request_release_v2(comparison);
+        require(complete_file_grant_same_entry(
+            engine.get(), comparison_id, true, same_entry),
+            "same-entry native authority result was rejected");
+    }
+    require(evaluate(engine.get(), "__sameEntryState",
+                "file-picker-same-entry-result.js")
+            == "[true,false,true,\"TypeError\"]",
+        "same-entry did not use opaque native identity");
+
+    activate_file_picker(engine.get(), 50003U);
+    execute(engine.get(), R"JS(
       globalThis.__directoryState = 'pending';
       showDirectoryPicker({ mode: 'readwrite', startIn: __openHandles[0] }).then(
         handle => {
@@ -191,6 +267,18 @@ void test_native_file_system_access_picker_and_handle_contract()
             | WEBSCENE_FILE_PANEL_GRANT_ENUMERATE_V2,
         "workspace", directory_grant),
         "directory picker completion was rejected");
+    const auto* directory_comparison =
+        take_file_grant_same_entry_request(engine.get());
+    require(directory_comparison->first_grant_id.byte_count
+                == directory_grant.size()
+            && directory_comparison->second_grant_id.byte_count
+                == directory_grant.size(),
+        "directory same-entry query lost its opaque native grant");
+    const auto directory_comparison_id = directory_comparison->request_id;
+    webscene_file_grant_same_entry_request_release_v2(directory_comparison);
+    require(complete_file_grant_same_entry(
+        engine.get(), directory_comparison_id, true, true),
+        "directory same-entry native authority result was rejected");
     std::string directory_state;
     for (int attempt = 0; attempt < 100; ++attempt) {
         directory_state = evaluate(engine.get(), "__directoryState",
@@ -203,7 +291,7 @@ void test_native_file_system_access_picker_and_handle_contract()
                 != std::string::npos,
         "directory picker handle contract changed: " + directory_state);
 
-    activate_file_picker(engine.get(), 50003U);
+    activate_file_picker(engine.get(), 50004U);
     execute(engine.get(), R"JS(
       globalThis.__saveState = 'pending';
       showSaveFilePicker({
@@ -244,6 +332,8 @@ void test_native_file_system_access_picker_and_handle_contract()
       const same=Object.getOwnPropertyDescriptor(FileSystemHandle.prototype,'isSameEntry');
       return {
         hiddenBridge: typeof __webSceneRequestFilePanel,
+        hiddenIdentityBridge: typeof __webSceneCompareFileGrants,
+        opaqueHandle: Reflect.ownKeys(__openHandles[0]).length === 0,
         illegal: (()=>{try{new FileSystemHandle();return false}catch(e){return e.name==='TypeError'}})(),
         kindEnumerable: kind.enumerable,
         kindConfigurable: kind.configurable,
@@ -255,6 +345,9 @@ void test_native_file_system_access_picker_and_handle_contract()
     })())JS", "file-picker-idl-result.js");
     require(descriptor_state.find("\"hiddenBridge\":\"undefined\"")
                 != std::string::npos
+            && descriptor_state.find("\"hiddenIdentityBridge\":\"undefined\"")
+                != std::string::npos
+            && descriptor_state.find("\"opaqueHandle\":true") != std::string::npos
             && descriptor_state.find("\"illegal\":true") != std::string::npos
             && descriptor_state.find("\"kindEnumerable\":true") != std::string::npos
             && descriptor_state.find("\"kindConfigurable\":true") != std::string::npos
@@ -263,6 +356,29 @@ void test_native_file_system_access_picker_and_handle_contract()
             && descriptor_state.find("\"sameWritable\":true") != std::string::npos
             && descriptor_state.find("\"inheritance\":true") != std::string::npos,
         "File System Access IDL descriptors changed: " + descriptor_state);
+
+    execute(engine.get(), R"JS(
+      globalThis.__deniedSameEntry = 'pending';
+      __openHandles[0].isSameEntry(__repeatedHandle).then(
+        value => { __deniedSameEntry = value; },
+        error => { __deniedSameEntry = error.name; });
+    )JS", "file-picker-same-entry-fail-closed.js");
+    const auto* denied_comparison =
+        take_file_grant_same_entry_request(engine.get());
+    const auto denied_comparison_id = denied_comparison->request_id;
+    webscene_file_grant_same_entry_request_release_v2(denied_comparison);
+    require(!complete_file_grant_same_entry(
+                engine.get(), denied_comparison_id, false, true),
+        "denied same-entry completion leaked a true result");
+    require(complete_file_grant_same_entry(
+                engine.get(), denied_comparison_id, false, false),
+        "fail-closed same-entry completion was rejected");
+    require(evaluate(engine.get(), "__deniedSameEntry",
+                "file-picker-same-entry-fail-closed-result.js") == "false",
+        "denied native identity did not resolve false");
+    require(!complete_file_grant_same_entry(
+                engine.get(), denied_comparison_id, false, false),
+        "same-entry comparison completed more than once");
 
     execute(engine.get(), R"JS(
       globalThis.__malformedPicker = { synchronous: false, promise: false, name: 'pending' };
@@ -355,7 +471,10 @@ void test_native_file_system_access_lifecycle_and_performance()
             const handle=handles[0];
             if (__stableHandle === null) __stableHandle=handle;
             if (__stableHandle !== handle) throw new Error('unstable grant identity');
-            ++__pickerCycles;
+            return __stableHandle.isSameEntry(handle).then(same => {
+              if (!same) throw new Error('stable native entry identity changed');
+              ++__pickerCycles;
+            });
           });
         )JS", "file-picker-cycle.js");
         const auto* request = take_file_panel_request(engine.get());
@@ -365,6 +484,16 @@ void test_native_file_system_access_lifecycle_and_performance()
             engine.get(), request_id, WEBSCENE_FILE_PANEL_ENTRY_FILE_V2,
             WEBSCENE_FILE_PANEL_GRANT_READ_V2, "stable.txt", stable_grant),
             "file picker lifecycle completion was rejected");
+        const auto* comparison =
+            take_file_grant_same_entry_request(engine.get());
+        require(comparison->first_grant_id.byte_count == stable_grant.size()
+                && comparison->second_grant_id.byte_count == stable_grant.size(),
+            "same-entry lifecycle query lost the stable grant");
+        const auto comparison_id = comparison->request_id;
+        webscene_file_grant_same_entry_request_release_v2(comparison);
+        require(complete_file_grant_same_entry(
+            engine.get(), comparison_id, true, true),
+            "same-entry lifecycle completion was rejected");
     }
     require(evaluate(engine.get(), "__pickerCycles",
                 "file-picker-cycle-result.js") == "100",
@@ -384,6 +513,9 @@ void test_native_file_system_access_lifecycle_and_performance()
         "100 stable-grant cycles exceeded the 64 MiB peak RSS budget");
     require(webscene_engine_take_file_panel_request_v2(engine.get()) == nullptr,
         "file picker request queue did not drain after 100 cycles");
+    require(webscene_engine_take_file_grant_same_entry_request_v2(engine.get())
+                == nullptr,
+        "same-entry request queue did not drain after 100 cycles");
 
     activate_file_picker(engine.get(), 52000U);
     execute(engine.get(), R"JS(
@@ -395,6 +527,16 @@ void test_native_file_system_access_lifecycle_and_performance()
     const auto* stale = take_file_panel_request(engine.get());
     const auto stale_id = stale->request_id;
     webscene_file_panel_request_release_v2(stale);
+    execute(engine.get(), R"JS(
+      globalThis.__retiredIdentity='pending';
+      __stableHandle.isSameEntry(__stableHandle).then(
+        ()=>{__retiredIdentity='unexpected'},
+        error=>{__retiredIdentity=error.name});
+    )JS", "file-picker-same-entry-before-navigation.js");
+    const auto* stale_identity =
+        take_file_grant_same_entry_request(engine.get());
+    const auto stale_identity_id = stale_identity->request_id;
+    webscene_file_grant_same_entry_request_release_v2(stale_identity);
     const auto path = std::filesystem::temp_directory_path()
         / ("webscene-picker-navigation-"
             + std::to_string(std::chrono::steady_clock::now()
@@ -414,6 +556,9 @@ void test_native_file_system_access_lifecycle_and_performance()
         engine.get(), stale_id, WEBSCENE_FILE_PANEL_ENTRY_FILE_V2,
         WEBSCENE_FILE_PANEL_GRANT_READ_V2, "stale.txt", stable_grant),
         "stale file picker completion survived navigation retirement");
+    require(!complete_file_grant_same_entry(
+                engine.get(), stale_identity_id, true, true),
+        "stale same-entry completion survived navigation retirement");
     std::filesystem::remove(path);
     std::cout << "File System Access lifecycle gate: cycles=100 elapsedSeconds="
               << elapsed << " heapDelta="

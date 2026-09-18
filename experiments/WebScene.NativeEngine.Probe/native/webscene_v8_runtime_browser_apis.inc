@@ -2351,6 +2351,10 @@
             reject("Clipboard writes require an active document", "NotAllowedError");
             return;
         }
+        if (!self->current_permissions_policy_allows("clipboard-write")) {
+            reject("Clipboard writes are blocked by Permissions Policy", "NotAllowedError");
+            return;
+        }
         const auto content_type = to_utf8(info.GetIsolate(), info[0]);
         if (content_type != "text/plain" && content_type != "text/html"
             && content_type != "image/png" && content_type != "image/jpeg"
@@ -2428,8 +2432,12 @@
             }
             resolver->Reject(local_context, error).Check();
         };
-        if (self == nullptr || local_context != self->context.Get(info.GetIsolate())) {
-            reject("Clipboard reads require the active top-level document", "NotAllowedError");
+        if (self == nullptr) {
+            reject("Clipboard reads require an active document", "NotAllowedError");
+            return;
+        }
+        if (!self->current_permissions_policy_allows("clipboard-read")) {
+            reject("Clipboard reads are blocked by Permissions Policy", "NotAllowedError");
             return;
         }
         constexpr auto user_activation_lifetime = std::chrono::seconds(5);

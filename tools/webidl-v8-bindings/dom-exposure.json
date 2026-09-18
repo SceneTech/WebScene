@@ -344,6 +344,7 @@
       "constructor": "illegal_dom_constructor",
       "parent": "HTMLElement",
       "attributes": [
+        { "name": "allow", "getter": "get_iframe_allow", "setter": "set_iframe_allow" },
         { "name": "sandbox", "getter": "get_iframe_sandbox", "setter": "set_iframe_sandbox" }
       ],
       "methods": [],

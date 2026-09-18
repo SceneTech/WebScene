@@ -1804,6 +1804,36 @@ void test_batched_stylesheet_rule_mutation_performance()
             throw new Error(`nested latency exceeded update=${nestedUpdateP95}/${nestedUpdateMax} lookup=${nestedLookupP95}/${nestedLookupMax}`);
           }
           sheet.deleteRule(mediaIndex);
+          const selectorRules = [];
+          for (let index = 0; index < 64; index++) {
+            const ruleIndex = sheet.insertRule(
+              `.selector-before-${index} { width: ${index + 1}px; }`,
+              rules.length);
+            selectorRules.push(rules[ruleIndex]);
+          }
+          const selectorMutationDurations = [];
+          for (let cycle = 0; cycle < 20; cycle++) {
+            const suffix = (cycle & 1) === 0 ? 'after' : 'before';
+            target.className = `theme-target selector-${suffix}-63`;
+            const started = performance.now();
+            for (let index = 0; index < selectorRules.length; index++) {
+              selectorRules[index].selectorText = `.selector-${suffix}-${index}`;
+            }
+            if (getComputedStyle(target).width !== '64px'
+                || selectorRules[63].selectorText !== `.selector-${suffix}-63`
+                || rules[rules.length - 1] !== selectorRules[63]) {
+              throw new Error('selectorText mutation was not synchronously observable');
+            }
+            selectorMutationDurations.push(performance.now() - started);
+          }
+          const selectorMutations = selectorMutationDurations.slice()
+            .sort((a, b) => a - b);
+          const selectorMutationP95 = selectorMutations[18];
+          const selectorMutationMax = selectorMutations[19];
+          if (selectorMutationP95 > 16 || selectorMutationMax > 500) {
+            throw new Error(`selector mutation latency exceeded ${selectorMutationP95}/${selectorMutationMax}`);
+          }
+          while (rules.length) sheet.deleteRule(0);
           for (let cycle = 0; cycle < 100; cycle++) {
             const lifecycleStyle = document.createElement('style');
             lifecycleStyle.textContent = '@media (min-width: 1px) {}';
@@ -1816,9 +1846,37 @@ void test_batched_stylesheet_rule_mutation_performance()
             if (child.parentRule !== null || child.parentStyleSheet !== null) {
               throw new Error('deleted nested rule retained its parents');
             }
+            const selectorIndex = lifecycleStyle.sheet.insertRule(
+              `.lifecycle-before-${cycle} { display: block; }`, 1);
+            const selectorRule = lifecycleStyle.sheet.cssRules[selectorIndex];
+            selectorRule.selectorText = `.lifecycle-after-${cycle}`;
+            if (selectorRule.selectorText !== `.lifecycle-after-${cycle}`) {
+              throw new Error('lifecycle selectorText mutation was not retained');
+            }
+            lifecycleStyle.sheet.deleteRule(selectorIndex);
+            if (selectorRule.parentStyleSheet !== null) {
+              throw new Error('deleted selector rule retained its stylesheet');
+            }
             lifecycleStyle.remove();
             document.head.appendChild(lifecycleStyle);
             lifecycleStyle.remove();
+
+            const realm = document.createElement('iframe');
+            document.body.appendChild(realm);
+            const realmDocument = realm.contentDocument;
+            const realmStyle = realmDocument.createElement('style');
+            const realmTarget = realmDocument.createElement('div');
+            realmStyle.textContent = `.realm-before-${cycle} { height: 7px; }`;
+            realmTarget.className = `realm-after-${cycle}`;
+            realmDocument.head.appendChild(realmStyle);
+            realmDocument.body.appendChild(realmTarget);
+            const realmRule = realmStyle.sheet.cssRules[0];
+            realmRule.selectorText = `.realm-after-${cycle}`;
+            if (!(realmRule instanceof realm.contentWindow.CSSStyleRule)
+                || realmRule.selectorText !== `.realm-after-${cycle}`) {
+              throw new Error('iframe selectorText mutation lost realm ownership');
+            }
+            realm.remove();
           }
           target.className = 'theme-target';
           sheet.insertRule('.theme-target { display: none; }', 0);
@@ -1846,7 +1904,10 @@ void test_batched_stylesheet_rule_mutation_performance()
                 p95, max: maximum, rules: style.sheet === null ? 0 : -1,
                 nestedUpdateP95, nestedUpdateMax,
                 nestedLookupP95, nestedLookupMax,
+                selectorMutationP95, selectorMutationMax,
+                selectorMutations: selectorMutationDurations.length,
                 lifecycleCycles: 100,
+                realmLifecycleCycles: 100,
                 authoredTextStable: style.textContent === authoredText,
                 order
               };
@@ -1922,7 +1983,7 @@ void test_batched_stylesheet_rule_mutation_performance()
     }
     require(rss_before == 0U || rss_after <= rss_before + 64U * 1024U * 1024U,
         "stylesheet mutation workload exceeded the 64 MiB peak RSS budget");
-    require(engine_after.layout_passes <= engine_before.layout_passes + 45U
+    require(engine_after.layout_passes <= engine_before.layout_passes + 70U
             && engine_after.published_scenes <= engine_before.published_scenes + 2U
             && memory_after.pending_scene_count <= 2U
             && work_after.timers_fired >= work_before.timers_fired + 2U,

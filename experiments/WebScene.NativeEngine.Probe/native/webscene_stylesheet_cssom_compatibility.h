@@ -156,6 +156,7 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
   };
   const makeRule = (state, parsed, containingRule = null) => {
     let cssText = parsed.cssText;
+    let selectorText = parsed.selectorText;
     let parent = state.sheet;
     let style;
     let serializeGroup;
@@ -230,7 +231,32 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
     } else if (parsed.selectorText !== undefined) {
       Object.defineProperties(rule, {
         type: { enumerable: true, value: 1 },
-        selectorText: { enumerable: true, value: parsed.selectorText },
+        selectorText: {
+          enumerable: true,
+          get: () => selectorText,
+          set(value) {
+            synchronize(state);
+            const candidate = text(value).trim();
+            try {
+              // Element.matches() and stylesheet parsing share WebScene's
+              // native selector parser. CSSOM ignores invalid selectorText
+              // assignments instead of surfacing the parser's SyntaxError.
+              state.owner.ownerDocument.createElement('span').matches(candidate);
+            } catch (error) {
+              if (error?.name === 'SyntaxError') return;
+              throw error;
+            }
+            if (candidate === selectorText) return;
+            selectorText = candidate;
+            cssText = selectorText + ' {'
+              + (style ? style.cssText : parsed.body || '') + '}';
+            if (parent && (containingRule || state.rules.includes(rule))) {
+              if (containingRule && typeof containingRule.__webSceneSerialize === 'function')
+                containingRule.__webSceneSerialize();
+              publish(state);
+            }
+          }
+        },
         style: { enumerable: true, get() {
           if (style) return style;
           // Reuse WebScene's real CSSStyleDeclaration parser/property methods.
@@ -240,7 +266,7 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
           declaration.cssText = parsed.body;
           const commit = () => {
             synchronize(state);
-            cssText = parsed.selectorText + ' {' + declaration.cssText + '}';
+            cssText = selectorText + ' {' + declaration.cssText + '}';
             if (parent && (containingRule || state.rules.includes(rule))) {
               if (containingRule && typeof containingRule.__webSceneSerialize === 'function')
                 containingRule.__webSceneSerialize();

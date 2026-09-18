@@ -811,6 +811,18 @@
             js_string(isolate, "__webSceneDirectoryGrant"),
             v8::Function::New(local_context, request_file_grant_directory)
                 .ToLocalChecked()).Check();
+        global->Set(local_context,
+            js_string(isolate, "__webSceneRegisterFileSystemHandle"),
+            v8::Function::New(local_context, register_file_system_handle)
+                .ToLocalChecked()).Check();
+        global->Set(local_context,
+            js_string(isolate, "__webSceneRegisterFileSystemHandleRealm"),
+            v8::Function::New(local_context, register_file_system_handle_realm)
+                .ToLocalChecked()).Check();
+        global->Set(local_context,
+            js_string(isolate, "__webSceneFileSystemHandleState"),
+            v8::Function::New(local_context, file_system_handle_state)
+                .ToLocalChecked()).Check();
         constexpr std::string_view source = R"JS(
           (() => {
             const requestPanel = globalThis.__webSceneRequestFilePanel;
@@ -818,15 +830,21 @@
             const readFileGrant = globalThis.__webSceneReadFileGrant;
             const writeFileGrant = globalThis.__webSceneWriteFileGrant;
             const directoryGrant = globalThis.__webSceneDirectoryGrant;
+            const registerHandle = globalThis.__webSceneRegisterFileSystemHandle;
+            const registerHandleRealm =
+              globalThis.__webSceneRegisterFileSystemHandleRealm;
+            const nativeHandleState = globalThis.__webSceneFileSystemHandleState;
             const createNativeFile = globalThis.__webSceneCreateNativeFile;
             delete globalThis.__webSceneRequestFilePanel;
             delete globalThis.__webSceneCompareFileGrants;
             delete globalThis.__webSceneReadFileGrant;
             delete globalThis.__webSceneWriteFileGrant;
             delete globalThis.__webSceneDirectoryGrant;
+            delete globalThis.__webSceneRegisterFileSystemHandle;
+            delete globalThis.__webSceneRegisterFileSystemHandleRealm;
+            delete globalThis.__webSceneFileSystemHandleState;
             delete globalThis.__webSceneCreateNativeFile;
             const states = new WeakMap();
-            const handles = new Map();
             const textEncoder = new TextEncoder();
             const permission = (state, mode) => {
               if (mode !== 'read' && mode !== 'readwrite') {
@@ -837,7 +855,19 @@
               return mode === 'read' ? read : write;
             };
             const stateFor = value => {
-              const state = states.get(value);
+              let state = states.get(value);
+              if (!state) {
+                const raw = nativeHandleState(value);
+                if (raw) {
+                  const token = raw.grant.slice();
+                  state = Object.freeze({
+                    kind: raw.kind === 1 ? 'file' : 'directory',
+                    name: String(raw.name),
+                    capabilities: Number(raw.capabilities), token
+                  });
+                  states.set(value, state);
+                }
+              }
               if (!state) throw new TypeError('Illegal invocation');
               return state;
             };
@@ -1257,33 +1287,22 @@
                 value: resolve },
               [Symbol.toStringTag]: { configurable: true, value: 'FileSystemDirectoryHandle' }
             });
-            const bytesKey = bytes => Array.from(bytes, value =>
-              value.toString(16).padStart(2, '0')).join('');
             const createHandle = raw => {
-              const key = bytesKey(raw.grant);
-              const existing = handles.get(key);
-              if (existing) {
-                const state = stateFor(existing);
-                if (state.kind !== (raw.kind === 1 ? 'file' : 'directory')
-                    || state.name !== raw.name
-                    || state.capabilities !== raw.capabilities) {
-                  throw new DOMException('Native grant metadata changed', 'DataError');
-                }
-                return existing;
-              }
-              if (handles.size >= 16384) {
-                throw new DOMException('Too many retained file system handles', 'QuotaExceededError');
-              }
               const kind = raw.kind === 1 ? 'file' : 'directory';
               const handle = Object.create(kind === 'file'
                 ? FileSystemFileHandle.prototype : FileSystemDirectoryHandle.prototype);
+              const token = raw.grant.slice();
               states.set(handle, Object.freeze({
-                key, kind, name: String(raw.name),
-                capabilities: Number(raw.capabilities), token: raw.grant.slice()
+                kind, name: String(raw.name),
+                capabilities: Number(raw.capabilities), token
               }));
-              handles.set(key, handle);
+              registerHandle(handle, Number(raw.kind), String(raw.name),
+                Number(raw.capabilities), token);
               return handle;
             };
+            registerHandleRealm(
+              FileSystemFileHandle.prototype,
+              FileSystemDirectoryHandle.prototype);
             const wellKnown = new Set([
               'desktop', 'documents', 'downloads', 'music', 'pictures', 'videos'
             ]);
@@ -1377,4 +1396,302 @@
             local_context,
             js_string(isolate, std::string(source).c_str())).ToLocalChecked();
         script->Run(local_context).ToLocalChecked();
+    }
+    static constexpr std::size_t maximum_file_system_handle_bindings = 16384U;
+
+    static v8::Local<v8::Private> file_system_handle_private(v8::Isolate* isolate)
+    {
+        return v8::Private::ForApi(
+            isolate, js_string(isolate, "WebScene.FileSystemHandle"));
+    }
+
+    static v8::Local<v8::Private> file_system_file_prototype_private(
+        v8::Isolate* isolate)
+    {
+        return v8::Private::ForApi(
+            isolate, js_string(isolate, "WebScene.FileSystemFileHandle.Prototype"));
+    }
+
+    static v8::Local<v8::Private> file_system_directory_prototype_private(
+        v8::Isolate* isolate)
+    {
+        return v8::Private::ForApi(isolate,
+            js_string(isolate, "WebScene.FileSystemDirectoryHandle.Prototype"));
+    }
+
+    static v8::Local<v8::Private> file_system_origin_private(v8::Isolate* isolate)
+    {
+        return v8::Private::ForApi(
+            isolate, js_string(isolate, "WebScene.FileSystemHandle.Origin"));
+    }
+
+    std::string security_origin_for_realm(v8::Local<v8::Context> realm)
+    {
+        v8::Context::Scope scope(realm);
+        v8::Local<v8::Value> location;
+        v8::Local<v8::Value> origin;
+        if (realm->Global()->Get(
+                realm, js_string(isolate, "location")).ToLocal(&location)
+            && location->IsObject()
+            && location.As<v8::Object>()->Get(
+                realm, js_string(isolate, "origin")).ToLocal(&origin)
+            && !origin->IsNullOrUndefined()) {
+            return to_utf8(isolate, origin);
+        }
+        return std::string("null");
+    }
+
+    std::string registered_file_system_origin(v8::Local<v8::Context> realm)
+    {
+        v8::Local<v8::Value> value;
+        if (realm->Global()->GetPrivate(
+                realm, file_system_origin_private(isolate)).ToLocal(&value)
+            && value->IsString()) return to_utf8(isolate, value);
+        return std::string("null");
+    }
+
+    file_system_handle_binding* file_system_handle_binding_from_object(
+        v8::Local<v8::Context> realm,
+        v8::Local<v8::Object> object)
+    {
+        v8::Local<v8::Value> value;
+        if (!object->GetPrivate(
+                realm, file_system_handle_private(isolate)).ToLocal(&value)
+            || !value->IsExternal()) return nullptr;
+        auto* binding = static_cast<file_system_handle_binding*>(
+            value.As<v8::External>()->Value(v8::kExternalPointerTypeTagDefault));
+        return binding != nullptr && !binding->reclaimed ? binding : nullptr;
+    }
+
+    static void file_system_handle_wrapper_collected(
+        const v8::WeakCallbackInfo<file_system_handle_binding>& info)
+    {
+        auto* binding = info.GetParameter();
+        if (binding == nullptr) return;
+        binding->context.Reset();
+        binding->wrapper.Reset();
+        binding->owner.reset();
+        binding->reclaimed = true;
+    }
+
+    static bool copy_file_grant_token(
+        v8::Local<v8::Value> value,
+        std::vector<std::uint8_t>& destination)
+    {
+        if (!value->IsUint8Array()) return false;
+        auto bytes = value.As<v8::Uint8Array>();
+        if (bytes->ByteLength() == 0
+            || bytes->ByteLength() > file_panel_maximum_token_bytes_v2)
+            return false;
+        const auto store = bytes->Buffer()->GetBackingStore();
+        const auto* first = static_cast<const std::uint8_t*>(store->Data())
+            + bytes->ByteOffset();
+        destination.assign(first, first + bytes->ByteLength());
+        return true;
+    }
+
+    static void register_file_system_handle_realm(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        if (self == nullptr || info.Length() != 2
+            || !info[0]->IsObject() || !info[1]->IsObject()) {
+            info.GetIsolate()->ThrowException(v8::Exception::TypeError(
+                js_string(info.GetIsolate(),
+                    "File system handle prototypes required")));
+            return;
+        }
+        auto realm = info.GetIsolate()->GetCurrentContext();
+        realm->Global()->SetPrivate(
+            realm,
+            file_system_file_prototype_private(info.GetIsolate()),
+            info[0]).Check();
+        realm->Global()->SetPrivate(
+            realm,
+            file_system_directory_prototype_private(info.GetIsolate()),
+            info[1]).Check();
+        realm->Global()->SetPrivate(
+            realm,
+            file_system_origin_private(info.GetIsolate()),
+            js_string(info.GetIsolate(),
+                self->security_origin_for_realm(realm).c_str())).Check();
+    }
+
+    bool bind_file_system_handle(
+        v8::Local<v8::Context> realm,
+        v8::Local<v8::Object> object,
+        std::shared_ptr<file_grant_owner> owner)
+    {
+        const auto reusable = std::find_if(
+            file_system_handle_bindings.begin(),
+            file_system_handle_bindings.end(),
+            [](const auto& binding) {
+                return binding != nullptr && binding->reclaimed;
+            });
+        if (reusable == file_system_handle_bindings.end()
+            && file_system_handle_bindings.size()
+                >= maximum_file_system_handle_bindings) return false;
+        file_system_handle_binding* raw = nullptr;
+        if (reusable != file_system_handle_bindings.end()) {
+            raw = reusable->get();
+        } else {
+            auto binding = std::make_unique<file_system_handle_binding>();
+            raw = binding.get();
+            file_system_handle_bindings.push_back(std::move(binding));
+        }
+        raw->owner = std::move(owner);
+        raw->reclaimed = false;
+        raw->context.Reset(isolate, realm);
+        raw->wrapper.Reset(isolate, object);
+        raw->wrapper.SetWeak(
+            raw,
+            file_system_handle_wrapper_collected,
+            v8::WeakCallbackType::kParameter);
+        object->SetPrivate(
+            realm,
+            file_system_handle_private(isolate),
+            v8::External::New(
+                isolate, raw, v8::kExternalPointerTypeTagDefault)).Check();
+        return true;
+    }
+
+    static void file_system_handle_state(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        auto realm = info.GetIsolate()->GetCurrentContext();
+        auto* binding = self != nullptr && info.Length() == 1
+                && info[0]->IsObject()
+            ? self->file_system_handle_binding_from_object(
+                realm, info[0].As<v8::Object>())
+            : nullptr;
+        if (binding == nullptr || binding->owner == nullptr
+            || binding->owner->released.load(std::memory_order_acquire)) return;
+        const auto& owner = *binding->owner;
+        auto buffer = v8::ArrayBuffer::New(info.GetIsolate(), owner.token.size());
+        std::memcpy(buffer->GetBackingStore()->Data(),
+            owner.token.data(), owner.token.size());
+        auto result = v8::Object::New(info.GetIsolate());
+        result->Set(realm, js_string(info.GetIsolate(), "kind"),
+            v8::Integer::NewFromUnsigned(info.GetIsolate(), owner.kind)).Check();
+        result->Set(realm, js_string(info.GetIsolate(), "name"),
+            js_string(info.GetIsolate(), owner.name.c_str())).Check();
+        result->Set(realm, js_string(info.GetIsolate(), "capabilities"),
+            v8::Integer::NewFromUnsigned(
+                info.GetIsolate(), owner.capabilities)).Check();
+        result->Set(realm, js_string(info.GetIsolate(), "grant"),
+            v8::Uint8Array::New(buffer, 0, owner.token.size())).Check();
+        info.GetReturnValue().Set(result);
+    }
+
+    static void register_file_system_handle(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        auto realm = info.GetIsolate()->GetCurrentContext();
+        if (self == nullptr || info.Length() != 5 || !info[0]->IsObject()
+            || !info[1]->IsUint32() || !info[3]->IsUint32()) {
+            info.GetIsolate()->ThrowException(v8::Exception::TypeError(
+                js_string(info.GetIsolate(), "Malformed file system handle")));
+            return;
+        }
+        const auto kind = info[1].As<v8::Uint32>()->Value();
+        const auto capabilities = info[3].As<v8::Uint32>()->Value();
+        const auto name = to_utf8(info.GetIsolate(), info[2]);
+        std::vector<std::uint8_t> token;
+        if ((kind != WEBSCENE_FILE_PANEL_ENTRY_FILE_V2
+                && kind != WEBSCENE_FILE_PANEL_ENTRY_DIRECTORY_V2)
+            || name.empty() || !file_panel_valid_utf8_v2(name)
+            || !copy_file_grant_token(info[4], token)) {
+            info.GetIsolate()->ThrowException(v8::Exception::TypeError(
+                js_string(info.GetIsolate(), "Invalid file system handle metadata")));
+            return;
+        }
+        auto object = info[0].As<v8::Object>();
+        if (self->file_system_handle_binding_from_object(realm, object) != nullptr) {
+            info.GetIsolate()->ThrowException(v8::Exception::TypeError(
+                js_string(info.GetIsolate(), "File system handle already registered")));
+            return;
+        }
+        const std::string key(
+            reinterpret_cast<const char*>(token.data()), token.size());
+        std::shared_ptr<file_grant_owner> owner;
+        if (const auto known = self->file_grant_owners.find(key);
+            known != self->file_grant_owners.end()) owner = known->second.lock();
+        const auto origin = self->registered_file_system_origin(realm);
+        if (owner != nullptr) {
+            if (owner->released.load(std::memory_order_acquire)
+                || owner->kind != kind || owner->capabilities != capabilities
+                || owner->name != name || owner->origin != origin) {
+                info.GetIsolate()->ThrowException(v8::Exception::Error(
+                    js_string(info.GetIsolate(), "Native grant metadata changed")));
+                return;
+            }
+        } else {
+            owner = std::make_shared<file_grant_owner>();
+            owner->token = std::move(token);
+            owner->origin = origin;
+            owner->name = name;
+            owner->kind = kind;
+            owner->capabilities = capabilities;
+            owner->dispatcher = self->file_grant_releases;
+            self->file_grant_owners[key] = owner;
+        }
+        if (!self->bind_file_system_handle(realm, object, std::move(owner))) {
+            info.GetIsolate()->ThrowException(v8::Exception::RangeError(
+                js_string(info.GetIsolate(),
+                    "File system handle binding capacity exhausted")));
+        }
+    }
+
+    v8::MaybeLocal<v8::Object> create_file_system_handle_wrapper(
+        v8::Local<v8::Context> realm,
+        const std::shared_ptr<file_grant_owner>& owner)
+    {
+        if (owner == nullptr || owner->released.load(std::memory_order_acquire)
+            || owner->origin == "null"
+            || registered_file_system_origin(realm) != owner->origin) return {};
+        v8::Local<v8::Value> prototype;
+        const auto prototype_key = owner->kind == WEBSCENE_FILE_PANEL_ENTRY_FILE_V2
+            ? file_system_file_prototype_private(isolate)
+            : file_system_directory_prototype_private(isolate);
+        if (!realm->Global()->GetPrivate(
+                realm, prototype_key).ToLocal(&prototype)
+            || !prototype->IsObject()) return {};
+        auto result = v8::Object::New(isolate);
+        if (!result->SetPrototype(realm, prototype).FromMaybe(false)
+            || !bind_file_system_handle(realm, result, owner)) return {};
+        return result;
+    }
+
+    void retire_file_system_handles_for_contexts(
+        const std::vector<v8::Local<v8::Context>>& contexts)
+    {
+        for (auto& binding : file_system_handle_bindings) {
+            if (binding == nullptr || binding->reclaimed
+                || binding->context.IsEmpty()) continue;
+            const auto realm = binding->context.Get(isolate);
+            if (std::find(contexts.begin(), contexts.end(), realm) == contexts.end())
+                continue;
+            binding->wrapper.Reset();
+            binding->context.Reset();
+            binding->owner.reset();
+            binding->reclaimed = true;
+        }
+        std::erase_if(file_grant_owners, [](const auto& entry) {
+            return entry.second.expired();
+        });
+    }
+
+    void release_all_file_system_handles()
+    {
+        for (auto& binding : file_system_handle_bindings) {
+            if (binding == nullptr) continue;
+            binding->wrapper.Reset();
+            binding->context.Reset();
+            binding->owner.reset();
+            binding->reclaimed = true;
+        }
+        file_system_handle_bindings.clear();
+        file_grant_owners.clear();
     }

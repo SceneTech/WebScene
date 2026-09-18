@@ -1749,6 +1749,23 @@ WEBSCENE_API uint8_t webscene_engine_complete_file_grant_directory_request_v2(
     webscene_engine* engine,
     const webscene_file_grant_directory_completion_v2* completion);
 
+/* One-way release of a live opaque file grant after the final browser-side
+ * wrapper or in-flight structured-clone packet relinquishes ownership. The
+ * engine queues each token at most once per broker lifetime. Request memory is
+ * immutable until release; opaque tokens remain capped at 1 KiB. */
+enum {
+    WEBSCENE_FILE_GRANT_RELEASE_MAXIMUM_QUEUED_V2 = 16384
+};
+typedef struct webscene_file_grant_release_request_v2 {
+    uint32_t struct_size, version;
+    webscene_file_panel_token_v2 grant_id;
+    uint32_t reserved, reserved2;
+} webscene_file_grant_release_request_v2;
+WEBSCENE_API const webscene_file_grant_release_request_v2*
+webscene_engine_take_file_grant_release_request_v2(webscene_engine* engine);
+WEBSCENE_API void webscene_file_grant_release_request_release_v2(
+    const webscene_file_grant_release_request_v2* request);
+
 /* Typed native desktop request ABI. Request memory is immutable and remains
  * valid until release. Byte payloads are capped at 16 MiB, strings are UTF-8,
  * and at most 16 completion-bearing operations may be pending per document. */

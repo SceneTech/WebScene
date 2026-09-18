@@ -262,6 +262,13 @@
     v8_dom_runtime::file_grant_write_request_sink_v2 file_grant_write_request_sink;
     v8_dom_runtime::file_grant_directory_request_sink_v2
         file_grant_directory_request_sink;
+    v8_dom_runtime::file_grant_release_request_sink_v2
+        file_grant_release_request_sink;
+    std::shared_ptr<file_grant_release_dispatcher> file_grant_releases;
+    std::unordered_map<std::string, std::weak_ptr<file_grant_owner>>
+        file_grant_owners;
+    std::vector<std::unique_ptr<file_system_handle_binding>>
+        file_system_handle_bindings;
     std::function<void()> interop_callback_available;
     v8_dom_runtime::interop_callback_sink_v3 interop_callback_sink;
     std::function<void()> runtime_work_available;

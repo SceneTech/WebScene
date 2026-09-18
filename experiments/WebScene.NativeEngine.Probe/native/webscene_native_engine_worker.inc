@@ -32,6 +32,7 @@
         file_grant_read_broker_v2_.retire();
         file_grant_write_broker_v2_.retire();
         file_grant_directory_broker_v2_.retire();
+        file_grant_release_broker_v2_.retire();
         // V8 cleanup must stay on its owning worker even after a terminal throw.
         retire_file_runtime();
 #endif
@@ -360,6 +361,9 @@
                         complete_file_grant_directory_request_v2(
                             std::move(completion));
                     });
+            },
+            [this](const webscene_file_grant_release_request_v2& request) {
+                return queue_file_grant_release_request_v2(request);
             });
         runtime_->set_work_metrics_enabled(
             runtime_work_metrics_enabled_.load(std::memory_order_acquire));
@@ -1156,6 +1160,7 @@
                     file_grant_read_broker_v2_.retire();
                     file_grant_write_broker_v2_.retire();
                     file_grant_directory_broker_v2_.retire();
+                    file_grant_release_broker_v2_.retire();
                     if (url->initial_viewport) apply(*url->initial_viewport);
                     bool loaded = false;
                     if (runtime_ != nullptr) {
@@ -1548,6 +1553,7 @@
         file_grant_read_broker_v2_.retire();
         file_grant_write_broker_v2_.retire();
         file_grant_directory_broker_v2_.retire();
+        file_grant_release_broker_v2_.retire();
         retire_file_runtime();
 #endif
         frame_trace_.dump();

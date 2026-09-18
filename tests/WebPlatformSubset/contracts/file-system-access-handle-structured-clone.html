@@ -1,0 +1,31 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>File System Access handle structured-clone browser oracle</title>
+<!-- Cases follow WPT fs/resources/messaging-serialize-helpers.js and
+     fs/script-tests/FileSystemBaseHandle-postMessage-*.js at revision
+     2699eaa2e5f906eda4d7443f7080c3de19e62365. -->
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<body>
+<script>
+  promise_test(async t => {
+    assert_true(Boolean(navigator.storage && navigator.storage.getDirectory));
+    const root = await navigator.storage.getDirectory();
+    const name = `webscene-clone-${Date.now()}-${Math.random()}.txt`;
+    const handle = await root.getFileHandle(name, {create:true});
+    t.add_cleanup(() => root.removeEntry(name));
+    const clone = structuredClone(handle);
+    assert_not_equals(clone, handle, "clone creates a fresh wrapper");
+    assert_true(clone instanceof FileSystemFileHandle);
+    assert_true(clone instanceof FileSystemHandle);
+    assert_equals(Object.prototype.toString.call(clone),
+      "[object FileSystemFileHandle]");
+    assert_equals(clone.name, handle.name);
+    assert_equals(clone.kind, handle.kind);
+    assert_array_equals(Object.keys(clone), []);
+    assert_equals(typeof clone.release, "undefined",
+      "FileSystemHandle has no explicit release API");
+    assert_true(await clone.isSameEntry(handle));
+  }, "structuredClone preserves a distinct branded same-entry file handle");
+</script>
+</body>

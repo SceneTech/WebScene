@@ -1,6 +1,6 @@
 {
   "profile": "file-system-access-picker-handles",
-  "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+  "wptRevision": "2699eaa2e5f906eda4d7443f7080c3de19e62365",
   "runtime": "v8",
   "viewport": {
     "width": 800,
@@ -24,6 +24,15 @@
     }
   ],
   "harnessBlocked": [
+    {
+      "path": "contracts/file-system-access-handle-structured-clone.html",
+      "type": "testharness",
+      "capabilities": [
+        "file-system-handle-structured-clone",
+        "file-system-handle-weak-lifetime"
+      ],
+      "reason": "Chromium/WPT oracle creates an origin-private filesystem handle; the native runner receives a host-issued opaque grant and exercises equivalent distinct branded clone, shared authority, weak wrapper, exactly-once release, same-origin and navigation retirement behavior through the host release bridge. IndexedDB remains blocked on durable AppScene authority."
+    },
     {
       "path": "contracts/file-system-access-directory-existing.html",
       "type": "testharness",

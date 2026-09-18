@@ -289,6 +289,8 @@ public:
         std::function<bool(const webscene_file_grant_write_request_v2&)>;
     using file_grant_directory_request_sink_v2 =
         std::function<bool(const webscene_file_grant_directory_request_v2&)>;
+    using file_grant_release_request_sink_v2 =
+        std::function<bool(const webscene_file_grant_release_request_v2&)>;
     using inspector_message_sink =
         std::function<void(uint64_t, std::string_view)>;
 
@@ -311,7 +313,9 @@ public:
         file_grant_read_request_sink_v2 file_grant_read_request_sink = {},
         file_grant_write_request_sink_v2 file_grant_write_request_sink = {},
         file_grant_directory_request_sink_v2
-            file_grant_directory_request_sink = {});
+            file_grant_directory_request_sink = {},
+        file_grant_release_request_sink_v2
+            file_grant_release_request_sink = {});
     ~v8_dom_runtime();
 
     v8_dom_runtime(const v8_dom_runtime&) = delete;

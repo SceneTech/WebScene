@@ -8,6 +8,7 @@
 #include "generated/webscene_css_supported_properties.inc"
 #if !defined(WEBSCENE_TEST_LEGACY_SPECIFIED_VALUE)
 #include "webscene_css_property_mask.h"
+#include "webscene_css_variables.h"
 #endif
 
 #include <algorithm>
@@ -134,6 +135,14 @@ int main()
     require(property_id("definitely-not-a-property") == css_property_id::unknown,
         "unknown names remain unknown");
 #if !defined(WEBSCENE_TEST_LEGACY_SPECIFIED_VALUE)
+    const std::vector<std::string> ordered_variables{"--theme", "--accent"};
+    const std::unordered_set<std::string> indexed_variables{"--theme", "--accent"};
+    require(variable_collection_contains(ordered_variables, std::string{"--accent"})
+            && !variable_collection_contains(ordered_variables, std::string{"--missing"})
+            && variable_collection_contains(indexed_variables, std::string{"--accent"})
+            && !variable_collection_contains(indexed_variables, std::string{"--missing"}),
+        "variable membership supports ordered and indexed containers");
+
     std::array<bool, 146U> audited_mask_ids{};
     for (const auto& entry : native_typed_property_identity_catalog) {
         const auto index = static_cast<size_t>(entry.id);

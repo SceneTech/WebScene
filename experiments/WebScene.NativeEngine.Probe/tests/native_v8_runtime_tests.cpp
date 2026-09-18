@@ -588,6 +588,13 @@ int main()
             webscene_engine_destroy(focused_engine);
             return 0;
         }
+        if (selected == "grid-auto-span-intrinsic") {
+            auto* focused_engine = webscene_engine_create(0);
+            require(focused_engine != nullptr, "focused grid engine creation failed");
+            test_grid_item_spanning_auto_rows_contributes_its_height(focused_engine);
+            webscene_engine_destroy(focused_engine);
+            return 0;
+        }
         if (selected == "grid-auto-max-stretch") {
             auto* focused_engine = webscene_engine_create(0);
             require(focused_engine != nullptr, "focused grid engine creation failed");
@@ -1164,6 +1171,7 @@ int main()
     test_responsive_positioned_sizing(engine);
     test_compact_go_to_fixed_grid_tracks_preserve_trailing_space(engine);
     test_named_grid_template_areas_layout_cssom_and_mutation(engine);
+    test_grid_item_spanning_auto_rows_contributes_its_height(engine);
     test_grid_auto_maximum_tracks_stretch_remaining_space(engine);
     test_go_to_tab_lines_and_calendar_scroll_ranges(engine);
     test_media_query_list_tracks_outer_and_frame_viewport_breakpoints(engine);

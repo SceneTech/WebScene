@@ -385,6 +385,11 @@ bool apply_grid_value(dom_node& node,const std::string& name,const std::string& 
             std::string area_source;
             size_t cursor = 0;
             size_t slash = std::string::npos;
+            const auto automatic_track = [] {
+                auto track = node_style::grid_data::track{};
+                track.maximum_is_auto = true;
+                return track;
+            };
             while (cursor < value.size()) {
                 if (value[cursor] == '/') { slash = cursor; break; }
                 if (value[cursor] != '"' && value[cursor] != '\'') { ++cursor; continue; }
@@ -405,7 +410,7 @@ bool apply_grid_value(dom_node& node,const std::string& name,const std::string& 
                 if (!row.empty()) {
                     rows.push_back(std::move(row));
                     row_tracks.push_back(parsed_tracks.empty()
-                        ? node_style::grid_data::track{} : parsed_tracks.front());
+                        ? automatic_track() : parsed_tracks.front());
                 }
                 cursor = track_end;
             }
@@ -416,7 +421,7 @@ bool apply_grid_value(dom_node& node,const std::string& name,const std::string& 
             size_t column_count = grid.template_columns.size();
             for (const auto& row : rows) column_count = std::max(column_count, row.size());
             while (grid.template_columns.size() < column_count) {
-                grid.template_columns.push_back({});
+                grid.template_columns.push_back(automatic_track());
             }
             grid.template_rows = std::move(row_tracks);
             grid.fractional_rows = std::any_of(

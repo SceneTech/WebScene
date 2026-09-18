@@ -127,7 +127,9 @@ bool same_dom_command_visual(
     return previous.flags == next.flags;
 }
 
-webscene_damage_rect command_damage_bounds(const webscene_scene_command& command)
+webscene_damage_rect command_damage_bounds(
+    const webscene_scene_command& command,
+    float effect_padding = 0.0F)
 {
     auto left = command.x;
     auto top = command.y;
@@ -153,11 +155,43 @@ webscene_damage_rect command_damage_bounds(const webscene_scene_command& command
         bottom = center_y + radius;
     }
     constexpr auto antialias_padding = 2.0F;
+    const auto padding = antialias_padding + std::max(0.0F, effect_padding);
     return {
-        left - antialias_padding,
-        top - antialias_padding,
-        std::max(0.0F, right - left + antialias_padding * 2.0F),
-        std::max(0.0F, bottom - top + antialias_padding * 2.0F)};
+        left - padding,
+        top - padding,
+        std::max(0.0F, right - left + padding * 2.0F),
+        std::max(0.0F, bottom - top + padding * 2.0F)};
+}
+
+std::vector<float> command_blur_damage_paddings(
+    const std::vector<webscene_scene_command>& commands)
+{
+    std::vector<float> result;
+    result.reserve(commands.size());
+    std::vector<float> group_contributions;
+    group_contributions.reserve(16U);
+    auto cumulative = 0.0F;
+    constexpr uint32_t foreground_blur_flag = 1U << 28U;
+    constexpr auto maximum_blur_sigma = 256.0F;
+    constexpr auto blur_extent_multiplier = 3.0F;
+    for (const auto& command : commands) {
+        if (command.kind == 30U) {
+            const auto contribution = (command.flags & foreground_blur_flag) != 0U
+                ? std::clamp(command.stroke_width, 0.0F, maximum_blur_sigma)
+                    * blur_extent_multiplier
+                : 0.0F;
+            group_contributions.push_back(contribution);
+            cumulative += contribution;
+            result.push_back(cumulative);
+            continue;
+        }
+        result.push_back(cumulative);
+        if (command.kind == 31U && !group_contributions.empty()) {
+            cumulative -= group_contributions.back();
+            group_contributions.pop_back();
+        }
+    }
+    return result;
 }
 
 bool append_localized_dom_damage(
@@ -181,13 +215,16 @@ bool append_localized_dom_damage(
         return false;
     }
 
+    const auto previous_blur_paddings = command_blur_damage_paddings(previous.commands);
+    const auto next_blur_paddings = command_blur_damage_paddings(next.commands);
+
     auto changed = false;
     auto left = viewport_width;
     auto top = viewport_height;
     auto right = 0.0F;
     auto bottom = 0.0F;
-    const auto include = [&](const webscene_scene_command& command) {
-        const auto bounds = command_damage_bounds(command);
+    const auto include = [&](const webscene_scene_command& command, float effect_padding) {
+        const auto bounds = command_damage_bounds(command, effect_padding);
         left = std::min(left, bounds.x);
         top = std::min(top, bounds.y);
         right = std::max(right, bounds.x + bounds.width);
@@ -213,8 +250,8 @@ bool append_localized_dom_damage(
         }
         if (same_dom_command_visual(previous, old_command, next, new_command)) continue;
         changed = true;
-        include(old_command);
-        include(new_command);
+        include(old_command, previous_blur_paddings[index]);
+        include(new_command, next_blur_paddings[index]);
     }
     if (!changed) return false;
 

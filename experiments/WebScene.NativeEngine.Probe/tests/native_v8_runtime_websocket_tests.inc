@@ -349,7 +349,7 @@ void test_native_websocket_protocol_handshake_timing()
                 {
                     std::lock_guard lock(sender_mutex);
                     active_background = stop;
-                    senders.emplace_back([&socket, stop, packet] {
+                    senders.emplace_back([&socket, stop, packet, background_bytes] {
                         for (auto index = 0U;
                              index < background_frames_after_ready && !stop->load();
                              ++index) {

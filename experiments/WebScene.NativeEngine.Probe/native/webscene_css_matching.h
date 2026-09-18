@@ -146,6 +146,52 @@ inline bool is_actually_disabled(const native_document& document,const dom_node&
         return false;
     }
 
+inline bool html_keyword_equals(std::string_view value,std::string_view expected)
+    {
+        if(value.size()!=expected.size()) return false;
+        for(size_t index=0;index<expected.size();++index) {
+            auto character=value[index];
+            if(character>='A' && character<='Z') character+='a'-'A';
+            if(character!=expected[index]) return false;
+        }
+        return true;
+    }
+
+inline bool read_only_applies(const dom_node& node)
+    {
+        if(node.tag=="textarea") return true;
+        if(node.tag!="input") return false;
+        const auto attribute=node.attributes.find("type");
+        if(attribute==node.attributes.end()) return true;
+        const auto type=std::string_view(attribute->second);
+        return !html_keyword_equals(type,"hidden") && !html_keyword_equals(type,"range")
+            && !html_keyword_equals(type,"color") && !html_keyword_equals(type,"checkbox")
+            && !html_keyword_equals(type,"radio") && !html_keyword_equals(type,"button")
+            && !html_keyword_equals(type,"submit") && !html_keyword_equals(type,"reset")
+            && !html_keyword_equals(type,"file") && !html_keyword_equals(type,"image");
+    }
+
+inline bool is_read_write(const native_document& document,const dom_node& node)
+    {
+        if(node.tag=="input" || node.tag=="textarea") {
+            return read_only_applies(node)
+                && !node.attributes.contains("readonly")
+                && !is_actually_disabled(document,node);
+        }
+        if(node.tag=="button" || node.tag=="select" || node.tag=="option"
+            || node.tag=="optgroup" || node.tag=="fieldset") return false;
+        if(node.xml_mode) return false;
+        for(auto* current=&node;current!=nullptr;current=document.dom_parent(*current)) {
+            const auto attribute=current->attributes.find("contenteditable");
+            if(attribute==current->attributes.end()) continue;
+            const auto value=std::string_view(attribute->second);
+            if(value.empty() || html_keyword_equals(value,"true")
+                || html_keyword_equals(value,"plaintext-only")) return true;
+            if(html_keyword_equals(value,"false")) return false;
+        }
+        return false;
+    }
+
 // Host-independent interaction state. The host supplies focus modality; the
 // document defines ancestry (including event ancestry for focus-within).
 struct interaction_state final {

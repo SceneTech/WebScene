@@ -108,6 +108,17 @@ inline std::vector<css_compound_dependencies> compile_invalidation_plan(
             } else if (pseudo.name == "checked") {
                 for (const auto* name : {"checked", "selected", "type"})
                     add(output.attributes[name], route);
+            } else if (pseudo.name == "read-only" || pseudo.name == "read-write") {
+                add(output.attributes["readonly"], route);
+                add(output.attributes["type"], route);
+                auto inherited_route = css_invalidation_route{
+                    css_invalidation_step::inclusive_descendants};
+                inherited_route.insert(inherited_route.end(), route.begin(), route.end());
+                add(output.attributes["disabled"], inherited_route);
+                add(output.attributes["contenteditable"], inherited_route);
+                // Moving the first legend changes inherited disabled state.
+                output.child_list_sensitive = true;
+                add(output.child_list, inherited_route);
             } else if (pseudo.name == "required" || pseudo.name == "optional"
                 || pseudo.name == "valid" || pseudo.name == "invalid") {
                 add(output.attributes["required"], route);

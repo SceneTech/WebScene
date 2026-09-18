@@ -307,6 +307,10 @@ inline bool compound_matches(const Host& host,const dom_node& node,
             } else if (name == "optional") {
                 if (!forms::required_applies(node)
                     || node.attributes.contains("required")) return false;
+            } else if (name == "read-write") {
+                if (!css::is_read_write(document,node)) return false;
+            } else if (name == "read-only") {
+                if (css::is_read_write(document,node)) return false;
             } else if (name == "valid") {
                 if (!form_control || node.tag == "fieldset" || node.tag == "optgroup"
                     || node.tag == "option") return false;

@@ -1844,6 +1844,185 @@
                 Number(raw.capabilities), token);
               return handle;
             };
+            const observerStates = new WeakMap();
+            const observerPollMilliseconds = 250;
+            const observerMaximumEntries = 10000;
+            const observerMaximumDepth = 64;
+            const observerPathKey = components => JSON.stringify(components);
+            const observerEntry = (handle, components, signature) => ({
+              handle, components, signature
+            });
+            const observerFileSignature = async handle => {
+              const file = await getFile.call(handle);
+              return `file:${file.size}:${file.lastModified}`;
+            };
+            const observerSnapshot = async (root, recursive) => {
+              const rootState = stateFor(root);
+              const snapshot = new Map();
+              if (rootState.kind === 'file') {
+                snapshot.set(observerPathKey([]), observerEntry(
+                  root, [], await observerFileSignature(root)));
+                return snapshot;
+              }
+              directoryState(root);
+              let count = 0;
+              const visit = async (directory, prefix, depth) => {
+                if (depth > observerMaximumDepth) {
+                  throw new DOMException(
+                    'Observed directory exceeds the recursion limit',
+                    'QuotaExceededError');
+                }
+                for await (const child of values.call(directory)) {
+                  const components = prefix.concat(child.name);
+                  if (++count > observerMaximumEntries) {
+                    throw new DOMException(
+                      'Observed directory exceeds the entry limit',
+                      'QuotaExceededError');
+                  }
+                  const signature = child.kind === 'file'
+                    ? await observerFileSignature(child) : 'directory';
+                  snapshot.set(observerPathKey(components), observerEntry(
+                    child, components, signature));
+                  if (recursive && child.kind === 'directory') {
+                    await visit(child, components, depth + 1);
+                  }
+                }
+              };
+              await visit(root, [], 0);
+              return snapshot;
+            };
+            const observerRecord = (type, root, entry, movedFrom = null) =>
+              Object.freeze({
+                type,
+                root,
+                changedHandle: entry ? entry.handle : null,
+                relativePathComponents: Object.freeze(
+                  entry ? entry.components.slice() : []),
+                relativePathMovedFrom: movedFrom
+              });
+            const stopObservation = observation => {
+              observation.active = false;
+              if (observation.timer !== undefined) {
+                clearTimeout(observation.timer);
+                observation.timer = undefined;
+              }
+            };
+            const scheduleObservation = (observer, observation) => {
+              if (!observation.active) return;
+              observation.timer = setTimeout(
+                () => pollObservation(observer, observation),
+                observerPollMilliseconds);
+            };
+            const pollObservation = async (observer, observation) => {
+              if (!observation.active || observation.polling) return;
+              observation.polling = true;
+              try {
+                const next = await observerSnapshot(
+                  observation.root, observation.recursive);
+                if (!observation.active) return;
+                const records = [];
+                for (const [key, entry] of observation.snapshot) {
+                  const current = next.get(key);
+                  if (!current) {
+                    records.push(observerRecord(
+                      'disappeared', observation.root, entry));
+                  } else if (entry.signature !== current.signature) {
+                    records.push(observerRecord(
+                      'modified', observation.root, current));
+                  }
+                }
+                for (const [key, entry] of next) {
+                  if (!observation.snapshot.has(key)) {
+                    records.push(observerRecord(
+                      'appeared', observation.root, entry));
+                  }
+                }
+                observation.snapshot = next;
+                if (records.length !== 0) {
+                  observerStates.get(observer).callback.call(
+                    undefined, Object.freeze(records), observer);
+                }
+              } catch (error) {
+                if (observation.active) {
+                  stopObservation(observation);
+                  observerStates.get(observer).observations.delete(
+                    observation.root);
+                  const type = error && error.name === 'NotFoundError'
+                    ? 'disappeared' : 'errored';
+                  observerStates.get(observer).callback.call(
+                    undefined,
+                    Object.freeze([observerRecord(
+                      type, observation.root, null)]), observer);
+                }
+              } finally {
+                observation.polling = false;
+                scheduleObservation(observer, observation);
+              }
+            };
+            function FileSystemObserver(callback) {
+              if (!new.target) {
+                throw new TypeError(
+                  "Failed to construct 'FileSystemObserver': use new");
+              }
+              if (typeof callback !== 'function') {
+                throw new TypeError('FileSystemObserver callback must be callable');
+              }
+              observerStates.set(this, {callback, observations:new Map()});
+            }
+            function observe(handle, options = {}) {
+              const observer = observerStates.get(this);
+              if (!observer) return Promise.reject(new TypeError('Illegal invocation'));
+              let handleState;
+              try {
+                handleState = stateFor(handle);
+                if (options == null) options = {};
+                if (typeof options !== 'object') {
+                  throw new TypeError('Observer options must be an object');
+                }
+              } catch (error) { return Promise.reject(error); }
+              const recursive = handleState.kind === 'directory'
+                && Boolean(options.recursive);
+              const previous = observer.observations.get(handle);
+              if (previous) stopObservation(previous);
+              return observerSnapshot(handle, recursive).then(snapshot => {
+                const observation = {
+                  root:handle, recursive, snapshot,
+                  active:true, polling:false, timer:undefined
+                };
+                observer.observations.set(handle, observation);
+                scheduleObservation(this, observation);
+              });
+            }
+            function unobserve(handle) {
+              const observer = observerStates.get(this);
+              if (!observer) return Promise.reject(new TypeError('Illegal invocation'));
+              try { stateFor(handle); }
+              catch (error) { return Promise.reject(error); }
+              const observation = observer.observations.get(handle);
+              if (observation) {
+                stopObservation(observation);
+                observer.observations.delete(handle);
+              }
+              return Promise.resolve();
+            }
+            function disconnect() {
+              const observer = observerStates.get(this);
+              if (!observer) throw new TypeError('Illegal invocation');
+              for (const observation of observer.observations.values()) {
+                stopObservation(observation);
+              }
+              observer.observations.clear();
+            }
+            Object.defineProperties(FileSystemObserver.prototype, {
+              observe: {enumerable:true, configurable:true, writable:true,
+                value:observe},
+              unobserve: {enumerable:true, configurable:true, writable:true,
+                value:unobserve},
+              disconnect: {enumerable:true, configurable:true, writable:true,
+                value:disconnect},
+              [Symbol.toStringTag]: {
+                configurable:true, value:'FileSystemObserver'}
+            });
             registerHandleRealm(
               FileSystemFileHandle.prototype,
               FileSystemDirectoryHandle.prototype);
@@ -1926,6 +2105,9 @@
               FileSystemWritableFileStream: {
                 configurable: true, writable: true,
                 value: FileSystemWritableFileStream
+              },
+              FileSystemObserver: {
+                configurable: true, writable: true, value: FileSystemObserver
               },
               showOpenFilePicker: { configurable: true, enumerable: true,
                 writable: true, value: showOpenFilePicker },

@@ -103,6 +103,42 @@
         schedule_timer(info, true);
     }
 
+    static void queue_file_reading_task(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        if (info.Length() < 1 || !info[0]->IsFunction()) {
+            info.GetReturnValue().Set(false);
+            return;
+        }
+        auto* self = current(info.GetIsolate());
+        if (self->pending_file_reading_tasks.size()
+                >= maximum_pending_file_reading_tasks) {
+            info.GetReturnValue().Set(false);
+            return;
+        }
+        const auto id = self->next_timer_id++;
+        const auto now = std::chrono::steady_clock::now();
+        if (self->work_metrics_enabled.load(std::memory_order_relaxed)) {
+            ++self->work.timers_scheduled;
+        }
+        self->pending_file_reading_tasks.push_back(timer_task{
+            id,
+            false,
+            false,
+            now,
+            std::chrono::duration<double, std::milli>::zero(),
+            v8::Global<v8::Context>(
+                info.GetIsolate(), info.GetIsolate()->GetCurrentContext()),
+            v8::Global<v8::Function>(
+                info.GetIsolate(), info[0].As<v8::Function>()),
+            {},
+            -1});
+#if defined(WEBSCENE_NATIVE_ENGINE_WITH_V8_INSPECTOR)
+        self->inspector_async_task_scheduled("FileReader", id, false);
+#endif
+        info.GetReturnValue().Set(true);
+    }
+
     static void clear_timeout(const v8::FunctionCallbackInfo<v8::Value>& info)
     {
         current(info.GetIsolate())->record_feature(

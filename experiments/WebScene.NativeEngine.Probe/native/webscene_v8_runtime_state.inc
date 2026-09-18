@@ -204,6 +204,8 @@
     std::vector<event_listener_registration> resize_listeners;
     std::vector<std::unique_ptr<media_query_list_state>> media_query_lists;
     std::vector<timer_task> timers;
+    static constexpr size_t maximum_pending_file_reading_tasks = 1024U;
+    std::deque<timer_task> pending_file_reading_tasks;
     static constexpr size_t maximum_pending_window_messages = 256U;
     static constexpr size_t maximum_pending_window_message_bytes =
         16U * 1024U * 1024U;

@@ -53,6 +53,7 @@ struct clip_scene_counts final {
     uint64_t revision{};
     uint32_t inset_clip_begins{};
     uint32_t inset_clip_ends{};
+    uint32_t ellipse_clip_begins{};
     uint32_t clipped_fills{};
     uint32_t blur_filter_begins{};
     uint32_t functional_blur_begins{};
@@ -61,7 +62,10 @@ struct clip_scene_counts final {
     bool compound_filter_ordered{};
 };
 
-clip_scene_counts wait_for_inset_clip_scene(webscene_engine* engine, uint32_t expected_count)
+clip_scene_counts wait_for_inset_clip_scene(
+    webscene_engine* engine,
+    uint32_t expected_inset_count,
+    uint32_t expected_fill_count)
 {
     const webscene_scene_acquire_options_v3 options{
         sizeof(webscene_scene_acquire_options_v3),
@@ -129,6 +133,11 @@ clip_scene_counts wait_for_inset_clip_scene(webscene_engine* engine, uint32_t ex
                         && std::abs(command.width - 6.0F) < 0.01F
                         && std::abs(command.height - 2.0F) < 0.01F) {
                         ++latest.inset_clip_begins;
+                    } else if (command.kind == 12U
+                        && (command.flags & (1U << 31U)) != 0U
+                        && std::abs(command.width - 4.0F) < 0.01F
+                        && std::abs(command.height - 2.0F) < 0.01F) {
+                        ++latest.ellipse_clip_begins;
                     } else if (command.kind == 13U) {
                         ++latest.inset_clip_ends;
                     } else if ((command.kind == 1U || command.kind == 9U)
@@ -147,10 +156,10 @@ clip_scene_counts wait_for_inset_clip_scene(webscene_engine* engine, uint32_t ex
                 webscene_scene_acknowledge_v3(lease);
             }
             webscene_scene_release_v3(lease);
-            if (latest.inset_clip_begins == expected_count
-                && latest.inset_clip_ends == expected_count
-                && latest.clipped_fills == expected_count
-                && (expected_count != 4096U || latest.transform_clip_nested)) return latest;
+            if (latest.inset_clip_begins == expected_inset_count
+                && latest.inset_clip_ends == expected_fill_count
+                && latest.clipped_fills == expected_fill_count
+                && (expected_fill_count != 4096U || latest.transform_clip_nested)) return latest;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
@@ -261,6 +270,7 @@ int main()
             clip-path: inset(0px 1px); filter: brightness(0.5); backdrop-filter: blur(1px); }
           #effects.alternate > span { clip-path: circle(25%); filter: contrast(2); }
           #effects > span:first-child { transform: scale(1.25) rotate(3deg); }
+          #ellipse-clip { clip-path: ellipse(25% 50% at 50% 50%); }
           #functional-blur { filter: blur(max(4px, calc(8px * 0.25))); }
           #compound-filter { filter: blur(2px) saturate(1.08) contrast(1.5) grayscale(0.25); }
           #effects > span:last-child { filter: blur(2px); }
@@ -271,6 +281,7 @@ int main()
         const fragment = document.createDocumentFragment();
         for (let index = 0; index < 4096; index++) fragment.appendChild(document.createElement('span'));
         host.appendChild(fragment);
+        host.children[1].id = 'ellipse-clip';
         host.children[4093].id = 'functional-blur';
         host.children[4094].id = 'compound-filter';
         document.body.appendChild(host);
@@ -292,6 +303,10 @@ int main()
         if (getComputedStyle(document.getElementById('functional-blur')).getPropertyValue('filter')
             !== 'blur(max(4px, calc(8px * 0.25)))') {
           throw new Error('initial functional blur value failed');
+        }
+        if (getComputedStyle(document.getElementById('ellipse-clip')).getPropertyValue('clip-path')
+            !== 'ellipse(25% 50% at 50% 50%)') {
+          throw new Error('initial ellipse clip value failed');
         }
       })()
     )JS", "native-effects-fixture.js");
@@ -350,15 +365,17 @@ int main()
         peak_memory.native_dom_textual_style_storage_bytes
             - before_memory.native_dom_textual_style_storage_bytes;
 
-    const auto initial_clip_scene = wait_for_inset_clip_scene(engine, 4096U);
-    require(initial_clip_scene.inset_clip_begins == 4096U,
-        "retained scene did not emit 4096 inset clip begin commands");
+    const auto initial_clip_scene = wait_for_inset_clip_scene(engine, 4095U, 4096U);
+    require(initial_clip_scene.inset_clip_begins == 4095U,
+        "retained scene did not emit 4095 inset clip begin commands");
     require(initial_clip_scene.inset_clip_ends == 4096U,
         "retained scene did not emit 4096 balanced inset clip end commands");
     require(initial_clip_scene.clipped_fills == 4096U,
         "retained scene did not preserve all 4096 clipped fills");
     require(initial_clip_scene.transform_clip_nested,
         "transform commands did not wrap the inset clip scope");
+    require(initial_clip_scene.ellipse_clip_begins == 1U,
+        "retained scene did not emit the explicit ellipse path clip");
     require(initial_clip_scene.blur_filter_begins == 2U,
         "retained scene did not emit both bounded foreground blur groups");
     require(initial_clip_scene.compound_filter_ordered,
@@ -405,7 +422,7 @@ int main()
       })()
     )JS", "native-effects-lifecycle-fixture.js");
 
-    auto scene_revision = wait_for_inset_clip_scene(engine, 1U).revision;
+    auto scene_revision = wait_for_inset_clip_scene(engine, 1U, 1U).revision;
     execute_and_wait(engine, R"JS(
       (() => {
         const first = document.getElementById('effects').firstElementChild;
@@ -493,6 +510,7 @@ int main()
               << " scene-commands=" << initial_clip_scene.command_count
               << " clip-begins=" << initial_clip_scene.inset_clip_begins
               << " clip-ends=" << initial_clip_scene.inset_clip_ends
+              << " ellipse-clip-begins=" << initial_clip_scene.ellipse_clip_begins
               << " clipped-fills=" << initial_clip_scene.clipped_fills
               << " blur-filter-begins=" << initial_clip_scene.blur_filter_begins
               << " functional-blur-begins=" << initial_clip_scene.functional_blur_begins

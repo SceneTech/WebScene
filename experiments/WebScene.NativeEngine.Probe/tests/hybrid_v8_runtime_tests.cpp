@@ -768,6 +768,91 @@ void test_message_port_clone_and_queue_bounds() {
         "message-port-close"), runtime.last_error().c_str());
 }
 
+void test_message_port_event_handler_accessors()
+{
+    webscene_native::native_document document;
+    webscene_native::v8_dom_runtime runtime(document,
+        []{return webscene_native::v8_dom_runtime::viewport_metrics{640,480,1,0};});
+    require(runtime.initialize(), "MessagePort EventHandler runtime failed");
+    const auto heap_before = runtime.read_memory_metrics().used_heap_bytes;
+    const auto rss_before = peak_rss_bytes();
+    const auto started = std::chrono::steady_clock::now();
+    require(runtime.execute(R"JS(
+      (() => {
+        for (const name of ['onmessage', 'onmessageerror']) {
+          const descriptor = Object.getOwnPropertyDescriptor(
+            MessagePort.prototype, name);
+          if (!descriptor || typeof descriptor.get !== 'function'
+              || typeof descriptor.set !== 'function'
+              || !descriptor.enumerable || !descriptor.configurable)
+            throw Error(`${name} is not a browser-shaped prototype accessor`);
+        }
+        for (let cycle = 0; cycle < 100; ++cycle) {
+          const channel = new MessageChannel();
+          if (Object.hasOwn(channel.port1, 'onmessage')
+              || Object.hasOwn(channel.port1, 'onmessageerror'))
+            throw Error(`cycle ${cycle} exposed an own EventHandler property`);
+          const first = () => 1;
+          const second = () => 2;
+          const objectListener = {handleEvent() {}};
+          channel.port1.onmessage = first;
+          channel.port1.onmessage = second;
+          channel.port1.onmessageerror = objectListener;
+          if (channel.port1.onmessage !== second
+              || channel.port1.onmessageerror !== objectListener)
+            throw Error(`cycle ${cycle} did not retain per-instance handlers`);
+          channel.port1.onmessage = 'not callable';
+          channel.port1.onmessageerror = null;
+          if (channel.port1.onmessage !== null
+              || channel.port1.onmessageerror !== null)
+            throw Error(`cycle ${cycle} did not clear converted handlers`);
+          const transferred = structuredClone(
+            channel.port1, {transfer:[channel.port1]});
+          if (Object.hasOwn(transferred, 'onmessage')
+              || transferred.onmessage !== null
+              || transferred.onmessageerror !== null)
+            throw Error(`cycle ${cycle} transferred handler state: own=${
+              Object.hasOwn(transferred, 'onmessage')} message=${
+              typeof transferred.onmessage} error=${
+              typeof transferred.onmessageerror} port=${
+              transferred instanceof MessagePort} proto=${
+              Object.getPrototypeOf(transferred) === MessagePort.prototype}`);
+          transferred.close();
+          channel.port2.close();
+        }
+      })()
+    )JS", "message-port-event-handler-accessors"), runtime.last_error().c_str());
+    runtime.notify_low_memory();
+    for (unsigned task = 0; task < 8; ++task)
+        require(runtime.pump_task(), runtime.last_error().c_str());
+    const auto heap_after = runtime.read_memory_metrics().used_heap_bytes;
+    const auto rss_after = peak_rss_bytes();
+    const auto ports = runtime.read_message_port_metrics();
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - started);
+    require(ports.queued_messages == 0U && ports.queued_bytes == 0U,
+        "EventHandler cycles retained queued MessagePort data");
+    require(ports.retained_bindings == 0U,
+        "EventHandler cycles retained MessagePort bindings");
+    require(ports.binding_slots <= 300U,
+        "EventHandler cycles exceeded three transfer bindings per cycle");
+    require(heap_after <= heap_before + 8U * 1024U * 1024U,
+        "EventHandler cycles retained more than 8 MiB of V8 heap");
+    require(rss_before == 0U || rss_after <= rss_before + 64U * 1024U * 1024U,
+        "EventHandler cycles grew peak RSS by more than 64 MiB");
+    require(elapsed < std::chrono::seconds(2),
+        "100 MessagePort EventHandler cycles exceeded two seconds");
+    std::cout << "[messageport-event-handlers] cycles=100 elapsedMs="
+              << elapsed.count() << " bindingSlots=" << ports.binding_slots
+              << " retainedBindings=" << ports.retained_bindings
+              << " queuedMessages=" << ports.queued_messages
+              << " queuedBytes=" << ports.queued_bytes
+              << " heapBefore=" << heap_before
+              << " heapAfter=" << heap_after
+              << " rssBefore=" << rss_before
+              << " rssAfter=" << rss_after << '\n';
+}
+
 void test_message_port_receiver_survives_gc() {
     webscene_native::native_document document;
     webscene_native::v8_dom_runtime runtime(document,
@@ -1578,6 +1663,7 @@ void test_worker_message_port_contracts() {
     test_message_port_receiver_survives_gc();
     test_worker_message_port_transfer_and_throughput();
     test_message_port_clone_and_queue_bounds();
+    test_message_port_event_handler_accessors();
     test_message_port_binding_memory_is_bounded();
     test_iframe_worker_extension_host_port_bootstrap();
     test_editor_worker_rpc_and_ui_responsiveness();
@@ -1630,6 +1716,10 @@ int main() {
             }
             if (selected == "messageport-gc-stress") {
                 test_message_port_active_listener_gc_stress();
+                return 0;
+            }
+            if (selected == "messageport-event-handlers") {
+                test_worker_message_port_contracts();
                 return 0;
             }
         }

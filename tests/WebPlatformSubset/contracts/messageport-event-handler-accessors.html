@@ -1,0 +1,131 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>MessagePort EventHandler accessors</title>
+<body>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<script>
+function assertDescriptor(realm, label) {
+  for (const name of ['onmessage', 'onmessageerror']) {
+    const descriptor = realm.Object.getOwnPropertyDescriptor(
+      realm.MessagePort.prototype, name);
+    assert_true(!!descriptor, `${label} ${name} descriptor exists`);
+    assert_equals(typeof descriptor.get, 'function', `${label} ${name} getter`);
+    assert_equals(typeof descriptor.set, 'function', `${label} ${name} setter`);
+    assert_true(descriptor.enumerable, `${label} ${name} is enumerable`);
+    assert_true(descriptor.configurable, `${label} ${name} is configurable`);
+  }
+}
+
+test(() => {
+  assertDescriptor(window, 'Window');
+  const first = new MessageChannel();
+  const second = new MessageChannel();
+  const handler = () => {};
+  const objectHandler = {handleEvent() {}};
+  assert_false(Object.hasOwn(first.port1, 'onmessage'));
+  first.port1.onmessage = handler;
+  first.port1.onmessageerror = objectHandler;
+  assert_equals(first.port1.onmessage, handler);
+  assert_equals(first.port1.onmessageerror, objectHandler);
+  assert_equals(second.port1.onmessage, null, 'handler storage is per instance');
+  first.port1.onmessage = 'not callable';
+  first.port1.onmessageerror = null;
+  assert_equals(first.port1.onmessage, null, 'non-object assignment converts to null');
+  assert_equals(first.port1.onmessageerror, null, 'null clears the handler');
+  first.port1.close(); first.port2.close();
+  second.port1.close(); second.port2.close();
+}, 'MessagePort exposes browser-shaped prototype EventHandler accessors');
+
+promise_test(async t => {
+  const frame = document.createElement('iframe');
+  document.body.appendChild(frame);
+  const result = new Promise(resolve => {
+    const receive = t.step_func(event => {
+      if (event.data?.type !== 'messageport-handler-shape') return;
+      removeEventListener('message', receive);
+      resolve(event.data);
+    });
+    addEventListener('message', receive);
+  });
+  frame.contentDocument.open();
+  frame.contentDocument.write(`<!doctype html><script>
+    const names = ['onmessage', 'onmessageerror'];
+    const shape = names.every(name => {
+      const descriptor = Object.getOwnPropertyDescriptor(
+        MessagePort.prototype, name);
+      return !!descriptor && typeof descriptor.get === 'function'
+        && typeof descriptor.set === 'function'
+        && descriptor.enumerable && descriptor.configurable;
+    });
+    const channel = new MessageChannel();
+    const handler = () => {};
+    channel.port1.onmessage = handler;
+    parent.postMessage({
+      type: 'messageport-handler-shape',
+      shape,
+      assigned: channel.port1.onmessage === handler,
+      own: Object.hasOwn(channel.port1, 'onmessage')
+    }, '*');
+    channel.port1.close(); channel.port2.close();
+  <\/script>`);
+  frame.contentDocument.close();
+  const outcome = await result;
+  assert_true(outcome.shape);
+  assert_true(outcome.assigned);
+  assert_false(outcome.own);
+  frame.remove();
+}, 'Hydrated iframe realms expose independent MessagePort accessors');
+
+promise_test(async t => {
+  const workerSource = `
+    onmessage = event => {
+      const port = event.data;
+      const descriptor = Object.getOwnPropertyDescriptor(
+        MessagePort.prototype, 'onmessage');
+      const shape = !Object.hasOwn(port, 'onmessage')
+        && typeof descriptor?.get === 'function'
+        && typeof descriptor?.set === 'function'
+        && descriptor.enumerable && descriptor.configurable;
+      port.onmessage = message => {
+        port.postMessage({shape, value:message.data + 1,
+          receiver:message.currentTarget === port});
+        port.close();
+      };
+      port.start();
+    }`;
+  const url = URL.createObjectURL(new Blob([workerSource], {type:'text/javascript'}));
+  const worker = new Worker(url);
+  URL.revokeObjectURL(url);
+  t.add_cleanup(() => worker.terminate());
+  const channel = new MessageChannel();
+  t.add_cleanup(() => channel.port1.close());
+  const reply = new Promise(resolve => channel.port1.onmessage = resolve);
+  worker.postMessage(channel.port2, [channel.port2]);
+  channel.port1.postMessage(41);
+  const event = await reply;
+  assert_true(event.data.shape, 'Worker descriptor matches the browser shape');
+  assert_equals(event.data.value, 42);
+  assert_true(event.data.receiver, 'transferred wrapper is the event receiver');
+}, 'Transferred Worker MessagePorts use the Worker-realm prototype accessor');
+
+test(() => {
+  const started = performance.now();
+  for (let cycle = 0; cycle < 100; ++cycle) {
+    const channel = new MessageChannel();
+    const first = () => cycle;
+    const second = () => cycle + 1;
+    channel.port1.onmessage = first;
+    channel.port1.onmessage = second;
+    assert_equals(channel.port1.onmessage, second);
+    const transferred = structuredClone(
+      channel.port1, {transfer:[channel.port1]});
+    assert_false(Object.hasOwn(transferred, 'onmessage'));
+    assert_equals(transferred.onmessage, null, 'handlers do not cross transfer');
+    transferred.close();
+    channel.port2.close();
+  }
+  assert_less_than(performance.now() - started, 2000,
+    '100 assignment and transfer cycles stay bounded');
+}, '100 MessagePort EventHandler assignment and transfer cycles stay bounded');
+</script>

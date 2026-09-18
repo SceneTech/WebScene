@@ -55,7 +55,7 @@ test('Code OSS inserts and removes decorations through native stylesheet text', 
   assert.equal(sheet.insertRule('.decoration-a {color: red}', 0), 0);
   assert.equal(sheet.insertRule('.decoration-b {color: blue}', 0), 0);
   assert.equal(style.writes.length, 2);
-  assert.equal(style.textContent, '.decoration-b {color: blue}\n.decoration-a {color: red}');
+  assert.equal(style.textContent, '.decoration-b { color: blue; }\n.decoration-a { color: red; }');
   assert.equal(rules.length, 2, 'previously obtained rule lists remain live');
   assert.equal(rules[1].selectorText, '.decoration-a');
   assert.equal(rules.item(1), rules[1]);
@@ -63,7 +63,7 @@ test('Code OSS inserts and removes decorations through native stylesheet text', 
   assert.deepEqual(Array.from(rules, rule => rule.selectorText), ['.decoration-b', '.decoration-a']);
   const removed = rules[0];
   sheet.deleteRule(0);
-  assert.equal(style.textContent, '.decoration-a {color: red}');
+  assert.equal(style.textContent, '.decoration-a { color: red; }');
   assert.equal(style.writes.length, 3);
   assert.equal(removed.parentStyleSheet, null);
   assert.equal(rules.length, 1);
@@ -81,7 +81,7 @@ test('external native stylesheet replacements refresh the same live rule list', 
   assert.equal(rules[0].selectorText, '.after');
   assert.equal(oldRule.parentStyleSheet, null);
   style.sheet.insertRule('.first {height: 5px}');
-  assert.equal(style.textContent, '.first {height: 5px}\n.after {color: green}\n.other {width: 10px}');
+  assert.equal(style.textContent, '.first { height: 5px; }\n.after { color: green; }\n.other { width: 10px; }');
 });
 
 test('CSS token boundaries retain quoted braces, comments, escapes and grouped rules', () => {
@@ -92,7 +92,8 @@ test('CSS token boundaries retain quoted braces, comments, escapes and grouped r
   style.sheet.insertRule('.escaped\\{name { --tokens: {one: two}; color: red }', 1);
   style.sheet.insertRule('@media screen { .nested {color: blue} }', 2);
   assert.equal(style.sheet.cssRules.length, 3);
-  assert.equal(style.sheet.cssRules[0].cssText, rule);
+  assert.equal(style.sheet.cssRules[0].cssText,
+    '[data-value="}"]::before { content: "a;{b}\\\""; background: url("data:image/svg+xml,<svg>{}</svg>"); }');
   assert.equal(style.sheet.cssRules[0].selectorText, '[data-value="}"]::before');
   assert.equal(style.sheet.cssRules[1].selectorText, '.escaped\\{name');
   assert.equal(style.sheet.cssRules[2].selectorText, undefined);
@@ -124,9 +125,9 @@ test('rule declarations use the native parser and publish native declaration mut
   const rule = style.sheet.cssRules[0];
   assert.equal(rule.style.getPropertyValue('color'), 'red');
   rule.style.setProperty('color', 'green');
-  assert.equal(style.textContent, '.a {color: green;}');
+  assert.equal(style.textContent, '.a { color: green; }');
   rule.style.cssText = 'width: 42px;';
-  assert.equal(style.textContent, '.a {width: 42px;}');
+  assert.equal(style.textContent, '.a { width: 42px; }');
   assert.equal(rule.style.getPropertyValue('width'), '42px');
   style.textContent = '.replacement {height: 10px}';
   rule.style.setProperty('color', 'blue');

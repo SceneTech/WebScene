@@ -1621,6 +1621,33 @@ void test_native_mutable_stylesheet_cssom(webscene_engine* engine)
           nestedRule.parentStyleSheet === sheet,
           view.getComputedStyle(target).display,
           mediaRule.cssText.includes('display: grid')];
+        const mediaList = mediaRule.media;
+        const mediaReflection = [
+          mediaList instanceof view.MediaList,
+          mediaRule.media === mediaList,
+          mediaList.mediaText,
+          mediaList.length,
+          mediaList[0],
+          mediaList.item(0),
+          mediaList.toString()];
+        mediaRule.media = '(max-width:1px)';
+        const mediaForwarded = [mediaRule.media === mediaList,
+          mediaList.mediaText, mediaRule.conditionText,
+          view.getComputedStyle(target).display,
+          mediaRule.cssText.includes('(max-width: 1px)')];
+        mediaList.appendMedium('screen');
+        mediaList.appendMedium('SCREEN');
+        mediaList.appendMedium('screen, print');
+        const mediaAppended = [mediaList.mediaText, mediaList.length,
+          mediaRule.conditionText, view.getComputedStyle(target).display];
+        mediaList.deleteMedium('screen');
+        let missingMedium = '';
+        try { mediaList.deleteMedium('speech'); }
+        catch (error) { missingMedium = error.name; }
+        const mediaListDeleted = [mediaList.mediaText, mediaList.length,
+          mediaRule.conditionText, missingMedium,
+          view.getComputedStyle(target).display];
+        mediaList.mediaText = '(min-width: 1px)';
         mediaRule.deleteRule(nestedIndex);
         const mediaDeleted = [mediaRules.length,
           nestedRule.parentRule === null,
@@ -1648,8 +1675,9 @@ void test_native_mutable_stylesheet_cssom(webscene_engine* engine)
         observer.disconnect();
         style.remove();
         target.remove();
-        return { inserted, mutated, media, mediaDeleted, reconnected, disabled, enabled,
-          mediaMiss, mediaMatch, deleted };
+        return { inserted, mutated, media, mediaReflection, mediaForwarded,
+          mediaAppended, mediaListDeleted, mediaDeleted, reconnected, disabled,
+          enabled, mediaMiss, mediaMatch, deleted };
       };
       const frame = document.createElement('iframe');
       document.body.appendChild(frame);
@@ -1664,7 +1692,7 @@ void test_native_mutable_stylesheet_cssom(webscene_engine* engine)
     })())JS", "native-mutable-stylesheet-cssom.js");
     require(
         result
-            == R"JSON({"main":{"inserted":[1,2,".monaco-main","none",true,true,true,"SyntaxError"],"mutated":[2,"inline-block","inline-block"],"media":[2,true,true,true,4,"(min-width: 1px)",true,2,true,true,true,true,"grid",true],"mediaDeleted":[1,true,true,"inline-block"],"reconnected":[true,"grid",true],"disabled":[true,"block"],"enabled":[false,"grid"],"mediaMiss":["(max-width: 1px)",1,"(max-width: 1px)","block"],"mediaMatch":["(min-width: 1px)","grid"],"deleted":[2,true,0,true]},"frame":{"inserted":[1,2,".monaco-frame","none",true,true,true,"SyntaxError"],"mutated":[2,"inline-flex","inline-flex"],"media":[2,true,true,true,4,"(min-width: 1px)",true,2,true,true,true,true,"grid",true],"mediaDeleted":[1,true,true,"inline-flex"],"reconnected":[true,"grid",true],"disabled":[true,"block"],"enabled":[false,"grid"],"mediaMiss":["(max-width: 1px)",1,"(max-width: 1px)","block"],"mediaMatch":["(min-width: 1px)","grid"],"deleted":[2,true,0,true]}})JSON",
+            == R"JSON({"main":{"inserted":[1,2,".monaco-main","none",true,true,true,"SyntaxError"],"mutated":[2,"inline-block","inline-block"],"media":[2,true,true,true,4,"(min-width: 1px)",true,2,true,true,true,true,"grid",true],"mediaReflection":[true,true,"(min-width: 1px)",1,"(min-width: 1px)","(min-width: 1px)","(min-width: 1px)"],"mediaForwarded":[true,"(max-width: 1px)","(max-width: 1px)","block",true],"mediaAppended":["(max-width: 1px), screen",2,"(max-width: 1px), screen","grid"],"mediaListDeleted":["(max-width: 1px)",1,"(max-width: 1px)","NotFoundError","block"],"mediaDeleted":[1,true,true,"inline-block"],"reconnected":[true,"grid",true],"disabled":[true,"block"],"enabled":[false,"grid"],"mediaMiss":["(max-width: 1px)",1,"(max-width: 1px)","block"],"mediaMatch":["(min-width: 1px)","grid"],"deleted":[2,true,0,true]},"frame":{"inserted":[1,2,".monaco-frame","none",true,true,true,"SyntaxError"],"mutated":[2,"inline-flex","inline-flex"],"media":[2,true,true,true,4,"(min-width: 1px)",true,2,true,true,true,true,"grid",true],"mediaReflection":[true,true,"(min-width: 1px)",1,"(min-width: 1px)","(min-width: 1px)","(min-width: 1px)"],"mediaForwarded":[true,"(max-width: 1px)","(max-width: 1px)","block",true],"mediaAppended":["(max-width: 1px), screen",2,"(max-width: 1px), screen","grid"],"mediaListDeleted":["(max-width: 1px)",1,"(max-width: 1px)","NotFoundError","block"],"mediaDeleted":[1,true,true,"inline-flex"],"reconnected":[true,"grid",true],"disabled":[true,"block"],"enabled":[false,"grid"],"mediaMiss":["(max-width: 1px)",1,"(max-width: 1px)","block"],"mediaMatch":["(min-width: 1px)","grid"],"deleted":[2,true,0,true]}})JSON",
         "mutable stylesheet CSSOM did not recascade main/frame styles: "
             + result);
 }
@@ -1834,11 +1862,52 @@ void test_batched_stylesheet_rule_mutation_performance()
             throw new Error(`selector mutation latency exceeded ${selectorMutationP95}/${selectorMutationMax}`);
           }
           while (rules.length) sheet.deleteRule(0);
+          sheet.insertRule('.theme-target { height: 1px; }', 0);
+          const mediaListIndex = sheet.insertRule('@media (min-width: 1px) {}', 1);
+          const mediaListRule = rules[mediaListIndex];
+          const mediaList = mediaListRule.media;
+          for (let index = 0; index < 64; index++) {
+            mediaListRule.insertRule(
+              `.media-list-${index} { height: ${index + 1}px; }`, index);
+          }
+          target.className = 'theme-target media-list-63';
+          const mediaMutationDurations = [];
+          for (let cycle = 0; cycle < 20; cycle++) {
+            const matches = (cycle & 1) !== 0;
+            const started = performance.now();
+            mediaList.mediaText = matches
+              ? '(min-width:1px)' : '(max-width:1px)';
+            if (mediaListRule.media !== mediaList
+                || mediaList.mediaText !== (matches
+                  ? '(min-width: 1px)' : '(max-width: 1px)')
+                || mediaListRule.conditionText !== mediaList.mediaText
+                || getComputedStyle(target).height !== (matches ? '64px' : '1px')) {
+              throw new Error('MediaList mutation was not synchronously observable');
+            }
+            mediaMutationDurations.push(performance.now() - started);
+          }
+          const mediaMutations = mediaMutationDurations.slice()
+            .sort((a, b) => a - b);
+          const mediaMutationP95 = mediaMutations[18];
+          const mediaMutationMax = mediaMutations[19];
+          if (mediaMutationP95 > 16 || mediaMutationMax > 500) {
+            throw new Error(`MediaList mutation latency exceeded ${mediaMutationP95}/${mediaMutationMax}`);
+          }
+          while (rules.length) sheet.deleteRule(0);
           for (let cycle = 0; cycle < 100; cycle++) {
             const lifecycleStyle = document.createElement('style');
             lifecycleStyle.textContent = '@media (min-width: 1px) {}';
             document.head.appendChild(lifecycleStyle);
             const lifecycleGroup = lifecycleStyle.sheet.cssRules[0];
+            const lifecycleMedia = lifecycleGroup.media;
+            lifecycleGroup.media = '(max-width:1px)';
+            lifecycleMedia.appendMedium('screen');
+            lifecycleMedia.deleteMedium('screen');
+            lifecycleMedia.mediaText = '(min-width: 1px)';
+            if (lifecycleGroup.media !== lifecycleMedia
+                || lifecycleGroup.conditionText !== '(min-width: 1px)') {
+              throw new Error('lifecycle MediaList identity or condition was lost');
+            }
             const childIndex = lifecycleGroup.insertRule(
               `.lifecycle-${cycle} { display: block; }`, 0);
             const child = lifecycleGroup.cssRules[childIndex];
@@ -1866,15 +1935,23 @@ void test_batched_stylesheet_rule_mutation_performance()
             const realmDocument = realm.contentDocument;
             const realmStyle = realmDocument.createElement('style');
             const realmTarget = realmDocument.createElement('div');
-            realmStyle.textContent = `.realm-before-${cycle} { height: 7px; }`;
+            realmStyle.textContent = `@media (min-width: 1px) {
+              .realm-before-${cycle} { height: 7px; }
+            }`;
             realmTarget.className = `realm-after-${cycle}`;
             realmDocument.head.appendChild(realmStyle);
             realmDocument.body.appendChild(realmTarget);
-            const realmRule = realmStyle.sheet.cssRules[0];
+            const realmGroup = realmStyle.sheet.cssRules[0];
+            const realmMedia = realmGroup.media;
+            const realmRule = realmGroup.cssRules[0];
+            realmGroup.media = '(max-width: 1px)';
+            realmMedia.appendMedium('screen');
             realmRule.selectorText = `.realm-after-${cycle}`;
-            if (!(realmRule instanceof realm.contentWindow.CSSStyleRule)
+            if (!(realmMedia instanceof realm.contentWindow.MediaList)
+                || realmGroup.media !== realmMedia
+                || !(realmRule instanceof realm.contentWindow.CSSStyleRule)
                 || realmRule.selectorText !== `.realm-after-${cycle}`) {
-              throw new Error('iframe selectorText mutation lost realm ownership');
+              throw new Error('iframe MediaList or selector mutation lost realm ownership');
             }
             realm.remove();
           }
@@ -1906,6 +1983,8 @@ void test_batched_stylesheet_rule_mutation_performance()
                 nestedLookupP95, nestedLookupMax,
                 selectorMutationP95, selectorMutationMax,
                 selectorMutations: selectorMutationDurations.length,
+                mediaMutationP95, mediaMutationMax,
+                mediaMutations: mediaMutationDurations.length,
                 lifecycleCycles: 100,
                 realmLifecycleCycles: 100,
                 authoredTextStable: style.textContent === authoredText,
@@ -1983,7 +2062,7 @@ void test_batched_stylesheet_rule_mutation_performance()
     }
     require(rss_before == 0U || rss_after <= rss_before + 64U * 1024U * 1024U,
         "stylesheet mutation workload exceeded the 64 MiB peak RSS budget");
-    require(engine_after.layout_passes <= engine_before.layout_passes + 70U
+    require(engine_after.layout_passes <= engine_before.layout_passes + 95U
             && engine_after.published_scenes <= engine_before.published_scenes + 2U
             && memory_after.pending_scene_count <= 2U
             && work_after.timers_fired >= work_before.timers_fired + 2U,

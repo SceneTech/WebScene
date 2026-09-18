@@ -3532,6 +3532,53 @@
         self->document.mark_dirty();
     }
 
+    static void form_request_submit(const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        auto* form = unwrap_node(info.This());
+        if (self == nullptr || form == nullptr || form->tag != "form") {
+            info.GetIsolate()->ThrowException(v8::Exception::TypeError(
+                js_string(info.GetIsolate(),
+                    "HTMLFormElement.requestSubmit requires a form")));
+            return;
+        }
+
+        dom_node* submitter = nullptr;
+        if (info.Length() > 0 && !info[0]->IsUndefined()) {
+            if (!info[0]->IsObject()
+                || (submitter = unwrap_node(info[0].As<v8::Object>())) == nullptr) {
+                info.GetIsolate()->ThrowException(v8::Exception::TypeError(
+                    js_string(info.GetIsolate(),
+                        "The specified submitter is not a submit button")));
+                return;
+            }
+            const auto authored_type = submitter->attributes.find("type");
+            const auto type = authored_type == submitter->attributes.end()
+                ? std::string{}
+                : lower_html_name(authored_type->second);
+            const auto submit_button = submitter->tag == "button"
+                ? type.empty() || type == "submit"
+                : submitter->tag == "input"
+                    && (type == "submit" || type == "image");
+            if (!submit_button) {
+                info.GetIsolate()->ThrowException(v8::Exception::TypeError(
+                    js_string(info.GetIsolate(),
+                        "The specified submitter is not a submit button")));
+                return;
+            }
+            if (self->form_owner(*submitter) != form) {
+                throw_dom_exception(
+                    info,
+                    "The specified submitter is not owned by this form",
+                    "NotFoundError");
+                return;
+            }
+        }
+
+        webscene_input_event synthetic{};
+        self->dispatch_form_submit(synthetic, *form, submitter);
+    }
+
     static void get_multiple(v8::Local<v8::Name>, const v8::PropertyCallbackInfo<v8::Value>& info)
     {
         get_boolean_attribute(info, "multiple");

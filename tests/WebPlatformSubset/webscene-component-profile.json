@@ -147,6 +147,13 @@
       "evidence": ["spotify-login-otp-slot-overlay"]
     },
     {
+      "path": "contracts/dom-form-request-submit.html",
+      "type": "testharness",
+      "capabilities": ["html-form-request-submit", "submit-event-submitter"],
+      "evidence": ["spotify-login-otp-auto-submit"],
+      "reason": "Spotify submits a completed six-digit OTP with form.requestSubmit(); the native DOM must dispatch one cancellable submit event without a synthetic click."
+    },
+    {
       "path": "contracts/css-zero-height-overflow-hidden-paint.html",
       "type": "reftest",
       "reference": "contracts/css-zero-height-overflow-hidden-paint-ref.html",

@@ -753,6 +753,9 @@ struct v8_dom_runtime::implementation final {
         element->PrototypeTemplate()->Set(
             js_string(isolate, "reset"),
             v8::FunctionTemplate::New(isolate, form_reset));
+        element->PrototypeTemplate()->Set(
+            js_string(isolate, "requestSubmit"),
+            v8::FunctionTemplate::New(isolate, form_request_submit));
         element_template.Reset(isolate, element);
 #endif
 

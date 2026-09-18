@@ -1258,6 +1258,51 @@ void test_pointer_submit_button_runs_form_default_action(webscene_engine* engine
         "pointer submit-button default action diverged: " + state);
 }
 
+void test_form_request_submit_dispatches_submit_event(webscene_engine* engine)
+{
+    const auto result = evaluate(engine, R"JS((() => {
+      document.body.innerHTML = `<form id="otp">
+        <input id="code" name="code" value="123456">
+        <button id="continue" type="submit">Continue</button>
+      </form>
+      <form id="other"><button id="foreign">Foreign</button></form>`;
+      const form = document.getElementById('otp');
+      const submitter = document.getElementById('continue');
+      let clicks = 0;
+      const submissions = [];
+      submitter.addEventListener('click', () => ++clicks);
+      form.addEventListener('submit', event => {
+        submissions.push({
+          submitter: event.submitter?.id || null,
+          cancelable: event.cancelable
+        });
+        event.preventDefault();
+      });
+
+      form.requestSubmit();
+      form.requestSubmit(submitter);
+
+      let invalidName = null;
+      try { form.requestSubmit(document.getElementById('code')); }
+      catch (error) { invalidName = error.name; }
+      let foreignName = null;
+      try { form.requestSubmit(document.getElementById('foreign')); }
+      catch (error) { foreignName = error.name; }
+
+      return JSON.stringify({
+        method: typeof HTMLFormElement.prototype.requestSubmit,
+        length: HTMLFormElement.prototype.requestSubmit.length,
+        clicks,
+        submissions,
+        invalidName,
+        foreignName
+      });
+    })())JS", "form-request-submit.js");
+    require(
+        result == R"("{\"method\":\"function\",\"length\":0,\"clicks\":0,\"submissions\":[{\"submitter\":null,\"cancelable\":true},{\"submitter\":\"continue\",\"cancelable\":true}],\"invalidName\":\"TypeError\",\"foreignName\":\"NotFoundError\"}")",
+        "HTMLFormElement.requestSubmit contract diverged: " + result);
+}
+
 void test_collapsed_single_select_native_activation(webscene_engine* engine)
 {
     resize(engine, 340, 230, 600U);

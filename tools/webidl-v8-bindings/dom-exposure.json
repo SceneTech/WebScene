@@ -376,7 +376,9 @@
       "attributes": [
         { "name": "length", "getter": "get_form_or_select_length" }
       ],
-      "methods": [],
+      "methods": [
+        { "name": "requestSubmit", "callback": "form_request_submit", "length": 0 }
+      ],
       "constants": []
     },
     {

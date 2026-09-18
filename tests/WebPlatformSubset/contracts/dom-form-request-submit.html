@@ -1,0 +1,59 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>HTMLFormElement requestSubmit dispatches one cancellable submit event</title>
+<link rel="help" href="https://html.spec.whatwg.org/multipage/forms.html#dom-form-requestsubmit">
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<script>
+  test(() => {
+    const form = document.createElement("form");
+    form.innerHTML = `<input name="code" value="123456"><button>Continue</button>`;
+    document.body.appendChild(form);
+    const events = [];
+    form.addEventListener("submit", event => {
+      events.push(event);
+      event.preventDefault();
+    });
+    assert_equals(typeof form.requestSubmit, "function", "requestSubmit type");
+    assert_equals(form.requestSubmit.length, 0, "requestSubmit arity");
+    form.requestSubmit();
+    assert_equals(events.length, 1, "submit event count");
+    assert_equals(events[0].submitter, null, "implicit submitter");
+    assert_true(events[0].cancelable, "submit event was not cancelable");
+    assert_true(events[0].defaultPrevented, "preventDefault did not cancel submission");
+    form.remove();
+  }, "requestSubmit without a submitter dispatches one cancellable submit event");
+
+  test(() => {
+    const form = document.createElement("form");
+    form.innerHTML = `<button id="submitter" type="submit">Continue</button>`;
+    document.body.appendChild(form);
+    const submitter = form.querySelector("button");
+    let clicks = 0;
+    let observed = null;
+    submitter.addEventListener("click", () => ++clicks);
+    form.addEventListener("submit", event => {
+      observed = event.submitter;
+      event.preventDefault();
+    });
+    form.requestSubmit(submitter);
+    assert_equals(observed, submitter, "explicit submitter identity");
+    assert_equals(clicks, 0, "requestSubmit synthesized a click");
+    form.remove();
+  }, "An explicit submitter reaches SubmitEvent without synthesizing click");
+
+  test(() => {
+    const form = document.createElement("form");
+    const text = document.createElement("input");
+    const foreignForm = document.createElement("form");
+    const foreignSubmitter = document.createElement("button");
+    form.appendChild(text);
+    foreignForm.appendChild(foreignSubmitter);
+    document.body.appendChild(form);
+    document.body.appendChild(foreignForm);
+    assert_throws_js(TypeError, () => form.requestSubmit(text));
+    assert_throws_dom("NotFoundError", () => form.requestSubmit(foreignSubmitter));
+    form.remove();
+    foreignForm.remove();
+  }, "requestSubmit validates its submitter");
+</script>

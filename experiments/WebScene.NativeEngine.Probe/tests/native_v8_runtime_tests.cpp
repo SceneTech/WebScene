@@ -297,6 +297,7 @@ int main()
             require(focused_engine != nullptr,
                 "pointer submit-button engine creation failed");
             test_pointer_submit_button_runs_form_default_action(focused_engine);
+            test_form_request_submit_dispatches_submit_event(focused_engine);
             webscene_engine_destroy(focused_engine);
             return 0;
         }
@@ -1359,6 +1360,7 @@ int main()
     }
     test_enter_dispatches_browser_keypress_for_interval_commit(engine);
     test_pointer_submit_button_runs_form_default_action(engine);
+    test_form_request_submit_dispatches_submit_event(engine);
     test_css_linear_gradient_reaches_the_retained_scene(engine);
     {
         auto* file_engine=webscene_engine_create(0);

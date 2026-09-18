@@ -6,6 +6,8 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
+import subprocess
 import sys
 import tempfile
 import time
@@ -396,6 +398,32 @@ class BundleAuditTests(unittest.TestCase):
         for option in ("--architecture", "--maximum-deployment-target",
                        "--maximum-audit-entries", "--maximum-audit-evidence-bytes"):
             self.assertIn(option, source)
+
+    def test_packager_import_does_not_mutate_installed_tools(self):
+        with tempfile.TemporaryDirectory(prefix="webscene immutable tools ") as temporary:
+            tools = Path(temporary) / "share/webscene/tools"
+            tools.mkdir(parents=True)
+            for name in ("package_macos.py", "audit_macos_bundle.py"):
+                shutil.copy2(ROOT / "src/WebScene.Sdk/tools" / name, tools / name)
+            before = {
+                path.relative_to(tools).as_posix(): path.read_bytes()
+                for path in tools.rglob("*") if path.is_file()
+            }
+            started = time.monotonic()
+            for _ in range(100):
+                completed = subprocess.run(
+                    [sys.executable, str(tools / "package_macos.py"), "--help"],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                    text=True, timeout=10)
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+            elapsed = time.monotonic() - started
+            after = {
+                path.relative_to(tools).as_posix(): path.read_bytes()
+                for path in tools.rglob("*") if path.is_file()
+            }
+            self.assertEqual(after, before)
+            self.assertFalse(any(path.name == "__pycache__" for path in tools.rglob("*")))
+            self.assertLess(elapsed, 15.0)
 
     def test_single_architecture_normalization_is_atomic_and_idempotent(self):
         extension_relative = "Contents/PlugIns/sample.node"

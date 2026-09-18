@@ -6,6 +6,11 @@ from pathlib import Path
 import platform
 import shutil
 import subprocess
+import sys
+
+# Installed SDK tools are immutable inputs. Prevent the adjacent module import
+# below from materializing __pycache__ inside an otherwise verified SDK.
+sys.dont_write_bytecode = True
 
 from audit_macos_bundle import (
     DEFAULT_MAXIMUM_ENTRIES,

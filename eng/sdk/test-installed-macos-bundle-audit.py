@@ -44,6 +44,10 @@ def main():
             if not installed.is_file():
                 relative = installed.relative_to(prefix)
                 raise RuntimeError(f"installed SDK surface is missing {relative}")
+        installed_before = {
+            path.relative_to(prefix).as_posix(): path.read_bytes()
+            for path in prefix.rglob("*") if path.is_file()
+        }
 
         bundle = work / "Fixture.app"
         macos = bundle / "Contents/MacOS"
@@ -101,6 +105,19 @@ def main():
             "--maximum-audit-entries", "10000",
             "--maximum-audit-evidence-bytes", str(64 * 1024),
         ], stdout=subprocess.DEVNULL)
+        installed_after = {
+            path.relative_to(prefix).as_posix(): path.read_bytes()
+            for path in prefix.rglob("*") if path.is_file()
+        }
+        if installed_after != installed_before:
+            added = sorted(set(installed_after) - set(installed_before))
+            changed = sorted(
+                path for path in set(installed_after) & set(installed_before)
+                if installed_after[path] != installed_before[path]
+            )
+            raise RuntimeError(
+                f"installed SDK mutated during packaging: added={added}, changed={changed}"
+            )
         final_architectures = run(
             ["xcrun", "lipo", "-archs", str(extension)], capture_output=True
         ).stdout.split()

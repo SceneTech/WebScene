@@ -301,6 +301,12 @@ inline bool compound_matches(const Host& host,const dom_node& node,
                 if (!form_control || css::is_actually_disabled(document,node)) return false;
             } else if (name == "disabled") {
                 if (!form_control || !css::is_actually_disabled(document,node)) return false;
+            } else if (name == "required") {
+                if (!forms::required_applies(node)
+                    || !node.attributes.contains("required")) return false;
+            } else if (name == "optional") {
+                if (!forms::required_applies(node)
+                    || node.attributes.contains("required")) return false;
             } else if (name == "valid") {
                 if (!form_control || node.tag == "fieldset" || node.tag == "optgroup"
                     || node.tag == "option") return false;

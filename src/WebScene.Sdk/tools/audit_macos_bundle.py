@@ -298,8 +298,9 @@ def normalize_single_architecture(bundle: Path, architecture: str,
                 raise AuditError(f"lipo result grew while normalizing {relative}")
             peak_temporary_bytes = max(peak_temporary_bytes, result_bytes)
             result_hash = sha256(temporary)
-            with temporary.open("rb") as stream:
-                os.fsync(stream.fileno())
+            if os.name != "nt":
+                with temporary.open("rb") as stream:
+                    os.fsync(stream.fileno())
             if (stable_normalization_metadata(current_metadata)
                     != stable_normalization_metadata(file_metadata(path))
                     or sha256(path) != candidate["sha256"]):

@@ -10,6 +10,15 @@
             }
             size += transfer->ByteLength();
         }
+        for (const auto& handle : packet.file_system_handles) {
+            if (handle == nullptr
+                || handle->token.size() > std::numeric_limits<size_t>::max() - size
+                || handle->name.size() > std::numeric_limits<size_t>::max()
+                    - size - handle->token.size()) {
+                return std::numeric_limits<size_t>::max();
+            }
+            size += handle->token.size() + handle->name.size();
+        }
         return size;
     }
 
@@ -202,15 +211,21 @@
         implementation* runtime;
         const v8::FunctionCallbackInfo<v8::Value>& info;
         const std::vector<message_port_binding*>& port_transfers;
+        clone_packet& packet;
+        bool for_storage;
         v8::ValueSerializer* serializer{};
 
         clone_delegate(
             implementation* runtime_value,
             const v8::FunctionCallbackInfo<v8::Value>& info_value,
-            const std::vector<message_port_binding*>& port_transfer_values)
+            const std::vector<message_port_binding*>& port_transfer_values,
+            clone_packet& packet_value,
+            bool for_storage_value)
             : runtime(runtime_value)
             , info(info_value)
             , port_transfers(port_transfer_values)
+            , packet(packet_value)
+            , for_storage(for_storage_value)
         {
         }
 
@@ -226,10 +241,11 @@
             v8::Isolate* isolate,
             v8::Local<v8::Object> object) override
         {
+            auto realm = isolate->GetCurrentContext();
             return v8::Just(
-                runtime->message_port_binding_from_object(
-                    isolate->GetCurrentContext(),
-                    object) != nullptr);
+                runtime->message_port_binding_from_object(realm, object) != nullptr
+                || runtime->file_system_handle_binding_from_object(
+                    realm, object) != nullptr);
         }
 
         v8::Maybe<bool> WriteHostObject(
@@ -239,15 +255,52 @@
             const auto* binding = runtime->message_port_binding_from_object(
                 isolate->GetCurrentContext(),
                 object);
-            const auto found = std::find(port_transfers.begin(), port_transfers.end(), binding);
-            if (binding == nullptr || found == port_transfers.end()) {
+            if (binding != nullptr) {
+                const auto found = std::find(
+                    port_transfers.begin(), port_transfers.end(), binding);
+                if (found == port_transfers.end()) {
+                    ThrowDataCloneError(js_string(
+                        isolate,
+                        "MessagePort must be included in the transfer list"));
+                    return v8::Nothing<bool>();
+                }
+                serializer->WriteUint32(0U);
+                serializer->WriteUint32(static_cast<uint32_t>(
+                    std::distance(port_transfers.begin(), found)));
+                return v8::Just(true);
+            }
+            auto* handle = runtime->file_system_handle_binding_from_object(
+                isolate->GetCurrentContext(), object);
+            if (handle == nullptr || handle->owner == nullptr
+                || handle->owner->released.load(std::memory_order_acquire)) {
                 ThrowDataCloneError(js_string(
-                    isolate,
-                    "MessagePort must be included in the transfer list"));
+                    isolate, "File system handle authority is unavailable"));
                 return v8::Nothing<bool>();
             }
+            if (handle->owner->origin == "null"
+                || runtime->registered_file_system_origin(
+                    isolate->GetCurrentContext()) != handle->owner->origin) {
+                ThrowDataCloneError(js_string(isolate,
+                    "File system handles require a matching non-opaque origin"));
+                return v8::Nothing<bool>();
+            }
+            if (for_storage
+                && (runtime->storage_partition_key.empty()
+                    || !runtime->file_grant_durable_request_sink)) {
+                ThrowDataCloneError(js_string(isolate,
+                    "Persistent file system handle authority is unavailable"));
+                return v8::Nothing<bool>();
+            }
+            if (packet.file_system_handles.size()
+                >= maximum_file_system_handle_bindings) {
+                ThrowDataCloneError(js_string(
+                    isolate, "Too many file system handles in structured clone"));
+                return v8::Nothing<bool>();
+            }
+            packet.file_system_handles.push_back(handle->owner);
+            serializer->WriteUint32(1U);
             serializer->WriteUint32(static_cast<uint32_t>(
-                std::distance(port_transfers.begin(), found)));
+                packet.file_system_handles.size() - 1U));
             return v8::Just(true);
         }
     };
@@ -258,6 +311,7 @@
         const clone_packet& packet;
         v8::ValueDeserializer* deserializer{};
         std::vector<v8::Global<v8::Object>> wrappers;
+        std::vector<v8::Global<v8::Object>> file_system_wrappers;
 
         clone_deserialize_delegate(
             implementation* runtime_value,
@@ -267,7 +321,23 @@
             , realm(realm_value)
             , packet(packet_value)
             , wrappers(packet.port_transfers.size())
+            , file_system_wrappers(packet.file_system_handles.size())
         {
+        }
+
+        v8::MaybeLocal<v8::Object> file_system_wrapper(uint32_t index)
+        {
+            if (index >= packet.file_system_handles.size()) return {};
+            if (!file_system_wrappers[index].IsEmpty()) {
+                return file_system_wrappers[index].Get(runtime->isolate);
+            }
+            v8::Local<v8::Object> value;
+            if (!runtime->create_file_system_handle_wrapper(
+                    realm, packet.file_system_handles[index]).ToLocal(&value)) {
+                return {};
+            }
+            file_system_wrappers[index].Reset(runtime->isolate, value);
+            return value;
         }
 
         v8::MaybeLocal<v8::Object> wrapper(uint32_t index)
@@ -288,9 +358,13 @@
 
         v8::MaybeLocal<v8::Object> ReadHostObject(v8::Isolate*) override
         {
+            uint32_t kind = 0U;
             uint32_t index = 0U;
-            if (!deserializer->ReadUint32(&index)) return {};
-            return wrapper(index);
+            if (!deserializer->ReadUint32(&kind)
+                || !deserializer->ReadUint32(&index)) return {};
+            if (kind == 0U) return wrapper(index);
+            if (kind == 1U) return file_system_wrapper(index);
+            return {};
         }
     };
 
@@ -299,7 +373,8 @@
         v8::Local<v8::Value> value,
         v8::Local<v8::Value> transfer,
         clone_packet& packet,
-        size_t maximum_bytes = maximum_clone_packet_bytes)
+        size_t maximum_bytes = maximum_clone_packet_bytes,
+        bool for_storage = false)
     {
         auto* self = current(info.GetIsolate());
         auto* isolate = info.GetIsolate();
@@ -347,7 +422,7 @@
             }
         }
 
-        clone_delegate delegate(self, info, ports);
+        clone_delegate delegate(self, info, ports, packet, for_storage);
         v8::ValueSerializer serializer(isolate, &delegate);
         delegate.serializer = &serializer;
         for (uint32_t index = 0; index < buffers.size(); ++index) {
@@ -389,10 +464,12 @@
         v8::Local<v8::Value> value,
         v8::Local<v8::Value> transfer,
         clone_packet& packet,
-        size_t maximum_bytes = maximum_clone_packet_bytes)
+        size_t maximum_bytes = maximum_clone_packet_bytes,
+        bool for_storage = false)
     {
         try {
-            return serialize_clone_impl(info, value, transfer, packet, maximum_bytes);
+            return serialize_clone_impl(
+                info, value, transfer, packet, maximum_bytes, for_storage);
         } catch (const std::exception& exception) {
             info.GetIsolate()->ThrowException(v8::Exception::RangeError(
                 js_string(info.GetIsolate(), exception.what())));
@@ -459,6 +536,11 @@
         if (current(info.GetIsolate())->deserialize_clone(
                 info.GetIsolate(), realm, packet).ToLocal(&result)) {
             info.GetReturnValue().Set(result);
+        } else if (!info.GetIsolate()->HasPendingException()) {
+            throw_dom_exception(
+                info,
+                "File system handle could not be deserialized in this origin",
+                "DataCloneError");
         }
     }
 

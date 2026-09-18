@@ -370,7 +370,8 @@ const webscene_interop_result_view_v3* invoke_binary(
         &request,
         interop_completed,
         &probe);
-    require(operation_id != 0U, "binary invocation was rejected");
+    require(operation_id != 0U,
+        "binary invocation was rejected: " + std::string(name));
     {
         std::unique_lock lock(probe.mutex);
         require(
@@ -378,18 +379,21 @@ const webscene_interop_result_view_v3* invoke_binary(
                 lock,
                 std::chrono::seconds(10),
                 [&probe] { return probe.operation_id != 0U; }),
-            "binary invocation did not complete");
+            "binary invocation did not complete: " + std::string(name));
     }
     require(
         probe.operation_id == operation_id,
-        "binary invocation completed with a different operation ID");
+        "binary invocation completed with a different operation ID: "
+            + std::string(name));
     const auto* result = webscene_engine_take_invoke_result_v3(
         engine,
         operation_id);
-    require(result != nullptr, "binary invocation result was unavailable");
+    require(result != nullptr,
+        "binary invocation result was unavailable: " + std::string(name));
     require(
         webscene_engine_take_invoke_result_v3(engine, operation_id) == nullptr,
-        "binary invocation result could be taken more than once");
+        "binary invocation result could be taken more than once: "
+            + std::string(name));
     return result;
 }
 

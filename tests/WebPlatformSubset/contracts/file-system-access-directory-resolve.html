@@ -1,0 +1,34 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>File System Access directory resolve browser oracle</title>
+<!-- Cases follow WPT fs/script-tests/FileSystemDirectoryHandle-resolve.js at
+     revision 76fdb39425f8319118cba6c0c961e1d835c2879f. -->
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<body>
+<script>
+  promise_test(async t => {
+    assert_true(Boolean(navigator.storage && navigator.storage.getDirectory));
+    const root = await navigator.storage.getDirectory();
+    const prefix = `webscene-resolve-${Date.now()}-${Math.random()}`;
+    const nestedName = `${prefix}-nested😊`;
+    const siblingName = `${prefix}-nested`;
+    const nested = await root.getDirectoryHandle(nestedName, {create:true});
+    const sibling = await root.getDirectoryHandle(siblingName, {create:true});
+    const file = await nested.getFileHandle("file-name", {create:true});
+    const siblingFile = await sibling.getFileHandle("sibling.txt", {create:true});
+    t.add_cleanup(async () => {
+      await root.removeEntry(nestedName, {recursive:true});
+      await root.removeEntry(siblingName, {recursive:true});
+    });
+
+    assert_array_equals(await root.resolve(root), []);
+    assert_array_equals(await root.resolve(nested), [nestedName]);
+    assert_array_equals(await root.resolve(file), [nestedName, "file-name"]);
+    assert_equals(await nested.resolve(siblingFile), null);
+    assert_equals(await sibling.resolve(file), null,
+      "a prefix sibling is not an ancestor");
+    await promise_rejects_js(t, TypeError, root.resolve({}));
+  }, "resolve returns ordered Unicode components, empty same-entry, or null");
+</script>
+</body>

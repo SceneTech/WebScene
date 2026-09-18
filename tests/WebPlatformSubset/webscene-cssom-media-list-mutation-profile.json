@@ -1,0 +1,26 @@
+{
+  "profile": "webscene-cssom-media-list-mutation-1",
+  "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+  "runtime": "v8",
+  "viewport": {
+    "width": 800,
+    "height": 600,
+    "deviceScaleFactor": 1
+  },
+  "required": [
+    {
+      "path": "contracts/cssom-media-list-mutation.html",
+      "type": "contract",
+      "capabilities": [
+        "cssom-media-rule-media-list",
+        "cssom-synchronous-rule-mutation",
+        "cssom-nested-rule-serialization",
+        "cssom-cross-document-ownership"
+      ],
+      "evidence": ["cssom-media-list-mutation-362"],
+      "reason": "CSSOM/WPT-derived Chromium authority and native regression for SameObject CSSMediaRule.media reflection, PutForwards assignment, append/delete mutation, synchronous recascade, nested serialization, and detached ownership."
+    }
+  ],
+  "harnessBlocked": [],
+  "excluded": []
+}

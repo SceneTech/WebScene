@@ -25,6 +25,15 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
     - uses: actions/checkout@v4
+    - name: Reclaim stale Linux runner temporary data
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        python3 scripts/prepare_runner_disk.py "$RUNNER_TEMP" --system-temp /tmp --minimum-free-bytes 6442450944
+        job_tmp="$RUNNER_TEMP/webscene-job-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${GITHUB_JOB//[^A-Za-z0-9_.-]/_}"
+        mkdir -p "$job_tmp"
+        echo "TMPDIR=$job_tmp" >> "$GITHUB_ENV"
+        echo "WEBSCENE_JOB_TMP=$job_tmp" >> "$GITHUB_ENV"
     - name: Repair incomplete .NET install
       shell: bash
       env:
@@ -56,6 +65,7 @@ jobs:
       shell: bash
       run: |
         sudo flock /var/lock/webscene-apt.lock bash -c '
+          apt-get clean
           apt-get update
           apt-get install -y fontconfig fonts-noto-color-emoji
         '
@@ -145,6 +155,13 @@ jobs:
 
     - name: Native media decode contracts
       run: ctest --test-dir artifacts/native-engine-portability -C Release -R "webscene_(media_decode|audio_graph)_tests" --output-on-failure
+    - name: Release Linux job temporary data
+      if: always() && runner.os == 'Linux'
+      shell: bash
+      run: |
+        if [[ -n "${WEBSCENE_JOB_TMP:-}" ]]; then
+          rm -rf -- "$WEBSCENE_JOB_TMP"
+        fi
 
   native-aot:
     name: NativeAOT contracts ${{ matrix.rid }} Avalonia ${{ matrix.avalonia }}

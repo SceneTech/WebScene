@@ -117,6 +117,7 @@ async function closeChrome(chrome) {
 }
 
 async function launchContractServer(setViewport) {
+  const resourceCacheRequests = new Map();
   const server = createServer(async (request, response) => {
     try {
       const requestUrl = new URL(request.url || "/", "http://127.0.0.1");
@@ -127,6 +128,54 @@ async function launchContractServer(setViewport) {
             || width<1 || height<1 || width>8192 || height>8192) throw new Error('Invalid test viewport');
         await setViewport(width,height);
         response.writeHead(204); response.end(); return;
+      }
+      if (requestUrl.pathname === '/__webscene_resource_cache_count') {
+        const key = requestUrl.searchParams.get('key') || '';
+        response.writeHead(200, {
+          'content-type':'application/json; charset=utf-8',
+          'cache-control':'no-store'
+        });
+        response.end(JSON.stringify(resourceCacheRequests.get(key)
+          || {requests:0, conditional:0}));
+        return;
+      }
+      if (requestUrl.pathname === '/__webscene_resource_cache.js') {
+        const key = requestUrl.searchParams.get('key') || '';
+        const mode = requestUrl.searchParams.get('mode') || '';
+        if (!key || key.length > 128
+            || !['fresh', 'validator'].includes(mode)) {
+          response.writeHead(400, {'content-type':'text/plain; charset=utf-8'});
+          response.end('Invalid resource-cache oracle request');
+          return;
+        }
+        const state = resourceCacheRequests.get(key)
+          || {requests:0, conditional:0};
+        state.requests++;
+        const conditional = request.headers['if-none-match'] === '"webscene-cache-v1"';
+        if (conditional) state.conditional++;
+        resourceCacheRequests.set(key, state);
+        const headers = {
+          'content-type':'text/javascript; charset=utf-8',
+          'etag':'"webscene-cache-v1"',
+          'cache-control':mode === 'validator' ? 'no-cache' : 'public, max-age=3600'
+        };
+        if (mode === 'validator' && conditional) {
+          response.writeHead(304, headers);
+          response.end();
+          return;
+        }
+        response.writeHead(200, headers);
+        response.end(`globalThis.__resourceCacheExecutions =
+          (globalThis.__resourceCacheExecutions || 0) + 1;`);
+        return;
+      }
+      if (requestUrl.pathname === '/__webscene_markdown_external.svg') {
+        response.writeHead(200, {
+          'content-type':'image/svg+xml',
+          'cache-control':'no-store'
+        });
+        response.end('<svg xmlns="http://www.w3.org/2000/svg" width="2" height="3" viewBox="0 0 2 3"><rect width="2" height="3"/></svg>');
+        return;
       }
       // Local contracts use the native runner's set_viewport extension. Drive
       // a real Chromium viewport change; do not emulate CSS/media results.

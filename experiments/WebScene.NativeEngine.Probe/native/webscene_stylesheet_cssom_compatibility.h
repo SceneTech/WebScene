@@ -26,6 +26,10 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
   const groupingRuleInstances = new WeakSet();
   const conditionRuleInstances = new WeakSet();
   const mediaRuleInstances = new WeakSet();
+  const supportsRuleInstances = new WeakSet();
+  const layerBlockRuleInstances = new WeakSet();
+  const layerStatementRuleInstances = new WeakSet();
+  const mediaListInstances = new WeakSet();
   const ruleListInstances = new WeakSet();
   const interfaceConstructor = (name, instances, parent) => {
     const constructor = { [name]: function() {
@@ -48,6 +52,13 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
     'CSSConditionRule', conditionRuleInstances, CSSGroupingRuleInterface);
   const CSSMediaRuleInterface = interfaceConstructor(
     'CSSMediaRule', mediaRuleInstances, CSSConditionRuleInterface);
+  const CSSSupportsRuleInterface = interfaceConstructor(
+    'CSSSupportsRule', supportsRuleInstances, CSSConditionRuleInterface);
+  const CSSLayerBlockRuleInterface = interfaceConstructor(
+    'CSSLayerBlockRule', layerBlockRuleInstances, CSSGroupingRuleInterface);
+  const CSSLayerStatementRuleInterface = interfaceConstructor(
+    'CSSLayerStatementRule', layerStatementRuleInstances, CSSRuleInterface);
+  const MediaListInterface = interfaceConstructor('MediaList', mediaListInstances);
   const CSSRuleListInterface = interfaceConstructor('CSSRuleList', ruleListInstances);
   const installInterfaces = view => {
     for (const [name, constructor] of [
@@ -56,10 +67,18 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
       ['CSSGroupingRule', CSSGroupingRuleInterface],
       ['CSSConditionRule', CSSConditionRuleInterface],
       ['CSSMediaRule', CSSMediaRuleInterface],
+      ['CSSSupportsRule', CSSSupportsRuleInterface],
+      ['CSSLayerBlockRule', CSSLayerBlockRuleInterface],
+      ['CSSLayerStatementRule', CSSLayerStatementRuleInterface],
+      ['MediaList', MediaListInterface],
       ['CSSRuleList', CSSRuleListInterface]
     ]) {
       if (typeof view[name] !== 'function')
         Object.defineProperty(view, name, { value: constructor, configurable: true });
+    }
+    for (const target of [view.CSSRule, view.CSSRule?.prototype]) {
+      if (target && !('SUPPORTS_RULE' in target)) Object.defineProperty(
+        target, 'SUPPORTS_RULE', { value: 12, enumerable: true });
     }
   };
   // Split only at top-level CSS rule boundaries. Quoted strings, escaped
@@ -113,6 +132,169 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
     synchronize(state);
     return state;
   };
+  // Keep the WPT-covered MediaList grammar bounded to comma-separated media
+  // queries while respecting strings and nested functional expressions. The
+  // native cascade remains the authority for whether each query matches.
+  const splitMediaQueries = value => {
+    const source = value === null ? '' : text(value);
+    if (!source.trim()) return [];
+    const queries = [];
+    let start = 0, parentheses = 0, quote = '', comment = false;
+    for (let index = 0; index < source.length; index++) {
+      const character = source[index], next = source[index + 1];
+      if (comment) {
+        if (character === '*' && next === '/') { comment = false; index++; }
+        continue;
+      }
+      if (quote) {
+        if (character === '\\') index++;
+        else if (character === quote) quote = '';
+        continue;
+      }
+      if (character === '/' && next === '*') { comment = true; index++; continue; }
+      if (character === '\\') { index++; continue; }
+      if (character === '"' || character === "'") { quote = character; continue; }
+      if (character === '(') parentheses++;
+      if (character === ')' && --parentheses < 0) return ['not all'];
+      if (character === ',' && parentheses === 0) {
+        queries.push(source.slice(start, index));
+        start = index + 1;
+      }
+    }
+    if (parentheses || quote || comment) return ['not all'];
+    queries.push(source.slice(start));
+    return queries;
+  };
+  const normalizeMediaQuery = value => {
+    let query = value.trim();
+    if (!query || /[$]/.test(query)) return 'not all';
+    query = query.replace(/\/\*[\s\S]*?\*\//g, ' ')
+      .replace(/\s+/g, ' ')
+      .replace(/\(\s*/g, '(')
+      .replace(/\s*\)/g, ')')
+      .replace(/\s*:\s*/g, ': ')
+      .trim();
+    query = query.replace(/^(?:(not|only)\s+)?([a-z][\w-]*)/i,
+      (_, prefix, medium) => (prefix ? prefix.toLowerCase() + ' ' : '')
+        + medium.toLowerCase());
+    return query.replace(/\b(and|or|not)\b/gi, keyword => keyword.toLowerCase());
+  };
+  const parseMediaList = value => splitMediaQueries(value).map(normalizeMediaQuery);
+  // Cascade layer statement names use <ident> components separated by dots,
+  // and a statement may declare a comma-separated list. Keep escaped dots and
+  // commas inside the identifier token, then use CSS.escape() to serialize the
+  // decoded identifier the same way as the browser CSSOM.
+  const splitLayerNames = (source, delimiter) => {
+    const values = [];
+    let start = 0;
+    for (let index = 0; index < source.length; index++) {
+      if (source[index] === '\\') {
+        let cursor = index + 1;
+        if (/[0-9a-f]/i.test(source[cursor] || '')) {
+          let digits = 0;
+          while (digits < 6 && /[0-9a-f]/i.test(source[cursor] || '')) {
+            cursor++; digits++;
+          }
+          if (/[\t\n\f\r ]/.test(source[cursor] || '')) cursor++;
+        } else if (cursor < source.length) {
+          cursor++;
+        }
+        index = cursor - 1;
+      } else if (source[index] === delimiter) {
+        values.push(source.slice(start, index));
+        start = index + 1;
+      }
+    }
+    values.push(source.slice(start));
+    return values;
+  };
+  const cssEscapeToken = String.raw`\\(?:[0-9a-f]{1,6}(?:[\t\n\f\r ]|\r\n)?|[^\n\r\f0-9a-f])`;
+  const cssIdentifierStart = `(?:[a-z_\\u0080-\\uffff]|${cssEscapeToken})`;
+  const cssIdentifierCharacter = `(?:[a-z0-9_-\\u0080-\\uffff]|${cssEscapeToken})`;
+  const cssIdentifierPattern = new RegExp(
+    `^(?:--|-?${cssIdentifierStart})${cssIdentifierCharacter}*$`, 'iu');
+  const decodeCssIdentifier = value => value.replace(
+    /\\([0-9a-f]{1,6})(?:\r\n|[\t\n\f\r ])?|\\([^\n\r\f0-9a-f])/giu,
+    (_, hexadecimal, escaped) => {
+      if (escaped !== undefined) return escaped;
+      const codePoint = Number.parseInt(hexadecimal, 16);
+      return codePoint === 0 || codePoint > 0x10ffff
+        ? '\ufffd' : String.fromCodePoint(codePoint);
+    });
+  const parseLayerStatementNames = cssText => {
+    const match = /^@layer\b([\s\S]*);$/i.exec(cssText);
+    if (!match) return undefined;
+    const source = match[1].replace(/\/\*[\s\S]*?\*\//g, '');
+    const serialized = [];
+    for (const candidate of splitLayerNames(source, ',')) {
+      const components = splitLayerNames(candidate.trim(), '.');
+      if (!components.length) return null;
+      const name = [];
+      for (const componentSource of components) {
+        const component = componentSource.trim();
+        if (!component || !cssIdentifierPattern.test(component)) return null;
+        const decoded = decodeCssIdentifier(component);
+        name.push(globalThis.CSS?.escape
+          ? globalThis.CSS.escape(decoded) : component);
+      }
+      serialized.push(name.join('.'));
+    }
+    return serialized.length && serialized.every(Boolean) ? serialized : null;
+  };
+  const validateLayerStatement = parsed => {
+    if (parsed.body !== undefined || !/^@layer\b/i.test(parsed.cssText)) return;
+    if (!parseLayerStatementNames(parsed.cssText))
+      exception('The layer statement is invalid', 'SyntaxError');
+  };
+  const makeMediaList = (read, write) => {
+    const target = {};
+    const queries = () => parseMediaList(read());
+    const commit = values => write(values.join(', '));
+    Object.defineProperties(target, {
+      mediaText: {
+        enumerable: true,
+        get: () => queries().join(', '),
+        set: value => commit(parseMediaList(value))
+      },
+      length: { enumerable: true, get: () => queries().length },
+      item: { value(index) { return queries()[Number(index) >>> 0] ?? null; } },
+      appendMedium: { value(medium) {
+        if (arguments.length === 0) throw new TypeError('A medium is required');
+        const parsed = parseMediaList(medium);
+        if (parsed.length !== 1 || splitMediaQueries(medium).length !== 1) return;
+        const current = queries();
+        if (!current.includes(parsed[0])) commit(current.concat(parsed[0]));
+      } },
+      deleteMedium: { value(medium) {
+        if (arguments.length === 0) throw new TypeError('A medium is required');
+        const parsed = parseMediaList(medium);
+        if (parsed.length !== 1 || splitMediaQueries(medium).length !== 1) return;
+        const current = queries();
+        const retained = current.filter(query => query !== parsed[0]);
+        if (retained.length === current.length)
+          exception('The medium was not found', 'NotFoundError');
+        commit(retained);
+      } },
+      toString: { value: () => queries().join(', ') }
+    });
+    const list = new Proxy(target, {
+      get(target, key, receiver) {
+        if (typeof key === 'string' && /^(0|[1-9][0-9]*)$/.test(key))
+          return queries()[Number(key)];
+        return Reflect.get(target, key, receiver);
+      },
+      set(target, key, value, receiver) {
+        if (typeof key === 'string' && /^(0|[1-9][0-9]*)$/.test(key)) return false;
+        return Reflect.set(target, key, value, receiver);
+      },
+      deleteProperty(target, key) {
+        return typeof key !== 'string' || !/^(0|[1-9][0-9]*)$/.test(key)
+          ? Reflect.deleteProperty(target, key) : false;
+      }
+    });
+    mediaListInstances.add(list);
+    return list;
+  };
   const publish = state => {
     const source = state.rules.map(rule => rule.cssText).join('\n');
     const publishedSource = state.disabled ? ''
@@ -122,7 +304,8 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
       // CSSOM mutation does not replace the style element's DOM text nodes.
       // Stage the final serialized rule set in native state; synchronous
       // style/layout reads and the browser-task boundary flush it.
-      state.sheet.__webSceneStageRules(publishedSource);
+      state.sheet.__webSceneStageRules(
+        publishedSource, collectLayerNames(state.rules));
     } else {
       state.owner.textContent = publishedSource;
       state.ownerSource = publishedSource;
@@ -154,18 +337,59 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
     ruleListInstances.add(list);
     return list;
   };
+  const collectLayerNames = (rules, inheritedName = '', names = []) => {
+    for (const rule of rules) {
+      if (layerStatementRuleInstances.has(rule)) {
+        for (const name of rule.nameList) {
+          const qualified = inheritedName ? `${inheritedName}.${name}` : name;
+          if (!names.includes(qualified)) names.push(qualified);
+        }
+      } else if (layerBlockRuleInstances.has(rule)) {
+        const qualified = rule.name
+          ? (inheritedName ? `${inheritedName}.${rule.name}` : rule.name)
+          : '';
+        if (qualified && !names.includes(qualified)) names.push(qualified);
+        // Names below an anonymous layer do not join the document's reusable
+        // named-layer registry, so only recurse through named layer blocks.
+        if (qualified) collectLayerNames(rule.cssRules, qualified, names);
+      } else if (groupingRuleInstances.has(rule)) {
+        collectLayerNames(rule.cssRules, inheritedName, names);
+      }
+    }
+    return names;
+  };
   const makeRule = (state, parsed, containingRule = null) => {
     let cssText = parsed.cssText;
-    let parent = state.sheet;
+    let selectorText = parsed.selectorText;
+    let parent = containingRule ? containingRule.parentStyleSheet : state.sheet;
     let style;
     let serializeGroup;
     const mediaMatch = /^@media(?:\s+([^\{]*?))?\s*\{/i.exec(parsed.cssText);
+    const supportsMatch = /^@supports(?:\s+([^\{]*?))?\s*\{/i.exec(parsed.cssText);
+    const layerBlockMatch = /^@layer(?:\s+([^\{]*?))?\s*\{/i.exec(parsed.cssText);
+    const layerStatementNames = parsed.body === undefined
+      ? parseLayerStatementNames(parsed.cssText) : undefined;
+    const groupingMatch = mediaMatch || supportsMatch || layerBlockMatch;
     const rule = {};
     ruleInstances.add(rule);
     if (mediaMatch) {
       groupingRuleInstances.add(rule);
       conditionRuleInstances.add(rule);
       mediaRuleInstances.add(rule);
+      Object.setPrototypeOf(rule, CSSMediaRuleInterface.prototype);
+    } else if (supportsMatch) {
+      groupingRuleInstances.add(rule);
+      conditionRuleInstances.add(rule);
+      supportsRuleInstances.add(rule);
+      Object.setPrototypeOf(rule, CSSSupportsRuleInterface.prototype);
+    } else if (layerBlockMatch) {
+      groupingRuleInstances.add(rule);
+      layerBlockRuleInstances.add(rule);
+      Object.setPrototypeOf(rule, CSSLayerBlockRuleInterface.prototype);
+    } else if (layerStatementNames) {
+      layerStatementRuleInstances.add(rule);
+      Object.setPrototypeOf(rule, CSSLayerStatementRuleInterface.prototype);
+      cssText = `@layer ${layerStatementNames.join(', ')};`;
     } else if (parsed.selectorText !== undefined) {
       styleRuleInstances.add(rule);
     }
@@ -174,29 +398,35 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
       parentStyleSheet: { enumerable: true, get: () => parent },
       parentRule: { enumerable: true, get: () => parent ? containingRule : null }
     });
-    if (mediaMatch) {
+    if (groupingMatch) {
       let children = splitRules(parsed.body || '').map(child => makeRule(state, child, rule));
-      let conditionText = (mediaMatch[1] || '').trim();
+      const isMedia = Boolean(mediaMatch);
+      const isSupports = Boolean(supportsMatch);
+      let preludeText = isMedia
+        ? parseMediaList(mediaMatch[1] || '').join(', ')
+        : isSupports
+          ? (supportsMatch[1] || '').trim()
+          : (layerBlockMatch[1] || '').trim();
       const attached = () => parent && (containingRule
         ? containingRule.cssRules && Array.from(containingRule.cssRules).includes(rule)
         : state.rules.includes(rule));
       const serialize = () => {
-        cssText = `@media ${conditionText} {${children.map(child => child.cssText).join('')}}`;
+        const keyword = isMedia ? 'media' : isSupports ? 'supports' : 'layer';
+        cssText = `@${keyword}${preludeText ? ' ' + preludeText : ''} {${children.map(child => child.cssText).join('')}}`;
+      };
+      const commitCondition = value => {
+        const normalized = parseMediaList(value).join(', ');
+        if (normalized === preludeText) return;
+        preludeText = normalized;
+        serialize();
+        if (parent && containingRule?.__webSceneSerialize)
+          containingRule.__webSceneSerialize();
+        if (attached()) publish(state);
       };
       serializeGroup = serialize;
       const list = makeList(() => children, () => synchronize(state));
-      Object.defineProperties(rule, {
-        type: { enumerable: true, value: 4 },
-        conditionText: {
-          enumerable: true,
-          get: () => conditionText,
-          set(value) {
-            synchronize(state);
-            conditionText = text(value).trim();
-            serialize();
-            if (attached()) publish(state);
-          }
-        },
+      const descriptors = {
+        type: { enumerable: true, value: isMedia ? 4 : isSupports ? 12 : 0 },
         cssRules: { enumerable: true, get: () => list },
         insertRule: { writable: true, value(ruleText, index = 0) {
           if (arguments.length === 0) throw new TypeError('A CSS rule is required');
@@ -205,10 +435,13 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
           if (index > children.length) exception('Rule index is out of bounds', 'IndexSizeError');
           const parsedChildren = splitRules(text(ruleText));
           if (parsedChildren.length !== 1) exception('Exactly one CSS rule is required', 'SyntaxError');
+          validateLayerStatement(parsedChildren[0]);
           if (/^@(import|namespace)\b/i.test(parsedChildren[0].cssText))
-            exception('Imported and namespace rules require native CSSOM support', 'NotSupportedError');
+            exception('Imported and namespace rules are not allowed in grouping rules', 'HierarchyRequestError');
           children.splice(index, 0, makeRule(state, parsedChildren[0], rule));
           serialize();
+          if (parent && containingRule?.__webSceneSerialize)
+            containingRule.__webSceneSerialize();
           if (attached()) publish(state);
           return index;
         } },
@@ -219,18 +452,80 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
           if (index >= children.length) exception('Rule index is out of bounds', 'IndexSizeError');
           children.splice(index, 1)[0].detach();
           serialize();
+          if (parent && containingRule?.__webSceneSerialize)
+            containingRule.__webSceneSerialize();
           if (attached()) publish(state);
         } },
         detach: { value: () => {
           parent = null;
           for (const child of children) child.detach();
         } }
-      });
+      };
+      if (isMedia) {
+        const media = makeMediaList(() => preludeText, commitCondition);
+        descriptors.conditionText = {
+          enumerable: true,
+          get: () => preludeText,
+          set: value => {
+            synchronize(state);
+            commitCondition(value);
+          }
+        };
+        descriptors.media = {
+          enumerable: true,
+          get: () => media,
+          set(value) {
+            synchronize(state);
+            media.mediaText = value;
+          }
+        };
+      } else if (isSupports) {
+        descriptors.conditionText = {
+          enumerable: true, get: () => preludeText
+        };
+      } else {
+        descriptors.name = { enumerable: true, get: () => preludeText };
+      }
+      Object.defineProperties(rule, descriptors);
       serialize();
+    } else if (layerStatementNames) {
+      Object.defineProperties(rule, {
+        type: { enumerable: true, value: 0 },
+        nameList: {
+          enumerable: true,
+          get: () => Object.freeze(layerStatementNames.slice())
+        },
+        detach: { value: () => { parent = null; } }
+      });
     } else if (parsed.selectorText !== undefined) {
       Object.defineProperties(rule, {
         type: { enumerable: true, value: 1 },
-        selectorText: { enumerable: true, value: parsed.selectorText },
+        selectorText: {
+          enumerable: true,
+          get: () => selectorText,
+          set(value) {
+            synchronize(state);
+            const candidate = text(value).trim();
+            try {
+              // Element.matches() and stylesheet parsing share WebScene's
+              // native selector parser. CSSOM ignores invalid selectorText
+              // assignments instead of surfacing the parser's SyntaxError.
+              state.owner.ownerDocument.createElement('span').matches(candidate);
+            } catch (error) {
+              if (error?.name === 'SyntaxError') return;
+              throw error;
+            }
+            if (candidate === selectorText) return;
+            selectorText = candidate;
+            cssText = selectorText + ' {'
+              + (style ? style.cssText : parsed.body || '') + '}';
+            if (parent && (containingRule || state.rules.includes(rule))) {
+              if (containingRule && typeof containingRule.__webSceneSerialize === 'function')
+                containingRule.__webSceneSerialize();
+              publish(state);
+            }
+          }
+        },
         style: { enumerable: true, get() {
           if (style) return style;
           // Reuse WebScene's real CSSStyleDeclaration parser/property methods.
@@ -240,7 +535,7 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
           declaration.cssText = parsed.body;
           const commit = () => {
             synchronize(state);
-            cssText = parsed.selectorText + ' {' + declaration.cssText + '}';
+            cssText = selectorText + ' {' + declaration.cssText + '}';
             if (parent && (containingRule || state.rules.includes(rule))) {
               if (containingRule && typeof containingRule.__webSceneSerialize === 'function')
                 containingRule.__webSceneSerialize();
@@ -270,7 +565,7 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
     } else {
       Object.defineProperty(rule, 'detach', { value: () => { parent = null; } });
     }
-    if (mediaMatch) Object.defineProperty(rule, '__webSceneSerialize', {
+    if (groupingMatch) Object.defineProperty(rule, '__webSceneSerialize', {
       value: () => {
         serializeGroup();
         if (containingRule?.__webSceneSerialize) containingRule.__webSceneSerialize();
@@ -298,24 +593,11 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
         : ''
     };
     const list = makeList(() => state.rules, () => synchronize(state));
-    const media = {};
-    Object.defineProperties(media, {
-      mediaText: {
-        enumerable: true,
-        get() { return state.mediaText; },
-        set(value) {
-          state.mediaText = text(value).trim();
-          if (state.mediaText) state.owner.setAttribute('media', state.mediaText);
-          else state.owner.removeAttribute('media');
-          publish(state);
-        }
-      },
-      length: { enumerable: true, get() {
-        return state.mediaText ? state.mediaText.split(',').length : 0;
-      } },
-      item: { value(index) {
-        return state.mediaText.split(',').map(value => value.trim())[Number(index)] || null;
-      } }
+    const media = makeMediaList(() => state.mediaText, value => {
+      state.mediaText = value;
+      if (state.mediaText) state.owner.setAttribute('media', state.mediaText);
+      else state.owner.removeAttribute('media');
+      publish(state);
     });
     sheets.set(sheet, state);
     Object.defineProperties(sheet, {
@@ -331,6 +613,34 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
         }
       },
       media: { configurable: true, enumerable: true, get() { stateFor(this); return media; } },
+      replaceSync: {
+        configurable: true, writable: true,
+        value: function replaceSync(cssText) {
+          if (arguments.length === 0)
+            throw new TypeError('CSSStyleSheet.replaceSync requires one argument');
+          stateFor(this);
+          text(cssText);
+          // CSSOM replacement is restricted to constructed sheets. Native
+          // owner-backed sheets must retain their rules and publication state.
+          exception('Cannot replace a non-constructed stylesheet', 'NotAllowedError');
+        }
+      },
+      replace: {
+        configurable: true, writable: true,
+        value: function replace(cssText) {
+          try {
+            if (arguments.length === 0)
+              throw new TypeError('CSSStyleSheet.replace requires one argument');
+            stateFor(this);
+            text(cssText);
+            exception('Cannot replace a non-constructed stylesheet', 'NotAllowedError');
+          } catch (error) {
+            // Promise-returning Web IDL operations report argument conversion
+            // and operation errors through a realm-local rejected Promise.
+            return Promise.reject(error);
+          }
+        }
+      },
       insertRule: { configurable: true, writable: true, value(rule, index = 0) {
         if (arguments.length === 0) throw new TypeError('A CSS rule is required');
         const current = stateFor(this);
@@ -338,6 +648,7 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
         if (index > current.rules.length) exception('Rule index is out of bounds', 'IndexSizeError');
         const parsed = splitRules(text(rule));
         if (parsed.length !== 1) exception('Exactly one CSS rule is required', 'SyntaxError');
+        validateLayerStatement(parsed[0]);
         // Imported sheets cannot be represented by the native owner-text bridge.
         if (/^@(import|namespace)\b/i.test(parsed[0].cssText))
           exception('Imported and namespace rules require native CSSOM support', 'NotSupportedError');

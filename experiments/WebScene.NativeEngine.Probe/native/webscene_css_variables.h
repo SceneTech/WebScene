@@ -2,6 +2,22 @@
 #include "webscene_css_matching.h"
 
 namespace webscene_native::css {
+template<typename Variables>
+inline bool variable_collection_contains(
+    const Variables& variables,
+    const std::string& variable)
+{
+    return std::find(variables.begin(), variables.end(), variable)
+        != variables.end();
+}
+
+inline bool variable_collection_contains(
+    const std::unordered_set<std::string>& variables,
+    const std::string& variable)
+{
+    return variables.find(variable) != variables.end();
+}
+
 // Existing parsed-CSS substitution semantics, shared with the runtime adapter.
 // Compiled-only style expressions continue to use their typed evaluator.
 inline std::string resolve_value(const dom_node& node,std::string value,

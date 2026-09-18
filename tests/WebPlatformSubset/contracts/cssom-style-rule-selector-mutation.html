@@ -1,0 +1,198 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>CSSStyleRule selectorText mutation stays live and synchronous</title>
+<body>
+<script>
+  const state = window.__webSceneWptState = {
+    complete: false, harness: null, results: [], errors: [], diagnostics: []
+  };
+
+  function record(name, error) {
+    state.results.push({
+      name,
+      status: error ? "FAIL" : "PASS",
+      message: error ? String(error && error.message || error) : null,
+      stack: error && error.stack ? String(error.stack) : null
+    });
+  }
+
+  function color(view, node) {
+    return view.getComputedStyle(node).color;
+  }
+
+  function background(view, node) {
+    return view.getComputedStyle(node).backgroundColor;
+  }
+
+  function exercise(document, view, prefix) {
+    const style = document.createElement("style");
+    style.textContent = `.${prefix}-before { color: rgb(17, 23, 31); }
+      @media (min-width: 1px) {
+        .${prefix}-nested-before { background-color: rgb(41, 43, 47); }
+      }`;
+    document.head.appendChild(style);
+    const before = document.createElement("div");
+    const after = document.createElement("div");
+    const nestedBefore = document.createElement("div");
+    const nestedAfter = document.createElement("div");
+    before.className = `${prefix}-before`;
+    after.className = `${prefix}-after`;
+    nestedBefore.className = `${prefix}-nested-before`;
+    nestedAfter.className = `${prefix}-nested-after`;
+    document.body.append(before, after, nestedBefore, nestedAfter);
+
+    const sheet = style.sheet;
+    const rules = sheet.cssRules;
+    const rule = rules[0];
+    const group = rules[1];
+    const nestedRules = group.cssRules;
+    const nested = nestedRules[0];
+    const authoredText = style.textContent;
+    const initial = {
+      styleRule: typeof view.CSSStyleRule === "function"
+        && rule instanceof view.CSSStyleRule,
+      listIdentity: sheet.cssRules === rules && group.cssRules === nestedRules,
+      ruleIdentity: rules[0] === rule && nestedRules[0] === nested,
+      selector: rule.selectorText,
+      before: color(view, before),
+      after: color(view, after)
+    };
+
+    rule.selectorText = `.${prefix}-after`;
+    const topLevel = {
+      selector: rule.selectorText,
+      serialized: rule.cssText.includes(`.${prefix}-after`),
+      identity: rules[0] === rule,
+      before: color(view, before),
+      after: color(view, after),
+      textStable: style.textContent === authoredText
+    };
+
+    rule.style.setProperty("color", "rgb(53, 59, 61)");
+    const declarationAfterSelector = {
+      selector: rule.selectorText,
+      serialized: rule.cssText.includes(`.${prefix}-after`)
+        && rule.cssText.includes("rgb(53, 59, 61)"),
+      before: color(view, before),
+      after: color(view, after),
+      textStable: style.textContent === authoredText
+    };
+
+    let invalidThrew = false;
+    try { rule.selectorText = "::: invalid"; }
+    catch { invalidThrew = true; }
+    const invalid = {
+      threw: invalidThrew,
+      selector: rule.selectorText,
+      before: color(view, before),
+      after: color(view, after),
+      textStable: style.textContent === authoredText
+    };
+
+    nested.selectorText = `.${prefix}-nested-after`;
+    const nestedMutation = {
+      selector: nested.selectorText,
+      serialized: nested.cssText.includes(`.${prefix}-nested-after`)
+        && group.cssText.includes(`.${prefix}-nested-after`),
+      parentRule: nested.parentRule === group,
+      parentSheet: nested.parentStyleSheet === sheet,
+      before: background(view, nestedBefore),
+      after: background(view, nestedAfter),
+      textStable: style.textContent === authoredText
+    };
+
+    sheet.deleteRule(0);
+    rule.selectorText = `.${prefix}-detached`;
+    const detached = {
+      selector: rule.selectorText,
+      serialized: rule.cssText.includes(`.${prefix}-detached`),
+      parentRule: rule.parentRule,
+      parentStyleSheet: rule.parentStyleSheet,
+      after: color(view, after),
+      remainingIdentity: rules[0] === group
+    };
+
+    style.remove();
+    before.remove();
+    after.remove();
+    nestedBefore.remove();
+    nestedAfter.remove();
+    return {
+      initial, topLevel, declarationAfterSelector, invalid, nestedMutation, detached
+    };
+  }
+
+  try {
+    const frame = document.createElement("iframe");
+    document.body.appendChild(frame);
+    const main = exercise(document, window, "selector-main");
+    const nested = exercise(
+      frame.contentDocument, frame.contentWindow, "selector-frame");
+    const transparent = value => value === "rgba(0, 0, 0, 0)"
+      || value === "transparent";
+    const initialPass = value => value.initial.styleRule
+      && value.initial.listIdentity && value.initial.ruleIdentity
+      && value.initial.before === "rgb(17, 23, 31)"
+      && value.initial.after === "rgb(0, 0, 0)";
+    const topPass = value => value.topLevel.serialized
+      && value.topLevel.identity && value.topLevel.textStable
+      && value.topLevel.before === "rgb(0, 0, 0)"
+      && value.topLevel.after === "rgb(17, 23, 31)";
+    const invalidPass = value => !value.invalid.threw
+      && value.invalid.selector.endsWith("-after")
+      && value.invalid.before === "rgb(0, 0, 0)"
+      && value.invalid.after === "rgb(53, 59, 61)"
+      && value.invalid.textStable;
+    const declarationPass = value => value.declarationAfterSelector.serialized
+      && value.declarationAfterSelector.selector.endsWith("-after")
+      && value.declarationAfterSelector.before === "rgb(0, 0, 0)"
+      && value.declarationAfterSelector.after === "rgb(53, 59, 61)"
+      && value.declarationAfterSelector.textStable;
+    const nestedPass = value => value.nestedMutation.serialized
+      && value.nestedMutation.parentRule && value.nestedMutation.parentSheet
+      && transparent(value.nestedMutation.before)
+      && value.nestedMutation.after === "rgb(41, 43, 47)"
+      && value.nestedMutation.textStable;
+    const detachedPass = value => value.detached.serialized
+      && value.detached.parentRule === null
+      && value.detached.parentStyleSheet === null
+      && value.detached.after === "rgb(0, 0, 0)"
+      && value.detached.remainingIdentity;
+    record("style rules expose stable browser-shaped identities",
+      initialPass(main) && initialPass(nested)
+        ? null : new Error(JSON.stringify({ main: main.initial, nested: nested.initial })));
+    record("top-level selectorText mutation recascades synchronously",
+      topPass(main) && topPass(nested)
+        ? null : new Error(JSON.stringify({ main: main.topLevel, nested: nested.topLevel })));
+    record("declaration mutation retains the updated selector",
+      declarationPass(main) && declarationPass(nested)
+        ? null : new Error(JSON.stringify({
+          main: main.declarationAfterSelector,
+          nested: nested.declarationAfterSelector
+        })));
+    record("invalid selectorText assignment preserves the previous rule",
+      invalidPass(main) && invalidPass(nested)
+        ? null : new Error(JSON.stringify({ main: main.invalid, nested: nested.invalid })));
+    record("nested selectorText mutation serializes and recascades",
+      nestedPass(main) && nestedPass(nested)
+        ? null : new Error(JSON.stringify({ main: main.nestedMutation, nested: nested.nestedMutation })));
+    record("detached style rules mutate without affecting their former document",
+      detachedPass(main) && detachedPass(nested)
+        ? null : new Error(JSON.stringify({ main: main.detached, nested: nested.detached })));
+    state.diagnostics.push(JSON.stringify({ main, nested }));
+    frame.remove();
+  } catch (error) {
+    record("selectorText mutation setup", error);
+  }
+
+  const failure = state.results.find(result => result.status !== "PASS");
+  state.harness = failure
+    ? { status: 1, message: failure.message, stack: failure.stack }
+    : { status: 0, message: null, stack: null };
+  state.complete = true;
+  const evidence = document.createElement("pre");
+  evidence.id = "cssom-selector-mutation-evidence";
+  evidence.hidden = true;
+  evidence.textContent = JSON.stringify(state);
+  document.body.appendChild(evidence);
+</script>

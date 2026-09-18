@@ -317,7 +317,6 @@ void test_cache_storage_and_controlled_fetch_broker()
             'controllerchange', resolve, {once:true}));
           const registration = await navigator.serviceWorker.register(
             'service-worker.js', {type:'module'});
-          state.phase = 'await-control';
           if (!navigator.serviceWorker.controller) await changed;
           for (let cycle = 0; cycle < 100; ++cycle) {
             const start = performance.now();
@@ -761,6 +760,167 @@ void test_service_worker_host_message_streaming()
               << " currentRssAfter=" << current_rss_after << '\n';
 }
 
+void test_controlled_fetch_abort_and_retirement()
+{
+    resource_server server{.content = {
+        {"https://fetch-abort.test/index.html",
+            "<!doctype html><title>controlled fetch abort gate</title>"},
+        {"https://fetch-abort.test/service-worker.js", R"JS(
+            self.addEventListener('install', event => event.waitUntil(skipWaiting()));
+            self.addEventListener('activate', event => event.waitUntil(clients.claim()));
+            self.addEventListener('fetch', event => {
+              const path = new URL(event.request.url).pathname;
+              if (path === '/controlled-pending') {
+                event.respondWith(new Promise(() => {}));
+              } else if (path === '/controlled-success') {
+                event.respondWith(new Response('released', {
+                  status:200, headers:{'content-type':'text/plain'}
+                }));
+              }
+            });
+        )JS"}
+    }};
+    webscene_engine_options options{};
+    options.struct_size = sizeof(options);
+    options.resource_load_callback = load_test_resource;
+    options.resource_load_user_data = &server;
+    auto* engine = webscene_engine_create_with_options(&options);
+    require(engine != nullptr, "controlled fetch abort engine creation failed");
+    constexpr std::string_view address{"https://fetch-abort.test/index.html"};
+    require(webscene_engine_load_url(engine, address.data(), address.size()) != 0U,
+        "controlled fetch abort navigation failed");
+    require(evaluate_until_equals(engine, "location.href", "fetch-abort-navigation.js",
+            R"("https://fetch-abort.test/index.html")", 2'500)
+            == R"("https://fetch-abort.test/index.html")",
+        "controlled fetch abort document did not become ready");
+
+    webscene_engine_memory_metrics memory_before{sizeof(webscene_engine_memory_metrics)};
+    require(webscene_engine_get_memory_metrics(engine, &memory_before) != 0,
+        "controlled fetch abort memory baseline unavailable");
+    const auto rss_before = service_worker_test_current_rss_bytes();
+    execute(engine, R"JS(
+      globalThis.__fetchAbort = {
+        complete:false, error:null, preAborted:false, customReason:false,
+        canceled:0, cycles:0, durations:[], releaseLatency:0,
+        retireRejected:false, retireLatency:0
+      };
+      (async () => {
+        const wait = duration => new Promise(resolve => setTimeout(resolve, duration));
+        try {
+          const changed = new Promise(resolve => navigator.serviceWorker.addEventListener(
+            'controllerchange', resolve, {once:true}));
+          const registration = await navigator.serviceWorker.register('service-worker.js');
+          if (!navigator.serviceWorker.controller) await changed;
+
+          const pre = new AbortController();
+          pre.abort();
+          try { await fetch('/controlled-pending', {signal:pre.signal}); }
+          catch (error) { __fetchAbort.preAborted = error?.name === 'AbortError'; }
+
+          const custom = new AbortController();
+          const customReason = new Error('custom abort reason');
+          const customFetch = fetch('/controlled-pending', {signal:custom.signal});
+          await wait(0);
+          custom.abort(customReason);
+          try { await customFetch; }
+          catch (error) { __fetchAbort.customReason = error === customReason; }
+          for (;;) {
+            try {
+              if (await (await fetch('/controlled-success')).text() === 'released') break;
+            } catch {}
+            await wait(1);
+          }
+
+          const controllers = Array.from({length:32}, () => new AbortController());
+          const blocked = controllers.map((controller, index) =>
+            fetch(`/controlled-pending?bulk=${index}`, {signal:controller.signal})
+              .then(() => false, error => error?.name === 'AbortError'));
+          await wait(2);
+          const releasedAt = performance.now();
+          for (const controller of controllers) controller.abort();
+          __fetchAbort.canceled = (await Promise.all(blocked)).filter(Boolean).length;
+          for (;;) {
+            try {
+              const response = await fetch('/controlled-success');
+              if (await response.text() === 'released') break;
+            } catch {}
+            if (performance.now() - releasedAt > 500) {
+              throw new Error('controlled fetch capacity was not released');
+            }
+            await wait(1);
+          }
+          __fetchAbort.releaseLatency = performance.now() - releasedAt;
+
+          for (let cycle = 0; cycle < 100; ++cycle) {
+            const controller = new AbortController();
+            const pending = fetch(`/controlled-pending?cycle=${cycle}`, {
+              signal:controller.signal
+            });
+            await wait(0);
+            const started = performance.now();
+            controller.abort();
+            const aborted = await pending.then(
+              () => false, error => error?.name === 'AbortError');
+            if (!aborted) throw new Error(`cycle ${cycle} did not abort`);
+            __fetchAbort.durations.push(performance.now() - started);
+            ++__fetchAbort.cycles;
+          }
+
+          const retiring = fetch('/controlled-pending?retire=1');
+          await wait(2);
+          const retireStarted = performance.now();
+          await registration.unregister();
+          __fetchAbort.retireRejected = await retiring.then(() => false, () => true);
+          __fetchAbort.retireLatency = performance.now() - retireStarted;
+        } catch (error) {
+          __fetchAbort.error = String(error && error.stack || error);
+        } finally { __fetchAbort.complete = true; }
+      })();
+    )JS", "controlled-fetch-abort-gate.js");
+    require(evaluate_until_equals(engine, "__fetchAbort.complete",
+            "fetch-abort-complete.js", "true", 15'000) == "true",
+        "controlled fetch abort gate did not finish: " + last_error(engine));
+    require(evaluate(engine, "__fetchAbort.error", "fetch-abort-error.js") == "null",
+        "controlled fetch abort gate failed: "
+            + evaluate(engine, "__fetchAbort.error", "fetch-abort-error-detail.js"));
+    require(evaluate(engine, R"JS((() => {
+      const value = __fetchAbort;
+      return value.preAborted && value.customReason && value.canceled === 32
+        && value.cycles === 100 && value.releaseLatency <= 100
+        && value.retireRejected && value.retireLatency <= 500;
+    })())JS", "fetch-abort-semantics.js") == "true",
+        "controlled fetch abort semantics diverged: "
+            + evaluate(engine, "JSON.stringify(__fetchAbort)",
+                "fetch-abort-semantics-detail.js"));
+    const auto p95 = std::stod(evaluate(engine, R"JS((() => {
+      const values = [...__fetchAbort.durations].sort((a,b) => a-b);
+      return values[Math.ceil(values.length * .95) - 1];
+    })())JS", "fetch-abort-p95.js"));
+    require(p95 <= 100.0,
+        "controlled fetch abort p95 exceeded 100 ms: " + std::to_string(p95));
+    require(webscene_engine_request_low_memory(engine) != 0,
+        "controlled fetch abort low-memory request was rejected");
+    webscene_engine_memory_metrics memory_after{sizeof(webscene_engine_memory_metrics)};
+    for (auto attempt = 0; attempt < 250; ++attempt) {
+        require(webscene_engine_get_memory_metrics(engine, &memory_after) != 0,
+            "controlled fetch abort final memory metrics unavailable");
+        if (memory_after.low_memory_notifications
+            > memory_before.low_memory_notifications) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    require(memory_after.v8_used_heap_bytes
+            <= memory_before.v8_used_heap_bytes + 8U * 1024U * 1024U,
+        "controlled fetch abort cycles retained more than 8 MiB V8 heap");
+    const auto rss_after = service_worker_test_current_rss_bytes();
+    require(rss_after <= rss_before + 64U * 1024U * 1024U,
+        "controlled fetch abort cycles retained more than 64 MiB RSS");
+    std::cout << "Controlled fetch abort gate: cycles=100 p95=" << p95
+              << "ms heapBefore=" << memory_before.v8_used_heap_bytes
+              << " heapAfter=" << memory_after.v8_used_heap_bytes
+              << " rssBefore=" << rss_before << " rssAfter=" << rss_after << '\n';
+    webscene_engine_destroy(engine);
+}
+
 void test_controlled_range_cache_headers_and_body_budget()
 {
     resource_server server{.content = {
@@ -1182,6 +1342,668 @@ void test_vscode_markdown_css_image_resource_broker()
     require(readme.find("# Code OSS on AppScene") != std::string::npos,
         "VS Code Markdown fixture did not contain the current README");
 
+    constexpr std::string_view cache_address{
+        "https://vscode-webview.test/index.html?id=cache-replacement"};
+    constexpr std::string_view cache_worker_one{
+        "https://vscode-webview.test/service-worker.js?"
+        "vscode-resource-base-authority=vscode-resource.test&platform=electron&version=1"};
+    constexpr std::string_view cache_worker_two{
+        "https://vscode-webview.test/service-worker.js?"
+        "vscode-resource-base-authority=vscode-resource.test&platform=electron&version=2"};
+    resource_server cache_server{.content = {
+        {std::string{cache_address},
+            "<!doctype html><title>cache replacement</title>"},
+        {std::string{cache_worker_one}, exact_worker},
+        {std::string{cache_worker_two}, exact_worker}
+    }};
+    webscene_engine_options cache_options{};
+    cache_options.struct_size = sizeof(cache_options);
+    cache_options.resource_load_callback = load_test_resource;
+    cache_options.resource_load_user_data = &cache_server;
+    auto* cache_engine = webscene_engine_create_with_options(&cache_options);
+    require(cache_engine != nullptr, "cache replacement engine creation failed");
+    require(webscene_engine_load_url(
+            cache_engine, cache_address.data(), cache_address.size()) != 0U,
+        "cache replacement navigation failed");
+    require(evaluate_until_equals(
+            cache_engine, "location.href", "cache-replacement-navigation.js",
+            R"("https://vscode-webview.test/index.html?id=cache-replacement")", 2'500)
+            == R"("https://vscode-webview.test/index.html?id=cache-replacement")",
+        "cache replacement document did not become ready");
+    webscene_engine_memory_metrics cache_memory_before{
+        sizeof(webscene_engine_memory_metrics)};
+    require(webscene_engine_get_memory_metrics(
+            cache_engine, &cache_memory_before) != 0,
+        "cache replacement memory baseline unavailable");
+    const auto cache_rss_before = service_worker_test_current_rss_bytes();
+    execute(cache_engine, R"JS(
+      globalThis.__cacheReplacement = {
+        complete:false, error:null, requests:[], byteStarts:0, durations:[], p95:0
+      };
+      (async () => {
+        const state = __cacheReplacement;
+        const body = 'unchanged-code-cached-body';
+        let worker;
+        navigator.serviceWorker.addEventListener('message', event => {
+          const request = event.data || {};
+          if (request.channel !== 'load-resource') return;
+          state.requests.push({path:request.path, ifNoneMatch:request.ifNoneMatch});
+          if (request.ifNoneMatch === '"cache-replacement-v1"') {
+            worker.postMessage({channel:'did-load-resource', data:{
+              id:request.id, status:304, path:request.path,
+              mime:'text/plain', mtime:1700000000000
+            }});
+            return;
+          }
+          worker.postMessage({channel:'did-load-resource', data:{
+            id:request.id, status:200, path:request.path, mime:'text/plain',
+            etag:'"cache-replacement-v1"', mtime:1700000000000
+          }});
+          const bytes = new TextEncoder().encode(body);
+          state.byteStarts++;
+          worker.postMessage({channel:'did-load-resource-chunk', data:{
+            id:request.id, data:bytes
+          }}, [bytes.buffer]);
+          worker.postMessage({channel:'did-load-resource-end', data:{id:request.id}});
+        });
+        try {
+          const changed = new Promise(resolve => navigator.serviceWorker.addEventListener(
+            'controllerchange', resolve, {once:true}));
+          let registration = await navigator.serviceWorker.register(
+            'service-worker.js?vscode-resource-base-authority=vscode-resource.test&platform=electron&version=1');
+          if (!navigator.serviceWorker.controller) await changed;
+          worker = navigator.serviceWorker.controller || registration.active;
+          const resource =
+            'https://file+.vscode-resource.test/workspace/cache.txt?replacement=1';
+          const initial = await fetch(resource);
+          if (initial.status !== 200 || await initial.text() !== body) {
+            throw new Error(`initial cache response mismatch ${initial.status}`);
+          }
+          await new Promise(resolve => setTimeout(resolve, 25));
+          registration = await navigator.serviceWorker.register(
+            'service-worker.js?vscode-resource-base-authority=vscode-resource.test&platform=electron&version=2');
+          worker = registration.active;
+          if (!worker) throw new Error('replacement worker did not activate');
+          const cached = await fetch(resource);
+          if (cached.status !== 200 || await cached.text() !== body
+              || cached.headers.get('etag') !== '"cache-replacement-v1"') {
+            throw new Error(`replacement cache response mismatch ${cached.status}`);
+          }
+          for (let cycle = 0; cycle < 100; ++cycle) {
+            const started = performance.now();
+            const response = await fetch(resource);
+            if (response.status !== 200 || await response.text() !== body) {
+              throw new Error(`replacement cache cycle ${cycle} failed`);
+            }
+            state.durations.push(performance.now() - started);
+          }
+          const ordered = [...state.durations].sort((left, right) => left - right);
+          state.p95 = ordered[Math.ceil(ordered.length * .95) - 1];
+          if (state.p95 > 100) {
+            throw new Error(`replacement cache p95 ${state.p95}`);
+          }
+          if (state.requests.length !== 102
+              || state.requests[1].ifNoneMatch !== '"cache-replacement-v1"'
+              || state.requests.some((request, index) =>
+                index > 0 && request.ifNoneMatch !== '"cache-replacement-v1"')
+              || state.byteStarts !== 1) {
+            throw new Error(`replacement validator mismatch ${JSON.stringify(state)}`);
+          }
+        } catch (error) { state.error = String(error?.stack || error); }
+        state.complete = true;
+      })();
+    )JS", "cache-replacement.js");
+    require(evaluate_until_equals(
+            cache_engine, "__cacheReplacement.complete", "cache-replacement-complete.js",
+            "true", 5'000) == "true",
+        "unchanged Code cache replacement gate timed out");
+    require(evaluate(cache_engine,
+            "__cacheReplacement.error", "cache-replacement-error.js") == "null",
+        "unchanged Code cache replacement gate failed: "
+            + evaluate(cache_engine,
+                "__cacheReplacement.error", "cache-replacement-error.js"));
+    webscene_engine_request_low_memory(cache_engine);
+    webscene_engine_memory_metrics cache_memory_after{
+        sizeof(webscene_engine_memory_metrics)};
+    for (auto attempt = 0; attempt < 250; ++attempt) {
+        require(webscene_engine_get_memory_metrics(
+                cache_engine, &cache_memory_after) != 0,
+            "cache replacement final memory metrics unavailable");
+        if (cache_memory_after.low_memory_notifications
+            > cache_memory_before.low_memory_notifications) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    require(cache_memory_after.low_memory_notifications
+            > cache_memory_before.low_memory_notifications,
+        "cache replacement low-memory collection did not complete");
+    require(cache_memory_after.v8_used_heap_bytes
+            <= cache_memory_before.v8_used_heap_bytes + 8U * 1024U * 1024U,
+        "cache replacement retained more than 8 MiB V8 heap");
+    std::cout << "Cache replacement gate: cycles=100 p95="
+              << evaluate(cache_engine, "__cacheReplacement.p95",
+                    "cache-replacement-p95.js")
+              << "ms requests="
+              << evaluate(cache_engine, "__cacheReplacement.requests.length",
+                    "cache-replacement-request-count.js")
+              << " byteStarts="
+              << evaluate(cache_engine, "__cacheReplacement.byteStarts",
+                    "cache-replacement-byte-count.js")
+              << " heapBefore=" << cache_memory_before.v8_used_heap_bytes
+              << " heapAfter=" << cache_memory_after.v8_used_heap_bytes << '\n';
+    webscene_engine_destroy(cache_engine);
+    require(service_worker_test_current_rss_bytes()
+            <= cache_rss_before + 64U * 1024U * 1024U,
+        "cache replacement retained more than 64 MiB RSS after teardown");
+
+    constexpr std::string_view localhost_address{
+        "https://vscode-webview.test/index.html?id=localhost-mapping"};
+    constexpr std::string_view localhost_worker_address{
+        "https://vscode-webview.test/service-worker.js?"
+        "remoteAuthority=remote.test&platform=electron"};
+    resource_server localhost_server{.content = {
+        {std::string{localhost_address},
+            "<!doctype html><title>localhost mapping</title>"},
+        {std::string{localhost_worker_address}, exact_worker},
+        {"http://127.0.0.1:5100/path/data.txt?token=7", "mapped-localhost-body"},
+        {"http://localhost:4101/fallback.txt", "unmapped-localhost-body"}
+    }};
+    webscene_engine_options localhost_options{};
+    localhost_options.struct_size = sizeof(localhost_options);
+    localhost_options.resource_load_callback = load_test_resource;
+    localhost_options.resource_load_user_data = &localhost_server;
+    auto* localhost_engine = webscene_engine_create_with_options(&localhost_options);
+    require(localhost_engine != nullptr, "localhost mapping engine creation failed");
+    require(webscene_engine_load_url(
+            localhost_engine, localhost_address.data(), localhost_address.size()) != 0U,
+        "localhost mapping navigation failed");
+    require(evaluate_until_equals(
+            localhost_engine, "location.href", "localhost-navigation.js",
+            R"("https://vscode-webview.test/index.html?id=localhost-mapping")", 2'500)
+            == R"("https://vscode-webview.test/index.html?id=localhost-mapping")",
+        "localhost mapping document did not become ready");
+    webscene_engine_memory_metrics localhost_memory_before{
+        sizeof(webscene_engine_memory_metrics)};
+    require(webscene_engine_get_memory_metrics(
+            localhost_engine, &localhost_memory_before) != 0,
+        "localhost mapping memory baseline unavailable");
+    const auto localhost_rss_before = service_worker_test_current_rss_bytes();
+    execute(localhost_engine, R"JS(
+      globalThis.__localhostMapping = {
+        complete:false, error:null, requests:[], durations:[], p95:0
+      };
+      (async () => {
+        const state = __localhostMapping;
+        let worker;
+        navigator.serviceWorker.addEventListener('message', event => {
+          const request = event.data || {};
+          if (request.channel !== 'load-localhost') return;
+          state.requests.push(request.origin);
+          worker.postMessage({channel:'did-load-localhost', data:{
+            id:request.id,
+            origin:request.origin,
+            location:request.origin === 'http://localhost:4100'
+              ? 'http://127.0.0.1:5100'
+              : request.origin === 'http://localhost:4102'
+                ? 'javascript:alert(1)'
+                : request.origin === 'http://localhost:4103'
+                  ? 'http://localhost:4103'
+                  : request.origin === 'http://localhost:4104'
+                    ? 'http://[' : undefined
+          }});
+        });
+        try {
+          const changed = new Promise(resolve => navigator.serviceWorker.addEventListener(
+            'controllerchange', resolve, {once:true}));
+          const registration = await navigator.serviceWorker.register(
+            'service-worker.js?remoteAuthority=remote.test&platform=electron');
+          if (!navigator.serviceWorker.controller) await changed;
+          worker = navigator.serviceWorker.controller || registration.active;
+          if (!worker) throw new Error('localhost worker did not control the document');
+          const mapped = await fetch('http://localhost:4100/path/data.txt?token=7');
+          const mappedBody = await mapped.text();
+          if (mapped.status !== 200 || mappedBody !== 'mapped-localhost-body'
+              || mapped.url !== 'http://127.0.0.1:5100/path/data.txt?token=7'
+              || !mapped.redirected) {
+            throw new Error(`mapped response mismatch ${mapped.status} ${mapped.url} ${mappedBody}`);
+          }
+          let redirectError = false;
+          try {
+            await fetch('http://localhost:4100/path/data.txt?token=7', {
+              redirect:'error'
+            });
+          } catch { redirectError = true; }
+          if (!redirectError) throw new Error('redirect error mode did not reject');
+          const rewritten = await fetch(
+            'http://localhost:4100/path/data.txt?token=7', {
+              method:'POST', body:'discarded',
+              headers:{'content-type':'text/plain'}
+            });
+          if (rewritten.status !== 200
+              || await rewritten.text() !== 'mapped-localhost-body') {
+            throw new Error(`redirect method rewrite mismatch ${rewritten.status}`);
+          }
+          const manual = await fetch(
+            'http://localhost:4100/path/data.txt?token=7', {redirect:'manual'});
+          if (manual.status !== 0 || manual.type !== 'opaqueredirect'
+              || manual.headers.get('location') !== null) {
+            throw new Error(`manual redirect mismatch ${manual.status} ${manual.type}`);
+          }
+          let invalidError = false;
+          try { await fetch('http://localhost:4102/invalid.txt'); }
+          catch { invalidError = true; }
+          if (!invalidError) throw new Error('non-network redirect did not reject');
+          let loopError = false;
+          try { await fetch('http://localhost:4103/loop.txt'); }
+          catch { loopError = true; }
+          if (!loopError) throw new Error('redirect loop did not reject');
+          let malformedError = false;
+          try { await fetch('http://localhost:4104/malformed.txt'); }
+          catch { malformedError = true; }
+          if (!malformedError) throw new Error('malformed redirect did not reject');
+          const unmapped = await fetch('http://localhost:4101/fallback.txt');
+          if (unmapped.status !== 200
+              || await unmapped.text() !== 'unmapped-localhost-body') {
+            throw new Error(`unmapped response mismatch ${unmapped.status}`);
+          }
+          for (let cycle = 0; cycle < 100; ++cycle) {
+            const started = performance.now();
+            const response = await fetch(
+              'http://localhost:4100/path/data.txt?token=7');
+            if (response.status !== 200
+                || await response.text() !== 'mapped-localhost-body') {
+              throw new Error(`localhost mapping cycle ${cycle} failed`);
+            }
+            state.durations.push(performance.now() - started);
+          }
+          const ordered = [...state.durations].sort((left, right) => left - right);
+          state.p95 = ordered[Math.ceil(ordered.length * .95) - 1];
+          if (state.p95 > 100) throw new Error(`localhost mapping p95 ${state.p95}`);
+          if (state.requests.length !== 108) {
+            throw new Error(`localhost request count ${state.requests.length}`);
+          }
+        } catch (error) { state.error = String(error?.stack || error); }
+        state.complete = true;
+      })();
+    )JS", "localhost-mapping.js");
+    require(evaluate_until_equals(
+            localhost_engine, "__localhostMapping.complete", "localhost-complete.js",
+            "true", 5'000) == "true",
+        "localhost mapping gate timed out");
+    require(evaluate(localhost_engine, "__localhostMapping.error", "localhost-error.js")
+            == "null",
+        "localhost mapping gate failed: "
+            + evaluate(localhost_engine, "__localhostMapping.error", "localhost-error.js"));
+    webscene_engine_request_low_memory(localhost_engine);
+    webscene_engine_memory_metrics localhost_memory_after{
+        sizeof(webscene_engine_memory_metrics)};
+    for (auto attempt = 0; attempt < 250; ++attempt) {
+        require(webscene_engine_get_memory_metrics(
+                localhost_engine, &localhost_memory_after) != 0,
+            "localhost mapping final memory metrics unavailable");
+        if (localhost_memory_after.low_memory_notifications
+            > localhost_memory_before.low_memory_notifications) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    require(localhost_memory_after.low_memory_notifications
+            > localhost_memory_before.low_memory_notifications,
+        "localhost mapping low-memory collection did not complete");
+    require(localhost_memory_after.v8_used_heap_bytes
+            <= localhost_memory_before.v8_used_heap_bytes + 8U * 1024U * 1024U,
+        "localhost mapping retained more than 8 MiB V8 heap");
+    std::cout << "Localhost mapping gate: cycles=100 p95="
+              << evaluate(localhost_engine, "__localhostMapping.p95", "localhost-p95.js")
+              << "ms requests="
+              << evaluate(localhost_engine, "__localhostMapping.requests.length",
+                    "localhost-request-count.js")
+              << " heapBefore=" << localhost_memory_before.v8_used_heap_bytes
+              << " heapAfter=" << localhost_memory_after.v8_used_heap_bytes << '\n';
+    webscene_engine_destroy(localhost_engine);
+    require(service_worker_test_current_rss_bytes()
+            <= localhost_rss_before + 64U * 1024U * 1024U,
+        "localhost mapping retained more than 64 MiB RSS after teardown");
+
+    constexpr std::string_view admission_address{
+        "https://vscode-webview.test/index.html?id=markdown-preview"};
+    constexpr std::string_view worker_address{
+        "https://vscode-webview.test/service-worker.js?"
+        "vscode-resource-base-authority=vscode-resource.test&platform=electron"};
+    constexpr std::array<unsigned char,70> admission_raster_png{{
+        0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,0x00,0x00,0x00,0x0d,
+        0x49,0x48,0x44,0x52,0x00,0x00,0x00,0x01,0x00,0x00,0x00,0x01,
+        0x08,0x06,0x00,0x00,0x00,0x1f,0x15,0xc4,0x89,0x00,0x00,0x00,
+        0x0d,0x49,0x44,0x41,0x54,0x78,0xda,0x63,0x90,0xdd,0x19,0xf2,
+        0x1f,0x00,0x04,0x4b,0x02,0x2a,0x81,0xeb,0x0d,0xbc,0x00,0x00,
+        0x00,0x00,0x49,0x45,0x4e,0x44,0xae,0x42,0x60,0x82}};
+    resource_server admission_server{.content = {
+        {std::string{admission_address},
+            "<!doctype html><title>local resource admission</title><div id='root'></div>"},
+        {std::string{worker_address}, exact_worker},
+        {"https://external-resource.test/external.png", std::string(
+            reinterpret_cast<const char*>(admission_raster_png.data()),
+            admission_raster_png.size())}
+    }};
+    webscene_engine_options admission_options{};
+    admission_options.struct_size = sizeof(admission_options);
+    admission_options.resource_load_callback = load_test_resource;
+    admission_options.resource_load_user_data = &admission_server;
+    auto* admission_engine = webscene_engine_create_with_options(&admission_options);
+    require(admission_engine != nullptr,
+        "local resource admission engine creation failed");
+    require(webscene_engine_load_url(
+            admission_engine, admission_address.data(), admission_address.size()) != 0U,
+        "local resource admission navigation failed");
+    require(evaluate_until_equals(
+            admission_engine, "location.href", "admission-navigation.js",
+            R"("https://vscode-webview.test/index.html?id=markdown-preview")", 2'500)
+            == R"("https://vscode-webview.test/index.html?id=markdown-preview")",
+        "local resource admission document did not become ready");
+    webscene_engine_memory_metrics admission_memory_before{
+        sizeof(webscene_engine_memory_metrics)};
+    require(webscene_engine_get_memory_metrics(
+            admission_engine, &admission_memory_before) != 0,
+        "local resource admission memory baseline unavailable");
+    const auto admission_peak_rss_before = service_worker_test_peak_rss_bytes();
+    const auto admission_current_rss_before = service_worker_test_current_rss_bytes();
+    execute(admission_engine, R"JS(
+      globalThis.__localResourceAdmission = {
+        complete:false, error:null, phase:'register', durations:[], requests:[],
+        imageDurations:[], byteStarts:0, lateReplies:0
+      };
+      (async () => {
+        const state = __localResourceAdmission;
+        const encode = value => new TextEncoder().encode(value);
+        const root = '/workspace/allowed';
+        const body = 'admitted-resource-body';
+        const largeBody = 'x'.repeat(64 * 1024);
+        const png = new Uint8Array([
+          137,80,78,71,13,10,26,10,0,0,0,13,73,72,68,82,0,0,0,1,0,0,0,1,
+          8,6,0,0,0,31,21,196,137,0,0,0,13,73,68,65,84,120,218,99,144,221,
+          25,242,31,0,4,75,2,42,129,235,13,188,0,0,0,0,73,69,78,68,174,66,96,130
+        ]);
+        const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="3" height="2" viewBox="0 0 3 2"><rect width="3" height="2"/></svg>';
+        let worker;
+        const admit = request => {
+          if (request.scheme !== 'file' || request.authority !== '') return false;
+          let path;
+          try { path = decodeURIComponent(request.path).replace(/\\/g, '/'); }
+          catch { return false; }
+          if (path.includes('\0')) return false;
+          const parts = path.split('/');
+          if (parts.some(part => part === '..' || part === '.')) return false;
+          return path.startsWith(root + '/');
+        };
+        const postBody = (request, value, status = 200, range = undefined,
+          mime = 'text/plain') => {
+          worker.postMessage({channel:'did-load-resource', data:{
+            id:request.id, status, path:request.path, mime,
+            etag:'"admission-v1"', mtime:1700000000000,
+            range
+          }});
+          const bytes = value instanceof Uint8Array ? value : encode(value);
+          state.byteStarts++;
+          worker.postMessage({channel:'did-load-resource-chunk', data:{
+            id:request.id, data:bytes
+          }}, [bytes.buffer]);
+          worker.postMessage({channel:'did-load-resource-end', data:{id:request.id}});
+        };
+        navigator.serviceWorker.addEventListener('message', event => {
+          const request = event.data || {};
+          if (request.channel !== 'load-resource') return;
+          state.requests.push({scheme:request.scheme, authority:request.authority,
+            path:request.path, query:request.query, range:request.range,
+            ifNoneMatch:request.ifNoneMatch});
+          if (!admit(request)) {
+            worker.postMessage({channel:'did-load-resource', data:{
+              id:request.id, status:401, path:request.path
+            }});
+            if (request.path === root) {
+              const late = encode('late-denied-body');
+              worker.postMessage({channel:'did-load-resource-chunk', data:{
+                id:request.id, data:late
+              }}, [late.buffer]);
+              worker.postMessage({channel:'did-load-resource-end', data:{id:request.id}});
+              state.lateReplies += 2;
+            }
+            return;
+          }
+          if (request.path.endsWith('/missing.txt')
+              || request.path.endsWith('/missing.png')) {
+            worker.postMessage({channel:'did-load-resource', data:{
+              id:request.id, status:404, path:request.path
+            }});
+            return;
+          }
+          if (request.path.endsWith('/local.png')) {
+            postBody(request, png.slice(), 200, undefined, 'image/png');
+            return;
+          }
+          if (request.path.endsWith('/local.svg')) {
+            postBody(request, svg, 200, undefined, 'image/svg+xml');
+            return;
+          }
+          if (request.ifNoneMatch === '"admission-v1"') {
+            worker.postMessage({channel:'did-load-resource', data:{
+              id:request.id, status:304, path:request.path,
+              mime:'text/plain', mtime:1700000000000
+            }});
+            return;
+          }
+          const value = request.path.endsWith('/large.txt') ? largeBody : body;
+          if (request.range) {
+            const end = request.range.end === undefined
+              ? value.length - 1 : Math.min(request.range.end, value.length - 1);
+            postBody(request, value.slice(request.range.start, end + 1), 206,
+              `bytes ${request.range.start}-${end}/${value.length}`);
+            return;
+          }
+          postBody(request, value);
+        });
+        try {
+          const changed = new Promise(resolve => navigator.serviceWorker.addEventListener(
+            'controllerchange', resolve, {once:true}));
+          const registration = await navigator.serviceWorker.register(
+            'service-worker.js?vscode-resource-base-authority=vscode-resource.test&platform=electron');
+          if (!navigator.serviceWorker.controller) await changed;
+          worker = navigator.serviceWorker.controller || registration.active;
+          if (!worker) throw new Error('admission worker did not control the document');
+          const resource = path => `https://file+.vscode-resource.test${path}`;
+          const loadImage = (url, expectError = false) => new Promise((resolve, reject) => {
+            const image = document.createElement('img');
+            image.onload = () => {
+              const result = {event:'load', width:image.naturalWidth,
+                height:image.naturalHeight};
+              image.remove();
+              expectError ? reject(new Error(`image unexpectedly loaded ${url}`))
+                : resolve(result);
+            };
+            image.onerror = () => {
+              const result = {event:'error', width:image.naturalWidth,
+                height:image.naturalHeight};
+              image.remove();
+              expectError ? resolve(result)
+                : reject(new Error(`image failed ${url}`));
+            };
+            image.src = url;
+            document.body.append(image);
+          });
+          state.phase = 'admitted';
+          const admitted = await fetch(resource('/workspace/allowed/asset.txt'));
+          if (admitted.status !== 200 || await admitted.text() !== body) {
+            throw new Error(`admitted resource mismatch ${admitted.status}`);
+          }
+          const head = await fetch(resource('/workspace/allowed/asset.txt?head=1'), {
+            method:'HEAD'
+          });
+          await head.text();
+          if (head.status !== 200 || head.headers.get('etag') !== '"admission-v1"') {
+            throw new Error(`HEAD resource mismatch ${head.status}`);
+          }
+          state.phase = 'denials';
+          for (const path of [
+            '/workspace/allowed',
+            '/workspace/allowed-sibling/asset.txt',
+            '/workspace/allowed/%2e%2e/secret.txt',
+            '/workspace/allowed/%E0%A4%A/secret.txt'
+          ]) {
+            const response = await fetch(resource(path));
+            if (response.status !== 401) {
+              throw new Error(`denied resource returned ${response.status}: ${path}`);
+            }
+          }
+          const foreign = await fetch(
+            'https://https+.vscode-resource.test/workspace/allowed/asset.txt');
+          if (foreign.status !== 401) throw new Error(`foreign scheme ${foreign.status}`);
+          const foreignAuthority = await fetch(
+            'https://file+server.vscode-resource.test/workspace/allowed/asset.txt');
+          if (foreignAuthority.status !== 401) {
+            throw new Error(`foreign authority ${foreignAuthority.status}`);
+          }
+          const missing = await fetch(resource('/workspace/allowed/missing.txt'));
+          if (missing.status !== 404) throw new Error(`missing resource ${missing.status}`);
+          if (state.byteStarts !== 2) throw new Error(`denial opened bytes ${state.byteStarts}`);
+          state.phase = 'range';
+          const ranged = await fetch(resource('/workspace/allowed/asset.txt?range=1'), {
+            headers:{Range:'bytes=2-7'}
+          });
+          if (ranged.status !== 206 || await ranged.text() !== body.slice(2, 8)
+              || ranged.headers.get('content-range') !== `bytes 2-7/${body.length}`) {
+            throw new Error(`range mismatch ${ranged.status}`);
+          }
+          const malformedRange = await fetch(
+            resource('/workspace/allowed/asset.txt?bad-range=1'), {
+              headers:{Range:'items=0-1'}
+            });
+          if (malformedRange.status !== 416) {
+            throw new Error(`malformed range ${malformedRange.status}`);
+          }
+          state.phase = 'cache';
+          const cached = await fetch(resource('/workspace/allowed/asset.txt'));
+          if (cached.status !== 200 || await cached.text() !== body) {
+            throw new Error('cached validator response mismatch');
+          }
+          const cachedRequest = state.requests.findLast(
+            request => request.path === '/workspace/allowed/asset.txt'
+              && request.ifNoneMatch === '"admission-v1"');
+          if (!cachedRequest) throw new Error('cache validator was not forwarded');
+          if (state.lateReplies !== 2) throw new Error('late denial probe was not sent');
+          state.phase = 'image-matrix';
+          const localPng = await loadImage(resource('/workspace/allowed/local.png'));
+          const localSvg = await loadImage(resource('/workspace/allowed/local.svg'));
+          if (localPng.width !== 1 || localPng.height !== 1
+              || localSvg.width !== 3 || localSvg.height !== 2) {
+            throw new Error(`local image dimensions ${JSON.stringify({localPng, localSvg})}`);
+          }
+          const beforeFailures = state.byteStarts;
+          const missingImage = await loadImage(
+            resource('/workspace/allowed/missing.png'), true);
+          const deniedImage = await loadImage(
+            resource('/workspace/denied/out-of-root.png'), true);
+          if (missingImage.width !== 0 || missingImage.height !== 0
+              || deniedImage.width !== 0 || deniedImage.height !== 0
+              || state.byteStarts !== beforeFailures) {
+            throw new Error(`failed image opened bytes ${JSON.stringify({
+              missingImage, deniedImage, beforeFailures, byteStarts:state.byteStarts})}`);
+          }
+          const external = await loadImage(
+            'https://external-resource.test/external.png');
+          if (external.width !== 1 || external.height !== 1
+              || state.requests.some(request => request.path === '/external.png')) {
+            throw new Error(`external image broker mismatch ${JSON.stringify(external)}`);
+          }
+          for (let cycle = 0; cycle < 100; ++cycle) {
+            const started = performance.now();
+            const suffix = cycle % 2 === 0 ? 'local.png' : 'local.svg';
+            await loadImage(resource(
+              `/workspace/allowed/${suffix}?image-cycle=${cycle}`));
+            state.imageDurations.push(performance.now() - started);
+          }
+          const orderedImages = [...state.imageDurations].sort(
+            (left, right) => left - right);
+          state.imageP95 = orderedImages[Math.ceil(orderedImages.length * .95) - 1];
+          if (state.imageP95 > 100) {
+            throw new Error(`mixed image p95 ${state.imageP95}`);
+          }
+          state.phase = 'cycles';
+          for (let cycle = 0; cycle < 100; ++cycle) {
+            const started = performance.now();
+            const path = cycle % 2 === 0
+              ? '/workspace/allowed/large.txt'
+              : '/workspace/denied/large.txt';
+            const response = await fetch(resource(`${path}?cycle=${cycle}`));
+            if (cycle % 2 === 0) {
+              if (response.status !== 200 || (await response.arrayBuffer()).byteLength !== 65536) {
+                throw new Error(`cycle ${cycle} admitted response mismatch`);
+              }
+              state.durations.push(performance.now() - started);
+            } else if (response.status !== 401) {
+              throw new Error(`cycle ${cycle} denied response mismatch`);
+            }
+          }
+          const ordered = [...state.durations].sort((left, right) => left - right);
+          state.p95 = ordered[Math.ceil(ordered.length * .95) - 1];
+          if (state.p95 > 100) throw new Error(`64 KiB warm p95 ${state.p95}`);
+          await registration.unregister();
+          state.phase = 'done';
+        } catch (error) {
+          state.error = String(error && error.stack || error);
+        } finally {
+          state.complete = true;
+        }
+      })();
+    )JS", "local-resource-admission.js");
+    require(evaluate_until_equals(admission_engine, "__localResourceAdmission.complete",
+            "admission-complete.js", "true", 15'000) == "true",
+        "local resource admission contract did not complete at phase "
+            + evaluate(admission_engine, "__localResourceAdmission.phase",
+                "admission-phase.js"));
+    require(evaluate(admission_engine, "__localResourceAdmission.error",
+            "admission-error.js") == "null",
+        "local resource admission contract failed: "
+            + evaluate(admission_engine, "JSON.stringify(__localResourceAdmission)",
+                "admission-error-detail.js"));
+    require(admission_server.requests.load(std::memory_order_relaxed) == 3,
+        "controlled admission requests bypassed the Service Worker host broker");
+    require(webscene_engine_request_low_memory(admission_engine) != 0,
+        "local resource admission low-memory request rejected");
+    webscene_engine_memory_metrics admission_memory_after{
+        sizeof(webscene_engine_memory_metrics)};
+    for (auto attempt = 0; attempt < 250; ++attempt) {
+        require(webscene_engine_get_memory_metrics(
+                admission_engine, &admission_memory_after) != 0,
+            "local resource admission final memory metrics unavailable");
+        if (admission_memory_after.low_memory_notifications
+            > admission_memory_before.low_memory_notifications) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    require(admission_memory_after.low_memory_notifications
+            > admission_memory_before.low_memory_notifications,
+        "local resource admission low-memory collection did not complete");
+    require(admission_memory_after.v8_used_heap_bytes
+            <= admission_memory_before.v8_used_heap_bytes + 8U * 1024U * 1024U,
+        "local resource admission cycles retained more than 8 MiB V8 heap");
+    const auto admission_peak_rss_after = service_worker_test_peak_rss_bytes();
+    require(admission_peak_rss_after
+            <= admission_peak_rss_before + 256U * 1024U * 1024U,
+        "local resource admission exceeded 256 MiB absolute RSS high-water growth");
+    std::cout << "Local resource admission gate: cycles=100 p95="
+              << evaluate(admission_engine, "__localResourceAdmission.p95",
+                    "admission-p95.js")
+              << "ms imageP95="
+              << evaluate(admission_engine, "__localResourceAdmission.imageP95",
+                    "admission-image-p95.js")
+              << "ms requests="
+              << evaluate(admission_engine, "__localResourceAdmission.requests.length",
+                    "admission-request-count.js")
+              << " heapBefore=" << admission_memory_before.v8_used_heap_bytes
+              << " heapAfter=" << admission_memory_after.v8_used_heap_bytes
+              << " peakRssBefore=" << admission_peak_rss_before
+              << " peakRssAfter=" << admission_peak_rss_after << '\n';
+    webscene_engine_destroy(admission_engine);
+    const auto admission_current_rss_after = service_worker_test_current_rss_bytes();
+    require(admission_current_rss_after
+            <= admission_current_rss_before + 64U * 1024U * 1024U,
+        "local resource admission retained more than 64 MiB RSS after teardown");
+
     constexpr std::string_view address{"https://css-resource.test/index.html"};
     const auto worker = R"JS(
       const counts = {};
@@ -1486,6 +2308,8 @@ void test_controlled_parser_and_nested_frame_resources()
                   parent.__finishParserCycle({error:'image'}));
               </script>
             </body></html>)HTML"},
+        {"https://parser-resource.test/pending-frame.html", R"HTML(
+            <!doctype html><script src="/pending-frame.js"></script>)HTML"},
         {"https://parser-resource.test/service-worker.js", R"JS(
             const requests = [];
             const pending = new Map();
@@ -1716,19 +2540,18 @@ void test_controlled_parser_and_nested_frame_resources()
       globalThis.__pendingParserRetirement = {complete:false,duration:0};
       (() => {
         const frame = document.createElement('iframe');
-        document.body.append(frame);
-        globalThis.__removePendingParserFrame = () => frame.remove();
         const started = performance.now();
-        const frameDocument = frame.contentDocument;
-        frameDocument.open();
-        frameDocument.write('<!doctype html><script src="/pending-frame.js"><\/script>');
-        frameDocument.close();
-        __pendingParserRetirement.duration = performance.now() - started;
-        __pendingParserRetirement.complete = true;
+        globalThis.__removePendingParserFrame = () => {
+          frame.remove();
+          __pendingParserRetirement.duration = performance.now() - started;
+          __pendingParserRetirement.complete = true;
+        };
+        frame.src = '/pending-frame.html';
+        document.body.append(frame);
       })();
     )JS", "pending-parser-retirement.js");
-    require(evaluate(engine, "__pendingParserRetirement.complete",
-            "pending-parser-retirement-complete.js") == "true",
+    require(evaluate_until_equals(engine, "__pendingParserRetirement.complete",
+            "pending-parser-retirement-complete.js", "true", 2'500) == "true",
         "retired pending parser request did not return");
     require(std::stod(evaluate(engine, "__pendingParserRetirement.duration",
             "pending-parser-retirement-duration.js")) <= 500.0,
@@ -1763,6 +2586,9 @@ void test_controlled_parser_and_nested_frame_resources()
             });
             __parserCycles.durations.push(performance.now() - started);
             ++__parserCycles.count;
+            // Run the next navigation as a new task after the retired frame's
+            // cascade and controlled fetch state have been released.
+            await new Promise(resolve => setTimeout(resolve, 0));
           }
         } catch (error) {
           __parserCycles.error = String(error && error.stack || error);

@@ -192,11 +192,15 @@ int main()
     require(after_memory.v8_used_heap_bytes
             <= before_memory.v8_used_heap_bytes + 32U * 1024U * 1024U,
         "post-cleanup V8 heap exceeded its 32 MiB bound");
+    const auto retained_heap_growth =
+        after_memory.v8_used_heap_bytes > before_memory.v8_used_heap_bytes
+        ? after_memory.v8_used_heap_bytes - before_memory.v8_used_heap_bytes
+        : 0U;
 
     webscene_engine_destroy(engine);
     std::cout << "css-accessibility-preferences controls=4096 cycles=100 states=200 elapsed-ms="
               << elapsed << " retained-node-delta<="
               << (after.dom_nodes - before.dom_nodes)
-              << " post-cleanup-heap-growth<=" << 32U * 1024U * 1024U << "\n";
+              << " retained-heap-growth=" << retained_heap_growth << "\n";
     return 0;
 }

@@ -7,6 +7,7 @@
     v8_dom_runtime::navigation_policy navigation_policy_callback;
     static constexpr size_t maximum_pending_fetches = 64U;
     std::vector<pending_fetch_task> pending_fetches;
+    uint64_t next_fetch_cancellation_id{1U};
     static constexpr size_t maximum_pending_digests = 32U;
     static constexpr size_t maximum_digest_input_bytes = 16U * 1024U * 1024U;
     static constexpr size_t maximum_pending_digest_bytes = 64U * 1024U * 1024U;
@@ -102,6 +103,8 @@
     std::deque<indexeddb_completion> indexeddb_completions;
     std::unordered_map<uint64_t, pending_indexeddb_promise>
         pending_indexeddb_promises;
+    std::unordered_map<uint64_t, indexeddb_durable_request_target>
+        indexeddb_durable_request_targets;
     std::atomic<bool> indexeddb_work_ready{false};
     uint64_t next_indexeddb_operation_id{1U};
     std::unordered_map<uint64_t, v8::Global<v8::Object>> node_wrappers;
@@ -119,6 +122,7 @@
         uint32_t cascade_root_id{0U};
         std::string base_address;
         std::string source;
+        std::vector<std::string> layer_names;
     };
     std::vector<pending_stylesheet_replacement> pending_stylesheet_replacements;
     size_t pending_stylesheet_replacement_bytes{0U};
@@ -175,6 +179,8 @@
     std::unordered_map<uint32_t, std::unique_ptr<session_storage_state>> frame_session_storage;
     std::vector<document_start_script> current_document_start_scripts;
     std::unordered_map<uint32_t, v8::Global<v8::Function>> frame_load_listeners;
+    std::unordered_map<uint32_t, std::vector<v8::Global<v8::Function>>>
+        frame_dom_content_loaded_listeners;
     std::unordered_map<std::string, std::vector<event_listener_registration>>
         frame_event_listeners;
 #if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
@@ -230,8 +236,63 @@
     };
     std::unordered_map<uint64_t, file_panel_promise_target>
         file_panel_promise_targets;
+    struct file_grant_same_entry_promise_target {
+        v8::Global<v8::Context> context;
+        v8::Global<v8::Promise::Resolver> resolver;
+    };
+    std::unordered_map<uint64_t, file_grant_same_entry_promise_target>
+        file_grant_same_entry_promise_targets;
+    struct file_grant_ancestry_promise_target {
+        v8::Global<v8::Context> context;
+        v8::Global<v8::Promise::Resolver> resolver;
+    };
+    std::unordered_map<uint64_t, file_grant_ancestry_promise_target>
+        file_grant_ancestry_promise_targets;
+    struct file_grant_read_promise_target {
+        v8::Global<v8::Context> context;
+        v8::Global<v8::Promise::Resolver> resolver;
+    };
+    std::unordered_map<uint64_t, file_grant_read_promise_target>
+        file_grant_read_promise_targets;
+    struct file_grant_write_promise_target {
+        v8::Global<v8::Context> context;
+        v8::Global<v8::Promise::Resolver> resolver;
+    };
+    std::unordered_map<uint64_t, file_grant_write_promise_target>
+        file_grant_write_promise_targets;
+    struct file_grant_directory_promise_target {
+        v8::Global<v8::Context> context;
+        v8::Global<v8::Promise::Resolver> resolver;
+    };
+    std::unordered_map<uint64_t, file_grant_directory_promise_target>
+        file_grant_directory_promise_targets;
+    struct file_grant_create_file_promise_target {
+        v8::Global<v8::Context> context;
+        v8::Global<v8::Promise::Resolver> resolver;
+    };
+    std::unordered_map<uint64_t, file_grant_create_file_promise_target>
+        file_grant_create_file_promise_targets;
     std::function<void()> host_request_available;
     v8_dom_runtime::file_panel_request_sink_v2 file_panel_request_sink;
+    v8_dom_runtime::file_grant_same_entry_request_sink_v2
+        file_grant_same_entry_request_sink;
+    v8_dom_runtime::file_grant_ancestry_request_sink_v2
+        file_grant_ancestry_request_sink;
+    v8_dom_runtime::file_grant_durable_request_sink_v2
+        file_grant_durable_request_sink;
+    v8_dom_runtime::file_grant_read_request_sink_v2 file_grant_read_request_sink;
+    v8_dom_runtime::file_grant_write_request_sink_v2 file_grant_write_request_sink;
+    v8_dom_runtime::file_grant_directory_request_sink_v2
+        file_grant_directory_request_sink;
+    v8_dom_runtime::file_grant_release_request_sink_v2
+        file_grant_release_request_sink;
+    v8_dom_runtime::file_grant_create_file_request_sink_v2
+        file_grant_create_file_request_sink;
+    std::shared_ptr<file_grant_release_dispatcher> file_grant_releases;
+    std::unordered_map<std::string, std::weak_ptr<file_grant_owner>>
+        file_grant_owners;
+    std::vector<std::unique_ptr<file_system_handle_binding>>
+        file_system_handle_bindings;
     std::function<void()> interop_callback_available;
     v8_dom_runtime::interop_callback_sink_v3 interop_callback_sink;
     std::function<void()> runtime_work_available;
@@ -388,6 +449,9 @@
     std::unordered_map<std::string, std::string> css_variables;
     std::unordered_set<std::string> important_css_variables;
     std::unordered_map<std::string, uint32_t> css_cascade_layer_orders;
+    std::unordered_map<uint32_t, std::vector<std::string>>
+        css_stylesheet_layer_names;
+    std::vector<std::string>* active_stylesheet_layer_names{nullptr};
     uint32_t next_css_cascade_layer_order{1U};
     const dom_node* active_css_cascade_root{nullptr};
     std::unordered_map<const dom_node*, css_cascade_state> inactive_css_cascades;
@@ -400,6 +464,12 @@
     // stable across unordered_map rehashes, so repeat decisions can increment
     // atomically without taking the report snapshot mutex on every hot API call.
     std::unordered_map<std::string, feature_observation*> feature_observation_writer_cache;
+    std::unordered_map<
+        std::string,
+        feature_observation*,
+        transparent_string_hash,
+        transparent_string_equal>
+        supported_css_property_observation_writer_cache;
     std::unordered_map<const char*, feature_observation*>
         canvas_feature_observation_writer_cache;
 #endif

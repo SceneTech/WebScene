@@ -1,0 +1,157 @@
+<!doctype html>
+<title>Remote protocol handshake timing and task-source fairness</title>
+<body>
+<script>
+window.__webSceneWptState = {complete:false,harness:null,results:[],errors:[],diagnostics:[]};
+const record = (name, condition, detail = null) => __webSceneWptState.results.push({
+  name, status:condition?'PASS':'FAIL', message:condition?null:String(detail || 'Contract failed'), stack:null
+});
+const finish = () => {
+  const state = __webSceneWptState;
+  state.harness={status:state.results.some(result=>result.status!=='PASS')?1:0,message:null,stack:null};
+  state.complete=true;
+};
+
+(async () => {
+  const cycles = 20;
+  const backgroundFrames = 4;
+  // Match the retained unchanged-product initialization payload so the
+  // browser control crosses the same one-megabyte boundary.
+  const payload = 'x'.repeat(1071424);
+  const ready = [], initialized = [], fileReader = [], microtask = [], serialization = [];
+  const percentile = values => {
+    const ordered = [...values].sort((left, right) => left - right);
+    return ordered[Math.ceil(ordered.length * .95) - 1];
+  };
+  const read = blob => new Promise((resolve, reject) => {
+    const started = performance.now();
+    const reader = new FileReader();
+    reader.onload = () => {
+      fileReader.push(performance.now() - started);
+      resolve(new Uint8Array(reader.result)[0]);
+    };
+    reader.onerror = () => reject(reader.error);
+    reader.readAsArrayBuffer(blob);
+  });
+  const channel = new MessageChannel();
+  channel.port1.onmessage = async event => {
+    const { cycle, phase } = event.data;
+    for (let index = 0; index < backgroundFrames; ++index) {
+      channel.port1.postMessage({cycle, phase:'background', bytes:new Uint8Array(64 * 1024)});
+    }
+    channel.port1.postMessage({cycle, phase, bytes:new Uint8Array([phase === 'ready' ? 2 : 1])});
+  };
+  const receive = () => new Promise((resolve, reject) => {
+    channel.port2.onmessage = async event => {
+      try {
+        const byte = await read(new Blob([event.data.bytes]));
+        if (event.data.phase === 'background') return;
+        resolve(byte);
+      } catch (error) { reject(error); }
+    };
+  });
+  for (let cycle = 0; cycle < cycles; ++cycle) {
+    let started = performance.now();
+    channel.port2.postMessage({cycle, phase:'ready'});
+    record('Ready marker retains its byte', await receive() === 2);
+    const readyAt = performance.now();
+    ready.push(readyAt - started);
+    const queued = performance.now();
+    await Promise.resolve();
+    microtask.push(performance.now() - queued);
+    started = performance.now();
+    JSON.stringify({cycle, payload});
+    serialization.push(performance.now() - started);
+    channel.port2.postMessage({cycle, phase:'initialized'});
+    record('Initialized marker retains its byte', await receive() === 1);
+    initialized.push(performance.now() - readyAt);
+  }
+  channel.port1.close(); channel.port2.close();
+  const evidence = {
+    cycles, backgroundFrames:cycles * backgroundFrames * 2,
+    readyP95Ms:percentile(ready), initializedP95Ms:percentile(initialized),
+    fileReaderP95Ms:percentile(fileReader), microtaskP95Ms:percentile(microtask),
+    serializationP95Ms:percentile(serialization)
+  };
+  __webSceneWptState.diagnostics.push(JSON.stringify(evidence));
+  record('Twenty cold/warm handshake cycles complete', evidence.cycles === 20);
+  record('Browser Ready and Initialized p95 stay within 500 ms',
+    evidence.readyP95Ms <= 500 && evidence.initializedP95Ms <= 500, JSON.stringify(evidence));
+  record('Browser FileReader, microtask, and serialization p95 stay bounded',
+    evidence.fileReaderP95Ms <= 250 && evidence.microtaskP95Ms <= 50
+      && evidence.serializationP95Ms <= 50, JSON.stringify(evidence));
+
+  const workerUrl = URL.createObjectURL(new Blob([
+    `onmessage = event => postMessage(event.data); postMessage('ready');`
+  ], {type:'text/javascript'}));
+  const worker = new Worker(workerUrl);
+  await new Promise((resolve, reject) => {
+    worker.onmessage = event => event.data === 'ready' && resolve();
+    worker.onerror = reject;
+  });
+  const fairnessChannel = new MessageChannel();
+  const flush = [], workerBeforeFlush = [], portBeforeFlush = [], windowBeforeFlush = [];
+  let activeCycle = -1;
+  let workerTasks = 0;
+  let portTasks = 0;
+  let windowTasks = 0;
+  worker.onmessage = event => {
+    if (event.data !== activeCycle) return;
+    ++workerTasks;
+    worker.postMessage(activeCycle);
+  };
+  fairnessChannel.port1.onmessage = event => {
+    if (event.data !== activeCycle) return;
+    ++portTasks;
+    fairnessChannel.port2.postMessage(activeCycle);
+  };
+  fairnessChannel.port1.start();
+  const onWindowFairnessMessage = event => {
+    if (!event.data || event.data.__protocolWindowFairness !== activeCycle) return;
+    ++windowTasks;
+    postMessage({__protocolWindowFairness:activeCycle}, '*');
+  };
+  addEventListener('message', onWindowFairnessMessage);
+  for (let cycle = 0; cycle < cycles; ++cycle) {
+    activeCycle = cycle;
+    workerTasks = portTasks = windowTasks = 0;
+    const readCompletion = read(new Blob([new Uint8Array(64 * 1024)]));
+    const started = performance.now();
+    await new Promise(resolve => {
+      setTimeout(() => {
+        flush.push(performance.now() - started);
+        workerBeforeFlush.push(workerTasks);
+        portBeforeFlush.push(portTasks);
+        windowBeforeFlush.push(windowTasks);
+        activeCycle = -1;
+        resolve();
+      }, 0);
+      worker.postMessage(cycle);
+      fairnessChannel.port2.postMessage(cycle);
+      postMessage({__protocolWindowFairness:cycle}, '*');
+    });
+    await readCompletion;
+  }
+  worker.terminate();
+  URL.revokeObjectURL(workerUrl);
+  fairnessChannel.port1.close();
+  fairnessChannel.port2.close();
+  removeEventListener('message', onWindowFairnessMessage);
+  evidence.protocolFlushP95Ms = percentile(flush);
+  evidence.protocolFlushMaxMs = Math.max(...flush);
+  evidence.workerTasksBeforeFlushMax = Math.max(...workerBeforeFlush);
+  evidence.portTasksBeforeFlushMax = Math.max(...portBeforeFlush);
+  evidence.windowTasksBeforeFlushMax = Math.max(...windowBeforeFlush);
+  __webSceneWptState.diagnostics.push(JSON.stringify(evidence));
+  record('Browser timer remains fair under self-refilling Worker, MessagePort, and window traffic',
+    evidence.protocolFlushP95Ms <= 25 && evidence.protocolFlushMaxMs <= 100,
+    JSON.stringify(evidence));
+  record('Browser bounds competing tasks before the coalesced flush',
+    evidence.workerTasksBeforeFlushMax <= 64 && evidence.portTasksBeforeFlushMax <= 64
+      && evidence.windowTasksBeforeFlushMax <= 64,
+    JSON.stringify(evidence));
+})().catch(error => {
+  __webSceneWptState.errors.push(String(error?.stack || error));
+  record('Remote protocol timing oracle completed without errors', false, error);
+}).finally(finish);
+</script>

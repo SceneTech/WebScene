@@ -102,6 +102,7 @@
         stop_workers();
         dedicated_workers.clear();
         reset_message_ports_for_navigation();
+        retire_file_system_handles_for_contexts(retired_contexts);
         terminal_pagehide_dispatched = false;
         file_targets.clear();
         { std::lock_guard lock(file_requests_mutex); file_requests.clear(); }
@@ -109,6 +110,18 @@
             "The document navigated before the native host completed the request");
         cancel_file_panel_promises(
             "The document navigated before the file picker completed");
+        cancel_file_grant_same_entry_promises(
+            "The document navigated before the entry comparison completed");
+        cancel_file_grant_ancestry_promises(
+            "The document navigated before directory resolution completed");
+        cancel_file_grant_read_promises(
+            "The document navigated before the file read completed");
+        cancel_file_grant_write_promises(
+            "The document navigated before the file write completed");
+        cancel_file_grant_directory_promises(
+            "The document navigated before directory enumeration completed");
+        cancel_file_grant_create_file_promises(
+            "The document navigated before file creation completed");
         fullscreen_element = nullptr;
         document_fullscreen = false;
         { std::lock_guard lock(host_request_mutex); host_requests.clear(); }
@@ -125,6 +138,7 @@
 
         for (auto& fetch : pending_fetches) {
             if (!is_retired_context(fetch.context.Get(isolate))) continue;
+            if (fetch.cancel) fetch.cancel();
             fetch.context.Reset();
             fetch.resolver.Reset();
         }
@@ -183,6 +197,7 @@
         resize_observers.clear();
         resize_observers_pending = false;
         frame_load_listeners.clear();
+        frame_dom_content_loaded_listeners.clear();
         frame_event_listeners.clear();
 #if defined(WEBSCENE_NATIVE_ENGINE_WITH_V8_INSPECTOR)
         for (auto& [id, frame] : actual_frame_contexts) {
@@ -577,6 +592,10 @@
         hover_selector_dependencies.clear();
         css_variables.clear();
         important_css_variables.clear();
+        css_cascade_layer_orders.clear();
+        css_stylesheet_layer_names.clear();
+        active_stylesheet_layer_names = nullptr;
+        next_css_cascade_layer_order = 1U;
 
 #if defined(WEBSCENE_NATIVE_ENGINE_HTML5EVER)
         for (auto stylesheet : compiled ? std::vector<std::string>{} : parsed_inline_stylesheets(html_element)) {

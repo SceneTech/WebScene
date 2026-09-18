@@ -10,6 +10,30 @@
     static constexpr size_t maximum_service_worker_fetches = 32U;
     static constexpr size_t maximum_service_worker_fetch_body_bytes =
         64U * 1024U * 1024U;
+    static constexpr size_t maximum_service_worker_caches = 32U;
+    static constexpr size_t maximum_service_worker_cache_entries = 256U;
+
+    struct service_worker_cache_entry final {
+        uint32_t status{200U};
+        std::string status_text{"OK"};
+        std::vector<std::pair<std::string, std::string>> headers;
+        std::string body;
+        std::string url;
+        std::string response_type{"basic"};
+        bool redirected{false};
+    };
+
+    struct service_worker_cache final {
+        std::unordered_map<std::string, service_worker_cache_entry> entries;
+        std::vector<std::string> order;
+    };
+
+    struct service_worker_cache_storage final {
+        std::mutex mutex;
+        std::unordered_map<std::string, service_worker_cache> caches;
+        std::vector<std::string> order;
+        size_t bytes{};
+    };
 
     struct service_worker_body_lease final {
         service_worker_body_lease(
@@ -34,16 +58,35 @@
         std::string url;
         std::string method{"GET"};
         uint32_t destination{WEBSCENE_REQUEST_DESTINATION_NONE};
+        uint32_t mode{WEBSCENE_FETCH_MODE_NONE};
+        uint32_t credentials{WEBSCENE_FETCH_CREDENTIALS_SAME_ORIGIN};
+        uint32_t redirect{};
         std::vector<std::pair<std::string, std::string>> headers;
         std::string client_id;
         uint64_t client_generation{};
         std::promise<service_worker_fetch_result> promise;
         std::function<void()> notify_client;
+        std::function<void()> notify_worker;
+        std::atomic_bool cancelled{false};
+        std::atomic_bool settled{false};
+        std::atomic_bool active_slot{false};
 
-        void settle(service_worker_fetch_result result)
+        bool settle(service_worker_fetch_result result)
         {
+            if (settled.exchange(true, std::memory_order_acq_rel)) return false;
             promise.set_value(std::move(result));
             if (notify_client) notify_client();
+            return true;
+        }
+
+        void cancel()
+        {
+            cancelled.store(true, std::memory_order_release);
+            service_worker_fetch_result result;
+            result.handled = true;
+            result.error = "Service worker fetch was cancelled";
+            settle(std::move(result));
+            if (notify_worker) notify_worker();
         }
     };
 
@@ -92,6 +135,273 @@
         auto* isolate = info.GetIsolate();
         auto context = isolate->GetCurrentContext();
         const auto operation = to_utf8(isolate, info[0]);
+        const auto cache_name = [&]() {
+            return info.Length() > 1 ? to_utf8(isolate, info[1]) : std::string{};
+        };
+        const auto cache_key = [&]() {
+            return info.Length() > 2 ? to_utf8(isolate, info[2]) : std::string{};
+        };
+        const auto validate_cache_identity = [&](const std::string& name,
+                                                  const std::string* key = nullptr) {
+            if (name.size() > 256U
+                || (key != nullptr && (key->empty() || key->size() > 8192U))) {
+                isolate->ThrowException(v8::Exception::TypeError(
+                    js_string(isolate, "Invalid CacheStorage key")));
+                return false;
+            }
+            return true;
+        };
+        if (operation == "cache-open") {
+            const auto name = cache_name();
+            if (!validate_cache_identity(name)) return;
+            std::lock_guard lock(runtime->cache_storage->mutex);
+            if (!runtime->cache_storage->caches.contains(name)) {
+                if (runtime->cache_storage->caches.size()
+                    >= maximum_service_worker_caches) {
+                    throw_dom_exception(
+                        info, "CacheStorage quota exceeded", "QuotaExceededError");
+                    return;
+                }
+                runtime->cache_storage->caches.emplace(name, service_worker_cache{});
+                runtime->cache_storage->order.push_back(name);
+            }
+            info.GetReturnValue().Set(v8::True(isolate));
+            return;
+        }
+        if (operation == "cache-storage-has") {
+            const auto name = cache_name();
+            if (!validate_cache_identity(name)) return;
+            std::lock_guard lock(runtime->cache_storage->mutex);
+            info.GetReturnValue().Set(v8::Boolean::New(
+                isolate, runtime->cache_storage->caches.contains(name)));
+            return;
+        }
+        if (operation == "cache-storage-delete") {
+            const auto name = cache_name();
+            if (!validate_cache_identity(name)) return;
+            std::lock_guard lock(runtime->cache_storage->mutex);
+            const auto found = runtime->cache_storage->caches.find(name);
+            if (found == runtime->cache_storage->caches.end()) {
+                info.GetReturnValue().Set(v8::False(isolate));
+                return;
+            }
+            for (const auto& [key, entry] : found->second.entries) {
+                static_cast<void>(key);
+                runtime->cache_storage->bytes -= entry.body.size();
+            }
+            runtime->cache_storage->caches.erase(found);
+            std::erase(runtime->cache_storage->order, name);
+            info.GetReturnValue().Set(v8::True(isolate));
+            return;
+        }
+        if (operation == "cache-storage-keys") {
+            std::lock_guard lock(runtime->cache_storage->mutex);
+            auto result = v8::Array::New(
+                isolate, static_cast<int>(runtime->cache_storage->order.size()));
+            for (uint32_t index = 0U;
+                 index < runtime->cache_storage->order.size(); ++index) {
+                result->Set(context, index, js_dom_string(
+                    isolate, runtime->cache_storage->order[index])).Check();
+            }
+            info.GetReturnValue().Set(result);
+            return;
+        }
+        if (operation == "cache-match") {
+            const auto name = cache_name();
+            const auto key = cache_key();
+            if (!validate_cache_identity(name, &key)) return;
+            std::lock_guard lock(runtime->cache_storage->mutex);
+            const auto cache = runtime->cache_storage->caches.find(name);
+            if (cache == runtime->cache_storage->caches.end()) {
+                info.GetReturnValue().Set(v8::Undefined(isolate));
+                return;
+            }
+            const auto found = cache->second.entries.find(key);
+            if (found == cache->second.entries.end()) {
+                info.GetReturnValue().Set(v8::Undefined(isolate));
+                return;
+            }
+            const auto& entry = found->second;
+            auto result = v8::Object::New(isolate);
+            result->Set(context, js_string(isolate, "status"),
+                v8::Integer::NewFromUnsigned(isolate, entry.status)).Check();
+            result->Set(context, js_string(isolate, "statusText"),
+                js_dom_string(isolate, entry.status_text)).Check();
+            result->Set(context, js_string(isolate, "url"),
+                js_dom_string(isolate, entry.url)).Check();
+            result->Set(context, js_string(isolate, "type"),
+                js_dom_string(isolate, entry.response_type)).Check();
+            result->Set(context, js_string(isolate, "redirected"),
+                v8::Boolean::New(isolate, entry.redirected)).Check();
+            auto headers = v8::Array::New(
+                isolate, static_cast<int>(entry.headers.size()));
+            for (uint32_t index = 0U; index < entry.headers.size(); ++index) {
+                auto pair = v8::Array::New(isolate, 2);
+                pair->Set(context, 0,
+                    js_dom_string(isolate, entry.headers[index].first)).Check();
+                pair->Set(context, 1,
+                    js_dom_string(isolate, entry.headers[index].second)).Check();
+                headers->Set(context, index, pair).Check();
+            }
+            result->Set(context, js_string(isolate, "headers"), headers).Check();
+            auto body = v8::ArrayBuffer::New(isolate, entry.body.size());
+            if (!entry.body.empty()) {
+                std::memcpy(body->GetBackingStore()->Data(),
+                    entry.body.data(), entry.body.size());
+            }
+            result->Set(context, js_string(isolate, "body"), body).Check();
+            info.GetReturnValue().Set(result);
+            return;
+        }
+        if (operation == "cache-delete-entry") {
+            const auto name = cache_name();
+            const auto key = cache_key();
+            if (!validate_cache_identity(name, &key)) return;
+            std::lock_guard lock(runtime->cache_storage->mutex);
+            const auto cache = runtime->cache_storage->caches.find(name);
+            if (cache == runtime->cache_storage->caches.end()) {
+                info.GetReturnValue().Set(v8::False(isolate));
+                return;
+            }
+            const auto found = cache->second.entries.find(key);
+            if (found == cache->second.entries.end()) {
+                info.GetReturnValue().Set(v8::False(isolate));
+                return;
+            }
+            runtime->cache_storage->bytes -= found->second.body.size();
+            cache->second.entries.erase(found);
+            std::erase(cache->second.order, key);
+            info.GetReturnValue().Set(v8::True(isolate));
+            return;
+        }
+        if (operation == "cache-entry-keys") {
+            const auto name = cache_name();
+            if (!validate_cache_identity(name)) return;
+            std::lock_guard lock(runtime->cache_storage->mutex);
+            const auto cache = runtime->cache_storage->caches.find(name);
+            const auto count = cache == runtime->cache_storage->caches.end()
+                ? 0U : static_cast<uint32_t>(cache->second.order.size());
+            auto result = v8::Array::New(isolate, static_cast<int>(count));
+            if (cache != runtime->cache_storage->caches.end()) {
+                for (uint32_t index = 0U; index < count; ++index) {
+                    result->Set(context, index, js_dom_string(
+                        isolate, cache->second.order[index])).Check();
+                }
+            }
+            info.GetReturnValue().Set(result);
+            return;
+        }
+        if (operation == "cache-put") {
+            const auto name = cache_name();
+            const auto key = cache_key();
+            if (!validate_cache_identity(name, &key) || info.Length() < 4
+                || !info[3]->IsObject()) return;
+            auto value = info[3].As<v8::Object>();
+            const auto property = [&](const char* property_name) {
+                v8::Local<v8::Value> result;
+                if (!value->Get(context, js_string(isolate, property_name)).ToLocal(&result)) {
+                    return v8::Local<v8::Value>{};
+                }
+                return result;
+            };
+            service_worker_cache_entry entry;
+            const auto status = property("status");
+            const auto status_text = property("statusText");
+            const auto url = property("url");
+            const auto response_type = property("type");
+            const auto redirected = property("redirected");
+            const auto headers_value = property("headers");
+            const auto body_value = property("body");
+            if (status.IsEmpty() || status_text.IsEmpty() || url.IsEmpty()
+                || response_type.IsEmpty() || redirected.IsEmpty()
+                || headers_value.IsEmpty() || body_value.IsEmpty()
+                || !headers_value->IsArray() || !body_value->IsArrayBufferView()) {
+                isolate->ThrowException(v8::Exception::TypeError(
+                    js_string(isolate, "Invalid cache response record")));
+                return;
+            }
+            entry.status = status->Uint32Value(context).FromMaybe(0U);
+            entry.status_text = to_utf8(isolate, status_text);
+            entry.url = to_utf8(isolate, url);
+            entry.response_type = to_utf8(isolate, response_type);
+            entry.redirected = redirected->BooleanValue(isolate);
+            if ((entry.status != 0U
+                    && (entry.status < 200U || entry.status > 599U))
+                || entry.status_text.size() > 1024U || entry.url.size() > 8192U
+                || entry.response_type.size() > 64U) {
+                isolate->ThrowException(v8::Exception::TypeError(
+                    js_string(isolate, "Invalid cache response metadata")));
+                return;
+            }
+            auto headers = headers_value.As<v8::Array>();
+            size_t header_bytes = 0U;
+            if (headers->Length() > 64U) {
+                isolate->ThrowException(v8::Exception::TypeError(
+                    js_string(isolate, "Cache response has too many headers")));
+                return;
+            }
+            for (uint32_t index = 0U; index < headers->Length(); ++index) {
+                v8::Local<v8::Value> pair_value;
+                if (!headers->Get(context, index).ToLocal(&pair_value)
+                    || !pair_value->IsArray()) {
+                    isolate->ThrowException(v8::Exception::TypeError(
+                        js_string(isolate, "Invalid cache response headers")));
+                    return;
+                }
+                auto pair = pair_value.As<v8::Array>();
+                v8::Local<v8::Value> header_name;
+                v8::Local<v8::Value> header_value;
+                if (pair->Length() != 2U
+                    || !pair->Get(context, 0).ToLocal(&header_name)
+                    || !pair->Get(context, 1).ToLocal(&header_value)) return;
+                auto header = std::pair{
+                    to_utf8(isolate, header_name), to_utf8(isolate, header_value)};
+                header_bytes += header.first.size() + header.second.size();
+                if (header_bytes > 64U * 1024U) {
+                    isolate->ThrowException(v8::Exception::TypeError(
+                        js_string(isolate, "Cache response headers are too large")));
+                    return;
+                }
+                entry.headers.push_back(std::move(header));
+            }
+            auto body = body_value.As<v8::ArrayBufferView>();
+            if (body->ByteLength() > maximum_service_worker_fetch_body_bytes) {
+                throw_dom_exception(
+                    info, "CacheStorage quota exceeded", "QuotaExceededError");
+                return;
+            }
+            const auto backing = body->Buffer()->GetBackingStore();
+            if (body->ByteLength() != 0U) {
+                const auto* bytes = static_cast<const char*>(backing->Data())
+                    + body->ByteOffset();
+                entry.body.assign(bytes, body->ByteLength());
+            }
+            std::lock_guard lock(runtime->cache_storage->mutex);
+            const auto cache = runtime->cache_storage->caches.find(name);
+            if (cache == runtime->cache_storage->caches.end()) {
+                isolate->ThrowException(v8::Exception::TypeError(
+                    js_string(isolate, "Cache is unavailable")));
+                return;
+            }
+            const auto prior = cache->second.entries.find(key);
+            const auto prior_bytes = prior == cache->second.entries.end()
+                ? 0U : prior->second.body.size();
+            if (runtime->cache_storage->bytes - prior_bytes
+                    > maximum_service_worker_fetch_body_bytes - entry.body.size()
+                || (prior == cache->second.entries.end()
+                    && cache->second.entries.size()
+                        >= maximum_service_worker_cache_entries)) {
+                throw_dom_exception(
+                    info, "CacheStorage quota exceeded", "QuotaExceededError");
+                return;
+            }
+            runtime->cache_storage->bytes = runtime->cache_storage->bytes
+                - prior_bytes + entry.body.size();
+            if (prior == cache->second.entries.end()) cache->second.order.push_back(key);
+            cache->second.entries.insert_or_assign(key, std::move(entry));
+            info.GetReturnValue().Set(v8::True(isolate));
+            return;
+        }
         if (operation == "claim") {
             std::lock_guard lock(runtime->mutex);
             if (!runtime->stopped) runtime->claimed = true;
@@ -285,6 +595,10 @@
         std::vector<service_worker_client_descriptor> clients)
     {
         auto state = std::make_shared<service_worker_runtime_state>();
+        if (registration.runtime != nullptr
+            && registration.runtime->cache_storage != nullptr) {
+            state->cache_storage = registration.runtime->cache_storage;
+        }
         for (auto& client : clients) {
             state->clients.emplace(client.id, std::move(client));
         }
@@ -390,6 +704,67 @@
                           globalThis, ServiceWorkerGlobalScope.prototype);
                         const control = globalThis.__webSceneServiceWorkerGlobalControl;
                         delete globalThis.__webSceneServiceWorkerGlobalControl;
+                        Object.defineProperty(ReadableStream.prototype, 'tee', {
+                          enumerable:true, configurable:true, writable:true,
+                          value:function() {
+                            if (!(this instanceof ReadableStream)) {
+                              throw new TypeError('Illegal invocation');
+                            }
+                            if (this.locked) throw new TypeError('ReadableStream is locked');
+                            const reader = this.getReader();
+                            const controllers = [undefined, undefined];
+                            const cancelled = [false, false];
+                            const reasons = [undefined, undefined];
+                            let resolveCancellation;
+                            const cancellation = new Promise(resolve => {
+                              resolveCancellation = resolve;
+                            });
+                            let reading;
+                            let finished = false;
+                            const pump = () => {
+                              if (finished) return Promise.resolve();
+                              if (!reading) {
+                                reading = reader.read().then(({value, done}) => {
+                                  if (done) {
+                                    finished = true;
+                                    for (let index = 0; index < controllers.length; ++index) {
+                                      if (!cancelled[index]) controllers[index].close();
+                                    }
+                                    if (cancelled[0] || cancelled[1]) resolveCancellation();
+                                    return;
+                                  }
+                                  for (let index = 0; index < controllers.length; ++index) {
+                                    if (!cancelled[index]) controllers[index].enqueue(value);
+                                  }
+                                }, error => {
+                                  finished = true;
+                                  for (let index = 0; index < controllers.length; ++index) {
+                                    if (!cancelled[index]) controllers[index].error(error);
+                                  }
+                                  if (cancelled[0] || cancelled[1]) resolveCancellation();
+                                }).finally(() => { reading = undefined; });
+                              }
+                              return reading;
+                            };
+                            const branch = index => new ReadableStream({
+                              start(controller) { controllers[index] = controller; },
+                              pull() { return pump(); },
+                              cancel(reason) {
+                                if (cancelled[index]) return cancellation;
+                                cancelled[index] = true;
+                                reasons[index] = reason;
+                                if (cancelled[0] && cancelled[1] && !finished) {
+                                  finished = true;
+                                  resolveCancellation(reader.cancel([reasons[0], reasons[1]]));
+                                }
+                                return cancellation;
+                              }
+                            });
+                            return [branch(0), branch(1)];
+                          }
+                        });
+)JS",
+                        R"JS(
                         const extendableEventState = new WeakMap();
                         class ExtendableEvent extends Event {
                           constructor(type, init = {}) {
@@ -502,9 +877,76 @@
                           await Promise.all(state.pending);
                           return response;
                         };
+)JS",
+                        R"JS(
                         const dispatchFetchRecord = async init => {
-                          const response = await dispatchFetch(init);
+                          let response = await dispatchFetch(init);
                           if (response === undefined) return {handled:false};
+                          let responseUrl = response.url;
+                          let responseRedirected = response.redirected;
+                          const redirectStatuses = new Set([301, 302, 303, 307, 308]);
+                          if (redirectStatuses.has(response.status)) {
+                            if (init.request.redirect === 'error') {
+                              throw new TypeError('Service worker redirect is disallowed');
+                            }
+                            if (init.request.redirect === 'manual') {
+                              if (response.body !== null && !response.body.locked) {
+                                await response.body.cancel('Returning opaque redirect');
+                              }
+                              return {handled:true, status:0, statusText:'', headers:[],
+                                body:new Uint8Array(), url:'', redirected:false,
+                                type:'opaqueredirect'};
+                            }
+                            if (init.request.redirect === 'follow') {
+                              let currentUrl = init.request.url;
+                              let method = init.request.method;
+                              const headers = new Headers(init.request.headers);
+                              const visited = new Set([currentUrl]);
+                              for (let redirects = 0; redirectStatuses.has(response.status);
+                                   ++redirects) {
+                                if (redirects >= 20) {
+                                  throw new TypeError('Service worker redirect limit exceeded');
+                                }
+                                const location = response.headers.get('location');
+                                if (location === null) break;
+                                let target;
+                                try { target = new URL(location, currentUrl); }
+                                catch { throw new TypeError('Invalid service worker redirect'); }
+                                if (target.protocol !== 'http:' && target.protocol !== 'https:') {
+                                  throw new TypeError('Invalid service worker redirect protocol');
+                                }
+                                if (visited.has(target.href)) {
+                                  throw new TypeError('Service worker redirect loop');
+                                }
+                                visited.add(target.href);
+                                if (response.body !== null && !response.body.locked) {
+                                  await response.body.cancel('Following service worker redirect');
+                                }
+                                if (response.status === 303
+                                    || ((response.status === 301 || response.status === 302)
+                                      && method === 'POST')) {
+                                  method = 'GET';
+                                  for (const name of ['content-encoding', 'content-language',
+                                    'content-length', 'content-location', 'content-type']) {
+                                    headers.delete(name);
+                                  }
+                                }
+                                if (new URL(currentUrl).origin !== target.origin) {
+                                  for (const name of ['authorization', 'proxy-authorization',
+                                    'cookie', 'cookie2']) headers.delete(name);
+                                }
+                                currentUrl = target.href;
+                                response = await fetch(currentUrl, {
+                                  method, headers,
+                                  credentials:init.request.credentials,
+                                  mode:init.request.mode,
+                                  redirect:'manual'
+                                });
+                                responseUrl = response.url || currentUrl;
+                                responseRedirected = true;
+                              }
+                            }
+                          }
                           const chunks = [];
                           let bodyLength = 0;
                           if (response.body !== null) {
@@ -541,11 +983,13 @@
                             statusText:response.statusText,
                             headers:[...response.headers],
                             body,
-                            url:response.url,
-                            redirected:response.redirected,
+                            url:responseUrl,
+                            redirected:responseRedirected,
                             type:response.type
                           };
                         };
+)JS",
+                        R"JS(
                         const cacheState = new WeakMap();
                         const cacheStorageState = new WeakMap();
                         const cacheKey = request => {
@@ -567,8 +1011,14 @@
                           constructor() { throw new TypeError('Illegal constructor'); }
                           match(request) {
                             const state = requireCache(this);
-                            const stored = state.entries.get(cacheKey(request));
-                            return Promise.resolve(stored?.response.clone());
+                            const stored = control(
+                              'cache-match', state.name, cacheKey(request));
+                            return Promise.resolve(stored === undefined ? undefined
+                              : new Response(stored.body, {
+                                status:stored.status, statusText:stored.statusText,
+                                headers:stored.headers, url:stored.url,
+                                redirected:stored.redirected, type:stored.type
+                              }));
                           }
                           async put(request, response) {
                             const state = requireCache(this);
@@ -584,33 +1034,23 @@
                             }
                             const clone = response.clone();
                             const body = new Uint8Array(await clone.arrayBuffer());
-                            const prior = state.entries.get(key)?.bytes ?? 0;
-                            const nextBytes = state.storage.bytes - prior + body.byteLength;
-                            if (nextBytes > 64 * 1024 * 1024
-                                || (!state.entries.has(key) && state.entries.size >= 256)) {
-                              throw new DOMException('Cache quota exceeded', 'QuotaExceededError');
-                            }
-                            state.entries.set(key, {bytes:body.byteLength,
-                              response:new Response(body, {
+                            control(
+                              'cache-put', state.name, key, {
                                 status:response.status, statusText:response.statusText,
-                                headers:response.headers, url:response.url,
-)JS",
-                        R"JS(                                redirected:response.redirected, type:response.type
-                              })});
-                            state.storage.bytes = nextBytes;
+                                headers:[...response.headers], body,
+                                url:response.url, redirected:response.redirected,
+                                type:response.type
+                              });
                           }
                           delete(request) {
                             const state = requireCache(this);
-                            const key = cacheKey(request);
-                            const entry = state.entries.get(key);
-                            if (!entry) return Promise.resolve(false);
-                            state.entries.delete(key);
-                            state.storage.bytes -= entry.bytes;
-                            return Promise.resolve(true);
+                            return Promise.resolve(control(
+                              'cache-delete-entry', state.name, cacheKey(request)));
                           }
                           keys() {
-                            const state = requireCache(this);
-                            return Promise.resolve([...state.entries.keys()].map(key =>
+                            const keys = control(
+                              'cache-entry-keys', requireCache(this).name);
+                            return Promise.resolve(keys.map(key =>
                               new Request(key.slice(key.indexOf(' ') + 1), {
                                 method:key.slice(0, key.indexOf(' '))})));
                           }
@@ -620,41 +1060,45 @@
                           open(name) {
                             const storage = requireCacheStorage(this);
                             const key = String(name);
-                            let value = storage.caches.get(key);
+                            control('cache-open', key);
+                            let value = storage.wrappers.get(key);
                             if (!value) {
-                              if (storage.caches.size >= 32) {
-                                return Promise.reject(new DOMException(
-                                  'CacheStorage quota exceeded', 'QuotaExceededError'));
-                              }
                               value = Object.create(Cache.prototype);
-                              cacheState.set(value, {entries:new Map(), storage});
-                              storage.caches.set(key, value);
+                              cacheState.set(value, {name:key});
+                              storage.wrappers.set(key, value);
                             }
                             return Promise.resolve(value);
                           }
                           has(name) {
-                            return Promise.resolve(
-                              requireCacheStorage(this).caches.has(String(name)));
+                            requireCacheStorage(this);
+                            return Promise.resolve(control(
+                              'cache-storage-has', String(name)));
                           }
                           delete(name) {
-                            const storage = requireCacheStorage(this);
                             const key = String(name);
-                            const value = storage.caches.get(key);
-                            if (!value) return Promise.resolve(false);
-                            for (const entry of requireCache(value).entries.values()) {
-                              storage.bytes -= entry.bytes;
-                            }
-                            storage.caches.delete(key);
-                            return Promise.resolve(true);
+                            const storage = requireCacheStorage(this);
+                            const deleted = control(
+                              'cache-storage-delete', key);
+                            if (deleted) storage.wrappers.delete(key);
+                            return Promise.resolve(deleted);
                           }
                           keys() {
-                            return Promise.resolve(
-                              [...requireCacheStorage(this).caches.keys()]);
+                            requireCacheStorage(this);
+                            return Promise.resolve(control(
+                              'cache-storage-keys'));
                           }
                           async match(request) {
-                            const storage = requireCacheStorage(this);
-                            for (const cache of storage.caches.values()) {
-                              const response = await cache.match(request);
+                            requireCacheStorage(this);
+                            for (const name of control(
+                                'cache-storage-keys')) {
+                              const stored = control(
+                                'cache-match', name, cacheKey(request));
+                              const response = stored === undefined ? undefined
+                                : new Response(stored.body, {
+                                  status:stored.status, statusText:stored.statusText,
+                                  headers:stored.headers, url:stored.url,
+                                  redirected:stored.redirected, type:stored.type
+                                });
                               if (response) return response;
                             }
                             return undefined;
@@ -674,7 +1118,7 @@
                           }
                         }
                         const caches = Object.create(CacheStorage.prototype);
-                        cacheStorageState.set(caches, {caches:new Map(), bytes:0});
+                        cacheStorageState.set(caches, {wrappers:new Map()});
                         function Client() { throw new TypeError('Illegal constructor'); }
                         function WindowClient() { throw new TypeError('Illegal constructor'); }
                         function Clients() { throw new TypeError('Illegal constructor'); }
@@ -858,6 +1302,15 @@
                     v8::Global<v8::Promise> promise;
                 };
                 std::vector<pending_fetch> pending_fetches;
+                const auto release_fetch_slot = [&](const auto& request) {
+                    std::lock_guard lock(state->mutex);
+                    if (request != nullptr
+                        && request->active_slot.exchange(
+                            false, std::memory_order_acq_rel)
+                        && state->active_fetches > 0U) {
+                        --state->active_fetches;
+                    }
+                };
                 for (;;) {
                     std::optional<service_worker_message> message;
                     std::shared_ptr<service_worker_fetch_request> fetch_request;
@@ -892,6 +1345,16 @@
                     if (fetch_request != nullptr) {
                         service_worker_fetch_result failure;
                         failure.handled = true;
+                        if (fetch_request->cancelled.load(std::memory_order_acquire)) {
+                            failure.error = "Service worker fetch was cancelled";
+                            release_fetch_slot(fetch_request);
+                            fetch_request->settle(std::move(failure));
+                            fetch_request.reset();
+                        }
+                    }
+                    if (fetch_request != nullptr) {
+                        service_worker_fetch_result failure;
+                        failure.handled = true;
                         v8::TryCatch caught(child->isolate);
                         v8::Local<v8::Value> helper_value;
                         v8::Local<v8::Value> request_constructor_value;
@@ -908,8 +1371,7 @@
                             || !request_constructor_value->IsFunction()) {
                             failure.error = "Service worker fetch dispatcher is unavailable";
                             fetch_request->settle(std::move(failure));
-                            std::lock_guard lock(state->mutex);
-                            if (state->active_fetches > 0U) --state->active_fetches;
+                            release_fetch_slot(fetch_request);
                         } else {
                             auto options = v8::Object::New(child->isolate);
                             options->Set(
@@ -931,6 +1393,22 @@
                                 realm,
                                 js_string(child->isolate, "destination"),
                                 js_string(child->isolate, destination)).Check();
+                            const auto mode = fetch_request->mode
+                                    == WEBSCENE_FETCH_MODE_SAME_ORIGIN ? "same-origin"
+                                : fetch_request->mode == WEBSCENE_FETCH_MODE_NO_CORS
+                                    ? "no-cors" : "cors";
+                            const auto credentials = fetch_request->credentials
+                                    == WEBSCENE_FETCH_CREDENTIALS_OMIT ? "omit"
+                                : fetch_request->credentials == WEBSCENE_FETCH_CREDENTIALS_INCLUDE
+                                    ? "include" : "same-origin";
+                            const auto redirect = fetch_request->redirect == 1U ? "error"
+                                : fetch_request->redirect == 2U ? "manual" : "follow";
+                            options->Set(realm, js_string(child->isolate, "mode"),
+                                js_string(child->isolate, mode)).Check();
+                            options->Set(realm, js_string(child->isolate, "credentials"),
+                                js_string(child->isolate, credentials)).Check();
+                            options->Set(realm, js_string(child->isolate, "redirect"),
+                                js_string(child->isolate, redirect)).Check();
                             auto headers = v8::Array::New(
                                 child->isolate,
                                 static_cast<int>(fetch_request->headers.size()));
@@ -956,8 +1434,7 @@
                                     realm, 2, request_arguments).ToLocal(&request_value)) {
                                 failure.error = child->describe_reported_exception(caught, realm);
                                 fetch_request->settle(std::move(failure));
-                                std::lock_guard lock(state->mutex);
-                                if (state->active_fetches > 0U) --state->active_fetches;
+                                release_fetch_slot(fetch_request);
                             } else {
                                 auto init = v8::Object::New(child->isolate);
                                 init->Set(
@@ -982,8 +1459,7 @@
                                     failure.error = child->describe_reported_exception(
                                         caught, realm);
                                     fetch_request->settle(std::move(failure));
-                                    std::lock_guard lock(state->mutex);
-                                    if (state->active_fetches > 0U) --state->active_fetches;
+                                    release_fetch_slot(fetch_request);
                                 } else {
                                     pending_fetch pending;
                                     pending.request = std::move(fetch_request);
@@ -1096,14 +1572,16 @@
                             client_retired = client == state->clients.end()
                                 || client->second.generation
                                     != iterator->request->client_generation;
-                            if (client_retired && state->active_fetches > 0U) {
-                                --state->active_fetches;
-                            }
                         }
-                        if (client_retired) {
+                        const auto cancelled = iterator->request->cancelled.load(
+                            std::memory_order_acquire);
+                        if (client_retired || cancelled) {
                             service_worker_fetch_result retired;
                             retired.handled = true;
-                            retired.error = "Service worker fetch client was retired";
+                            retired.error = cancelled
+                                ? "Service worker fetch was cancelled"
+                                : "Service worker fetch client was retired";
+                            release_fetch_slot(iterator->request);
                             iterator->request->settle(std::move(retired));
                             iterator->promise.Reset();
                             iterator = pending_fetches.erase(iterator);
@@ -1201,14 +1679,20 @@
                                 }
                             }
                         }
-                        {
-                            std::lock_guard lock(state->mutex);
-                            if (state->active_fetches > 0U) --state->active_fetches;
-                        }
+                        release_fetch_slot(iterator->request);
                         iterator->request->settle(std::move(result));
                         iterator->promise.Reset();
                         iterator = pending_fetches.erase(iterator);
                     }
+                }
+                for (auto& pending : pending_fetches) {
+                    pending.request->cancelled.store(true, std::memory_order_release);
+                    pending.request->active_slot.store(false, std::memory_order_release);
+                    service_worker_fetch_result retired;
+                    retired.handled = true;
+                    retired.error = "Service worker fetch runtime stopped";
+                    pending.request->settle(std::move(retired));
+                    pending.promise.Reset();
                 }
                 {
                     std::lock_guard lock(state->mutex);
@@ -1712,8 +2196,11 @@
     std::shared_future<service_worker_fetch_result>
     enqueue_controlled_service_worker_fetch(
         const std::string& url,
-        const resource_request_context& request_context)
+        const resource_request_context& request_context,
+        std::shared_ptr<service_worker_fetch_request>* request_handle = nullptr,
+        uint32_t redirect = 0U)
     {
+        if (request_handle != nullptr) request_handle->reset();
         if (service_worker_realm || isolate == nullptr || context.IsEmpty()) {
             return {};
         }
@@ -1743,10 +2230,14 @@
         }
         if (runtime == nullptr) return {};
         auto request = std::make_shared<service_worker_fetch_request>();
+        if (request_handle != nullptr) *request_handle = request;
         request->url = url;
         request->method = request_context.method.empty()
             ? "GET" : request_context.method;
         request->destination = request_context.destination;
+        request->mode = request_context.mode;
+        request->credentials = request_context.credentials;
+        request->redirect = redirect;
         request->headers = request_context.headers;
         const auto contains_header = [&](std::string_view name) {
             return std::ranges::any_of(request->headers, [&](const auto& header) {
@@ -1764,6 +2255,9 @@
         request->client_id = client->descriptor.id;
         request->client_generation = client->descriptor.generation;
         request->notify_client = runtime_work_available;
+        request->notify_worker = [weak = std::weak_ptr(runtime)] {
+            if (const auto owner = weak.lock()) owner->ready.notify_all();
+        };
         auto future = request->promise.get_future().share();
         {
             std::lock_guard lock(runtime->mutex);
@@ -1785,6 +2279,7 @@
                 return future;
             }
             ++runtime->active_fetches;
+            request->active_slot.store(true, std::memory_order_release);
             runtime->fetch_high_water = std::max(
                 runtime->fetch_high_water, runtime->active_fetches);
             runtime->fetches.push_back(request);
@@ -1986,7 +2481,9 @@
                         return false;
                     }
                     retired_fetches.push_back(request);
-                    if (registration.runtime->active_fetches > 0U) {
+                    if (request->active_slot.exchange(
+                            false, std::memory_order_acq_rel)
+                        && registration.runtime->active_fetches > 0U) {
                         --registration.runtime->active_fetches;
                     }
                     return true;
@@ -2188,6 +2685,8 @@
         size_t active_fetches{};
         std::shared_ptr<std::atomic_size_t> queued_response_bytes{
             std::make_shared<std::atomic_size_t>(0U)};
+        std::shared_ptr<service_worker_cache_storage> cache_storage{
+            std::make_shared<service_worker_cache_storage>()};
         std::function<void()> notify_client;
         bool stopped{false};
         bool activated{false};
@@ -2196,6 +2695,7 @@
 
         void stop()
         {
+            std::deque<std::shared_ptr<service_worker_fetch_request>> retired_fetches;
             {
                 std::lock_guard lock(mutex);
                 stopped = true;
@@ -2203,10 +2703,23 @@
                 clients.clear();
                 incoming.clear();
                 outgoing.clear();
-                fetches.clear();
+                retired_fetches.swap(fetches);
+                for (const auto& request : retired_fetches) {
+                    if (request != nullptr) {
+                        request->cancelled.store(true, std::memory_order_release);
+                        request->active_slot.store(false, std::memory_order_release);
+                    }
+                }
                 incoming_bytes = 0U;
                 outgoing_bytes = 0U;
                 active_fetches = 0U;
+            }
+            for (auto& request : retired_fetches) {
+                if (request == nullptr) continue;
+                service_worker_fetch_result retired;
+                retired.handled = true;
+                retired.error = "Service worker fetch runtime stopped";
+                request->settle(std::move(retired));
             }
             ready.notify_all();
             if (thread.joinable()) thread.join();

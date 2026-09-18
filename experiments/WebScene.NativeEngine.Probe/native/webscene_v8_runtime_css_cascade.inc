@@ -167,7 +167,11 @@
         return effective_document_base(root);
     }
 
-    void apply_css_declaration(dom_node& node, const css_declaration& declaration, bool inline_origin = false)
+    void apply_css_declaration(
+        dom_node& node,
+        const css_declaration& declaration,
+        bool inline_origin = false,
+        bool defer_transition_configuration = false)
     {
 #if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
         if (profile_css) {
@@ -185,7 +189,11 @@
             auto normalized = declaration;
             normalized.name = name.starts_with("grid-")
                 ? canonical_css_property_name(name) : "transform";
-            apply_css_declaration(node, normalized, inline_origin);
+            apply_css_declaration(
+                node,
+                normalized,
+                inline_origin,
+                defer_transition_configuration);
             return;
         }
         if (name.starts_with("--")) {
@@ -193,19 +201,21 @@
             record_feature("css","custom-property","supported",{},"style-application");
             return;
         }
-        auto resolved_declaration = declaration;
+        const auto* resolved_declaration = &declaration;
+        std::optional<css_declaration> resolved_resource_declaration;
         if ((name == "background" || name == "background-image")
             && first_css_url(declaration.value).has_value()) {
-            resolved_declaration.value = resolve_css_resource_urls(
+            resolved_resource_declaration = declaration;
+            resolved_resource_declaration->value = resolve_css_resource_urls(
                 declaration.value,
                 current_css_base_address(node));
+            resolved_declaration = &*resolved_resource_declaration;
         }
         feature_decision decision(
             *this,
-            "css",
-            "property:" + name,
-            "style-application");
-        css::apply_declaration(document,node,resolved_declaration,css_variables,inline_origin,decision,
+            feature_decision::css_property_tag{},
+            name);
+        css::apply_declaration(document,node,*resolved_declaration,css_variables,inline_origin,decision,
             [this,&node](const std::string& url,std::string& markup,std::string& resolved,std::string& view_box) {
                 auto resource_context = isolate->GetCurrentContext();
                 if (resource_context.IsEmpty()) resource_context = context_for_node(node);
@@ -221,7 +231,7 @@
             },[&](bool contains_variable) {
                 if(contains_variable && is_paint_property(name))
                     record_composition("css-custom-property-to-paint",node.id);
-            });
+            },defer_transition_configuration);
     }
 
     void recompute_inline_font_relative_metrics(dom_node& node)
@@ -312,8 +322,12 @@
         const css::cascaded_rule_order cascade_order(matched_rules);
         css::apply_matched_declarations(node,cascade_order,
             [&](const css_declaration& declaration,bool inline_origin) {
-                apply_css_declaration(node,declaration,inline_origin);
+                apply_css_declaration(node,declaration,inline_origin,true);
             });
+        // Transition longhands share one computed transition table. During a
+        // full cascade, configure it once after every winning declaration has
+        // landed instead of reparsing its four lists after each longhand.
+        css::configure_style_transitions(node.style);
         // Inline relative line-height is authored at a higher origin, but its
         // computed pixel value depends on the winning font-size. Re-resolve it
         // only after stylesheet declarations have completed their cascade.
@@ -614,13 +628,9 @@
             return std::any_of(
                 references.begin(), references.end(),
                 [&variables](const auto& reference) {
-                    if constexpr (requires { variables.contains(reference); }) {
-                        return variables.contains(reference);
-                    } else {
-                        return std::find(
-                            variables.begin(), variables.end(), reference)
-                            != variables.end();
-                    }
+                    return css::variable_collection_contains(
+                        variables,
+                        reference);
                 });
         }
         if (declaration_index >= rule.declarations().size()) return false;
@@ -629,13 +639,9 @@
         return std::any_of(
             references.begin(), references.end(),
             [&variables](const auto& reference) {
-                if constexpr (requires { variables.contains(reference); }) {
-                    return variables.contains(reference);
-                } else {
-                    return std::find(
-                        variables.begin(), variables.end(), reference)
-                        != variables.end();
-                }
+                return css::variable_collection_contains(
+                    variables,
+                    reference);
             });
     }
 
@@ -2378,6 +2384,42 @@
         }
     }
 
+    void recascade_form_value_selector_transition(
+        dom_node& subject,
+        std::string previous_value,
+        std::string current_value)
+    {
+        document.mark_dirty();
+        if (previous_value.empty() == current_value.empty()) {
+            return;
+        }
+        webscene_frame_trace::scope invalidation_trace(
+            frame_trace,
+            "form-state-invalidation-start",
+            "form-state-invalidation-end",
+            0);
+        const auto indexed = css_invalidation_rules_by_attribute.find(
+            "$live-form-value");
+        const std::span<const size_t> changed_rules =
+            indexed == css_invalidation_rules_by_attribute.end()
+            ? std::span<const size_t>{}
+            : std::span<const size_t>{indexed->second};
+        recascade_selector_transition(
+            subject,
+            changed_rules,
+            [](const css::css_compound_dependencies& dependencies) {
+                css::css_invalidation_targets result;
+                const auto found = dependencies.attributes.find(
+                    "$live-form-value");
+                if (found != dependencies.attributes.end()) {
+                    result.include(found->second);
+                }
+                return result;
+            },
+            [&] { subject.mutable_form_control().value = previous_value; },
+            [&] { subject.mutable_form_control().value = current_value; });
+    }
+
     void recascade_class_selector_transition(
         dom_node& subject,
         const std::optional<std::string>& previous_value,
@@ -2647,6 +2689,118 @@
             });
     }
 
+    void rebuild_cascade_layer_order_for_stylesheet(
+        uint32_t owner_id,
+        const std::vector<std::string>& replacement_names)
+    {
+        const auto previous_orders = css_cascade_layer_orders;
+        std::vector<std::pair<uint32_t, std::string>> ordered_pairs;
+        ordered_pairs.reserve(previous_orders.size());
+        for (const auto& [name, order] : previous_orders) {
+            ordered_pairs.emplace_back(order, name);
+        }
+        std::sort(ordered_pairs.begin(), ordered_pairs.end());
+        std::vector<std::string> ordered_names;
+        ordered_names.reserve(ordered_pairs.size() + replacement_names.size());
+        for (const auto& [order, name] : ordered_pairs) {
+            static_cast<void>(order);
+            ordered_names.push_back(name);
+        }
+
+        const auto known_owner = css_stylesheet_layer_names.find(owner_id);
+        const auto previous_names = known_owner == css_stylesheet_layer_names.end()
+            ? std::vector<std::string>{} : known_owner->second;
+        const auto owner_scope = cascade_layer_scope_id(owner_id);
+        std::vector<std::string> previous_keys;
+        previous_keys.reserve(previous_names.size());
+        for (const auto& name : previous_names) {
+            previous_keys.push_back(
+                std::to_string(owner_scope) + ':' + name);
+        }
+        std::unordered_set<std::string> declared_elsewhere;
+        for (const auto& [candidate_owner, names] : css_stylesheet_layer_names) {
+            if (candidate_owner == owner_id
+                || cascade_layer_scope_id(candidate_owner) != owner_scope) {
+                continue;
+            }
+            for (const auto& name : names) {
+                declared_elsewhere.insert(
+                    std::to_string(owner_scope) + ':' + name);
+            }
+        }
+
+        auto insertion = std::numeric_limits<size_t>::max();
+        std::vector<std::string> retained;
+        retained.reserve(ordered_names.size() + replacement_names.size());
+        for (const auto& name : ordered_names) {
+            const auto owned = std::find(
+                previous_keys.begin(), previous_keys.end(), name)
+                != previous_keys.end();
+            if (owned && insertion == std::numeric_limits<size_t>::max()) {
+                insertion = retained.size();
+            }
+            if (owned && !declared_elsewhere.contains(name)) continue;
+            retained.push_back(name);
+        }
+        if (insertion == std::numeric_limits<size_t>::max()) {
+            insertion = retained.size();
+        }
+        insertion = std::min(insertion, retained.size());
+        for (const auto& name : replacement_names) {
+            const auto key = std::to_string(owner_scope) + ':' + name;
+            if (name.empty()
+                || std::find(retained.begin(), retained.end(), key)
+                    != retained.end()) {
+                continue;
+            }
+            retained.insert(retained.begin() + static_cast<std::ptrdiff_t>(insertion), key);
+            ++insertion;
+        }
+
+        if (replacement_names.empty()) css_stylesheet_layer_names.erase(owner_id);
+        else css_stylesheet_layer_names.insert_or_assign(owner_id, replacement_names);
+        css_cascade_layer_orders.clear();
+        uint32_t next_order = 1U;
+        for (const auto& name : retained) {
+            css_cascade_layer_orders.emplace(name, next_order++);
+        }
+
+        std::unordered_map<uint32_t, std::string> previous_names_by_order;
+        for (const auto& [name, order] : previous_orders) {
+            previous_names_by_order.emplace(order, name);
+        }
+        std::vector<uint32_t> anonymous_orders;
+        for (const auto& rule : css_rules) {
+            if (rule.cascade_layer_order != 0U
+                && !previous_names_by_order.contains(rule.cascade_layer_order)
+                && std::find(
+                    anonymous_orders.begin(), anonymous_orders.end(),
+                    rule.cascade_layer_order) == anonymous_orders.end()) {
+                anonymous_orders.push_back(rule.cascade_layer_order);
+            }
+        }
+        std::sort(anonymous_orders.begin(), anonymous_orders.end());
+        std::unordered_map<uint32_t, uint32_t> remapped_anonymous_orders;
+        for (const auto old_order : anonymous_orders) {
+            remapped_anonymous_orders.emplace(old_order, next_order++);
+        }
+        for (auto& rule : css_rules) {
+            if (rule.cascade_layer_order == 0U) continue;
+            if (const auto named = previous_names_by_order.find(
+                    rule.cascade_layer_order);
+                named != previous_names_by_order.end()) {
+                const auto remapped = css_cascade_layer_orders.find(named->second);
+                rule.cascade_layer_order = remapped == css_cascade_layer_orders.end()
+                    ? 0U : remapped->second;
+            } else if (const auto anonymous = remapped_anonymous_orders.find(
+                    rule.cascade_layer_order);
+                anonymous != remapped_anonymous_orders.end()) {
+                rule.cascade_layer_order = anonymous->second;
+            }
+        }
+        next_css_cascade_layer_order = next_order;
+    }
+
     void flush_pending_stylesheet_replacements()
     {
         if (pending_stylesheet_replacements.empty()) return;
@@ -2680,6 +2834,13 @@
             std::erase_if(css_rules, [&](const auto& rule) {
                 return owners.contains(rule.stylesheet_owner_id);
             });
+            for (const auto& replacement : pending) {
+                if (replacement.cascade_root_id == root->id
+                    && owners.contains(replacement.owner_id)) {
+                    rebuild_cascade_layer_order_for_stylesheet(
+                        replacement.owner_id, replacement.layer_names);
+                }
+            }
             for (auto& replacement : pending) {
                 auto* owner = document.find_by_native_id(replacement.owner_id);
                 if (replacement.cascade_root_id != root->id

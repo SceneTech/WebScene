@@ -131,6 +131,48 @@
         script_work_.emplace_back(std::move(completion));
         signal_worker();
     }
+    void complete_file_grant_same_entry_request_v2(
+        webscene_native::file_grant_same_entry_completion_data_v2 completion) {
+        std::lock_guard lock(script_mutex_);
+        script_work_.emplace_back(std::move(completion));
+        signal_worker();
+    }
+    void complete_file_grant_ancestry_request_v2(
+        webscene_native::file_grant_ancestry_completion_data_v2 completion) {
+        std::lock_guard lock(script_mutex_);
+        script_work_.emplace_back(std::move(completion));
+        signal_worker();
+    }
+    void complete_file_grant_durable_request_v2(
+        webscene_native::file_grant_durable_completion_data_v2 completion) {
+        std::lock_guard lock(script_mutex_);
+        script_work_.emplace_back(std::move(completion));
+        signal_worker();
+    }
+    void complete_file_grant_read_request_v2(
+        webscene_native::file_grant_read_completion_data_v2 completion) {
+        std::lock_guard lock(script_mutex_);
+        script_work_.emplace_back(std::move(completion));
+        signal_worker();
+    }
+    void complete_file_grant_write_request_v2(
+        webscene_native::file_grant_write_completion_data_v2 completion) {
+        std::lock_guard lock(script_mutex_);
+        script_work_.emplace_back(std::move(completion));
+        signal_worker();
+    }
+    void complete_file_grant_directory_request_v2(
+        webscene_native::file_grant_directory_completion_data_v2 completion) {
+        std::lock_guard lock(script_mutex_);
+        script_work_.emplace_back(std::move(completion));
+        signal_worker();
+    }
+    void complete_file_grant_create_file_request_v2(
+        webscene_native::file_grant_create_file_completion_data_v2 completion) {
+        std::lock_guard lock(script_mutex_);
+        script_work_.emplace_back(std::move(completion));
+        signal_worker();
+    }
     bool complete_host_request(webscene_native::native_host_completion completion) {
         std::lock_guard lock(script_mutex_);
         if (script_work_.size() >= 1024) return false;

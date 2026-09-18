@@ -1589,6 +1589,342 @@ WEBSCENE_API uint8_t webscene_engine_complete_file_panel_request_v2(
     webscene_engine* engine,
     const webscene_file_panel_completion_v2* completion);
 
+/* File-system handle identity remains owned by the native grant authority.
+ * Request storage is immutable until release and contains only the two opaque
+ * grant tokens. A denied or unavailable comparison completes with admitted=0
+ * and same_entry=0 so callers cannot distinguish authority failure details. */
+typedef struct webscene_file_grant_same_entry_request_v2 {
+    uint32_t struct_size, version;
+    uint64_t request_id;
+    webscene_file_panel_token_v2 first_grant_id;
+    webscene_file_panel_token_v2 second_grant_id;
+} webscene_file_grant_same_entry_request_v2;
+typedef struct webscene_file_grant_same_entry_completion_v2 {
+    uint32_t struct_size, version;
+    uint64_t request_id;
+    uint8_t admitted, same_entry;
+    uint8_t reserved[6];
+} webscene_file_grant_same_entry_completion_v2;
+WEBSCENE_API const webscene_file_grant_same_entry_request_v2*
+webscene_engine_take_file_grant_same_entry_request_v2(webscene_engine* engine);
+WEBSCENE_API void webscene_file_grant_same_entry_request_release_v2(
+    const webscene_file_grant_same_entry_request_v2* request);
+WEBSCENE_API uint8_t webscene_engine_complete_file_grant_same_entry_request_v2(
+    webscene_engine* engine,
+    const webscene_file_grant_same_entry_completion_v2* completion);
+
+/* Resolve one live opaque grant relative to a live directory grant without
+ * exposing native paths. SUCCESS returns zero or more ordered UTF-8 display
+ * components; the same directory is SUCCESS with zero components.
+ * NOT_DESCENDANT is a successful browser result and also carries no
+ * components. Request storage is immutable until release and completion
+ * strings are copied before return. Limits match the native ancestry
+ * authority: 16 pending requests, 64 components, 1 MiB total UTF-8 names,
+ * and 1 KiB per opaque grant token. */
+enum {
+    WEBSCENE_FILE_GRANT_ANCESTRY_SUCCESS_V2 = 0,
+    WEBSCENE_FILE_GRANT_ANCESTRY_NOT_DESCENDANT_V2 = 1,
+    WEBSCENE_FILE_GRANT_ANCESTRY_CANCELLED_V2 = 2,
+    WEBSCENE_FILE_GRANT_ANCESTRY_DENIED_V2 = 3,
+    WEBSCENE_FILE_GRANT_ANCESTRY_NOT_FOUND_V2 = 4,
+    WEBSCENE_FILE_GRANT_ANCESTRY_CHANGED_V2 = 5,
+    WEBSCENE_FILE_GRANT_ANCESTRY_IO_ERROR_V2 = 6,
+    WEBSCENE_FILE_GRANT_ANCESTRY_LIMIT_V2 = 7,
+    WEBSCENE_FILE_GRANT_ANCESTRY_MAXIMUM_COMPONENTS_V2 = 64,
+    WEBSCENE_FILE_GRANT_ANCESTRY_MAXIMUM_NAME_BYTES_V2 = 1024 * 1024,
+    WEBSCENE_FILE_GRANT_ANCESTRY_MAXIMUM_PENDING_OPERATIONS_V2 = 16
+};
+typedef struct webscene_file_grant_ancestry_request_v2 {
+    uint32_t struct_size, version;
+    uint64_t request_id;
+    webscene_file_panel_token_v2 base_directory_grant_id;
+    webscene_file_panel_token_v2 possible_descendant_grant_id;
+    uint64_t reserved;
+} webscene_file_grant_ancestry_request_v2;
+typedef struct webscene_file_grant_ancestry_component_v2 {
+    uint32_t struct_size, version;
+    webscene_file_panel_string_v2 display_name;
+} webscene_file_grant_ancestry_component_v2;
+typedef struct webscene_file_grant_ancestry_completion_v2 {
+    uint32_t struct_size, version;
+    uint64_t request_id;
+    uint32_t status, reserved;
+    const webscene_file_grant_ancestry_component_v2* components;
+    size_t component_count;
+    webscene_file_panel_string_v2 error_code;
+} webscene_file_grant_ancestry_completion_v2;
+WEBSCENE_API const webscene_file_grant_ancestry_request_v2*
+webscene_engine_take_file_grant_ancestry_request_v2(webscene_engine* engine);
+WEBSCENE_API void webscene_file_grant_ancestry_request_release_v2(
+    const webscene_file_grant_ancestry_request_v2* request);
+WEBSCENE_API uint8_t webscene_engine_complete_file_grant_ancestry_request_v2(
+    webscene_engine* engine,
+    const webscene_file_grant_ancestry_completion_v2* completion);
+
+/* Persist and restore opaque grants without exposing live tokens or native
+ * location material to storage. Every request is bound to an exact host-owned
+ * storage partition plus serialized origin. EXPORT returns a fixed 32-byte
+ * locator. RESTORE returns a fresh live grant. REVOKE deletes the durable
+ * record. Request storage is immutable until release and completion storage is
+ * copied before return. */
+enum {
+    WEBSCENE_FILE_GRANT_DURABLE_EXPORT_V2 = 1,
+    WEBSCENE_FILE_GRANT_DURABLE_RESTORE_V2 = 2,
+    WEBSCENE_FILE_GRANT_DURABLE_REVOKE_V2 = 3
+};
+enum {
+    WEBSCENE_FILE_GRANT_DURABLE_SUCCESS_V2 = 0,
+    WEBSCENE_FILE_GRANT_DURABLE_CANCELLED_V2 = 1,
+    WEBSCENE_FILE_GRANT_DURABLE_DENIED_V2 = 2,
+    WEBSCENE_FILE_GRANT_DURABLE_NOT_FOUND_V2 = 3,
+    WEBSCENE_FILE_GRANT_DURABLE_CHANGED_V2 = 4,
+    WEBSCENE_FILE_GRANT_DURABLE_STALE_V2 = 5,
+    WEBSCENE_FILE_GRANT_DURABLE_TAMPERED_V2 = 6,
+    WEBSCENE_FILE_GRANT_DURABLE_IO_ERROR_V2 = 7,
+    WEBSCENE_FILE_GRANT_DURABLE_LIMIT_V2 = 8,
+    WEBSCENE_FILE_GRANT_DURABLE_LOCATOR_BYTES_V2 = 32,
+    WEBSCENE_FILE_GRANT_DURABLE_MAXIMUM_PARTITION_BYTES_V2 = 1024,
+    WEBSCENE_FILE_GRANT_DURABLE_MAXIMUM_ORIGIN_BYTES_V2 = 4096,
+    WEBSCENE_FILE_GRANT_DURABLE_MAXIMUM_RECORDS_V2 = 1024,
+    WEBSCENE_FILE_GRANT_DURABLE_MAXIMUM_PENDING_OPERATIONS_V2 = 16
+};
+typedef struct webscene_file_grant_durable_request_v2 {
+    uint32_t struct_size, version;
+    uint64_t request_id;
+    uint32_t action, reserved;
+    webscene_file_panel_token_v2 grant_id;
+    webscene_file_panel_token_v2 locator;
+    webscene_file_panel_string_v2 storage_partition;
+    webscene_file_panel_string_v2 serialized_origin;
+} webscene_file_grant_durable_request_v2;
+typedef struct webscene_file_grant_durable_completion_v2 {
+    uint32_t struct_size, version;
+    uint64_t request_id;
+    uint32_t status, action;
+    webscene_file_panel_token_v2 locator;
+    webscene_file_panel_token_v2 grant_id;
+    uint32_t kind, capabilities;
+    webscene_file_panel_string_v2 display_name;
+    webscene_file_panel_string_v2 error_code;
+} webscene_file_grant_durable_completion_v2;
+WEBSCENE_API const webscene_file_grant_durable_request_v2*
+webscene_engine_take_file_grant_durable_request_v2(webscene_engine* engine);
+WEBSCENE_API void webscene_file_grant_durable_request_release_v2(
+    const webscene_file_grant_durable_request_v2* request);
+WEBSCENE_API uint8_t webscene_engine_complete_file_grant_durable_request_v2(
+    webscene_engine* engine,
+    const webscene_file_grant_durable_completion_v2* completion);
+
+/* Bounded reads over an opaque native file grant. Each request asks for one
+ * offset range and owns immutable token storage until release. Successful
+ * completions include current metadata so the browser runtime can reject a
+ * File whose backing entry changed between chunks. Completion bytes are copied
+ * before this call returns. Limits: 64 pending reads, 1 MiB per completion,
+ * 1 KiB opaque grant IDs. */
+enum {
+    WEBSCENE_FILE_GRANT_READ_SUCCESS_V2 = 0,
+    WEBSCENE_FILE_GRANT_READ_CANCELLED_V2 = 1,
+    WEBSCENE_FILE_GRANT_READ_DENIED_V2 = 2,
+    WEBSCENE_FILE_GRANT_READ_NOT_FOUND_V2 = 3,
+    WEBSCENE_FILE_GRANT_READ_IO_ERROR_V2 = 4,
+    WEBSCENE_FILE_GRANT_READ_MAXIMUM_BYTES_V2 = 1024 * 1024
+};
+typedef struct webscene_file_grant_metadata_v2 {
+    uint32_t struct_size, version;
+    uint64_t byte_count;
+    int64_t modification_time_ns;
+    uint32_t kind, reserved;
+} webscene_file_grant_metadata_v2;
+typedef struct webscene_file_grant_read_request_v2 {
+    uint32_t struct_size, version;
+    uint64_t request_id;
+    webscene_file_panel_token_v2 grant_id;
+    uint64_t offset;
+    uint32_t maximum_bytes, reserved;
+} webscene_file_grant_read_request_v2;
+typedef struct webscene_file_grant_read_completion_v2 {
+    uint32_t struct_size, version;
+    uint64_t request_id;
+    uint32_t status, reserved;
+    webscene_file_grant_metadata_v2 metadata;
+    uint64_t offset;
+    const uint8_t* data;
+    size_t byte_count;
+    uint8_t eof;
+    uint8_t reserved_bytes[7];
+} webscene_file_grant_read_completion_v2;
+WEBSCENE_API const webscene_file_grant_read_request_v2*
+webscene_engine_take_file_grant_read_request_v2(webscene_engine* engine);
+WEBSCENE_API void webscene_file_grant_read_request_release_v2(
+    const webscene_file_grant_read_request_v2* request);
+WEBSCENE_API uint8_t webscene_engine_complete_file_grant_read_request_v2(
+    webscene_engine* engine,
+    const webscene_file_grant_read_completion_v2* completion);
+
+/* Atomic writes over an opaque native file grant. BEGIN returns a private
+ * transaction token. CHUNK copies one nonempty offset range. COMMIT publishes
+ * exactly final_byte_count bytes atomically; ABORT discards the transaction.
+ * Request storage remains immutable until release and completion storage is
+ * copied before return. Limits: 64 pending operations, 16 concurrent
+ * transactions in the native authority, 1 MiB per chunk, 1 GiB per
+ * transaction, and 1 KiB opaque grant/transaction tokens. */
+enum {
+    WEBSCENE_FILE_GRANT_WRITE_BEGIN_V2 = 1,
+    WEBSCENE_FILE_GRANT_WRITE_CHUNK_V2 = 2,
+    WEBSCENE_FILE_GRANT_WRITE_COMMIT_V2 = 3,
+    WEBSCENE_FILE_GRANT_WRITE_ABORT_V2 = 4
+};
+enum {
+    WEBSCENE_FILE_GRANT_WRITE_SUCCESS_V2 = 0,
+    WEBSCENE_FILE_GRANT_WRITE_CANCELLED_V2 = 1,
+    WEBSCENE_FILE_GRANT_WRITE_DENIED_V2 = 2,
+    WEBSCENE_FILE_GRANT_WRITE_NOT_FOUND_V2 = 3,
+    WEBSCENE_FILE_GRANT_WRITE_CHANGED_V2 = 4,
+    WEBSCENE_FILE_GRANT_WRITE_IO_ERROR_V2 = 5,
+    WEBSCENE_FILE_GRANT_WRITE_LIMIT_V2 = 6,
+    WEBSCENE_FILE_GRANT_WRITE_MAXIMUM_CHUNK_BYTES_V2 = 1024 * 1024,
+    WEBSCENE_FILE_GRANT_WRITE_MAXIMUM_TRANSACTION_BYTES_V2 = 1024 * 1024 * 1024,
+    WEBSCENE_FILE_GRANT_WRITE_MAXIMUM_PENDING_OPERATIONS_V2 = 64
+};
+typedef struct webscene_file_grant_write_request_v2 {
+    uint32_t struct_size, version;
+    uint64_t request_id;
+    uint32_t action, reserved;
+    webscene_file_panel_token_v2 grant_id;
+    webscene_file_panel_token_v2 transaction_id;
+    uint64_t offset;
+    const uint8_t* data;
+    size_t byte_count;
+    uint64_t final_byte_count;
+} webscene_file_grant_write_request_v2;
+typedef struct webscene_file_grant_write_completion_v2 {
+    uint32_t struct_size, version;
+    uint64_t request_id;
+    uint32_t status, action;
+    webscene_file_panel_token_v2 transaction_id;
+    webscene_file_grant_metadata_v2 metadata;
+    uint64_t offset;
+    size_t byte_count;
+} webscene_file_grant_write_completion_v2;
+WEBSCENE_API const webscene_file_grant_write_request_v2*
+webscene_engine_take_file_grant_write_request_v2(webscene_engine* engine);
+WEBSCENE_API void webscene_file_grant_write_request_release_v2(
+    const webscene_file_grant_write_request_v2* request);
+WEBSCENE_API uint8_t webscene_engine_complete_file_grant_write_request_v2(
+    webscene_engine* engine,
+    const webscene_file_grant_write_completion_v2* completion);
+
+/* Bounded deterministic directory pages over an opaque directory grant.
+ * ENUMERATE starts with an empty cursor and continues with the returned opaque
+ * cursor. RELEASE_CURSOR explicitly discards an unfinished snapshot. Requests
+ * and completions are copied at the ABI boundary. Names and child grants are
+ * relative display metadata and opaque authority only; paths never cross this
+ * interface. Limits: 64 pending operations, 32 entries/page, 10,000 entries
+ * and 1 MiB of UTF-8 names per native snapshot, 1 KiB grant/cursor tokens. */
+enum {
+    WEBSCENE_FILE_GRANT_DIRECTORY_ENUMERATE_V2 = 1,
+    WEBSCENE_FILE_GRANT_DIRECTORY_RELEASE_CURSOR_V2 = 2
+};
+enum {
+    WEBSCENE_FILE_GRANT_DIRECTORY_SUCCESS_V2 = 0,
+    WEBSCENE_FILE_GRANT_DIRECTORY_CANCELLED_V2 = 1,
+    WEBSCENE_FILE_GRANT_DIRECTORY_DENIED_V2 = 2,
+    WEBSCENE_FILE_GRANT_DIRECTORY_NOT_FOUND_V2 = 3,
+    WEBSCENE_FILE_GRANT_DIRECTORY_CHANGED_V2 = 4,
+    WEBSCENE_FILE_GRANT_DIRECTORY_IO_ERROR_V2 = 5,
+    WEBSCENE_FILE_GRANT_DIRECTORY_LIMIT_V2 = 6,
+    WEBSCENE_FILE_GRANT_DIRECTORY_MAXIMUM_PAGE_ENTRIES_V2 = 32,
+    WEBSCENE_FILE_GRANT_DIRECTORY_MAXIMUM_SNAPSHOT_ENTRIES_V2 = 10000,
+    WEBSCENE_FILE_GRANT_DIRECTORY_MAXIMUM_NAME_BYTES_V2 = 1024 * 1024,
+    WEBSCENE_FILE_GRANT_DIRECTORY_MAXIMUM_PENDING_OPERATIONS_V2 = 64
+};
+typedef struct webscene_file_grant_directory_request_v2 {
+    uint32_t struct_size, version;
+    uint64_t request_id;
+    uint32_t action, reserved;
+    webscene_file_panel_token_v2 directory_grant_id;
+    webscene_file_panel_token_v2 cursor;
+    uint32_t maximum_entries, reserved_entries;
+} webscene_file_grant_directory_request_v2;
+typedef struct webscene_file_grant_directory_entry_v2 {
+    uint32_t struct_size, version;
+    webscene_file_grant_metadata_v2 metadata;
+    uint32_t capabilities, reserved;
+    webscene_file_panel_string_v2 display_name;
+    webscene_file_panel_token_v2 grant_id;
+} webscene_file_grant_directory_entry_v2;
+typedef struct webscene_file_grant_directory_completion_v2 {
+    uint32_t struct_size, version;
+    uint64_t request_id;
+    uint32_t status, action;
+    const webscene_file_grant_directory_entry_v2* entries;
+    size_t entry_count;
+    webscene_file_panel_token_v2 next_cursor;
+    uint64_t skipped_symlinks;
+} webscene_file_grant_directory_completion_v2;
+WEBSCENE_API const webscene_file_grant_directory_request_v2*
+webscene_engine_take_file_grant_directory_request_v2(webscene_engine* engine);
+WEBSCENE_API void webscene_file_grant_directory_request_release_v2(
+    const webscene_file_grant_directory_request_v2* request);
+WEBSCENE_API uint8_t webscene_engine_complete_file_grant_directory_request_v2(
+    webscene_engine* engine,
+    const webscene_file_grant_directory_completion_v2* completion);
+
+/* Atomically gets or creates one direct file child beneath an opaque directory
+ * grant. A successful completion carries metadata and a newly derived opaque
+ * file grant; paths, bookmarks, descriptors, and native objects stay native. */
+enum {
+    WEBSCENE_FILE_GRANT_CREATE_FILE_SUCCESS_V2 = 0,
+    WEBSCENE_FILE_GRANT_CREATE_FILE_CANCELLED_V2 = 1,
+    WEBSCENE_FILE_GRANT_CREATE_FILE_DENIED_V2 = 2,
+    WEBSCENE_FILE_GRANT_CREATE_FILE_NOT_FOUND_V2 = 3,
+    WEBSCENE_FILE_GRANT_CREATE_FILE_TYPE_MISMATCH_V2 = 4,
+    WEBSCENE_FILE_GRANT_CREATE_FILE_CHANGED_V2 = 5,
+    WEBSCENE_FILE_GRANT_CREATE_FILE_IO_ERROR_V2 = 6,
+    WEBSCENE_FILE_GRANT_CREATE_FILE_LIMIT_V2 = 7,
+    WEBSCENE_FILE_GRANT_CREATE_FILE_MAXIMUM_NAME_BYTES_V2 = 1024 * 1024,
+    WEBSCENE_FILE_GRANT_CREATE_FILE_MAXIMUM_PENDING_OPERATIONS_V2 = 64
+};
+typedef struct webscene_file_grant_create_file_request_v2 {
+    uint32_t struct_size, version;
+    uint64_t request_id;
+    webscene_file_panel_token_v2 directory_grant_id;
+    webscene_file_panel_string_v2 display_name;
+    uint64_t reserved;
+} webscene_file_grant_create_file_request_v2;
+typedef struct webscene_file_grant_create_file_completion_v2 {
+    uint32_t struct_size, version;
+    uint64_t request_id;
+    uint32_t status, capabilities;
+    webscene_file_grant_metadata_v2 metadata;
+    webscene_file_panel_string_v2 display_name;
+    webscene_file_panel_token_v2 grant_id;
+} webscene_file_grant_create_file_completion_v2;
+WEBSCENE_API const webscene_file_grant_create_file_request_v2*
+webscene_engine_take_file_grant_create_file_request_v2(webscene_engine* engine);
+WEBSCENE_API void webscene_file_grant_create_file_request_release_v2(
+    const webscene_file_grant_create_file_request_v2* request);
+WEBSCENE_API uint8_t webscene_engine_complete_file_grant_create_file_request_v2(
+    webscene_engine* engine,
+    const webscene_file_grant_create_file_completion_v2* completion);
+
+/* One-way release of a live opaque file grant after the final browser-side
+ * wrapper or in-flight structured-clone packet relinquishes ownership. The
+ * engine queues each token at most once per broker lifetime. Request memory is
+ * immutable until release; opaque tokens remain capped at 1 KiB. */
+enum {
+    WEBSCENE_FILE_GRANT_RELEASE_MAXIMUM_QUEUED_V2 = 16384
+};
+typedef struct webscene_file_grant_release_request_v2 {
+    uint32_t struct_size, version;
+    webscene_file_panel_token_v2 grant_id;
+    uint32_t reserved, reserved2;
+} webscene_file_grant_release_request_v2;
+WEBSCENE_API const webscene_file_grant_release_request_v2*
+webscene_engine_take_file_grant_release_request_v2(webscene_engine* engine);
+WEBSCENE_API void webscene_file_grant_release_request_release_v2(
+    const webscene_file_grant_release_request_v2* request);
+
 /* Typed native desktop request ABI. Request memory is immutable and remains
  * valid until release. Byte payloads are capped at 16 MiB, strings are UTF-8,
  * and at most 16 completion-bearing operations may be pending per document. */
@@ -1605,7 +1941,11 @@ enum {
 };
 enum {
     WEBSCENE_HOST_REQUEST_CLIPBOARD_REPLACE_V1 = 1U << 0U,
-    WEBSCENE_HOST_REQUEST_NAVIGATION_REPLACE_V1 = 1U << 0U
+    WEBSCENE_HOST_REQUEST_NAVIGATION_REPLACE_V1 = 1U << 0U,
+    /* The engine has already admitted this cross-origin navigation through
+     * webscene_navigation_policy_callback_v1. Hosts may retain a same-origin
+     * default while accepting this explicit, engine-policy-backed exception. */
+    WEBSCENE_HOST_REQUEST_NAVIGATION_CROSS_ORIGIN_ADMITTED_V1 = 1U << 1U
 };
 typedef struct webscene_host_request_v1 {
     uint32_t struct_size, version;

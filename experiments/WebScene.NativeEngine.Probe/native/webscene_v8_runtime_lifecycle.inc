@@ -12,7 +12,23 @@
         std::string storage_directory_value,
         std::string storage_partition_key_value,
         uint64_t storage_quota_bytes_value,
-        v8_dom_runtime::file_panel_request_sink_v2 file_panel_request_sink_value)
+        v8_dom_runtime::file_panel_request_sink_v2 file_panel_request_sink_value,
+        v8_dom_runtime::file_grant_same_entry_request_sink_v2
+            file_grant_same_entry_request_sink_value,
+        v8_dom_runtime::file_grant_ancestry_request_sink_v2
+            file_grant_ancestry_request_sink_value,
+        v8_dom_runtime::file_grant_durable_request_sink_v2
+            file_grant_durable_request_sink_value,
+        v8_dom_runtime::file_grant_read_request_sink_v2
+            file_grant_read_request_sink_value,
+        v8_dom_runtime::file_grant_write_request_sink_v2
+            file_grant_write_request_sink_value,
+        v8_dom_runtime::file_grant_directory_request_sink_v2
+            file_grant_directory_request_sink_value,
+        v8_dom_runtime::file_grant_release_request_sink_v2
+            file_grant_release_request_sink_value,
+        v8_dom_runtime::file_grant_create_file_request_sink_v2
+            file_grant_create_file_request_sink_value)
         : document(document_value)
         , viewport_provider(std::move(viewport_provider_value))
         , load_resource_callback(std::move(resource_loader_value))
@@ -21,6 +37,22 @@
         , storage_quota_bytes(storage_quota_bytes_value)
         , host_request_available(std::move(host_request_available_value))
         , file_panel_request_sink(std::move(file_panel_request_sink_value))
+        , file_grant_same_entry_request_sink(
+            std::move(file_grant_same_entry_request_sink_value))
+        , file_grant_ancestry_request_sink(
+            std::move(file_grant_ancestry_request_sink_value))
+        , file_grant_durable_request_sink(
+            std::move(file_grant_durable_request_sink_value))
+        , file_grant_read_request_sink(
+            std::move(file_grant_read_request_sink_value))
+        , file_grant_write_request_sink(
+            std::move(file_grant_write_request_sink_value))
+        , file_grant_directory_request_sink(
+            std::move(file_grant_directory_request_sink_value))
+        , file_grant_release_request_sink(
+            std::move(file_grant_release_request_sink_value))
+        , file_grant_create_file_request_sink(
+            std::move(file_grant_create_file_request_sink_value))
         , interop_callback_available(std::move(interop_callback_available_value))
         , interop_callback_sink(std::move(interop_callback_sink_value))
         , runtime_work_available(std::move(runtime_work_available_value))
@@ -48,6 +80,8 @@
         , profile_css(std::getenv("WEBSCENE_PROBE_PROFILE_CSS") != nullptr)
 #endif
     {
+        file_grant_releases = std::make_shared<file_grant_release_dispatcher>();
+        file_grant_releases->sink = file_grant_release_request_sink;
         if (!storage_directory.empty() && !storage_partition_key.empty()) {
             indexeddb = std::make_unique<indexeddb_storage>(
                 std::filesystem::path(storage_directory),
@@ -137,6 +171,9 @@
         // Fetch workers only own host-resource data. Join them before V8
         // persistent promise handles are released below.
         for (auto& fetch : pending_fetches) {
+            if (fetch.cancel) fetch.cancel();
+        }
+        for (auto& fetch : pending_fetches) {
             if (!fetch.future.valid()) continue;
             try {
                 static_cast<void>(fetch.future.get());
@@ -186,6 +223,8 @@
         pending_window_messages.clear();
         pending_window_message_bytes = 0U;
         message_port_bindings.clear();
+        release_all_file_system_handles();
+        if (file_grant_releases != nullptr) file_grant_releases->stop();
         pending_dialog_close_events.clear();
         pending_programmatic_scroll_events.clear();
         pending_interop_promises.clear();
@@ -195,12 +234,19 @@
             indexeddb_completions.clear();
         }
         pending_indexeddb_promises.clear();
+        indexeddb_durable_request_targets.clear();
         // Native host and file completions can still be pending when a window
         // closes. Their persistent context/resolver handles must be released
         // while the isolate is alive; member destruction happens after this
         // body and therefore after isolate disposal below.
         host_promise_targets.clear();
         file_panel_promise_targets.clear();
+        file_grant_same_entry_promise_targets.clear();
+        file_grant_ancestry_promise_targets.clear();
+        file_grant_read_promise_targets.clear();
+        file_grant_write_promise_targets.clear();
+        file_grant_directory_promise_targets.clear();
+        file_grant_create_file_promise_targets.clear();
         file_targets.clear();
         pending_fetches.clear();
         pending_digests.clear();
@@ -239,6 +285,7 @@
         frame_windows.clear();
         frame_window_scroll_offsets.clear();
         frame_load_listeners.clear();
+        frame_dom_content_loaded_listeners.clear();
         frame_event_listeners.clear();
         actual_frame_windows.clear();
         actual_frame_contexts.clear();
@@ -374,6 +421,9 @@
         std::string classification{"supported"};
         std::string semantic_slice;
         std::string source;
+        std::string_view css_property;
+
+        struct css_property_tag final {};
 
         feature_decision(
             implementation& owner_value,
@@ -387,11 +437,27 @@
         {
         }
 
+        feature_decision(
+            implementation& owner_value,
+            css_property_tag,
+            std::string_view property_value)
+            : owner(owner_value),
+              css_property(property_value)
+        {
+        }
+
         feature_decision(const feature_decision&) = delete;
         feature_decision& operator=(const feature_decision&) = delete;
 
         ~feature_decision()
         {
+            if (!css_property.empty()) {
+                owner.record_css_property_feature(
+                    css_property,
+                    std::move(classification),
+                    std::move(semantic_slice));
+                return;
+            }
             owner.record_feature(
                 std::move(category),
                 std::move(feature),
@@ -649,6 +715,56 @@
 #endif
     }
 
+    void record_css_property_feature(
+        std::string_view property,
+        std::string classification,
+        std::string semantic_slice)
+    {
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+        // Supported declarations are the hot cascade path. Preserve exact
+        // feature-use counts while avoiding five temporary strings and a
+        // composite-key allocation for every declaration replay.
+        if (classification == "supported" && semantic_slice.empty()) {
+            if (const auto cached =
+                    supported_css_property_observation_writer_cache.find(property);
+                cached != supported_css_property_observation_writer_cache.end()) {
+                cached->second->count.fetch_add(1U, std::memory_order_relaxed);
+                return;
+            }
+            auto category = std::string("css");
+            auto feature = std::string("property:");
+            feature.append(property);
+            auto source = std::string("style-application");
+            const auto key = category + '\x1f' + feature + "\x1fsupported\x1f\x1f"
+                + source;
+            std::lock_guard lock(feature_observation_mutex);
+            auto [entry, inserted] = feature_observations.try_emplace(
+                key,
+                std::move(category),
+                std::move(feature),
+                std::string("supported"),
+                std::string{},
+                std::move(source));
+            static_cast<void>(inserted);
+            feature_observation_writer_cache.emplace(key, &entry->second);
+            supported_css_property_observation_writer_cache.emplace(
+                std::string(property), &entry->second);
+            entry->second.count.fetch_add(1U, std::memory_order_relaxed);
+            return;
+        }
+        record_feature(
+            "css",
+            "property:" + std::string(property),
+            std::move(classification),
+            std::move(semantic_slice),
+            "style-application");
+#else
+        static_cast<void>(property);
+        static_cast<void>(classification);
+        static_cast<void>(semantic_slice);
+#endif
+    }
+
     void record_canvas_feature(const char* feature)
     {
 #if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
@@ -828,6 +944,12 @@
             for (const auto& listener : listeners) {
                 if (listener.target == 0U || listener.callback.IsEmpty()) continue;
                 by_target[listener.target].insert(type);
+            }
+        }
+        for (const auto& [target, listeners] : frame_dom_content_loaded_listeners) {
+            if (std::any_of(listeners.begin(), listeners.end(),
+                    [](const auto& listener) { return !listener.IsEmpty(); })) {
+                by_target[target].insert("DOMContentLoaded");
             }
         }
         std::vector<uint32_t> target_ids;

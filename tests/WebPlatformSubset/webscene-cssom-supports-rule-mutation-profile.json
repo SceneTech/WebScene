@@ -1,0 +1,27 @@
+{
+  "profile": "webscene-cssom-supports-rule-mutation-1",
+  "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+  "runtime": "v8",
+  "viewport": {
+    "width": 800,
+    "height": 600,
+    "deviceScaleFactor": 1
+  },
+  "required": [
+    {
+      "path": "contracts/cssom-supports-rule-mutation.html",
+      "type": "contract",
+      "capabilities": [
+        "cssom-supports-rule-identity",
+        "cssom-conditional-grouping-rule-list",
+        "cssom-supports-nested-rule-mutation",
+        "cssom-supports-rule-parent-links",
+        "cssom-supports-cross-document-ownership"
+      ],
+      "evidence": ["cssom-supports-rule-mutation-381"],
+      "reason": "Chrome-derived CSSOM and CSS Conditional Rules regression for live owner-backed CSSSupportsRule identity, readonly condition reflection, nested mutation, invalidation, serialization, and lifecycle ownership."
+    }
+  ],
+  "harnessBlocked": [],
+  "excluded": []
+}

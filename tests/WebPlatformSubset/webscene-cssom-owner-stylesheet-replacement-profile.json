@@ -1,0 +1,26 @@
+{
+  "profile": "webscene-cssom-owner-stylesheet-replacement-1",
+  "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+  "runtime": "v8",
+  "viewport": {
+    "width": 800,
+    "height": 600,
+    "deviceScaleFactor": 1
+  },
+  "required": [
+    {
+      "path": "contracts/cssom-owner-stylesheet-replacement.html",
+      "type": "contract",
+      "capabilities": [
+        "cssom-owner-stylesheet-replacement-rejection",
+        "cssom-webidl-promise-errors",
+        "cssom-detached-owner-lifecycle",
+        "cssom-cross-document-ownership"
+      ],
+      "evidence": ["cssom-owner-stylesheet-replacement-366"],
+      "reason": "WPT-derived Chromium authority and native regression for constructed-only replace/replaceSync rejection on owner-backed sheets, Web IDL conversion and Promise behavior, unchanged rules/invalidation, detached ownership, and cross-realm lifecycle."
+    }
+  ],
+  "harnessBlocked": [],
+  "excluded": []
+}

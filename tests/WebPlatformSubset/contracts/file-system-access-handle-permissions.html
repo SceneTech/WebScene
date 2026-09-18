@@ -1,0 +1,51 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>File System Access capability-exact permission states</title>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<body>
+<script>
+  promise_test(async t => {
+    const root = await navigator.storage.getDirectory();
+    const name = `webscene-permissions-${Date.now()}.txt`;
+    t.add_cleanup(() => root.removeEntry(name));
+    const file = await root.getFileHandle(name, {create: true});
+    const clone = structuredClone(file);
+    let modeReads = 0;
+
+    for (const handle of [root, file, clone]) {
+      assert_equals(await handle.queryPermission(), "granted",
+        `${handle.kind} omitted query mode`);
+      assert_equals(await handle.queryPermission(undefined), "granted",
+        `${handle.kind} undefined descriptor`);
+      assert_equals(await handle.queryPermission(null), "granted",
+        `${handle.kind} null descriptor`);
+      assert_equals(await handle.queryPermission({mode: "readwrite"}), "granted",
+        `${handle.kind} readwrite query`);
+      assert_equals(await handle.requestPermission(), "granted",
+        `${handle.kind} omitted request mode`);
+      assert_equals(await handle.requestPermission({mode: "readwrite"}), "granted",
+        `${handle.kind} readwrite request`);
+    }
+    assert_equals(await file.queryPermission({get mode() {
+      ++modeReads;
+      return "read";
+    }}), "granted", "getter-backed mode");
+    assert_equals(modeReads, 1, "permission dictionary reads mode once");
+  }, "OPFS handles and structured clones preserve granted read and readwrite states");
+
+  promise_test(async t => {
+    const handle = await navigator.storage.getDirectory();
+    for (const mode of ["", "unknown", null, 0]) {
+      await promise_rejects_js(t, TypeError,
+        handle.queryPermission({mode}), `query mode ${String(mode)}`);
+      await promise_rejects_js(t, TypeError,
+        handle.requestPermission({mode}), `request mode ${String(mode)}`);
+    }
+    await promise_rejects_js(t, TypeError,
+      FileSystemHandle.prototype.queryPermission.call({}), "query receiver");
+    await promise_rejects_js(t, TypeError,
+      FileSystemHandle.prototype.requestPermission.call({}), "request receiver");
+  }, "permission descriptors reject unsupported modes and borrowed receivers");
+</script>
+</body>

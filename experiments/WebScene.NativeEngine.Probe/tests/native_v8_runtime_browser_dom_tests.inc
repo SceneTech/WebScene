@@ -1621,6 +1621,33 @@ void test_native_mutable_stylesheet_cssom(webscene_engine* engine)
           nestedRule.parentStyleSheet === sheet,
           view.getComputedStyle(target).display,
           mediaRule.cssText.includes('display: grid')];
+        const mediaList = mediaRule.media;
+        const mediaReflection = [
+          mediaList instanceof view.MediaList,
+          mediaRule.media === mediaList,
+          mediaList.mediaText,
+          mediaList.length,
+          mediaList[0],
+          mediaList.item(0),
+          mediaList.toString()];
+        mediaRule.media = '(max-width:1px)';
+        const mediaForwarded = [mediaRule.media === mediaList,
+          mediaList.mediaText, mediaRule.conditionText,
+          view.getComputedStyle(target).display,
+          mediaRule.cssText.includes('(max-width: 1px)')];
+        mediaList.appendMedium('screen');
+        mediaList.appendMedium('SCREEN');
+        mediaList.appendMedium('screen, print');
+        const mediaAppended = [mediaList.mediaText, mediaList.length,
+          mediaRule.conditionText, view.getComputedStyle(target).display];
+        mediaList.deleteMedium('screen');
+        let missingMedium = '';
+        try { mediaList.deleteMedium('speech'); }
+        catch (error) { missingMedium = error.name; }
+        const mediaListDeleted = [mediaList.mediaText, mediaList.length,
+          mediaRule.conditionText, missingMedium,
+          view.getComputedStyle(target).display];
+        mediaList.mediaText = '(min-width: 1px)';
         mediaRule.deleteRule(nestedIndex);
         const mediaDeleted = [mediaRules.length,
           nestedRule.parentRule === null,
@@ -1648,8 +1675,9 @@ void test_native_mutable_stylesheet_cssom(webscene_engine* engine)
         observer.disconnect();
         style.remove();
         target.remove();
-        return { inserted, mutated, media, mediaDeleted, reconnected, disabled, enabled,
-          mediaMiss, mediaMatch, deleted };
+        return { inserted, mutated, media, mediaReflection, mediaForwarded,
+          mediaAppended, mediaListDeleted, mediaDeleted, reconnected, disabled,
+          enabled, mediaMiss, mediaMatch, deleted };
       };
       const frame = document.createElement('iframe');
       document.body.appendChild(frame);
@@ -1664,15 +1692,453 @@ void test_native_mutable_stylesheet_cssom(webscene_engine* engine)
     })())JS", "native-mutable-stylesheet-cssom.js");
     require(
         result
-            == R"JSON({"main":{"inserted":[1,2,".monaco-main","none",true,true,true,"SyntaxError"],"mutated":[2,"inline-block","inline-block"],"media":[2,true,true,true,4,"(min-width: 1px)",true,2,true,true,true,true,"grid",true],"mediaDeleted":[1,true,true,"inline-block"],"reconnected":[true,"grid",true],"disabled":[true,"block"],"enabled":[false,"grid"],"mediaMiss":["(max-width: 1px)",1,"(max-width: 1px)","block"],"mediaMatch":["(min-width: 1px)","grid"],"deleted":[2,true,0,true]},"frame":{"inserted":[1,2,".monaco-frame","none",true,true,true,"SyntaxError"],"mutated":[2,"inline-flex","inline-flex"],"media":[2,true,true,true,4,"(min-width: 1px)",true,2,true,true,true,true,"grid",true],"mediaDeleted":[1,true,true,"inline-flex"],"reconnected":[true,"grid",true],"disabled":[true,"block"],"enabled":[false,"grid"],"mediaMiss":["(max-width: 1px)",1,"(max-width: 1px)","block"],"mediaMatch":["(min-width: 1px)","grid"],"deleted":[2,true,0,true]}})JSON",
+            == R"JSON({"main":{"inserted":[1,2,".monaco-main","none",true,true,true,"SyntaxError"],"mutated":[2,"inline-block","inline-block"],"media":[2,true,true,true,4,"(min-width: 1px)",true,2,true,true,true,true,"grid",true],"mediaReflection":[true,true,"(min-width: 1px)",1,"(min-width: 1px)","(min-width: 1px)","(min-width: 1px)"],"mediaForwarded":[true,"(max-width: 1px)","(max-width: 1px)","block",true],"mediaAppended":["(max-width: 1px), screen",2,"(max-width: 1px), screen","grid"],"mediaListDeleted":["(max-width: 1px)",1,"(max-width: 1px)","NotFoundError","block"],"mediaDeleted":[1,true,true,"inline-block"],"reconnected":[true,"grid",true],"disabled":[true,"block"],"enabled":[false,"grid"],"mediaMiss":["(max-width: 1px)",1,"(max-width: 1px)","block"],"mediaMatch":["(min-width: 1px)","grid"],"deleted":[2,true,0,true]},"frame":{"inserted":[1,2,".monaco-frame","none",true,true,true,"SyntaxError"],"mutated":[2,"inline-flex","inline-flex"],"media":[2,true,true,true,4,"(min-width: 1px)",true,2,true,true,true,true,"grid",true],"mediaReflection":[true,true,"(min-width: 1px)",1,"(min-width: 1px)","(min-width: 1px)","(min-width: 1px)"],"mediaForwarded":[true,"(max-width: 1px)","(max-width: 1px)","block",true],"mediaAppended":["(max-width: 1px), screen",2,"(max-width: 1px), screen","grid"],"mediaListDeleted":["(max-width: 1px)",1,"(max-width: 1px)","NotFoundError","block"],"mediaDeleted":[1,true,true,"inline-flex"],"reconnected":[true,"grid",true],"disabled":[true,"block"],"enabled":[false,"grid"],"mediaMiss":["(max-width: 1px)",1,"(max-width: 1px)","block"],"mediaMatch":["(min-width: 1px)","grid"],"deleted":[2,true,0,true]}})JSON",
         "mutable stylesheet CSSOM did not recascade main/frame styles: "
             + result);
+
+    const auto supports_result = evaluate(engine, R"JS((() => {
+      const exercise = (document, view, className) => {
+        const style = document.createElement('style');
+        const target = document.createElement('div');
+        style.textContent = `@supports selector(:focus-visible) {
+          .${className} { display: grid; }
+        }`;
+        target.className = className;
+        document.head.appendChild(style);
+        document.body.appendChild(target);
+        const sheet = style.sheet;
+        const group = sheet.cssRules[0];
+        const rules = group.cssRules;
+        const original = rules[0];
+        const authoredText = style.textContent;
+        const initial = [
+          group.constructor.name,
+          group instanceof view.CSSSupportsRule,
+          group instanceof view.CSSConditionRule,
+          group instanceof view.CSSGroupingRule,
+          group instanceof view.CSSRule,
+          group.type,
+          view.CSSRule.SUPPORTS_RULE,
+          group.conditionText,
+          group.cssRules === rules,
+          original.parentRule === group,
+          original.parentStyleSheet === sheet,
+          view.getComputedStyle(target).display
+        ];
+        let assignmentError = '';
+        try { group.conditionText = '(display:none)'; }
+        catch (error) { assignmentError = error.name; }
+        const assignment = [group.conditionText, assignmentError];
+        const errors = [];
+        for (const invoke of [
+          () => group.insertRule(),
+          () => group.deleteRule(),
+          () => group.insertRule(`.${className} {}`, 99),
+          () => group.insertRule(`.${className} {} .other {}`, 0),
+          () => group.insertRule('@import url("x.css");', 0)
+        ]) {
+          try { invoke(); errors.push('none'); }
+          catch (error) { errors.push(error.name); }
+        }
+        const insertedIndex = group.insertRule(
+          `.${className} { display: none; }`, rules.length);
+        const inserted = rules[insertedIndex];
+        const afterInsert = [insertedIndex, rules.length,
+          inserted.parentRule === group,
+          inserted.parentStyleSheet === sheet,
+          view.getComputedStyle(target).display,
+          group.cssText.includes('display: none')];
+        group.deleteRule(insertedIndex);
+        const afterDelete = [rules.length, inserted.parentRule,
+          inserted.parentStyleSheet, view.getComputedStyle(target).display];
+        const mediaIndex = sheet.insertRule(
+          `@media (min-width:1px) { @supports selector(:focus-visible) {
+            .${className} { display: inline-grid; }
+          } }`, sheet.cssRules.length);
+        const media = sheet.cssRules[mediaIndex];
+        const nested = media.cssRules[0];
+        const nestedIndex = nested.insertRule(
+          `.${className} { display: block; }`, nested.cssRules.length);
+        const nestedState = [nestedIndex, nested.cssRules.length,
+          nested.parentRule === media,
+          nested.parentStyleSheet === sheet,
+          view.getComputedStyle(target).display,
+          media.cssText.includes('display: block')];
+        const textStable = style.textContent === authoredText;
+        style.remove();
+        target.remove();
+        return { initial, assignment, errors, afterInsert, afterDelete,
+          nestedState, textStable };
+      };
+      const frame = document.createElement('iframe');
+      document.body.appendChild(frame);
+      const value = {
+        main: exercise(document, window, 'supports-main'),
+        frame: exercise(frame.contentDocument, frame.contentWindow, 'supports-frame')
+      };
+      frame.remove();
+      return value;
+    })())JS", "native-css-supports-rule-mutation.js");
+    const auto supports_expected = [] {
+        return std::string{"{\"initial\":[\"CSSSupportsRule\",true,true,true,true,12,12,\"selector(:focus-visible)\",true,true,true,\"grid\"],\"assignment\":[\"selector(:focus-visible)\",\"\"],\"errors\":[\"TypeError\",\"TypeError\",\"IndexSizeError\",\"SyntaxError\",\"HierarchyRequestError\"],\"afterInsert\":[1,2,true,true,\"none\",true],\"afterDelete\":[1,null,null,\"grid\"],\"nestedState\":[1,2,true,true,\"block\",true],\"textStable\":true}"};
+    };
+    require(
+        supports_result == "{\"main\":" + supports_expected()
+                + ",\"frame\":" + supports_expected() + "}",
+        "CSSSupportsRule mutation diverged from the browser contract: "
+            + supports_result);
+
+    const auto layer_result = evaluate(engine, R"JS((() => {
+      const exercise = (document, view, className) => {
+        const style = document.createElement('style');
+        const target = document.createElement('div');
+        style.textContent = `@layer base, theme;
+          @layer base { .${className} { color: rgb(1, 2, 3); } }
+          @layer theme { .${className} { color: rgb(4, 5, 6); } }`;
+        target.className = className;
+        document.head.appendChild(style);
+        document.body.appendChild(target);
+        const sheet = style.sheet;
+        const group = sheet.cssRules[2];
+        const rules = group.cssRules;
+        const original = rules[0];
+        const authoredText = style.textContent;
+        const initial = [
+          group.constructor.name,
+          group instanceof view.CSSLayerBlockRule,
+          group instanceof view.CSSGroupingRule,
+          group instanceof view.CSSRule,
+          group.type,
+          typeof view.CSSRule.LAYER_BLOCK_RULE,
+          group.name,
+          group.cssRules === rules,
+          original.parentRule === group,
+          original.parentStyleSheet === sheet,
+          view.getComputedStyle(target).color
+        ];
+        let assignmentError = '';
+        try { group.name = 'changed'; }
+        catch (error) { assignmentError = error.name; }
+        const assignment = [group.name, assignmentError];
+        const errors = [];
+        for (const invoke of [
+          () => group.insertRule(),
+          () => group.deleteRule(),
+          () => group.insertRule(`.${className} {}`, 99),
+          () => group.insertRule(`.${className} {} .other {}`, 0),
+          () => group.insertRule('@import url("x.css");', 0),
+          () => group.insertRule('@namespace x url("x");', 0)
+        ]) {
+          try { invoke(); errors.push('none'); }
+          catch (error) { errors.push(error.name); }
+        }
+        const insertedIndex = group.insertRule(
+          `.${className} { color: rgb(7, 8, 9); }`, rules.length);
+        const inserted = rules[insertedIndex];
+        const afterInsert = [insertedIndex, rules.length,
+          inserted.parentRule === group,
+          inserted.parentStyleSheet === sheet,
+          view.getComputedStyle(target).color,
+          group.cssText.includes('rgb(7, 8, 9)')];
+        group.deleteRule(insertedIndex);
+        const afterDelete = [rules.length, inserted.parentRule,
+          inserted.parentStyleSheet, view.getComputedStyle(target).color];
+        const mediaIndex = sheet.insertRule(
+          `@media (min-width:1px) { @layer nested {
+            .${className} { color: rgb(10, 11, 12); }
+          } }`, sheet.cssRules.length);
+        const media = sheet.cssRules[mediaIndex];
+        const nested = media.cssRules[0];
+        const nestedIndex = nested.insertRule(
+          `.${className} { color: rgb(13, 14, 15); }`, nested.cssRules.length);
+        const nestedState = [nestedIndex, nested.cssRules.length,
+          nested.constructor.name,
+          nested instanceof view.CSSLayerBlockRule,
+          nested.name,
+          nested.parentRule === media,
+          nested.parentStyleSheet === sheet,
+          view.getComputedStyle(target).color,
+          media.cssText.includes('rgb(13, 14, 15)')];
+        const anonymousIndex = sheet.insertRule(
+          `@layer { .${className} { color: rgb(16, 17, 18); } }`,
+          sheet.cssRules.length);
+        const anonymous = sheet.cssRules[anonymousIndex];
+        const anonymousState = [anonymous.constructor.name, anonymous.name,
+          anonymous instanceof view.CSSLayerBlockRule, anonymous.type,
+          view.getComputedStyle(target).color];
+        const textStable = style.textContent === authoredText;
+        style.remove();
+        target.remove();
+        return { initial, assignment, errors, afterInsert, afterDelete,
+          nestedState, anonymousState, textStable };
+      };
+      const frame = document.createElement('iframe');
+      document.body.appendChild(frame);
+      const value = {
+        main: exercise(document, window, 'layer-main'),
+        frame: exercise(frame.contentDocument, frame.contentWindow, 'layer-frame')
+      };
+      frame.remove();
+      return value;
+    })())JS", "native-css-layer-block-rule-mutation.js");
+    const auto layer_expected = [] {
+        return std::string{"{\"initial\":[\"CSSLayerBlockRule\",true,true,true,0,\"undefined\",\"theme\",true,true,true,\"rgb(4, 5, 6)\"],\"assignment\":[\"theme\",\"\"],\"errors\":[\"TypeError\",\"TypeError\",\"IndexSizeError\",\"SyntaxError\",\"HierarchyRequestError\",\"HierarchyRequestError\"],\"afterInsert\":[1,2,true,true,\"rgb(7, 8, 9)\",true],\"afterDelete\":[1,null,null,\"rgb(4, 5, 6)\"],\"nestedState\":[1,2,\"CSSLayerBlockRule\",true,\"nested\",true,true,\"rgb(13, 14, 15)\",true],\"anonymousState\":[\"CSSLayerBlockRule\",\"\",true,0,\"rgb(16, 17, 18)\"],\"textStable\":true}"};
+    };
+    require(
+        layer_result == "{\"main\":" + layer_expected()
+                + ",\"frame\":" + layer_expected() + "}",
+        "CSSLayerBlockRule mutation diverged from the browser contract: "
+            + layer_result);
+
+    const auto plain_frame_style_result = evaluate(engine, R"JS((() => {
+      const frame = document.createElement('iframe');
+      document.body.appendChild(frame);
+      const style = frame.contentDocument.createElement('style');
+      const target = frame.contentDocument.createElement('div');
+      style.textContent = '.plain-frame-style { color: rgb(9, 8, 7); }';
+      target.className = 'plain-frame-style';
+      frame.contentDocument.head.appendChild(style);
+      frame.contentDocument.body.appendChild(target);
+      const result = frame.contentWindow.getComputedStyle(target).color;
+      frame.remove();
+      return result;
+    })())JS", "native-plain-frame-style-debug.js");
+    require(
+        plain_frame_style_result == "\"rgb(9, 8, 7)\"",
+        "plain provisional-frame stylesheet control regressed: "
+            + plain_frame_style_result);
+
+    const auto layer_statement_result = evaluate(engine, R"JS((() => {
+      const exercise = (document, view, className) => {
+        const style = document.createElement('style');
+        const target = document.createElement('div');
+        style.textContent = `@layer early, branch.base, late;
+          @layer late { .${className} { color: rgb(255, 0, 0); } }
+          @layer early { .${className} { color: rgb(0, 0, 255); } }`;
+        target.className = className;
+        document.head.appendChild(style);
+        document.body.appendChild(target);
+        const sheet = style.sheet;
+        const authoredText = style.textContent;
+        const statement = sheet.cssRules[0];
+        const names = statement.nameList;
+        const initial = [
+          statement.constructor.name,
+          statement instanceof view.CSSLayerStatementRule,
+          statement instanceof view.CSSRule,
+          statement instanceof view.CSSGroupingRule,
+          statement.type,
+          typeof view.CSSRule.LAYER_STATEMENT_RULE,
+          names.join('|'),
+          Array.isArray(names),
+          Object.isFrozen(names),
+          statement.nameList !== statement.nameList,
+          statement.parentStyleSheet === sheet,
+          statement.parentRule,
+          statement.cssText,
+          view.getComputedStyle(target).color
+        ];
+        let assignmentError = '';
+        try { statement.nameList = ['changed']; }
+        catch (error) { assignmentError = error.name; }
+        let pushError = '';
+        try { names.push('changed'); }
+        catch (error) { pushError = error.name; }
+        const readonly = [assignmentError, pushError,
+          statement.nameList.join('|'), names.join('|')];
+        const errors = [];
+        for (const source of [
+          '@layer;', '@layer invalid,;', '@layer invalid name;',
+          '@layer invalid..name;'
+        ]) {
+          try { sheet.insertRule(source, 0); errors.push('none'); }
+          catch (error) { errors.push(error.name); }
+        }
+        sheet.deleteRule(0);
+        const afterDelete = [
+          view.getComputedStyle(target).color,
+          statement.parentStyleSheet,
+          statement.parentRule,
+          statement.nameList.join('|'),
+          statement.cssText
+        ];
+        const insertedIndex = sheet.insertRule('@layer early, late;', 0);
+        const inserted = sheet.cssRules[insertedIndex];
+        const afterInsert = [
+          insertedIndex,
+          inserted.constructor.name,
+          inserted instanceof view.CSSLayerStatementRule,
+          inserted.nameList.join('|'),
+          inserted.cssText,
+          view.getComputedStyle(target).color
+        ];
+        const mediaIndex = sheet.insertRule('@media all {}', sheet.cssRules.length);
+        const media = sheet.cssRules[mediaIndex];
+        const nestedIndex = media.insertRule(
+          '@layer nested.one, nested.two;', media.cssRules.length);
+        const nested = media.cssRules[nestedIndex];
+        const nestedState = [
+          nested.constructor.name,
+          nested instanceof view.CSSLayerStatementRule,
+          nested.nameList.join('|'),
+          nested.parentRule === media,
+          nested.parentStyleSheet === sheet,
+          media.cssText.includes('@layer nested.one, nested.two;')
+        ];
+        const outerIndex = sheet.insertRule('@layer outer {}', sheet.cssRules.length);
+        const outer = sheet.cssRules[outerIndex];
+        const innerIndex = outer.insertRule('@layer inner.one, inner.two;', 0);
+        const inner = outer.cssRules[innerIndex];
+        const layerNested = [
+          inner instanceof view.CSSLayerStatementRule,
+          inner.nameList.join('|'),
+          inner.parentRule === outer,
+          inner.parentStyleSheet === sheet,
+          outer.cssText.includes('@layer inner.one, inner.two;')
+        ];
+        sheet.deleteRule(0);
+        const detached = [
+          inserted.parentStyleSheet,
+          inserted.parentRule,
+          inserted.nameList.join('|'),
+          inserted.cssText,
+          view.getComputedStyle(target).color
+        ];
+        const textStable = style.textContent === authoredText;
+        style.remove();
+        target.remove();
+        return { initial, readonly, errors, afterDelete, afterInsert,
+          nestedState, layerNested, detached, textStable };
+      };
+      const frame = document.createElement('iframe');
+      document.body.appendChild(frame);
+      const value = {
+        main: exercise(document, window, 'layer-statement-main'),
+        frame: exercise(
+          frame.contentDocument, frame.contentWindow, 'layer-statement-frame')
+      };
+      frame.remove();
+      return value;
+    })())JS", "native-css-layer-statement-rule-mutation.js");
+    const auto layer_statement_expected = [] {
+        return std::string{"{\"initial\":[\"CSSLayerStatementRule\",true,true,false,0,\"undefined\",\"early|branch.base|late\",true,true,true,true,null,\"@layer early, branch.base, late;\",\"rgb(255, 0, 0)\"],\"readonly\":[\"\",\"TypeError\",\"early|branch.base|late\",\"early|branch.base|late\"],\"errors\":[\"SyntaxError\",\"SyntaxError\",\"SyntaxError\",\"SyntaxError\"],\"afterDelete\":[\"rgb(0, 0, 255)\",null,null,\"early|branch.base|late\",\"@layer early, branch.base, late;\"],\"afterInsert\":[0,\"CSSLayerStatementRule\",true,\"early|late\",\"@layer early, late;\",\"rgb(255, 0, 0)\"],\"nestedState\":[\"CSSLayerStatementRule\",true,\"nested.one|nested.two\",true,true,true],\"layerNested\":[true,\"inner.one|inner.two\",true,true,true],\"detached\":[null,null,\"early|late\",\"@layer early, late;\",\"rgb(0, 0, 255)\"],\"textStable\":true}"};
+    };
+    require(
+        layer_statement_result == "{\"main\":" + layer_statement_expected()
+                + ",\"frame\":" + layer_statement_expected() + "}",
+        "CSSLayerStatementRule mutation diverged from the browser contract: "
+            + layer_statement_result);
+
+    execute(engine, R"JS((async () => {
+      globalThis.__ownerSheetReplacement = { status: 'pending' };
+      try {
+        const exercise = async (document, view, className) => {
+          const style = document.createElement('style');
+          const target = document.createElement('div');
+          style.textContent = `.${className} { color: rgb(17, 23, 31); }`;
+          target.className = className;
+          document.head.appendChild(style);
+          document.body.appendChild(target);
+          const sheet = style.sheet;
+          const rules = sheet.cssRules;
+          const rule = rules[0];
+          const authoredText = style.textContent;
+          const initialCssText = rule.cssText;
+          const syncErrors = [];
+          for (const invoke of [
+            () => sheet.replaceSync(),
+            () => sheet.replaceSync(Symbol('css')),
+            () => sheet.replaceSync(`.${className} { color: red; }`)
+          ]) {
+            try { invoke(); syncErrors.push('none'); }
+            catch (error) {
+              syncErrors.push(error.name);
+            }
+          }
+          const asyncOperations = [
+            sheet.replace(),
+            sheet.replace(Symbol('css')),
+            sheet.replace(`.${className} { color: blue; }`)
+          ];
+          if (!asyncOperations.every(operation => operation
+              && typeof operation.then === 'function'
+              && operation.constructor === asyncOperations[0].constructor))
+            throw new Error('replace did not return consistent Promise objects');
+          const asyncErrors = await Promise.all(asyncOperations.map(operation =>
+            operation.then(() => 'none', error => error.name)));
+          style.remove();
+          let detachedSync = '';
+          try { sheet.replaceSync(`.${className} { color: green; }`); }
+          catch (error) { detachedSync = error.name; }
+          const detachedAsync = await sheet.replace(`.${className} { color: green; }`)
+            .then(() => 'none', error => error.name);
+          const stable = sheet.cssRules === rules
+            && rules[0] === rule
+            && rule.cssText === initialCssText
+            && style.textContent === authoredText
+            && style.sheet === null;
+          document.head.appendChild(style);
+          const reattached = style.sheet === sheet
+            && view.getComputedStyle(target).color === 'rgb(17, 23, 31)';
+          style.remove();
+          target.remove();
+          return {
+            syncErrors, asyncErrors, detachedSync, detachedAsync, stable,
+            reattached, lengths: [sheet.replaceSync.length, sheet.replace.length]
+          };
+        };
+        const frame = document.createElement('iframe');
+        document.body.appendChild(frame);
+        const main = await exercise(document, window, 'replace-main');
+        const nested = await exercise(
+          frame.contentDocument, frame.contentWindow, 'replace-frame');
+        frame.remove();
+        const pass = value => JSON.stringify(value.syncErrors)
+              === JSON.stringify(['TypeError', 'TypeError', 'NotAllowedError'])
+            && JSON.stringify(value.asyncErrors)
+              === JSON.stringify(['TypeError', 'TypeError', 'NotAllowedError'])
+            && value.detachedSync === 'NotAllowedError'
+            && value.detachedAsync === 'NotAllowedError'
+            && value.stable && value.reattached
+            && value.lengths[0] === 1 && value.lengths[1] === 1;
+        if (!pass(main) || !pass(nested))
+          throw new Error(JSON.stringify({ main, nested }));
+        globalThis.__ownerSheetReplacement = { status: 'passed', main, nested };
+      } catch (error) {
+        globalThis.__ownerSheetReplacement = {
+          status: 'failed', error: String(error), stack: String(error?.stack || '')
+        };
+      }
+    })())JS", "native-owner-stylesheet-replacement.js");
+    const auto replacement_status = evaluate_until_equals(
+        engine,
+        "globalThis.__ownerSheetReplacement?.status ?? 'pending'",
+        "native-owner-stylesheet-replacement-status.js",
+        R"("passed")",
+        500);
+    require(replacement_status == R"("passed")",
+        "owner stylesheet replacement rejection diverged: "
+            + evaluate(engine, "globalThis.__ownerSheetReplacement",
+                "native-owner-stylesheet-replacement-result.js"));
 }
 
 void test_batched_stylesheet_rule_mutation_performance()
 {
     auto* engine = webscene_engine_create(0);
     require(engine != nullptr, "stylesheet mutation performance engine creation failed");
+    const auto acknowledge_latest_scene = [&](std::string_view failure) {
+        const webscene_scene_view* scene = nullptr;
+        for (auto attempt = 0; attempt < 100 && scene == nullptr; ++attempt) {
+            scene = webscene_engine_acquire_latest_scene(engine);
+            if (scene == nullptr) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            }
+        }
+        require(scene != nullptr, failure);
+        require(webscene_scene_acknowledge(scene) != 0,
+            "stylesheet mutation scene acknowledgement failed");
+        webscene_scene_release(scene);
+    };
     resize(engine, 800, 600, 1U);
     wait_for_consumed_inputs(
         engine, 1U, "stylesheet mutation performance viewport was not consumed");
@@ -1694,6 +2160,119 @@ void test_batched_stylesheet_rule_mutation_performance()
         "oversized stylesheet source low-memory request was rejected");
     require(webscene_engine_set_runtime_work_metrics_enabled(engine, 1U) != 0,
         "stylesheet mutation runtime-work metrics could not be enabled");
+    execute_and_wait(engine, R"JS((() => {
+      const style = document.createElement('style');
+      const target = document.createElement('div');
+      style.textContent = Array.from({ length: 64 }, (_, index) =>
+        `.replacement-rule-${index} { width: ${index + 1}px; }`).join('\n');
+      target.className = 'replacement-rule-63';
+      document.head.appendChild(style);
+      document.body.appendChild(target);
+      if (getComputedStyle(target).width !== '64px')
+        throw new Error('replacement performance fixture did not settle');
+      globalThis.__replacementPerformanceFixture = { style, target };
+    })())JS", "owner-stylesheet-replacement-performance-setup.js");
+    acknowledge_latest_scene(
+        "owner stylesheet replacement performance fixture had no scene");
+    webscene_engine_metrics replacement_engine_before{};
+    webscene_engine_get_metrics(engine, &replacement_engine_before);
+    webscene_runtime_work_metrics replacement_work_before{
+        sizeof(webscene_runtime_work_metrics)};
+    require(webscene_engine_get_runtime_work_metrics(
+                engine, &replacement_work_before) != 0,
+        "owner stylesheet replacement baseline work metrics were unavailable");
+    webscene_engine_memory_metrics replacement_memory_before{
+        sizeof(webscene_engine_memory_metrics)};
+    require(webscene_engine_get_memory_metrics(
+                engine, &replacement_memory_before) != 0,
+        "owner stylesheet replacement baseline memory metrics were unavailable");
+    execute(engine, R"JS((async () => {
+      globalThis.__ownerSheetReplacementPerformance = { status: 'pending' };
+      try {
+        const { style, target } = globalThis.__replacementPerformanceFixture;
+        const sheet = style.sheet;
+        const rules = sheet.cssRules;
+        const first = rules[0], last = rules[63];
+        const authoredText = style.textContent;
+        const durations = [];
+        for (let cycle = 0; cycle < 20; cycle++) {
+          const started = performance.now();
+          let syncError = '';
+          try { sheet.replaceSync(`.replacement-${cycle} { width: 1px; }`); }
+          catch (error) { syncError = error.name; }
+          const asyncError = await sheet.replace(
+            `.replacement-${cycle} { width: 2px; }`)
+            .then(() => 'none', error => error.name);
+          if (syncError !== 'NotAllowedError'
+              || asyncError !== 'NotAllowedError') {
+            throw new Error(`replacement denial diverged: ${syncError}/${asyncError}`);
+          }
+          durations.push(performance.now() - started);
+        }
+        const ordered = durations.slice().sort((left, right) => left - right);
+        const p95 = ordered[18], maximum = ordered[19];
+        if (p95 > 16 || maximum > 500)
+          throw new Error(`replacement denial latency exceeded ${p95}/${maximum}`);
+        if (sheet.cssRules !== rules || rules.length !== 64
+            || rules[0] !== first || rules[63] !== last
+            || style.textContent !== authoredText
+            || getComputedStyle(target).width !== '64px') {
+          throw new Error('denied replacement changed sheet or computed style state');
+        }
+        globalThis.__ownerSheetReplacementPerformance = {
+          status: 'passed', cycles: durations.length, ruleCount: rules.length,
+          p95, max: maximum, authoredTextStable: style.textContent === authoredText
+        };
+      } catch (error) {
+        globalThis.__ownerSheetReplacementPerformance = {
+          status: 'failed', error: String(error), stack: String(error?.stack || '')
+        };
+      }
+    })())JS", "owner-stylesheet-replacement-performance.js");
+    const auto replacement_performance_status = evaluate_until_equals(
+        engine,
+        "globalThis.__ownerSheetReplacementPerformance?.status ?? 'pending'",
+        "owner-stylesheet-replacement-performance-status.js",
+        R"("passed")",
+        500);
+    require(replacement_performance_status == R"("passed")",
+        "owner stylesheet replacement performance workload failed: "
+            + evaluate(engine, "globalThis.__ownerSheetReplacementPerformance",
+                "owner-stylesheet-replacement-performance-result.js"));
+    const auto replacement_metrics = evaluate(
+        engine,
+        "globalThis.__ownerSheetReplacementPerformance",
+        "owner-stylesheet-replacement-performance-metrics.js");
+    webscene_engine_metrics replacement_engine_after{};
+    webscene_engine_get_metrics(engine, &replacement_engine_after);
+    webscene_runtime_work_metrics replacement_work_after{
+        sizeof(webscene_runtime_work_metrics)};
+    require(webscene_engine_get_runtime_work_metrics(
+                engine, &replacement_work_after) != 0,
+        "owner stylesheet replacement final work metrics were unavailable");
+    webscene_engine_memory_metrics replacement_memory_after{
+        sizeof(webscene_engine_memory_metrics)};
+    require(webscene_engine_get_memory_metrics(
+                engine, &replacement_memory_after) != 0,
+        "owner stylesheet replacement final memory metrics were unavailable");
+    require(
+        replacement_engine_after.layout_passes
+                == replacement_engine_before.layout_passes
+            && replacement_engine_after.published_scenes
+                == replacement_engine_before.published_scenes
+            && replacement_work_after.scene_builds
+                == replacement_work_before.scene_builds
+            && replacement_memory_after.native_css_rule_count
+                == replacement_memory_before.native_css_rule_count
+            && replacement_memory_after.pending_scene_count
+                == replacement_memory_before.pending_scene_count,
+        "denied stylesheet replacement caused invalidation, publication, or native rule churn");
+    execute_and_wait(engine, R"JS((() => {
+      const fixture = globalThis.__replacementPerformanceFixture;
+      fixture.style.remove();
+      fixture.target.remove();
+      delete globalThis.__replacementPerformanceFixture;
+    })())JS", "owner-stylesheet-replacement-performance-cleanup.js");
     webscene_engine_metrics engine_before{};
     webscene_engine_get_metrics(engine, &engine_before);
     webscene_runtime_work_metrics work_before{sizeof(webscene_runtime_work_metrics)};
@@ -1727,7 +2306,7 @@ void test_batched_stylesheet_rule_mutation_performance()
       const observer = new MutationObserver(() => {});
       observer.observe(style, { childList: true, characterData: true, subtree: true });
       globalThis.__stylesheetMutationResult = null;
-      setTimeout(() => {
+      setTimeout(async () => {
         try {
           const sheet = style.sheet;
           const rules = sheet.cssRules;
@@ -1804,11 +2383,228 @@ void test_batched_stylesheet_rule_mutation_performance()
             throw new Error(`nested latency exceeded update=${nestedUpdateP95}/${nestedUpdateMax} lookup=${nestedLookupP95}/${nestedLookupMax}`);
           }
           sheet.deleteRule(mediaIndex);
+          const selectorRules = [];
+          for (let index = 0; index < 64; index++) {
+            const ruleIndex = sheet.insertRule(
+              `.selector-before-${index} { width: ${index + 1}px; }`,
+              rules.length);
+            selectorRules.push(rules[ruleIndex]);
+          }
+          const selectorMutationDurations = [];
+          for (let cycle = 0; cycle < 20; cycle++) {
+            const suffix = (cycle & 1) === 0 ? 'after' : 'before';
+            target.className = `theme-target selector-${suffix}-63`;
+            const started = performance.now();
+            for (let index = 0; index < selectorRules.length; index++) {
+              selectorRules[index].selectorText = `.selector-${suffix}-${index}`;
+            }
+            if (getComputedStyle(target).width !== '64px'
+                || selectorRules[63].selectorText !== `.selector-${suffix}-63`
+                || rules[rules.length - 1] !== selectorRules[63]) {
+              throw new Error('selectorText mutation was not synchronously observable');
+            }
+            selectorMutationDurations.push(performance.now() - started);
+          }
+          const selectorMutations = selectorMutationDurations.slice()
+            .sort((a, b) => a - b);
+          const selectorMutationP95 = selectorMutations[18];
+          const selectorMutationMax = selectorMutations[19];
+          if (selectorMutationP95 > 16 || selectorMutationMax > 500) {
+            throw new Error(`selector mutation latency exceeded ${selectorMutationP95}/${selectorMutationMax}`);
+          }
+          while (rules.length) sheet.deleteRule(0);
+          sheet.insertRule('.theme-target { height: 1px; }', 0);
+          const mediaListIndex = sheet.insertRule('@media (min-width: 1px) {}', 1);
+          const mediaListRule = rules[mediaListIndex];
+          const mediaList = mediaListRule.media;
+          for (let index = 0; index < 64; index++) {
+            mediaListRule.insertRule(
+              `.media-list-${index} { height: ${index + 1}px; }`, index);
+          }
+          target.className = 'theme-target media-list-63';
+          const mediaMutationDurations = [];
+          for (let cycle = 0; cycle < 20; cycle++) {
+            const matches = (cycle & 1) !== 0;
+            const started = performance.now();
+            mediaList.mediaText = matches
+              ? '(min-width:1px)' : '(max-width:1px)';
+            if (mediaListRule.media !== mediaList
+                || mediaList.mediaText !== (matches
+                  ? '(min-width: 1px)' : '(max-width: 1px)')
+                || mediaListRule.conditionText !== mediaList.mediaText
+                || getComputedStyle(target).height !== (matches ? '64px' : '1px')) {
+              throw new Error('MediaList mutation was not synchronously observable');
+            }
+            mediaMutationDurations.push(performance.now() - started);
+          }
+          const mediaMutations = mediaMutationDurations.slice()
+            .sort((a, b) => a - b);
+          const mediaMutationP95 = mediaMutations[18];
+          const mediaMutationMax = mediaMutations[19];
+          if (mediaMutationP95 > 16 || mediaMutationMax > 500) {
+            throw new Error(`MediaList mutation latency exceeded ${mediaMutationP95}/${mediaMutationMax}`);
+          }
+          while (rules.length) sheet.deleteRule(0);
+          sheet.insertRule('.theme-target { width: 1px; }', 0);
+          const supportsIndex = sheet.insertRule('@supports selector(:focus-visible) {}', 1);
+          const supportsRule = rules[supportsIndex];
+          const supportsRules = supportsRule.cssRules;
+          const supportsMutationDurations = [];
+          target.className = 'theme-target supports-rule-63';
+          for (let cycle = 0; cycle < 20; cycle++) {
+            const started = performance.now();
+            while (supportsRules.length) supportsRule.deleteRule(0);
+            for (let index = 0; index < 64; index++) {
+              supportsRule.insertRule(
+                `.supports-rule-${index} { width: ${index + 1}px; }`, index);
+            }
+            if (!(supportsRule instanceof CSSSupportsRule)
+                || supportsRule.conditionText !== 'selector(:focus-visible)'
+                || supportsRule.cssRules !== supportsRules
+                || supportsRules.length !== 64
+                || getComputedStyle(target).width !== '64px') {
+              throw new Error('CSSSupportsRule mutation was not synchronously observable');
+            }
+            supportsMutationDurations.push(performance.now() - started);
+          }
+          const supportsMutations = supportsMutationDurations.slice()
+            .sort((a, b) => a - b);
+          const supportsMutationP95 = supportsMutations[18];
+          const supportsMutationMax = supportsMutations[19];
+          if (supportsMutationP95 > 16 || supportsMutationMax > 500) {
+            throw new Error(`CSSSupportsRule mutation latency exceeded ${supportsMutationP95}/${supportsMutationMax}`);
+          }
+          while (rules.length) sheet.deleteRule(0);
+          const layerIndex = sheet.insertRule('@layer performance {}', 0);
+          const layerRule = rules[layerIndex];
+          const layerRules = layerRule.cssRules;
+          const layerMutationDurations = [];
+          target.className = 'layer-rule-63';
+          for (let cycle = 0; cycle < 20; cycle++) {
+            const started = performance.now();
+            while (layerRules.length) layerRule.deleteRule(0);
+            for (let index = 0; index < 64; index++) {
+              layerRule.insertRule(
+                `.layer-rule-${index} { width: ${index + 1}px; }`, index);
+            }
+            if (!(layerRule instanceof CSSLayerBlockRule)
+                || layerRule.name !== 'performance'
+                || layerRule.cssRules !== layerRules
+                || layerRules.length !== 64
+                || getComputedStyle(target).width !== '64px') {
+              throw new Error('CSSLayerBlockRule mutation was not synchronously observable');
+            }
+            layerMutationDurations.push(performance.now() - started);
+          }
+          const layerMutations = layerMutationDurations.slice()
+            .sort((a, b) => a - b);
+          const layerMutationP95 = layerMutations[18];
+          const layerMutationMax = layerMutations[19];
+          if (layerMutationP95 > 16 || layerMutationMax > 500) {
+            throw new Error(`CSSLayerBlockRule mutation latency exceeded ${layerMutationP95}/${layerMutationMax}`);
+          }
+          const layerStatementMutationDurations = [];
+          for (let cycle = 0; cycle < 20; cycle++) {
+            const started = performance.now();
+            while (rules.length) sheet.deleteRule(0);
+            for (let index = 0; index < 64; index++) {
+              sheet.insertRule(`@layer statement-${cycle}-${index};`, index);
+            }
+            sheet.insertRule(
+              `@layer statement-${cycle}-0 { .layer-statement-target { width: 1px; } }`,
+              rules.length);
+            sheet.insertRule(
+              `@layer statement-${cycle}-63 { .layer-statement-target { width: 64px; } }`,
+              rules.length);
+            target.className = 'layer-statement-target';
+            const firstStatement = rules[0];
+            const lastStatement = rules[63];
+            if (!(firstStatement instanceof CSSLayerStatementRule)
+                || !(lastStatement instanceof CSSLayerStatementRule)
+                || firstStatement.nameList.join('') !== `statement-${cycle}-0`
+                || lastStatement.nameList.join('') !== `statement-${cycle}-63`
+                || !Object.isFrozen(firstStatement.nameList)
+                || getComputedStyle(target).width !== '64px') {
+              throw new Error('CSSLayerStatementRule mutation was not synchronously observable');
+            }
+            layerStatementMutationDurations.push(performance.now() - started);
+          }
+          const layerStatementMutations = layerStatementMutationDurations.slice()
+            .sort((a, b) => a - b);
+          const layerStatementMutationP95 = layerStatementMutations[18];
+          const layerStatementMutationMax = layerStatementMutations[19];
+          if (layerStatementMutationP95 > 16 || layerStatementMutationMax > 500) {
+            throw new Error(`CSSLayerStatementRule mutation latency exceeded ${layerStatementMutationP95}/${layerStatementMutationMax}`);
+          }
+          while (rules.length) sheet.deleteRule(0);
+          const replacementPromises = [];
+          const expectSyncReplacementDenial = (candidate, label) => {
+            try { candidate.replaceSync(`.${label} { display: none; }`); }
+            catch (error) {
+              if (error.name === 'NotAllowedError') return;
+              throw error;
+            }
+            throw new Error(`${label} replaceSync unexpectedly succeeded`);
+          };
+          const expectAsyncReplacementDenial = (candidate, label) =>
+            candidate.replace(`.${label} { display: none; }`).then(
+              () => { throw new Error(`${label} replace unexpectedly succeeded`); },
+              error => {
+                if (error.name !== 'NotAllowedError') throw error;
+                return true;
+              });
           for (let cycle = 0; cycle < 100; cycle++) {
             const lifecycleStyle = document.createElement('style');
-            lifecycleStyle.textContent = '@media (min-width: 1px) {}';
+            lifecycleStyle.textContent = '@media (min-width: 1px) {} @supports selector(:focus-visible) {} @layer lifecycle {} @layer lifecycle-first, lifecycle-second;';
             document.head.appendChild(lifecycleStyle);
-            const lifecycleGroup = lifecycleStyle.sheet.cssRules[0];
+            const lifecycleSheet = lifecycleStyle.sheet;
+            const lifecycleGroup = lifecycleSheet.cssRules[0];
+            expectSyncReplacementDenial(
+              lifecycleSheet, `lifecycle-attached-${cycle}`);
+            const lifecycleMedia = lifecycleGroup.media;
+            lifecycleGroup.media = '(max-width:1px)';
+            lifecycleMedia.appendMedium('screen');
+            lifecycleMedia.deleteMedium('screen');
+            lifecycleMedia.mediaText = '(min-width: 1px)';
+            if (lifecycleGroup.media !== lifecycleMedia
+                || lifecycleGroup.conditionText !== '(min-width: 1px)') {
+              throw new Error('lifecycle MediaList identity or condition was lost');
+            }
+            const lifecycleSupports = lifecycleSheet.cssRules[1];
+            const supportsChildIndex = lifecycleSupports.insertRule(
+              `.lifecycle-supports-${cycle} { display: grid; }`, 0);
+            const supportsChild = lifecycleSupports.cssRules[supportsChildIndex];
+            lifecycleSupports.deleteRule(supportsChildIndex);
+            if (!(lifecycleSupports instanceof CSSSupportsRule)
+                || lifecycleSupports.conditionText !== 'selector(:focus-visible)'
+                || supportsChild.parentRule !== null
+                || supportsChild.parentStyleSheet !== null) {
+              throw new Error('lifecycle supports rule identity or ownership was lost');
+            }
+            const lifecycleLayer = lifecycleSheet.cssRules[2];
+            const layerChildIndex = lifecycleLayer.insertRule(
+              `.lifecycle-layer-${cycle} { display: block; }`, 0);
+            const layerChild = lifecycleLayer.cssRules[layerChildIndex];
+            lifecycleLayer.deleteRule(layerChildIndex);
+            if (!(lifecycleLayer instanceof CSSLayerBlockRule)
+                || lifecycleLayer.name !== 'lifecycle'
+                || layerChild.parentRule !== null
+                || layerChild.parentStyleSheet !== null) {
+              throw new Error('lifecycle layer rule identity or ownership was lost');
+            }
+            const lifecycleStatement = lifecycleSheet.cssRules[3];
+            const lifecycleStatementNames = lifecycleStatement.nameList;
+            lifecycleSheet.deleteRule(3);
+            if (!(lifecycleStatement instanceof CSSLayerStatementRule)
+                || lifecycleStatementNames.join('|')
+                  !== 'lifecycle-first|lifecycle-second'
+                || !Object.isFrozen(lifecycleStatementNames)
+                || lifecycleStatement.parentRule !== null
+                || lifecycleStatement.parentStyleSheet !== null
+                || lifecycleStatement.nameList.join('|')
+                  !== 'lifecycle-first|lifecycle-second') {
+              throw new Error('lifecycle layer statement identity or ownership was lost');
+            }
             const childIndex = lifecycleGroup.insertRule(
               `.lifecycle-${cycle} { display: block; }`, 0);
             const child = lifecycleGroup.cssRules[childIndex];
@@ -1816,10 +2612,73 @@ void test_batched_stylesheet_rule_mutation_performance()
             if (child.parentRule !== null || child.parentStyleSheet !== null) {
               throw new Error('deleted nested rule retained its parents');
             }
+            const selectorIndex = lifecycleStyle.sheet.insertRule(
+              `.lifecycle-before-${cycle} { display: block; }`,
+              lifecycleStyle.sheet.cssRules.length);
+            const selectorRule = lifecycleStyle.sheet.cssRules[selectorIndex];
+            selectorRule.selectorText = `.lifecycle-after-${cycle}`;
+            if (selectorRule.selectorText !== `.lifecycle-after-${cycle}`) {
+              throw new Error('lifecycle selectorText mutation was not retained');
+            }
+            lifecycleStyle.sheet.deleteRule(selectorIndex);
+            if (selectorRule.parentStyleSheet !== null) {
+              throw new Error('deleted selector rule retained its stylesheet');
+            }
             lifecycleStyle.remove();
             document.head.appendChild(lifecycleStyle);
             lifecycleStyle.remove();
+            replacementPromises.push(expectAsyncReplacementDenial(
+              lifecycleSheet, `lifecycle-detached-${cycle}`));
+
+            const realm = document.createElement('iframe');
+            document.body.appendChild(realm);
+            const realmDocument = realm.contentDocument;
+            const realmStyle = realmDocument.createElement('style');
+            const realmTarget = realmDocument.createElement('div');
+            realmStyle.textContent = `@media (min-width: 1px) {
+              @supports selector(:focus-visible) {
+                @layer realm {
+                  @layer iframe-first, iframe-second;
+                  .realm-before-${cycle} { height: 7px; }
+                }
+              }
+            }`;
+            realmTarget.className = `realm-after-${cycle}`;
+            realmDocument.head.appendChild(realmStyle);
+            realmDocument.body.appendChild(realmTarget);
+            const realmGroup = realmStyle.sheet.cssRules[0];
+            const realmSheet = realmStyle.sheet;
+            const realmMedia = realmGroup.media;
+            const realmSupports = realmGroup.cssRules[0];
+            const realmLayer = realmSupports.cssRules[0];
+            const realmStatement = realmLayer.cssRules[0];
+            const realmRule = realmLayer.cssRules[1];
+            expectSyncReplacementDenial(realmSheet, `realm-attached-${cycle}`);
+            realmGroup.media = '(max-width: 1px)';
+            realmMedia.appendMedium('screen');
+            realmRule.selectorText = `.realm-after-${cycle}`;
+            if (!(realmMedia instanceof realm.contentWindow.MediaList)
+                || realmGroup.media !== realmMedia
+                || !(realmSupports instanceof realm.contentWindow.CSSSupportsRule)
+                || realmSupports.parentRule !== realmGroup
+                || !(realmLayer instanceof realm.contentWindow.CSSLayerBlockRule)
+                || realmLayer.parentRule !== realmSupports
+                || realmLayer.name !== 'realm'
+                || !(realmStatement
+                  instanceof realm.contentWindow.CSSLayerStatementRule)
+                || realmStatement.nameList.join('|')
+                  !== 'iframe-first|iframe-second'
+                || realmStatement.parentRule !== realmLayer
+                || !(realmRule instanceof realm.contentWindow.CSSStyleRule)
+                || realmRule.selectorText !== `.realm-after-${cycle}`
+                || realm.contentWindow.getComputedStyle(realmTarget).height !== '7px') {
+              throw new Error('iframe MediaList, supports, layer, or selector mutation lost realm ownership');
+            }
+            realm.remove();
+            replacementPromises.push(expectAsyncReplacementDenial(
+              realmSheet, `realm-detached-${cycle}`));
           }
+          await Promise.all(replacementPromises);
           target.className = 'theme-target';
           sheet.insertRule('.theme-target { display: none; }', 0);
           const order = ['sync'];
@@ -1846,7 +2705,19 @@ void test_batched_stylesheet_rule_mutation_performance()
                 p95, max: maximum, rules: style.sheet === null ? 0 : -1,
                 nestedUpdateP95, nestedUpdateMax,
                 nestedLookupP95, nestedLookupMax,
+                selectorMutationP95, selectorMutationMax,
+                selectorMutations: selectorMutationDurations.length,
+                mediaMutationP95, mediaMutationMax,
+                mediaMutations: mediaMutationDurations.length,
+                supportsMutationP95, supportsMutationMax,
+                supportsMutations: supportsMutationDurations.length,
+                layerMutationP95, layerMutationMax,
+                layerMutations: layerMutationDurations.length,
+                layerStatementMutationP95, layerStatementMutationMax,
+                layerStatementMutations: layerStatementMutationDurations.length,
+                replacementRejections: replacementPromises.length,
                 lifecycleCycles: 100,
+                realmLifecycleCycles: 100,
                 authoredTextStable: style.textContent === authoredText,
                 order
               };
@@ -1922,12 +2793,22 @@ void test_batched_stylesheet_rule_mutation_performance()
     }
     require(rss_before == 0U || rss_after <= rss_before + 64U * 1024U * 1024U,
         "stylesheet mutation workload exceeded the 64 MiB peak RSS budget");
-    require(engine_after.layout_passes <= engine_before.layout_passes + 45U
+    // The established cold lifecycle allowance is 225 passes. Each of the 20
+    // layer-statement cycles performs one synchronous computed-style read.
+    if (!(engine_after.layout_passes <= engine_before.layout_passes + 245U
             && engine_after.published_scenes <= engine_before.published_scenes + 2U
             && memory_after.pending_scene_count <= 2U
-            && work_after.timers_fired >= work_before.timers_fired + 2U,
-        "stylesheet mutation workload exceeded layout, scene, queue, or task bounds");
+            && work_after.timers_fired >= work_before.timers_fired + 2U)) {
+        fail("stylesheet mutation workload exceeded layout, scene, queue, or task bounds: layout="
+            + std::to_string(engine_after.layout_passes - engine_before.layout_passes)
+            + " scenes="
+            + std::to_string(engine_after.published_scenes - engine_before.published_scenes)
+            + " pending=" + std::to_string(memory_after.pending_scene_count)
+            + " timers="
+            + std::to_string(work_after.timers_fired - work_before.timers_fired));
+    }
     std::cout << "stylesheet-mutation-profile=" << metrics
+              << " ownerReplacementProfile=" << replacement_metrics
               << " layoutDelta=" << (engine_after.layout_passes - engine_before.layout_passes)
               << " sceneDelta=" << (engine_after.published_scenes - engine_before.published_scenes)
               << " heapBefore=" << memory_before.v8_used_heap_bytes

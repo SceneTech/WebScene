@@ -3,8 +3,23 @@
 import argparse
 import os
 from pathlib import Path
+import platform
 import shutil
 import subprocess
+import sys
+
+# Installed SDK tools are immutable inputs. Prevent the adjacent module import
+# below from materializing __pycache__ inside an otherwise verified SDK.
+sys.dont_write_bytecode = True
+
+from audit_macos_bundle import (
+    DEFAULT_MAXIMUM_ENTRIES,
+    DEFAULT_MAXIMUM_EVIDENCE_BYTES,
+    audit_bundle,
+    default_deployment_target,
+    encode_evidence,
+    normalize_single_architecture,
+)
 
 
 def run(*args):
@@ -82,7 +97,39 @@ def package(args):
             raise RuntimeError(f'Unbundled dependency in {binary.name}: {dependency}')
         if args.strip:
             run('strip', '-x', str(binary))
-        run('codesign', '--force', '--sign', '-', str(binary))
+    architectures = args.architecture or [platform.machine()]
+    maximum_deployment_target = (
+        args.maximum_deployment_target or default_deployment_target(bundle)
+    )
+    normalization = None
+    if len(architectures) == 1:
+        normalization = normalize_single_architecture(
+            bundle,
+            architectures[0],
+            maximum_entries=args.maximum_audit_entries,
+        )
+    pre_signature_evidence = audit_bundle(
+        bundle,
+        executable.relative_to(bundle).as_posix(),
+        architectures,
+        maximum_deployment_target,
+        maximum_entries=args.maximum_audit_entries,
+    )
+    for item in sorted(
+            pre_signature_evidence['binaries'],
+            key=lambda value: len(Path(value['path']).parts), reverse=True):
+        run('codesign', '--force', '--sign', '-', str(bundle / item['path']))
+    evidence = audit_bundle(
+        bundle,
+        executable.relative_to(bundle).as_posix(),
+        architectures,
+        maximum_deployment_target,
+        maximum_entries=args.maximum_audit_entries,
+        normalization=normalization,
+    )
+    evidence_path = bundle / 'Contents' / 'Resources' / 'webscene-macho-audit.json'
+    evidence_path.parent.mkdir(parents=True, exist_ok=True)
+    evidence_path.write_bytes(encode_evidence(evidence, args.maximum_audit_evidence_bytes))
     run('codesign', '--force', '--sign', '-', str(bundle))
     run('codesign', '--verify', '--deep', '--strict', str(bundle))
 
@@ -96,4 +143,9 @@ if __name__ == '__main__':
     parser.add_argument('--runtime', action='store_true')
     parser.add_argument('--webgpu', action='store_true')
     parser.add_argument('--strip', action='store_true')
+    parser.add_argument('--architecture', action='append')
+    parser.add_argument('--maximum-deployment-target')
+    parser.add_argument('--maximum-audit-entries', type=int, default=DEFAULT_MAXIMUM_ENTRIES)
+    parser.add_argument('--maximum-audit-evidence-bytes', type=int,
+                        default=DEFAULT_MAXIMUM_EVIDENCE_BYTES)
     package(parser.parse_args())

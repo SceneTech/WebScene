@@ -1,5 +1,169 @@
 // These tests measure invalidation work, not wall-clock limits. Unrelated DOM
 // and stylesheet growth must not amplify a fixed-size component mutation.
+void test_live_form_state_selectors_and_scaling()
+{
+    auto* engine = webscene_engine_create(0);
+    require(engine != nullptr, "live form-state engine creation failed");
+    resize(engine, 800, 600, 1U);
+    wait_for_consumed_inputs(engine, 1U, "live form-state viewport was not applied");
+
+    const auto correctness = evaluate(engine, R"JS((() => {
+      document.body.innerHTML = `<style>
+        .probe {padding-left:19px;padding-top:17px}
+        .probe:invalid {padding-left:47px}
+        .probe:placeholder-shown {padding-top:83px}
+      </style><form id="form"></form>`;
+      const form=document.getElementById('form');
+      const textarea=document.createElement('textarea');
+      const text=document.createTextNode('seed');
+      textarea.className='probe'; textarea.setAttribute('required','');
+      textarea.setAttribute('placeholder','enter'); textarea.appendChild(text);
+      form.appendChild(textarea);
+      const snapshot=()=>{const style=getComputedStyle(textarea);return [
+        textarea.matches(':valid'),textarea.matches(':invalid'),
+        textarea.matches(':placeholder-shown'),style.paddingLeft,style.paddingTop,
+        document.querySelectorAll(':invalid').length,
+        document.querySelectorAll(':placeholder-shown').length,textarea.value];};
+      const states=[snapshot()];
+      text.data=''; states.push(snapshot());
+      text.nodeValue='restored'; states.push(snapshot());
+      textarea.value='user'; text.textContent=''; states.push(snapshot());
+      textarea.value=''; states.push(snapshot());
+      textarea.removeAttribute('placeholder'); states.push(snapshot());
+      textarea.setAttribute('placeholder','again'); textarea.removeAttribute('required'); states.push(snapshot());
+      textarea.setAttribute('required',''); textarea.value='user'; form.reset(); states.push(snapshot());
+      textarea.remove(); textarea.value='detached'; form.appendChild(textarea); states.push(snapshot());
+      const input=document.createElement('input'); input.className='probe';
+      input.setAttribute('required',''); input.setAttribute('placeholder','type');
+      input.setAttribute('value','seed'); form.appendChild(input);
+      const inputSnapshot=()=>[input.value,input.matches(':valid'),input.matches(':invalid'),
+        input.matches(':placeholder-shown'),getComputedStyle(input).paddingLeft,
+        getComputedStyle(input).paddingTop];
+      const inputStates=[inputSnapshot()];
+      input.setAttribute('value',''); inputStates.push(inputSnapshot());
+      input.setAttribute('value','seed'); inputStates.push(inputSnapshot());
+      input.value='user'; input.setAttribute('value',''); inputStates.push(inputSnapshot());
+      form.reset(); inputStates.push(inputSnapshot());
+      input.defaultValue='next'; inputStates.push(inputSnapshot());
+      input.value='dirty'; input.defaultValue=''; inputStates.push(inputSnapshot());
+      return [states,inputStates];
+    })())JS", "live-form-state-correctness.js");
+    require(correctness == R"JSON([[[true,false,false,"19px","17px",0,0,"seed"],[false,true,true,"47px","83px",1,1,""],[true,false,false,"19px","17px",0,0,"restored"],[true,false,false,"19px","17px",0,0,"user"],[false,true,true,"47px","83px",1,1,""],[false,true,false,"47px","17px",1,0,""],[true,false,true,"19px","83px",0,1,""],[false,true,true,"47px","83px",1,1,""],[true,false,false,"19px","17px",0,0,"detached"]],[["seed",true,false,false,"19px","17px"],["",false,true,true,"47px","83px"],["seed",true,false,false,"19px","17px"],["user",true,false,false,"19px","17px"],["",false,true,true,"47px","83px"],["next",true,false,false,"19px","17px"],["dirty",true,false,false,"19px","17px"]]])JSON",
+        "live form-state selector/computed-style lifecycle diverged: " + correctness);
+
+    const auto native_setup = evaluate(engine, R"JS((() => {
+      const input=document.createElement('input'); input.id='native-value';
+      input.className='probe'; input.setAttribute('required',''); input.setAttribute('placeholder','type');
+      document.body.appendChild(input); input.focus(); return [
+        input.matches(':invalid'),input.matches(':placeholder-shown'),
+        getComputedStyle(input).paddingLeft,getComputedStyle(input).paddingTop];
+    })())JS", "live-form-state-native-setup.js");
+    require(native_setup == R"([true,true,"47px","83px"])",
+        "native form-state setup diverged: " + native_setup);
+    keyboard_input(engine, WEBSCENE_INPUT_TEXT, 'x', 2U);
+    wait_for_consumed_inputs(engine, 2U, "native form-state input was not consumed");
+    const auto native_result = evaluate(engine, R"JS((() => {const input=document.getElementById('native-value');return [
+      input.value,input.matches(':valid'),input.matches(':invalid'),
+      input.matches(':placeholder-shown'),getComputedStyle(input).paddingLeft,
+      getComputedStyle(input).paddingTop];})())JS", "live-form-state-native-result.js");
+    require(native_result == R"(["x",true,false,false,"19px","17px"])",
+        "native input did not invalidate live form state: " + native_result);
+
+    const auto setup = evaluate(engine, R"JS((() => {
+      document.body.innerHTML='<style>.scale:invalid{width:2px}.scale:placeholder-shown{height:3px}'+
+        Array.from({length:1024},(_,i)=>'.noise-'+i+':hover{width:7px}').join('')+'</style>'+
+        '<main id="controls"></main>';
+      const root=document.getElementById('controls'),fragment=document.createDocumentFragment();
+      for(let i=0;i<4096;i++){const node=document.createElement('textarea');node.className='scale';
+        node.setAttribute('required','');node.setAttribute('placeholder','p');fragment.appendChild(node);} root.appendChild(fragment);
+      globalThis.scaleTarget=root.firstElementChild;
+      return [root.children.length,scaleTarget.matches(':invalid'),
+        scaleTarget.matches(':placeholder-shown'),getComputedStyle(scaleTarget).width,
+        getComputedStyle(scaleTarget).height];
+    })())JS", "live-form-state-scale-setup.js");
+    require(setup == R"([4096,true,true,"2px","3px"])",
+        "4,096-control form-state setup diverged: " + setup);
+
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+    std::this_thread::sleep_for(std::chrono::milliseconds(260));
+    execute_and_wait_for_wrapper_retention_scene(engine,
+        "document.body.style.backgroundColor='rgb(1,2,3)'",
+        "live-form-state-scale-baseline-scene.js");
+#endif
+    webscene_engine_memory_metrics memory_before{sizeof(memory_before)};
+    require(webscene_engine_get_memory_metrics(engine, &memory_before) != 0,
+        "live form-state memory baseline was unavailable");
+    webscene_engine_metrics metrics_before{};
+    webscene_engine_get_metrics(engine, &metrics_before);
+    const auto rss_before = file_system_access_test_peak_rss_bytes();
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+    const auto cascades_before = runtime_counter_diagnostic(
+        engine, "css-cascade-applications");
+    const auto candidates_before = runtime_counter_diagnostic(
+        engine, "selector-invalidation-candidate-visits");
+#endif
+    const auto started = std::chrono::steady_clock::now();
+    const auto scale_result = evaluate(engine, R"JS((() => {
+      for(let i=0;i<1000;i++) scaleTarget.value=(i&1)?'':'x';
+      return [scaleTarget.value,scaleTarget.matches(':invalid'),
+        scaleTarget.matches(':placeholder-shown'),getComputedStyle(scaleTarget).width,
+        getComputedStyle(scaleTarget).height,document.querySelectorAll('.scale').length];
+    })())JS", "live-form-state-scale-mutation.js");
+    const auto elapsed = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - started).count();
+    require(scale_result == R"(["",true,true,"2px","3px",4096])",
+        "4,096-control form-state mutation diverged: " + scale_result);
+    require(elapsed < 2000.0, "1,000 bounded form-state transitions exceeded two seconds");
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+    std::this_thread::sleep_for(std::chrono::milliseconds(260));
+    execute_and_wait_for_wrapper_retention_scene(engine,
+        "document.body.style.backgroundColor='rgb(3,2,1)'",
+        "live-form-state-scale-result-scene.js");
+#endif
+    webscene_engine_metrics metrics_after{};
+    webscene_engine_get_metrics(engine, &metrics_after);
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+    const auto cascades = runtime_counter_diagnostic(
+        engine, "css-cascade-applications") - cascades_before;
+    const auto candidates = runtime_counter_diagnostic(
+        engine, "selector-invalidation-candidate-visits") - candidates_before;
+    require(cascades <= 2004U && candidates <= 4008U,
+        "form-state transitions scanned unrelated controls or rules");
+#else
+    const auto cascades = uint64_t{0};
+    const auto candidates = uint64_t{0};
+#endif
+    require(metrics_after.layout_passes <= metrics_before.layout_passes + 2U,
+        "batched form-state transitions forced repeated layout");
+
+    require(evaluate(engine, R"JS((() => {document.getElementById('controls').remove();
+      delete globalThis.scaleTarget;return document.querySelectorAll('.scale').length;})())JS",
+        "live-form-state-scale-retire.js") == "0", "form-state controls did not detach");
+    require(webscene_engine_request_low_memory(engine) != 0,
+        "live form-state low-memory request was rejected");
+    webscene_engine_memory_metrics memory_after{sizeof(memory_after)};
+    for (auto attempt=0; attempt<250; ++attempt) {
+        require(webscene_engine_get_memory_metrics(engine, &memory_after) != 0,
+            "live form-state final memory metrics were unavailable");
+        if (memory_after.low_memory_notifications > memory_before.low_memory_notifications) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    const auto rss_after = file_system_access_test_peak_rss_bytes();
+    require(memory_after.low_memory_notifications > memory_before.low_memory_notifications
+            && memory_after.v8_used_heap_bytes <= memory_before.v8_used_heap_bytes + 8U*1024U*1024U
+            && memory_after.native_dom_node_count <= memory_before.native_dom_node_count + 8U,
+        "form-state detach/GC heap or DOM lifecycle exceeded its bound");
+    require(rss_before == 0U || rss_after <= rss_before + 64U*1024U*1024U,
+        "form-state 4,096-control RSS growth exceeded 64 MiB");
+    std::cout << "Live form-state gate: controls=4096 transitions=1000 ms=" << elapsed
+        << " cascades=" << cascades << " candidates=" << candidates
+        << " layouts=" << (metrics_after.layout_passes-metrics_before.layout_passes)
+        << " heapBefore=" << memory_before.v8_used_heap_bytes
+        << " heapAfter=" << memory_after.v8_used_heap_bytes
+        << " rssBefore=" << rss_before << " rssAfter=" << rss_after << '\n';
+    webscene_engine_destroy(engine);
+}
+
 void test_variadic_child_vector_scaling()
 {
     bool bounded = true;
@@ -117,8 +281,194 @@ void test_compiled_subject_index_scaling()
     }
 }
 
+void test_nested_functional_selector_scaling()
+{
+    constexpr auto affected_count = 128;
+    constexpr auto transition_count = 1000;
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+    std::vector<std::array<uint64_t, 7>> observations;
+#endif
+    for (const auto unrelated_count : {32, 1024}) {
+        auto* engine = webscene_engine_create(0);
+        require(engine != nullptr, "nested functional selector engine creation failed");
+        resize(engine, 800, 600, 1U);
+        wait_for_consumed_inputs(
+            engine, 1U, "nested functional selector viewport was not applied");
+
+        webscene_engine_memory_metrics loaded_memory{sizeof(loaded_memory)};
+        const auto rss_before = file_system_access_test_peak_rss_bytes();
+        auto setup_source = std::string{R"JS((([affected, unrelated]) => {
+          const style = document.createElement('style');
+          style.id = 'nested-functional-style';
+          style.textContent = `
+            .functional-leaf { display:block; width:11px; height:13px; }
+            .functional-host:is(:not(.blocked, [data-off]), .fallback) > .functional-leaf {
+              width:41px;
+            }
+            .functional-host:not(:is(.blocked, [data-off]), .excluded) > .functional-leaf {
+              height:43px;
+            }
+          ` + Array.from({length: unrelated}, (_, index) =>
+            `.noise-${index}:is(:not(.unused-a-${index}, [data-unused-${index}]), .unused-b-${index}) { color:rgb(7,8,9); }`
+          ).join('');
+          const root = document.createElement('main');
+          root.id = 'nested-functional-root';
+          root.innerHTML = `<section class="functional-host">${
+            '<i class="functional-leaf"></i>'.repeat(affected)}</section>` +
+            Array.from({length: unrelated}, (_, index) =>
+              `<aside class="noise-${index}"></aside>`).join('');
+          document.head.appendChild(style);
+          document.body.appendChild(root);
+          const host = root.firstElementChild;
+          const leaves = Array.from(host.children);
+          const snapshot = enabled => leaves.every(node => {
+            const computed = getComputedStyle(node);
+            return computed.width === (enabled ? '11px' : '41px') &&
+              computed.height === (enabled ? '13px' : '43px');
+          });
+          globalThis.mutateNestedFunctional = () => {
+            for (let index = 0; index < TRANSITIONS; ++index) {
+              const enabled = (index & 1) === 0;
+              host.toggleAttribute('data-off', enabled);
+              if (!snapshot(enabled)) return false;
+            }
+            return true;
+          };
+          const first = getComputedStyle(leaves[0]);
+          return [leaves.length, snapshot(false), first.width, first.height,
+            host.matches(':is(:not(.blocked, [data-off]), .fallback)'),
+            host.matches(':not(:is(.blocked, [data-off]), .excluded)'),
+            leaves.filter(node => getComputedStyle(node).width === '41px').length,
+            leaves.filter(node => getComputedStyle(node).height === '43px').length];
+        })(COUNTS))JS"};
+        setup_source.replace(
+            setup_source.find("TRANSITIONS"), 11, std::to_string(transition_count));
+        setup_source.replace(
+            setup_source.find("COUNTS"), 6,
+            "[" + std::to_string(affected_count) + ","
+                + std::to_string(unrelated_count) + "]");
+        const auto setup = evaluate(
+            engine, setup_source, "nested-functional-scale-setup.js");
+        require(setup == "[128,true,\"41px\",\"43px\",true,true,128,128]",
+            "nested functional selector scale setup diverged: " + setup);
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+        std::this_thread::sleep_for(std::chrono::milliseconds(260));
+        execute_and_wait_for_wrapper_retention_scene(
+            engine,
+            "document.body.style.backgroundColor='rgb(1,2,3)'",
+            "nested-functional-scale-baseline.js");
+        const std::array<std::string_view, 7> names{
+            "selector-invalidation-plan-lookups",
+            "selector-invalidation-candidate-visits",
+            "selector-invalidation-fallback-visits",
+            "css-compound-match-checks",
+            "css-rule-match-checks",
+            "css-cascade-applications",
+            "css-cascade-candidate-checks"};
+        std::array<uint64_t, 7> before{};
+        for (size_t index = 0; index < names.size(); ++index) {
+            before[index] = runtime_counter_diagnostic(engine, names[index]);
+        }
+#endif
+        for (auto attempt = 0; attempt < 250; ++attempt) {
+            require(webscene_engine_get_memory_metrics(engine, &loaded_memory) != 0,
+                "nested functional selector loaded memory metrics were unavailable");
+            if (loaded_memory.v8_used_heap_bytes > 0U
+                && loaded_memory.native_dom_node_count >= affected_count) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        require(loaded_memory.v8_used_heap_bytes > 0U
+                && loaded_memory.native_dom_node_count >= affected_count,
+            "nested functional selector loaded memory metrics did not settle");
+        const auto started = std::chrono::steady_clock::now();
+        require(evaluate(
+                engine,
+                "mutateNestedFunctional()",
+                "nested-functional-scale-mutations.js") == "true",
+            "nested functional selector transitions produced stale computed style");
+        const auto elapsed = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - started).count();
+        require(elapsed < 2000.0,
+            "1,000 nested functional selector transitions exceeded two seconds");
+
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+        std::this_thread::sleep_for(std::chrono::milliseconds(260));
+        execute_and_wait_for_wrapper_retention_scene(
+            engine,
+            "document.body.style.backgroundColor='rgb(3,2,1)'",
+            "nested-functional-scale-result.js");
+        std::array<uint64_t, 7> delta{};
+        for (size_t index = 0; index < names.size(); ++index) {
+            delta[index] = runtime_counter_diagnostic(engine, names[index])
+                - before[index];
+        }
+        require(delta[0] > 0U && delta[1] > 0U && delta[2] == 0U,
+            "nested functional selector mutation used no plan or document fallback");
+        for (const auto value : delta) {
+            require(value <= static_cast<uint64_t>(
+                    transition_count * (affected_count * 20 + 64)),
+                "nested functional selector work exceeded its linear bound");
+        }
+        std::cout << "nested-functional-counters unrelated=" << unrelated_count;
+        for (size_t index = 0; index < names.size(); ++index) {
+            std::cout << ' ' << names[index] << '=' << delta[index];
+        }
+        std::cout << '\n';
+        observations.push_back(delta);
+#endif
+
+        require(evaluate(engine, R"JS((() => {
+          document.getElementById('nested-functional-root').remove();
+          document.getElementById('nested-functional-style').remove();
+          delete globalThis.mutateNestedFunctional;
+          return document.querySelectorAll('.functional-leaf').length;
+        })())JS", "nested-functional-scale-retire.js") == "0",
+            "nested functional selector fixture did not detach");
+        require(webscene_engine_request_low_memory(engine) != 0,
+            "nested functional selector low-memory request was rejected");
+        webscene_engine_memory_metrics final_memory{sizeof(final_memory)};
+        for (auto attempt = 0; attempt < 250; ++attempt) {
+            require(webscene_engine_get_memory_metrics(engine, &final_memory) != 0,
+                "nested functional selector final memory metrics were unavailable");
+            if (final_memory.low_memory_notifications
+                > loaded_memory.low_memory_notifications) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        const auto rss_after = file_system_access_test_peak_rss_bytes();
+        require(final_memory.low_memory_notifications
+                > loaded_memory.low_memory_notifications
+                && final_memory.v8_used_heap_bytes
+                    <= loaded_memory.v8_used_heap_bytes + 1024U * 1024U
+                && final_memory.native_dom_node_count
+                    <= loaded_memory.native_dom_node_count,
+            "nested functional selector teardown retained heap or DOM nodes: heap "
+                + std::to_string(loaded_memory.v8_used_heap_bytes) + " -> "
+                + std::to_string(final_memory.v8_used_heap_bytes) + ", dom "
+                + std::to_string(loaded_memory.native_dom_node_count) + " -> "
+                + std::to_string(final_memory.native_dom_node_count) + ", low-memory "
+                + std::to_string(loaded_memory.low_memory_notifications) + " -> "
+                + std::to_string(final_memory.low_memory_notifications));
+        require(rss_before == 0U || rss_after <= rss_before + 64U * 1024U * 1024U,
+            "nested functional selector peak RSS grew by more than 64 MiB");
+        std::cout << "nested-functional-selectors affected=" << affected_count
+            << " unrelated=" << unrelated_count
+            << " transitions=" << transition_count
+            << " ms=" << elapsed
+            << " heapBefore=" << loaded_memory.v8_used_heap_bytes
+            << " heapAfter=" << final_memory.v8_used_heap_bytes
+            << " rssBefore=" << rss_before
+            << " rssAfter=" << rss_after << '\n';
+        webscene_engine_destroy(engine);
+    }
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+    require(observations.size() == 2U && observations[0] == observations[1],
+        "unrelated rules amplified nested functional selector invalidation work");
+#endif
+}
+
 void test_compiled_css_invalidation_scaling()
 {
+    test_nested_functional_selector_scaling();
     std::vector<std::array<uint64_t, 7>> observations;
     for (const auto unrelated_count : {32, 1024}) {
         auto* engine = webscene_engine_create(0);

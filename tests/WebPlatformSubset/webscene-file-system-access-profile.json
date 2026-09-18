@@ -23,5 +23,86 @@
       "reason": "Exercises the standards-shaped picker globals and branded handle prototype surface. Native companion tests own activation, bounded request transport, opaque grant identity, status mapping, navigation retirement and lifecycle budgets."
     }
   ],
-  "harnessBlocked": []
+  "harnessBlocked": [
+    {
+      "path": "contracts/file-system-access-handle-permissions.html",
+      "type": "testharness",
+      "capabilities": [
+        "file-system-handle-permissions",
+        "opaque-file-grant-capabilities"
+      ],
+      "reason": "Chromium/WPT oracle creates origin-private filesystem handles with read and readwrite permission. The native runner receives host-issued opaque grants and exercises equivalent file and directory read/readwrite decisions, invalid descriptors, borrowed receivers, clone and durable restore parity, and terminal no-prompt behavior from exact grant capabilities."
+    },
+    {
+      "path": "contracts/file-system-access-directory-resolve.html",
+      "type": "testharness",
+      "capabilities": [
+        "file-system-directory-handle-resolve",
+        "opaque-file-grant-ancestry"
+      ],
+      "reason": "Chromium/WPT oracle uses origin-private filesystem handles; the native runner receives host-issued opaque grants and exercises equivalent same-directory, ordered Unicode descendant, unrelated null, branded-argument, native status, navigation cancellation and bounded ancestry behavior through the host bridge."
+    },
+    {
+      "path": "contracts/file-system-access-handle-structured-clone.html",
+      "type": "testharness",
+      "capabilities": [
+        "file-system-handle-structured-clone",
+        "file-system-handle-weak-lifetime"
+      ],
+      "reason": "Chromium/WPT oracle creates an origin-private filesystem handle; the native runner receives a host-issued opaque grant and exercises equivalent distinct branded clone, shared authority, weak wrapper, exactly-once release, same-origin and navigation retirement behavior through the host release bridge."
+    },
+    {
+      "path": "contracts/file-system-access-handle-indexeddb.html",
+      "type": "testharness",
+      "capabilities": [
+        "file-system-handle-indexeddb-persistence",
+        "opaque-file-grant-durable-restore"
+      ],
+      "reason": "Chromium/WPT oracle covers IndexedDB snapshot, later transaction retrieval, cursor retrieval, same-entry identity and neighboring Blob preservation. The native runner exercises the equivalent opaque export, restart restore, partition/origin binding, deletion revoke, stale-generation rejection and bounded lifecycle through the durable host bridge."
+    },
+    {
+      "path": "contracts/file-system-access-directory-existing.html",
+      "type": "testharness",
+      "capabilities": [
+        "file-system-directory-handle-async-iteration",
+        "file-system-directory-handle-existing-child-lookup"
+      ],
+      "reason": "Chromium/WPT oracle uses origin-private filesystem handles; the native runner receives host-issued opaque directory grants and exercises equivalent bounded paging, derived grants, lookup errors, early cursor release, mutation/status mapping and lifecycle behavior through the host directory bridge."
+    },
+    {
+      "path": "contracts/file-system-access-directory-create-file.html",
+      "type": "testharness",
+      "capabilities": [
+        "file-system-directory-handle-create-file",
+        "opaque-file-grant-derived-create-authority"
+      ],
+      "reason": "Chromium/WPT oracle covers missing-file creation, existing-file preservation, same-entry identity, Unicode names, directory collisions and unsafe component names. The native runner uses an opaque parent directory grant and exercises the equivalent derived-grant, status, cancellation, retirement and bounded lifecycle behavior through the native create-file bridge."
+    },
+    {
+      "path": "contracts/file-system-access-create-writable.html",
+      "type": "testharness",
+      "capabilities": [
+        "file-system-file-handle-create-writable",
+        "file-system-writable-file-stream",
+        "atomic-file-writes"
+      ],
+      "reason": "Chromium/WPT oracle uses origin-private filesystem handles; the native runner receives host-issued opaque grants and exercises equivalent begin/chunk/commit/abort, cursor, truncation, keepExistingData, error, atomicity and lifecycle behavior through the host writer bridge."
+    },
+    {
+      "path": "contracts/file-system-access-get-file.html",
+      "type": "testharness",
+      "capabilities": [
+        "file-system-file-handle-get-file"
+      ],
+      "reason": "Chromium/WPT oracle uses origin-private filesystem handles; the native runner receives host-issued opaque grants and exercises equivalent chunked snapshot, metadata, error and lifecycle behavior through the host read bridge."
+    },
+    {
+      "path": "contracts/file-system-access-is-same-entry.html",
+      "type": "testharness",
+      "capabilities": [
+        "file-system-handle-identity"
+      ],
+      "reason": "Chromium/WPT oracle uses origin-private filesystem handles; the native runner receives host-issued opaque grants instead and exercises the equivalent identity cases in its native File System Access contract."
+    }
+  ]
 }

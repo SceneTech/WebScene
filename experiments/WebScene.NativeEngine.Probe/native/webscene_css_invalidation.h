@@ -111,7 +111,21 @@ inline std::vector<css_compound_dependencies> compile_invalidation_plan(
             } else if (pseudo.name == "required" || pseudo.name == "optional"
                 || pseudo.name == "valid" || pseudo.name == "invalid") {
                 add(output.attributes["required"], route);
-                add(output.attributes["value"], route);
+                if (pseudo.name == "valid" || pseudo.name == "invalid") {
+                    // Non-text controls retain their existing authored-value
+                    // dependency while text controls also observe live value.
+                    add(output.attributes["value"], route);
+                    add(output.attributes["$live-form-value"], route);
+                    // A non-dirty textarea derives its live value from its
+                    // text children. Reuse the structural route machinery.
+                    output.child_list_sensitive = true;
+                    add(output.child_list, route);
+                }
+            } else if (pseudo.name == "placeholder-shown") {
+                add(output.attributes["placeholder"], route);
+                add(output.attributes["$live-form-value"], route);
+                output.child_list_sensitive = true;
+                add(output.child_list, route);
             }
             if (pseudo.argument.empty()) continue;
             const bool has = pseudo.name == "has";

@@ -882,12 +882,20 @@ struct v8_dom_runtime::implementation final {
 
         auto frame_window = v8::ObjectTemplate::New(isolate);
         frame_window->SetInternalFieldCount(1);
+        frame_window->SetHandler(v8::NamedPropertyHandlerConfiguration(
+            get_frame_window_proxy_named_property,
+            nullptr,
+            nullptr,
+            nullptr,
+            nullptr,
+            {},
+            v8::PropertyHandlerFlags::kNonMasking));
         frame_window->Set(
             js_string(isolate, "addEventListener"),
             v8::FunctionTemplate::New(isolate, frame_window_add_event_listener));
         frame_window->Set(
             js_string(isolate, "removeEventListener"),
-            v8::FunctionTemplate::New(isolate, remove_event_listener));
+            v8::FunctionTemplate::New(isolate, frame_window_remove_event_listener));
         frame_window->Set(
             js_string(isolate, "getComputedStyle"),
             v8::FunctionTemplate::New(isolate, get_computed_style));
@@ -1324,6 +1332,34 @@ struct v8_dom_runtime::implementation final {
         info.GetReturnValue().Set(js_dom_string(info.GetIsolate(), content));
     }
 
+    static void allocate_fetch_cancellation_id(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        if (self == nullptr) return;
+        auto id = self->next_fetch_cancellation_id++;
+        if (id == 0U) id = self->next_fetch_cancellation_id++;
+        info.GetReturnValue().Set(v8::Number::New(
+            info.GetIsolate(), static_cast<double>(id)));
+    }
+
+    static void cancel_fetch_resource(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        if (self == nullptr || info.Length() < 1) return;
+        const auto id = info[0]->IntegerValue(
+            info.GetIsolate()->GetCurrentContext()).FromMaybe(0);
+        if (id <= 0) return;
+        const auto found = std::find_if(
+            self->pending_fetches.begin(),
+            self->pending_fetches.end(),
+            [&](const auto& pending) {
+                return pending.cancellation_id == static_cast<uint64_t>(id);
+            });
+        if (found != self->pending_fetches.end() && found->cancel) found->cancel();
+    }
+
     static void fetch_resource(
         const v8::FunctionCallbackInfo<v8::Value>& info)
     {
@@ -1357,6 +1393,9 @@ struct v8_dom_runtime::implementation final {
         const auto redirect = info.Length() > 6
             ? info[6]->Uint32Value(info.GetIsolate()->GetCurrentContext()).FromMaybe(0U)
             : 0U;
+        const auto cancellation_id = info.Length() > 8
+            ? info[8]->IntegerValue(info.GetIsolate()->GetCurrentContext()).FromMaybe(0)
+            : 0;
         std::vector<std::pair<std::string, std::string>> headers;
         size_t header_bytes = 0U;
         if (info.Length() > 7 && !info[7]->IsUndefined()) {
@@ -1463,11 +1502,17 @@ struct v8_dom_runtime::implementation final {
         }
         auto resolver = v8::Promise::Resolver::New(local_context).ToLocalChecked();
         pending_fetch_task pending;
+        pending.cancellation_id = cancellation_id > 0
+            ? static_cast<uint64_t>(cancellation_id) : 0U;
         pending.context.Reset(info.GetIsolate(), local_context);
         pending.resolver.Reset(info.GetIsolate(), resolver);
         const auto notify = self->runtime_work_available;
+        std::shared_ptr<service_worker_fetch_request> controlled_request;
         auto controlled_fetch = self->enqueue_controlled_service_worker_fetch(
-            resolved, request_context);
+            resolved, request_context, &controlled_request, redirect);
+        if (controlled_request != nullptr) {
+            pending.cancel = [request = controlled_request] { request->cancel(); };
+        }
         pending.future = std::async(
             std::launch::async,
             [self,
@@ -1477,6 +1522,7 @@ struct v8_dom_runtime::implementation final {
                 redirect,
                 request_context = std::move(request_context),
                 controlled_fetch = std::move(controlled_fetch),
+                controlled_request = std::move(controlled_request),
                 notify]() mutable {
                 async_fetch_result result;
                 result.resolved_url = resolved;
@@ -1487,6 +1533,9 @@ struct v8_dom_runtime::implementation final {
                     if (controlled_fetch.valid()) {
                         if (controlled_fetch.wait_for(std::chrono::seconds(30))
                             != std::future_status::ready) {
+                            if (controlled_request != nullptr) {
+                                controlled_request->cancel();
+                            }
                             handled_by_service_worker = true;
                             result.error = "Service worker fetch timed out";
                         } else {
@@ -3808,29 +3857,47 @@ struct v8_dom_runtime::implementation final {
         global->Set(local_context, js_string(isolate, "DOMRectReadOnly"), rect_constructor).Check();
 
         set_context_location(local_context, global, "http://127.0.0.1/");
-        auto history = v8::Object::New(isolate);
-        history->Set(local_context, js_string(isolate, "length"),
-            v8::Integer::New(isolate, 1)).Check();
-        history->Set(local_context, js_string(isolate, "state"), v8::Null(isolate)).Check();
-        history->Set(local_context, js_string(isolate, "scrollRestoration"),
-            js_string(isolate, "auto")).Check();
-        for (const auto* name : {"back", "forward", "go", "pushState", "replaceState"}) {
-            history->Set(local_context, js_string(isolate, name),
-                v8::Function::New(local_context, no_op).ToLocalChecked()).Check();
-        }
-        global->Set(local_context, js_string(isolate, "history"), history).Check();
-
         install_navigator(isolate, local_context, global);
 
         install_console(local_context, global);
         install_host_bridge(local_context);
 
         constexpr std::string_view crypto_source_parts[] = {R"JS(
+            const nativeBlobSources = new WeakMap();
+            const normalizeBlobIndex = (value, size, fallback) => {
+              value = value === undefined ? fallback : Number(value);
+              if (Number.isNaN(value)) value = 0;
+              value = value < 0 ? Math.max(size + Math.trunc(value), 0)
+                : Math.min(Math.trunc(value), size);
+              return value;
+            };
+            const readNativeBlob = async (source, start, length) => {
+              const bytes = new Uint8Array(length);
+              if (length === 0) {
+                await source.read(source.start + start, 1);
+                return bytes;
+              }
+              let offset = 0;
+              while (offset < length) {
+                const result = await source.read(source.start + start + offset,
+                  Math.min(1024 * 1024, length - offset));
+                if (!(result.bytes instanceof Uint8Array)
+                    || result.bytes.byteLength === 0) {
+                  throw new DOMException('The native file read ended early', 'NotReadableError');
+                }
+                bytes.set(result.bytes, offset);
+                offset += result.bytes.byteLength;
+                if (result.eof && offset !== length) {
+                  throw new DOMException('The native file size changed', 'NotReadableError');
+                }
+              }
+              return bytes;
+            };
             class WebSceneBlob {
               constructor(parts = [], options = {}) {
                 __webSceneRecordWebApi(
                   'Blob.constructor', 'partially-supported',
-                  'byte-preserving construction, type, size, object URLs, and downloads without slicing or streaming');
+                  'byte-preserving construction, type, size, slicing and bounded streams');
                 const chunks = [];
                 let size = 0;
                 for (const part of parts) {
@@ -3858,17 +3925,75 @@ struct v8_dom_runtime::implementation final {
                 this._text = Array.from(parts, String).join('');
               }
               toString() { return this._text; }
-              text() { return Promise.resolve(new TextDecoder().decode(this._bytes)); }
-              arrayBuffer() { return Promise.resolve(this._bytes.slice().buffer); }
-              slice(start=0,end=this.size,type='') {return new WebSceneBlob([this._bytes.slice(start,end)],{type});}
+              async text() {
+                return new TextDecoder().decode(await this.arrayBuffer());
+              }
+              async arrayBuffer() {
+                const source = nativeBlobSources.get(this);
+                const bytes = source
+                  ? await readNativeBlob(source, 0, this.size)
+                  : this._bytes.slice();
+                return bytes.buffer;
+              }
+              slice(start=0,end=this.size,type='') {
+                const first = normalizeBlobIndex(start, this.size, 0);
+                const last = Math.max(first,
+                  normalizeBlobIndex(end, this.size, this.size));
+                const source = nativeBlobSources.get(this);
+                if (!source) {
+                  return new WebSceneBlob([this._bytes.slice(first,last)],{type});
+                }
+                const result = new WebSceneBlob([], {type});
+                result.size = last - first;
+                nativeBlobSources.set(result, {
+                  read: source.read, start: source.start + first
+                });
+                return result;
+              }
+              stream() {
+                const source = nativeBlobSources.get(this);
+                const bytes = this._bytes;
+                const size = this.size;
+                let offset = 0;
+                return new ReadableStream({
+                  async pull(controller) {
+                    if (offset >= size) {
+                      if (source && offset === 0) {
+                        await readNativeBlob(source, 0, 0);
+                      }
+                      controller.close();
+                      return;
+                    }
+                    const length = Math.min(64 * 1024, size - offset);
+                    const chunk = source
+                      ? await readNativeBlob(source, offset, length)
+                      : bytes.slice(offset, offset + length);
+                    offset += chunk.byteLength;
+                    controller.enqueue(chunk);
+                    if (offset >= size) controller.close();
+                  }
+                });
+              }
             }
-            globalThis.File = class File extends WebSceneBlob {
+            class WebSceneFile extends WebSceneBlob {
               constructor(parts, name, options={}) {
                 super(parts,options);
                 this.name=String(name).replace(/[\/]/g, ':');
                 this.lastModified=Number(options.lastModified ?? Date.now());
               }
-            };
+            }
+            globalThis.File = WebSceneFile;
+            globalThis.__webSceneCreateNativeFile =
+              (name, lastModified, size, read) => {
+                if (!Number.isSafeInteger(size) || size < 0
+                    || !Number.isFinite(lastModified) || typeof read !== 'function') {
+                  throw new DOMException('Malformed native file metadata', 'DataError');
+                }
+                const file = new WebSceneFile([], name, {lastModified});
+                file.size = size;
+                nativeBlobSources.set(file, {read, start: 0});
+                return file;
+              };
             class WebSceneURLSearchParams {
               constructor(init = null) {
                 this._owner = init && typeof init === 'object'
@@ -4188,6 +4313,15 @@ struct v8_dom_runtime::implementation final {
             local_context,
             js_string(isolate, "__webSceneFetchResource"),
             v8::Function::New(local_context, fetch_resource).ToLocalChecked()).Check();
+        global->Set(
+            local_context,
+            js_string(isolate, "__webSceneAllocateFetchCancellationId"),
+            v8::Function::New(
+                local_context, allocate_fetch_cancellation_id).ToLocalChecked()).Check();
+        global->Set(
+            local_context,
+            js_string(isolate, "__webSceneCancelFetchResource"),
+            v8::Function::New(local_context, cancel_fetch_resource).ToLocalChecked()).Check();
         if constexpr (bootstrap_snapshot_enabled) {
             if (!context.IsEmpty() && context.Get(isolate) == local_context) return;
         }
@@ -4913,7 +5047,7 @@ struct v8_dom_runtime::implementation final {
               }
             }
 
-            function webSceneFetchInternal(input, options = {}) {
+            function webSceneFetchInternal(input, options = {}, cancellationId = 0) {
               const request = new WebSceneRequest(input, options);
               if ((request.method === 'GET' || request.method === 'HEAD')
                   && request.body !== null) {
@@ -4980,7 +5114,8 @@ struct v8_dom_runtime::implementation final {
                         credentials,
                         mode,
                         redirect,
-                        [...request.headers])
+                        [...request.headers],
+                        cancellationId)
                         .then(result => new WebSceneResponse(
                           result.body,
                           { status: result.status, statusText: result.statusText,
@@ -4997,10 +5132,14 @@ struct v8_dom_runtime::implementation final {
               const signal=options.signal ?? input?.signal;
               if(!signal)return webSceneFetchInternal(input,options);
               if(signal.aborted)return Promise.reject(signal.reason ?? new DOMException('Fetch aborted','AbortError'));
+              const cancellationId=__webSceneAllocateFetchCancellationId();
               return new Promise((resolve,reject)=>{
-                const abort=()=>reject(signal.reason ?? new DOMException('Fetch aborted','AbortError'));
+                const abort=()=>{
+                  __webSceneCancelFetchResource(cancellationId);
+                  reject(signal.reason ?? new DOMException('Fetch aborted','AbortError'));
+                };
                 signal.addEventListener('abort',abort,{once:true});
-                webSceneFetchInternal(input,options).then(resolve,reject).finally(()=>signal.removeEventListener('abort',abort));
+                webSceneFetchInternal(input,options,cancellationId).then(resolve,reject).finally(()=>signal.removeEventListener('abort',abort));
               });
             }
 
@@ -5717,6 +5856,10 @@ struct v8_dom_runtime::implementation final {
         request->view.kind = WEBSCENE_HOST_REQUEST_WINDOW_NAVIGATE_V1;
         request->view.flags = replace
             ? WEBSCENE_HOST_REQUEST_NAVIGATION_REPLACE_V1 : 0U;
+        if (cross_origin) {
+            request->view.flags |=
+                WEBSCENE_HOST_REQUEST_NAVIGATION_CROSS_ORIGIN_ADMITTED_V1;
+        }
         request->url = resolved;
         record_feature(
             "web-api",
@@ -5986,7 +6129,15 @@ v8_dom_runtime::v8_dom_runtime(
     std::string storage_directory,
     std::string storage_partition_key,
     uint64_t storage_quota_bytes,
-    file_panel_request_sink_v2 file_panel_request_sink)
+    file_panel_request_sink_v2 file_panel_request_sink,
+    file_grant_same_entry_request_sink_v2 file_grant_same_entry_request_sink,
+    file_grant_ancestry_request_sink_v2 file_grant_ancestry_request_sink,
+    file_grant_durable_request_sink_v2 file_grant_durable_request_sink,
+    file_grant_read_request_sink_v2 file_grant_read_request_sink,
+    file_grant_write_request_sink_v2 file_grant_write_request_sink,
+    file_grant_directory_request_sink_v2 file_grant_directory_request_sink,
+    file_grant_release_request_sink_v2 file_grant_release_request_sink,
+    file_grant_create_file_request_sink_v2 file_grant_create_file_request_sink)
     : impl_(std::make_unique<implementation>(
         document,
         std::move(viewport_provider),
@@ -5999,7 +6150,15 @@ v8_dom_runtime::v8_dom_runtime(
         std::move(storage_directory),
         std::move(storage_partition_key),
         storage_quota_bytes,
-        std::move(file_panel_request_sink)))
+        std::move(file_panel_request_sink),
+        std::move(file_grant_same_entry_request_sink),
+        std::move(file_grant_ancestry_request_sink),
+        std::move(file_grant_durable_request_sink),
+        std::move(file_grant_read_request_sink),
+        std::move(file_grant_write_request_sink),
+        std::move(file_grant_directory_request_sink),
+        std::move(file_grant_release_request_sink),
+        std::move(file_grant_create_file_request_sink)))
 {
 }
 
@@ -7829,6 +7988,129 @@ void v8_dom_runtime::complete_file_panel_request(
         if(impl_->console_messages.size()<1024)
             impl_->console_messages.push_back(
                 "error\nNative file panel completion: "+impl_->last_error);
+    }
+}
+
+void v8_dom_runtime::complete_file_grant_same_entry_request(
+    file_grant_same_entry_completion_data_v2& completion) {
+    if (impl_ == nullptr) return;
+    v8::Locker locker(impl_->isolate);
+    v8::Isolate::Scope isolate_scope(impl_->isolate);
+    v8::HandleScope handles(impl_->isolate);
+    v8::TryCatch caught(impl_->isolate);
+    impl_->complete_native_file_grant_same_entry(completion);
+    if (caught.HasCaught()) {
+        impl_->last_error = impl_->describe_reported_exception(caught);
+        std::lock_guard lock(impl_->console_message_mutex);
+        if (impl_->console_messages.size() < 1024)
+            impl_->console_messages.push_back(
+                "error\nNative file grant identity completion: "
+                + impl_->last_error);
+    }
+}
+void v8_dom_runtime::complete_file_grant_ancestry_request(
+    file_grant_ancestry_completion_data_v2& completion) {
+    if (impl_ == nullptr) return;
+    v8::Locker locker(impl_->isolate);
+    v8::Isolate::Scope isolate_scope(impl_->isolate);
+    v8::HandleScope handles(impl_->isolate);
+    v8::TryCatch caught(impl_->isolate);
+    impl_->complete_native_file_grant_ancestry(completion);
+    if (caught.HasCaught()) {
+        impl_->last_error = impl_->describe_reported_exception(caught);
+        std::lock_guard lock(impl_->console_message_mutex);
+        if (impl_->console_messages.size() < 1024)
+            impl_->console_messages.push_back(
+                "error\nNative file grant ancestry completion: "
+                + impl_->last_error);
+    }
+}
+void v8_dom_runtime::complete_file_grant_durable_request(
+    file_grant_durable_completion_data_v2& completion) {
+    if (impl_ == nullptr) return;
+    v8::Locker locker(impl_->isolate);
+    v8::Isolate::Scope isolate_scope(impl_->isolate);
+    v8::HandleScope handles(impl_->isolate);
+    v8::TryCatch caught(impl_->isolate);
+    impl_->complete_native_file_grant_durable(completion);
+    if (caught.HasCaught() && !caught.Exception().IsEmpty()) {
+        const auto realm = impl_->isolate->GetCurrentContext();
+        impl_->last_error = realm.IsEmpty()
+            ? "Native durable file grant completion raised an exception"
+            : impl_->describe_reported_exception(caught, realm);
+        std::lock_guard lock(impl_->console_message_mutex);
+        if (impl_->console_messages.size() < 1024)
+            impl_->console_messages.push_back(
+                "error\nNative durable file grant completion: "
+                + impl_->last_error);
+    }
+}
+void v8_dom_runtime::complete_file_grant_read_request(
+    file_grant_read_completion_data_v2& completion) {
+    if (impl_ == nullptr) return;
+    v8::Locker locker(impl_->isolate);
+    v8::Isolate::Scope isolate_scope(impl_->isolate);
+    v8::HandleScope handles(impl_->isolate);
+    v8::TryCatch caught(impl_->isolate);
+    impl_->complete_native_file_grant_read(completion);
+    if (caught.HasCaught()) {
+        impl_->last_error = impl_->describe_reported_exception(caught);
+        std::lock_guard lock(impl_->console_message_mutex);
+        if (impl_->console_messages.size() < 1024)
+            impl_->console_messages.push_back(
+                "error\nNative file grant read completion: "
+                + impl_->last_error);
+    }
+}
+void v8_dom_runtime::complete_file_grant_write_request(
+    file_grant_write_completion_data_v2& completion) {
+    if (impl_ == nullptr) return;
+    v8::Locker locker(impl_->isolate);
+    v8::Isolate::Scope isolate_scope(impl_->isolate);
+    v8::HandleScope handles(impl_->isolate);
+    v8::TryCatch caught(impl_->isolate);
+    impl_->complete_native_file_grant_write(completion);
+    if (caught.HasCaught()) {
+        impl_->last_error = impl_->describe_reported_exception(caught);
+        std::lock_guard lock(impl_->console_message_mutex);
+        if (impl_->console_messages.size() < 1024)
+            impl_->console_messages.push_back(
+                "error\nNative file grant write completion: "
+                + impl_->last_error);
+    }
+}
+void v8_dom_runtime::complete_file_grant_directory_request(
+    file_grant_directory_completion_data_v2& completion) {
+    if (impl_ == nullptr) return;
+    v8::Locker locker(impl_->isolate);
+    v8::Isolate::Scope isolate_scope(impl_->isolate);
+    v8::HandleScope handles(impl_->isolate);
+    v8::TryCatch caught(impl_->isolate);
+    impl_->complete_native_file_grant_directory(completion);
+    if (caught.HasCaught()) {
+        impl_->last_error = impl_->describe_reported_exception(caught);
+        std::lock_guard lock(impl_->console_message_mutex);
+        if (impl_->console_messages.size() < 1024)
+            impl_->console_messages.push_back(
+                "error\nNative file grant directory completion: "
+                + impl_->last_error);
+    }
+}
+void v8_dom_runtime::complete_file_grant_create_file_request(
+    file_grant_create_file_completion_data_v2& completion) {
+    if (impl_ == nullptr) return;
+    v8::Locker locker(impl_->isolate);
+    v8::Isolate::Scope isolate_scope(impl_->isolate);
+    v8::HandleScope handles(impl_->isolate);
+    v8::TryCatch caught(impl_->isolate);
+    impl_->complete_native_file_grant_create_file(completion);
+    if (caught.HasCaught()) {
+        impl_->last_error = impl_->describe_reported_exception(caught);
+        std::lock_guard lock(impl_->console_message_mutex);
+        if (impl_->console_messages.size() < 1024)
+            impl_->console_messages.push_back(
+                "error\nNative file grant create-file completion: "
+                + impl_->last_error);
     }
 }
 void v8_dom_runtime::complete_host_request(native_host_completion& completion) {

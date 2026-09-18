@@ -32,6 +32,12 @@
       FileSystemHandle.prototype, "file handle prototype inheritance changed");
     assert_equals(Object.getPrototypeOf(FileSystemDirectoryHandle.prototype),
       FileSystemHandle.prototype, "directory handle prototype inheritance changed");
+    assert_equals(Object.getPrototypeOf(FileSystemWritableFileStream.prototype),
+      WritableStream.prototype, "writable file stream inheritance changed");
+    let writerError = null;
+    try { new FileSystemWritableFileStream(); } catch (caught) { writerError = caught; }
+    assert_equals(writerError && writerError.name, "TypeError",
+      "FileSystemWritableFileStream construction");
   }, "handle constructors are illegal and inherit by interface");
 
   test(() => {
@@ -62,17 +68,31 @@
       "FileSystemFileHandle", "file handle tag changed");
     assert_equals(FileSystemDirectoryHandle.prototype[Symbol.toStringTag],
       "FileSystemDirectoryHandle", "directory handle tag changed");
+    assert_equals(FileSystemWritableFileStream.prototype[Symbol.toStringTag],
+      "FileSystemWritableFileStream", "writable file stream tag changed");
     for (const [name, length] of [["getFile", 0], ["createWritable", 0]]) {
       assert_equals(typeof FileSystemFileHandle.prototype[name], "function", `${name} was absent`);
       assert_equals(FileSystemFileHandle.prototype[name].name, name, `${name}.name`);
       assert_equals(FileSystemFileHandle.prototype[name].length, length, `${name}.length`);
     }
     for (const [name, length] of [
+      ["entries", 0], ["keys", 0], ["values", 0],
       ["getFileHandle", 1], ["getDirectoryHandle", 1], ["removeEntry", 1], ["resolve", 1]
     ]) {
       assert_equals(typeof FileSystemDirectoryHandle.prototype[name], "function", `${name} was absent`);
       assert_equals(FileSystemDirectoryHandle.prototype[name].name, name, `${name}.name`);
       assert_equals(FileSystemDirectoryHandle.prototype[name].length, length, `${name}.length`);
+    }
+    assert_equals(FileSystemDirectoryHandle.prototype[Symbol.asyncIterator],
+      FileSystemDirectoryHandle.prototype.entries,
+      "directory @@asyncIterator must be entries");
+    for (const [name, length] of [["write", 1], ["seek", 1], ["truncate", 1]]) {
+      const descriptor = Object.getOwnPropertyDescriptor(
+        FileSystemWritableFileStream.prototype, name);
+      assert_true(Boolean(descriptor && typeof descriptor.value === "function"
+        && descriptor.value.length === length && descriptor.enumerable
+        && descriptor.configurable && descriptor.writable),
+        `${name} writable stream operation changed`);
     }
   }, "specialized handle operations have the expected brands");
 </script>

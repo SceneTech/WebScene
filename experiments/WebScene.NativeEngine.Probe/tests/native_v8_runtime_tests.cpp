@@ -55,6 +55,8 @@ void require(bool condition, std::string_view message)
     if (!condition) fail(message);
 }
 
+uint64_t service_worker_test_current_rss_bytes();
+
 uint8_t measure_baseline_fixture_text(
     void*,
     const char* text,
@@ -155,6 +157,18 @@ int main()
             test_navigation_replaces_top_level_realm();
             return 0;
         }
+        if (selected == "history-same-document") {
+            auto* focused_engine = webscene_engine_create(0);
+            require(focused_engine != nullptr,
+                "same-document History engine creation failed");
+            test_same_document_history_state_and_url_mutation(focused_engine);
+            webscene_engine_destroy(focused_engine);
+            return 0;
+        }
+        if (selected == "iframe-navigation-lifecycle") {
+            test_same_origin_iframe_navigation_document_replacement();
+            return 0;
+        }
         if (selected == "idle-v8-platform") {
             test_idle_v8_foreground_completion();
             return 0;
@@ -186,6 +200,26 @@ int main()
             test_native_file_system_access_lifecycle_and_performance();
             return 0;
         }
+        if (selected == "file-system-handle-permissions") {
+            test_native_file_system_access_picker_and_handle_contract();
+            return 0;
+        }
+        if (selected == "file-system-handle-lifetime") {
+            test_native_file_system_access_lifecycle_and_performance();
+            return 0;
+        }
+        if (selected == "file-system-directory-resolve") {
+            test_native_file_system_access_picker_and_handle_contract();
+            return 0;
+        }
+        if (selected == "resource-cache-prefetch") {
+            test_resource_cache_reuse_across_engine_generations();
+            test_parser_resource_cache_partitioning();
+            test_process_wide_resource_load_single_flight();
+            test_cross_engine_single_flight_keeps_set_cookie_responses_private();
+            test_resource_cache_policy_matrix();
+            return 0;
+        }
         if (selected == "service-worker-lifecycle") {
             test_service_worker_lifecycle_performance_and_teardown_gate();
             return 0;
@@ -205,6 +239,10 @@ int main()
         }
         if (selected == "service-worker-host-stream") {
             test_service_worker_host_message_streaming();
+            return 0;
+        }
+        if (selected == "service-worker-fetch-abort") {
+            test_controlled_fetch_abort_and_retirement();
             return 0;
         }
         if (selected == "service-worker-range-cache") {
@@ -367,6 +405,10 @@ int main()
             test_compiled_css_route_scaling(true, true);
             return 0;
         }
+        if (selected == "live-form-state") {
+            test_live_form_state_selectors_and_scaling();
+            return 0;
+        }
         if (selected == "css-subject-index-scaling") {
             test_compiled_subject_index_scaling();
             return 0;
@@ -406,6 +448,45 @@ int main()
         if (selected == "runtime-diagnostics") {
             test_runtime_diagnostics();
             test_runtime_diagnostics_frame_and_failure();
+            return 0;
+        }
+        if (selected == "feature-use") {
+            auto* focused_engine = webscene_engine_create(0);
+            require(focused_engine != nullptr,
+                "feature-use test engine creation failed");
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+            execute(focused_engine, R"JS(
+                (() => {
+                  const style = document.createElement('style');
+                  style.textContent = '.feature-use-cache-probe { display: flex; }';
+                  document.head.appendChild(style);
+                  for (let index = 0; index < 2; ++index) {
+                    const target = document.createElement('div');
+                    target.className = 'feature-use-cache-probe';
+                    document.body.appendChild(target);
+                  }
+                })()
+            )JS", "feature-use-cache-probe.js");
+            require(
+                evaluate(focused_engine,
+                    "document.querySelector('.feature-use-cache-probe').offsetWidth >= 0",
+                    "feature-use-cache-barrier.js") == "true",
+                "feature-use cache fixture did not settle");
+            const auto report = feature_use(focused_engine);
+            const auto observation = report.find(
+                R"("feature":"property:display","classification":"supported","count":2,"source":"style-application")");
+            require(
+                observation != std::string::npos
+                    && report.find(
+                        R"("feature":"property:display","classification":"supported")",
+                        observation + 1U) == std::string::npos,
+                "repeated supported CSS declarations did not retain one structured observation: "
+                    + report);
+#else
+            test_unsupported_features_are_reported_at_native_decision_points(
+                focused_engine);
+#endif
+            webscene_engine_destroy(focused_engine);
             return 0;
         }
 #if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
@@ -475,6 +556,7 @@ int main()
         }
         if (selected == "websocket-file-reader") {
             test_native_websocket_browser_api();
+            test_native_websocket_protocol_handshake_timing();
             return 0;
         }
         if (selected == "stylesheet-cssom") {
@@ -1111,6 +1193,7 @@ int main()
     test_media_query_inherited_value_propagation_work();
     test_media_query_matching_scales_linearly();
     test_attribute_invalidation_scopes_subject_and_descendant_rules();
+    test_live_form_state_selectors_and_scaling();
     test_compiled_subject_index_scaling();
     test_cascade_layer_mutation_scaling();
     test_compiled_css_invalidation_scaling();
@@ -1130,6 +1213,7 @@ int main()
     test_loaded_document_keeps_html_and_body_cascade_distinct();
     test_relative_stylesheet_background_uses_stylesheet_address();
     test_resource_cache_reuse_across_engine_generations();
+    test_parser_resource_cache_partitioning();
     test_parsed_css_rule_payloads_are_shared_across_live_engines();
     test_process_wide_resource_load_single_flight();
     test_resource_cache_policy_matrix();
@@ -1171,6 +1255,7 @@ int main()
     test_engine_memory_metrics_are_worker_snapshots(engine);
     test_hidden_engine_reclamation_is_debounced_and_cancelable(engine);
     test_native_websocket_browser_api();
+    test_native_websocket_protocol_handshake_timing();
     execute(
         engine,
         "if (typeof IntersectionObserver !== 'function' || "

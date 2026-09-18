@@ -1,0 +1,26 @@
+{
+  "profile": "webscene-localhost-port-mapping-1",
+  "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+  "runtime": "v8",
+  "viewport": {
+    "width": 800,
+    "height": 600,
+    "deviceScaleFactor": 1
+  },
+  "required": [
+    {
+      "path": "contracts/service-worker-localhost-port-mapping.html",
+      "type": "contract",
+      "capabilities": [
+        "service-worker-localhost-port-mapping",
+        "service-worker-controlled-redirect-follow",
+        "service-worker-opaque-redirect"
+      ],
+      "evidence": ["vscode-webview-localhost-port-mapping-371"],
+      "reason": "WPT-derived host simulator for mapped localhost redirects, Fetch redirect modes, URL preservation, bounded latency, and drained request state. The native companion gate runs the pinned unchanged Code OSS v6 worker.",
+      "nativeNavigation": true
+    }
+  ],
+  "harnessBlocked": [],
+  "excluded": []
+}

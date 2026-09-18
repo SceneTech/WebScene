@@ -1,5 +1,14 @@
 cmake_minimum_required(VERSION 3.28)
 project(WebSceneSDK VERSION 0.1.0 LANGUAGES C CXX)
+include(GNUInstallDirs)
+option(WEBSCENE_SDK_TOOLS_ONLY "Install portable SDK packaging tools without native libraries" OFF)
+install(PROGRAMS tools/package_macos.py tools/audit_macos_bundle.py
+  tools/qualify_macos_profile.py tools/precompile_javascript.py
+  DESTINATION share/webscene/tools)
+install(FILES schemas/webscene-macho-audit.schema.json DESTINATION share/webscene/schemas)
+if(WEBSCENE_SDK_TOOLS_ONLY)
+  return()
+endif()
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/WebSceneLinuxSDK.cmake")
   return()
@@ -34,7 +43,6 @@ add_library(WebScene::WebGPU ALIAS webscene_sdk_webgpu)
 file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/sdk-libraries.txt" CONTENT
  "$<TARGET_FILE:webscene_core>\n$<TARGET_FILE:webscene_native_web>\n$<TARGET_FILE:webscene_native_web_shared_css>\n$<TARGET_FILE:webscene_native_engine>\n$<TARGET_FILE:webscene_media>\n$<TARGET_FILE:ixwebsocket>\n")
 
-include(GNUInstallDirs)
 install(TARGETS webscene_core webscene_native_web webscene_native_web_shared_css
   webscene_native_engine webscene_media ixwebsocket ARCHIVE DESTINATION lib)
 install(TARGETS webscene-uic RUNTIME DESTINATION bin)
@@ -57,9 +65,6 @@ install(FILES "${WEBSCENE_V8_ROOT}/LICENSE" DESTINATION share/licenses/WebScene 
 install(FILES "${CMAKE_BINARY_DIR}/webscene-miniaudio-LICENSE" DESTINATION share/licenses/WebScene)
 install(FILES "${CMAKE_BINARY_DIR}/_deps/webscene_ixwebsocket-src/LICENSE.txt"
  DESTINATION share/licenses/WebScene RENAME IXWebSocket-LICENSE)
-install(PROGRAMS tools/package_macos.py DESTINATION share/webscene/tools)
-install(PROGRAMS tools/qualify_macos_profile.py DESTINATION share/webscene/tools)
-
 install(DIRECTORY "${WEBSCENE_GRAPHICS_SDK_ROOT}/dawn/licenses/" DESTINATION share/licenses/WebScene/Dawn)
 install(FILES "${WEBSCENE_GRAPHICS_SDK_ROOT}/dawn/webscene-graphics-package.json"
   "${WEBSCENE_ROOT}/eng/graphics/dependencies.lock.json" DESTINATION share/webscene/dependencies)
@@ -71,7 +76,6 @@ install(FILES "${CMAKE_BINARY_DIR}/WebSceneConfigVersion.cmake" DESTINATION lib/
 # The host compiler and its initialization assets are SDK tools, never app payloads.
 install(TARGETS webscene-jsc RUNTIME DESTINATION bin)
 install(FILES "${WEBSCENE_ROOT}/experiments/WebScene.NativeEngine.Probe/native/webscene_precompiled_javascript.h" DESTINATION include)
-install(PROGRAMS tools/precompile_javascript.py DESTINATION share/webscene/tools)
 install(FILES "${WEBSCENE_V8_OUTPUT_ROOT}/icudtl.dat"
   "${CMAKE_BINARY_DIR}/runtime/webscene_bootstrap_snapshot.bin"
   "${CMAKE_BINARY_DIR}/runtime/webscene_bootstrap_snapshot.meta" DESTINATION bin)

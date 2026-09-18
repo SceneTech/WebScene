@@ -1,0 +1,60 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>File System Access handle IndexedDB browser oracle</title>
+<!-- Cases follow WPT fs/script-tests/FileSystemBaseHandle-IndexedDB.js at
+     revision 76fdb39425f8319118cba6c0c961e1d835c2879f. -->
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<body>
+<script>
+  const requestPromise = request => new Promise((resolve, reject) => {
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+  const transactionPromise = transaction => new Promise((resolve, reject) => {
+    transaction.oncomplete = resolve;
+    transaction.onabort = transaction.onerror = () => reject(transaction.error);
+  });
+
+  promise_test(async t => {
+    assert_true(Boolean(navigator.storage && navigator.storage.getDirectory));
+    const root = await navigator.storage.getDirectory();
+    const fileName = `webscene-idb-${Date.now()}-${Math.random()}.txt`;
+    const databaseName = `webscene-file-handle-${Date.now()}-${Math.random()}`;
+    const handle = await root.getFileHandle(fileName, {create: true});
+    t.add_cleanup(() => root.removeEntry(fileName));
+    t.add_cleanup(() => new Promise(resolve => {
+      const request = indexedDB.deleteDatabase(databaseName);
+      request.onsuccess = request.onerror = request.onblocked = resolve;
+    }));
+
+    const opened = indexedDB.open(databaseName, 1);
+    opened.onupgradeneeded = () => opened.result.createObjectStore("handles");
+    const database = await requestPromise(opened);
+    t.add_cleanup(() => database.close());
+
+    const write = database.transaction("handles", "readwrite");
+    const record = {handle, blob: new Blob(["neighbor"], {type: "text/plain"})};
+    const pendingPut = write.objectStore("handles").put(record, "key");
+    record.handle = null;
+    record.blob = null;
+    await requestPromise(pendingPut);
+    await transactionPromise(write);
+
+    const read = database.transaction("handles", "readonly");
+    const restored = await requestPromise(read.objectStore("handles").get("key"));
+    assert_true(restored.handle instanceof FileSystemFileHandle);
+    assert_not_equals(restored.handle, handle, "retrieval creates a fresh wrapper");
+    assert_true(await restored.handle.isSameEntry(handle));
+    assert_equals(restored.handle.name, handle.name);
+    assert_true(restored.blob instanceof Blob);
+    assert_equals(await restored.blob.text(), "neighbor");
+
+    const cursorRead = database.transaction("handles", "readonly");
+    const cursor = await requestPromise(
+      cursorRead.objectStore("handles").openCursor());
+    assert_true(cursor.value.handle instanceof FileSystemFileHandle);
+    assert_true(await cursor.value.handle.isSameEntry(handle));
+  }, "IndexedDB snapshots, retrieves, and cursors durable file handles with neighboring values");
+</script>
+</body>

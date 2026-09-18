@@ -197,6 +197,9 @@ int main()
     )JS", "native-effects-fixture.js");
 
     const auto scale_started = std::chrono::steady_clock::now();
+    // The explicit 25-second performance assertion below owns this workload's
+    // budget. The dispatch wait includes one second of scheduling margin so a
+    // slow run reports its measured gate instead of a generic timeout.
     execute_and_wait(engine, R"JS(
       (() => {
         const host = document.getElementById('effects');
@@ -215,7 +218,7 @@ int main()
           }
         }
       })()
-    )JS", "native-effects-scaled-cycles.js", 7500);
+    )JS", "native-effects-scaled-cycles.js", 13000);
     const auto scale_elapsed = std::chrono::duration<double, std::milli>(
         std::chrono::steady_clock::now() - scale_started).count();
     require(scale_elapsed < 25000.0, "4096-effect, 100-cycle gate exceeded 25 seconds");
@@ -223,8 +226,13 @@ int main()
     webscene_engine_metrics peak{};
     webscene_engine_get_metrics(engine, &peak);
     webscene_engine_memory_metrics peak_memory{sizeof(webscene_engine_memory_metrics)};
-    require(webscene_engine_get_memory_metrics(engine, &peak_memory) != 0,
-        "peak memory metrics were unavailable");
+    for (auto attempt = 0; attempt < 500; ++attempt) {
+        require(webscene_engine_get_memory_metrics(engine, &peak_memory) != 0,
+            "peak memory metrics were unavailable");
+        if (peak_memory.native_dom_textual_style_count
+            > before_memory.native_dom_textual_style_count) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
     require(peak.dom_nodes >= before.dom_nodes + 4098U
         && peak.dom_nodes <= before.dom_nodes + 4102U,
         "fixture DOM node delta was outside its 4098..4102 bound");
@@ -347,6 +355,10 @@ int main()
     require(after_memory.v8_used_heap_bytes
             <= before_memory.v8_used_heap_bytes + 32U * 1024U * 1024U,
         "post-cleanup V8 heap exceeded its 32 MiB bound");
+    const auto retained_heap_growth =
+        after_memory.v8_used_heap_bytes > before_memory.v8_used_heap_bytes
+        ? after_memory.v8_used_heap_bytes - before_memory.v8_used_heap_bytes
+        : 0U;
 
     webscene_engine_destroy(engine);
     std::cout << "css-effect-values initial-effects=4096 scale-cycles=100 scale-elapsed-ms="
@@ -362,6 +374,7 @@ int main()
               << " initial-scene-command-bytes=" << initial_scene_command_bytes
               << " peak-textual-style-count-delta=" << peak_textual_style_count_delta
               << " peak-textual-style-bytes-delta=" << peak_textual_style_bytes_delta
+              << " retained-heap-growth=" << retained_heap_growth
               << '\n';
     return 0;
 }

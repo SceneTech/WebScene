@@ -20,11 +20,63 @@
 
     struct message_port_endpoint;
 
+    struct file_grant_release_dispatcher final {
+        std::mutex mutex;
+        v8_dom_runtime::file_grant_release_request_sink_v2 sink;
+        bool stopped{false};
+
+        bool release(const std::vector<std::uint8_t>& token)
+        {
+            std::lock_guard lock(mutex);
+            if (stopped || !sink || token.empty()) return false;
+            webscene_file_grant_release_request_v2 request{
+                sizeof(webscene_file_grant_release_request_v2), 2,
+                {token.data(), token.size()}, 0, 0};
+            return sink(request);
+        }
+
+        void stop()
+        {
+            std::lock_guard lock(mutex);
+            stopped = true;
+            sink = {};
+        }
+    };
+
+    struct file_grant_owner final {
+        std::vector<std::uint8_t> token;
+        std::string origin;
+        std::string name;
+        std::uint32_t kind{};
+        std::uint32_t capabilities{};
+        std::shared_ptr<file_grant_release_dispatcher> dispatcher;
+        std::atomic<bool> released{false};
+
+        void release()
+        {
+            if (released.exchange(true, std::memory_order_acq_rel)) return;
+            if (dispatcher != nullptr) dispatcher->release(token);
+        }
+
+        ~file_grant_owner() { release(); }
+    };
+
+    struct file_system_handle_binding final {
+        std::shared_ptr<file_grant_owner> owner;
+        v8::Global<v8::Context> context;
+        v8::Global<v8::Object> wrapper;
+        bool reclaimed{false};
+    };
+
     struct clone_packet {
         std::vector<uint8_t> bytes;
         std::vector<std::shared_ptr<v8::BackingStore>> transfers;
         std::vector<std::shared_ptr<message_port_endpoint>> port_transfers;
+        std::vector<std::shared_ptr<file_grant_owner>> file_system_handles;
     };
+
+    using durable_file_grant_locator = std::array<std::uint8_t,
+        WEBSCENE_FILE_GRANT_DURABLE_LOCATOR_BYTES_V2>;
 
     struct binary_object_url final {
         std::string bytes;
@@ -143,10 +195,44 @@
         v8::Global<v8::Promise::Resolver> resolver;
     };
 
+    enum class indexeddb_operation_kind : std::uint8_t {
+        load,
+        store,
+        erase
+    };
+    enum class indexeddb_operation_phase : std::uint8_t {
+        load_storage,
+        export_handles,
+        commit_storage,
+        restore_handles,
+        erase_storage,
+        revoke_locators
+    };
     struct pending_indexeddb_promise final {
         v8::Global<v8::Context> context;
         v8::Global<v8::Promise::Resolver> resolver;
         bool deserialize_data{false};
+        indexeddb_operation_kind operation{indexeddb_operation_kind::load};
+        indexeddb_operation_phase phase{indexeddb_operation_phase::load_storage};
+        std::string origin;
+        std::string database;
+        std::uint64_t revision{};
+        clone_packet packet;
+        std::vector<durable_file_grant_locator> locators;
+        std::vector<durable_file_grant_locator> prior_locators;
+        std::size_t next_durable_index{};
+        std::size_t active_durable_requests{};
+        std::optional<indexeddb_storage_result> terminal_result;
+        std::string failure_message;
+        std::string failure_name;
+        bool cleanup_after_failure{};
+    };
+
+    struct indexeddb_durable_request_target final {
+        std::uint64_t indexeddb_operation_id{};
+        std::size_t index{};
+        std::uint32_t action{};
+        std::string serialized_origin;
     };
 
     struct indexeddb_completion final {
@@ -530,6 +616,8 @@
         std::condition_variable condition;
         std::atomic<bool> ready{false};
         bool loaded{false};
+        bool cross_engine_shareable{false};
+        const void* owner{nullptr};
         std::shared_ptr<const resource_response> response;
         std::chrono::steady_clock::time_point expires_at{};
         uint64_t access{0U};
@@ -577,9 +665,11 @@
     };
 
     struct pending_fetch_task final {
+        uint64_t cancellation_id{};
         v8::Global<v8::Context> context;
         v8::Global<v8::Promise::Resolver> resolver;
         std::shared_future<async_fetch_result> future;
+        std::function<void()> cancel;
     };
 
     struct async_digest_result final {

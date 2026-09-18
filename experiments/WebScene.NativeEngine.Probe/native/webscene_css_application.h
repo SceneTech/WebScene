@@ -15,7 +15,8 @@ namespace webscene_native::css {
 template<typename Decision,typename LoadSvg>
 void apply_resolved_declaration(native_document& document,dom_node& node,
     const css_declaration& declaration,const std::string& value,
-    bool inline_origin,Decision& decision,LoadSvg&& load_svg)
+    bool inline_origin,Decision& decision,LoadSvg&& load_svg,
+    bool defer_transition_configuration = false)
 {
     const auto& name=declaration.name;
     const auto may_require_application_expansion =
@@ -44,7 +45,8 @@ void apply_resolved_declaration(native_document& document,dom_node& node,
                     component.value,
                     inline_origin,
                     decision,
-                    load_svg);
+                    load_svg,
+                    defer_transition_configuration);
             }
             return;
         }
@@ -73,6 +75,71 @@ void apply_resolved_declaration(native_document& document,dom_node& node,
                 && ((node.style.inline_property_mask | node.style.important_property_mask)
                     & property) != 0U;
         };
+        // Stylesheet preparation already parses fixed lengths into immutable
+        // specified-value IR. Reuse those values during large recascades
+        // instead of parsing the same authored token for every matched node.
+        if (declaration.specified.kind == specified_css_kind::length
+            && declaration.specified.keyword.empty()) {
+            switch (declaration.property) {
+            case css_property_id::width:
+                if (!is_inline(inline_width)) node.style.width = declaration.specified.length;
+                return;
+            case css_property_id::height:
+                if (!is_inline(inline_height)) node.style.height = declaration.specified.length;
+                return;
+            case css_property_id::padding_left:
+                if (!is_inline(inline_padding)) {
+                    node.style.padding_left = declaration.specified.length;
+                }
+                return;
+            case css_property_id::padding_right:
+                if (!is_inline(inline_padding)) {
+                    node.style.padding_right = declaration.specified.length;
+                }
+                return;
+            case css_property_id::padding_top:
+                if (!is_inline(inline_padding)) {
+                    node.style.padding_top = declaration.specified.length;
+                }
+                return;
+            case css_property_id::padding_bottom:
+                if (!is_inline(inline_padding)) {
+                    node.style.padding_bottom = declaration.specified.length;
+                }
+                return;
+            default:
+                break;
+            }
+        }
+        if (declaration.specified.kind == specified_css_kind::color) {
+            if (declaration.property == css_property_id::color) {
+                if (!is_inline(inline_color)) {
+                    node.style.foreground_rgba = declaration.specified.color.rgba;
+                }
+                return;
+            }
+            if (declaration.property == css_property_id::background_color) {
+                if (!is_inline(inline_background)) {
+                    node.style.background_rgba = declaration.specified.color.rgba;
+                    node.style.background_current_color =
+                        declaration.specified.color.current_color;
+                }
+                return;
+            }
+        }
+        if (declaration.property == css_property_id::box_sizing
+            && declaration.specified.kind == specified_css_kind::keyword) {
+            if (!is_inline(inline_box_sizing)) {
+                node.style.border_box = declaration.specified.keyword == "border-box";
+            }
+            return;
+        }
+        if (declaration.property == css_property_id::transition
+            && value.find(',') == std::string::npos
+            && apply_compiled_single_transition_shorthand(
+                node.style,
+                declaration.specified,
+                !defer_transition_configuration)) return;
         if (name == "all") {
             if (!cascade_keyword_is(value, "unset")) {
                 decision.classification = "unsupported";
@@ -104,7 +171,13 @@ void apply_resolved_declaration(native_document& document,dom_node& node,
             node.style.background_current_color = false;
             return;
         }
-        if(css::apply_decoration_value(node,name,value,decision,is_inline)) return;
+        if(css::apply_decoration_value(
+            node,
+            name,
+            value,
+            decision,
+            is_inline,
+            defer_transition_configuration)) return;
         if (css::apply_box_metrics(node,name,value,is_inline)) {
         } else if (css::apply_structure_value(document,node,name,value,decision,is_inline)) {
         } else if (css::apply_grid_value(node,name,value,decision,is_inline)) {
@@ -129,7 +202,8 @@ void apply_resolved_declaration(native_document& document,dom_node& node,
 template<typename Decision,typename LoadSvg,typename Resolved>
 void apply_declaration(native_document& document,dom_node& node,
     const css_declaration& authored,const std::unordered_map<std::string,std::string>& variables,
-    bool inline_origin,Decision& decision,LoadSvg&& load_svg,Resolved&& on_resolved)
+    bool inline_origin,Decision& decision,LoadSvg&& load_svg,Resolved&& on_resolved,
+    bool defer_transition_configuration = false)
 {
     std::optional<css_declaration> normalized;
     if(authored.name=="-moz-transform" || authored.name=="-webkit-transform") {
@@ -151,6 +225,14 @@ void apply_declaration(native_document& document,dom_node& node,
         return;
     }
     on_resolved(contains_variable);
-    apply_resolved_declaration(document,node,declaration,value,inline_origin,decision,load_svg);
+    apply_resolved_declaration(
+        document,
+        node,
+        declaration,
+        value,
+        inline_origin,
+        decision,
+        load_svg,
+        defer_transition_configuration);
 }
 } // namespace webscene_native::css

@@ -10,6 +10,61 @@ inline std::string_view trim_css_view(std::string_view value) {
     if(start==std::string_view::npos) return {};
     return value.substr(start,value.find_last_not_of(whitespace)-start+1);
 }
+inline size_t skip_css_escape_sequence(std::string_view text, size_t slash);
+
+// Functional selector arguments are forgiving selector lists. Only commas at
+// the current list depth separate alternatives; nested functions and attribute
+// values keep their commas. Keep this allocation-free because matching calls it
+// for every subject considered by :is(), :where(), and :not().
+template<typename Predicate>
+inline bool css_selector_list_any(std::string_view value, Predicate&& predicate)
+{
+    size_t start = 0U;
+    int parenthesis_depth = 0;
+    int bracket_depth = 0;
+    char quote = 0;
+    for (size_t index = 0U; index <= value.size(); ++index) {
+        const auto at_end = index == value.size();
+        const auto character = at_end ? ',' : value[index];
+        if (!at_end && character == '\\') {
+            index = skip_css_escape_sequence(value, index) - 1U;
+            continue;
+        }
+        if (!at_end && quote != 0) {
+            if (character == quote) quote = 0;
+            continue;
+        }
+        if (!at_end && (character == '\'' || character == '"')) {
+            quote = character;
+            continue;
+        }
+        if (!at_end && character == '[') {
+            ++bracket_depth;
+            continue;
+        }
+        if (!at_end && character == ']' && bracket_depth > 0) {
+            --bracket_depth;
+            continue;
+        }
+        if (!at_end && bracket_depth == 0 && character == '(') {
+            ++parenthesis_depth;
+            continue;
+        }
+        if (!at_end && bracket_depth == 0 && character == ')'
+            && parenthesis_depth > 0) {
+            --parenthesis_depth;
+            continue;
+        }
+        if (character != ',' || parenthesis_depth != 0 || bracket_depth != 0) {
+            continue;
+        }
+        if (predicate(trim_css_view(value.substr(start, index - start)))) {
+            return true;
+        }
+        start = index + 1U;
+    }
+    return false;
+}
 inline void append_utf8_codepoint(std::string& result, uint32_t codepoint)
     {
         if (codepoint <= 0x7FU) {

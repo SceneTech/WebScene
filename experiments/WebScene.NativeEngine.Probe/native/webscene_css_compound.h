@@ -305,13 +305,21 @@ inline bool compound_matches(const Host& host,const dom_node& node,
                 if (!form_control || node.tag == "fieldset" || node.tag == "optgroup"
                     || node.tag == "option") return false;
                 if (node.attributes.contains("required")) {
-                    const auto value = node.attributes.find("value");
-                    if (value == node.attributes.end() || value->second.empty()) return false;
+                    if (forms::supports_text_selection(&node)
+                        ? forms::text_value_empty(node)
+                        : !node.attributes.contains("value")
+                            || node.attributes.at("value").empty()) return false;
                 }
             } else if (name == "invalid") {
                 if (!form_control || !node.attributes.contains("required")) return false;
-                const auto value = node.attributes.find("value");
-                if (value != node.attributes.end() && !value->second.empty()) return false;
+                if (forms::supports_text_selection(&node)
+                    ? !forms::text_value_empty(node)
+                    : node.attributes.contains("value")
+                        && !node.attributes.at("value").empty()) return false;
+            } else if (name == "placeholder-shown") {
+                if (!forms::supports_placeholder_selector(node)
+                    || !node.attributes.contains("placeholder")
+                    || !forms::text_value_empty(node)) return false;
             } else if (name == "lang") {
                 if (!css::language_matches(document,node,argument)) return false;
             } else if (name == "dir") {
@@ -325,33 +333,13 @@ inline bool compound_matches(const Host& host,const dom_node& node,
                 if (!css::interaction_matches(document,node,name,
                     host.selector_interaction_state(),host.is_text_control(&node))) return false;
             } else if (name == "not") {
-                size_t start = 0;
-                while (start <= argument.size()) {
-                    auto end = argument.find(',', start);
-                    if (end == std::string::npos) end = argument.size();
-                    if (host.css_selector_matches(
-                            node,
-                            trim_css_view(argument.substr(start, end - start)),
-                            scope_root)) {
-                        return false;
-                    }
-                    if (end == argument.size()) break;
-                    start = end + 1U;
-                }
+                if (css_selector_list_any(argument, [&](std::string_view item) {
+                        return host.css_selector_matches(node, item, scope_root);
+                    })) return false;
             } else if (name == "is" || name == "where") {
-                bool any = false;
-                size_t start = 0;
-                while (start <= argument.size()) {
-                    auto end = argument.find(',', start);
-                    if (end == std::string::npos) end = argument.size();
-                    any = any || host.css_selector_matches(
-                        node,
-                        trim_css_view(argument.substr(start, end - start)),
-                        scope_root);
-                    if (end == argument.size()) break;
-                    start = end + 1U;
-                }
-                if (!any) return false;
+                if (!css_selector_list_any(argument, [&](std::string_view item) {
+                        return host.css_selector_matches(node, item, scope_root);
+                    })) return false;
             } else if (name == "has") {
                 bool any = false;
                 size_t start = 0;

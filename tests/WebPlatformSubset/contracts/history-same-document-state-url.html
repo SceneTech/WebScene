@@ -1,0 +1,106 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Same-document History state and URL mutation</title>
+<body>
+<script>
+  const state = window.__webSceneWptState = {
+    complete: false, harness: null, results: [], errors: [], diagnostics: [], durations: []
+  };
+  function assert(condition, message) { if (!condition) throw new Error(message); }
+  function test(name, body) {
+    const started = performance.now();
+    try {
+      body();
+      state.results.push({ name, status: "PASS", message: null, stack: null });
+    } catch (error) {
+      state.results.push({ name, status: "FAIL", message: String(error.message || error), stack: error.stack || null });
+    } finally {
+      state.durations.push({ name, milliseconds: performance.now() - started });
+    }
+  }
+
+  const originalUrl = location.href;
+  const originalLength = history.length;
+  const stableLocation = location;
+  const stableHistory = history;
+  let popstates = 0;
+  addEventListener("popstate", () => ++popstates);
+
+  test("replaceState accepts the Code OSS URL-object preparation path", () => {
+    const input = { nested: { value: 7 }, list: [1, 2, 3] };
+    const prepared = new URL(location.href);
+    prepared.searchParams.set("id", "markdown-preview");
+    prepared.hash = "ready";
+    history.replaceState(input, "", prepared);
+    input.nested.value = 99;
+    assert(location === stableLocation && history === stableHistory, "Location or History identity changed");
+    assert(location.search === "?id=markdown-preview" && location.hash === "#ready", location.href);
+    assert(document.URL === location.href && document.documentURI === location.href, "Document URL did not update");
+    assert(document.baseURI === location.href, `baseURI ${document.baseURI}`);
+    assert(history.length === originalLength, "replaceState changed history length");
+    assert(history.state.nested.value === 7 && history.state !== input, "state was not cloned");
+    assert(popstates === 0, "replaceState synchronously dispatched popstate");
+  });
+
+  test("pushState updates length, state and relative URL resolution", () => {
+    history.pushState({ page: 2 }, "", "next/page?mode=edit");
+    assert(location.pathname.endsWith("/next/page") && location.search === "?mode=edit", location.href);
+    assert(history.length === originalLength + 1, `length ${history.length}`);
+    assert(history.state.page === 2, "push state missing");
+    assert(new URL("asset.svg", document.baseURI).pathname.endsWith("/next/asset.svg"), document.baseURI);
+    assert(popstates === 0, "pushState synchronously dispatched popstate");
+  });
+
+  test("cross-origin URLs fail atomically with SecurityError", () => {
+    const before = [location.href, history.length, history.state.page];
+    let name = "";
+    try { history.replaceState({ bad: true }, "", "https://example.invalid/x"); }
+    catch (error) { name = error.name; }
+    assert(name === "SecurityError", `exception ${name}`);
+    assert(location.href === before[0] && history.length === before[1]
+      && history.state.page === before[2], "cross-origin rejection mutated history");
+  });
+
+  test("uncloneable state fails atomically with DataCloneError", () => {
+    const before = [location.href, history.length, history.state.page];
+    let name = "";
+    try { history.replaceState(() => {}, "", "?bad=clone"); }
+    catch (error) { name = error.name; }
+    assert(name === "DataCloneError", `exception ${name}`);
+    assert(location.href === before[0] && history.length === before[1]
+      && history.state.page === before[2], "clone rejection mutated history");
+  });
+
+  test("History methods reject a borrowed receiver", () => {
+    const before = [location.href, history.length, history.state.page];
+    let name = "";
+    try { history.replaceState.call({}, null, "", "?bad=brand"); }
+    catch (error) { name = error.name; }
+    assert(name === "TypeError", `exception ${name}`);
+    assert(location.href === before[0] && history.length === before[1]
+      && history.state.page === before[2], "brand rejection mutated history");
+  });
+
+  test("bounded repeated replacement remains same-document", () => {
+    const samples = [];
+    for (let batch = 0; batch < 10; ++batch) {
+      const started = performance.now();
+      for (let index = 0; index < 10; ++index) {
+        history.replaceState({ batch, index }, "", `?batch=${batch}&index=${index}`);
+      }
+      samples.push((performance.now() - started) / 10);
+    }
+    samples.sort((a, b) => a - b);
+    state.diagnostics.push(`replace-state-ms p95=${samples[9]} max=${samples[9]}`);
+    assert(history.length === originalLength + 1, "replace stress grew history");
+    assert(history.state.batch === 9 && history.state.index === 9,
+      `final state mismatch ${JSON.stringify(history.state)}`);
+  });
+
+  history.replaceState(null, "", originalUrl);
+  const failure = state.results.find(result => result.status !== "PASS");
+  state.harness = failure
+    ? { status: 1, message: failure.message, stack: failure.stack }
+    : { status: 0, message: null, stack: null };
+  state.complete = true;
+</script>

@@ -1,0 +1,156 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://scenetech.dev/schemas/webscene-macho-audit.schema.json",
+  "title": "WebScene macOS bundle Mach-O audit evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "configuration", "summary", "executable", "binaries", "symlinks", "normalization"],
+  "properties": {
+    "schemaVersion": { "const": 2 },
+    "configuration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["architectures", "maximumDeploymentTarget", "maximumEntries", "systemPrefixes"],
+      "properties": {
+        "architectures": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "pattern": "^[A-Za-z0-9_]+$" } },
+        "maximumDeploymentTarget": { "type": "string", "pattern": "^[0-9]+(?:\\.[0-9]+){0,2}$" },
+        "maximumEntries": { "type": "integer", "minimum": 1 },
+        "systemPrefixes": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "pattern": "^/" } }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["entriesScanned", "machoFiles", "symlinks"],
+      "properties": {
+        "entriesScanned": { "type": "integer", "minimum": 1 },
+        "machoFiles": { "type": "integer", "minimum": 1 },
+        "symlinks": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "executable": { "$ref": "#/$defs/path" },
+    "binaries": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "bytes", "sha256", "architectures", "slices"],
+        "properties": {
+          "path": { "$ref": "#/$defs/path" },
+          "bytes": { "type": "integer", "minimum": 4 },
+          "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "architectures": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string" } },
+          "slices": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["architecture", "deploymentTarget", "installName", "rpaths", "dependencies"],
+              "properties": {
+                "architecture": { "type": "string", "pattern": "^[A-Za-z0-9_]+$" },
+                "deploymentTarget": { "type": "string", "pattern": "^[0-9]+(?:\\.[0-9]+){0,2}$" },
+                "installName": { "type": ["string", "null"] },
+                "rpaths": { "type": "array", "uniqueItems": true, "items": { "type": "string" } },
+                "dependencies": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["name", "kind"],
+                    "properties": {
+                      "name": { "type": "string" },
+                      "kind": { "enum": ["system", "bundle"] },
+                      "resolvedPath": { "$ref": "#/$defs/path" }
+                    },
+                    "allOf": [
+                      {
+                        "if": { "properties": { "kind": { "const": "bundle" } }, "required": ["kind"] },
+                        "then": { "required": ["resolvedPath"] },
+                        "else": { "not": { "required": ["resolvedPath"] } }
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "symlinks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "target", "resolvedPath"],
+        "properties": {
+          "path": { "$ref": "#/$defs/path" },
+          "target": { "type": "string" },
+          "resolvedPath": { "$ref": "#/$defs/path" }
+        }
+      }
+    },
+    "normalization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "requestedArchitecture", "files", "summary"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "requestedArchitecture": { "type": ["string", "null"], "pattern": "^[A-Za-z0-9_]+$" },
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "action", "originalArchitectures", "resultArchitectures", "originalBytes", "resultBytes", "originalSha256", "resultSha256"],
+            "properties": {
+              "path": { "$ref": "#/$defs/path" },
+              "action": { "enum": ["unchanged", "thinned"] },
+              "originalArchitectures": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "pattern": "^[A-Za-z0-9_]+$" } },
+              "resultArchitectures": { "type": "array", "minItems": 1, "maxItems": 1, "uniqueItems": true, "items": { "type": "string", "pattern": "^[A-Za-z0-9_]+$" } },
+              "originalBytes": { "type": "integer", "minimum": 4 },
+              "resultBytes": { "type": "integer", "minimum": 4 },
+              "originalSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+              "resultSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+            }
+          }
+        },
+        "summary": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["machoFiles", "thinnedFiles", "originalBytes", "resultBytes", "savedBytes", "peakTemporaryBytes"],
+          "properties": {
+            "machoFiles": { "type": "integer", "minimum": 0 },
+            "thinnedFiles": { "type": "integer", "minimum": 0 },
+            "originalBytes": { "type": "integer", "minimum": 0 },
+            "resultBytes": { "type": "integer", "minimum": 0 },
+            "savedBytes": { "type": "integer", "minimum": 0 },
+            "peakTemporaryBytes": { "type": "integer", "minimum": 0 }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "enabled": { "const": true } }, "required": ["enabled"] },
+          "then": {
+            "properties": {
+              "requestedArchitecture": { "type": "string" },
+              "files": { "minItems": 1 }
+            }
+          },
+          "else": {
+            "properties": {
+              "requestedArchitecture": { "type": "null" },
+              "files": { "maxItems": 0 }
+            }
+          }
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "path": { "type": "string", "minLength": 1, "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$" }
+  }
+}

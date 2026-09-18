@@ -26,6 +26,7 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
   const ruleInstances = new WeakSet();
   const styleRuleInstances = new WeakSet();
   const importRuleInstances = new WeakSet();
+  const namespaceRuleInstances = new WeakSet();
   const groupingRuleInstances = new WeakSet();
   const conditionRuleInstances = new WeakSet();
   const mediaRuleInstances = new WeakSet();
@@ -95,6 +96,8 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
     'CSSStyleRule', styleRuleInstances, CSSRuleInterface);
   const CSSImportRuleInterface = interfaceConstructor(
     'CSSImportRule', importRuleInstances, CSSRuleInterface);
+  const CSSNamespaceRuleInterface = interfaceConstructor(
+    'CSSNamespaceRule', namespaceRuleInstances, CSSRuleInterface);
   const CSSGroupingRuleInterface = interfaceConstructor(
     'CSSGroupingRule', groupingRuleInstances, CSSRuleInterface);
   const CSSConditionRuleInterface = interfaceConstructor(
@@ -117,6 +120,7 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
       ['CSSStyleSheet', CSSStyleSheetInterface],
       ['CSSStyleRule', CSSStyleRuleInterface],
       ['CSSImportRule', CSSImportRuleInterface],
+      ['CSSNamespaceRule', CSSNamespaceRuleInterface],
       ['CSSGroupingRule', CSSGroupingRuleInterface],
       ['CSSConditionRule', CSSConditionRuleInterface],
       ['CSSMediaRule', CSSMediaRuleInterface],
@@ -133,6 +137,8 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
     for (const target of [view.CSSRule, view.CSSRule?.prototype]) {
       if (target && !('IMPORT_RULE' in target)) Object.defineProperty(
         target, 'IMPORT_RULE', { value: 3, enumerable: true });
+      if (target && !('NAMESPACE_RULE' in target)) Object.defineProperty(
+        target, 'NAMESPACE_RULE', { value: 10, enumerable: true });
       if (target && !('SUPPORTS_RULE' in target)) Object.defineProperty(
         target, 'SUPPORTS_RULE', { value: 12, enumerable: true });
     }
@@ -769,6 +775,38 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
       mediaText: parseMediaList(remainder).join(', ')
     };
   };
+  const parseNamespaceRule = cssText => {
+    const match = /^@namespace\b([\s\S]*);$/i.exec(cssText.trim());
+    if (!match) return null;
+    let source = match[1].trim();
+    let prefix = null;
+    const identifier = /^(-?[_a-zA-Z][_a-zA-Z0-9-]*)\s+/.exec(source);
+    if (identifier) {
+      prefix = identifier[1];
+      source = source.slice(identifier[0].length).trim();
+    }
+    let namespaceURI = '';
+    if (source[0] === '"' || source[0] === "'") {
+      const quote = source[0];
+      let cursor = 1;
+      for (; cursor < source.length && source[cursor] !== quote; cursor++) {
+        if (source[cursor] === '\\' && cursor + 1 < source.length) cursor++;
+        namespaceURI += source[cursor];
+      }
+      if (cursor >= source.length || source.slice(cursor + 1).trim()) return null;
+    } else {
+      const url = /^url\s*\(([\s\S]*)\)$/i.exec(source);
+      if (!url) return null;
+      namespaceURI = url[1].trim();
+      if (namespaceURI.length >= 2
+          && (namespaceURI[0] === '"' || namespaceURI[0] === "'")
+          && namespaceURI.at(-1) === namespaceURI[0]) {
+        namespaceURI = namespaceURI.slice(1, -1);
+      }
+      if (!namespaceURI) return null;
+    }
+    return { prefix, namespaceURI };
+  };
   const escapeCssString = value => String(value)
     .replace(/\\/g, '\\\\').replace(/"/g, '\\"');
   const absolutizeCssUrls = (source, baseURL) => {
@@ -832,6 +870,7 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
     let style;
     let serializeGroup;
     const importSpec = parseImportRule(parsed.cssText);
+    const namespaceSpec = parseNamespaceRule(parsed.cssText);
     const mediaMatch = /^@media(?:\s+([^\{]*?))?\s*\{/i.exec(parsed.cssText);
     const supportsMatch = /^@supports(?:\s+([^\{]*?))?\s*\{/i.exec(parsed.cssText);
     const layerBlockMatch = /^@layer(?:\s+([^\{]*?))?\s*\{/i.exec(parsed.cssText);
@@ -843,6 +882,9 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
     if (importSpec) {
       importRuleInstances.add(rule);
       Object.setPrototypeOf(rule, CSSImportRuleInterface.prototype);
+    } else if (namespaceSpec) {
+      namespaceRuleInstances.add(rule);
+      Object.setPrototypeOf(rule, CSSNamespaceRuleInterface.prototype);
     } else if (mediaMatch) {
       groupingRuleInstances.add(rule);
       conditionRuleInstances.add(rule);
@@ -974,6 +1016,14 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
         } }
       });
       serialize();
+    } else if (namespaceSpec) {
+      cssText = `@namespace${namespaceSpec.prefix ? ' ' + namespaceSpec.prefix : ''} url("${escapeCssString(namespaceSpec.namespaceURI)}");`;
+      Object.defineProperties(rule, {
+        type: { enumerable: true, value: 10 },
+        prefix: { enumerable: true, value: namespaceSpec.prefix },
+        namespaceURI: { enumerable: true, value: namespaceSpec.namespaceURI },
+        detach: { value: () => { parent = null; } }
+      });
     } else if (groupingMatch) {
       let children = splitRules(parsed.body || '').map(child =>
         makeRule(state, child, rule, nestedStyleContext));
@@ -1321,8 +1371,23 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
             exception('Imported rules must precede ordinary rules', 'HierarchyRequestError');
           }
         }
-        if (/^@namespace\b/i.test(parsed[0].cssText))
-          exception('Namespace rules require native CSSOM support', 'NotSupportedError');
+        const namespace = parseNamespaceRule(parsed[0].cssText);
+        if (/^@namespace\b/i.test(parsed[0].cssText) && !namespace)
+          exception('The namespace rule is invalid', 'SyntaxError');
+        if (namespace) {
+          if (current.rules.slice(0, index).some(existing =>
+              !importRuleInstances.has(existing)
+              && !layerStatementRuleInstances.has(existing)
+              && !namespaceRuleInstances.has(existing))) {
+            exception('Namespace rules must precede ordinary rules', 'HierarchyRequestError');
+          }
+          if (current.rules.slice(index).some(existing => importRuleInstances.has(existing)))
+            exception('Namespace rules must follow imported rules', 'HierarchyRequestError');
+        } else if (!/^@import\b/i.test(parsed[0].cssText)
+            && !parseLayerStatementNames(parsed[0].cssText)
+            && current.rules.slice(index).some(existing => namespaceRuleInstances.has(existing))) {
+          exception('Ordinary rules must follow namespace rules', 'HierarchyRequestError');
+        }
         current.rules.splice(index, 0, makeRule(current, parsed[0]));
         publish(current);
         return index;

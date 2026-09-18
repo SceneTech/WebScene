@@ -54,6 +54,7 @@ struct clip_scene_counts final {
     uint32_t inset_clip_begins{};
     uint32_t inset_clip_ends{};
     uint32_t clipped_fills{};
+    uint32_t blur_filter_begins{};
     uint32_t command_count{};
     bool transform_clip_nested{};
 };
@@ -105,6 +106,10 @@ clip_scene_counts wait_for_inset_clip_scene(webscene_engine* engine, uint32_t ex
                     } else if ((command.kind == 1U || command.kind == 9U)
                         && command.rgba == 0x285078FFU) {
                         ++latest.clipped_fills;
+                    } else if (command.kind == 30U
+                        && (command.flags & (1U << 28U)) != 0U
+                        && std::abs(command.stroke_width - 2.0F) < 0.01F) {
+                        ++latest.blur_filter_begins;
                     }
                 }
                 webscene_scene_acknowledge_v3(lease);
@@ -177,6 +182,7 @@ int main()
             clip-path: inset(0px 1px); filter: brightness(0.5); backdrop-filter: blur(1px); }
           #effects.alternate > span { clip-path: circle(25%); filter: contrast(2); }
           #effects > span:first-child { transform: scale(1.25) rotate(3deg); }
+          #effects > span:last-child { filter: blur(2px); }
         `;
         document.head.appendChild(rules);
         const host = document.createElement('main');
@@ -192,6 +198,9 @@ int main()
             || style.getPropertyValue('mask-repeat') !== 'no-repeat'
             || first.offsetWidth !== 8 || first.offsetHeight !== 2) {
           throw new Error('initial effect values failed');
+        }
+        if (getComputedStyle(host.lastElementChild).getPropertyValue('filter') !== 'blur(2px)') {
+          throw new Error('initial blur filter value failed');
         }
       })()
     )JS", "native-effects-fixture.js");
@@ -259,6 +268,8 @@ int main()
         "retained scene did not preserve all 4096 clipped fills");
     require(initial_clip_scene.transform_clip_nested,
         "transform commands did not wrap the inset clip scope");
+    require(initial_clip_scene.blur_filter_begins == 1U,
+        "retained scene did not emit the bounded foreground blur group");
     const auto initial_scene_command_bytes =
         static_cast<uint64_t>(initial_clip_scene.command_count)
             * sizeof(webscene_scene_command);
@@ -370,6 +381,7 @@ int main()
               << " clip-begins=" << initial_clip_scene.inset_clip_begins
               << " clip-ends=" << initial_clip_scene.inset_clip_ends
               << " clipped-fills=" << initial_clip_scene.clipped_fills
+              << " blur-filter-begins=" << initial_clip_scene.blur_filter_begins
               << " transform-clip-nested=" << initial_clip_scene.transform_clip_nested
               << " initial-scene-command-bytes=" << initial_scene_command_bytes
               << " peak-textual-style-count-delta=" << peak_textual_style_count_delta

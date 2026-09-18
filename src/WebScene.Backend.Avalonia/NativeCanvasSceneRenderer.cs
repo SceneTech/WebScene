@@ -47,8 +47,10 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
     private const uint DomBrightnessFilter = 1u << 31;
     private const uint DomGrayscaleFilter = 1u << 30;
     private const uint DomContrastFilter = 1u << 29;
+    private const uint DomBlurFilter = 1u << 28;
     private const uint DomColorFilterMask =
         DomBrightnessFilter | DomGrayscaleFilter | DomContrastFilter;
+    private const uint DomEffectFilterMask = DomColorFilterMask | DomBlurFilter;
 
     private readonly Dictionary<uint, RetainedLayer> s_layers = new();
     private readonly List<RetainedLayer> s_orderedLayers = [];
@@ -840,19 +842,28 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
         in SceneCommand command,
         SKPaint paint)
     {
+        paint.ColorFilter = null;
+        paint.ImageFilter = null;
         paint.Color = new SKColor(
             255,
             255,
             255,
-            (command.Flags & DomColorFilterMask) != 0
+            (command.Flags & DomEffectFilterMask) != 0
                 ? (byte)255 : (byte)(command.Rgba & 0xff));
-        if ((command.Flags & DomColorFilterMask) == 0)
+        if ((command.Flags & DomEffectFilterMask) == 0)
         {
-            paint.ColorFilter = null;
             canvas.SaveLayer(paint);
             return;
         }
         var amount = Math.Max(0, command.StrokeWidth);
+        if ((command.Flags & DomBlurFilter) != 0)
+        {
+            using var blur = SKImageFilter.CreateBlur(amount, amount);
+            paint.ImageFilter = blur;
+            canvas.SaveLayer(paint);
+            paint.ImageFilter = null;
+            return;
+        }
         float[] matrix;
         if ((command.Flags & DomBrightnessFilter) != 0)
         {

@@ -376,6 +376,37 @@ void native_document::append_scene(
     const auto brightness_filter = resolve_single_filter("brightness", 10.0F);
     const auto grayscale_filter = resolve_single_filter("grayscale", 1.0F);
     const auto contrast_filter = resolve_single_filter("contrast", 10.0F);
+    const auto blur_filter = [&]() -> std::optional<float> {
+        const auto& effects = node.style.textual().effect_values;
+        const auto known = effects.find("filter");
+        if (known == effects.end()) return std::nullopt;
+        auto value = std::string_view{known->second};
+        constexpr auto name = std::string_view{"blur"};
+        if (value.size() < name.size() + 2U
+            || value[name.size()] != '(' || value.back() != ')') return std::nullopt;
+        for (size_t index = 0; index < name.size(); ++index) {
+            const auto character = static_cast<unsigned char>(value[index]);
+            const auto lower = character >= 'A' && character <= 'Z'
+                ? static_cast<char>(character - 'A' + 'a')
+                : static_cast<char>(character);
+            if (lower != name[index]) return std::nullopt;
+        }
+        value.remove_prefix(name.size() + 1U);
+        value.remove_suffix(1U);
+        while (!value.empty()
+            && std::isspace(static_cast<unsigned char>(value.front())))
+            value.remove_prefix(1U);
+        while (!value.empty()
+            && std::isspace(static_cast<unsigned char>(value.back())))
+            value.remove_suffix(1U);
+        const auto parsed = css::parse_ascii_number_prefix(value);
+        if (!parsed.has_value() || parsed->value < 0.0F) return std::nullopt;
+        const auto suffix = value.substr(parsed->consumed);
+        if (suffix != "px" && !(suffix.empty() && parsed->value == 0.0F))
+            return std::nullopt;
+        return parsed->value <= 256.0F
+            ? std::optional<float>{parsed->value} : std::nullopt;
+    }();
     const auto has_opacity_group = opacity < 0.999F;
     if (has_opacity_group) {
         commands.push_back(webscene_scene_command{
@@ -438,6 +469,22 @@ void native_document::append_scene(
             0,
             0,
             *contrast_filter});
+    }
+    if (blur_filter.has_value()) {
+        commands.push_back(webscene_scene_command{
+            30U,
+            1U << 28U,
+            node.layout.x,
+            node.layout.y,
+            node.layout.width,
+            node.layout.height,
+            255U,
+            node.id,
+            0,
+            0,
+            0,
+            0,
+            *blur_filter});
     }
     const auto resolve_transform_origin = [](css_length value, float available, float fallback) {
         if (value.unit == length_unit::pixels) return value.value;
@@ -1999,6 +2046,11 @@ void native_document::append_scene(
         if (has_scale_transform) {
             commands.push_back(webscene_scene_command{16U, 0U, 0, 0, 0, 0, 0U, node.id});
         }
+        if (blur_filter.has_value()) {
+            commands.push_back(webscene_scene_command{
+                31U, 0U, node.layout.x, node.layout.y,
+                node.layout.width, node.layout.height, 0U, node.id});
+        }
         if (contrast_filter.has_value()) {
             commands.push_back(webscene_scene_command{
                 31U, 0U, node.layout.x, node.layout.y,
@@ -2365,6 +2417,11 @@ void native_document::append_scene(
     }
     if (has_scale_transform) {
         commands.push_back(webscene_scene_command{16U, 0U, 0, 0, 0, 0, 0U, node.id});
+    }
+    if (blur_filter.has_value()) {
+        commands.push_back(webscene_scene_command{
+            31U, 0U, node.layout.x, node.layout.y,
+            node.layout.width, node.layout.height, 0U, node.id});
     }
     if (contrast_filter.has_value()) {
         commands.push_back(webscene_scene_command{

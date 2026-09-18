@@ -1,4 +1,5 @@
 uint64_t file_system_access_test_peak_rss_bytes();
+uint64_t file_system_access_test_open_fd_count();
 
 const webscene_file_panel_request_v2* take_file_panel_request(
     webscene_engine* engine)
@@ -289,6 +290,7 @@ void test_native_file_system_access_picker_and_handle_contract()
         }]
       }).then(handles => {
         globalThis.__openHandles = handles;
+        let modeReads = 0;
         __pickerState = {
           length: handles.length,
           kinds: handles.map(handle => handle.kind),
@@ -296,10 +298,29 @@ void test_native_file_system_access_picker_and_handle_contract()
           instance: handles.every(handle => handle instanceof FileSystemFileHandle),
           base: handles.every(handle => handle instanceof FileSystemHandle),
           tag: Object.prototype.toString.call(handles[0]),
-          read: null
+          permissions: null
         };
-        return handles[0].queryPermission().then(value => {
-          __pickerState.read = value;
+        return Promise.all([
+          handles[0].queryPermission(),
+          handles[0].queryPermission(undefined),
+          handles[0].queryPermission(null),
+          handles[0].queryPermission({get mode() {
+            ++modeReads;
+            return 'read';
+          }}).then(value => `${value}:${modeReads}`),
+          handles[0].queryPermission({mode:'readwrite'}),
+          handles[0].requestPermission(),
+          handles[0].requestPermission({mode:'readwrite'}),
+          handles[0].queryPermission({mode:''}).then(
+            () => 'unexpected', error => error.name),
+          handles[0].queryPermission({mode:null}).then(
+            () => 'unexpected', error => error.name),
+          handles[0].queryPermission({mode:0}).then(
+            () => 'unexpected', error => error.name),
+          FileSystemHandle.prototype.queryPermission.call({}).then(
+            () => 'unexpected', error => error.name)
+        ]).then(values => {
+          __pickerState.permissions = values;
         });
       }, error => { __pickerState = error.name; });
       showOpenFilePicker().then(
@@ -352,7 +373,10 @@ void test_native_file_system_access_picker_and_handle_contract()
             && opened_state.find("\"instance\":true") != std::string::npos
             && opened_state.find("\"base\":true") != std::string::npos
             && opened_state.find("[object FileSystemFileHandle]") != std::string::npos
-            && opened_state.find("\"read\":\"granted\"") != std::string::npos,
+            && opened_state.find("\"permissions\":[\"granted\",\"granted\","
+                "\"granted\",\"granted:1\",\"denied\",\"granted\",\"denied\","
+                "\"TypeError\",\"TypeError\",\"TypeError\",\"TypeError\"]")
+                != std::string::npos,
         "open picker handle identity or permission contract changed: " + opened_state);
     require(evaluate(engine.get(), "__pickerReplay",
                 "file-picker-replay-result.js") == "\"SecurityError\"",
@@ -1045,7 +1069,19 @@ void test_native_file_system_access_picker_and_handle_contract()
         types: [{description:'JSON', accept:{'application/json':['.json']}}]
       }).then(handle => {
         globalThis.__saveHandle = handle;
-        __saveState = `${handle.kind}:${handle.name}:${handle instanceof FileSystemFileHandle}`;
+        return Promise.all([
+          handle.queryPermission(),
+          handle.queryPermission({mode:'readwrite'}),
+          handle.requestPermission(),
+          handle.requestPermission({mode:'readwrite'})
+        ]).then(permissions => {
+          __saveState = {
+            kind: handle.kind,
+            name: handle.name,
+            instance: handle instanceof FileSystemFileHandle,
+            permissions
+          };
+        });
       }, error => { __saveState = error.name; });
     )JS", "file-picker-save.js");
     request = take_file_panel_request(engine.get());
@@ -1067,9 +1103,14 @@ void test_native_file_system_access_picker_and_handle_contract()
         WEBSCENE_FILE_PANEL_GRANT_WRITE_V2,
         "drawing.json", save_grant),
         "save picker completion was rejected");
-    require(evaluate(engine.get(), "__saveState", "file-picker-save-result.js")
-            == "\"file:drawing.json:true\"",
-        "save picker handle contract changed");
+    const auto save_state = evaluate(
+        engine.get(), "__saveState", "file-picker-save-result.js");
+    require(save_state.find("\"kind\":\"file\"") != std::string::npos
+            && save_state.find("\"name\":\"drawing.json\"") != std::string::npos
+            && save_state.find("\"instance\":true") != std::string::npos
+            && save_state.find("\"permissions\":[\"denied\",\"denied\","
+                "\"denied\",\"denied\"]") != std::string::npos,
+        "write-only save handle permission contract changed: " + save_state);
     execute(engine.get(), R"JS(
       globalThis.__writeOnlyRead='pending';
       __saveHandle.getFile().then(
@@ -1081,6 +1122,91 @@ void test_native_file_system_access_picker_and_handle_contract()
         "write-only native grant was allowed to read file content");
     require(webscene_engine_take_file_grant_read_request_v2(engine.get()) == nullptr,
         "write-only getFile reached the native read broker");
+
+    if (const auto* filter = std::getenv("WEBSCENE_NATIVE_ENGINE_TEST_FILTER");
+        filter != nullptr
+        && std::string_view(filter) == "file-system-handle-permissions") {
+        execute(engine.get(), R"JS(
+          globalThis.__clonePermissions='pending';
+          (async()=>{
+            const clone=structuredClone(__openHandles[0]);
+            __clonePermissions=await Promise.all([
+              clone.queryPermission(),
+              clone.queryPermission({mode:'readwrite'}),
+              clone.requestPermission(),
+              clone.requestPermission({mode:'readwrite'})
+            ]);
+          })().catch(error=>{__clonePermissions=error.name});
+        )JS", "file-handle-permission-clone.js");
+        const auto clone_permissions = evaluate(engine.get(),
+            "__clonePermissions", "file-handle-permission-clone-result.js");
+        require(clone_permissions
+                == "[\"granted\",\"denied\",\"granted\",\"denied\"]",
+            "structured clone lost exact permission capabilities: "
+                + clone_permissions);
+        webscene_engine_memory_metrics before{sizeof(before)};
+        require(webscene_engine_get_memory_metrics(engine.get(), &before) != 0,
+            "permission performance baseline metrics unavailable");
+        const auto fd_before = file_system_access_test_open_fd_count();
+        const auto rss_before = file_system_access_test_peak_rss_bytes();
+        const auto started = std::chrono::steady_clock::now();
+        execute(engine.get(), R"JS(
+          globalThis.__permissionCycles='pending';
+          (async()=>{
+            for (let cycle=0;cycle<100;++cycle) {
+              const checks=[];
+              for (let index=0;index<100;++index) {
+                checks.push(__openHandles[0].queryPermission());
+              }
+              const values=await Promise.all(checks);
+              if (values.some(value=>value!=='granted'))
+                throw new Error('permission state changed');
+            }
+            __permissionCycles=10000;
+          })().catch(error=>{__permissionCycles=error.name});
+        )JS", "file-handle-permission-cycles.js");
+        std::string cycle_state;
+        for (int attempt = 0; attempt < 500; ++attempt) {
+            cycle_state = evaluate(engine.get(), "__permissionCycles",
+                "file-handle-permission-cycles-result.js");
+            if (cycle_state != "\"pending\"") break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        require(cycle_state == "10000",
+            "permission lifecycle promises did not settle: " + cycle_state);
+        const auto elapsed = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - started).count();
+        webscene_engine_memory_metrics after{sizeof(after)};
+        require(webscene_engine_get_memory_metrics(engine.get(), &after) != 0,
+            "permission performance final metrics unavailable");
+        const auto fd_after = file_system_access_test_open_fd_count();
+        const auto rss_after = file_system_access_test_peak_rss_bytes();
+        require(elapsed < 5.0, "10k permission queries exceeded time budget");
+        require(after.v8_used_heap_bytes <= before.v8_used_heap_bytes
+                + 8U * 1024U * 1024U,
+            "10k permission queries exceeded heap budget");
+        require(rss_after <= rss_before + 64U * 1024U * 1024U,
+            "10k permission queries exceeded RSS budget");
+        require(fd_after <= fd_before + 2U,
+            "permission queries leaked file descriptors");
+        require(webscene_engine_take_file_panel_request_v2(engine.get()) == nullptr
+                && webscene_engine_take_file_grant_read_request_v2(engine.get())
+                    == nullptr
+                && webscene_engine_take_file_grant_write_request_v2(engine.get())
+                    == nullptr
+                && webscene_engine_take_file_grant_directory_request_v2(engine.get())
+                    == nullptr,
+            "terminal permission checks reached a native broker");
+        std::cout << "File System Access permission gate: queries=10000 cycles=100"
+                  << " elapsedSeconds=" << elapsed
+                  << " heapDelta="
+                  << static_cast<int64_t>(after.v8_used_heap_bytes)
+                        - static_cast<int64_t>(before.v8_used_heap_bytes)
+                  << " rssBefore=" << rss_before << " rssAfter=" << rss_after
+                  << " fdBefore=" << fd_before << " fdAfter=" << fd_after
+                  << " queuedRequests=0" << '\n';
+        return;
+    }
 
     const std::vector<uint8_t> write_transaction(16U, 0x5aU);
     execute(engine.get(), R"JS(
@@ -1428,6 +1554,21 @@ uint64_t file_system_access_test_peak_rss_bytes()
 #endif
 }
 
+uint64_t file_system_access_test_open_fd_count()
+{
+#if defined(__APPLE__) || defined(__linux__)
+    std::error_code error;
+    uint64_t count = 0U;
+    for (std::filesystem::directory_iterator iterator("/dev/fd", error), end;
+         !error && iterator != end; iterator.increment(error)) {
+        ++count;
+    }
+    return error ? 0U : count;
+#else
+    return 0U;
+#endif
+}
+
 void test_native_file_system_access_lifecycle_and_performance()
 {
     std::unique_ptr<webscene_engine, decltype(&webscene_engine_destroy)> engine(
@@ -1451,6 +1592,14 @@ void test_native_file_system_access_lifecycle_and_performance()
               throw new Error('a fresh picker result reused its wrapper');
             return __stableHandle.isSameEntry(handle).then(async same => {
               if (!same) throw new Error('stable native entry identity changed');
+              const permissions=await Promise.all([
+                handle.queryPermission(),
+                handle.queryPermission({mode:'readwrite'}),
+                handle.requestPermission(),
+                handle.requestPermission({mode:'readwrite'})
+              ]);
+              if (permissions.join(',') !== 'granted,granted,granted,granted')
+                throw new Error('stable native permissions changed');
               const file=await __stableHandle.getFile();
               if (file.size !== 1 || file.name !== 'stable.txt')
                 throw new Error('stable native file metadata changed');
@@ -1550,6 +1699,20 @@ void test_native_file_system_access_lifecycle_and_performance()
             && clone_state.find("\"release\":\"undefined\"")
                 != std::string::npos,
         "structured clone diverged from Chrome FileSystemHandle semantics");
+    execute(engine.get(), R"JS(
+      globalThis.__clonePermissions='pending';
+      Promise.all([
+        __lifetimeClone.queryPermission(),
+        __lifetimeClone.queryPermission({mode:'readwrite'}),
+        __lifetimeClone.requestPermission(),
+        __lifetimeClone.requestPermission({mode:'readwrite'})
+      ]).then(values=>{__clonePermissions=values},
+        error=>{__clonePermissions=error.name});
+    )JS", "file-handle-clone-permissions.js");
+    require(evaluate(engine.get(), "__clonePermissions",
+                "file-handle-clone-permissions-result.js")
+            == "[\"granted\",\"granted\",\"granted\",\"granted\"]",
+        "structured clone lost capability-exact permission state");
     execute(engine.get(), R"JS(
       globalThis.__cloneSame='pending';
       __lifetimeClone.isSameEntry(__stableHandle).then(

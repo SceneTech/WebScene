@@ -188,6 +188,10 @@ int main()
             test_native_file_system_access_lifecycle_and_performance();
             return 0;
         }
+        if (selected == "file-system-handle-permissions") {
+            test_native_file_system_access_picker_and_handle_contract();
+            return 0;
+        }
         if (selected == "file-system-handle-lifetime") {
             test_native_file_system_access_lifecycle_and_performance();
             return 0;

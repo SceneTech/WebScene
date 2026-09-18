@@ -56,13 +56,16 @@ inline float resolved_word_spacing(const dom_node& node)
     return 0;
 }
 
-inline float resolved_declared_font_size(const dom_node& node, const std::string& value)
+inline float resolved_declared_font_size_from_parent(
+    const dom_node& node,
+    const std::string& value,
+    float parent_font_size)
 {
     if (value == "inherit" || value == "unset") return -1.0F;
     if (value == "initial" || value == "revert") return 14.0F;
     const auto parsed = native_document::parse_length(value);
     if (parsed.unit == length_unit::em) {
-        return std::max(0.0F, parsed.value * inherited_font_size(node));
+        return std::max(0.0F, parsed.value * parent_font_size);
     }
     if (parsed.unit == length_unit::rem) {
         const auto root_size = node.tag == "html" ? 16.0F : document_root_font_size(node);
@@ -70,9 +73,24 @@ inline float resolved_declared_font_size(const dom_node& node, const std::string
     }
     if (parsed.unit == length_unit::percent) {
         return std::max(0.0F,
-            parsed.value * inherited_font_size(node) / 100.0F + parsed.pixel_offset);
+            parsed.value * parent_font_size / 100.0F + parsed.pixel_offset);
     }
     return std::max(0.0F, parsed.value);
+}
+
+inline float resolved_declared_font_size(const dom_node& node, const std::string& value)
+{
+    return resolved_declared_font_size_from_parent(
+        node, value, inherited_font_size(node));
+}
+
+inline float resolved_pseudo_font_size(const dom_node& originating, const std::string& value)
+{
+    const auto originating_font_size = originating.style.font_size >= 0
+        ? originating.style.font_size
+        : originating.tag == "html" ? 16.0F : inherited_font_size(originating);
+    return resolved_declared_font_size_from_parent(
+        originating, value, originating_font_size);
 }
 
 inline float resolved_declared_line_height(

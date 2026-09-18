@@ -98,6 +98,7 @@
     effect.style.setProperty('filter', 'blur(2px)');
     effect.style.setProperty('clip-path', 'inset(2px)');
     const after = effect.getBoundingClientRect();
+    assert_equals(getComputedStyle(effect).getPropertyValue('filter'), 'blur(2px)');
     assert_equals(after.width, before.width);
     assert_equals(after.height, before.height);
   }, 'effect syntax does not change principal box geometry');

@@ -22,8 +22,10 @@ const int _domPolygonClipIndexMask = _domPolygonClipResource - 1;
 const int _domBrightnessFilter = 1 << 31;
 const int _domGrayscaleFilter = 1 << 30;
 const int _domContrastFilter = 1 << 29;
+const int _domBlurFilter = 1 << 28;
 const int _domColorFilterMask =
     _domBrightnessFilter | _domGrayscaleFilter | _domContrastFilter;
+const int _domEffectFilterMask = _domColorFilterMask | _domBlurFilter;
 
 final class SceneApplyResult {
   const SceneApplyResult({
@@ -963,11 +965,15 @@ final class WebSceneSceneProjector extends ChangeNotifier {
   }
 
   static ui.Paint _domGroupPaint(WebSceneSceneCommand command) {
-    if (command.flags & _domColorFilterMask == 0) {
+    if (command.flags & _domEffectFilterMask == 0) {
       return ui.Paint()
         ..color = ui.Color.fromARGB(command.rgba & 0xff, 255, 255, 255);
     }
     final amount = command.strokeWidth.clamp(0.0, double.infinity).toDouble();
+    if (command.flags & _domBlurFilter != 0) {
+      return ui.Paint()
+        ..imageFilter = ui.ImageFilter.blur(sigmaX: amount, sigmaY: amount);
+    }
     final List<double> matrix;
     if (command.flags & _domBrightnessFilter != 0) {
       matrix = <double>[

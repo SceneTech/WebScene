@@ -1153,6 +1153,7 @@ struct dom_node final {
         bool selection_explicitly_empty{false};
         bool checkedness_initialized{false};
         bool checkedness{false};
+        bool indeterminate{false};
         bool value_initialized{false};
         bool dirty_value{false};
         bool input_focused{false};

@@ -108,6 +108,11 @@ inline std::vector<css_compound_dependencies> compile_invalidation_plan(
             } else if (pseudo.name == "checked") {
                 for (const auto* name : {"checked", "selected", "type"})
                     add(output.attributes[name], route);
+            } else if (pseudo.name == "indeterminate") {
+                for (const auto* name : {"$live-form-indeterminate", "checked", "type", "name"})
+                    add(output.attributes[name], route);
+                output.child_list_sensitive = true;
+                add(output.child_list, route);
             } else if (pseudo.name == "read-only" || pseudo.name == "read-write") {
                 add(output.attributes["readonly"], route);
                 add(output.attributes["type"], route);

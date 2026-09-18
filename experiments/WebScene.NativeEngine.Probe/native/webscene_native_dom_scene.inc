@@ -1692,7 +1692,13 @@ void native_document::append_scene(
     if(paint_self && checkbox_input) {
         const auto& control=node.form_control();
         const bool checked=control.checkedness_initialized?control.checkedness:node.attributes.contains("checked");
-        if(checked) {
+        if(control.indeterminate) {
+            const auto size=std::min(node.layout.width,node.layout.height);
+            const auto x=node.layout.x+(node.layout.width-size)*0.5F;
+            const auto y=node.layout.y+(node.layout.height-size)*0.5F;
+            const auto color=with_opacity(resolved_foreground(node));
+            commands.push_back(webscene_scene_command{2U,150U,x+size*.2F,y+size*.5F,x+size*.8F,y+size*.5F,color,node.id});
+        } else if(checked) {
             const auto size=std::min(node.layout.width,node.layout.height);
             const auto x=node.layout.x+(node.layout.width-size)*0.5F;
             const auto y=node.layout.y+(node.layout.height-size)*0.5F;

@@ -3031,6 +3031,7 @@
         dom_node* target{nullptr};
         dom_node* previously_checked_radio{nullptr};
         bool target_was_checked{false};
+        bool target_was_indeterminate{false};
         bool changed{false};
         bool active{false};
     };
@@ -3042,6 +3043,28 @@
             : target.attributes.contains("checked");
     }
 
+    std::vector<dom_node*> radio_group_members(dom_node& target)
+    {
+        const auto type=target.attributes.find("type");
+        if(target.tag!="input" || type==target.attributes.end()
+            || lower_html_name(type->second)!="radio") return {};
+        const auto name=target.attributes.find("name");
+        if(name==target.attributes.end() || name->second.empty()) return {&target};
+        auto* root=css_cascade_root_for_node(target);
+        if(root==nullptr) return {&target};
+        auto inputs=document.query_selector_all(*root,"input");
+        std::erase_if(inputs,[&](const auto* candidate) {
+            if(candidate==nullptr) return true;
+            const auto candidate_type=candidate->attributes.find("type");
+            const auto candidate_name=candidate->attributes.find("name");
+            return candidate_type==candidate->attributes.end()
+                || lower_html_name(candidate_type->second)!="radio"
+                || candidate_name==candidate->attributes.end()
+                || candidate_name->second!=name->second;
+        });
+        return inputs;
+    }
+
     bool set_native_checkedness(dom_node& target, bool checked)
     {
         const auto previous = native_checkedness(target);
@@ -3049,7 +3072,10 @@
         target.mutable_form_control().checkedness = checked;
         if (previous != checked) {
             if (is_connected(target)) {
-                recascade_dynamic_state_subject(target, "native-checkedness");
+                auto group=radio_group_members(target);
+                if(group.empty()) group.push_back(&target);
+                for(auto* member:group)
+                    recascade_dynamic_state_subject(*member,"native-checkedness");
             } else {
                 document.mark_dirty();
             }
@@ -3073,8 +3099,13 @@
 
         activation.target = &target;
         activation.target_was_checked = native_checkedness(target);
+        activation.target_was_indeterminate = target.form_control().indeterminate;
         activation.active = true;
         if (type == "checkbox") {
+            if(activation.target_was_indeterminate) {
+                target.mutable_form_control().indeterminate=false;
+                recascade_dynamic_state_subject(target,"checkbox-activation-indeterminate");
+            }
             activation.changed = set_native_checkedness(
                 target, !activation.target_was_checked);
             return true;
@@ -3111,6 +3142,13 @@
     {
         if (!activation.active || activation.target == nullptr) return;
         set_native_checkedness(*activation.target, activation.target_was_checked);
+        if(activation.target->form_control().indeterminate
+            != activation.target_was_indeterminate) {
+            activation.target->mutable_form_control().indeterminate
+                = activation.target_was_indeterminate;
+            recascade_dynamic_state_subject(
+                *activation.target,"checkbox-activation-restore-indeterminate");
+        }
         if (activation.previously_checked_radio != nullptr) {
             set_native_checkedness(*activation.previously_checked_radio, true);
         }

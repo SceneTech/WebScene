@@ -150,11 +150,11 @@ def stable_metadata(entry: dict) -> tuple:
         # Directory identity and timestamps are not stable across equivalent
         # Windows scans. The entry inventory detects additions and removals.
         return ("directory",)
-    fields = ["type", "device", "inode", "mode", "uid", "gid", "size", "mtimeNs"]
-    # Windows reports transient link counts while files are opened. Hard-link
-    # rejection and link-count stability are macOS package invariants.
+    fields = ["type", "device", "inode", "mode", "size", "mtimeNs"]
+    # Windows reports POSIX ownership/link fields that are not stable file
+    # identity. Ownership and hard-link invariants apply to macOS packages.
     if os.name != "nt":
-        fields.insert(4, "links")
+        fields[4:4] = ["links", "uid", "gid"]
     return tuple(entry.get(field) for field in fields) + (
         entry.get("target"), entry.get("resolvedRelative"), entry.get("macho")
     )
@@ -267,8 +267,9 @@ def normalize_single_architecture(bundle: Path, architecture: str,
                     f"lipo result has wrong architectures for {relative}: "
                     f"{result_architectures}"
                 )
-            if (temporary_metadata.st_uid != original["uid"]
-                    or temporary_metadata.st_gid != original["gid"]):
+            if (os.name != "nt"
+                    and (temporary_metadata.st_uid != original["uid"]
+                         or temporary_metadata.st_gid != original["gid"])):
                 try:
                     os.chown(temporary, original["uid"], original["gid"])
                 except OSError as error:
@@ -279,8 +280,9 @@ def normalize_single_architecture(bundle: Path, architecture: str,
             os.utime(temporary, ns=(current.st_atime_ns, original["mtimeNs"]))
             result_metadata = temporary.stat(follow_symlinks=False)
             if (stat.S_IMODE(result_metadata.st_mode) != stat.S_IMODE(original["mode"])
-                    or result_metadata.st_uid != original["uid"]
-                    or result_metadata.st_gid != original["gid"]
+                    or (os.name != "nt" and (
+                        result_metadata.st_uid != original["uid"]
+                        or result_metadata.st_gid != original["gid"]))
                     or result_metadata.st_mtime_ns != original["mtimeNs"]):
                 raise AuditError(f"cannot preserve metadata while normalizing {relative}")
             result_bytes = result_metadata.st_size
@@ -332,8 +334,9 @@ def normalize_single_architecture(bundle: Path, architecture: str,
                     or sha256(bundle / relative) != result["resultSha256"]):
                 raise AuditError(f"unchanged Mach-O was modified: {relative}")
         elif (after[relative]["mode"] != before[relative]["mode"]
-              or after[relative]["uid"] != before[relative]["uid"]
-              or after[relative]["gid"] != before[relative]["gid"]
+              or (os.name != "nt" and (
+                  after[relative]["uid"] != before[relative]["uid"]
+                  or after[relative]["gid"] != before[relative]["gid"]))
               or after[relative]["mtimeNs"] != before[relative]["mtimeNs"]
               or after[relative]["size"] != result["resultBytes"]
               or sha256(bundle / relative) != result["resultSha256"]):

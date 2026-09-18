@@ -761,4 +761,73 @@ void test_native_websocket_protocol_handshake_timing()
     require(ix::uninitNetSystem(), "protocol timing network cleanup failed");
 }
 
+void test_native_file_reader_task_source_fairness()
+{
+    auto* engine = webscene_engine_create(0);
+    require(engine != nullptr, "FileReader task-source engine creation failed");
+    require(webscene_engine_set_runtime_work_metrics_enabled(engine, 1U) != 0,
+        "FileReader task-source work metrics could not be enabled");
+    execute(engine, R"JS(
+      globalThis.__webSceneFileReaderTaskSource = {
+        complete: false, error: null, timerCount: 0, timersBeforeLoad: -1,
+        elapsedMs: -1, events: [], bytes: []
+      };
+      (() => {
+        const state = globalThis.__webSceneFileReaderTaskSource;
+        for (let index = 0; index < 4096; ++index) {
+          setTimeout(() => { ++state.timerCount; }, 0);
+        }
+        const reader = new FileReader();
+        for (const name of ['loadstart', 'progress', 'load', 'loadend']) {
+          reader.addEventListener(name, () => state.events.push(name));
+        }
+        const started = performance.now();
+        reader.onload = () => {
+          state.timersBeforeLoad = state.timerCount;
+          state.elapsedMs = performance.now() - started;
+          state.bytes = Array.from(new Uint8Array(reader.result));
+        };
+        reader.onerror = () => {
+          state.error = reader.error?.message || 'FileReader failed';
+        };
+        reader.onloadend = () => { state.complete = true; };
+        reader.readAsArrayBuffer(new Blob([Uint8Array.of(1, 3, 5, 7)]));
+      })();
+    )JS", "native-file-reader-task-source.js");
+    auto state = std::string{};
+    for (auto attempt = 0; attempt < 1000; ++attempt) {
+        state = evaluate(
+            engine,
+            "globalThis.__webSceneFileReaderTaskSource",
+            "native-file-reader-task-source-state.js");
+        if (state.find("\"complete\":true") != std::string::npos) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    const auto number_field = [&](std::string_view name) {
+        const auto key = std::string("\"") + std::string(name) + "\":";
+        const auto position = state.find(key);
+        require(position != std::string::npos,
+            "FileReader task-source evidence field was not retained: "
+                + std::string(name));
+        return std::stod(state.substr(position + key.size()));
+    };
+    std::cout << "FileReader task-source state: " << state << "\n";
+    require(state.find("\"complete\":true") != std::string::npos
+            && state.find("\"error\":null") != std::string::npos,
+        "FileReader task-source lifecycle did not complete");
+    require(state.find(
+            "\"events\":[\"loadstart\",\"progress\",\"load\",\"loadend\"]")
+            != std::string::npos
+            && state.find("\"bytes\":[1,3,5,7]") != std::string::npos,
+        "FileReader task-source changed bytes or event ordering");
+    require(number_field("timersBeforeLoad") <= 4.0,
+        "FileReader waited behind the application timer backlog");
+    require(number_field("elapsedMs") <= 100.0,
+        "FileReader task-source completion exceeded 100 ms");
+    std::cout << "FileReader task-source gate: timersBeforeLoad="
+              << number_field("timersBeforeLoad")
+              << " elapsedMs=" << number_field("elapsedMs") << "\n";
+    webscene_engine_destroy(engine);
+}
+
 } // namespace

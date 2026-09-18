@@ -1288,6 +1288,9 @@
             get_window_scroll_y).Check();
         install_screen(local_context, global);
         global->Set(local_context, js_string(isolate, "setTimeout"), v8::Function::New(local_context, set_timeout).ToLocalChecked()).Check();
+        global->Set(local_context,
+            js_string(isolate, "__webSceneQueueFileReadingTask"),
+            v8::Function::New(local_context, queue_file_reading_task).ToLocalChecked()).Check();
         global->Set(local_context, js_string(isolate, "clearTimeout"), v8::Function::New(local_context, clear_timeout).ToLocalChecked()).Check();
         global->Set(local_context, js_string(isolate, "setInterval"), v8::Function::New(local_context, set_interval).ToLocalChecked()).Check();
         global->Set(local_context, js_string(isolate, "clearInterval"), v8::Function::New(local_context, clear_timeout).ToLocalChecked()).Check();

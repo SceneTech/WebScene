@@ -185,6 +185,7 @@
         resize_listeners.clear();
         media_query_lists.clear();
         timers.clear();
+        pending_file_reading_tasks.clear();
         active_timer_id = 0U;
         active_timer_cancelled = false;
         pending_window_messages.clear();

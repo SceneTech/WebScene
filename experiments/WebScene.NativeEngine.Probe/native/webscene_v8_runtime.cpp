@@ -3597,6 +3597,11 @@ struct v8_dom_runtime::implementation final {
             v8::Function::New(local_context, set_timeout).ToLocalChecked()).Check();
         global->Set(
             local_context,
+            js_string(isolate, "__webSceneQueueFileReadingTask"),
+            v8::Function::New(
+                local_context, queue_file_reading_task).ToLocalChecked()).Check();
+        global->Set(
+            local_context,
             js_string(isolate, "clearTimeout"),
             v8::Function::New(local_context, clear_timeout).ToLocalChecked()).Check();
         global->Set(
@@ -6768,6 +6773,7 @@ bool v8_dom_runtime::has_pending_tasks() const noexcept
     return impl_->has_pending_detached_dom_collection()
         || impl_->indexeddb_work_ready.load(std::memory_order_acquire)
         || impl_->websocket_transport.has_pending_events()
+        || !impl_->pending_file_reading_tasks.empty()
         || !impl_->pending_window_messages.empty()
         || impl_->has_worker_messages()
         || impl_->has_service_worker_messages()

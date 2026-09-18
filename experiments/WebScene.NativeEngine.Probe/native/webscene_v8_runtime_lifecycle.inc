@@ -224,6 +224,7 @@
         resize_listeners.clear();
         media_query_lists.clear();
         timers.clear();
+        pending_file_reading_tasks.clear();
         pending_window_messages.clear();
         pending_window_message_bytes = 0U;
         message_port_bindings.clear();

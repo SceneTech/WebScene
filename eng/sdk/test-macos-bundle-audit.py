@@ -400,7 +400,8 @@ class BundleAuditTests(unittest.TestCase):
     def test_single_architecture_normalization_is_atomic_and_idempotent(self):
         extension_relative = "Contents/PlugIns/sample.node"
         self.fixture.extension.write_bytes(b"\xca\xfe\xba\xbf" + bytes(range(128)))
-        self.fixture.extension.chmod(0o555)
+        if os.name != "nt":
+            self.fixture.extension.chmod(0o555)
         original_mtime = self.fixture.extension.stat().st_mtime_ns
         runner = NormalizationRunner(
             self.fixture.bundle,
@@ -417,7 +418,8 @@ class BundleAuditTests(unittest.TestCase):
         self.assertLess(extension["resultBytes"], extension["originalBytes"])
         self.assertEqual(evidence["summary"]["peakTemporaryBytes"],
                          extension["resultBytes"])
-        self.assertEqual(self.fixture.extension.stat().st_mode & 0o777, 0o555)
+        if os.name != "nt":
+            self.assertEqual(self.fixture.extension.stat().st_mode & 0o777, 0o555)
         self.assertEqual(self.fixture.extension.stat().st_mtime_ns, original_mtime)
         self.assertFalse(any(".webscene-thin-" in item.name
                              for item in self.fixture.extension.parent.iterdir()))

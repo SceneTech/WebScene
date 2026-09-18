@@ -204,7 +204,7 @@ def normalize_single_architecture(bundle: Path, architecture: str,
     for relative in sorted(path for path, entry in before.items()
                            if entry["type"] == "file" and entry.get("macho")):
         entry = before[relative]
-        if entry["links"] != 1:
+        if os.name != "nt" and entry["links"] != 1:
             raise AuditError(f"Mach-O has multiple hard links: {relative}")
         path = bundle / relative
         architectures = parse_architectures(runner(["lipo", "-archs", str(path)]))
@@ -253,7 +253,8 @@ def normalize_single_architecture(bundle: Path, architecture: str,
                     "-output", str(temporary)])
             temporary_metadata = temporary.stat(follow_symlinks=False)
             if (not stat.S_ISREG(temporary_metadata.st_mode)
-                    or temporary_metadata.st_nlink != 1 or not is_macho(temporary)):
+                    or (os.name != "nt" and temporary_metadata.st_nlink != 1)
+                    or not is_macho(temporary)):
                 raise AuditError(f"lipo produced an unsafe non-Mach-O file: {relative}")
             result_architectures = parse_architectures(
                 runner(["lipo", "-archs", str(temporary)])
@@ -320,7 +321,8 @@ def normalize_single_architecture(bundle: Path, architecture: str,
                 raise AuditError(f"bundle mutated during normalization: {relative}")
             continue
         result = result_by_path[relative]
-        if after[relative]["links"] != 1 or not after[relative].get("macho"):
+        if ((os.name != "nt" and after[relative]["links"] != 1)
+                or not after[relative].get("macho")):
             raise AuditError(f"normalized Mach-O became unsafe: {relative}")
         if result["action"] == "unchanged":
             if (stable_metadata(before[relative]) != stable_metadata(after[relative])

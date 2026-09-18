@@ -19,7 +19,9 @@ const int _layerReplace = 1;
 const int _layerRemove = 2;
 const int _canvasEvenOdd = 1 << 16;
 const int _domPolygonClipResource = 1 << 31;
-const int _domPolygonClipIndexMask = _domPolygonClipResource - 1;
+const int _domClipEvenOdd = 1 << 30;
+const int _domClipRelativePath = 1 << 29;
+const int _domPolygonClipIndexMask = _domClipRelativePath - 1;
 const int _domBrightnessFilter = 1 << 31;
 const int _domGrayscaleFilter = 1 << 30;
 const int _domContrastFilter = 1 << 29;
@@ -962,12 +964,21 @@ final class WebSceneSceneProjector extends ChangeNotifier {
       return;
     }
     try {
-      canvas.clipPath(
-        parseSvgPathData(
-          _domString(scene, command.flags & _domPolygonClipIndexMask),
-        ),
-        doAntiAlias: true,
+      final path = parseSvgPathData(
+        _domString(scene, command.flags & _domPolygonClipIndexMask),
       );
+      if ((command.flags & _domClipEvenOdd) != 0) {
+        path.fillType = ui.PathFillType.evenOdd;
+      }
+      final relative = (command.flags & _domClipRelativePath) != 0;
+      if (relative) canvas.translate(command.x, command.y);
+      try {
+        canvas.clipPath(path, doAntiAlias: true);
+      } finally {
+        // Restoring a saved canvas would also discard the clip. Undo only the
+        // matrix so the clip remains in device coordinates.
+        if (relative) canvas.translate(-command.x, -command.y);
+      }
     } catch (_) {
       canvas.clipRect(ui.Rect.zero, doAntiAlias: false);
     }

@@ -153,8 +153,10 @@ typedef struct webscene_scene_header {
 // Shadow kinds 17/18: flags bit 0 selects an inverse rounded hole;
 // producers must bracket inverse shadows with clip commands 12/13.
 // Clip kind 12 uses flags bit 31 to select an SVG path stored in the indexed
-// scene string; the remaining bits are its string index. A zero flag retains
-// the rounded-rectangle fields used by existing producers and presenters.
+// scene string. Bit 30 selects even-odd fill and bit 29 makes path coordinates
+// relative to the command box origin; the remaining bits are its string index.
+// A zero flag retains the rounded-rectangle fields used by existing producers
+// and presenters.
 // Group kind 30 uses flags bit 31 for brightness, bit 30 for grayscale,
 // bit 29 for contrast, bit 28 for foreground blur, and bit 27 for saturation;
 // bit 26 opens a neutral isolated layer for a following kind-47 alpha mask.

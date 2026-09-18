@@ -79,18 +79,24 @@ void store_maximum(std::atomic<uint64_t>& target, uint64_t value)
 
 bool command_uses_dom_string(const webscene_scene_command& command)
 {
-    return (command.kind >= 3U && command.kind <= 6U) || command.kind == 47U;
+    return (command.kind >= 3U && command.kind <= 6U)
+        || (command.kind == 12U && (command.flags & (1U << 31U)) != 0U)
+        || command.kind == 47U;
 }
 
 std::string_view command_dom_string(
     const scene& owner,
     const webscene_scene_command& command)
 {
-    if (!command_uses_dom_string(command)
-        || command.flags >= owner.canvas_strings.size()) {
+    if (!command_uses_dom_string(command)) {
         return {};
     }
-    const auto& value = owner.canvas_strings[command.flags];
+    constexpr auto clip_index_mask = (1U << 29U) - 1U;
+    const auto index = command.kind == 12U
+        ? command.flags & clip_index_mask
+        : command.flags;
+    if (index >= owner.canvas_strings.size()) return {};
+    const auto& value = owner.canvas_strings[index];
     if (value.byte_offset > owner.canvas_string_bytes.size()
         || value.byte_length > owner.canvas_string_bytes.size() - value.byte_offset) {
         return {};
@@ -121,6 +127,11 @@ bool same_dom_command_visual(
         return false;
     }
     if (command_uses_dom_string(next)) {
+        constexpr auto clip_index_mask = (1U << 29U) - 1U;
+        if (next.kind == 12U
+            && (previous.flags & ~clip_index_mask) != (next.flags & ~clip_index_mask)) {
+            return false;
+        }
         return command_dom_string(previous_owner, previous)
             == command_dom_string(next_owner, next);
     }

@@ -49,9 +49,11 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
     private const uint DomContrastFilter = 1u << 29;
     private const uint DomBlurFilter = 1u << 28;
     private const uint DomSaturateFilter = 1u << 27;
+    private const uint DomLinearMaskGroup = 1u << 26;
     private const uint DomColorFilterMask =
         DomBrightnessFilter | DomGrayscaleFilter | DomContrastFilter | DomSaturateFilter;
-    private const uint DomEffectFilterMask = DomColorFilterMask | DomBlurFilter;
+    private const uint DomEffectFilterMask =
+        DomColorFilterMask | DomBlurFilter | DomLinearMaskGroup;
 
     private readonly Dictionary<uint, RetainedLayer> s_layers = new();
     private readonly List<RetainedLayer> s_orderedLayers = [];
@@ -661,6 +663,10 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
                         backdrop.Restore();
                         overlay.Restore();
                         break;
+                    case 47:
+                        DrawDomLinearMask(backdrop, view, command);
+                        DrawDomLinearMask(overlay, view, command);
+                        break;
                     case 15:
                         ApplyScale(backdrop, command);
                         ApplyScale(overlay, command);
@@ -852,6 +858,11 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
             (command.Flags & DomEffectFilterMask) != 0
                 ? (byte)255 : (byte)(command.Rgba & 0xff));
         if ((command.Flags & DomEffectFilterMask) == 0)
+        {
+            canvas.SaveLayer(paint);
+            return;
+        }
+        if ((command.Flags & DomLinearMaskGroup) != 0)
         {
             canvas.SaveLayer(paint);
             return;
@@ -1207,6 +1218,19 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
             radii);
     }
 
+    private static void DrawDomLinearMask(
+        SKCanvas canvas,
+        NativeSceneView* view,
+        in SceneCommand command)
+    {
+        DrawDomBackgroundLayers(
+            canvas,
+            DomStringAt(view, command.Flags),
+            command,
+            default,
+            SKBlendMode.DstIn);
+    }
+
     internal static void DrawDomBackgroundForTest(
         SKCanvas canvas,
         string resource,
@@ -1217,7 +1241,8 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
         SKCanvas canvas,
         string value,
         in SceneCommand command,
-        in DomCornerRadii radii)
+        in DomCornerRadii radii,
+        SKBlendMode blendMode = SKBlendMode.SrcOver)
     {
         var resource = DecodeDomBackgroundResource(value);
         var layers = SplitTopLevel(resource.Image, ',');
@@ -1246,7 +1271,8 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
                 var repeat = LayerValue(repeats, layerIndex, "repeat");
                 var position = LayerValue(positions, layerIndex, "0% 0%");
                 var size = LayerValue(sizes, layerIndex, "auto");
-                DrawDomGradientTiles(canvas, layer, command, repeat, position, size);
+                DrawDomGradientTiles(
+                    canvas, layer, command, repeat, position, size, blendMode);
             }
         }
         finally
@@ -1307,11 +1333,20 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
         in SceneCommand command,
         string repeatValue,
         string positionValue,
-        string sizeValue)
+        string sizeValue,
+        SKBlendMode blendMode = SKBlendMode.SrcOver)
     {
         ResolveDomBackgroundSize(sizeValue, command.Width, command.Height,
             out var tileWidth, out var tileHeight);
-        if (tileWidth <= 0 || tileHeight <= 0) return;
+        if (tileWidth <= 0 || tileHeight <= 0)
+        {
+            if (blendMode == SKBlendMode.DstIn)
+            {
+                ClearDomMaskRect(canvas, command.X, command.Y,
+                    command.Width, command.Height);
+            }
+            return;
+        }
         ResolveDomBackgroundPosition(positionValue, command.Width, command.Height,
             tileWidth, tileHeight, out var offsetX, out var offsetY);
 
@@ -1335,6 +1370,12 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
 
         var endX = repeatX ? command.X + command.Width : firstX + tileWidth;
         var endY = repeatY ? command.Y + command.Height : firstY + tileHeight;
+        if (blendMode == SKBlendMode.DstIn)
+        {
+            ClearDomMaskOutsideCoverage(canvas, command,
+                repeatX, repeatY, firstX, firstY, tileWidth, tileHeight);
+        }
+        var drewTile = false;
         for (var y = firstY; y < endY; y += tileHeight)
         {
             for (var x = firstX; x < endX; x += tileWidth)
@@ -1360,13 +1401,64 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
                 {
                     IsAntialias = false,
                     Style = SKPaintStyle.Fill,
-                    Shader = shader
+                    Shader = shader,
+                    BlendMode = blendMode
                 };
                 canvas.DrawRect(x, y, tileWidth, tileHeight, paint);
+                drewTile = true;
                 if (!repeatX) break;
             }
             if (!repeatY) break;
         }
+        if (blendMode == SKBlendMode.DstIn && !drewTile)
+        {
+            ClearDomMaskRect(canvas, command.X, command.Y,
+                command.Width, command.Height);
+        }
+    }
+
+    private static void ClearDomMaskOutsideCoverage(
+        SKCanvas canvas,
+        in SceneCommand command,
+        bool repeatX,
+        bool repeatY,
+        float firstX,
+        float firstY,
+        float tileWidth,
+        float tileHeight)
+    {
+        var left = command.X;
+        var top = command.Y;
+        var right = command.X + command.Width;
+        var bottom = command.Y + command.Height;
+        var coverageLeft = repeatX ? left : Math.Clamp(firstX, left, right);
+        var coverageRight = repeatX ? right : Math.Clamp(firstX + tileWidth, left, right);
+        var coverageTop = repeatY ? top : Math.Clamp(firstY, top, bottom);
+        var coverageBottom = repeatY ? bottom : Math.Clamp(firstY + tileHeight, top, bottom);
+        if (coverageRight <= coverageLeft || coverageBottom <= coverageTop)
+        {
+            ClearDomMaskRect(canvas, left, top, command.Width, command.Height);
+            return;
+        }
+        ClearDomMaskRect(canvas, left, top, command.Width, coverageTop - top);
+        ClearDomMaskRect(canvas, left, coverageBottom,
+            command.Width, bottom - coverageBottom);
+        ClearDomMaskRect(canvas, left, coverageTop,
+            coverageLeft - left, coverageBottom - coverageTop);
+        ClearDomMaskRect(canvas, coverageRight, coverageTop,
+            right - coverageRight, coverageBottom - coverageTop);
+    }
+
+    private static void ClearDomMaskRect(
+        SKCanvas canvas,
+        float x,
+        float y,
+        float width,
+        float height)
+    {
+        if (width <= 0 || height <= 0) return;
+        using var clear = new SKPaint { BlendMode = SKBlendMode.Clear };
+        canvas.DrawRect(x, y, width, height, clear);
     }
 
     private static void ExpandPremultipliedGradientStops(
@@ -1494,6 +1586,18 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
     {
         var normalized = value.Trim().ToLowerInvariant();
         if (normalized == "auto") return fallback;
+        var calc = System.Text.RegularExpressions.Regex.Match(
+            normalized,
+            @"^calc\(\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+))%\s*([-+])\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+))px\s*\)$");
+        if (calc.Success
+            && float.TryParse(calc.Groups[1].Value, NumberStyles.Float,
+                CultureInfo.InvariantCulture, out var calcPercent)
+            && float.TryParse(calc.Groups[3].Value, NumberStyles.Float,
+                CultureInfo.InvariantCulture, out var calcPixels))
+        {
+            var sign = calc.Groups[2].Value == "-" ? -1f : 1f;
+            return percentageBasis * calcPercent / 100f + sign * calcPixels;
+        }
         if (normalized.EndsWith('%')
             && float.TryParse(normalized[..^1], NumberStyles.Float,
                 CultureInfo.InvariantCulture, out var percentage))

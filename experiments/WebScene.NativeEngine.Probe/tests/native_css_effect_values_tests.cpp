@@ -57,6 +57,7 @@ struct clip_scene_counts final {
     uint32_t clipped_fills{};
     uint32_t blur_filter_begins{};
     uint32_t functional_blur_begins{};
+    uint32_t linear_mask_commands{};
     uint32_t command_count{};
     bool transform_clip_nested{};
     bool compound_filter_ordered{};
@@ -151,6 +152,8 @@ clip_scene_counts wait_for_inset_clip_scene(
                         && (command.flags & (1U << 28U)) != 0U
                         && std::abs(command.stroke_width - 4.0F) < 0.01F) {
                         ++latest.functional_blur_begins;
+                    } else if (command.kind == 47U) {
+                        ++latest.linear_mask_commands;
                     }
                 }
                 webscene_scene_acknowledge_v3(lease);
@@ -382,6 +385,8 @@ int main()
         "retained scene did not preserve compound foreground filter order");
     require(initial_clip_scene.functional_blur_begins == 1U,
         "retained scene did not resolve the functional blur radius");
+    require(initial_clip_scene.linear_mask_commands == 4096U,
+        "retained scene did not emit all linear-gradient mask commands");
     const auto initial_scene_command_bytes =
         static_cast<uint64_t>(initial_clip_scene.command_count)
             * sizeof(webscene_scene_command);
@@ -514,6 +519,7 @@ int main()
               << " clipped-fills=" << initial_clip_scene.clipped_fills
               << " blur-filter-begins=" << initial_clip_scene.blur_filter_begins
               << " functional-blur-begins=" << initial_clip_scene.functional_blur_begins
+              << " linear-mask-commands=" << initial_clip_scene.linear_mask_commands
               << " compound-filter-ordered=" << initial_clip_scene.compound_filter_ordered
               << " transform-clip-nested=" << initial_clip_scene.transform_clip_nested
               << " initial-scene-command-bytes=" << initial_scene_command_bytes

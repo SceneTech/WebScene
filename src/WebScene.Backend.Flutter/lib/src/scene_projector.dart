@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:ffi';
+import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
@@ -24,10 +25,12 @@ const int _domGrayscaleFilter = 1 << 30;
 const int _domContrastFilter = 1 << 29;
 const int _domBlurFilter = 1 << 28;
 const int _domSaturateFilter = 1 << 27;
+const int _domLinearMaskGroup = 1 << 26;
 const int _domColorFilterMask =
     _domBrightnessFilter | _domGrayscaleFilter | _domContrastFilter |
     _domSaturateFilter;
-const int _domEffectFilterMask = _domColorFilterMask | _domBlurFilter;
+const int _domEffectFilterMask =
+    _domColorFilterMask | _domBlurFilter | _domLinearMaskGroup;
 
 final class SceneApplyResult {
   const SceneApplyResult({
@@ -246,6 +249,8 @@ final class WebSceneSceneProjector extends ChangeNotifier {
           canvas.saveLayer(null, _domGroupPaint(command));
         case 31:
           canvas.restore();
+        case 47:
+          _drawDomLinearMask(canvas, scene, command);
         case 15:
           canvas
             ..save()
@@ -966,11 +971,403 @@ final class WebSceneSceneProjector extends ChangeNotifier {
     }
   }
 
+  static void _drawDomLinearMask(
+    ui.Canvas canvas,
+    WebSceneSceneView scene,
+    WebSceneSceneCommand command,
+  ) {
+    const prefix = 'webscene-bg-v2\t';
+    final resource = _domString(scene, command.flags);
+    if (!resource.startsWith(prefix)) return;
+    final fields = resource.substring(prefix.length).split('\t');
+    if (fields.isEmpty) {
+      _clearDomMaskBounds(canvas, command);
+      return;
+    }
+    final image = fields[0].trim();
+    final match = RegExp(
+      r'^linear-gradient\(([\s\S]*)\)$',
+      caseSensitive: false,
+    ).firstMatch(image);
+    if (match == null) {
+      _clearDomMaskBounds(canvas, command);
+      return;
+    }
+    final components = _splitCssTopLevel(match.group(1)!, ',');
+    if (components.length < 2) {
+      _clearDomMaskBounds(canvas, command);
+      return;
+    }
+
+    var directionX = 0.0;
+    var directionY = 1.0;
+    var stopStart = 0;
+    final direction = components.first.trim().toLowerCase();
+    if (direction.startsWith('to ')) {
+      directionX = direction.contains('right')
+          ? 1
+          : direction.contains('left') ? -1 : 0;
+      directionY = direction.contains('bottom')
+          ? 1
+          : direction.contains('top') ? -1 : 0;
+      final length = math.sqrt(
+        directionX * directionX + directionY * directionY,
+      );
+      if (length <= 0) {
+        _clearDomMaskBounds(canvas, command);
+        return;
+      }
+      directionX /= length;
+      directionY /= length;
+      stopStart = 1;
+    } else {
+      final angle = RegExp(
+        r'^([-+]?(?:\d+(?:\.\d*)?|\.\d+))(deg|turn)$',
+      ).firstMatch(direction);
+      if (angle != null) {
+        var degrees = double.parse(angle.group(1)!);
+        if (angle.group(2) == 'turn') degrees *= 360;
+        final radians = degrees * math.pi / 180;
+        directionX = math.sin(radians);
+        directionY = -math.cos(radians);
+        stopStart = 1;
+      }
+    }
+
+    final repeat = fields.length > 1 ? fields[1].trim().toLowerCase() : 'repeat';
+    final position = fields.length > 2 ? fields[2].trim() : '0% 0%';
+    final size = fields.length > 3 ? fields[3].trim() : 'auto';
+    final resolvedSize = _resolveMaskSize(size, command.width, command.height);
+    final tileWidth = resolvedSize.$1;
+    final tileHeight = resolvedSize.$2;
+    if (tileWidth <= 0 || tileHeight <= 0) {
+      _clearDomMaskBounds(canvas, command);
+      return;
+    }
+    final resolvedPosition = _resolveMaskPosition(
+      position,
+      command.width,
+      command.height,
+      tileWidth,
+      tileHeight,
+    );
+    var firstX = command.x + resolvedPosition.$1;
+    var firstY = command.y + resolvedPosition.$2;
+    final repeatX = repeat != 'no-repeat' && repeat != 'repeat-y';
+    final repeatY = repeat != 'no-repeat' && repeat != 'repeat-x';
+    if (repeatX) {
+      while (firstX > command.x) firstX -= tileWidth;
+      while (firstX + tileWidth <= command.x) firstX += tileWidth;
+    }
+    if (repeatY) {
+      while (firstY > command.y) firstY -= tileHeight;
+      while (firstY + tileHeight <= command.y) firstY += tileHeight;
+    }
+    final endX = repeatX ? command.x + command.width : firstX + tileWidth;
+    final endY = repeatY ? command.y + command.height : firstY + tileHeight;
+    final axisLength = math.max(
+      1.0,
+      directionX.abs() * tileWidth + directionY.abs() * tileHeight,
+    );
+    final colors = <ui.Color>[];
+    final stops = <double>[];
+    for (var index = stopStart; index < components.length; index++) {
+      final parsed = _parseMaskStop(components[index], axisLength);
+      if (parsed == null) continue;
+      for (final offset in parsed.$2) {
+        colors.add(parsed.$1);
+        stops.add(offset);
+      }
+    }
+    if (colors.length < 2) {
+      _clearDomMaskBounds(canvas, command);
+      return;
+    }
+    _fillMissingGradientStops(stops);
+    final centerX = tileWidth / 2;
+    final centerY = tileHeight / 2;
+    final halfProjection = (
+      directionX.abs() * tileWidth + directionY.abs() * tileHeight
+    ) / 2;
+    canvas.save();
+    try {
+      final bounds = ui.Rect.fromLTWH(
+        command.x,
+        command.y,
+        command.width,
+        command.height,
+      );
+      canvas.clipRect(bounds, doAntiAlias: false);
+      _clearDomMaskOutsideCoverage(
+        canvas,
+        bounds,
+        repeatX,
+        repeatY,
+        firstX,
+        firstY,
+        tileWidth,
+        tileHeight,
+      );
+      for (var y = firstY; y < endY; y += tileHeight) {
+        for (var x = firstX; x < endX; x += tileWidth) {
+          final start = ui.Offset(
+            x + centerX - directionX * halfProjection,
+            y + centerY - directionY * halfProjection,
+          );
+          final end = ui.Offset(
+            x + centerX + directionX * halfProjection,
+            y + centerY + directionY * halfProjection,
+          );
+          canvas.drawRect(
+            ui.Rect.fromLTWH(x, y, tileWidth, tileHeight),
+            ui.Paint()
+              ..isAntiAlias = false
+              ..blendMode = ui.BlendMode.dstIn
+              ..shader = ui.Gradient.linear(start, end, colors, stops),
+          );
+          if (!repeatX) break;
+        }
+        if (!repeatY) break;
+      }
+    } finally {
+      canvas.restore();
+    }
+  }
+
+  static void _clearDomMaskBounds(
+    ui.Canvas canvas,
+    WebSceneSceneCommand command,
+  ) {
+    canvas.save();
+    try {
+      final bounds = ui.Rect.fromLTWH(
+        command.x,
+        command.y,
+        command.width,
+        command.height,
+      );
+      canvas.clipRect(bounds, doAntiAlias: false);
+      canvas.drawRect(bounds, ui.Paint()..blendMode = ui.BlendMode.clear);
+    } finally {
+      canvas.restore();
+    }
+  }
+
+  static void _clearDomMaskOutsideCoverage(
+    ui.Canvas canvas,
+    ui.Rect bounds,
+    bool repeatX,
+    bool repeatY,
+    double firstX,
+    double firstY,
+    double tileWidth,
+    double tileHeight,
+  ) {
+    final coverageLeft = repeatX
+        ? bounds.left
+        : firstX.clamp(bounds.left, bounds.right).toDouble();
+    final coverageRight = repeatX
+        ? bounds.right
+        : (firstX + tileWidth).clamp(bounds.left, bounds.right).toDouble();
+    final coverageTop = repeatY
+        ? bounds.top
+        : firstY.clamp(bounds.top, bounds.bottom).toDouble();
+    final coverageBottom = repeatY
+        ? bounds.bottom
+        : (firstY + tileHeight).clamp(bounds.top, bounds.bottom).toDouble();
+    final clear = ui.Paint()..blendMode = ui.BlendMode.clear;
+    if (coverageRight <= coverageLeft || coverageBottom <= coverageTop) {
+      canvas.drawRect(bounds, clear);
+      return;
+    }
+    canvas.drawRect(
+      ui.Rect.fromLTRB(bounds.left, bounds.top, bounds.right, coverageTop),
+      clear,
+    );
+    canvas.drawRect(
+      ui.Rect.fromLTRB(bounds.left, coverageBottom, bounds.right, bounds.bottom),
+      clear,
+    );
+    canvas.drawRect(
+      ui.Rect.fromLTRB(bounds.left, coverageTop, coverageLeft, coverageBottom),
+      clear,
+    );
+    canvas.drawRect(
+      ui.Rect.fromLTRB(coverageRight, coverageTop, bounds.right, coverageBottom),
+      clear,
+    );
+  }
+
+  static List<String> _splitCssTopLevel(String value, String separator) {
+    final result = <String>[];
+    var start = 0;
+    var depth = 0;
+    String? quote;
+    for (var index = 0; index <= value.length; index++) {
+      final character = index < value.length ? value[index] : separator;
+      if (quote != null) {
+        if (character == '\\') index++;
+        else if (character == quote) quote = null;
+      } else if (character == '"' || character == "'") {
+        quote = character;
+      } else if (character == '(') {
+        depth++;
+      } else if (character == ')' && depth > 0) {
+        depth--;
+      } else if (character == separator && depth == 0) {
+        result.add(value.substring(start, index).trim());
+        start = index + 1;
+      }
+    }
+    return result;
+  }
+
+  static (ui.Color, List<double>)? _parseMaskStop(
+    String component,
+    double axisLength,
+  ) {
+    final source = component.trim();
+    if (source.isEmpty) return null;
+    var colorEnd = source.indexOf(RegExp(r'\s'));
+    final open = source.indexOf('(');
+    if (open >= 0 && (colorEnd < 0 || open < colorEnd)) {
+      var depth = 1;
+      colorEnd = open + 1;
+      while (colorEnd < source.length && depth > 0) {
+        if (source[colorEnd] == '(') depth++;
+        else if (source[colorEnd] == ')') depth--;
+        colorEnd++;
+      }
+    }
+    if (colorEnd < 0) colorEnd = source.length;
+    final color = _parseColor(source.substring(0, colorEnd));
+    final positionSource = source.substring(colorEnd).trim();
+    final offsets = <double>[];
+    if (positionSource.isNotEmpty) {
+      for (final token in positionSource.split(RegExp(r'\s+(?![^()]*\))'))) {
+        if (token.isEmpty) continue;
+        final offset = _parseMaskPositionValue(token, axisLength);
+        if (offset != null) offsets.add(offset);
+      }
+    }
+    if (offsets.isEmpty) offsets.add(double.nan);
+    return (color, offsets);
+  }
+
+  static double? _parseMaskPositionValue(String value, double axisLength) {
+    final normalized = value.trim().toLowerCase();
+    if (normalized.endsWith('%')) {
+      final percentage = double.tryParse(
+        normalized.substring(0, normalized.length - 1),
+      );
+      return percentage == null ? null : percentage / 100;
+    }
+    if (normalized.endsWith('px')) {
+      final pixels = double.tryParse(normalized.substring(0, normalized.length - 2));
+      return pixels == null ? null : pixels / axisLength;
+    }
+    final calc = RegExp(
+      r'^calc\(100%\s*([-+])\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+))px\)$',
+    ).firstMatch(normalized);
+    if (calc != null) {
+      final pixels = double.parse(calc.group(2)!);
+      return (axisLength + (calc.group(1) == '-' ? -pixels : pixels)) / axisLength;
+    }
+    return null;
+  }
+
+  static void _fillMissingGradientStops(List<double> stops) {
+    if (stops.first.isNaN) stops[0] = 0;
+    if (stops.last.isNaN) stops[stops.length - 1] = 1;
+    var index = 1;
+    while (index < stops.length - 1) {
+      if (!stops[index].isNaN) {
+        stops[index] = stops[index].clamp(stops[index - 1], 1);
+        index++;
+        continue;
+      }
+      final runStart = index - 1;
+      var runEnd = index + 1;
+      while (runEnd < stops.length && stops[runEnd].isNaN) runEnd++;
+      final from = stops[runStart];
+      final to = runEnd < stops.length ? stops[runEnd] : 1;
+      for (var missing = index; missing < runEnd; missing++) {
+        stops[missing] = from
+            + (to - from) * (missing - runStart) / (runEnd - runStart);
+      }
+      index = runEnd;
+    }
+    for (var stop = 0; stop < stops.length; stop++) {
+      stops[stop] = stops[stop].clamp(stop == 0 ? 0 : stops[stop - 1], 1);
+    }
+  }
+
+  static (double, double) _resolveMaskSize(
+    String value,
+    double width,
+    double height,
+  ) {
+    final tokens = _splitCssTopLevel(value.trim(), ' ')
+        .where((token) => token.isNotEmpty)
+        .toList();
+    final first = tokens.isEmpty ? 'auto' : tokens[0];
+    final second = tokens.length > 1 ? tokens[1] : first;
+    double resolve(String token, double available) {
+      if (token == 'auto') return available;
+      final calc = RegExp(
+        r'^calc\(\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+))%\s*([-+])\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+))px\s*\)$',
+        caseSensitive: false,
+      ).firstMatch(token);
+      if (calc != null) {
+        final percentage = double.parse(calc.group(1)!);
+        final pixels = double.parse(calc.group(3)!);
+        return available * percentage / 100
+            + (calc.group(2) == '-' ? -pixels : pixels);
+      }
+      if (token.endsWith('%')) {
+        return available * (double.tryParse(token.substring(0, token.length - 1)) ?? 100) / 100;
+      }
+      if (token.endsWith('px')) {
+        return double.tryParse(token.substring(0, token.length - 2)) ?? available;
+      }
+      return available;
+    }
+    return (resolve(first, width), resolve(second, height));
+  }
+
+  static (double, double) _resolveMaskPosition(
+    String value,
+    double width,
+    double height,
+    double tileWidth,
+    double tileHeight,
+  ) {
+    final tokens = _splitCssTopLevel(value.trim(), ' ')
+        .where((token) => token.isNotEmpty)
+        .toList();
+    final first = tokens.isEmpty ? '0%' : tokens[0];
+    final second = tokens.length > 1 ? tokens[1] : '0%';
+    double resolve(String token, double remaining) {
+      if (token == 'center') return remaining / 2;
+      if (token == 'right' || token == 'bottom') return remaining;
+      if (token == 'left' || token == 'top') return 0;
+      if (token.endsWith('%')) {
+        return remaining * (double.tryParse(token.substring(0, token.length - 1)) ?? 0) / 100;
+      }
+      if (token.endsWith('px')) {
+        return double.tryParse(token.substring(0, token.length - 2)) ?? 0;
+      }
+      return 0;
+    }
+    return (resolve(first, width - tileWidth), resolve(second, height - tileHeight));
+  }
+
   static ui.Paint _domGroupPaint(WebSceneSceneCommand command) {
     if (command.flags & _domEffectFilterMask == 0) {
       return ui.Paint()
         ..color = ui.Color.fromARGB(command.rgba & 0xff, 255, 255, 255);
     }
+    if (command.flags & _domLinearMaskGroup != 0) return ui.Paint();
     final amount = command.strokeWidth.clamp(0.0, double.infinity).toDouble();
     if (command.flags & _domBlurFilter != 0) {
       return ui.Paint()

@@ -467,6 +467,69 @@ void native_document::append_scene(
         }
         return result;
     }();
+    const auto linear_mask_resource = [&]() -> std::optional<uint32_t> {
+        const auto& effects = node.style.textual().effect_values;
+        const auto known = effects.find("mask-image");
+        if (known == effects.end()) return std::nullopt;
+        auto image = std::string_view{known->second};
+        while (!image.empty()
+            && std::isspace(static_cast<unsigned char>(image.front())))
+            image.remove_prefix(1U);
+        while (!image.empty()
+            && std::isspace(static_cast<unsigned char>(image.back())))
+            image.remove_suffix(1U);
+        constexpr auto prefix = std::string_view{"linear-gradient("};
+        if (image.size() <= prefix.size()) return std::nullopt;
+        for (size_t index = 0U; index < prefix.size(); ++index) {
+            const auto character = static_cast<unsigned char>(image[index]);
+            const auto lower = character >= 'A' && character <= 'Z'
+                ? static_cast<char>(character - 'A' + 'a')
+                : static_cast<char>(character);
+            if (lower != prefix[index]) return std::nullopt;
+        }
+        auto depth = 1U;
+        auto close = std::string_view::npos;
+        for (size_t index = prefix.size(); index < image.size(); ++index) {
+            if (image[index] == '(') ++depth;
+            else if (image[index] == ')' && --depth == 0U) {
+                close = index;
+                break;
+            }
+        }
+        if (close != image.size() - 1U) return std::nullopt;
+        const auto value = [&](std::string_view name, std::string_view fallback) {
+            const auto found = effects.find(std::string{name});
+            return found == effects.end() ? std::string{fallback} : found->second;
+        };
+        const auto composite = value("mask-composite", "add");
+        if (composite != "add") return std::nullopt;
+        const auto mode = value("mask-mode", "match-source");
+        if (mode != "match-source" && mode != "alpha") return std::nullopt;
+        auto repeat = value("mask-repeat", "repeat");
+        for (auto& character : repeat) {
+            const auto byte = static_cast<unsigned char>(character);
+            if (byte >= 'A' && byte <= 'Z') character = static_cast<char>(byte - 'A' + 'a');
+        }
+        if (repeat != "repeat" && repeat != "no-repeat"
+            && repeat != "repeat-x" && repeat != "repeat-y") {
+            return std::nullopt;
+        }
+        const auto position = value("mask-position", "0% 0%");
+        const auto size = value("mask-size", "auto");
+        if (position.find(',') != std::string::npos
+            || size.find(',') != std::string::npos) {
+            return std::nullopt;
+        }
+        auto resource = std::string{"webscene-bg-v2\t"};
+        resource.append(image);
+        resource += '\t';
+        resource += repeat;
+        resource += '\t';
+        resource += position;
+        resource += '\t';
+        resource += size;
+        return append_scene_string(resource, strings, string_bytes);
+    }();
     const auto has_opacity_group = opacity < 0.999F;
     if (has_opacity_group) {
         commands.push_back(webscene_scene_command{
@@ -480,6 +543,17 @@ void native_document::append_scene(
                 std::lround(opacity * 255.0F),
                 0L,
                 255L)),
+            node.id});
+    }
+    if (linear_mask_resource.has_value()) {
+        commands.push_back(webscene_scene_command{
+            30U,
+            1U << 26U,
+            node.layout.x,
+            node.layout.y,
+            node.layout.width,
+            node.layout.height,
+            255U,
             node.id});
     }
     // SaveLayer effects apply when their groups restore. Open in reverse CSS
@@ -2142,6 +2216,16 @@ void native_document::append_scene(
                 31U, 0U, node.layout.x, node.layout.y,
                 node.layout.width, node.layout.height, 0U, node.id});
         }
+        if (linear_mask_resource.has_value()) {
+            commands.push_back(webscene_scene_command{
+                47U, *linear_mask_resource,
+                node.layout.x, node.layout.y,
+                node.layout.width, node.layout.height,
+                0U, node.id});
+            commands.push_back(webscene_scene_command{
+                31U, 0U, node.layout.x, node.layout.y,
+                node.layout.width, node.layout.height, 0U, node.id});
+        }
         if (has_opacity_group) {
             commands.push_back(webscene_scene_command{
                 31U, 0U, node.layout.x, node.layout.y,
@@ -2496,6 +2580,16 @@ void native_document::append_scene(
     }
     for (size_t filter_index = 0U;
          filter_index < foreground_filters.size(); ++filter_index) {
+        commands.push_back(webscene_scene_command{
+            31U, 0U, node.layout.x, node.layout.y,
+            node.layout.width, node.layout.height, 0U, node.id});
+    }
+    if (linear_mask_resource.has_value()) {
+        commands.push_back(webscene_scene_command{
+            47U, *linear_mask_resource,
+            node.layout.x, node.layout.y,
+            node.layout.width, node.layout.height,
+            0U, node.id});
         commands.push_back(webscene_scene_command{
             31U, 0U, node.layout.x, node.layout.y,
             node.layout.width, node.layout.height, 0U, node.id});

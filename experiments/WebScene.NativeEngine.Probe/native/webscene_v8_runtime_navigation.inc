@@ -125,6 +125,7 @@
 
         for (auto& fetch : pending_fetches) {
             if (!is_retired_context(fetch.context.Get(isolate))) continue;
+            if (fetch.cancel) fetch.cancel();
             fetch.context.Reset();
             fetch.resolver.Reset();
         }

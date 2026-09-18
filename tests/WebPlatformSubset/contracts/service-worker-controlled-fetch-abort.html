@@ -1,0 +1,92 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Controlled Service Worker fetch abort and retirement</title>
+<script>
+  const state = window.__webSceneWptState = {
+    complete:false, harness:null, results:[], errors:[], diagnostics:[]
+  };
+  const record = (name, condition, detail = 'Contract failed') => state.results.push({
+    name, status:condition ? 'PASS' : 'FAIL',
+    message:condition ? null : detail, stack:null
+  });
+  const wait = duration => new Promise(resolve => setTimeout(resolve, duration));
+  (async () => {
+    const changed = new Promise(resolve => navigator.serviceWorker.addEventListener(
+      'controllerchange', resolve, {once:true}));
+    const registration = await navigator.serviceWorker.register(
+      'service-worker-controlled-fetch-abort-worker.js');
+    if (!navigator.serviceWorker.controller) await changed;
+    const controller = navigator.serviceWorker.controller;
+
+    const pre = new AbortController();
+    pre.abort();
+    const preAborted = await fetch('controlled-pending', {signal:pre.signal}).then(
+      () => false, error => error?.name === 'AbortError');
+    const custom = new AbortController();
+    const reason = new Error('custom controlled fetch abort');
+    const customFetch = fetch('controlled-pending', {signal:custom.signal});
+    await wait(0);
+    custom.abort(reason);
+    const customReason = await customFetch.then(() => false, error => error === reason);
+    record('pre-aborted and custom AbortSignal reasons match browser fetch semantics',
+      preAborted && customReason);
+
+    await wait(10);
+    const controllers = Array.from({length:32}, () => new AbortController());
+    const blocked = controllers.map((entry, index) =>
+      fetch(`controlled-pending?bulk=${index}`, {signal:entry.signal}).then(
+        () => false, error => error?.name === 'AbortError'));
+    await wait(10);
+    const releasedAt = performance.now();
+    controllers.forEach(entry => entry.abort());
+    const canceled = (await Promise.all(blocked)).filter(Boolean).length;
+    let released = false;
+    while (performance.now() - releasedAt <= 500) {
+      try {
+        released = await (await fetch('controlled-success')).text() === 'released';
+        if (released) break;
+      } catch {}
+      await wait(1);
+    }
+    const releaseLatency = performance.now() - releasedAt;
+    state.diagnostics.push(JSON.stringify({name:'capacity-release', canceled, releaseLatency}));
+    record('thirty-two aborted controlled fetches release capacity promptly',
+      canceled === 32 && released && releaseLatency <= 500,
+      JSON.stringify({canceled, released, releaseLatency}));
+
+    const lateController = new AbortController();
+    const lateFetch = fetch('controlled-late', {signal:lateController.signal});
+    await wait(5);
+    lateController.abort();
+    const lateAborted = await lateFetch.then(
+      () => false, error => error?.name === 'AbortError');
+    controller.postMessage('settle-late');
+    await wait(10);
+    const afterLate = await (await fetch('controlled-success?after=late')).text();
+    record('late worker settlement cannot revive an aborted fetch',
+      lateAborted && afterLate === 'released');
+
+    const report = await new Promise(resolve => {
+      const listener = event => {
+        if (event.data?.channel !== 'abort-report') return;
+        navigator.serviceWorker.removeEventListener('message', listener);
+        resolve(event.data.observed);
+      };
+      navigator.serviceWorker.addEventListener('message', listener);
+      controller.postMessage('report');
+    });
+    record('worker remains live after cancellation and late settlement races',
+      report.late === 1 && report.success >= 2,
+      JSON.stringify(report));
+    await registration.unregister();
+  })().catch(error => {
+    state.errors.push(String(error && error.stack || error));
+    record('contract completed', false, state.errors[0]);
+  }).finally(() => {
+    const failure = state.results.find(result => result.status !== 'PASS');
+    state.harness = failure
+      ? {status:1, message:failure.message, stack:failure.stack}
+      : {status:0, message:null, stack:null};
+    state.complete = true;
+  });
+</script>

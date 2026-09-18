@@ -1324,6 +1324,34 @@ struct v8_dom_runtime::implementation final {
         info.GetReturnValue().Set(js_dom_string(info.GetIsolate(), content));
     }
 
+    static void allocate_fetch_cancellation_id(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        if (self == nullptr) return;
+        auto id = self->next_fetch_cancellation_id++;
+        if (id == 0U) id = self->next_fetch_cancellation_id++;
+        info.GetReturnValue().Set(v8::Number::New(
+            info.GetIsolate(), static_cast<double>(id)));
+    }
+
+    static void cancel_fetch_resource(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        if (self == nullptr || info.Length() < 1) return;
+        const auto id = info[0]->IntegerValue(
+            info.GetIsolate()->GetCurrentContext()).FromMaybe(0);
+        if (id <= 0) return;
+        const auto found = std::find_if(
+            self->pending_fetches.begin(),
+            self->pending_fetches.end(),
+            [&](const auto& pending) {
+                return pending.cancellation_id == static_cast<uint64_t>(id);
+            });
+        if (found != self->pending_fetches.end() && found->cancel) found->cancel();
+    }
+
     static void fetch_resource(
         const v8::FunctionCallbackInfo<v8::Value>& info)
     {
@@ -1357,6 +1385,9 @@ struct v8_dom_runtime::implementation final {
         const auto redirect = info.Length() > 6
             ? info[6]->Uint32Value(info.GetIsolate()->GetCurrentContext()).FromMaybe(0U)
             : 0U;
+        const auto cancellation_id = info.Length() > 8
+            ? info[8]->IntegerValue(info.GetIsolate()->GetCurrentContext()).FromMaybe(0)
+            : 0;
         std::vector<std::pair<std::string, std::string>> headers;
         size_t header_bytes = 0U;
         if (info.Length() > 7 && !info[7]->IsUndefined()) {
@@ -1463,11 +1494,17 @@ struct v8_dom_runtime::implementation final {
         }
         auto resolver = v8::Promise::Resolver::New(local_context).ToLocalChecked();
         pending_fetch_task pending;
+        pending.cancellation_id = cancellation_id > 0
+            ? static_cast<uint64_t>(cancellation_id) : 0U;
         pending.context.Reset(info.GetIsolate(), local_context);
         pending.resolver.Reset(info.GetIsolate(), resolver);
         const auto notify = self->runtime_work_available;
+        std::shared_ptr<service_worker_fetch_request> controlled_request;
         auto controlled_fetch = self->enqueue_controlled_service_worker_fetch(
-            resolved, request_context);
+            resolved, request_context, &controlled_request);
+        if (controlled_request != nullptr) {
+            pending.cancel = [request = controlled_request] { request->cancel(); };
+        }
         pending.future = std::async(
             std::launch::async,
             [self,
@@ -1477,6 +1514,7 @@ struct v8_dom_runtime::implementation final {
                 redirect,
                 request_context = std::move(request_context),
                 controlled_fetch = std::move(controlled_fetch),
+                controlled_request = std::move(controlled_request),
                 notify]() mutable {
                 async_fetch_result result;
                 result.resolved_url = resolved;
@@ -1487,6 +1525,9 @@ struct v8_dom_runtime::implementation final {
                     if (controlled_fetch.valid()) {
                         if (controlled_fetch.wait_for(std::chrono::seconds(30))
                             != std::future_status::ready) {
+                            if (controlled_request != nullptr) {
+                                controlled_request->cancel();
+                            }
                             handled_by_service_worker = true;
                             result.error = "Service worker fetch timed out";
                         } else {
@@ -4188,6 +4229,15 @@ struct v8_dom_runtime::implementation final {
             local_context,
             js_string(isolate, "__webSceneFetchResource"),
             v8::Function::New(local_context, fetch_resource).ToLocalChecked()).Check();
+        global->Set(
+            local_context,
+            js_string(isolate, "__webSceneAllocateFetchCancellationId"),
+            v8::Function::New(
+                local_context, allocate_fetch_cancellation_id).ToLocalChecked()).Check();
+        global->Set(
+            local_context,
+            js_string(isolate, "__webSceneCancelFetchResource"),
+            v8::Function::New(local_context, cancel_fetch_resource).ToLocalChecked()).Check();
         if constexpr (bootstrap_snapshot_enabled) {
             if (!context.IsEmpty() && context.Get(isolate) == local_context) return;
         }
@@ -4913,7 +4963,7 @@ struct v8_dom_runtime::implementation final {
               }
             }
 
-            function webSceneFetchInternal(input, options = {}) {
+            function webSceneFetchInternal(input, options = {}, cancellationId = 0) {
               const request = new WebSceneRequest(input, options);
               if ((request.method === 'GET' || request.method === 'HEAD')
                   && request.body !== null) {
@@ -4980,7 +5030,8 @@ struct v8_dom_runtime::implementation final {
                         credentials,
                         mode,
                         redirect,
-                        [...request.headers])
+                        [...request.headers],
+                        cancellationId)
                         .then(result => new WebSceneResponse(
                           result.body,
                           { status: result.status, statusText: result.statusText,
@@ -4997,10 +5048,14 @@ struct v8_dom_runtime::implementation final {
               const signal=options.signal ?? input?.signal;
               if(!signal)return webSceneFetchInternal(input,options);
               if(signal.aborted)return Promise.reject(signal.reason ?? new DOMException('Fetch aborted','AbortError'));
+              const cancellationId=__webSceneAllocateFetchCancellationId();
               return new Promise((resolve,reject)=>{
-                const abort=()=>reject(signal.reason ?? new DOMException('Fetch aborted','AbortError'));
+                const abort=()=>{
+                  __webSceneCancelFetchResource(cancellationId);
+                  reject(signal.reason ?? new DOMException('Fetch aborted','AbortError'));
+                };
                 signal.addEventListener('abort',abort,{once:true});
-                webSceneFetchInternal(input,options).then(resolve,reject).finally(()=>signal.removeEventListener('abort',abort));
+                webSceneFetchInternal(input,options,cancellationId).then(resolve,reject).finally(()=>signal.removeEventListener('abort',abort));
               });
             }
 

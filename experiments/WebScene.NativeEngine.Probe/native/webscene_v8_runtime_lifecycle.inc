@@ -137,6 +137,9 @@
         // Fetch workers only own host-resource data. Join them before V8
         // persistent promise handles are released below.
         for (auto& fetch : pending_fetches) {
+            if (fetch.cancel) fetch.cancel();
+        }
+        for (auto& fetch : pending_fetches) {
             if (!fetch.future.valid()) continue;
             try {
                 static_cast<void>(fetch.future.get());

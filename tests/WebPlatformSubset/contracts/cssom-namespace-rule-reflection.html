@@ -1,0 +1,90 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>CSS namespace rule reflection and ordering</title>
+<body>
+<script>
+  const state = window.__webSceneWptState = {
+    complete: false, harness: null, results: [], errors: [], diagnostics: []
+  };
+  const record = (name, error) => state.results.push({
+    name, status: error ? "FAIL" : "PASS",
+    message: error ? String(error && error.message || error) : null,
+    stack: error && error.stack ? String(error.stack) : null
+  });
+  function exercise(view) {
+    const sheet = new view.CSSStyleSheet();
+    const index = sheet.insertRule('@namespace svg url("http://www.w3.org/2000/svg");', 0);
+    const rule = sheet.cssRules[index];
+    const defaultIndex = sheet.insertRule('@namespace "urn:webscene:default";', 1);
+    const defaultRule = sheet.cssRules[defaultIndex];
+    sheet.insertRule('.ordinary { color: red; }', 2);
+    const errors = {};
+    for (const [name, source, target, at] of [
+      ['late', '@namespace late url("urn:late");', sheet, 3],
+      ['invalid', '@namespace invalid;', sheet, 0]
+    ]) {
+      try { target.insertRule(source, at); errors[name] = 'none'; }
+      catch (error) { errors[name] = error.name; }
+    }
+    const mediaIndex = sheet.insertRule('@media all {}', sheet.cssRules.length);
+    const media = sheet.cssRules[mediaIndex];
+    try { media.insertRule('@namespace nested url("urn:nested");', 0); errors.nested = 'none'; }
+    catch (error) { errors.nested = error.name; }
+    sheet.deleteRule(0);
+    return {
+      identity: rule.constructor.name === 'CSSNamespaceRule'
+        && rule instanceof view.CSSNamespaceRule
+        && rule instanceof view.CSSRule,
+      type: rule.type,
+      constant: view.CSSRule.NAMESPACE_RULE,
+      prefix: rule.prefix,
+      namespaceURI: rule.namespaceURI,
+      cssText: rule.cssText,
+      defaultPrefix: defaultRule.prefix,
+      defaultURI: defaultRule.namespaceURI,
+      parentBeforeDelete: defaultRule.parentStyleSheet === sheet,
+      detachedParent: rule.parentStyleSheet,
+      detachedPrefix: rule.prefix,
+      detachedURI: rule.namespaceURI,
+      errors
+    };
+  }
+  try {
+    const frame = document.createElement('iframe');
+    document.body.appendChild(frame);
+    const main = exercise(window);
+    const nested = exercise(frame.contentWindow);
+    const both = predicate => predicate(main) && predicate(nested);
+    record('namespace rules expose browser-shaped identity and immutable reflection',
+      both(value => value.identity && value.type === 10 && value.constant === 10
+        && value.prefix === 'svg'
+        && value.namespaceURI === 'http://www.w3.org/2000/svg'
+        && value.cssText === '@namespace svg url("http://www.w3.org/2000/svg");'
+        && value.defaultPrefix === null
+        && value.defaultURI === 'urn:webscene:default'
+        && value.parentBeforeDelete) ? null : new Error(JSON.stringify({ main, nested })));
+    record('namespace ordering and grouping hierarchy errors stay browser-shaped',
+      both(value => value.errors.late === 'HierarchyRequestError'
+        && value.errors.invalid === 'SyntaxError'
+        && value.errors.nested === 'HierarchyRequestError')
+        ? null : new Error(JSON.stringify({ main, nested })));
+    record('detached namespace rules preserve immutable values',
+      both(value => value.detachedParent === null && value.detachedPrefix === 'svg'
+        && value.detachedURI === 'http://www.w3.org/2000/svg')
+        ? null : new Error(JSON.stringify({ main, nested })));
+    state.diagnostics.push(JSON.stringify({ main, nested }));
+    frame.remove();
+  } catch (error) {
+    record('CSSNamespaceRule setup', error);
+  }
+  const failure = state.results.find(result => result.status !== 'PASS');
+  state.harness = failure
+    ? { status: 1, message: failure.message, stack: failure.stack }
+    : { status: 0, message: null, stack: null };
+  state.complete = true;
+  const evidence = document.createElement('pre');
+  evidence.id = 'cssom-namespace-rule-reflection-evidence';
+  evidence.hidden = true;
+  evidence.textContent = JSON.stringify(state);
+  document.body.appendChild(evidence);
+</script>

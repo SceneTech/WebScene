@@ -1,0 +1,21 @@
+{
+  "profile": "webscene-cssom-namespace-rule-reflection-1",
+  "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+  "runtime": "v8",
+  "viewport": { "width": 800, "height": 600, "deviceScaleFactor": 1 },
+  "required": [
+    {
+      "path": "contracts/cssom-namespace-rule-reflection.html",
+      "type": "contract",
+      "capabilities": [
+        "cssom-namespace-rule-identity",
+        "cssom-namespace-rule-ordering",
+        "cssom-namespace-rule-lifecycle"
+      ],
+      "evidence": ["cssom-namespace-rule-reflection-495"],
+      "reason": "Chrome- and CSSOM-derived regression for top-level CSSNamespaceRule identity, default/prefixed URI reflection, ordering, grouping rejection, iframe realms, and detached lifetime."
+    }
+  ],
+  "harnessBlocked": [],
+  "excluded": []
+}

@@ -1342,6 +1342,173 @@ void test_vscode_markdown_css_image_resource_broker()
     require(readme.find("# Code OSS on AppScene") != std::string::npos,
         "VS Code Markdown fixture did not contain the current README");
 
+    constexpr std::string_view localhost_address{
+        "https://vscode-webview.test/index.html?id=localhost-mapping"};
+    constexpr std::string_view localhost_worker_address{
+        "https://vscode-webview.test/service-worker.js?"
+        "remoteAuthority=remote.test&platform=electron"};
+    resource_server localhost_server{.content = {
+        {std::string{localhost_address},
+            "<!doctype html><title>localhost mapping</title>"},
+        {std::string{localhost_worker_address}, exact_worker},
+        {"http://127.0.0.1:5100/path/data.txt?token=7", "mapped-localhost-body"},
+        {"http://localhost:4101/fallback.txt", "unmapped-localhost-body"}
+    }};
+    webscene_engine_options localhost_options{};
+    localhost_options.struct_size = sizeof(localhost_options);
+    localhost_options.resource_load_callback = load_test_resource;
+    localhost_options.resource_load_user_data = &localhost_server;
+    auto* localhost_engine = webscene_engine_create_with_options(&localhost_options);
+    require(localhost_engine != nullptr, "localhost mapping engine creation failed");
+    require(webscene_engine_load_url(
+            localhost_engine, localhost_address.data(), localhost_address.size()) != 0U,
+        "localhost mapping navigation failed");
+    require(evaluate_until_equals(
+            localhost_engine, "location.href", "localhost-navigation.js",
+            R"("https://vscode-webview.test/index.html?id=localhost-mapping")", 2'500)
+            == R"("https://vscode-webview.test/index.html?id=localhost-mapping")",
+        "localhost mapping document did not become ready");
+    webscene_engine_memory_metrics localhost_memory_before{
+        sizeof(webscene_engine_memory_metrics)};
+    require(webscene_engine_get_memory_metrics(
+            localhost_engine, &localhost_memory_before) != 0,
+        "localhost mapping memory baseline unavailable");
+    const auto localhost_rss_before = service_worker_test_current_rss_bytes();
+    execute(localhost_engine, R"JS(
+      globalThis.__localhostMapping = {
+        complete:false, error:null, requests:[], durations:[], p95:0
+      };
+      (async () => {
+        const state = __localhostMapping;
+        let worker;
+        navigator.serviceWorker.addEventListener('message', event => {
+          const request = event.data || {};
+          if (request.channel !== 'load-localhost') return;
+          state.requests.push(request.origin);
+          worker.postMessage({channel:'did-load-localhost', data:{
+            id:request.id,
+            origin:request.origin,
+            location:request.origin === 'http://localhost:4100'
+              ? 'http://127.0.0.1:5100'
+              : request.origin === 'http://localhost:4102'
+                ? 'javascript:alert(1)'
+                : request.origin === 'http://localhost:4103'
+                  ? 'http://localhost:4103'
+                  : request.origin === 'http://localhost:4104'
+                    ? 'http://[' : undefined
+          }});
+        });
+        try {
+          const changed = new Promise(resolve => navigator.serviceWorker.addEventListener(
+            'controllerchange', resolve, {once:true}));
+          const registration = await navigator.serviceWorker.register(
+            'service-worker.js?remoteAuthority=remote.test&platform=electron');
+          if (!navigator.serviceWorker.controller) await changed;
+          worker = navigator.serviceWorker.controller || registration.active;
+          if (!worker) throw new Error('localhost worker did not control the document');
+          const mapped = await fetch('http://localhost:4100/path/data.txt?token=7');
+          const mappedBody = await mapped.text();
+          if (mapped.status !== 200 || mappedBody !== 'mapped-localhost-body'
+              || mapped.url !== 'http://127.0.0.1:5100/path/data.txt?token=7'
+              || !mapped.redirected) {
+            throw new Error(`mapped response mismatch ${mapped.status} ${mapped.url} ${mappedBody}`);
+          }
+          let redirectError = false;
+          try {
+            await fetch('http://localhost:4100/path/data.txt?token=7', {
+              redirect:'error'
+            });
+          } catch { redirectError = true; }
+          if (!redirectError) throw new Error('redirect error mode did not reject');
+          const rewritten = await fetch(
+            'http://localhost:4100/path/data.txt?token=7', {
+              method:'POST', body:'discarded',
+              headers:{'content-type':'text/plain'}
+            });
+          if (rewritten.status !== 200
+              || await rewritten.text() !== 'mapped-localhost-body') {
+            throw new Error(`redirect method rewrite mismatch ${rewritten.status}`);
+          }
+          const manual = await fetch(
+            'http://localhost:4100/path/data.txt?token=7', {redirect:'manual'});
+          if (manual.status !== 0 || manual.type !== 'opaqueredirect'
+              || manual.headers.get('location') !== null) {
+            throw new Error(`manual redirect mismatch ${manual.status} ${manual.type}`);
+          }
+          let invalidError = false;
+          try { await fetch('http://localhost:4102/invalid.txt'); }
+          catch { invalidError = true; }
+          if (!invalidError) throw new Error('non-network redirect did not reject');
+          let loopError = false;
+          try { await fetch('http://localhost:4103/loop.txt'); }
+          catch { loopError = true; }
+          if (!loopError) throw new Error('redirect loop did not reject');
+          let malformedError = false;
+          try { await fetch('http://localhost:4104/malformed.txt'); }
+          catch { malformedError = true; }
+          if (!malformedError) throw new Error('malformed redirect did not reject');
+          const unmapped = await fetch('http://localhost:4101/fallback.txt');
+          if (unmapped.status !== 200
+              || await unmapped.text() !== 'unmapped-localhost-body') {
+            throw new Error(`unmapped response mismatch ${unmapped.status}`);
+          }
+          for (let cycle = 0; cycle < 100; ++cycle) {
+            const started = performance.now();
+            const response = await fetch(
+              'http://localhost:4100/path/data.txt?token=7');
+            if (response.status !== 200
+                || await response.text() !== 'mapped-localhost-body') {
+              throw new Error(`localhost mapping cycle ${cycle} failed`);
+            }
+            state.durations.push(performance.now() - started);
+          }
+          const ordered = [...state.durations].sort((left, right) => left - right);
+          state.p95 = ordered[Math.ceil(ordered.length * .95) - 1];
+          if (state.p95 > 100) throw new Error(`localhost mapping p95 ${state.p95}`);
+          if (state.requests.length !== 108) {
+            throw new Error(`localhost request count ${state.requests.length}`);
+          }
+        } catch (error) { state.error = String(error?.stack || error); }
+        state.complete = true;
+      })();
+    )JS", "localhost-mapping.js");
+    require(evaluate_until_equals(
+            localhost_engine, "__localhostMapping.complete", "localhost-complete.js",
+            "true", 5'000) == "true",
+        "localhost mapping gate timed out");
+    require(evaluate(localhost_engine, "__localhostMapping.error", "localhost-error.js")
+            == "null",
+        "localhost mapping gate failed: "
+            + evaluate(localhost_engine, "__localhostMapping.error", "localhost-error.js"));
+    webscene_engine_request_low_memory(localhost_engine);
+    webscene_engine_memory_metrics localhost_memory_after{
+        sizeof(webscene_engine_memory_metrics)};
+    for (auto attempt = 0; attempt < 250; ++attempt) {
+        require(webscene_engine_get_memory_metrics(
+                localhost_engine, &localhost_memory_after) != 0,
+            "localhost mapping final memory metrics unavailable");
+        if (localhost_memory_after.low_memory_notifications
+            > localhost_memory_before.low_memory_notifications) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    require(localhost_memory_after.low_memory_notifications
+            > localhost_memory_before.low_memory_notifications,
+        "localhost mapping low-memory collection did not complete");
+    require(localhost_memory_after.v8_used_heap_bytes
+            <= localhost_memory_before.v8_used_heap_bytes + 8U * 1024U * 1024U,
+        "localhost mapping retained more than 8 MiB V8 heap");
+    std::cout << "Localhost mapping gate: cycles=100 p95="
+              << evaluate(localhost_engine, "__localhostMapping.p95", "localhost-p95.js")
+              << "ms requests="
+              << evaluate(localhost_engine, "__localhostMapping.requests.length",
+                    "localhost-request-count.js")
+              << " heapBefore=" << localhost_memory_before.v8_used_heap_bytes
+              << " heapAfter=" << localhost_memory_after.v8_used_heap_bytes << '\n';
+    webscene_engine_destroy(localhost_engine);
+    require(service_worker_test_current_rss_bytes()
+            <= localhost_rss_before + 64U * 1024U * 1024U,
+        "localhost mapping retained more than 64 MiB RSS after teardown");
+
     constexpr std::string_view admission_address{
         "https://vscode-webview.test/index.html?id=markdown-preview"};
     constexpr std::string_view worker_address{

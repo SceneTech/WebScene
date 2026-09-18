@@ -1320,6 +1320,134 @@ void test_controlled_connected_resource_interception()
     webscene_engine_destroy(engine);
 }
 
+void test_nested_admitted_resource_client_lifecycle()
+{
+    const auto repository_root = std::filesystem::path(__FILE__)
+        .parent_path().parent_path().parent_path().parent_path();
+    const auto contracts_root = repository_root / "tests/WebPlatformSubset/contracts";
+    const auto read_contract = [&](std::string_view name) {
+        std::ifstream stream(contracts_root / name, std::ios::binary);
+        require(stream.good(), "nested admitted-resource contract file was not found");
+        return std::string{
+            std::istreambuf_iterator<char>(stream),
+            std::istreambuf_iterator<char>()};
+    };
+    const auto document = read_contract(
+        "service-worker-nested-admitted-resource.html");
+    const auto worker = read_contract(
+        "service-worker-nested-admitted-resource-worker.js");
+    const auto frame = read_contract(
+        "fixtures/service-worker-nested-admitted-resource-frame.html");
+    const auto fallback = read_contract(
+        "service-worker-nested-admitted-resource-fallback.js");
+    constexpr std::string_view address{
+        "https://nested-admitted.test/"
+        "service-worker-nested-admitted-resource.html?id=webview-1"};
+    struct nested_admitted_server final {
+        resource_server resources;
+        std::atomic<int> controlled_host_reads{0};
+    } server{.resources = {.content = {
+        {std::string{address}, document},
+        {"https://nested-admitted.test/"
+         "service-worker-nested-admitted-resource-worker.js", worker}
+    }}};
+    server.resources.content.emplace(
+        "https://nested-admitted.test/fixtures/"
+        "service-worker-nested-admitted-resource-frame.html?id=webview-1",
+        frame);
+    server.resources.content.emplace(
+        "https://nested-admitted.test/"
+        "service-worker-nested-admitted-resource-fallback.js",
+        fallback);
+    webscene_engine_options options{};
+    options.struct_size = sizeof(options);
+    options.resource_load_callback = +[](void* user_data, uint32_t kind,
+        const char* url, size_t url_length, const char* headers,
+        size_t headers_length, int64_t timeout_ms, char* destination,
+        size_t destination_capacity) {
+        auto& value = *static_cast<nested_admitted_server*>(user_data);
+        const auto address = std::string_view(url, url_length);
+        if (address.find("service-worker-nested-admitted-resource-fallback.js")
+            != std::string_view::npos) {
+            value.controlled_host_reads.fetch_add(1, std::memory_order_relaxed);
+        }
+        return load_test_resource(&value.resources, kind, url, url_length,
+            headers, headers_length, timeout_ms, destination,
+            destination_capacity);
+    };
+    options.resource_load_user_data = &server;
+    auto* engine = webscene_engine_create_with_options(&options);
+    require(engine != nullptr, "nested admitted-resource engine creation failed");
+    require(webscene_engine_load_url(engine, address.data(), address.size()) != 0U,
+        "nested admitted-resource navigation failed");
+    require(evaluate_until_equals(engine, "location.href", "nested-admitted-navigation.js",
+            R"("https://nested-admitted.test/service-worker-nested-admitted-resource.html?id=webview-1")",
+            2'500)
+            == R"("https://nested-admitted.test/service-worker-nested-admitted-resource.html?id=webview-1")",
+        "nested admitted-resource document did not become ready");
+    webscene_engine_memory_metrics memory_before{sizeof(webscene_engine_memory_metrics)};
+    require(webscene_engine_get_memory_metrics(engine, &memory_before) != 0,
+        "nested admitted-resource memory baseline unavailable");
+    const auto peak_rss_before = service_worker_test_peak_rss_bytes();
+    const auto current_rss_before = service_worker_test_current_rss_bytes();
+    require(evaluate_until_equals(engine, "__webSceneWptState.complete",
+            "nested-admitted-complete.js", "true", 30'000) == "true",
+        "nested admitted-resource contract timed out: "
+            + evaluate(engine, "JSON.stringify(__webSceneWptState)",
+                "nested-admitted-timeout.js"));
+    require(evaluate(engine, "__webSceneWptState.harness.status",
+            "nested-admitted-status.js") == "0",
+        "nested admitted-resource contract failed: "
+            + evaluate(engine, "JSON.stringify(__webSceneWptState)",
+                "nested-admitted-result.js"));
+    const auto p95 = std::stod(evaluate(engine,
+        "__webSceneWptState.p95", "nested-admitted-p95.js"));
+    const auto client_requests = std::stoi(evaluate(engine,
+        "__webSceneWptState.requests.length", "nested-admitted-requests.js"));
+    require(client_requests == 100,
+        "nested admitted-resource contract did not broker 100 client requests");
+    require(p95 <= 100.0,
+        "nested admitted-resource 100-cycle p95 exceeded 100 ms: "
+            + std::to_string(p95));
+    require(server.controlled_host_reads.load(std::memory_order_relaxed) == 0,
+        "nested admitted scripts escaped to the host resource loader");
+    require(webscene_engine_request_low_memory(engine) != 0,
+        "nested admitted-resource low-memory request rejected");
+    webscene_engine_memory_metrics memory_after{sizeof(webscene_engine_memory_metrics)};
+    for (auto attempt = 0; attempt < 250; ++attempt) {
+        require(webscene_engine_get_memory_metrics(engine, &memory_after) != 0,
+            "nested admitted-resource final memory metrics unavailable");
+        if (memory_after.low_memory_notifications
+            > memory_before.low_memory_notifications) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    require(memory_after.low_memory_notifications
+            > memory_before.low_memory_notifications,
+        "nested admitted-resource low-memory collection did not complete");
+    require(memory_after.v8_used_heap_bytes
+            <= memory_before.v8_used_heap_bytes + 8U * 1024U * 1024U,
+        "nested admitted-resource cycles retained more than 8 MiB V8 heap: before="
+            + std::to_string(memory_before.v8_used_heap_bytes) + " after="
+            + std::to_string(memory_after.v8_used_heap_bytes));
+    const auto peak_rss_after = service_worker_test_peak_rss_bytes();
+    require(peak_rss_after <= peak_rss_before + 256U * 1024U * 1024U,
+        "nested admitted-resource cycles exceeded 256 MiB RSS high-water growth");
+    webscene_engine_destroy(engine);
+    const auto current_rss_after = service_worker_test_current_rss_bytes();
+    require(current_rss_after <= current_rss_before + 64U * 1024U * 1024U,
+        "nested admitted-resource teardown retained more than 64 MiB RSS");
+    std::cout << "Nested admitted-resource gate: cycles=100 p95=" << p95
+              << "ms clientRequests=" << client_requests
+              << " hostRequests="
+              << server.resources.requests.load(std::memory_order_relaxed)
+              << " heapBefore=" << memory_before.v8_used_heap_bytes
+              << " heapAfter=" << memory_after.v8_used_heap_bytes
+              << " peakRssBefore=" << peak_rss_before
+              << " peakRssAfter=" << peak_rss_after
+              << " currentRssBefore=" << current_rss_before
+              << " currentRssAfter=" << current_rss_after << '\n';
+}
+
 void test_vscode_markdown_css_image_resource_broker()
 {
     const auto repository_root = std::filesystem::path(__FILE__)
@@ -2237,6 +2365,7 @@ void test_vscode_markdown_css_image_resource_broker()
               << " peakRssAfter=" << peak_rss_after
               << " currentRssBefore=" << current_rss_before
               << " currentRssAfter=" << current_rss_after << '\n';
+    test_nested_admitted_resource_client_lifecycle();
 }
 
 void test_controlled_parser_and_nested_frame_resources()

@@ -46,6 +46,8 @@ jobs:
         shell: bash
         run: |
           df -B1 / /tmp "$RUNNER_TEMP"
+          sudo du -B1 --max-depth=1 /tmp 2>/dev/null | sort -nr | head -20 || true
+          sudo fuser -vm /tmp 2>&1 | head -40 || true
           sudo du -x -B1 --max-depth=1 /var /home/danw 2>/dev/null | sort -nr | head -30 || true
           if command -v docker >/dev/null 2>&1; then
             sudo docker system df || true

@@ -2588,6 +2588,8 @@
         auto* node = unwrap_node(info.Holder());
         if (node == nullptr || (node->tag != "input" && node->tag != "textarea")) return;
         const auto text = to_wtf8(info.GetIsolate(), value);
+        forms::ensure_text_value(*node);
+        const auto previous_live_value = node->form_control().value;
         if (node->tag == "textarea") {
             if (!self->blur_active_descendant_before_replacing_children(*node)) return;
             self->detach_all_children(*node);
@@ -2599,8 +2601,22 @@
                 self->document.append_child(*node, text_node);
             }
             synchronize_textarea_value_from_children(*node);
+            if (self->is_connected(*node)) {
+                self->recascade_form_value_selector_transition(
+                    *node, previous_live_value, node->form_control().value);
+            }
         } else {
+            const auto previous_default = node->attributes.find("value");
+            const auto old_value = previous_default == node->attributes.end()
+                ? std::nullopt
+                : std::optional<std::string>(previous_default->second);
             node->attributes["value"] = text;
+            if (self->attribute_requires_recascade("value")) {
+                self->recascade_attribute_selector_transition(
+                    *node, "value", old_value, text);
+            }
+            self->finish_input_value_attribute_change(
+                *node, previous_live_value, text);
         }
         self->document.mark_dirty();
     }
@@ -3208,15 +3224,15 @@
             self->document.mark_dirty();
             return;
         }
+        forms::ensure_text_value(*node);
+        const auto previous_value = node->form_control().value;
         node->mutable_form_control().value = value->IsNullOrUndefined()
             ? std::string{}
             : forms::supports_text_selection(node)
                 ? to_wtf8(info.GetIsolate(), value)
                 : to_utf8(info.GetIsolate(), value);
         node->mutable_form_control().value_initialized = true;
-        if (node->tag == "textarea") {
-            node->mutable_form_control().dirty_value = true;
-        }
+        node->mutable_form_control().dirty_value = true;
         node->mutable_form_control().selection_start = std::min(node->mutable_form_control().selection_start, node->mutable_form_control().value.size());
         node->mutable_form_control().selection_end = std::min(node->mutable_form_control().selection_end, node->mutable_form_control().value.size());
         node->mutable_form_control().selection_start_utf16_suboffset = 0U;
@@ -3224,7 +3240,12 @@
         if (node->mutable_form_control().selection_start == node->mutable_form_control().selection_end) {
             node->mutable_form_control().selection_direction = text_selection_direction::none;
         }
-        self->document.mark_dirty();
+        if (self->is_connected(*node)) {
+            self->recascade_form_value_selector_transition(
+                *node, previous_value, node->form_control().value);
+        } else {
+            self->document.mark_dirty();
+        }
     }
 
     static void get_selection_start(
@@ -3471,6 +3492,7 @@
         auto* self = current(info.GetIsolate());
         auto* form = unwrap_node(info.This());
         if (form == nullptr || form->tag != "form") return;
+        style_recascade_batch_scope style_batch(*self);
         const auto reset_subtree = [&](const auto& recurse, dom_node& node) -> void {
             if (node.tag == "select") node.mutable_form_control().selection_explicitly_empty = false;
             if (node.tag == "option") {
@@ -3478,6 +3500,8 @@
                 node.mutable_form_control().selectedness = false;
             }
             if (node.tag == "input" || node.tag == "textarea") {
+                forms::ensure_text_value(node);
+                const auto previous_value = node.form_control().value;
                 if (node.tag == "textarea") {
                     reset_textarea_value(node);
                 } else {
@@ -3491,6 +3515,10 @@
                 if (node.tag == "input") {
                     node.mutable_form_control().checkedness_initialized = false;
                     node.mutable_form_control().checkedness = false;
+                }
+                if (self->is_connected(node)) {
+                    self->recascade_form_value_selector_transition(
+                        node, previous_value, node.form_control().value);
                 }
             }
             for (auto* child : node.children) {

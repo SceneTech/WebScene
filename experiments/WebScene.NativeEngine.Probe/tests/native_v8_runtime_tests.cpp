@@ -367,6 +367,10 @@ int main()
             test_compiled_css_route_scaling(true, true);
             return 0;
         }
+        if (selected == "live-form-state") {
+            test_live_form_state_selectors_and_scaling();
+            return 0;
+        }
         if (selected == "css-subject-index-scaling") {
             test_compiled_subject_index_scaling();
             return 0;
@@ -1094,6 +1098,7 @@ int main()
     test_media_query_inherited_value_propagation_work();
     test_media_query_matching_scales_linearly();
     test_attribute_invalidation_scopes_subject_and_descendant_rules();
+    test_live_form_state_selectors_and_scaling();
     test_compiled_subject_index_scaling();
     test_cascade_layer_mutation_scaling();
     test_compiled_css_invalidation_scaling();

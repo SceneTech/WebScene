@@ -188,6 +188,28 @@ inline void ensure_text_value(dom_node& node) {
     control.selection_direction=text_selection_direction::none;
 }
 
+// Selector matching is const and may run before the first cascade initializes
+// a control. Read the same live/default source without mutating the node.
+inline bool text_value_empty(const dom_node& node) {
+    if(node.form_control().value_initialized) return node.form_control().value.empty();
+    if(node.tag=="textarea") {
+        const auto has_text=[](const auto& self,const dom_node& current)->bool {
+            if(current.kind==dom_node_kind::text && !current.text_content.empty()) return true;
+            for(const auto* child:current.children)
+                if(child && self(self,*child)) return true;
+            return false;
+        };
+        return !has_text(has_text,node);
+    }
+    const auto attribute=node.attributes.find("value");
+    return attribute==node.attributes.end() || attribute->second.empty();
+}
+
+inline bool supports_placeholder_selector(const dom_node& node) {
+    return (node.tag=="input" || node.tag=="textarea")
+        && supports_text_selection(&node);
+}
+
 inline size_t previous_utf8_boundary(const std::string& value,size_t index) {
     index=std::min(index,value.size());
     if(!index) return 0;

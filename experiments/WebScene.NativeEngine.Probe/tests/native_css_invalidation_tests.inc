@@ -1,5 +1,169 @@
 // These tests measure invalidation work, not wall-clock limits. Unrelated DOM
 // and stylesheet growth must not amplify a fixed-size component mutation.
+void test_live_form_state_selectors_and_scaling()
+{
+    auto* engine = webscene_engine_create(0);
+    require(engine != nullptr, "live form-state engine creation failed");
+    resize(engine, 800, 600, 1U);
+    wait_for_consumed_inputs(engine, 1U, "live form-state viewport was not applied");
+
+    const auto correctness = evaluate(engine, R"JS((() => {
+      document.body.innerHTML = `<style>
+        .probe {padding-left:19px;padding-top:17px}
+        .probe:invalid {padding-left:47px}
+        .probe:placeholder-shown {padding-top:83px}
+      </style><form id="form"></form>`;
+      const form=document.getElementById('form');
+      const textarea=document.createElement('textarea');
+      const text=document.createTextNode('seed');
+      textarea.className='probe'; textarea.setAttribute('required','');
+      textarea.setAttribute('placeholder','enter'); textarea.appendChild(text);
+      form.appendChild(textarea);
+      const snapshot=()=>{const style=getComputedStyle(textarea);return [
+        textarea.matches(':valid'),textarea.matches(':invalid'),
+        textarea.matches(':placeholder-shown'),style.paddingLeft,style.paddingTop,
+        document.querySelectorAll(':invalid').length,
+        document.querySelectorAll(':placeholder-shown').length,textarea.value];};
+      const states=[snapshot()];
+      text.data=''; states.push(snapshot());
+      text.nodeValue='restored'; states.push(snapshot());
+      textarea.value='user'; text.textContent=''; states.push(snapshot());
+      textarea.value=''; states.push(snapshot());
+      textarea.removeAttribute('placeholder'); states.push(snapshot());
+      textarea.setAttribute('placeholder','again'); textarea.removeAttribute('required'); states.push(snapshot());
+      textarea.setAttribute('required',''); textarea.value='user'; form.reset(); states.push(snapshot());
+      textarea.remove(); textarea.value='detached'; form.appendChild(textarea); states.push(snapshot());
+      const input=document.createElement('input'); input.className='probe';
+      input.setAttribute('required',''); input.setAttribute('placeholder','type');
+      input.setAttribute('value','seed'); form.appendChild(input);
+      const inputSnapshot=()=>[input.value,input.matches(':valid'),input.matches(':invalid'),
+        input.matches(':placeholder-shown'),getComputedStyle(input).paddingLeft,
+        getComputedStyle(input).paddingTop];
+      const inputStates=[inputSnapshot()];
+      input.setAttribute('value',''); inputStates.push(inputSnapshot());
+      input.setAttribute('value','seed'); inputStates.push(inputSnapshot());
+      input.value='user'; input.setAttribute('value',''); inputStates.push(inputSnapshot());
+      form.reset(); inputStates.push(inputSnapshot());
+      input.defaultValue='next'; inputStates.push(inputSnapshot());
+      input.value='dirty'; input.defaultValue=''; inputStates.push(inputSnapshot());
+      return [states,inputStates];
+    })())JS", "live-form-state-correctness.js");
+    require(correctness == R"JSON([[[true,false,false,"19px","17px",0,0,"seed"],[false,true,true,"47px","83px",1,1,""],[true,false,false,"19px","17px",0,0,"restored"],[true,false,false,"19px","17px",0,0,"user"],[false,true,true,"47px","83px",1,1,""],[false,true,false,"47px","17px",1,0,""],[true,false,true,"19px","83px",0,1,""],[false,true,true,"47px","83px",1,1,""],[true,false,false,"19px","17px",0,0,"detached"]],[["seed",true,false,false,"19px","17px"],["",false,true,true,"47px","83px"],["seed",true,false,false,"19px","17px"],["user",true,false,false,"19px","17px"],["",false,true,true,"47px","83px"],["next",true,false,false,"19px","17px"],["dirty",true,false,false,"19px","17px"]]])JSON",
+        "live form-state selector/computed-style lifecycle diverged: " + correctness);
+
+    const auto native_setup = evaluate(engine, R"JS((() => {
+      const input=document.createElement('input'); input.id='native-value';
+      input.className='probe'; input.setAttribute('required',''); input.setAttribute('placeholder','type');
+      document.body.appendChild(input); input.focus(); return [
+        input.matches(':invalid'),input.matches(':placeholder-shown'),
+        getComputedStyle(input).paddingLeft,getComputedStyle(input).paddingTop];
+    })())JS", "live-form-state-native-setup.js");
+    require(native_setup == R"([true,true,"47px","83px"])",
+        "native form-state setup diverged: " + native_setup);
+    keyboard_input(engine, WEBSCENE_INPUT_TEXT, 'x', 2U);
+    wait_for_consumed_inputs(engine, 2U, "native form-state input was not consumed");
+    const auto native_result = evaluate(engine, R"JS((() => {const input=document.getElementById('native-value');return [
+      input.value,input.matches(':valid'),input.matches(':invalid'),
+      input.matches(':placeholder-shown'),getComputedStyle(input).paddingLeft,
+      getComputedStyle(input).paddingTop];})())JS", "live-form-state-native-result.js");
+    require(native_result == R"(["x",true,false,false,"19px","17px"])",
+        "native input did not invalidate live form state: " + native_result);
+
+    const auto setup = evaluate(engine, R"JS((() => {
+      document.body.innerHTML='<style>.scale:invalid{width:2px}.scale:placeholder-shown{height:3px}'+
+        Array.from({length:1024},(_,i)=>'.noise-'+i+':hover{width:7px}').join('')+'</style>'+
+        '<main id="controls"></main>';
+      const root=document.getElementById('controls'),fragment=document.createDocumentFragment();
+      for(let i=0;i<4096;i++){const node=document.createElement('textarea');node.className='scale';
+        node.setAttribute('required','');node.setAttribute('placeholder','p');fragment.appendChild(node);} root.appendChild(fragment);
+      globalThis.scaleTarget=root.firstElementChild;
+      return [root.children.length,scaleTarget.matches(':invalid'),
+        scaleTarget.matches(':placeholder-shown'),getComputedStyle(scaleTarget).width,
+        getComputedStyle(scaleTarget).height];
+    })())JS", "live-form-state-scale-setup.js");
+    require(setup == R"([4096,true,true,"2px","3px"])",
+        "4,096-control form-state setup diverged: " + setup);
+
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+    std::this_thread::sleep_for(std::chrono::milliseconds(260));
+    execute_and_wait_for_wrapper_retention_scene(engine,
+        "document.body.style.backgroundColor='rgb(1,2,3)'",
+        "live-form-state-scale-baseline-scene.js");
+#endif
+    webscene_engine_memory_metrics memory_before{sizeof(memory_before)};
+    require(webscene_engine_get_memory_metrics(engine, &memory_before) != 0,
+        "live form-state memory baseline was unavailable");
+    webscene_engine_metrics metrics_before{};
+    webscene_engine_get_metrics(engine, &metrics_before);
+    const auto rss_before = file_system_access_test_peak_rss_bytes();
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+    const auto cascades_before = runtime_counter_diagnostic(
+        engine, "css-cascade-applications");
+    const auto candidates_before = runtime_counter_diagnostic(
+        engine, "selector-invalidation-candidate-visits");
+#endif
+    const auto started = std::chrono::steady_clock::now();
+    const auto scale_result = evaluate(engine, R"JS((() => {
+      for(let i=0;i<1000;i++) scaleTarget.value=(i&1)?'':'x';
+      return [scaleTarget.value,scaleTarget.matches(':invalid'),
+        scaleTarget.matches(':placeholder-shown'),getComputedStyle(scaleTarget).width,
+        getComputedStyle(scaleTarget).height,document.querySelectorAll('.scale').length];
+    })())JS", "live-form-state-scale-mutation.js");
+    const auto elapsed = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - started).count();
+    require(scale_result == R"(["",true,true,"2px","3px",4096])",
+        "4,096-control form-state mutation diverged: " + scale_result);
+    require(elapsed < 2000.0, "1,000 bounded form-state transitions exceeded two seconds");
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+    std::this_thread::sleep_for(std::chrono::milliseconds(260));
+    execute_and_wait_for_wrapper_retention_scene(engine,
+        "document.body.style.backgroundColor='rgb(3,2,1)'",
+        "live-form-state-scale-result-scene.js");
+#endif
+    webscene_engine_metrics metrics_after{};
+    webscene_engine_get_metrics(engine, &metrics_after);
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+    const auto cascades = runtime_counter_diagnostic(
+        engine, "css-cascade-applications") - cascades_before;
+    const auto candidates = runtime_counter_diagnostic(
+        engine, "selector-invalidation-candidate-visits") - candidates_before;
+    require(cascades <= 2004U && candidates <= 4008U,
+        "form-state transitions scanned unrelated controls or rules");
+#else
+    const auto cascades = uint64_t{0};
+    const auto candidates = uint64_t{0};
+#endif
+    require(metrics_after.layout_passes <= metrics_before.layout_passes + 2U,
+        "batched form-state transitions forced repeated layout");
+
+    require(evaluate(engine, R"JS((() => {document.getElementById('controls').remove();
+      delete globalThis.scaleTarget;return document.querySelectorAll('.scale').length;})())JS",
+        "live-form-state-scale-retire.js") == "0", "form-state controls did not detach");
+    require(webscene_engine_request_low_memory(engine) != 0,
+        "live form-state low-memory request was rejected");
+    webscene_engine_memory_metrics memory_after{sizeof(memory_after)};
+    for (auto attempt=0; attempt<250; ++attempt) {
+        require(webscene_engine_get_memory_metrics(engine, &memory_after) != 0,
+            "live form-state final memory metrics were unavailable");
+        if (memory_after.low_memory_notifications > memory_before.low_memory_notifications) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    const auto rss_after = file_system_access_test_peak_rss_bytes();
+    require(memory_after.low_memory_notifications > memory_before.low_memory_notifications
+            && memory_after.v8_used_heap_bytes <= memory_before.v8_used_heap_bytes + 8U*1024U*1024U
+            && memory_after.native_dom_node_count <= memory_before.native_dom_node_count + 8U,
+        "form-state detach/GC heap or DOM lifecycle exceeded its bound");
+    require(rss_before == 0U || rss_after <= rss_before + 64U*1024U*1024U,
+        "form-state 4,096-control RSS growth exceeded 64 MiB");
+    std::cout << "Live form-state gate: controls=4096 transitions=1000 ms=" << elapsed
+        << " cascades=" << cascades << " candidates=" << candidates
+        << " layouts=" << (metrics_after.layout_passes-metrics_before.layout_passes)
+        << " heapBefore=" << memory_before.v8_used_heap_bytes
+        << " heapAfter=" << memory_after.v8_used_heap_bytes
+        << " rssBefore=" << rss_before << " rssAfter=" << rss_after << '\n';
+    webscene_engine_destroy(engine);
+}
+
 void test_variadic_child_vector_scaling()
 {
     bool bounded = true;

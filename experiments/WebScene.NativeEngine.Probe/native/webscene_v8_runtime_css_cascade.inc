@@ -2374,6 +2374,42 @@
         }
     }
 
+    void recascade_form_value_selector_transition(
+        dom_node& subject,
+        std::string previous_value,
+        std::string current_value)
+    {
+        document.mark_dirty();
+        if (previous_value.empty() == current_value.empty()) {
+            return;
+        }
+        webscene_frame_trace::scope invalidation_trace(
+            frame_trace,
+            "form-state-invalidation-start",
+            "form-state-invalidation-end",
+            0);
+        const auto indexed = css_invalidation_rules_by_attribute.find(
+            "$live-form-value");
+        const std::span<const size_t> changed_rules =
+            indexed == css_invalidation_rules_by_attribute.end()
+            ? std::span<const size_t>{}
+            : std::span<const size_t>{indexed->second};
+        recascade_selector_transition(
+            subject,
+            changed_rules,
+            [](const css::css_compound_dependencies& dependencies) {
+                css::css_invalidation_targets result;
+                const auto found = dependencies.attributes.find(
+                    "$live-form-value");
+                if (found != dependencies.attributes.end()) {
+                    result.include(found->second);
+                }
+                return result;
+            },
+            [&] { subject.mutable_form_control().value = previous_value; },
+            [&] { subject.mutable_form_control().value = current_value; });
+    }
+
     void recascade_class_selector_transition(
         dom_node& subject,
         const std::optional<std::string>& previous_value,

@@ -317,7 +317,6 @@ void test_cache_storage_and_controlled_fetch_broker()
             'controllerchange', resolve, {once:true}));
           const registration = await navigator.serviceWorker.register(
             'service-worker.js', {type:'module'});
-          state.phase = 'await-control';
           if (!navigator.serviceWorker.controller) await changed;
           for (let cycle = 0; cycle < 100; ++cycle) {
             const start = performance.now();
@@ -759,6 +758,167 @@ void test_service_worker_host_message_streaming()
               << " currentRssBefore=" << current_rss_before
               << " currentRssAfterBulk=" << current_rss_after_bulk
               << " currentRssAfter=" << current_rss_after << '\n';
+}
+
+void test_controlled_fetch_abort_and_retirement()
+{
+    resource_server server{.content = {
+        {"https://fetch-abort.test/index.html",
+            "<!doctype html><title>controlled fetch abort gate</title>"},
+        {"https://fetch-abort.test/service-worker.js", R"JS(
+            self.addEventListener('install', event => event.waitUntil(skipWaiting()));
+            self.addEventListener('activate', event => event.waitUntil(clients.claim()));
+            self.addEventListener('fetch', event => {
+              const path = new URL(event.request.url).pathname;
+              if (path === '/controlled-pending') {
+                event.respondWith(new Promise(() => {}));
+              } else if (path === '/controlled-success') {
+                event.respondWith(new Response('released', {
+                  status:200, headers:{'content-type':'text/plain'}
+                }));
+              }
+            });
+        )JS"}
+    }};
+    webscene_engine_options options{};
+    options.struct_size = sizeof(options);
+    options.resource_load_callback = load_test_resource;
+    options.resource_load_user_data = &server;
+    auto* engine = webscene_engine_create_with_options(&options);
+    require(engine != nullptr, "controlled fetch abort engine creation failed");
+    constexpr std::string_view address{"https://fetch-abort.test/index.html"};
+    require(webscene_engine_load_url(engine, address.data(), address.size()) != 0U,
+        "controlled fetch abort navigation failed");
+    require(evaluate_until_equals(engine, "location.href", "fetch-abort-navigation.js",
+            R"("https://fetch-abort.test/index.html")", 2'500)
+            == R"("https://fetch-abort.test/index.html")",
+        "controlled fetch abort document did not become ready");
+
+    webscene_engine_memory_metrics memory_before{sizeof(webscene_engine_memory_metrics)};
+    require(webscene_engine_get_memory_metrics(engine, &memory_before) != 0,
+        "controlled fetch abort memory baseline unavailable");
+    const auto rss_before = service_worker_test_current_rss_bytes();
+    execute(engine, R"JS(
+      globalThis.__fetchAbort = {
+        complete:false, error:null, preAborted:false, customReason:false,
+        canceled:0, cycles:0, durations:[], releaseLatency:0,
+        retireRejected:false, retireLatency:0
+      };
+      (async () => {
+        const wait = duration => new Promise(resolve => setTimeout(resolve, duration));
+        try {
+          const changed = new Promise(resolve => navigator.serviceWorker.addEventListener(
+            'controllerchange', resolve, {once:true}));
+          const registration = await navigator.serviceWorker.register('service-worker.js');
+          if (!navigator.serviceWorker.controller) await changed;
+
+          const pre = new AbortController();
+          pre.abort();
+          try { await fetch('/controlled-pending', {signal:pre.signal}); }
+          catch (error) { __fetchAbort.preAborted = error?.name === 'AbortError'; }
+
+          const custom = new AbortController();
+          const customReason = new Error('custom abort reason');
+          const customFetch = fetch('/controlled-pending', {signal:custom.signal});
+          await wait(0);
+          custom.abort(customReason);
+          try { await customFetch; }
+          catch (error) { __fetchAbort.customReason = error === customReason; }
+          for (;;) {
+            try {
+              if (await (await fetch('/controlled-success')).text() === 'released') break;
+            } catch {}
+            await wait(1);
+          }
+
+          const controllers = Array.from({length:32}, () => new AbortController());
+          const blocked = controllers.map((controller, index) =>
+            fetch(`/controlled-pending?bulk=${index}`, {signal:controller.signal})
+              .then(() => false, error => error?.name === 'AbortError'));
+          await wait(2);
+          const releasedAt = performance.now();
+          for (const controller of controllers) controller.abort();
+          __fetchAbort.canceled = (await Promise.all(blocked)).filter(Boolean).length;
+          for (;;) {
+            try {
+              const response = await fetch('/controlled-success');
+              if (await response.text() === 'released') break;
+            } catch {}
+            if (performance.now() - releasedAt > 500) {
+              throw new Error('controlled fetch capacity was not released');
+            }
+            await wait(1);
+          }
+          __fetchAbort.releaseLatency = performance.now() - releasedAt;
+
+          for (let cycle = 0; cycle < 100; ++cycle) {
+            const controller = new AbortController();
+            const pending = fetch(`/controlled-pending?cycle=${cycle}`, {
+              signal:controller.signal
+            });
+            await wait(0);
+            const started = performance.now();
+            controller.abort();
+            const aborted = await pending.then(
+              () => false, error => error?.name === 'AbortError');
+            if (!aborted) throw new Error(`cycle ${cycle} did not abort`);
+            __fetchAbort.durations.push(performance.now() - started);
+            ++__fetchAbort.cycles;
+          }
+
+          const retiring = fetch('/controlled-pending?retire=1');
+          await wait(2);
+          const retireStarted = performance.now();
+          await registration.unregister();
+          __fetchAbort.retireRejected = await retiring.then(() => false, () => true);
+          __fetchAbort.retireLatency = performance.now() - retireStarted;
+        } catch (error) {
+          __fetchAbort.error = String(error && error.stack || error);
+        } finally { __fetchAbort.complete = true; }
+      })();
+    )JS", "controlled-fetch-abort-gate.js");
+    require(evaluate_until_equals(engine, "__fetchAbort.complete",
+            "fetch-abort-complete.js", "true", 15'000) == "true",
+        "controlled fetch abort gate did not finish: " + last_error(engine));
+    require(evaluate(engine, "__fetchAbort.error", "fetch-abort-error.js") == "null",
+        "controlled fetch abort gate failed: "
+            + evaluate(engine, "__fetchAbort.error", "fetch-abort-error-detail.js"));
+    require(evaluate(engine, R"JS((() => {
+      const value = __fetchAbort;
+      return value.preAborted && value.customReason && value.canceled === 32
+        && value.cycles === 100 && value.releaseLatency <= 100
+        && value.retireRejected && value.retireLatency <= 500;
+    })())JS", "fetch-abort-semantics.js") == "true",
+        "controlled fetch abort semantics diverged: "
+            + evaluate(engine, "JSON.stringify(__fetchAbort)",
+                "fetch-abort-semantics-detail.js"));
+    const auto p95 = std::stod(evaluate(engine, R"JS((() => {
+      const values = [...__fetchAbort.durations].sort((a,b) => a-b);
+      return values[Math.ceil(values.length * .95) - 1];
+    })())JS", "fetch-abort-p95.js"));
+    require(p95 <= 100.0,
+        "controlled fetch abort p95 exceeded 100 ms: " + std::to_string(p95));
+    require(webscene_engine_request_low_memory(engine) != 0,
+        "controlled fetch abort low-memory request was rejected");
+    webscene_engine_memory_metrics memory_after{sizeof(webscene_engine_memory_metrics)};
+    for (auto attempt = 0; attempt < 250; ++attempt) {
+        require(webscene_engine_get_memory_metrics(engine, &memory_after) != 0,
+            "controlled fetch abort final memory metrics unavailable");
+        if (memory_after.low_memory_notifications
+            > memory_before.low_memory_notifications) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    require(memory_after.v8_used_heap_bytes
+            <= memory_before.v8_used_heap_bytes + 8U * 1024U * 1024U,
+        "controlled fetch abort cycles retained more than 8 MiB V8 heap");
+    const auto rss_after = service_worker_test_current_rss_bytes();
+    require(rss_after <= rss_before + 64U * 1024U * 1024U,
+        "controlled fetch abort cycles retained more than 64 MiB RSS");
+    std::cout << "Controlled fetch abort gate: cycles=100 p95=" << p95
+              << "ms heapBefore=" << memory_before.v8_used_heap_bytes
+              << " heapAfter=" << memory_after.v8_used_heap_bytes
+              << " rssBefore=" << rss_before << " rssAfter=" << rss_after << '\n';
+    webscene_engine_destroy(engine);
 }
 
 void test_controlled_range_cache_headers_and_body_budget()

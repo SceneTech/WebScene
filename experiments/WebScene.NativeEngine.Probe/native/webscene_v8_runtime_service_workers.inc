@@ -39,11 +39,27 @@
         uint64_t client_generation{};
         std::promise<service_worker_fetch_result> promise;
         std::function<void()> notify_client;
+        std::function<void()> notify_worker;
+        std::atomic_bool cancelled{false};
+        std::atomic_bool settled{false};
+        std::atomic_bool active_slot{false};
 
-        void settle(service_worker_fetch_result result)
+        bool settle(service_worker_fetch_result result)
         {
+            if (settled.exchange(true, std::memory_order_acq_rel)) return false;
             promise.set_value(std::move(result));
             if (notify_client) notify_client();
+            return true;
+        }
+
+        void cancel()
+        {
+            cancelled.store(true, std::memory_order_release);
+            service_worker_fetch_result result;
+            result.handled = true;
+            result.error = "Service worker fetch was cancelled";
+            settle(std::move(result));
+            if (notify_worker) notify_worker();
         }
     };
 
@@ -858,6 +874,15 @@
                     v8::Global<v8::Promise> promise;
                 };
                 std::vector<pending_fetch> pending_fetches;
+                const auto release_fetch_slot = [&](const auto& request) {
+                    std::lock_guard lock(state->mutex);
+                    if (request != nullptr
+                        && request->active_slot.exchange(
+                            false, std::memory_order_acq_rel)
+                        && state->active_fetches > 0U) {
+                        --state->active_fetches;
+                    }
+                };
                 for (;;) {
                     std::optional<service_worker_message> message;
                     std::shared_ptr<service_worker_fetch_request> fetch_request;
@@ -892,6 +917,16 @@
                     if (fetch_request != nullptr) {
                         service_worker_fetch_result failure;
                         failure.handled = true;
+                        if (fetch_request->cancelled.load(std::memory_order_acquire)) {
+                            failure.error = "Service worker fetch was cancelled";
+                            release_fetch_slot(fetch_request);
+                            fetch_request->settle(std::move(failure));
+                            fetch_request.reset();
+                        }
+                    }
+                    if (fetch_request != nullptr) {
+                        service_worker_fetch_result failure;
+                        failure.handled = true;
                         v8::TryCatch caught(child->isolate);
                         v8::Local<v8::Value> helper_value;
                         v8::Local<v8::Value> request_constructor_value;
@@ -908,8 +943,7 @@
                             || !request_constructor_value->IsFunction()) {
                             failure.error = "Service worker fetch dispatcher is unavailable";
                             fetch_request->settle(std::move(failure));
-                            std::lock_guard lock(state->mutex);
-                            if (state->active_fetches > 0U) --state->active_fetches;
+                            release_fetch_slot(fetch_request);
                         } else {
                             auto options = v8::Object::New(child->isolate);
                             options->Set(
@@ -956,8 +990,7 @@
                                     realm, 2, request_arguments).ToLocal(&request_value)) {
                                 failure.error = child->describe_reported_exception(caught, realm);
                                 fetch_request->settle(std::move(failure));
-                                std::lock_guard lock(state->mutex);
-                                if (state->active_fetches > 0U) --state->active_fetches;
+                                release_fetch_slot(fetch_request);
                             } else {
                                 auto init = v8::Object::New(child->isolate);
                                 init->Set(
@@ -982,8 +1015,7 @@
                                     failure.error = child->describe_reported_exception(
                                         caught, realm);
                                     fetch_request->settle(std::move(failure));
-                                    std::lock_guard lock(state->mutex);
-                                    if (state->active_fetches > 0U) --state->active_fetches;
+                                    release_fetch_slot(fetch_request);
                                 } else {
                                     pending_fetch pending;
                                     pending.request = std::move(fetch_request);
@@ -1096,14 +1128,16 @@
                             client_retired = client == state->clients.end()
                                 || client->second.generation
                                     != iterator->request->client_generation;
-                            if (client_retired && state->active_fetches > 0U) {
-                                --state->active_fetches;
-                            }
                         }
-                        if (client_retired) {
+                        const auto cancelled = iterator->request->cancelled.load(
+                            std::memory_order_acquire);
+                        if (client_retired || cancelled) {
                             service_worker_fetch_result retired;
                             retired.handled = true;
-                            retired.error = "Service worker fetch client was retired";
+                            retired.error = cancelled
+                                ? "Service worker fetch was cancelled"
+                                : "Service worker fetch client was retired";
+                            release_fetch_slot(iterator->request);
                             iterator->request->settle(std::move(retired));
                             iterator->promise.Reset();
                             iterator = pending_fetches.erase(iterator);
@@ -1201,14 +1235,20 @@
                                 }
                             }
                         }
-                        {
-                            std::lock_guard lock(state->mutex);
-                            if (state->active_fetches > 0U) --state->active_fetches;
-                        }
+                        release_fetch_slot(iterator->request);
                         iterator->request->settle(std::move(result));
                         iterator->promise.Reset();
                         iterator = pending_fetches.erase(iterator);
                     }
+                }
+                for (auto& pending : pending_fetches) {
+                    pending.request->cancelled.store(true, std::memory_order_release);
+                    pending.request->active_slot.store(false, std::memory_order_release);
+                    service_worker_fetch_result retired;
+                    retired.handled = true;
+                    retired.error = "Service worker fetch runtime stopped";
+                    pending.request->settle(std::move(retired));
+                    pending.promise.Reset();
                 }
                 {
                     std::lock_guard lock(state->mutex);
@@ -1712,8 +1752,10 @@
     std::shared_future<service_worker_fetch_result>
     enqueue_controlled_service_worker_fetch(
         const std::string& url,
-        const resource_request_context& request_context)
+        const resource_request_context& request_context,
+        std::shared_ptr<service_worker_fetch_request>* request_handle = nullptr)
     {
+        if (request_handle != nullptr) request_handle->reset();
         if (service_worker_realm || isolate == nullptr || context.IsEmpty()) {
             return {};
         }
@@ -1743,6 +1785,7 @@
         }
         if (runtime == nullptr) return {};
         auto request = std::make_shared<service_worker_fetch_request>();
+        if (request_handle != nullptr) *request_handle = request;
         request->url = url;
         request->method = request_context.method.empty()
             ? "GET" : request_context.method;
@@ -1764,6 +1807,9 @@
         request->client_id = client->descriptor.id;
         request->client_generation = client->descriptor.generation;
         request->notify_client = runtime_work_available;
+        request->notify_worker = [weak = std::weak_ptr(runtime)] {
+            if (const auto owner = weak.lock()) owner->ready.notify_all();
+        };
         auto future = request->promise.get_future().share();
         {
             std::lock_guard lock(runtime->mutex);
@@ -1785,6 +1831,7 @@
                 return future;
             }
             ++runtime->active_fetches;
+            request->active_slot.store(true, std::memory_order_release);
             runtime->fetch_high_water = std::max(
                 runtime->fetch_high_water, runtime->active_fetches);
             runtime->fetches.push_back(request);
@@ -1986,7 +2033,9 @@
                         return false;
                     }
                     retired_fetches.push_back(request);
-                    if (registration.runtime->active_fetches > 0U) {
+                    if (request->active_slot.exchange(
+                            false, std::memory_order_acq_rel)
+                        && registration.runtime->active_fetches > 0U) {
                         --registration.runtime->active_fetches;
                     }
                     return true;
@@ -2196,6 +2245,7 @@
 
         void stop()
         {
+            std::deque<std::shared_ptr<service_worker_fetch_request>> retired_fetches;
             {
                 std::lock_guard lock(mutex);
                 stopped = true;
@@ -2203,10 +2253,23 @@
                 clients.clear();
                 incoming.clear();
                 outgoing.clear();
-                fetches.clear();
+                retired_fetches.swap(fetches);
+                for (const auto& request : retired_fetches) {
+                    if (request != nullptr) {
+                        request->cancelled.store(true, std::memory_order_release);
+                        request->active_slot.store(false, std::memory_order_release);
+                    }
+                }
                 incoming_bytes = 0U;
                 outgoing_bytes = 0U;
                 active_fetches = 0U;
+            }
+            for (auto& request : retired_fetches) {
+                if (request == nullptr) continue;
+                service_worker_fetch_result retired;
+                retired.handled = true;
+                retired.error = "Service worker fetch runtime stopped";
+                request->settle(std::move(retired));
             }
             ready.notify_all();
             if (thread.joinable()) thread.join();

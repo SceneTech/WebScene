@@ -2453,6 +2453,14 @@
       "nativeNavigation": true
     },
     {
+      "path": "contracts/service-worker-controlled-fetch-abort.html",
+      "type": "contract",
+      "capabilities": ["service-worker-controlled-fetch-abort", "service-worker-fetch-capacity-retirement"],
+      "evidence": ["fetch-abort-derived", "service-workers-fetch-event-derived", "chromium-direct-neutral-contract"],
+      "reason": "Candidate controlled-fetch cancellation slice for WebScene #266/#340. It proves pre-aborted and custom AbortSignal reasons, cancellation of queued or dispatched Service Worker FetchEvents, prompt release of all 32 active-fetch slots, and rejection of late worker settlement. The native companion gate adds unregister/shutdown retirement, 100 abort cycles at p95 <= 100 ms, <= 8 MiB retained V8 heap, and <= 64 MiB retained RSS. Local-resource admission and localhost mapping remain host-policy slices.",
+      "nativeNavigation": true
+    },
+    {
       "path": "contracts/controlled-css-image-service-worker.html",
       "type": "contract",
       "capabilities": ["service-worker-css-image", "service-worker-vscode-markdown-resource-broker"],

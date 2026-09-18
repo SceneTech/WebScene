@@ -207,6 +207,10 @@ int main()
             test_service_worker_host_message_streaming();
             return 0;
         }
+        if (selected == "service-worker-fetch-abort") {
+            test_controlled_fetch_abort_and_retirement();
+            return 0;
+        }
         if (selected == "service-worker-range-cache") {
             test_controlled_range_cache_headers_and_body_budget();
             return 0;

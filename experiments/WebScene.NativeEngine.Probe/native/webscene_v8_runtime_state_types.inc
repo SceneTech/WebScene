@@ -564,9 +564,11 @@
     };
 
     struct pending_fetch_task final {
+        uint64_t cancellation_id{};
         v8::Global<v8::Context> context;
         v8::Global<v8::Promise::Resolver> resolver;
         std::shared_future<async_fetch_result> future;
+        std::function<void()> cancel;
     };
 
     struct async_digest_result final {

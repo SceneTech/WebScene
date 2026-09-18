@@ -6,6 +6,7 @@
     resource_loader load_resource_callback;
     static constexpr size_t maximum_pending_fetches = 64U;
     std::vector<pending_fetch_task> pending_fetches;
+    uint64_t next_fetch_cancellation_id{1U};
     static constexpr size_t maximum_pending_digests = 32U;
     static constexpr size_t maximum_digest_input_bytes = 16U * 1024U * 1024U;
     static constexpr size_t maximum_pending_digest_bytes = 64U * 1024U * 1024U;

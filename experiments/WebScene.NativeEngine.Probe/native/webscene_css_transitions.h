@@ -92,7 +92,10 @@ inline void configure_style_transitions(node_style& style)
         animations.color_transition = resolve("color");
     }
 
-inline void apply_transition_shorthand(node_style& style, const std::string& value)
+inline void apply_transition_shorthand(
+    node_style& style,
+    const std::string& value,
+    bool configure = true)
     {
         std::vector<std::string> properties;
         std::vector<std::string> durations;
@@ -136,7 +139,42 @@ inline void apply_transition_shorthand(node_style& style, const std::string& val
         animations.transition_duration_value = join(durations);
         animations.transition_delay_value = join(delays);
         animations.transition_timing_function_value = join(timings);
-        configure_style_transitions(style);
+        if (configure) configure_style_transitions(style);
+    }
+
+inline bool apply_compiled_single_transition_shorthand(
+    node_style& style,
+    const specified_css_value& specified,
+    bool configure = true)
+    {
+        if (specified.kind != specified_css_kind::component_list
+            || specified.components.empty()) return false;
+        auto property = std::string("all");
+        auto duration = std::string("0s");
+        auto delay = std::string("0s");
+        auto timing = std::string("ease");
+        auto saw_time = false;
+        for (const auto& component : specified.components) {
+            const auto lower = ascii_lower(component.name);
+            if (component.kind == css_typed_component_kind::time) {
+                if (!saw_time) duration = lower;
+                else delay = lower;
+                saw_time = true;
+            } else if (lower == "linear" || lower == "ease" || lower == "ease-in"
+                || lower == "ease-out" || lower == "ease-in-out"
+                || lower.starts_with("cubic-bezier(")) {
+                timing = lower;
+            } else if (lower != "normal") {
+                property = lower;
+            }
+        }
+        auto& animations = style.mutable_animations();
+        animations.transition_property_value = std::move(property);
+        animations.transition_duration_value = std::move(duration);
+        animations.transition_delay_value = std::move(delay);
+        animations.transition_timing_function_value = std::move(timing);
+        if (configure) configure_style_transitions(style);
+        return true;
     }
 
 inline void apply_animation_shorthand(node_style& style, const std::string& value)

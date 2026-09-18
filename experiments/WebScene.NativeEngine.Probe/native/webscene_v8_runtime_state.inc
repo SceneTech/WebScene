@@ -398,6 +398,12 @@
     // stable across unordered_map rehashes, so repeat decisions can increment
     // atomically without taking the report snapshot mutex on every hot API call.
     std::unordered_map<std::string, feature_observation*> feature_observation_writer_cache;
+    std::unordered_map<
+        std::string,
+        feature_observation*,
+        transparent_string_hash,
+        transparent_string_equal>
+        supported_css_property_observation_writer_cache;
     std::unordered_map<const char*, feature_observation*>
         canvas_feature_observation_writer_cache;
 #endif

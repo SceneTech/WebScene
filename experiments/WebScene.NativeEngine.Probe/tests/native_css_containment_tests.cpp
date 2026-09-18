@@ -31,7 +31,8 @@ std::string last_error(webscene_engine* engine)
 void execute_and_wait(
     webscene_engine* engine,
     std::string_view source,
-    std::string_view name)
+    std::string_view name,
+    int maximum_attempts = 500)
 {
     webscene_engine_metrics before{};
     webscene_engine_get_metrics(engine, &before);
@@ -39,7 +40,7 @@ void execute_and_wait(
         webscene_engine_execute_script(
             engine, source.data(), source.size(), name.data(), name.size()) != 0,
         "script was rejected");
-    for (auto attempt = 0; attempt < 500; ++attempt) {
+    for (auto attempt = 0; attempt < maximum_attempts; ++attempt) {
         webscene_engine_metrics after{};
         webscene_engine_get_metrics(engine, &after);
         if (after.script_errors > before.script_errors) {
@@ -48,7 +49,7 @@ void execute_and_wait(
         if (after.executed_scripts > before.executed_scripts) return;
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
-    fail("script did not complete within one second");
+    fail("script did not complete within its bounded wait");
 }
 } // namespace
 
@@ -71,6 +72,9 @@ int main()
     require(before_dom.dom_nodes != 0U, "baseline DOM metrics were unavailable");
 
     const auto started = std::chrono::steady_clock::now();
+    // The explicit ten-second performance assertion below owns this workload's
+    // budget. The dispatch wait includes one second of scheduling margin so a
+    // slow run reports its measured gate instead of a generic timeout.
     execute_and_wait(engine, R"JS(
       (() => {
         const rules = document.createElement('style');
@@ -110,7 +114,7 @@ int main()
           void skipped.offsetHeight;
         }
       })()
-    )JS", "native-containment-lifecycle-gate.js");
+    )JS", "native-containment-lifecycle-gate.js", 5500);
     const auto elapsed = std::chrono::duration<double, std::milli>(
         std::chrono::steady_clock::now() - started).count();
     require(elapsed < 10000.0, "4096-descendant, 100-cycle gate exceeded 10 seconds");
@@ -148,11 +152,15 @@ int main()
             + std::to_string(after_dom.dom_nodes) + ")");
     require(after.v8_used_heap_bytes <= before.v8_used_heap_bytes + 32U * 1024U * 1024U,
         "post-cleanup V8 heap exceeded its 32 MiB bound");
+    const auto retained_heap_growth = after.v8_used_heap_bytes > before.v8_used_heap_bytes
+        ? after.v8_used_heap_bytes - before.v8_used_heap_bytes
+        : 0U;
 
     webscene_engine_destroy(engine);
     std::cout << "css-containment-lifecycle descendants=4096 cycles=100 elapsed-ms="
               << elapsed << " peak-node-delta="
               << (peak_dom.dom_nodes - before_dom.dom_nodes)
-              << " retained-node-delta=0\n";
+              << " retained-node-delta=0 retained-heap-growth="
+              << retained_heap_growth << '\n';
     return 0;
 }

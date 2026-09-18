@@ -361,6 +361,177 @@ void test_same_origin_iframe_navigation_document_replacement()
     webscene_engine_destroy(engine);
 }
 
+void test_query_iframe_worker_extension_host_bootstrap()
+{
+    constexpr std::string_view address{
+        "https://extension-host.test/index.html"};
+    constexpr std::string_view frame_address{
+        "https://extension-host.test/webWorkerExtensionHostIframe.html?&vscodeWebWorkerExtHostId=extension-host-id"};
+    resource_server server{.content = {
+        {std::string{address}, "<!doctype html><title>extension host</title><body></body>"},
+        {std::string{frame_address}, R"HTML(<!doctype html><body><script>
+          (() => {
+            const searchParams = new URL(document.location.href).searchParams;
+            const vscodeWebWorkerExtHostId =
+              searchParams.get('vscodeWebWorkerExtHostId') || '';
+            const parentOrigin = window.origin;
+            self.onmessage = event => {
+              if (event.origin !== parentOrigin
+                  || event.data.type !== 'vscode.bootstrap.nls') return;
+              const source = `await import(${JSON.stringify(event.data.workerUrl)});`;
+              const blob = new Blob([source], {type:'application/javascript'});
+              const worker = new Worker(URL.createObjectURL(blob), {
+                name:'ExtensionHostWorker', type:'module'
+              });
+              worker.onmessage = workerEvent => {
+                const {data} = workerEvent;
+                parent.postMessage({vscodeWebWorkerExtHostId, data}, parentOrigin, [data]);
+              };
+              self.onmessage = bridgeEvent =>
+                worker.postMessage(bridgeEvent.data, bridgeEvent.ports);
+            };
+            parent.postMessage({
+              vscodeWebWorkerExtHostId,
+              type:'vscode.bootstrap.nls',
+              observedSearch:document.location.search
+            }, '*');
+          })();
+        </script></body>)HTML"},
+        {"https://extension-host.test/extensionHostWorker.js", R"JS(
+          const channel = new MessageChannel();
+          channel.port1.onmessage = event => channel.port1.postMessage(event.data + 1);
+          postMessage(channel.port2, [channel.port2]);
+        )JS"}
+    }};
+    webscene_engine_options options{};
+    options.struct_size = sizeof(options);
+    options.resource_load_callback = load_test_resource;
+    options.resource_load_user_data = &server;
+    auto* engine = webscene_engine_create_with_options(&options);
+    require(engine != nullptr, "query iframe extension-host engine creation failed");
+    require(webscene_engine_load_url(engine, address.data(), address.size()) != 0U,
+        "query iframe extension-host outer document failed");
+    require(evaluate_until_equals(engine, "location.href", "query-iframe-ready.js",
+            R"("https://extension-host.test/index.html")", 2'500)
+            == R"("https://extension-host.test/index.html")",
+        "query iframe extension-host outer document did not become ready");
+
+    webscene_engine_memory_metrics memory_before{
+        sizeof(webscene_engine_memory_metrics)};
+    require(webscene_engine_get_memory_metrics(engine, &memory_before) != 0,
+        "query iframe extension-host baseline memory metrics unavailable");
+    const auto rss_before = service_worker_test_current_rss_bytes();
+
+    execute(engine, R"JS(
+      globalThis.__extensionHost = {
+        complete:false, error:null, bootstrap:false, source:false,
+        search:null, port:false, reply:null, cycles:0, durations:[],
+        p95:null, max:null, frame:null, started:0
+      };
+      (() => {
+        const state = __extensionHost;
+        const finish = error => {
+          if (error) state.error = String(error && error.stack || error);
+          if (state.frame) state.frame.remove();
+          state.frame = null;
+          removeEventListener('message', onmessage);
+          const ordered = state.durations.slice().sort((a, b) => a - b);
+          state.p95 = ordered[Math.max(0, Math.ceil(ordered.length * .95) - 1)];
+          state.max = ordered[ordered.length - 1];
+          state.complete = true;
+        };
+        const start = () => {
+          state.started = performance.now();
+          const frame = document.createElement('iframe');
+          state.frame = frame;
+          frame.setAttribute('sandbox', 'allow-same-origin allow-scripts');
+          frame.src = './webWorkerExtensionHostIframe.html?&vscodeWebWorkerExtHostId=extension-host-id';
+          document.body.appendChild(frame);
+        };
+        const onmessage = event => {
+          try {
+            if (event.data?.vscodeWebWorkerExtHostId !== 'extension-host-id') return;
+            const frame = state.frame;
+            state.source = event.source === frame.contentWindow;
+            if (event.data.type === 'vscode.bootstrap.nls') {
+              state.bootstrap = true;
+              state.search = event.data.observedSearch;
+              frame.contentWindow.postMessage({
+                type:'vscode.bootstrap.nls',
+                workerUrl:'https://extension-host.test/extensionHostWorker.js'
+              }, '*');
+              return;
+            }
+            const port = event.data.data;
+            state.port = port instanceof MessagePort && event.ports[0] === port;
+            port.onmessage = reply => {
+              state.reply = reply.data;
+              port.close();
+              frame.remove();
+              state.frame = null;
+              state.durations.push(performance.now() - state.started);
+              ++state.cycles;
+              if (state.cycles < 20) setTimeout(start, 0);
+              else finish();
+            };
+            port.postMessage(41);
+          } catch (error) {
+            finish(error);
+          }
+        };
+        addEventListener('message', onmessage);
+        start();
+      })();
+    )JS", "query-iframe-extension-host-bootstrap.js");
+    require(evaluate_until_equals(engine, "__extensionHost.complete",
+            "query-iframe-extension-host-complete.js", "true", 30'000) == "true",
+        "query iframe extension-host bootstrap timed out: "
+            + evaluate(engine, "JSON.stringify(__extensionHost)",
+                "query-iframe-extension-host-timeout.js")
+            + " / " + last_error(engine));
+    require(evaluate(engine, R"JS((() => {
+      const s=__extensionHost;
+      return s.error===null && s.bootstrap && s.source && s.port && s.reply===42
+        && s.search==='?&vscodeWebWorkerExtHostId=extension-host-id'
+        && s.cycles===20 && s.p95<=250 && s.max<=2500;
+    })())JS", "query-iframe-extension-host-result.js") == "true",
+        "query iframe extension-host bootstrap diverged: "
+            + evaluate(engine, "JSON.stringify(__extensionHost)",
+                "query-iframe-extension-host-detail.js"));
+    require(webscene_engine_request_low_memory(engine) != 0,
+        "query iframe extension-host low-memory request failed");
+    webscene_engine_memory_metrics memory_after{
+        sizeof(webscene_engine_memory_metrics)};
+    for (auto attempt = 0; attempt < 500; ++attempt) {
+        require(webscene_engine_get_memory_metrics(engine, &memory_after) != 0,
+            "query iframe extension-host final memory metrics unavailable");
+        if (memory_after.low_memory_notifications
+            > memory_before.low_memory_notifications) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    const auto rss_after = service_worker_test_current_rss_bytes();
+    require(
+        memory_after.low_memory_notifications
+                > memory_before.low_memory_notifications
+            && memory_after.v8_used_heap_bytes
+                <= memory_before.v8_used_heap_bytes + 8U * 1024U * 1024U
+            && memory_after.native_dom_node_count
+                <= memory_before.native_dom_node_count + 8U
+            && memory_after.native_wrapper_handle_count
+                <= memory_before.native_wrapper_handle_count + 16U,
+        "query iframe extension-host cycles retained heap, DOM nodes, or wrappers");
+    require(rss_before == 0U || rss_after <= rss_before + 64U * 1024U * 1024U,
+        "query iframe extension-host cycles retained more than 64 MiB RSS");
+    std::cout << "Query iframe extension-host lifecycle gate: cycles=20 p95="
+              << evaluate(engine, "__extensionHost.p95", "query-iframe-p95.js")
+              << "ms max="
+              << evaluate(engine, "__extensionHost.max", "query-iframe-max.js")
+              << "ms heapBefore=" << memory_before.v8_used_heap_bytes
+              << " heapAfter=" << memory_after.v8_used_heap_bytes
+              << " rssBefore=" << rss_before << " rssAfter=" << rss_after << '\n';
+    webscene_engine_destroy(engine);
+}
+
 void test_nested_window_find_selection() {
   constexpr std::string_view address{"https://iframe-find.test/index.html"};
   resource_server server{

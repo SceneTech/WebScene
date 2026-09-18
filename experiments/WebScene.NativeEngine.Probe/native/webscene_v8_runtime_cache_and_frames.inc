@@ -1224,16 +1224,17 @@
         actual_frame_contexts[frame.id].Reset(isolate, local_context);
         actual_frame_documents[frame.id].Reset(isolate, frame_document_value);
         if (same_origin_access) {
-            const auto proxy_entry = frame_windows.find(frame.id);
-            if (proxy_entry != frame_windows.end() && !proxy_entry->second.IsEmpty()) {
-                auto owner_context = context.Get(isolate);
-                v8::Context::Scope owner_scope(owner_context);
-                auto proxy = proxy_entry->second.Get(isolate);
-                proxy->Set(
-                    owner_context,
-                    js_string(isolate, "document"),
-                    frame_document_value).Check();
-            }
+            // Every browsing context has a WindowProxy even when script has
+            // not read iframe.contentWindow yet. Materialize it before child
+            // script can post a message so MessageEvent.source can retain the
+            // stable proxy across the initial document replacement.
+            auto owner_context = context.Get(isolate);
+            v8::Context::Scope owner_scope(owner_context);
+            auto proxy = frame_window(frame);
+            proxy->Set(
+                owner_context,
+                js_string(isolate, "document"),
+                frame_document_value).Check();
         }
         global->Set(local_context, js_string(isolate, "name"), js_string(isolate, frame.attributes["name"].c_str())).Check();
         v8::Local<v8::Value> parent_window = v8::Null(isolate);

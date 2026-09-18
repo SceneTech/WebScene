@@ -1,0 +1,29 @@
+{
+  "profile": "query-iframe-worker-bootstrap",
+  "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+  "runtime": "v8",
+  "viewport": {
+    "width": 800,
+    "height": 600,
+    "deviceScaleFactor": 1
+  },
+  "required": [],
+  "candidate": [
+    {
+      "path": "contracts/query-iframe-worker-extension-host.html",
+      "type": "contract",
+      "capabilities": [
+        "same-origin-iframe-navigation",
+        "stable-window-proxy",
+        "module-workers",
+        "messageport-transfer"
+      ],
+      "evidence": [
+        "vscode-oss-extension-host-bootstrap"
+      ],
+      "reason": "Chrome oracle and native regression for the query-bearing same-origin iframe bootstrap used by the unchanged VS Code OSS browser extension host.",
+      "nativeNavigation": true
+    }
+  ],
+  "harnessBlocked": []
+}

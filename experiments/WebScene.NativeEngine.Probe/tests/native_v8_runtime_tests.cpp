@@ -169,6 +169,10 @@ int main()
             test_same_origin_iframe_navigation_document_replacement();
             return 0;
         }
+        if (selected == "query-iframe-worker-bootstrap") {
+            test_query_iframe_worker_extension_host_bootstrap();
+            return 0;
+        }
         if (selected == "window-find-selection") {
           test_nested_window_find_selection();
           return 0;
@@ -1226,6 +1230,7 @@ int main()
     test_resource_cache_policy_matrix();
     test_due_timer_precedes_dynamic_resource_wave();
     test_dynamic_frame_resources_use_each_document_base_url();
+    test_query_iframe_worker_extension_host_bootstrap();
     test_iframe_preparation_discovers_subresources_during_outer_script();
     test_deferred_frame_script_observes_window_dom_content_loaded();
     test_worker_starts_after_engine_configuration();

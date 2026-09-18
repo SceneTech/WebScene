@@ -2488,7 +2488,14 @@
         const auto source = node.attributes.contains("src") ? node.attributes["src"] : "about:blank";
         location->Set(local_context, js_string(isolate, "href"), js_string(isolate, source.c_str())).Check();
         object->Set(local_context, js_string(isolate, "location"), location).Check();
-        object->Set(local_context, js_string(isolate, "document"), frame_document(node)).Check();
+        const auto actual_document = actual_frame_documents.find(node.id);
+        object->Set(
+            local_context,
+            js_string(isolate, "document"),
+            actual_document != actual_frame_documents.end()
+                    && !actual_document->second.IsEmpty()
+                ? v8::Local<v8::Value>(actual_document->second.Get(isolate))
+                : v8::Local<v8::Value>(frame_document(node))).Check();
         object->Set(local_context, js_string(isolate, "window"), object).Check();
         object->Set(local_context, js_string(isolate, "self"), object).Check();
         object->Set(local_context, js_string(isolate, "parent"), local_context->Global()).Check();

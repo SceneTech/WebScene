@@ -253,6 +253,18 @@
             }
             break;
         }
+        for (const auto& [frame_id, persistent_proxy] : self->frame_windows) {
+            auto frame_proxy = persistent_proxy.Get(isolate);
+            if (frame_proxy.IsEmpty() || !frame_proxy->StrictEquals(info.This())) {
+                continue;
+            }
+            const auto frame_context = self->actual_frame_contexts.find(frame_id);
+            if (frame_context != self->actual_frame_contexts.end()
+                && !frame_context->second.IsEmpty()) {
+                target_context = frame_context->second.Get(isolate);
+            }
+            break;
+        }
         auto source_context = isolate->GetIncumbentContext();
         if (target_context.IsEmpty()) return;
         if (source_context.IsEmpty()) source_context = target_context;
@@ -321,9 +333,27 @@
             return std::string("null");
         };
 
+        // A navigated iframe replaces its Window while retaining the owner
+        // realm's WindowProxy. MessageEvent.source exposes that stable proxy,
+        // not the current inner Window global. Capture it when the task is
+        // queued so navigation cannot change the sender identity in flight.
+        auto source_window = source_context->Global();
+        for (const auto& [frame_id, frame_context] : self->actual_frame_contexts) {
+            if (frame_context.IsEmpty()
+                || frame_context.Get(isolate) != source_context) {
+                continue;
+            }
+            const auto proxy = self->frame_windows.find(frame_id);
+            if (proxy != self->frame_windows.end() && !proxy->second.IsEmpty()) {
+                source_window = proxy->second.Get(isolate);
+            }
+            break;
+        }
+
         self->pending_window_messages.push_back(pending_window_message{
             v8::Global<v8::Context>(isolate, target_context),
             v8::Global<v8::Context>(isolate, source_context),
+            v8::Global<v8::Object>(isolate, source_window),
             std::move(packet),
             std::move(target_origin),
             read_origin(source_context)});

@@ -152,6 +152,9 @@ typedef struct webscene_scene_header {
 // (background/foreground pairs). stroke_width carries the width in CSS pixels.
 // Shadow kinds 17/18: flags bit 0 selects an inverse rounded hole;
 // producers must bracket inverse shadows with clip commands 12/13.
+// Clip kind 12 uses flags bit 31 to select an SVG path stored in the indexed
+// scene string; the remaining bits are its string index. A zero flag retains
+// the rounded-rectangle fields used by existing producers and presenters.
 typedef struct webscene_scene_command {
     uint32_t kind;
     uint32_t flags;

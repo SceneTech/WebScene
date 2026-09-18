@@ -42,6 +42,8 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
     private const uint LayerRemove = 2;
     private const uint LayerUnchangedPrefix = 4;
     private const uint OffscreenCanvasLayer = 1u << 31;
+    private const uint DomPolygonClipResource = 1u << 31;
+    private const uint DomPolygonClipIndexMask = ~DomPolygonClipResource;
 
     private readonly Dictionary<uint, RetainedLayer> s_layers = new();
     private readonly List<RetainedLayer> s_orderedLayers = [];
@@ -799,12 +801,14 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
                     case 12:
                         backdrop.Save();
                         overlay.Save();
-                        ClipDomRoundedRect(
+                        ClipDomShape(
                             backdrop,
+                            view,
                             command,
                             ResolveDomCornerRadii(commands, commandIndex));
-                        ClipDomRoundedRect(
+                        ClipDomShape(
                             overlay,
+                            view,
                             command,
                             ResolveDomCornerRadii(commands, commandIndex));
                         break;
@@ -1769,6 +1773,31 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
                 radii.BottomLeft
             ]);
         canvas.ClipRoundRect(rounded, SKClipOperation.Intersect, antialias: true);
+    }
+
+    private static void ClipDomShape(
+        SKCanvas canvas,
+        NativeSceneView* view,
+        in SceneCommand command,
+        in DomCornerRadii radii)
+    {
+        if ((command.Flags & DomPolygonClipResource) == 0)
+        {
+            ClipDomRoundedRect(canvas, command, radii);
+            return;
+        }
+        ClipDomPath(canvas, DomStringAt(view, command.Flags & DomPolygonClipIndexMask));
+    }
+
+    private static void ClipDomPath(SKCanvas canvas, string pathData)
+    {
+        using var path = SKPath.ParseSvgPathData(pathData);
+        if (path is null)
+        {
+            canvas.ClipRect(SKRect.Empty, SKClipOperation.Intersect, antialias: false);
+            return;
+        }
+        canvas.ClipPath(path, SKClipOperation.Intersect, antialias: true);
     }
 
     private void DrawDomText(
@@ -3612,7 +3641,7 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
             && Resources.AsSpan().SequenceEqual(other.Resources);
     }
     private sealed record OrderedGpuPaint(SceneCommand Command, DomCornerRadii Radii, SKPicture? Picture,
-        DomPictureInput? Input = null);
+        DomPictureInput? Input = null, string? ClipPath = null);
 
     private bool ValidateOrderedCanvasPlacements(NativeSceneView* view, bool checkpoint)
     {
@@ -3678,7 +3707,11 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
                     var input = new DomPictureInput(
                         MemoryMarshal.AsBytes(commands.Slice(Math.Max(0, start - 1), index - Math.Max(0, start - 1))).ToArray(),
                         commands.Slice(start, index - start).ToArray()
-                            .Select(command => DomStringAt(view, command.Flags)).ToArray(),
+                            .Select(command => command.Kind == 12
+                                    && (command.Flags & DomPolygonClipResource) != 0
+                                ? DomStringAt(view, command.Flags & DomPolygonClipIndexMask)
+                                : DomStringAt(view, command.Flags))
+                            .ToArray(),
                         view->Header.ViewportWidth, view->Header.ViewportHeight,
                         _presenterDeviceScaleFactor, NativeTextShaping.FontRegistrationVersion);
                     var previous = _orderedGpuPaint is not null && result.Count < _orderedGpuPaint.Count
@@ -3696,7 +3729,19 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
                     }
                 }
                 if (index != commands.Length)
-                    result.Add(new(commands[index], ResolveDomCornerRadii(commands, index), null));
+                {
+                    ref readonly var command = ref commands[index];
+                    var clipPath = command.Kind == 12
+                            && (command.Flags & DomPolygonClipResource) != 0
+                        ? DomStringAt(view, command.Flags & DomPolygonClipIndexMask)
+                        : null;
+                    result.Add(new(
+                        command,
+                        ResolveDomCornerRadii(commands, index),
+                        null,
+                        null,
+                        clipPath));
+                }
                 start = index + 1;
             }
             return result;
@@ -3732,7 +3777,12 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
                 switch (command.Kind)
                 {
                     case 12:
-                        canvas.Save(); ClipDomRoundedRect(canvas, command, entry.Radii); break;
+                        canvas.Save();
+                        if (entry.ClipPath is null)
+                            ClipDomRoundedRect(canvas, command, entry.Radii);
+                        else
+                            ClipDomPath(canvas, entry.ClipPath);
+                        break;
                     case 15: ApplyScale(canvas, command); break;
                     case 19: ApplyRotation(canvas, command); break;
                     case 30:

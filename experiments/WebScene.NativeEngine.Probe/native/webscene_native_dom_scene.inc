@@ -432,6 +432,7 @@ void native_document::append_scene(
     struct effect_clip_geometry final {
         layout_rect bounds;
         float radius{};
+        std::string path;
     };
     const auto resolve_effect_clip = [&]() -> std::optional<effect_clip_geometry> {
         const auto& effects = node.style.textual().effect_values;
@@ -440,6 +441,7 @@ void native_document::append_scene(
         const std::string_view value = known->second;
         constexpr std::string_view inset_prefix = "inset(";
         constexpr std::string_view circle_prefix = "circle(";
+        constexpr std::string_view polygon_prefix = "polygon(";
         if (value.empty() || value.back() != ')') return std::nullopt;
         const auto has_prefix = [&](std::string_view prefix) {
             if (value.size() < prefix.size() + 1U) return false;
@@ -474,6 +476,64 @@ void native_document::append_scene(
                     radius * 2.0F,
                     radius * 2.0F},
                 radius};
+        }
+        if (has_prefix(polygon_prefix)) {
+            auto arguments = value.substr(
+                polygon_prefix.size(), value.size() - polygon_prefix.size() - 1U);
+            const auto trim = [](std::string_view token) {
+                while (!token.empty()
+                    && std::isspace(static_cast<unsigned char>(token.front()))) {
+                    token.remove_prefix(1U);
+                }
+                while (!token.empty()
+                    && std::isspace(static_cast<unsigned char>(token.back()))) {
+                    token.remove_suffix(1U);
+                }
+                return token;
+            };
+            std::ostringstream path;
+            path.precision(std::numeric_limits<float>::max_digits10);
+            size_t point_count = 0U;
+            size_t cursor = 0U;
+            while (cursor <= arguments.size()) {
+                const auto comma = arguments.find(',', cursor);
+                const auto point = trim(arguments.substr(
+                    cursor,
+                    comma == std::string_view::npos
+                        ? arguments.size() - cursor : comma - cursor));
+                const auto separator = point.find_first_of(" \t\r\n\f");
+                if (separator == std::string_view::npos || point_count == 64U) {
+                    return std::nullopt;
+                }
+                const auto x_token = point.substr(0U, separator);
+                const auto y_token = trim(point.substr(separator + 1U));
+                if (y_token.empty()
+                    || y_token.find_first_of(" \t\r\n\f") != std::string_view::npos) {
+                    return std::nullopt;
+                }
+                const auto x = css::parse_ascii_inset_length(x_token);
+                const auto y = css::parse_ascii_inset_length(y_token);
+                if (!x.has_value() || !y.has_value()) return std::nullopt;
+                const auto resolved_x = node.layout.x
+                    + (x->percent ? node.layout.width * x->value / 100.0F : x->value);
+                const auto resolved_y = node.layout.y
+                    + (y->percent ? node.layout.height * y->value / 100.0F : y->value);
+                path << (point_count == 0U ? "M " : " L ")
+                    << resolved_x << ' ' << resolved_y;
+                ++point_count;
+                if (comma == std::string_view::npos) break;
+                cursor = comma + 1U;
+            }
+            if (point_count < 3U) return std::nullopt;
+            path << " Z";
+            return effect_clip_geometry{
+                layout_rect{
+                    node.layout.x,
+                    node.layout.y,
+                    node.layout.width,
+                    node.layout.height},
+                0.0F,
+                path.str()};
         }
         if (!has_prefix(inset_prefix)) return std::nullopt;
         const std::string_view arguments(value.data() + 6U, value.size() - 7U);
@@ -516,9 +576,14 @@ void native_document::append_scene(
     };
     const auto effect_clip = resolve_effect_clip();
     if (effect_clip.has_value()) {
+        constexpr uint32_t polygon_clip_resource = 1U << 31U;
+        const auto flags = effect_clip->path.empty()
+            ? 0U
+            : polygon_clip_resource
+                | append_scene_string(effect_clip->path, strings, string_bytes);
         commands.push_back(webscene_scene_command{
             12U,
-            0U,
+            flags,
             effect_clip->bounds.x,
             effect_clip->bounds.y,
             effect_clip->bounds.width,

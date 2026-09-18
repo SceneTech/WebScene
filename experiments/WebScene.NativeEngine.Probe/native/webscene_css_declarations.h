@@ -1,19 +1,16 @@
 #pragma once
 #include "webscene_css_state.h"
 #include "webscene_css_parser.h"
+#include "webscene_css_effect_values.h"
 
 namespace webscene_native::css {
-inline std::string ascii_lower(std::string_view value) {
-    auto result=std::string(value);
-    for (auto &c:result) if(c>='A' && c<='Z') c=static_cast<char>(c+('a'-'A'));
-    return result;
-}
 inline bool valid_custom_property_name(std::string_view name) {
     if (!name.starts_with("--") || name.size()<=2) return false;
     return std::none_of(name.begin(),name.end(),[](unsigned char c) {
         return c<=0x20 || c==0x7f;
     });
 }
+
 inline void append_declaration(
         std::vector<css_declaration>& result,
         std::string_view raw_name,
@@ -27,16 +24,39 @@ inline void append_declaration(
         auto value = std::string(raw_value);
         const auto custom = name.starts_with("--");
         if (custom && !valid_custom_property_name(name)) return;
+        if (name == "-webkit-mask") name = "mask";
+        else if (name == "-webkit-mask-image") name = "mask-image";
+        else if (name == "-webkit-mask-position") name = "mask-position";
+        else if (name == "-webkit-mask-size") name = "mask-size";
+        else if (name == "-webkit-mask-repeat") name = "mask-repeat";
+        else if (name == "-webkit-mask-composite") name = "mask-composite";
         if (!custom && name.starts_with("-")
             && name != "-moz-transform"
             && name != "-webkit-transform"
             && name != "-webkit-font-smoothing") return;
         if (custom && value.empty() && preserve_empty_custom_properties) value = " ";
-        if (!name.empty() && !value.empty()) {
-            css_declaration declaration{std::move(name), std::move(value), important};
+        const auto append_one = [&](std::string property_name, std::string property_value) {
+            css_declaration declaration{
+                std::move(property_name), std::move(property_value), important};
             declaration.property = property_id(declaration.name);
-            declaration.specified = compile_specified_value(declaration.property, declaration.value);
+            declaration.specified = compile_specified_value(
+                declaration.property, declaration.value);
             result.push_back(std::move(declaration));
+        };
+        if (name == "mask" && !value.empty()) {
+            const auto parsed = parse_single_mask_shorthand(value);
+            if (!parsed.has_value()) {
+                append_one(std::move(name), std::move(value));
+                return;
+            }
+            append_one("mask-image", parsed->image);
+            append_one("mask-position", parsed->position);
+            append_one("mask-size", parsed->size);
+            append_one("mask-repeat", parsed->repeat);
+            append_one("mask-composite", parsed->composite);
+            append_one("mask-mode", parsed->mode);
+        } else if (!name.empty() && !value.empty()) {
+            append_one(std::move(name), std::move(value));
         }
     }
 

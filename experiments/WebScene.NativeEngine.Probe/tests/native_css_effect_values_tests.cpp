@@ -268,8 +268,8 @@ int main()
         rules.textContent = `
           #effects > span { display: block; width: 8px; height: 2px;
             background: rgb(40, 80, 120);
-            mask-image: linear-gradient(black, transparent); mask-size: 8px 2px;
-            mask-position: 0px 0px; mask-repeat: no-repeat; mask-composite: add;
+            -webkit-mask: linear-gradient(black, transparent) no-repeat 0px 0px / 8px 2px;
+            mask: linear-gradient(black, transparent) no-repeat 0px 0px / 8px 2px;
             clip-path: inset(0px 1px); filter: brightness(0.5); backdrop-filter: blur(1px); }
           #effects.alternate > span { clip-path: circle(25%); filter: contrast(2); }
           #effects > span:first-child { transform: scale(1.25) rotate(3deg); }
@@ -293,6 +293,10 @@ int main()
         if (style.getPropertyValue('filter') !== 'brightness(0.5)'
             || style.getPropertyValue('clip-path') !== 'inset(0px 1px)'
             || style.getPropertyValue('mask-repeat') !== 'no-repeat'
+            || style.getPropertyValue('mask-position') !== '0px 0px'
+            || style.getPropertyValue('mask-size') !== '8px 2px'
+            || style.getPropertyValue('mask-composite') !== 'add'
+            || style.getPropertyValue('mask-mode') !== 'match-source'
             || first.offsetWidth !== 8 || first.offsetHeight !== 2) {
           throw new Error('initial effect values failed');
         }
@@ -414,8 +418,7 @@ int main()
         rules.textContent = `
           #effects > span { display: block; width: 8px; height: 2px;
             background: rgb(40, 80, 120);
-            mask-image: linear-gradient(black, transparent); mask-size: 8px 2px;
-            mask-position: 0px 0px; mask-repeat: no-repeat; mask-composite: add;
+            mask: linear-gradient(black, transparent) no-repeat 0px 0px / 8px 2px;
             clip-path: inset(0px 1px); filter: brightness(0.5); backdrop-filter: blur(1px); }
           #effects.alternate > span { clip-path: circle(25%); filter: contrast(2); }
         `;

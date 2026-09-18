@@ -7,6 +7,12 @@ struct cssom_supported_property_metadata final {
 inline constexpr std::array cssom_supported_property_catalog{
     cssom_supported_property_metadata{"-moz-transform", "MozTransform"},
     cssom_supported_property_metadata{"-webkit-font-smoothing", "WebkitFontSmoothing"},
+    cssom_supported_property_metadata{"-webkit-mask", "WebkitMask"},
+    cssom_supported_property_metadata{"-webkit-mask-composite", "WebkitMaskComposite"},
+    cssom_supported_property_metadata{"-webkit-mask-image", "WebkitMaskImage"},
+    cssom_supported_property_metadata{"-webkit-mask-position", "WebkitMaskPosition"},
+    cssom_supported_property_metadata{"-webkit-mask-repeat", "WebkitMaskRepeat"},
+    cssom_supported_property_metadata{"-webkit-mask-size", "WebkitMaskSize"},
     cssom_supported_property_metadata{"-webkit-transform", "WebkitTransform"},
     cssom_supported_property_metadata{"accent-color", "accentColor"},
     cssom_supported_property_metadata{"align-content", "alignContent"},
@@ -168,8 +174,10 @@ inline constexpr std::array cssom_supported_property_catalog{
     cssom_supported_property_metadata{"margin-left", "marginLeft"},
     cssom_supported_property_metadata{"margin-right", "marginRight"},
     cssom_supported_property_metadata{"margin-top", "marginTop"},
+    cssom_supported_property_metadata{"mask", "mask"},
     cssom_supported_property_metadata{"mask-composite", "maskComposite"},
     cssom_supported_property_metadata{"mask-image", "maskImage"},
+    cssom_supported_property_metadata{"mask-mode", "maskMode"},
     cssom_supported_property_metadata{"mask-position", "maskPosition"},
     cssom_supported_property_metadata{"mask-repeat", "maskRepeat"},
     cssom_supported_property_metadata{"mask-size", "maskSize"},
@@ -238,4 +246,4 @@ inline constexpr std::array cssom_supported_property_catalog{
     cssom_supported_property_metadata{"zoom", "zoom"},
 };
 
-inline constexpr auto cssom_style_template_property_accessor_count = 420U;
+inline constexpr auto cssom_style_template_property_accessor_count = 435U;

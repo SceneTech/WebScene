@@ -209,7 +209,7 @@ inline constexpr std::array native_typed_property_identity_catalog{
     native_typed_property_identity{"contain-intrinsic-size", css_property_id::contain_intrinsic_size},
 };
 
-inline constexpr std::array<std::string_view, 54> native_storage_only_property_catalog{
+inline constexpr std::array<std::string_view, 62> native_storage_only_property_catalog{
     "accent-color",
     "align-content",
     "animation-direction",
@@ -245,8 +245,16 @@ inline constexpr std::array<std::string_view, 54> native_storage_only_property_c
     "grid-template-areas",
     "inset-block",
     "inset-inline",
+    "-webkit-mask",
+    "-webkit-mask-composite",
+    "-webkit-mask-image",
+    "-webkit-mask-position",
+    "-webkit-mask-repeat",
+    "-webkit-mask-size",
+    "mask",
     "mask-composite",
     "mask-image",
+    "mask-mode",
     "mask-position",
     "mask-repeat",
     "mask-size",

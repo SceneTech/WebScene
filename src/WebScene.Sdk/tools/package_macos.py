@@ -3,8 +3,17 @@
 import argparse
 import os
 from pathlib import Path
+import platform
 import shutil
 import subprocess
+
+from audit_macos_bundle import (
+    DEFAULT_MAXIMUM_ENTRIES,
+    DEFAULT_MAXIMUM_EVIDENCE_BYTES,
+    audit_bundle,
+    default_deployment_target,
+    encode_evidence,
+)
 
 
 def run(*args):
@@ -83,6 +92,16 @@ def package(args):
         if args.strip:
             run('strip', '-x', str(binary))
         run('codesign', '--force', '--sign', '-', str(binary))
+    evidence = audit_bundle(
+        bundle,
+        executable.relative_to(bundle).as_posix(),
+        args.architecture or [platform.machine()],
+        args.maximum_deployment_target or default_deployment_target(bundle),
+        maximum_entries=args.maximum_audit_entries,
+    )
+    evidence_path = bundle / 'Contents' / 'Resources' / 'webscene-macho-audit.json'
+    evidence_path.parent.mkdir(parents=True, exist_ok=True)
+    evidence_path.write_bytes(encode_evidence(evidence, args.maximum_audit_evidence_bytes))
     run('codesign', '--force', '--sign', '-', str(bundle))
     run('codesign', '--verify', '--deep', '--strict', str(bundle))
 
@@ -96,4 +115,9 @@ if __name__ == '__main__':
     parser.add_argument('--runtime', action='store_true')
     parser.add_argument('--webgpu', action='store_true')
     parser.add_argument('--strip', action='store_true')
+    parser.add_argument('--architecture', action='append')
+    parser.add_argument('--maximum-deployment-target')
+    parser.add_argument('--maximum-audit-entries', type=int, default=DEFAULT_MAXIMUM_ENTRIES)
+    parser.add_argument('--maximum-audit-evidence-bytes', type=int,
+                        default=DEFAULT_MAXIMUM_EVIDENCE_BYTES)
     package(parser.parse_args())

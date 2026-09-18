@@ -167,6 +167,7 @@
         {
             std::lock_guard lock(document_generation_mutex);
             document_generation.fetch_add(1U, std::memory_order_acq_rel);
+            frame_navigation_generations.clear();
         }
         std::erase_if(retired_frame_preparations, [](const auto& future) {
             return !future.valid()

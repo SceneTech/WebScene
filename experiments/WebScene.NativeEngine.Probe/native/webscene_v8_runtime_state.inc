@@ -28,6 +28,7 @@
     static constexpr size_t maximum_frame_preparations = 16U;
     std::unordered_map<uint32_t, pending_frame_preparation>
         pending_frame_preparations;
+    std::unordered_map<uint32_t, uint64_t> frame_navigation_generations;
     std::vector<std::shared_future<std::shared_ptr<const prepared_frame>>>
         retired_frame_preparations;
     std::mutex document_generation_mutex;

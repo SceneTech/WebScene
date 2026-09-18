@@ -355,6 +355,7 @@
         dom_node* body{nullptr};
         std::vector<frame_script> scripts;
         frame_script_content_security_policy script_policy;
+        uint64_t navigation_generation{0U};
         std::string body_opening;
         std::string base_address;
         v8::Global<v8::Context> context;
@@ -756,6 +757,7 @@
 
     struct pending_frame_preparation final {
         std::string source;
+        uint64_t navigation_generation{0U};
         std::shared_future<std::shared_ptr<const prepared_frame>> future;
     };
 

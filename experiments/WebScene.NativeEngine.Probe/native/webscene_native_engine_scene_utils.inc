@@ -91,7 +91,7 @@ std::string_view command_dom_string(
     if (!command_uses_dom_string(command)) {
         return {};
     }
-    constexpr auto clip_index_mask = (1U << 29U) - 1U;
+    constexpr auto clip_index_mask = (1U << 28U) - 1U;
     const auto index = command.kind == 12U
         ? command.flags & clip_index_mask
         : command.flags;
@@ -127,7 +127,7 @@ bool same_dom_command_visual(
         return false;
     }
     if (command_uses_dom_string(next)) {
-        constexpr auto clip_index_mask = (1U << 29U) - 1U;
+        constexpr auto clip_index_mask = (1U << 28U) - 1U;
         if (next.kind == 12U
             && (previous.flags & ~clip_index_mask) != (next.flags & ~clip_index_mask)) {
             return false;

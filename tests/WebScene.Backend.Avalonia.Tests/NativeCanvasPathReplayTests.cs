@@ -24,6 +24,28 @@ public sealed unsafe class NativeCanvasPathReplayTests
     }
 
     [Fact]
+    public void DomSvgPathClipScalesObjectBoundingBoxCoordinates()
+    {
+        using var bitmap = new SKBitmap(30, 20);
+        using var canvas = new SKCanvas(bitmap);
+        canvas.Clear(SKColors.Transparent);
+
+        NativeCanvasSceneRenderer.ClipDomPathForTest(
+            canvas,
+            "M0 0H0.5V1H0Z",
+            objectBoundingBox: true,
+            x: 5,
+            y: 4,
+            width: 20,
+            height: 10);
+        canvas.DrawColor(SKColors.CornflowerBlue);
+
+        Assert.NotEqual(0, bitmap.GetPixel(8, 8).Alpha);
+        Assert.Equal(0, bitmap.GetPixel(20, 8).Alpha);
+        Assert.Equal(0, bitmap.GetPixel(8, 16).Alpha);
+    }
+
+    [Fact]
     public void PathGeometryRetainsTransformActiveDuringConstruction()
     {
         var commands = new[]

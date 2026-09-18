@@ -32,6 +32,79 @@
         return v8::Private::ForApi(isolate, js_string(isolate, "WebScene.MessagePort.Peer"));
     }
 
+    static v8::Local<v8::Private> message_port_handler_private(
+        v8::Isolate* isolate,
+        bool error_handler)
+    {
+        return v8::Private::ForApi(isolate, js_string(
+            isolate,
+            error_handler
+                ? "WebScene.MessagePort.onmessageerror"
+                : "WebScene.MessagePort.onmessage"));
+    }
+
+    static bool message_port_error_handler(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        return info.Data()->BooleanValue(info.GetIsolate());
+    }
+
+    static bool validate_message_port_handler_receiver(
+        const v8::FunctionCallbackInfo<v8::Value>& info,
+        implementation*& runtime)
+    {
+        runtime = current(info.GetIsolate());
+        auto realm = info.GetIsolate()->GetCurrentContext();
+        if (runtime != nullptr && info.This()->IsObject()
+            && runtime->message_port_binding_from_object(
+                realm, info.This().As<v8::Object>()) != nullptr) {
+            return true;
+        }
+        info.GetIsolate()->ThrowException(v8::Exception::TypeError(
+            js_string(info.GetIsolate(), "Illegal invocation")));
+        return false;
+    }
+
+    static void message_port_handler_get(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        implementation* runtime = nullptr;
+        if (!validate_message_port_handler_receiver(info, runtime)) return;
+        auto realm = info.GetIsolate()->GetCurrentContext();
+        v8::Local<v8::Value> value;
+        if (info.This().As<v8::Object>()->GetPrivate(
+                realm,
+                message_port_handler_private(
+                    info.GetIsolate(), message_port_error_handler(info))).ToLocal(&value)
+            && !value->IsUndefined()) {
+            info.GetReturnValue().Set(value);
+        } else {
+            info.GetReturnValue().Set(v8::Null(info.GetIsolate()));
+        }
+    }
+
+    static void message_port_handler_set(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        implementation* runtime = nullptr;
+        if (!validate_message_port_handler_receiver(info, runtime)) return;
+        auto realm = info.GetIsolate()->GetCurrentContext();
+        auto value = info.Length() > 0 && info[0]->IsObject()
+            ? info[0]
+            : v8::Local<v8::Value>(v8::Null(info.GetIsolate()));
+        info.This().As<v8::Object>()->SetPrivate(
+            realm,
+            message_port_handler_private(
+                info.GetIsolate(), message_port_error_handler(info)),
+            value).Check();
+        auto* binding = runtime->message_port_binding_from_object(
+            realm, info.This().As<v8::Object>());
+        if (binding != nullptr) {
+            if (!value->IsNullOrUndefined()) binding->started = true;
+            runtime->update_message_port_reachability(*binding);
+        }
+    }
+
     static void unlink_local_message_port_peer(
         v8::Isolate* isolate,
         message_port_binding& binding)
@@ -76,25 +149,124 @@
         return endpoint->channel->closed[endpoint->side];
     }
 
+    static bool message_port_endpoint_entangled(
+        const std::shared_ptr<message_port_endpoint>& endpoint)
+    {
+        if (endpoint == nullptr || endpoint->channel == nullptr) return false;
+        std::lock_guard lock(endpoint->channel->mutex);
+        return !endpoint->channel->closed[endpoint->side]
+            && !endpoint->channel->closed[1U - endpoint->side];
+    }
+
+    bool message_port_has_local_peer(const message_port_binding& binding) const
+    {
+        if (binding.endpoint == nullptr) return false;
+        return std::any_of(
+            message_port_bindings.begin(),
+            message_port_bindings.end(),
+            [&](const auto& peer) {
+                return peer != nullptr && peer.get() != &binding
+                    && !peer->transferred && peer->endpoint != nullptr
+                    && peer->endpoint->channel == binding.endpoint->channel
+                    && peer->endpoint->side != binding.endpoint->side
+                    && !peer->wrapper.IsEmpty();
+            });
+    }
+
+    bool message_port_has_active_listener(message_port_binding& binding)
+    {
+        auto realm = binding.context.Get(isolate);
+        auto wrapper = binding.wrapper.Get(isolate);
+        if (realm.IsEmpty() || wrapper.IsEmpty()) return false;
+        for (const auto error_handler : {false, true}) {
+            v8::Local<v8::Value> handler;
+            if (wrapper->GetPrivate(
+                    realm,
+                    message_port_handler_private(
+                        isolate, error_handler)).ToLocal(&handler)
+                && !handler->IsNullOrUndefined()) {
+                return true;
+            }
+        }
+        for (const auto* type : {"message", "messageerror"}) {
+            const auto listeners = frame_event_listeners.find(type);
+            if (listeners == frame_event_listeners.end()) continue;
+            for (const auto& registration : listeners->second) {
+                if (registration.target == binding.event_target_id
+                    && registration.context.Get(isolate) == realm
+                    && !registration.callback.IsEmpty()) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    void update_message_port_reachability(message_port_binding& binding)
+    {
+        const auto should_root = binding.started && !binding.transferred
+            && message_port_endpoint_entangled(binding.endpoint)
+            && !message_port_has_local_peer(binding)
+            && message_port_has_active_listener(binding);
+        if (should_root == binding.active_listener_rooted
+            || binding.wrapper.IsEmpty()) {
+            return;
+        }
+        if (should_root) {
+            binding.wrapper.ClearWeak();
+        } else {
+            binding.wrapper.SetWeak(
+                &binding,
+                message_port_wrapper_collected,
+                v8::WeakCallbackType::kParameter);
+        }
+        binding.active_listener_rooted = should_root;
+    }
+
+    void update_message_port_reachability_from_object(
+        v8::Local<v8::Context> realm,
+        v8::Local<v8::Object> object)
+    {
+        auto* binding = message_port_binding_from_object(realm, object);
+        if (binding != nullptr) update_message_port_reachability(*binding);
+    }
+
+    void refresh_message_port_reachability()
+    {
+        for (const auto& binding : message_port_bindings) {
+            if (binding != nullptr && binding->active_listener_rooted) {
+                update_message_port_reachability(*binding);
+            }
+        }
+    }
+
     static void message_port_wrapper_collected(
         const v8::WeakCallbackInfo<message_port_binding>& info)
     {
         auto* binding = info.GetParameter();
         if (binding == nullptr) return;
+        std::shared_ptr<message_port_runtime_wake> peer_wake;
         if (binding->endpoint != nullptr
             && binding->endpoint->channel != nullptr) {
-            std::lock_guard lock(binding->endpoint->channel->mutex);
-            const auto side = binding->endpoint->side;
-            binding->endpoint->channel->closed[side] = true;
-            binding->endpoint->channel->incoming[side].clear();
-            binding->endpoint->channel->incoming_bytes[side] = 0U;
-            binding->endpoint->channel->wake[side].reset();
+            {
+                std::lock_guard lock(binding->endpoint->channel->mutex);
+                const auto side = binding->endpoint->side;
+                binding->endpoint->channel->closed[side] = true;
+                binding->endpoint->channel->incoming[side].clear();
+                binding->endpoint->channel->incoming_bytes[side] = 0U;
+                binding->endpoint->channel->wake[side].reset();
+                peer_wake = binding->endpoint->channel->wake[1U - side].lock();
+            }
         }
         binding->endpoint.reset();
         binding->context.Reset();
         binding->wrapper.Reset();
+        binding->event_target_id = 0U;
+        binding->started = false;
+        binding->active_listener_rooted = false;
         binding->transferred = false;
         binding->reclaimed = true;
+        if (peer_wake != nullptr) peer_wake->signal(true);
     }
 
     v8::MaybeLocal<v8::Object> create_message_port_wrapper(
@@ -148,6 +320,9 @@
             message_port_bindings.push_back(std::move(binding));
         }
         raw->endpoint = std::move(endpoint);
+        raw->event_target_id = 0U;
+        raw->started = false;
+        raw->active_listener_rooted = false;
         raw->transferred = false;
         raw->reclaimed = false;
         raw->context.Reset(isolate, realm);
@@ -162,6 +337,10 @@
             raw,
             v8::kExternalPointerTypeTagDefault);
         wrapper->SetPrivate(realm, message_port_private(isolate), external).Check();
+#if defined(WEBSCENE_NATIVE_ENGINE_GENERATED_DOM_BINDINGS)
+        raw->event_target_id = generated_standalone_event_target_id(
+            isolate, wrapper).value_or(0U);
+#endif
         wrapper->Set(
             realm,
             js_string(isolate, "postMessage"),
@@ -177,12 +356,6 @@
             js_string(isolate, "close"),
             v8::Function::New(realm, message_port_close, external)
                 .ToLocalChecked()).Check();
-        wrapper->Set(realm, js_string(isolate, "onmessage"), v8::Null(isolate)).Check();
-        wrapper->Set(
-            realm,
-            js_string(isolate, "onmessageerror"),
-            v8::Null(isolate)).Check();
-
         {
             std::lock_guard lock(raw->endpoint->channel->mutex);
             raw->endpoint->channel->wake[raw->endpoint->side] = message_port_wake;
@@ -452,7 +625,17 @@
         for (auto* port : ports) {
             unlink_local_message_port_peer(info.GetIsolate(), *port);
             clear_message_port_wake(port->endpoint);
+            const auto channel = port->endpoint->channel;
+            port->started = false;
             port->transferred = true;
+            self->update_message_port_reachability(*port);
+            for (const auto& peer : self->message_port_bindings) {
+                if (peer != nullptr && peer.get() != port
+                    && peer->endpoint != nullptr
+                    && peer->endpoint->channel == channel) {
+                    self->update_message_port_reachability(*peer);
+                }
+            }
             port->endpoint.reset();
             port->context.Reset();
         }
@@ -665,6 +848,8 @@
         auto* binding = message_port_binding_from_callback(info);
         if (self != nullptr && binding != nullptr && !binding->transferred
             && binding->endpoint != nullptr) {
+            binding->started = true;
+            self->update_message_port_reachability(*binding);
             self->message_port_wake->signal();
         }
     }
@@ -676,18 +861,40 @@
             return;
         }
         const auto& endpoint = binding.endpoint;
-        std::lock_guard lock(endpoint->channel->mutex);
-        endpoint->channel->closed[endpoint->side] = true;
-        endpoint->channel->wake[endpoint->side].reset();
+        std::shared_ptr<message_port_runtime_wake> peer_wake;
+        {
+            std::lock_guard lock(endpoint->channel->mutex);
+            endpoint->channel->closed[endpoint->side] = true;
+            endpoint->channel->incoming[endpoint->side].clear();
+            endpoint->channel->incoming_bytes[endpoint->side] = 0U;
+            endpoint->channel->wake[endpoint->side].reset();
+            peer_wake = endpoint->channel->wake[1U - endpoint->side].lock();
+        }
+        if (peer_wake != nullptr) peer_wake->signal(true);
     }
 
     static void message_port_close(
         const v8::FunctionCallbackInfo<v8::Value>& info)
     {
+        auto* self = current(info.GetIsolate());
         auto* binding = message_port_binding_from_callback(info);
         if (binding != nullptr) {
+            const auto channel = binding->endpoint == nullptr
+                ? std::shared_ptr<message_port_channel>{}
+                : binding->endpoint->channel;
             unlink_local_message_port_peer(info.GetIsolate(), *binding);
             close_message_port_binding(*binding);
+            binding->started = false;
+            if (self != nullptr) self->update_message_port_reachability(*binding);
+            if (self != nullptr && channel != nullptr) {
+                for (const auto& peer : self->message_port_bindings) {
+                    if (peer != nullptr && peer.get() != binding
+                        && peer->endpoint != nullptr
+                        && peer->endpoint->channel == channel) {
+                        self->update_message_port_reachability(*peer);
+                    }
+                }
+            }
         }
     }
 
@@ -766,6 +973,23 @@
             port_prototype.As<v8::Object>()->SetPrototype(
                 realm,
                 event_target_prototype).Check();
+        }
+        if (!port_prototype.IsEmpty() && port_prototype->IsObject()) {
+            for (const auto& [name, error_handler] : {
+                     std::pair{"onmessage", false},
+                     std::pair{"onmessageerror", true}}) {
+                auto data = v8::Boolean::New(isolate, error_handler);
+                auto getter = v8::Function::New(
+                    realm, message_port_handler_get, data).ToLocalChecked();
+                auto setter = v8::Function::New(
+                    realm, message_port_handler_set, data, 1).ToLocalChecked();
+                getter->SetName(js_string(
+                    isolate, (std::string("get ") + name).c_str()));
+                setter->SetName(js_string(
+                    isolate, (std::string("set ") + name).c_str()));
+                port_prototype.As<v8::Object>()->SetAccessorProperty(
+                    js_string(isolate, name), getter, setter, v8::None);
+            }
         }
         global->DefineOwnProperty(
             realm,
@@ -858,6 +1082,7 @@
                 last_error = describe_reported_exception(caught, realm);
                 return false;
             }
+            update_message_port_reachability(*binding);
             perform_microtask_checkpoint();
             return true;
         }

@@ -411,7 +411,9 @@
 
         auto target_context = task.target_context.Get(isolate);
         auto source_context = task.source_context.Get(isolate);
-        if (target_context.IsEmpty() || source_context.IsEmpty()) {
+        auto source_window = task.source_window.Get(isolate);
+        if (target_context.IsEmpty() || source_context.IsEmpty()
+            || source_window.IsEmpty()) {
             return true;
         }
 
@@ -477,25 +479,6 @@
             target_context,
             js_string(isolate, "origin"),
             js_string(isolate, task.source_origin.c_str())).Check();
-        v8::Local<v8::Value> source_window = source_context->Global();
-        if (target_context == context.Get(isolate)) {
-            for (const auto& [frame_id, persistent_context] : actual_frame_contexts) {
-                if (persistent_context.Get(isolate) != source_context) continue;
-                if (auto* frame = find_node_by_native_id(document.body(), frame_id);
-                    frame != nullptr) {
-                    source_window = frame_window(*frame);
-                }
-                break;
-            }
-        } else if (source_context == context.Get(isolate)) {
-            v8::Local<v8::Value> parent_value;
-            if (target_global->Get(
-                    target_context,
-                    js_string(isolate, "parent")).ToLocal(&parent_value)
-                && !parent_value->IsNullOrUndefined()) {
-                source_window = parent_value;
-            }
-        }
         event->Set(
             target_context,
             js_string(isolate, "source"),
@@ -782,8 +765,20 @@
         return execute_timer_task(std::move(task), now_time);
     }
 
+    bool drain_file_reading_task()
+    {
+        if (pending_file_reading_tasks.empty()) return true;
+        auto task = std::move(pending_file_reading_tasks.front());
+        pending_file_reading_tasks.pop_front();
+        return execute_timer_task(
+            std::move(task), std::chrono::steady_clock::now());
+    }
+
     bool drain_tasks()
     {
+        if (message_port_wake->consume_reachability_change()) {
+            refresh_message_port_reachability();
+        }
         // Native DOM objects are retained by JavaScript wrappers, so report
         // their fixed object storage at browser task boundaries. V8 can then
         // schedule normal incremental/concurrent work from allocation pressure
@@ -830,23 +825,27 @@
         synchronize_media_elements();
         if(drain_media())return true;
 #endif
-        // Worker, ServiceWorker, MessagePort, and WebSocket messages are
-        // independent browser task sources. Rotate the first eligible source
-        // so a self-refilling source cannot strand another source behind its
-        // backlog.
-        for (uint8_t offset = 0U; offset < 4U; ++offset) {
+        // Worker, ServiceWorker, MessagePort, WebSocket messages, and file
+        // reading callbacks are independent browser task sources. Rotate the
+        // first eligible source so a self-refilling source cannot strand
+        // another source behind its backlog. FileReader must not inherit a
+        // large application timer backlog merely because its compatibility
+        // implementation needs an asynchronous task boundary.
+        for (uint8_t offset = 0U; offset < 5U; ++offset) {
             const auto source = static_cast<uint8_t>(
-                (next_async_message_task_source + offset) % 4U);
+                (next_async_message_task_source + offset) % 5U);
             const auto ready = source == 0U ? has_worker_messages()
                 : source == 1U ? has_service_worker_messages()
                 : source == 2U ? has_message_port_messages()
-                : websocket_transport.has_pending_events();
+                : source == 3U ? websocket_transport.has_pending_events()
+                : !pending_file_reading_tasks.empty();
             if (!ready) continue;
-            next_async_message_task_source = static_cast<uint8_t>((source + 1U) % 4U);
+            next_async_message_task_source = static_cast<uint8_t>((source + 1U) % 5U);
             if (source == 0U) return drain_worker_message();
             if (source == 1U) return drain_service_worker_message();
             if (source == 2U) return drain_message_port_message();
-            return drain_websocket_event();
+            if (source == 3U) return drain_websocket_event();
+            return drain_file_reading_task();
         }
         if (!pending_window_messages.empty()) {
             return drain_window_message_task();
@@ -1778,7 +1777,8 @@
         const char* type,
         dom_node& target,
         bool* default_prevented = nullptr,
-        dom_node* submitter = nullptr)
+        dom_node* submitter = nullptr,
+        std::optional<bool> trusted = std::nullopt)
     {
         webscene_frame_trace::scope trace(frame_trace, "event-start", "event-end", input.sequence);
         const auto previous_context = isolate->GetCurrentContext();
@@ -1838,6 +1838,10 @@
         event->Set(local_context, js_string(isolate, "bubbles"), v8::Boolean::New(isolate, bubbles)).Check();
         event->Set(local_context, js_string(isolate, "cancelable"), v8::Boolean::New(isolate, cancelable)).Check();
         event->Set(local_context, js_string(isolate, "defaultPrevented"), v8::False(isolate)).Check();
+        event->Set(
+            local_context,
+            js_string(isolate, "isTrusted"),
+            v8::Boolean::New(isolate, trusted.value_or(dispatching_user_input))).Check();
         if (type_view == "beforetoggle") {
             event->Set(local_context, js_string(isolate, "oldState"), js_string(isolate, "closed")).Check();
             event->Set(local_context, js_string(isolate, "newState"), js_string(isolate, "open")).Check();
@@ -2504,37 +2508,50 @@
 
     bool set_active_element(dom_node* next, const webscene_input_event& input)
     {
-        if (active_element == next) return true;
-        auto* previous = active_element;
-        auto* related_target = previous != nullptr && next != nullptr
-                && focus_document_owner(previous) == focus_document_owner(next)
-            ? next
-            : nullptr;
-        if (previous != nullptr) {
-            previous->mutable_form_control().input_focused = false;
-            previous->mutable_form_control().caret_visible = false;
-            // The document regains focus before blur/focusout listeners run.
-            // This also allows a listener to focus another element without
-            // recursively blurring the element whose transition is in flight.
-            active_element = nullptr;
-            recascade_focus_subject(*previous, "focus-before-blur");
-            current_related_target = related_target;
-            if (!dispatch_input_event_type(input, "blur", *previous)) {
-                current_related_target = nullptr;
-                return false;
-            }
-            current_related_target = related_target;
-            if (!dispatch_input_event_type(input, "focusout", *previous)) {
-                current_related_target = nullptr;
-                return false;
-            }
-            // A focus/blur listener may have completed a newer focus change.
-            // Preserve that result instead of overwriting it with this request.
-            if (active_element != nullptr) {
-                current_related_target = nullptr;
-                document.mark_dirty();
-                return true;
-            }
+      const auto next_owner = next == nullptr ? focused_document_owner_id
+                                              : focus_document_owner(next);
+      if (active_element == next && focused_document_owner_id == next_owner)
+        return true;
+      auto *previous = active_element;
+      auto *related_target =
+          previous != nullptr && next != nullptr &&
+                  focus_document_owner(previous) == focus_document_owner(next)
+              ? next
+              : nullptr;
+      if (previous != nullptr) {
+        previous->mutable_form_control().input_focused = false;
+        previous->mutable_form_control().caret_visible = false;
+        // The document regains focus before blur/focusout listeners run.
+        // This also allows a listener to focus another element without
+        // recursively blurring the element whose transition is in flight.
+        active_element = nullptr;
+        recascade_focus_subject(*previous, "focus-before-blur");
+        current_related_target = related_target;
+        if (!dispatch_input_event_type(input, "blur", *previous)) {
+          current_related_target = nullptr;
+          return false;
+        }
+        current_related_target = related_target;
+        if (!dispatch_input_event_type(input, "focusout", *previous)) {
+          current_related_target = nullptr;
+          return false;
+        }
+        // A focus/blur listener may have completed a newer focus change.
+        // Preserve that result instead of overwriting it with this request.
+        if (active_element != nullptr) {
+          current_related_target = nullptr;
+          document.mark_dirty();
+          return true;
+        }
+        }
+        if (next != nullptr && !set_focus_document_owner(next_owner)) {
+          current_related_target = nullptr;
+          return false;
+        }
+        if (active_element != nullptr) {
+          current_related_target = nullptr;
+          document.mark_dirty();
+          return true;
         }
         active_element = next;
         if (next != nullptr && is_text_control(next)) {
@@ -2598,9 +2615,20 @@
     bool blur_active_element_before_detach(dom_node& detached_root)
     {
         document.unregister_modal_subtree(detached_root);
-        if (!subtree_contains(detached_root, active_element)) return true;
+        auto *focused_owner =
+            focused_document_owner_id == 0U
+                ? nullptr
+                : document.find_by_native_id(focused_document_owner_id);
+        const auto removes_focused_document =
+            focused_owner != nullptr &&
+            subtree_contains(detached_root, focused_owner);
+        if (!subtree_contains(detached_root, active_element) &&
+            !removes_focused_document)
+          return true;
         webscene_input_event synthetic{};
-        if (!set_active_element(nullptr, synthetic)) return false;
+        if (subtree_contains(detached_root, active_element) &&
+            !set_active_element(nullptr, synthetic))
+          return false;
 
         // A blur/focusout listener can synchronously focus another node. Preserve
         // focus outside the subtree, but never retain a node that is about to be
@@ -2615,6 +2643,9 @@
                 "focus-detached-reentrant");
             document.mark_dirty();
         }
+        if (removes_focused_document && focused_document_owner_id != 0U &&
+            !set_focus_document_owner(0U))
+          return false;
         return true;
     }
 
@@ -3043,6 +3074,7 @@
         dom_node* target{nullptr};
         dom_node* previously_checked_radio{nullptr};
         bool target_was_checked{false};
+        bool target_was_indeterminate{false};
         bool changed{false};
         bool active{false};
     };
@@ -3054,6 +3086,28 @@
             : target.attributes.contains("checked");
     }
 
+    std::vector<dom_node*> radio_group_members(dom_node& target)
+    {
+        const auto type=target.attributes.find("type");
+        if(target.tag!="input" || type==target.attributes.end()
+            || lower_html_name(type->second)!="radio") return {};
+        const auto name=target.attributes.find("name");
+        if(name==target.attributes.end() || name->second.empty()) return {&target};
+        auto* root=css_cascade_root_for_node(target);
+        if(root==nullptr) return {&target};
+        auto inputs=document.query_selector_all(*root,"input");
+        std::erase_if(inputs,[&](const auto* candidate) {
+            if(candidate==nullptr) return true;
+            const auto candidate_type=candidate->attributes.find("type");
+            const auto candidate_name=candidate->attributes.find("name");
+            return candidate_type==candidate->attributes.end()
+                || lower_html_name(candidate_type->second)!="radio"
+                || candidate_name==candidate->attributes.end()
+                || candidate_name->second!=name->second;
+        });
+        return inputs;
+    }
+
     bool set_native_checkedness(dom_node& target, bool checked)
     {
         const auto previous = native_checkedness(target);
@@ -3061,7 +3115,10 @@
         target.mutable_form_control().checkedness = checked;
         if (previous != checked) {
             if (is_connected(target)) {
-                recascade_dynamic_state_subject(target, "native-checkedness");
+                auto group=radio_group_members(target);
+                if(group.empty()) group.push_back(&target);
+                for(auto* member:group)
+                    recascade_dynamic_state_subject(*member,"native-checkedness");
             } else {
                 document.mark_dirty();
             }
@@ -3085,8 +3142,13 @@
 
         activation.target = &target;
         activation.target_was_checked = native_checkedness(target);
+        activation.target_was_indeterminate = target.form_control().indeterminate;
         activation.active = true;
         if (type == "checkbox") {
+            if(activation.target_was_indeterminate) {
+                target.mutable_form_control().indeterminate=false;
+                recascade_dynamic_state_subject(target,"checkbox-activation-indeterminate");
+            }
             activation.changed = set_native_checkedness(
                 target, !activation.target_was_checked);
             return true;
@@ -3123,6 +3185,13 @@
     {
         if (!activation.active || activation.target == nullptr) return;
         set_native_checkedness(*activation.target, activation.target_was_checked);
+        if(activation.target->form_control().indeterminate
+            != activation.target_was_indeterminate) {
+            activation.target->mutable_form_control().indeterminate
+                = activation.target_was_indeterminate;
+            recascade_dynamic_state_subject(
+                *activation.target,"checkbox-activation-restore-indeterminate");
+        }
         if (activation.previously_checked_radio != nullptr) {
             set_native_checkedness(*activation.previously_checked_radio, true);
         }

@@ -7,6 +7,7 @@ struct native_typed_property_identity final {
 inline constexpr std::array native_typed_property_identity_catalog{
     native_typed_property_identity{"all", css_property_id::all},
     native_typed_property_identity{"content", css_property_id::content},
+    native_typed_property_identity{"aspect-ratio", css_property_id::aspect_ratio},
     native_typed_property_identity{"width", css_property_id::width},
     native_typed_property_identity{"height", css_property_id::height},
     native_typed_property_identity{"min-width", css_property_id::min_width},
@@ -270,6 +271,7 @@ inline constexpr std::array native_modeled_property_mask_catalog{
     false,
     true,
     false,
+    false,
     true,
     true,
     true,
@@ -461,6 +463,7 @@ inline constexpr std::array native_property_grammar_catalog{
     native_property_grammar::special,
     native_property_grammar::keyword,
     native_property_grammar::complex,
+    native_property_grammar::complex,
     native_property_grammar::length,
     native_property_grammar::length,
     native_property_grammar::length,
@@ -618,6 +621,7 @@ inline css_property_id generated_property_id_lowercase(std::string_view name) no
 {
     if (name == "all") return css_property_id::all;
     if (name == "content") return css_property_id::content;
+    if (name == "aspect-ratio") return css_property_id::aspect_ratio;
     if (name == "width") return css_property_id::width;
     if (name == "height") return css_property_id::height;
     if (name == "min-width") return css_property_id::min_width;

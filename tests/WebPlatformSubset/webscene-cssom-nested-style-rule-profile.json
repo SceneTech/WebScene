@@ -1,0 +1,26 @@
+{
+  "profile": "webscene-cssom-nested-style-rule-1",
+  "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+  "runtime": "v8",
+  "viewport": {
+    "width": 800,
+    "height": 600,
+    "deviceScaleFactor": 1
+  },
+  "required": [
+    {
+      "path": "contracts/cssom-nested-style-rule-mutation.html",
+      "type": "contract",
+      "capabilities": [
+        "cssom-nested-style-rule-list",
+        "cssom-nested-declarations",
+        "cssom-nested-style-rule-mutation",
+        "cssom-nested-style-rule-lifecycle"
+      ],
+      "evidence": ["cssom-nested-style-rule-425"],
+      "reason": "Chrome/WPT-derived authority and native regression for SameObject nested rule lists, CSSNestedDeclarations, nested selector/group reflection, live mutation, synchronous recascade, detached ownership, and exact unchanged Code OSS recursive discovery."
+    }
+  ],
+  "harnessBlocked": [],
+  "excluded": []
+}

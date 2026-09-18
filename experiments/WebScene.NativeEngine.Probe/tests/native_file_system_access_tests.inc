@@ -191,6 +191,34 @@ take_file_grant_create_file_request(webscene_engine* engine)
     return request;
 }
 
+const webscene_file_grant_create_directory_request_v2*
+take_file_grant_create_directory_request(webscene_engine* engine)
+{
+    const webscene_file_grant_create_directory_request_v2* request = nullptr;
+    for (int attempt = 0; attempt < 250 && request == nullptr; ++attempt) {
+        request = webscene_engine_take_file_grant_create_directory_request_v2(engine);
+        if (request == nullptr)
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    require(request != nullptr,
+        "native file grant create-directory request was not published");
+    return request;
+}
+
+const webscene_file_grant_remove_request_v2*
+take_file_grant_remove_request(webscene_engine* engine)
+{
+    const webscene_file_grant_remove_request_v2* request = nullptr;
+    for (int attempt = 0; attempt < 250 && request == nullptr; ++attempt) {
+        request = webscene_engine_take_file_grant_remove_request_v2(engine);
+        if (request == nullptr)
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    require(request != nullptr,
+        "native file grant remove request was not published");
+    return request;
+}
+
 struct directory_completion_entry final {
     std::string name;
     std::vector<uint8_t> grant;
@@ -249,6 +277,40 @@ bool complete_file_grant_create_file(
     return webscene_engine_complete_file_grant_create_file_request_v2(
         engine, &completion) != 0;
 }
+
+bool complete_file_grant_create_directory(
+    webscene_engine* engine, uint64_t request_id, uint32_t status,
+    std::string_view name = {}, const std::vector<uint8_t>& grant = {})
+{
+    webscene_file_grant_create_directory_completion_v2 completion{};
+    completion.struct_size = sizeof(completion);
+    completion.version = 2U;
+    completion.request_id = request_id;
+    completion.status = status;
+    if (status == WEBSCENE_FILE_GRANT_CREATE_DIRECTORY_SUCCESS_V2) {
+        completion.capabilities = WEBSCENE_FILE_PANEL_GRANT_READ_V2
+            | WEBSCENE_FILE_PANEL_GRANT_WRITE_V2
+            | WEBSCENE_FILE_PANEL_GRANT_ENUMERATE_V2
+            | WEBSCENE_FILE_PANEL_GRANT_CREATE_V2;
+        completion.metadata = {sizeof(webscene_file_grant_metadata_v2), 2U,
+            0U, 1700000000999000000LL,
+            WEBSCENE_FILE_PANEL_ENTRY_DIRECTORY_V2, 0U};
+        completion.display_name = {name.data(), name.size()};
+        completion.grant_id = {grant.data(), grant.size()};
+    }
+    return webscene_engine_complete_file_grant_create_directory_request_v2(
+        engine, &completion) != 0;
+}
+
+bool complete_file_grant_remove(
+    webscene_engine* engine, uint64_t request_id, uint32_t status)
+{
+    const webscene_file_grant_remove_completion_v2 completion{
+        sizeof(completion), 2U, request_id, status, 0U};
+    return webscene_engine_complete_file_grant_remove_request_v2(
+        engine, &completion) != 0;
+}
+
 
 void activate_file_picker(webscene_engine* engine, uint64_t sequence)
 {
@@ -981,6 +1043,179 @@ void test_native_file_system_access_picker_and_handle_contract()
         return;
 
     execute(engine.get(), R"JS(
+      globalThis.__createdDirectory='pending';
+      __directoryHandle.getDirectoryHandle('created-🙂', {create:true}).then(
+        value=>{globalThis.__createdDirectoryHandle=value;
+          __createdDirectory=`${value.kind}:${value.name}`},
+        error=>{__createdDirectory=error.name});
+    )JS", "file-directory-create-directory.js");
+    auto* create_directory_request =
+        take_file_grant_create_directory_request(engine.get());
+    require(create_directory_request->directory_grant_id.byte_count
+                == directory_grant.size()
+            && std::memcmp(create_directory_request->directory_grant_id.data,
+                directory_grant.data(), directory_grant.size()) == 0
+            && std::string_view(create_directory_request->display_name.data,
+                   create_directory_request->display_name.byte_count)
+                == "created-🙂",
+        "create-directory request lost its parent grant or UTF-8 name");
+    auto create_directory_request_id = create_directory_request->request_id;
+    webscene_file_grant_create_directory_request_release_v2(
+        create_directory_request);
+    const std::vector<uint8_t> created_directory_grant{62U, 63U};
+    require(complete_file_grant_create_directory(engine.get(),
+                create_directory_request_id,
+                WEBSCENE_FILE_GRANT_CREATE_DIRECTORY_SUCCESS_V2,
+                "created-🙂", created_directory_grant),
+        "create-directory success completion was rejected");
+    require(evaluate(engine.get(), "__createdDirectory",
+                "file-directory-create-directory-result.js")
+            == "\"directory:created-🙂\"",
+        "create=true did not produce a directory handle");
+
+    execute(engine.get(), R"JS(
+      globalThis.__createdDirectoryEntries='pending';
+      (async()=>{const names=[];
+        for await (const value of __createdDirectoryHandle.values())
+          names.push(value.name);
+        __createdDirectoryEntries=JSON.stringify(names)})().catch(
+          error=>{__createdDirectoryEntries=error.name});
+    )JS", "file-directory-created-directory-enumerate.js");
+    directory_request = take_file_grant_directory_request(engine.get());
+    require(directory_request->directory_grant_id.byte_count
+                == created_directory_grant.size()
+            && std::memcmp(directory_request->directory_grant_id.data,
+                created_directory_grant.data(), created_directory_grant.size())
+                == 0,
+        "created directory handle did not retain its derived opaque grant");
+    directory_request_id = directory_request->request_id;
+    webscene_file_grant_directory_request_release_v2(directory_request);
+    require(complete_file_grant_directory(engine.get(), directory_request_id,
+                WEBSCENE_FILE_GRANT_DIRECTORY_ENUMERATE_V2,
+                WEBSCENE_FILE_GRANT_DIRECTORY_SUCCESS_V2),
+        "created directory enumeration completion was rejected");
+    require(evaluate(engine.get(), "__createdDirectoryEntries",
+                "file-directory-created-directory-enumerate-result.js")
+            == "\"[]\"",
+        "created directory did not enumerate as empty");
+
+    struct create_directory_status_case {
+        uint32_t status;
+        const char* expected_name;
+    };
+    constexpr create_directory_status_case create_directory_status_cases[] = {
+        {WEBSCENE_FILE_GRANT_CREATE_DIRECTORY_CANCELLED_V2, "AbortError"},
+        {WEBSCENE_FILE_GRANT_CREATE_DIRECTORY_DENIED_V2, "NotAllowedError"},
+        {WEBSCENE_FILE_GRANT_CREATE_DIRECTORY_NOT_FOUND_V2, "NotFoundError"},
+        {WEBSCENE_FILE_GRANT_CREATE_DIRECTORY_TYPE_MISMATCH_V2,
+            "TypeMismatchError"},
+        {WEBSCENE_FILE_GRANT_CREATE_DIRECTORY_CHANGED_V2, "InvalidStateError"},
+        {WEBSCENE_FILE_GRANT_CREATE_DIRECTORY_IO_ERROR_V2, "NotReadableError"},
+        {WEBSCENE_FILE_GRANT_CREATE_DIRECTORY_LIMIT_V2,
+            "QuotaExceededError"}};
+    for (const auto& status_case : create_directory_status_cases) {
+        execute(engine.get(), R"JS(
+          globalThis.__createDirectoryFailure='pending';
+          __directoryHandle.getDirectoryHandle('failure', {create:true}).then(
+            ()=>{__createDirectoryFailure='unexpected'},
+            error=>{__createDirectoryFailure=error.name});
+        )JS", "file-directory-create-directory-status.js");
+        create_directory_request =
+            take_file_grant_create_directory_request(engine.get());
+        create_directory_request_id = create_directory_request->request_id;
+        webscene_file_grant_create_directory_request_release_v2(
+            create_directory_request);
+        require(complete_file_grant_create_directory(engine.get(),
+                    create_directory_request_id, status_case.status),
+            "create-directory error completion was rejected");
+        require(evaluate(engine.get(), "__createDirectoryFailure",
+                    "file-directory-create-directory-status-result.js")
+                == std::string("\"") + status_case.expected_name + "\"",
+            "create-directory status mapped to the wrong DOMException");
+        require(!complete_file_grant_create_directory(engine.get(),
+                    create_directory_request_id, status_case.status),
+            "create-directory operation completed more than once");
+    }
+    if (std::getenv(
+            "WEBSCENE_TEST_FILE_GRANT_CREATE_DIRECTORY_ONLY") != nullptr)
+        return;
+
+    execute(engine.get(), R"JS(
+      globalThis.__removeResult='pending';
+      __directoryHandle.removeEntry('removed-🙂', {recursive:true}).then(
+        value=>{__removeResult=String(value)},
+        error=>{__removeResult=error.name});
+    )JS", "file-directory-remove.js");
+    auto* remove_request = take_file_grant_remove_request(engine.get());
+    require(remove_request->directory_grant_id.byte_count
+                == directory_grant.size()
+            && std::memcmp(remove_request->directory_grant_id.data,
+                directory_grant.data(), directory_grant.size()) == 0
+            && std::string_view(remove_request->display_name.data,
+                   remove_request->display_name.byte_count) == "removed-🙂"
+            && remove_request->recursive == 1U,
+        "removeEntry lost its parent grant, Unicode name, or recursive flag");
+    auto remove_request_id = remove_request->request_id;
+    webscene_file_grant_remove_request_release_v2(remove_request);
+    require(complete_file_grant_remove(engine.get(), remove_request_id,
+                WEBSCENE_FILE_GRANT_REMOVE_SUCCESS_V2),
+        "remove success completion was rejected");
+    require(evaluate(engine.get(), "__removeResult",
+                "file-directory-remove-result.js") == "\"undefined\"",
+        "removeEntry did not resolve undefined");
+
+    struct remove_status_case {
+        uint32_t status;
+        const char* expected_name;
+    };
+    constexpr remove_status_case remove_status_cases[] = {
+        {WEBSCENE_FILE_GRANT_REMOVE_CANCELLED_V2, "AbortError"},
+        {WEBSCENE_FILE_GRANT_REMOVE_DENIED_V2, "NotAllowedError"},
+        {WEBSCENE_FILE_GRANT_REMOVE_NOT_FOUND_V2, "NotFoundError"},
+        {WEBSCENE_FILE_GRANT_REMOVE_INVALID_MODIFICATION_V2,
+            "InvalidModificationError"},
+        {WEBSCENE_FILE_GRANT_REMOVE_CHANGED_V2, "InvalidStateError"},
+        {WEBSCENE_FILE_GRANT_REMOVE_IO_ERROR_V2, "NotReadableError"},
+        {WEBSCENE_FILE_GRANT_REMOVE_LIMIT_V2, "QuotaExceededError"}};
+    for (const auto& status_case : remove_status_cases) {
+        execute(engine.get(), R"JS(
+          globalThis.__removeFailure='pending';
+          __directoryHandle.removeEntry('failure').then(
+            ()=>{__removeFailure='unexpected'},
+            error=>{__removeFailure=error.name});
+        )JS", "file-directory-remove-status.js");
+        remove_request = take_file_grant_remove_request(engine.get());
+        remove_request_id = remove_request->request_id;
+        require(remove_request->recursive == 0U,
+            "removeEntry default recursive option changed");
+        webscene_file_grant_remove_request_release_v2(remove_request);
+        require(complete_file_grant_remove(engine.get(), remove_request_id,
+                    status_case.status),
+            "remove error completion was rejected");
+        require(evaluate(engine.get(), "__removeFailure",
+                    "file-directory-remove-status-result.js")
+                == std::string("\"") + status_case.expected_name + "\"",
+            "remove status mapped to the wrong DOMException");
+        require(!complete_file_grant_remove(engine.get(), remove_request_id,
+                    status_case.status),
+            "remove operation completed more than once");
+    }
+    require(evaluate(engine.get(), R"JS((async()=>{
+      const values=[];
+      for (const [name,options] of [['',{}],['.',{}],['..',{}],['a/b',{}],
+        ['a\\b',{}],['ok',1]]) {
+        try { await __directoryHandle.removeEntry(name,options);
+          values.push('unexpected'); }
+        catch(error) { values.push(error.name); }
+      }
+      return values.join(':');
+    })())JS", "file-directory-remove-validation.js")
+            == "\"TypeError:TypeError:TypeError:TypeError:TypeError:TypeError\"",
+        "removeEntry WebIDL name/options validation changed");
+    if (std::getenv("WEBSCENE_TEST_FILE_GRANT_REMOVE_ONLY") != nullptr)
+        return;
+
+    execute(engine.get(), R"JS(
       globalThis.__resolveSame='pending';
       __directoryHandle.resolve(__directoryHandle).then(
         value=>{__resolveSame=JSON.stringify(value)},
@@ -1079,13 +1314,13 @@ void test_native_file_system_access_picker_and_handle_contract()
       globalThis.__directoryErrors='pending';
       Promise.all([
         __directoryHandle.getFileHandle('../bad').catch(e=>e.name),
-        __directoryHandle.getDirectoryHandle('new', {create:true}).catch(e=>e.name),
+        __directoryHandle.getDirectoryHandle('../bad', {create:true}).catch(e=>e.name),
         __directoryHandle.resolve({}).catch(e=>e.name)
       ]).then(values=>{__directoryErrors=values.join(':')});
     )JS", "file-directory-errors.js");
     require(evaluate(engine.get(), "__directoryErrors",
                 "file-directory-errors-result.js")
-            == "\"TypeError:NotSupportedError:TypeError\"",
+            == "\"TypeError:TypeError:TypeError\"",
         "directory authority boundaries changed");
 
     execute(engine.get(), R"JS(
@@ -2041,6 +2276,26 @@ void test_native_file_system_access_lifecycle_and_performance()
     const auto stale_create_file_id = stale_create_file->request_id;
     webscene_file_grant_create_file_request_release_v2(stale_create_file);
     execute(engine.get(), R"JS(
+      globalThis.__retiredCreateDirectory='pending';
+      __directoryHandle.getDirectoryHandle('stale', {create:true}).then(
+        ()=>{__retiredCreateDirectory='unexpected'},
+        error=>{__retiredCreateDirectory=error.name});
+    )JS", "file-picker-create-directory-before-navigation.js");
+    const auto* stale_create_directory =
+        take_file_grant_create_directory_request(engine.get());
+    const auto stale_create_directory_id = stale_create_directory->request_id;
+    webscene_file_grant_create_directory_request_release_v2(
+        stale_create_directory);
+    execute(engine.get(), R"JS(
+      globalThis.__retiredRemove='pending';
+      __directoryHandle.removeEntry('stale').then(
+        ()=>{__retiredRemove='unexpected'},
+        error=>{__retiredRemove=error.name});
+    )JS", "file-picker-remove-before-navigation.js");
+    const auto* stale_remove = take_file_grant_remove_request(engine.get());
+    const auto stale_remove_id = stale_remove->request_id;
+    webscene_file_grant_remove_request_release_v2(stale_remove);
+    execute(engine.get(), R"JS(
       globalThis.__retiredAncestry='pending';
       __directoryHandle.resolve(__stableHandle).then(
         ()=>{__retiredAncestry='unexpected'},
@@ -2090,6 +2345,14 @@ void test_native_file_system_access_lifecycle_and_performance()
                 WEBSCENE_FILE_GRANT_CREATE_FILE_SUCCESS_V2,
                 "stale.txt", {99U}),
         "stale create-file completion survived navigation retirement");
+    require(!complete_file_grant_create_directory(engine.get(),
+                stale_create_directory_id,
+                WEBSCENE_FILE_GRANT_CREATE_DIRECTORY_SUCCESS_V2,
+                "stale", {100U}),
+        "stale create-directory completion survived navigation retirement");
+    require(!complete_file_grant_remove(engine.get(), stale_remove_id,
+                WEBSCENE_FILE_GRANT_REMOVE_SUCCESS_V2),
+        "stale remove completion survived navigation retirement");
     require(!complete_file_grant_ancestry(engine.get(), stale_ancestry_id,
                 WEBSCENE_FILE_GRANT_ANCESTRY_SUCCESS_V2,
                 {"stable.txt"}),

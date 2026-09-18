@@ -28,7 +28,11 @@
         v8_dom_runtime::file_grant_release_request_sink_v2
             file_grant_release_request_sink_value,
         v8_dom_runtime::file_grant_create_file_request_sink_v2
-            file_grant_create_file_request_sink_value)
+            file_grant_create_file_request_sink_value,
+        v8_dom_runtime::file_grant_create_directory_request_sink_v2
+            file_grant_create_directory_request_sink_value,
+        v8_dom_runtime::file_grant_remove_request_sink_v2
+            file_grant_remove_request_sink_value)
         : document(document_value)
         , viewport_provider(std::move(viewport_provider_value))
         , load_resource_callback(std::move(resource_loader_value))
@@ -49,10 +53,14 @@
             std::move(file_grant_write_request_sink_value))
         , file_grant_directory_request_sink(
             std::move(file_grant_directory_request_sink_value))
+        , file_grant_remove_request_sink(
+            std::move(file_grant_remove_request_sink_value))
         , file_grant_release_request_sink(
             std::move(file_grant_release_request_sink_value))
         , file_grant_create_file_request_sink(
             std::move(file_grant_create_file_request_sink_value))
+        , file_grant_create_directory_request_sink(
+            std::move(file_grant_create_directory_request_sink_value))
         , interop_callback_available(std::move(interop_callback_available_value))
         , interop_callback_sink(std::move(interop_callback_sink_value))
         , runtime_work_available(std::move(runtime_work_available_value))
@@ -80,9 +88,59 @@
         , profile_css(std::getenv("WEBSCENE_PROBE_PROFILE_CSS") != nullptr)
 #endif
     {
+        outer_local_storage.local = true;
         file_grant_releases = std::make_shared<file_grant_release_dispatcher>();
         file_grant_releases->sink = file_grant_release_request_sink;
         if (!storage_directory.empty() && !storage_partition_key.empty()) {
+            profile_storage = std::make_shared<browser_profile_storage>(
+                std::filesystem::path(storage_directory),
+                storage_partition_key,
+                storage_quota_bytes);
+            if (profile_storage->available()) {
+                const auto loaded = profile_storage->snapshot();
+                const auto now = std::chrono::system_clock::now();
+                {
+                    std::lock_guard lock(cookie_jar->mutex);
+                    cookie_jar->persistence = profile_storage;
+                    for (const auto& durable : loaded.cookies) {
+                        const auto expiry = std::chrono::system_clock::from_time_t(
+                            static_cast<std::time_t>(durable.expiry_unix_seconds));
+                        if (expiry <= now) continue;
+                        stored_cookie cookie;
+                        cookie.name = durable.name;
+                        cookie.value = durable.value;
+                        cookie.domain = durable.domain;
+                        cookie.path = durable.path;
+                        cookie.expires = expiry;
+                        cookie.creation_order = durable.creation_order;
+                        cookie.persistent = true;
+                        cookie.host_only = durable.host_only;
+                        cookie.secure = durable.secure;
+                        cookie.http_only = durable.http_only;
+                        cookie.same_site = static_cast<cookie_same_site>(durable.same_site);
+                        cookie_jar->next_creation_order = std::max(
+                            cookie_jar->next_creation_order,
+                            cookie.creation_order + 1U);
+                        cookie_jar->cookies.push_back(std::move(cookie));
+                    }
+                }
+                const auto local_quota = storage_quota_bytes == 0U
+                    ? 5U * 1024U * 1024U
+                    : std::min<uint64_t>(storage_quota_bytes, 5U * 1024U * 1024U);
+                for (const auto& [origin, durable] : loaded.local_storage) {
+                    session_storage_state storage;
+                    storage.keys = durable.keys;
+                    storage.values = durable.values;
+                    storage.persistence = profile_storage;
+                    storage.origin = origin;
+                    storage.quota_bytes = local_quota;
+                    storage.local = true;
+                    storage.accessible = !origin.empty() && origin != "null";
+                    outer_local_storage_by_origin.emplace(origin, std::move(storage));
+                }
+            } else {
+                profile_storage.reset();
+            }
             indexeddb = std::make_unique<indexeddb_storage>(
                 std::filesystem::path(storage_directory),
                 storage_partition_key,
@@ -104,6 +162,7 @@
         stop_workers();
         // The storage worker never touches V8. Join it before persistent
         // resolver handles and the isolate are released.
+        profile_storage.reset();
         indexeddb.reset();
 #if defined(WEBSCENE_NATIVE_ENGINE_ENABLE_MEDIA)
         clear_media_bindings();
@@ -220,6 +279,7 @@
         resize_listeners.clear();
         media_query_lists.clear();
         timers.clear();
+        pending_file_reading_tasks.clear();
         pending_window_messages.clear();
         pending_window_message_bytes = 0U;
         message_port_bindings.clear();
@@ -247,6 +307,8 @@
         file_grant_write_promise_targets.clear();
         file_grant_directory_promise_targets.clear();
         file_grant_create_file_promise_targets.clear();
+        file_grant_create_directory_promise_targets.clear();
+        file_grant_remove_promise_targets.clear();
         file_targets.clear();
         pending_fetches.clear();
         pending_digests.clear();
@@ -279,6 +341,7 @@
         connected_resources.clear();
         resize_observers.clear();
         frame_hydration_states.clear();
+        frame_navigation_generations.clear();
         inactive_css_cascades.clear();
         active_css_cascade_root = nullptr;
         frame_documents.clear();
@@ -286,7 +349,10 @@
         frame_window_scroll_offsets.clear();
         frame_load_listeners.clear();
         frame_dom_content_loaded_listeners.clear();
+        frame_pagehide_dispatched.clear();
         frame_event_listeners.clear();
+        window_selections.clear();
+        focused_document_owner_id = 0U;
         actual_frame_windows.clear();
         actual_frame_contexts.clear();
         actual_frame_documents.clear();
@@ -309,6 +375,9 @@
         pending_stylesheet_replacements.clear();
         pending_stylesheet_replacement_bytes = 0U;
         stylesheet_cssom_sources.clear();
+        adopted_stylesheet_publications.clear();
+        adopted_stylesheet_owner_scopes.clear();
+        next_adopted_stylesheet_owner_id = 0xf0000000U;
         detached_documents.clear();
         node_wrappers.clear();
         attr_wrappers.clear();

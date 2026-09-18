@@ -17,6 +17,13 @@ const int _sceneComponentReady = 4;
 const int _layerReplace = 1;
 const int _layerRemove = 2;
 const int _canvasEvenOdd = 1 << 16;
+const int _domPolygonClipResource = 1 << 31;
+const int _domPolygonClipIndexMask = _domPolygonClipResource - 1;
+const int _domBrightnessFilter = 1 << 31;
+const int _domGrayscaleFilter = 1 << 30;
+const int _domContrastFilter = 1 << 29;
+const int _domColorFilterMask =
+    _domBrightnessFilter | _domGrayscaleFilter | _domContrastFilter;
 
 final class SceneApplyResult {
   const SceneApplyResult({
@@ -232,11 +239,7 @@ final class WebSceneSceneProjector extends ChangeNotifier {
       final command = scene.commands[index];
       switch (command.kind) {
         case 30:
-          canvas.saveLayer(
-            null,
-            ui.Paint()
-              ..color = ui.Color.fromARGB(command.rgba & 0xff, 255, 255, 255),
-          );
+          canvas.saveLayer(null, _domGroupPaint(command));
         case 31:
           canvas.restore();
         case 15:
@@ -306,9 +309,8 @@ final class WebSceneSceneProjector extends ChangeNotifier {
               ..color = _rgba(command.rgba),
           );
         case 12:
-          canvas
-            ..save()
-            ..clipRRect(_domRRect(command), doAntiAlias: true);
+          canvas.save();
+          _clipDomShape(canvas, scene, command);
         case 13:
           canvas.restore();
       }
@@ -938,6 +940,61 @@ final class WebSceneSceneProjector extends ChangeNotifier {
           .allMatches(value)
           .map((match) => double.parse(match.group(0)!))
           .toList();
+
+  static void _clipDomShape(
+    ui.Canvas canvas,
+    WebSceneSceneView scene,
+    WebSceneSceneCommand command,
+  ) {
+    if (command.flags & _domPolygonClipResource == 0) {
+      canvas.clipRRect(_domRRect(command), doAntiAlias: true);
+      return;
+    }
+    try {
+      canvas.clipPath(
+        parseSvgPathData(
+          _domString(scene, command.flags & _domPolygonClipIndexMask),
+        ),
+        doAntiAlias: true,
+      );
+    } catch (_) {
+      canvas.clipRect(ui.Rect.zero, doAntiAlias: false);
+    }
+  }
+
+  static ui.Paint _domGroupPaint(WebSceneSceneCommand command) {
+    if (command.flags & _domColorFilterMask == 0) {
+      return ui.Paint()
+        ..color = ui.Color.fromARGB(command.rgba & 0xff, 255, 255, 255);
+    }
+    final amount = command.strokeWidth.clamp(0.0, double.infinity).toDouble();
+    final List<double> matrix;
+    if (command.flags & _domBrightnessFilter != 0) {
+      matrix = <double>[
+        amount, 0, 0, 0, 0,
+        0, amount, 0, 0, 0,
+        0, 0, amount, 0, 0,
+        0, 0, 0, 1, 0,
+      ];
+    } else if (command.flags & _domGrayscaleFilter != 0) {
+      matrix = <double>[
+        1 - 0.7874 * amount, 0.7152 * amount, 0.0722 * amount, 0, 0,
+        0.2126 * amount, 1 - 0.2848 * amount, 0.0722 * amount, 0, 0,
+        0.2126 * amount, 0.7152 * amount, 1 - 0.9278 * amount, 0, 0,
+        0, 0, 0, 1, 0,
+      ];
+    } else {
+      final intercept = 127.5 * (1 - amount);
+      matrix = <double>[
+        amount, 0, 0, 0, intercept,
+        0, amount, 0, 0, intercept,
+        0, 0, amount, 0, intercept,
+        0, 0, 0, 1, 0,
+      ];
+    }
+    return ui.Paint()
+      ..colorFilter = ui.ColorFilter.matrix(matrix);
+  }
 
   static String _domString(WebSceneSceneView scene, int index) =>
       _stringAt(scene, index);

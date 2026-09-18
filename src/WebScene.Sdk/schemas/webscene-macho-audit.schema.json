@@ -95,7 +95,7 @@
     "normalization": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["enabled", "requestedArchitecture", "files", "summary"],
+      "required": ["enabled", "requestedArchitecture", "files", "installNames", "summary"],
       "properties": {
         "enabled": { "type": "boolean" },
         "requestedArchitecture": { "type": ["string", "null"], "pattern": "^[A-Za-z0-9_]+$" },
@@ -117,13 +117,30 @@
             }
           }
         },
+        "installNames": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "architectures", "original", "result", "originalSha256", "resultSha256"],
+            "properties": {
+              "path": { "$ref": "#/$defs/path" },
+              "architectures": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "pattern": "^[A-Za-z0-9_]+$" } },
+              "original": { "type": "string", "pattern": "^/" },
+              "result": { "type": "string", "pattern": "^@rpath/[^/]+$" },
+              "originalSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+              "resultSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+            }
+          }
+        },
         "summary": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["machoFiles", "thinnedFiles", "originalBytes", "resultBytes", "savedBytes", "peakTemporaryBytes"],
+          "required": ["machoFiles", "thinnedFiles", "relocatedInstallNames", "originalBytes", "resultBytes", "savedBytes", "peakTemporaryBytes"],
           "properties": {
             "machoFiles": { "type": "integer", "minimum": 0 },
             "thinnedFiles": { "type": "integer", "minimum": 0 },
+            "relocatedInstallNames": { "type": "integer", "minimum": 0 },
             "originalBytes": { "type": "integer", "minimum": 0 },
             "resultBytes": { "type": "integer", "minimum": 0 },
             "savedBytes": { "type": "integer", "minimum": 0 },

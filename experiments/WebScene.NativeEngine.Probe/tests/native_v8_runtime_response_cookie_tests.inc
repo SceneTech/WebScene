@@ -277,6 +277,171 @@ void test_request_headers_reach_resource_callback_v5()
     webscene_engine_destroy(engine);
 }
 
+struct durable_profile_server final {
+    std::atomic<uint32_t> phase{1U};
+    std::mutex mutex;
+    std::string navigation_cookie;
+};
+
+size_t load_durable_profile_resource_v4(
+    void* user_data,
+    uint32_t,
+    const char* url,
+    size_t url_length,
+    const char*,
+    size_t,
+    int64_t,
+    const webscene_resource_request_context_v4* context,
+    webscene_resource_response_v4* response,
+    char* destination,
+    size_t destination_capacity)
+{
+    auto& server = *static_cast<durable_profile_server*>(user_data);
+    const auto first = server.phase.load(std::memory_order_acquire) == 1U;
+    static constexpr std::string_view first_document = R"HTML(
+      <!doctype html><script>
+        localStorage.setItem('durable-local', 'retained');
+        sessionStorage.setItem('session-only', 'discarded');
+        document.cookie = 'visible=retained; Path=/; Secure; Max-Age=3600; SameSite=Lax';
+        document.cookie = 'temporary=discarded; Path=/; Secure';
+        document.cookie = 'doomed=discarded; Path=/; Secure; Max-Age=3600';
+        document.cookie = 'doomed=; Path=/; Secure; Max-Age=0';
+        let quota = false;
+        try { localStorage.setItem('oversized', 'x'.repeat(5 * 1024 * 1024)); }
+        catch (error) { quota = error.name === 'QuotaExceededError'; }
+        globalThis.__durableProfile = {ready:true, quota};
+      </script>)HTML";
+    static constexpr std::string_view second_document = R"HTML(
+      <!doctype html><script>
+        globalThis.__durableProfile = {
+          ready: true,
+          local: localStorage.getItem('durable-local'),
+          session: sessionStorage.getItem('session-only'),
+          visible: document.cookie
+        };
+      </script>)HTML";
+    static constexpr char persistent_cookie[] =
+        "durable=secret; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=3600";
+    static constexpr char session_cookie[] =
+        "session=discarded; Path=/; Secure; HttpOnly; SameSite=Lax";
+    static const webscene_resource_header_v4 headers[]{
+        {sizeof(webscene_resource_header_v4), "Set-Cookie", 10U,
+            persistent_cookie, sizeof(persistent_cookie) - 1U},
+        {sizeof(webscene_resource_header_v4), "Set-Cookie", 10U,
+            session_cookie, sizeof(session_cookie) - 1U}};
+    if (context != nullptr) {
+        std::lock_guard lock(server.mutex);
+        server.navigation_cookie.assign(
+            context->cookie == nullptr ? "" : context->cookie,
+            context->cookie_length);
+    }
+    if (response != nullptr) {
+        response->status = 200U;
+        response->status_text = "OK";
+        response->status_text_length = 2U;
+        response->final_url = url;
+        response->final_url_length = url_length;
+        response->headers = first ? headers : nullptr;
+        response->header_count = first ? std::size(headers) : 0U;
+    }
+    const auto body = first ? first_document : second_document;
+    constexpr size_t header_size = 2U + sizeof(uint32_t) + sizeof(int64_t) * 2U;
+    const auto required = header_size + body.size();
+    if (destination == nullptr || destination_capacity < required) return required;
+    std::memset(destination, 0, header_size);
+    destination[0] = 1;
+    std::copy(body.begin(), body.end(), destination + header_size);
+    return required;
+}
+
+void test_durable_profile_restart_contract()
+{
+    const auto storage_directory = std::filesystem::temp_directory_path()
+        / ("webscene-durable-profile-test-" + std::to_string(
+            std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::filesystem::create_directories(storage_directory);
+    const auto root = storage_directory.string();
+    const std::string partition = "native-restart/default";
+    durable_profile_server server;
+    webscene_engine_options options{};
+    options.struct_size = sizeof(options);
+    options.resource_load_callback_v4 = load_durable_profile_resource_v4;
+    options.resource_load_v4_user_data = &server;
+    options.storage_directory = root.data();
+    options.storage_directory_length = root.size();
+    options.storage_partition_key = partition.data();
+    options.storage_partition_key_length = partition.size();
+    options.storage_quota_bytes = 4U * 1024U * 1024U;
+    constexpr std::string_view address{"https://profile.test/index.html"};
+    auto* engine = webscene_engine_create_with_options(&options);
+    require(engine != nullptr, "durable profile writer engine creation failed");
+    require(webscene_engine_load_url(engine, address.data(), address.size()) != 0U,
+        "durable profile writer navigation failed");
+    require(evaluate(engine, "globalThis.__durableProfile", "profile-writer.js")
+            == R"({"ready":true,"quota":true})",
+        "durable profile writer did not initialize state");
+    webscene_engine_destroy(engine);
+
+    server.phase.store(2U, std::memory_order_release);
+    {
+        std::lock_guard lock(server.mutex);
+        server.navigation_cookie.clear();
+    }
+    engine = webscene_engine_create_with_options(&options);
+    require(engine != nullptr, "durable profile reader engine creation failed");
+    require(webscene_engine_load_url(engine, address.data(), address.size()) != 0U,
+        "durable profile reader navigation failed");
+    const auto restored = evaluate(
+        engine, "globalThis.__durableProfile", "profile-reader.js");
+    require(restored.find(R"("local":"retained")") != std::string::npos
+            && restored.find(R"("session":null)") != std::string::npos
+            && restored.find("visible=retained") != std::string::npos
+            && restored.find("temporary=discarded") == std::string::npos
+            && restored.find("doomed=discarded") == std::string::npos,
+        "durable/local versus session restart contract failed: " + restored);
+    {
+        std::lock_guard lock(server.mutex);
+        require(server.navigation_cookie.find("durable=secret") != std::string::npos
+                && server.navigation_cookie.find("visible=retained") != std::string::npos
+                && server.navigation_cookie.find("session=discarded") == std::string::npos
+                && server.navigation_cookie.find("temporary=discarded") == std::string::npos,
+            "persistent/session cookie restart contract failed");
+    }
+    webscene_engine_destroy(engine);
+
+    const std::string isolated_partition = "native-restart/isolated";
+    options.storage_partition_key = isolated_partition.data();
+    options.storage_partition_key_length = isolated_partition.size();
+    {
+        std::lock_guard lock(server.mutex);
+        server.navigation_cookie.clear();
+    }
+    engine = webscene_engine_create_with_options(&options);
+    require(engine != nullptr, "isolated profile engine creation failed");
+    require(webscene_engine_load_url(engine, address.data(), address.size()) != 0U,
+        "isolated profile navigation failed");
+    const auto isolated = evaluate(
+        engine, "globalThis.__durableProfile", "profile-isolated.js");
+    require(isolated.find(R"("local":null)") != std::string::npos
+            && isolated.find(R"("session":null)") != std::string::npos,
+        "profile partition observed another partition's localStorage: " + isolated);
+    {
+        std::lock_guard lock(server.mutex);
+        require(server.navigation_cookie.empty(),
+            "profile partition observed another partition's cookies");
+    }
+    webscene_engine_destroy(engine);
+
+    require(webscene_profile_clear_data_v1(
+            root.data(), root.size(), partition.data(), partition.size(),
+            options.storage_quota_bytes,
+            WEBSCENE_PROFILE_CLEAR_ALL_SITE_DATA_V1)
+            == WEBSCENE_PROFILE_STATUS_OK_V1,
+        "durable profile clear-data contract failed");
+    std::error_code cleanup_error;
+    std::filesystem::remove_all(storage_directory, cleanup_error);
+}
+
 struct single_flight_cookie_server final {
     std::atomic<uint32_t> target_requests{0U};
 };

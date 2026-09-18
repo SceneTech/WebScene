@@ -765,6 +765,9 @@
             return;
         }
         node->attributes[name] = value;
+        if (name == "src" && node->tag == "iframe") {
+            self->begin_iframe_navigation(*node);
+        }
         if (node->tag == "base" && name == "href") {
             self->invalidate_document_base(*node);
         }
@@ -1139,8 +1142,10 @@
                 result.push_back(frame_script{
                     std::move(source),
                     html.substr(open_end + 1U, close - open_end - 1U),
+                    extract_html_attribute(attributes, "nonce"),
                     defer || type == "module",
                     index,
+                    open,
                     type == "module",
                     {},
                     no_module});
@@ -1149,6 +1154,145 @@
             cursor = close + 9U;
         }
         return result;
+    }
+
+    static frame_script_content_security_policy parse_frame_script_policy(
+        const std::string& html)
+    {
+        frame_script_content_security_policy result;
+        const auto normalized_html = lower_html_name(html);
+        size_t cursor = 0U;
+        while (true) {
+            const auto open = normalized_html.find("<meta", cursor);
+            if (open == std::string::npos) return result;
+            const auto open_end = normalized_html.find('>', open + 5U);
+            if (open_end == std::string::npos) return result;
+            const auto opening = html.substr(open, open_end - open + 1U);
+            std::string http_equiv;
+            std::string content;
+            for (auto [name, value] : parse_html_attributes(opening, 5U)) {
+                name = lower_html_name(name);
+                if (name == "http-equiv") http_equiv = lower_html_name(value);
+                else if (name == "content") content = std::move(value);
+            }
+            const auto first = http_equiv.find_first_not_of(" \t\r\n\f");
+            const auto last = http_equiv.find_last_not_of(" \t\r\n\f");
+            http_equiv = first == std::string::npos
+                ? std::string{}
+                : http_equiv.substr(first, last - first + 1U);
+            if (http_equiv != "content-security-policy") {
+                cursor = open_end + 1U;
+                continue;
+            }
+
+            result.present = true;
+            result.effective_offset = open_end + 1U;
+            std::vector<std::string> default_sources;
+            bool found_default = false;
+            bool found_script = false;
+            size_t directive_start = 0U;
+            while (directive_start <= content.size()) {
+                const auto directive_end = content.find(';', directive_start);
+                const auto directive = std::string_view(content).substr(
+                    directive_start,
+                    directive_end == std::string::npos
+                        ? std::string::npos
+                        : directive_end - directive_start);
+                std::vector<std::string> tokens;
+                for (size_t index = 0U; index < directive.size();) {
+                    while (index < directive.size()
+                        && std::isspace(static_cast<unsigned char>(directive[index])) != 0) {
+                        ++index;
+                    }
+                    const auto token_start = index;
+                    while (index < directive.size()
+                        && std::isspace(static_cast<unsigned char>(directive[index])) == 0) {
+                        ++index;
+                    }
+                    if (token_start != index) tokens.emplace_back(
+                        directive.substr(token_start, index - token_start));
+                }
+                if (!tokens.empty()) {
+                    const auto name = lower_html_name(tokens.front());
+                    std::vector<std::string> sources(
+                        std::next(tokens.begin()), tokens.end());
+                    if (!found_script
+                        && (name == "script-src-elem" || name == "script-src")) {
+                        result.sources = std::move(sources);
+                        result.restrict_scripts = true;
+                        found_script = true;
+                    } else if (!found_default && name == "default-src") {
+                        default_sources = std::move(sources);
+                        found_default = true;
+                    }
+                }
+                if (directive_end == std::string::npos) break;
+                directive_start = directive_end + 1U;
+            }
+            if (!found_script && found_default) {
+                result.sources = std::move(default_sources);
+                result.restrict_scripts = true;
+            }
+            return result;
+        }
+    }
+
+    bool frame_script_policy_allows(
+        const frame_script_content_security_policy& policy,
+        const frame_script& script,
+        const std::string& base_address)
+    {
+        if (!policy.present || !policy.restrict_scripts
+            || script.document_offset < policy.effective_offset) {
+            return true;
+        }
+
+        auto has_nonce_or_hash = false;
+        auto allows_unsafe_inline = false;
+        for (const auto& source : policy.sources) {
+            const auto normalized = lower_html_name(source);
+            has_nonce_or_hash = has_nonce_or_hash
+                || normalized.starts_with("'nonce-")
+                || normalized.starts_with("'sha256-")
+                || normalized.starts_with("'sha384-")
+                || normalized.starts_with("'sha512-");
+            allows_unsafe_inline = allows_unsafe_inline
+                || normalized == "'unsafe-inline'";
+            if (!script.nonce.empty()
+                && source == "'nonce-" + script.nonce + "'") {
+                return true;
+            }
+        }
+        if (script.source.empty()) {
+            return allows_unsafe_inline && !has_nonce_or_hash;
+        }
+
+        const auto target = resolve_resource_url(script.source, base_address);
+        const auto target_origin = resource_origin(target);
+        const auto base_origin = resource_origin(base_address);
+        for (const auto& source : policy.sources) {
+            const auto normalized = lower_html_name(source);
+            if (normalized == "'self'" && target_origin == base_origin) return true;
+            if (normalized == "*" && !target.starts_with("data:")) return true;
+            if (normalized == "'none'" || normalized.starts_with("'nonce-")
+                || normalized.starts_with("'sha")) continue;
+            if (normalized.ends_with(":") && normalized.find('/') == std::string::npos
+                && target.starts_with(normalized)) return true;
+            const auto wildcard = normalized.find("://*.");
+            if (wildcard != std::string::npos) {
+                const auto scheme = normalized.substr(0U, wildcard + 3U);
+                const auto suffix = normalized.substr(wildcard + 4U);
+                if (target_origin.starts_with(scheme)) {
+                    const auto host = target_origin.substr(scheme.size());
+                    if (host.size() > suffix.size()
+                        && host.ends_with("." + suffix)) return true;
+                }
+                continue;
+            }
+            if (normalized.find("://") != std::string::npos
+                && resource_origin(normalized) == target_origin) return true;
+        }
+        return false;
     }
 
     void append_script_elements(dom_node& parent, const std::vector<frame_script>& scripts)
@@ -1166,6 +1310,7 @@
                 record_html_attribute_feature("src", "html-parser");
                 element.attributes["src"] = script.source;
             }
+            if (!script.nonce.empty()) element.attributes["nonce"] = script.nonce;
             if (script.defer) {
                 record_html_attribute_feature("defer", "html-parser");
                 element.attributes["defer"] = std::string{};
@@ -1496,7 +1641,8 @@
     void set_current_script(
         v8::Local<v8::Context> local_context,
         v8::Local<v8::Object> document_value,
-        const std::string& script_url)
+        const std::string& script_url,
+        std::string_view nonce = {})
     {
         auto current_script = v8::Object::New(isolate);
         current_script->Set(
@@ -1510,7 +1656,7 @@
         current_script->Set(
             local_context,
             js_string(isolate, "nonce"),
-            js_string(isolate, "")).Check();
+            js_dom_string(isolate, nonce)).Check();
         current_script->Set(
             local_context,
             js_string(isolate, "getAttribute"),

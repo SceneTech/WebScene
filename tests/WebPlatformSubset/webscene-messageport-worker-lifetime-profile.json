@@ -1,0 +1,25 @@
+{
+  "profile": "webscene-messageport-worker-lifetime-1",
+  "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+  "runtime": "v8",
+  "viewport": {
+    "width": 800,
+    "height": 600,
+    "deviceScaleFactor": 1
+  },
+  "required": [
+    {
+      "path": "contracts/messageport-worker-active-lifetime.html",
+      "type": "contract",
+      "capabilities": [
+        "messageport-worker-active-listener-reachability",
+        "messageport-worker-transfer-release",
+        "messageport-worker-termination-release"
+      ],
+      "evidence": ["messageport-worker-lifetime-288"],
+      "reason": "Focused dedicated-Worker cross-isolate contract for onmessage and EventTarget listeners, source transfer release, 100-cycle delivery, and termination."
+    }
+  ],
+  "harnessBlocked": [],
+  "excluded": []
+}

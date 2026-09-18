@@ -25,9 +25,9 @@
     {
       "path": "contracts/remote-protocol-handshake-timing.html",
       "type": "contract",
-      "capabilities": ["cross-task-source-timer-fairness", "remote-protocol-handshake-timing", "websocket-filereader-worker-messageport-fairness"],
+      "capabilities": ["cross-task-source-timer-fairness", "file-reading-task-source-fairness", "remote-protocol-handshake-timing", "websocket-filereader-worker-messageport-fairness"],
       "evidence": ["vscode-remote-extension-host-handshake-289", "chromium-task-source-control"],
-      "reason": "A product-shaped 1,071,438-byte framed protocol write remains bounded across twenty cold/warm cycles while Worker, MessagePort, window-message, WebSocket, and FileReader work stays continuously ready. Due timers alternate with other observable task sources, preserving run-to-completion and microtask checkpoints while preventing protocol flush starvation."
+      "reason": "A product-shaped 1,071,438-byte framed protocol write remains bounded across twenty cold/warm cycles while Worker, MessagePort, window-message, WebSocket, and FileReader work stays continuously ready. Due timers alternate with other observable task sources, and FileReader completes within 25 ms under a 4,096-timer application backlog while preserving its asynchronous event order."
     },
     {
       "path": "contracts/webcrypto-hmac-sign.html",
@@ -1994,6 +1994,20 @@
       "capabilities": ["nested-functional-selector-lists", "functional-selector-specificity", "functional-selector-class-invalidation", "functional-selector-attribute-invalidation"],
       "evidence": ["selectors-level-4-functional-pseudo-classes", "direct-chromium-native-contract"],
       "reason": "Candidate contract for depth-aware :is(), :where(), and :not() argument matching. It protects commas in nested functions and quoted attribute values, standards specificity, and live class/attribute invalidation."
+    },
+    {
+      "path": "contracts/css-nested-has-selector-lists.html",
+      "type": "contract",
+      "capabilities": ["nested-has-selector-lists", "has-selector-specificity", "has-class-invalidation", "has-attribute-invalidation"],
+      "evidence": ["selectors-level-4-relational-pseudo-class", "unchanged-code-oss-nested-has-selector", "direct-chromium-native-contract"],
+      "reason": "Candidate contract for depth-aware :has() relative selector lists used by unchanged Code OSS. It protects nested functional and quoted commas, top-level alternatives, standards specificity, and targeted class/attribute invalidation."
+    },
+    {
+      "path": "contracts/css-relative-sibling-has.html",
+      "type": "contract",
+      "capabilities": ["relative-adjacent-has", "relative-general-sibling-has", "reverse-sibling-invalidation"],
+      "evidence": ["selectors-level-4-relational-pseudo-class", "unchanged-code-oss-relative-sibling-has", "direct-chromium-native-contract"],
+      "reason": "Candidate contract for unchanged Code OSS :has(+ ...) and :has(~ ...) matching, chained relative selectors, reverse class/attribute invalidation, and sibling insertion/removal."
     },
     {
       "path": "css/selectors/is-specificity.html",

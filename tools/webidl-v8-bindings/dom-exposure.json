@@ -193,7 +193,15 @@
         { "name": "activeElement", "getter": "get_active_element" },
         { "name": "styleSheets", "getter": "get_shadow_style_sheets" }
       ],
-      "methods": [],
+      "methods": [
+        {
+          "name": "__webScenePublishAdoptedStyleSheets",
+          "callback": "publish_adopted_stylesheets",
+          "length": 1,
+          "extension": true,
+          "attributes": ["DontEnum"]
+        }
+      ],
       "constants": []
     },
     {
@@ -293,6 +301,8 @@
         { "name": "value", "getter": "get_form_value", "setter": "set_form_value" },
         { "name": "defaultValue", "getter": "get_default_value", "setter": "set_default_value" },
         { "name": "maxLength", "getter": "get_max_length", "setter": "set_max_length" },
+        { "name": "min", "getter": "get_reflected_string_attribute", "setter": "set_reflected_string_attribute" },
+        { "name": "max", "getter": "get_reflected_string_attribute", "setter": "set_reflected_string_attribute" },
         { "name": "readOnly", "getter": "get_read_only", "setter": "set_read_only" },
         { "name": "options", "getter": "get_select_options" },
         { "name": "elements", "getter": "get_form_elements" },
@@ -301,6 +311,7 @@
         { "name": "selectionEnd", "getter": "get_selection_end", "setter": "set_selection_end" },
         { "name": "selectionDirection", "getter": "get_selection_direction", "setter": "set_selection_direction" },
         { "name": "checked", "getter": "get_checked", "setter": "set_checked" },
+        { "name": "indeterminate", "getter": "get_indeterminate", "setter": "set_indeterminate" },
         { "name": "selected", "getter": "get_selected", "setter": "set_selected" },
         { "name": "multiple", "getter": "get_multiple", "setter": "set_multiple" },
         { "name": "disabled", "getter": "get_disabled", "setter": "set_disabled" },
@@ -349,6 +360,7 @@
       "constructor": "illegal_dom_constructor",
       "parent": "HTMLElement",
       "attributes": [
+        { "name": "allow", "getter": "get_iframe_allow", "setter": "set_iframe_allow" },
         { "name": "sandbox", "getter": "get_iframe_sandbox", "setter": "set_iframe_sandbox" }
       ],
       "methods": [],

@@ -146,6 +146,52 @@ inline bool is_actually_disabled(const native_document& document,const dom_node&
         return false;
     }
 
+inline bool html_keyword_equals(std::string_view value,std::string_view expected)
+    {
+        if(value.size()!=expected.size()) return false;
+        for(size_t index=0;index<expected.size();++index) {
+            auto character=value[index];
+            if(character>='A' && character<='Z') character+='a'-'A';
+            if(character!=expected[index]) return false;
+        }
+        return true;
+    }
+
+inline bool read_only_applies(const dom_node& node)
+    {
+        if(node.tag=="textarea") return true;
+        if(node.tag!="input") return false;
+        const auto attribute=node.attributes.find("type");
+        if(attribute==node.attributes.end()) return true;
+        const auto type=std::string_view(attribute->second);
+        return !html_keyword_equals(type,"hidden") && !html_keyword_equals(type,"range")
+            && !html_keyword_equals(type,"color") && !html_keyword_equals(type,"checkbox")
+            && !html_keyword_equals(type,"radio") && !html_keyword_equals(type,"button")
+            && !html_keyword_equals(type,"submit") && !html_keyword_equals(type,"reset")
+            && !html_keyword_equals(type,"file") && !html_keyword_equals(type,"image");
+    }
+
+inline bool is_read_write(const native_document& document,const dom_node& node)
+    {
+        if(node.tag=="input" || node.tag=="textarea") {
+            return read_only_applies(node)
+                && !node.attributes.contains("readonly")
+                && !is_actually_disabled(document,node);
+        }
+        if(node.tag=="button" || node.tag=="select" || node.tag=="option"
+            || node.tag=="optgroup" || node.tag=="fieldset") return false;
+        if(node.xml_mode) return false;
+        for(auto* current=&node;current!=nullptr;current=document.dom_parent(*current)) {
+            const auto attribute=current->attributes.find("contenteditable");
+            if(attribute==current->attributes.end()) continue;
+            const auto value=std::string_view(attribute->second);
+            if(value.empty() || html_keyword_equals(value,"true")
+                || html_keyword_equals(value,"plaintext-only")) return true;
+            if(html_keyword_equals(value,"false")) return false;
+        }
+        return false;
+    }
+
 // Host-independent interaction state. The host supplies focus modality; the
 // document defines ancestry (including event ancestry for focus-within).
 struct interaction_state final {
@@ -217,13 +263,107 @@ inline bool direction_matches(const native_document& document,const dom_node& no
                 }
                 return true;
 }
+inline const dom_node* form_owner_for_selector(
+    const native_document& document,const dom_node& control) {
+    const auto explicit_owner=control.attributes.find("form");
+    if(explicit_owner!=control.attributes.end()) {
+        if(explicit_owner->second.empty()) return nullptr;
+        const dom_node* root=&control;
+        while(auto* parent=document.dom_parent(*root)) {
+            if(parent->tag=="iframe") break;
+            root=parent;
+        }
+        const auto find=[&](const auto& recurse,const dom_node& current)->const dom_node* {
+            if(current.tag=="form" && current.id_attribute==explicit_owner->second)
+                return &current;
+            for(const auto* child:current.children) {
+                if(child==nullptr || child->tag=="iframe") continue;
+                if(const auto* matched=recurse(recurse,*child)) return matched;
+            }
+            return nullptr;
+        };
+        return find(find,*root);
+    }
+    for(auto* ancestor=document.dom_parent(control);ancestor!=nullptr;
+        ancestor=document.dom_parent(*ancestor)) {
+        if(ancestor->tag=="iframe") break;
+        if(ancestor->tag=="form") return ancestor;
+    }
+    return nullptr;
+}
+
+inline bool is_submit_button_for_selector(const dom_node& node) {
+    const auto authored=node.attributes.find("type");
+    const auto type=authored==node.attributes.end()
+        ? std::string_view{}:std::string_view{authored->second};
+    if(node.tag=="button") return type.empty() || html_keyword_equals(type,"submit");
+    return node.tag=="input"
+        && (html_keyword_equals(type,"submit") || html_keyword_equals(type,"image"));
+}
+
+inline bool default_matches(const native_document& document,const dom_node& node) {
+    if(node.tag=="option") return node.attributes.contains("selected");
+    if(node.tag=="input") {
+        const auto type=node.attributes.find("type");
+        if(type!=node.attributes.end()
+            && (html_keyword_equals(type->second,"checkbox")
+                || html_keyword_equals(type->second,"radio")))
+            return node.attributes.contains("checked");
+    }
+    if(!is_submit_button_for_selector(node)) return false;
+    const auto* owner=form_owner_for_selector(document,node);
+    if(owner==nullptr) return false;
+    const dom_node* root=&node;
+    while(auto* parent=document.dom_parent(*root)) {
+        if(parent->tag=="iframe") break;
+        root=parent;
+    }
+    const auto first=[&](const auto& recurse,const dom_node& current)->const dom_node* {
+        if(is_submit_button_for_selector(current)
+            && form_owner_for_selector(document,current)==owner) return &current;
+        for(const auto* child:current.children) {
+            if(child==nullptr || child->tag=="iframe") continue;
+            if(const auto* matched=recurse(recurse,*child)) return matched;
+        }
+        return nullptr;
+    };
+    return first(first,*root)==&node;
+}
+
 inline bool checked_matches(const dom_node& node) {
     const auto type=node.attributes.find("type");
     const bool checkable=node.tag=="input" && type!=node.attributes.end() &&
-        (type->second=="checkbox" || type->second=="radio");
+        (html_keyword_equals(type->second,"checkbox") || html_keyword_equals(type->second,"radio"));
     if(checkable) return node.form_control().checkedness_initialized ?
         node.form_control().checkedness : node.attributes.contains("checked");
     return node.tag=="option" && forms::option_is_selected(const_cast<dom_node&>(node));
+}
+inline bool indeterminate_matches(const dom_node& node) {
+    const auto type=node.attributes.find("type");
+    if(node.tag!="input" || type==node.attributes.end()) return false;
+    if(html_keyword_equals(type->second,"checkbox"))
+        return node.form_control().indeterminate;
+    if(!html_keyword_equals(type->second,"radio")) return false;
+    const auto name=node.attributes.find("name");
+    if(name==node.attributes.end() || name->second.empty()) return !checked_matches(node);
+    auto* root=&node;
+    while(root->parent!=nullptr && root->parent->tag!="iframe") root=root->parent;
+    const auto any_checked=[&](const auto& recurse,const dom_node& current)->bool {
+        if(current.tag=="input") {
+            const auto candidate_type=current.attributes.find("type");
+            const auto candidate_name=current.attributes.find("name");
+            if(candidate_type!=current.attributes.end()
+                && html_keyword_equals(candidate_type->second,"radio")
+                && candidate_name!=current.attributes.end()
+                && candidate_name->second==name->second
+                && checked_matches(current)) return true;
+        }
+        if(&current!=root && current.tag=="iframe") return false;
+        for(const auto* child:current.children)
+            if(child!=nullptr && recurse(recurse,*child)) return true;
+        return false;
+    };
+    return !any_checked(any_checked,*root);
 }
 inline bool target_matches(const dom_node& node,std::string_view hash) {
     if(hash.starts_with('#')) hash.remove_prefix(1);
@@ -249,6 +389,48 @@ inline const dom_node* previous_element_sibling(const dom_node& node)
         }
         return nullptr;
     }
+
+// A relative selector is matched by anchoring its first compound to :scope and
+// testing only nodes reachable in the direction of its first combinator.  The
+// ordinary selector matcher still verifies every chained combinator.  Scanning
+// all following sibling subtrees for a sibling-leading arm is necessary for
+// chains such as `:scope + .a + .b`, while keeping work inside one sibling list.
+template<typename MatchSelector>
+inline bool relative_selector_list_matches(
+    const dom_node& scope,
+    const compiled_css_selector_list& selectors,
+    const MatchSelector& match_selector)
+{
+    const auto visit_subtree = [&](const auto& self, const dom_node& root,
+                                   const compiled_css_selector& selector) -> bool {
+        if (root.kind == dom_node_kind::element
+            && match_selector(root, selector, &scope)) return true;
+        for (const auto* child : root.children) {
+            if (child != nullptr && self(self, *child, selector)) return true;
+        }
+        return false;
+    };
+    for (const auto& selector : selectors.selectors) {
+        if (selector.compounds.size() < 2U || selector.combinators.empty()) continue;
+        const auto first = selector.combinators.front();
+        if (first == '+' || first == '~') {
+            if (scope.parent == nullptr) continue;
+            const auto& siblings = scope.parent->children;
+            const auto found = std::find(siblings.begin(), siblings.end(), &scope);
+            if (found == siblings.end()) continue;
+            for (auto current = std::next(found); current != siblings.end(); ++current) {
+                if (*current != nullptr && visit_subtree(
+                        visit_subtree, **current, selector)) return true;
+            }
+            continue;
+        }
+        for (const auto* child : scope.children) {
+            if (child != nullptr && visit_subtree(
+                    visit_subtree, *child, selector)) return true;
+        }
+    }
+    return false;
+}
 
 // Ephemeral memoization for one immutable DOM/interaction-state matching pass.
 // Never retain this across author callbacks or selector-state transitions.

@@ -358,15 +358,104 @@ def normalize_single_architecture(bundle: Path, architecture: str,
         "enabled": True,
         "requestedArchitecture": architecture,
         "files": results,
+        "installNames": [],
         "summary": {
             "machoFiles": len(results),
             "thinnedFiles": sum(item["action"] == "thinned" for item in results),
+            "relocatedInstallNames": 0,
             "originalBytes": original_bytes,
             "resultBytes": result_bytes,
             "savedBytes": original_bytes - result_bytes,
             "peakTemporaryBytes": peak_temporary_bytes,
         },
     }
+
+
+def normalize_absolute_install_names(
+        bundle: Path,
+        maximum_entries: int = DEFAULT_MAXIMUM_ENTRIES,
+        system_prefixes: tuple[str, ...] = DEFAULT_SYSTEM_PREFIXES,
+        runner=run_tool) -> list[dict]:
+    """Relocate producer-machine LC_ID_DYLIB values without relaxing the audit."""
+    bundle = bundle.resolve()
+    before = snapshot_tree(bundle, maximum_entries)
+    candidates = []
+    for relative in sorted(path for path, entry in before.items()
+                           if entry["type"] == "file" and entry.get("macho")):
+        entry = before[relative]
+        if os.name != "nt" and entry["links"] != 1:
+            raise AuditError(f"Mach-O has multiple hard links: {relative}")
+        path = bundle / relative
+        architectures = parse_architectures(runner(["lipo", "-archs", str(path)]))
+        identifiers = []
+        for architecture in architectures:
+            identifier = parse_load_commands(
+                runner(["otool", "-arch", architecture, "-l", str(path)])
+            )["identifier"]
+            identifiers.append(identifier)
+        distinct = set(identifiers)
+        if len(distinct) > 1:
+            raise AuditError(f"Mach-O slices have different dylib install names: {relative}")
+        identifier = identifiers[0]
+        if identifier is None or not identifier.startswith("/"):
+            continue
+        if any(identifier.startswith(prefix) for prefix in system_prefixes):
+            continue
+        basename = PurePosixPath(identifier).name
+        if not basename or basename in (".", ".."):
+            raise AuditError(f"absolute dylib install name has no basename: {relative}")
+        relocated = "@rpath/" + basename
+        validate_install_name(relocated, "relocated dylib install name", system_prefixes)
+        candidates.append({
+            "path": relative,
+            "architectures": architectures,
+            "original": identifier,
+            "result": relocated,
+            "originalSha256": sha256(path),
+        })
+
+    results = []
+    for candidate in candidates:
+        relative = candidate["path"]
+        path = bundle / relative
+        original = before[relative]
+        if (stable_normalization_metadata(file_metadata(path))
+                != stable_normalization_metadata(original)
+                or sha256(path) != candidate["originalSha256"]):
+            raise AuditError(f"Mach-O mutated before install-name normalization: {relative}")
+        runner(["install_name_tool", "-id", candidate["result"], str(path)])
+        current = file_metadata(path)
+        if (current["type"] != "file" or not current.get("macho")
+                or (os.name != "nt" and (
+                    current["links"] != 1
+                    or current["mode"] != original["mode"]
+                    or current["uid"] != original["uid"]
+                    or current["gid"] != original["gid"]))):
+            raise AuditError(f"install-name normalization made Mach-O unsafe: {relative}")
+        for architecture in candidate["architectures"]:
+            identifier = parse_load_commands(
+                runner(["otool", "-arch", architecture, "-l", str(path)])
+            )["identifier"]
+            if identifier != candidate["result"]:
+                raise AuditError(
+                    f"install-name normalization failed for {relative} ({architecture})"
+                )
+        result_hash = sha256(path)
+        if result_hash == candidate["originalSha256"]:
+            raise AuditError(f"install-name normalization did not modify {relative}")
+        results.append({**candidate, "resultSha256": result_hash})
+
+    after = snapshot_tree(bundle, maximum_entries)
+    if set(before) != set(after):
+        changed = sorted(set(before) ^ set(after))
+        raise AuditError(f"bundle inventory changed during install-name normalization: {changed[0]}")
+    changed_paths = {item["path"] for item in results}
+    for relative in sorted(before):
+        if relative in changed_paths:
+            continue
+        if stable_metadata(before[relative]) != stable_metadata(after[relative]):
+            raise AuditError(f"bundle mutated during install-name normalization: {relative}")
+    return results
 
 
 def parse_architectures(output: str) -> list[str]:
@@ -717,9 +806,11 @@ def audit_bundle(bundle: Path, executable: str, architectures: list[str],
             "enabled": False,
             "requestedArchitecture": None,
             "files": [],
+            "installNames": [],
             "summary": {
                 "machoFiles": len(binaries),
                 "thinnedFiles": 0,
+                "relocatedInstallNames": 0,
                 "originalBytes": sum(item["bytes"] for item in binaries),
                 "resultBytes": sum(item["bytes"] for item in binaries),
                 "savedBytes": 0,

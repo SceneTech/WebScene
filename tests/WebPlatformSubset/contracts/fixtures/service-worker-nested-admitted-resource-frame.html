@@ -1,0 +1,9 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Nested admitted resource frame</title>
+<script>
+  const script = document.createElement('script');
+  script.src = '../service-worker-nested-admitted-resource-fallback.js';
+  script.onerror = () => parent.__nestedAdmittedResourceFinished('error');
+  document.head.append(script);
+</script>

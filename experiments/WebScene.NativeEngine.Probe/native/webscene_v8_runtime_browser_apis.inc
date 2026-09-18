@@ -103,6 +103,42 @@
         schedule_timer(info, true);
     }
 
+    static void queue_file_reading_task(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        if (info.Length() < 1 || !info[0]->IsFunction()) {
+            info.GetReturnValue().Set(false);
+            return;
+        }
+        auto* self = current(info.GetIsolate());
+        if (self->pending_file_reading_tasks.size()
+                >= maximum_pending_file_reading_tasks) {
+            info.GetReturnValue().Set(false);
+            return;
+        }
+        const auto id = self->next_timer_id++;
+        const auto now = std::chrono::steady_clock::now();
+        if (self->work_metrics_enabled.load(std::memory_order_relaxed)) {
+            ++self->work.timers_scheduled;
+        }
+        self->pending_file_reading_tasks.push_back(timer_task{
+            id,
+            false,
+            false,
+            now,
+            std::chrono::duration<double, std::milli>::zero(),
+            v8::Global<v8::Context>(
+                info.GetIsolate(), info.GetIsolate()->GetCurrentContext()),
+            v8::Global<v8::Function>(
+                info.GetIsolate(), info[0].As<v8::Function>()),
+            {},
+            -1});
+#if defined(WEBSCENE_NATIVE_ENGINE_WITH_V8_INSPECTOR)
+        self->inspector_async_task_scheduled("FileReader", id, false);
+#endif
+        info.GetReturnValue().Set(true);
+    }
+
     static void clear_timeout(const v8::FunctionCallbackInfo<v8::Value>& info)
     {
         current(info.GetIsolate())->record_feature(
@@ -298,9 +334,27 @@
             return std::string("null");
         };
 
+        // A navigated iframe replaces its Window while retaining the owner
+        // realm's WindowProxy. MessageEvent.source exposes that stable proxy,
+        // not the current inner Window global. Capture it when the task is
+        // queued so navigation cannot change the sender identity in flight.
+        auto source_window = source_context->Global();
+        for (const auto& [frame_id, frame_context] : self->actual_frame_contexts) {
+            if (frame_context.IsEmpty()
+                || frame_context.Get(isolate) != source_context) {
+                continue;
+            }
+            const auto proxy = self->frame_windows.find(frame_id);
+            if (proxy != self->frame_windows.end() && !proxy->second.IsEmpty()) {
+                source_window = proxy->second.Get(isolate);
+            }
+            break;
+        }
+
         self->pending_window_messages.push_back(pending_window_message{
             v8::Global<v8::Context>(isolate, target_context),
             v8::Global<v8::Context>(isolate, source_context),
+            v8::Global<v8::Object>(isolate, source_window),
             std::move(packet),
             std::move(target_origin),
             read_origin(source_context)});
@@ -361,6 +415,23 @@
             "supported",
             {},
             "web-api-binding");
+        if (auto *frame = frame_owner_for_window(*self, info.This());
+            frame != nullptr) {
+          if (self->active_element != nullptr &&
+              self->focus_document_owner(self->active_element) != frame->id) {
+            webscene_input_event synthetic{};
+            if (!self->set_active_element(nullptr, synthetic))
+              return;
+            if (self->active_element != nullptr)
+              return;
+          }
+          if (!self->set_focus_document_owner(frame->id)) {
+            info.GetIsolate()->ThrowException(v8::Exception::Error(js_string(
+                info.GetIsolate(),
+                "WebScene could not focus the child browsing context")));
+          }
+          return;
+        }
         // A child browsing context may focus its own active element but must
         // not activate the top-level operating-system window.
         if (local_context != self->context.Get(info.GetIsolate())) return;
@@ -607,10 +678,14 @@
             }
             if (target_node_id != 0U
                 && target_node_id != std::numeric_limits<uint32_t>::max()
-                && unwrap_node(info.This()) != nullptr) {
+                && (unwrap_node(info.This()) != nullptr
+                    || self->message_port_binding_from_object(
+                        local_context, info.This()) != nullptr)) {
                 self->retain_dom_event_listener(registration, info.This());
             }
             registrations.push_back(std::move(registration));
+            self->update_message_port_reachability_from_object(
+                local_context, info.This());
         } else if (type == "resize") {
             const auto requested = info[1];
             for (const auto& registration : self->resize_listeners) {
@@ -716,6 +791,8 @@
                 self->clear_event_listener(registration);
                 break;
             }
+            self->update_message_port_reachability_from_object(
+                local_context, info.This());
             return;
         }
         if (type != "resize") return;
@@ -770,6 +847,7 @@
         event->Set(local_context, js_string(isolate, "bubbles"), v8::False(isolate)).Check();
         event->Set(local_context, js_string(isolate, "cancelable"), v8::False(isolate)).Check();
         event->Set(local_context, js_string(isolate, "composed"), v8::False(isolate)).Check();
+        event->Set(local_context, js_string(isolate, "isTrusted"), v8::False(isolate)).Check();
         event->Set(
             local_context,
             js_string(isolate, "__webSceneComposedPath"),
@@ -1209,6 +1287,7 @@
             remove_aborted(registrations);
         }
         remove_aborted(self->resize_listeners);
+        self->refresh_message_port_reachability();
 
         auto event = self->create_event_instance(local_context);
         event->Set(
@@ -1587,42 +1666,70 @@
         auto isolate_locker = lock_shared_isolate();
         v8::Isolate::Scope isolate_scope(isolate);
         v8::HandleScope handle_scope(isolate);
-        auto local_context = context.Get(isolate);
-        if (local_context.IsEmpty()) return true;
-        v8::Context::Scope context_scope(local_context);
-        auto target = local_context->Global();
-        auto event = create_event_instance(local_context);
-        event->Set(
-            local_context,
-            js_string(isolate, "type"),
-            js_string(isolate, focused ? "focus" : "blur")).Check();
-        event->Set(
-            local_context,
-            js_string(isolate, "bubbles"),
-            v8::False(isolate)).Check();
-        event->Set(
-            local_context,
-            js_string(isolate, "cancelable"),
-            v8::False(isolate)).Check();
-        v8::Local<v8::Value> dispatcher;
-        if (!target->Get(
-                local_context,
-                js_string(isolate, "dispatchEvent")).ToLocal(&dispatcher)
-            || !dispatcher->IsFunction()) {
-            last_error = "Window focus dispatcher is unavailable";
-            return false;
+        return dispatch_window_focus_event(focused_document_owner_id, focused);
+    }
+
+    bool dispatch_window_focus_event(uint32_t owner_id, bool focused) {
+      auto local_context = context.Get(isolate);
+      if (owner_id != 0U) {
+        const auto found = actual_frame_contexts.find(owner_id);
+        if (found == actual_frame_contexts.end() || found->second.IsEmpty()) {
+          return true;
         }
-        v8::TryCatch try_catch(isolate);
-        v8::Local<v8::Value> arguments[] = {event};
-        if (dispatcher.As<v8::Function>()->Call(
-                local_context, target, 1, arguments).IsEmpty()) {
-            last_error = "Window focus dispatch failed: "
-                + describe_reported_exception(try_catch, local_context);
-            ++frame_script_error_count;
-            return false;
-        }
-        perform_microtask_checkpoint();
+        local_context = found->second.Get(isolate);
+      }
+      if (local_context.IsEmpty())
         return true;
+      v8::Context::Scope context_scope(local_context);
+      auto target = local_context->Global();
+      auto event = create_event_instance(local_context);
+      event
+          ->Set(local_context, js_string(isolate, "type"),
+                js_string(isolate, focused ? "focus" : "blur"))
+          .Check();
+      event
+          ->Set(local_context, js_string(isolate, "bubbles"),
+                v8::False(isolate))
+          .Check();
+      event
+          ->Set(local_context, js_string(isolate, "cancelable"),
+                v8::False(isolate))
+          .Check();
+      v8::Local<v8::Value> dispatcher;
+      if (!target->Get(local_context, js_string(isolate, "dispatchEvent"))
+               .ToLocal(&dispatcher) ||
+          !dispatcher->IsFunction()) {
+        last_error = "Window focus dispatcher is unavailable";
+        return false;
+      }
+      v8::TryCatch try_catch(isolate);
+      v8::Local<v8::Value> arguments[] = {event};
+      if (dispatcher.As<v8::Function>()
+              ->Call(local_context, target, 1, arguments)
+              .IsEmpty()) {
+        last_error = "Window focus dispatch failed: " +
+                     describe_reported_exception(try_catch, local_context);
+        ++frame_script_error_count;
+        return false;
+      }
+      perform_microtask_checkpoint();
+      return true;
+    }
+
+    bool set_focus_document_owner(uint32_t owner_id) {
+      if (focused_document_owner_id == owner_id)
+        return true;
+      const auto previous_owner_id = focused_document_owner_id;
+      if (document_focused &&
+          !dispatch_window_focus_event(previous_owner_id, false)) {
+        return false;
+      }
+      focused_document_owner_id = owner_id;
+      if (document_focused && !dispatch_window_focus_event(owner_id, true)) {
+        return false;
+      }
+      document.mark_dirty();
+      return true;
     }
 
     bool set_fullscreen(bool fullscreen)
@@ -2248,6 +2355,10 @@
             reject("Clipboard writes require an active document", "NotAllowedError");
             return;
         }
+        if (!self->current_permissions_policy_allows("clipboard-write")) {
+            reject("Clipboard writes are blocked by Permissions Policy", "NotAllowedError");
+            return;
+        }
         const auto content_type = to_utf8(info.GetIsolate(), info[0]);
         if (content_type != "text/plain" && content_type != "text/html"
             && content_type != "image/png" && content_type != "image/jpeg"
@@ -2325,8 +2436,12 @@
             }
             resolver->Reject(local_context, error).Check();
         };
-        if (self == nullptr || local_context != self->context.Get(info.GetIsolate())) {
-            reject("Clipboard reads require the active top-level document", "NotAllowedError");
+        if (self == nullptr) {
+            reject("Clipboard reads require an active document", "NotAllowedError");
+            return;
+        }
+        if (!self->current_permissions_policy_allows("clipboard-read")) {
+            reject("Clipboard reads are blocked by Permissions Policy", "NotAllowedError");
             return;
         }
         constexpr auto user_activation_lifetime = std::chrono::seconds(5);

@@ -2390,30 +2390,43 @@
         std::string current_value)
     {
         document.mark_dirty();
-        if (previous_value.empty() == current_value.empty()) {
-            return;
-        }
+        const auto empty_state_changed=previous_value.empty()!=current_value.empty();
+        const auto previous_range=forms::range_state(subject,previous_value);
+        const auto current_range=forms::range_state(subject,current_value);
+        const auto range_state_changed=previous_range!=current_range;
+        if(!empty_state_changed && !range_state_changed) return;
         webscene_frame_trace::scope invalidation_trace(
             frame_trace,
             "form-state-invalidation-start",
             "form-state-invalidation-end",
             0);
-        const auto indexed = css_invalidation_rules_by_attribute.find(
-            "$live-form-value");
-        const std::span<const size_t> changed_rules =
-            indexed == css_invalidation_rules_by_attribute.end()
-            ? std::span<const size_t>{}
-            : std::span<const size_t>{indexed->second};
+        std::vector<size_t> changed_rule_storage;
+        const auto append_rules=[&](std::string_view dependency) {
+            const auto indexed=css_invalidation_rules_by_attribute.find(
+                std::string(dependency));
+            if(indexed!=css_invalidation_rules_by_attribute.end())
+                changed_rule_storage.insert(changed_rule_storage.end(),
+                    indexed->second.begin(),indexed->second.end());
+        };
+        if(empty_state_changed) append_rules("$live-form-value");
+        if(range_state_changed) append_rules("$live-form-range");
+        std::ranges::sort(changed_rule_storage);
+        changed_rule_storage.erase(
+            std::unique(changed_rule_storage.begin(),changed_rule_storage.end()),
+            changed_rule_storage.end());
+        const auto changed_rules=std::span<const size_t>{
+            changed_rule_storage.data(),changed_rule_storage.size()};
         recascade_selector_transition(
             subject,
             changed_rules,
-            [](const css::css_compound_dependencies& dependencies) {
+            [&](const css::css_compound_dependencies& dependencies) {
                 css::css_invalidation_targets result;
-                const auto found = dependencies.attributes.find(
-                    "$live-form-value");
-                if (found != dependencies.attributes.end()) {
-                    result.include(found->second);
-                }
+                const auto include=[&](std::string_view dependency) {
+                    const auto found=dependencies.attributes.find(std::string(dependency));
+                    if(found!=dependencies.attributes.end()) result.include(found->second);
+                };
+                if(empty_state_changed) include("$live-form-value");
+                if(range_state_changed) include("$live-form-range");
                 return result;
             },
             [&] { subject.mutable_form_control().value = previous_value; },
@@ -2857,6 +2870,10 @@
                     owner->id,
                     shadow_root == nullptr ? 0U : shadow_root->id);
             }
+            // Adopted sheets are the final author sheets for their document or
+            // shadow root. Reappend them after any owner-backed replacement so
+            // later <style> mutation cannot move normal author rules past them.
+            reappend_adopted_stylesheets_for_cascade_root(root->id);
             rebuild_css_rule_indexes_and_root_variables();
             schedule_style_recascade(*root, true, "stylesheet-change");
         }
@@ -3351,6 +3368,9 @@
                     style->id,
                     shadow_root == nullptr ? 0U : shadow_root->id);
             }
+        }
+        if (auto* root = css_cascade_root_for_node(node); root != nullptr) {
+            reappend_adopted_stylesheets_for_cascade_root(root->id);
         }
         recascade_after_stylesheet_change();
     }

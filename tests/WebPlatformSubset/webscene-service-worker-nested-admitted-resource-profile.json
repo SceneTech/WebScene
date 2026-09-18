@@ -1,0 +1,26 @@
+{
+  "profile": "webscene-service-worker-nested-admitted-resource-1",
+  "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+  "runtime": "v8",
+  "viewport": { "width": 800, "height": 600, "deviceScaleFactor": 1 },
+  "required": [
+    {
+      "path": "contracts/service-worker-nested-admitted-resource.html",
+      "type": "contract",
+      "capabilities": [
+        "service-worker-nested-resource-client",
+        "service-worker-outer-client-discovery",
+        "service-worker-nested-resource-retirement"
+      ],
+      "evidence": [
+        "service-workers-fetch-event-client-id-derived",
+        "service-workers-clients-match-all-derived",
+        "vscode-oss-webview-resource-client-ancestry"
+      ],
+      "reason": "Browser and native contract for preserving the nested resource client while discovering the outer admission owner across repeated frame replacement.",
+      "nativeNavigation": true
+    }
+  ],
+  "harnessBlocked": [],
+  "excluded": []
+}

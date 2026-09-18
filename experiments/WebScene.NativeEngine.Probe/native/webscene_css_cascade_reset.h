@@ -13,6 +13,24 @@ inline void reset_cascaded_style(dom_node& node,
 {
         node.style.important_property_mask = 0;
         node.style.important_margin_sides = 0;
+        node.style.aspect_ratio_width = 0;
+        node.style.aspect_ratio_height = 0;
+        node.style.aspect_ratio_inline = false;
+        node.style.aspect_ratio_inline_important = false;
+        node.style.aspect_ratio_important = false;
+        if (const auto authored = node.authored_style().declarations.find("aspect-ratio");
+            authored != node.authored_style().declarations.end()) {
+            auto ratio_width = 0.0F;
+            auto ratio_height = 0.0F;
+            const auto resolved = resolve_value(node, authored->second, variables);
+            if (parse_preferred_aspect_ratio(resolved, ratio_width, ratio_height)) {
+                node.style.aspect_ratio_width = ratio_width;
+                node.style.aspect_ratio_height = ratio_height;
+                node.style.aspect_ratio_inline = true;
+                node.style.aspect_ratio_inline_important =
+                    node.authored_style().important_declarations.contains("aspect-ratio");
+            }
+        }
         node.style.scrollbar_hidden = false;
         node.style.scrollbar_visibility_important = false;
         node.style.reset_scrollbar_style();

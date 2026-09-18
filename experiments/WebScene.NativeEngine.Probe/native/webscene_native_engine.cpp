@@ -4,6 +4,7 @@
 #include "webscene_native_dom.h"
 #include "webscene_v8_runtime.h"
 #include "webscene_runtime_diagnostics.h"
+#include "webscene_profile_storage.h"
 #include "webscene_frame_trace.h"
 #include "graphics/engine_wake.h"
 #include "graphics/webgpu_canvas_interop.h"
@@ -25,6 +26,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <deque>
+#include <filesystem>
 #include <iterator>
 #include <memory>
 #include <mutex>
@@ -523,6 +525,38 @@ struct webscene_engine final {
         const webscene_file_grant_create_file_completion_v2& completion) {
         return file_grant_create_file_broker_v2_.complete(completion);
     }
+    bool queue_file_grant_create_directory_request_v2(
+        const webscene_file_grant_create_directory_request_v2& request,
+        webscene_native::file_grant_create_directory_completion_callback_v2 callback) {
+        if (!file_grant_create_directory_broker_v2_.queue(
+                request, std::move(callback))) return false;
+        notify_host_work();
+        return true;
+    }
+    std::unique_ptr<webscene_native::file_grant_create_directory_request_lease_v2>
+    take_file_grant_create_directory_request_v2() {
+        return file_grant_create_directory_broker_v2_.take();
+    }
+    bool complete_file_grant_create_directory_request_v2(
+        const webscene_file_grant_create_directory_completion_v2& completion) {
+        return file_grant_create_directory_broker_v2_.complete(completion);
+    }
+    bool queue_file_grant_remove_request_v2(
+        const webscene_file_grant_remove_request_v2& request,
+        webscene_native::file_grant_remove_completion_callback_v2 callback) {
+        if (!file_grant_remove_broker_v2_.queue(request, std::move(callback)))
+            return false;
+        notify_host_work();
+        return true;
+    }
+    std::unique_ptr<webscene_native::file_grant_remove_request_lease_v2>
+    take_file_grant_remove_request_v2() {
+        return file_grant_remove_broker_v2_.take();
+    }
+    bool complete_file_grant_remove_request_v2(
+        const webscene_file_grant_remove_completion_v2& completion) {
+        return file_grant_remove_broker_v2_.complete(completion);
+    }
     bool queue_file_grant_release_request_v2(
         const webscene_file_grant_release_request_v2& request) {
         if (!file_grant_release_broker_v2_.queue(request)) return false;
@@ -628,6 +662,9 @@ private:
         file_grant_directory_broker_v2_;
     webscene_native::file_grant_create_file_broker_v2
         file_grant_create_file_broker_v2_;
+    webscene_native::file_grant_create_directory_broker_v2
+        file_grant_create_directory_broker_v2_;
+    webscene_native::file_grant_remove_broker_v2 file_grant_remove_broker_v2_;
     webscene_native::file_grant_release_broker_v2 file_grant_release_broker_v2_;
 #if defined(WEBSCENE_NATIVE_ENGINE_WITH_V8)
     std::unique_ptr<webscene_native::v8_dom_runtime> runtime_;
@@ -1765,6 +1802,51 @@ webscene_scene_acquire_status acquire_scene_v3(webscene_engine* engine,
     } catch (const std::bad_alloc&) { return WEBSCENE_SCENE_ACQUIRE_OUT_OF_MEMORY; }
     catch (...) { return WEBSCENE_SCENE_ACQUIRE_INTERNAL_ERROR; }
 }
+
+uint32_t webscene_profile_clear_data_v1(
+    const char* storage_directory,
+    size_t storage_directory_length,
+    const char* storage_partition_key,
+    size_t storage_partition_key_length,
+    uint64_t storage_quota_bytes,
+    uint32_t flags)
+{
+    if (storage_directory == nullptr || storage_directory_length == 0U
+        || storage_partition_key == nullptr || storage_partition_key_length == 0U
+        || (flags & (WEBSCENE_PROFILE_CLEAR_COOKIES_V1
+            | WEBSCENE_PROFILE_CLEAR_LOCAL_STORAGE_V1
+            | WEBSCENE_PROFILE_CLEAR_ALL_SITE_DATA_V1)) == 0U) {
+        return WEBSCENE_PROFILE_STATUS_INVALID_ARGUMENT_V1;
+    }
+    try {
+        const auto result = webscene_native::browser_profile_storage::clear_partition_sync(
+            std::filesystem::path(std::string(storage_directory, storage_directory_length)),
+            std::string(storage_partition_key, storage_partition_key_length),
+            storage_quota_bytes,
+            ((flags & WEBSCENE_PROFILE_CLEAR_COOKIES_V1) != 0U
+                    ? webscene_native::profile_clear_cookies : 0U)
+                | ((flags & WEBSCENE_PROFILE_CLEAR_LOCAL_STORAGE_V1) != 0U
+                    ? webscene_native::profile_clear_local_storage : 0U)
+                | ((flags & WEBSCENE_PROFILE_CLEAR_ALL_SITE_DATA_V1) != 0U
+                    ? webscene_native::profile_clear_all_site_data : 0U));
+        switch (result.status) {
+        case webscene_native::profile_storage_status::ok:
+        case webscene_native::profile_storage_status::not_found:
+            return WEBSCENE_PROFILE_STATUS_OK_V1;
+        case webscene_native::profile_storage_status::busy:
+            return WEBSCENE_PROFILE_STATUS_BUSY_V1;
+        case webscene_native::profile_storage_status::quota_exceeded:
+            return WEBSCENE_PROFILE_STATUS_QUOTA_EXCEEDED_V1;
+        case webscene_native::profile_storage_status::corrupt:
+            return WEBSCENE_PROFILE_STATUS_CORRUPT_V1;
+        case webscene_native::profile_storage_status::unavailable:
+        case webscene_native::profile_storage_status::io_error:
+            return WEBSCENE_PROFILE_STATUS_IO_ERROR_V1;
+        }
+    } catch (...) {
+    }
+    return WEBSCENE_PROFILE_STATUS_IO_ERROR_V1;
+}
 }
 webscene_scene_acquire_status webscene_engine_acquire_latest_scene_v3(webscene_engine* engine,
     const webscene_scene_acquire_options_v3* options,const webscene_scene_view_v3** result)
@@ -2306,6 +2388,49 @@ uint8_t webscene_engine_complete_file_grant_create_file_request_v2(
     try {
         return engine->complete_file_grant_create_file_request_v2(*completion);
     } catch (...) { return 0; }
+}
+const webscene_file_grant_create_directory_request_v2*
+webscene_engine_take_file_grant_create_directory_request_v2(webscene_engine* engine) {
+    if (engine == nullptr) return nullptr;
+    try {
+        auto request = engine->take_file_grant_create_directory_request_v2();
+        const auto* raw = request.release();
+        return raw == nullptr ? nullptr : &raw->view;
+    } catch (...) { return nullptr; }
+}
+void webscene_file_grant_create_directory_request_release_v2(
+    const webscene_file_grant_create_directory_request_v2* request) {
+    delete reinterpret_cast<const
+        webscene_native::file_grant_create_directory_request_lease_v2*>(request);
+}
+uint8_t webscene_engine_complete_file_grant_create_directory_request_v2(
+    webscene_engine* engine,
+    const webscene_file_grant_create_directory_completion_v2* completion) {
+    if (engine == nullptr || completion == nullptr) return 0;
+    try {
+        return engine->complete_file_grant_create_directory_request_v2(*completion);
+    } catch (...) { return 0; }
+}
+const webscene_file_grant_remove_request_v2*
+webscene_engine_take_file_grant_remove_request_v2(webscene_engine* engine) {
+    if (engine == nullptr) return nullptr;
+    try {
+        auto request = engine->take_file_grant_remove_request_v2();
+        const auto* raw = request.release();
+        return raw == nullptr ? nullptr : &raw->view;
+    } catch (...) { return nullptr; }
+}
+void webscene_file_grant_remove_request_release_v2(
+    const webscene_file_grant_remove_request_v2* request) {
+    delete reinterpret_cast<const
+        webscene_native::file_grant_remove_request_lease_v2*>(request);
+}
+uint8_t webscene_engine_complete_file_grant_remove_request_v2(
+    webscene_engine* engine,
+    const webscene_file_grant_remove_completion_v2* completion) {
+    if (engine == nullptr || completion == nullptr) return 0;
+    try { return engine->complete_file_grant_remove_request_v2(*completion); }
+    catch (...) { return 0; }
 }
 const webscene_file_grant_release_request_v2*
 webscene_engine_take_file_grant_release_request_v2(webscene_engine* engine) {

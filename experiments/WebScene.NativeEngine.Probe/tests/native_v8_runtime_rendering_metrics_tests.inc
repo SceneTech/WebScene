@@ -816,10 +816,10 @@ void test_generated_pseudo_font_family_scene_and_scale_gate()
         auto advance = font_size * 3.0F;
         if (selected.find("FixtureIconAlternate") != std::string_view::npos) {
             ++state.alternate_calls;
-            advance = 18.0F;
+            advance = font_size * 0.9F;
         } else if (selected.find("FixtureIcon") != std::string_view::npos) {
             ++state.fixture_calls;
-            advance = 12.0F;
+            advance = font_size * 0.6F;
         } else if (selected.find("ParentFace") != std::string_view::npos) {
             ++state.parent_calls;
         }
@@ -885,6 +885,9 @@ void test_generated_pseudo_font_family_scene_and_scale_gate()
                             + std::string(resource);
                     }
                     if (command.rgba != 0x0C2238FFU) continue;
+                    require(resource.starts_with("19.5\t"),
+                        "generated pseudo text command did not serialize the resolved 19.5px size: "
+                            + std::string(resource));
                     const auto family_field = "\t" + std::string(expected_family) + "\t";
                     require(resource.find(family_field) != std::string_view::npos,
                         "generated pseudo text command used the originating font family: "
@@ -927,10 +930,10 @@ void test_generated_pseudo_font_family_scene_and_scale_gate()
         const rules = document.createElement('style');
         rules.id = 'pseudo-font-rules';
         rules.textContent = `
-          .icon-host { display:block; font-family:ParentFace; height:20px; }
+          .icon-host { display:block; font-family:ParentFace; font-size:13px; height:20px; }
           .icon-host::before { content:'\\e023'; display:inline-block;
             color:rgb(12,34,56); font-family:FixtureIcon;
-            font-size:20px; line-height:20px; }
+            font-size:150%; line-height:20px; }
           #single-icon::before { font-family:WrongFace; }
           .icon-host::before { font-family:FixtureIcon !important; }
           .icon-host.alternate::before { font-family:FixtureIconAlternate !important; }
@@ -943,15 +946,15 @@ void test_generated_pseudo_font_family_scene_and_scale_gate()
         document.body.appendChild(host);
       })()
     )JS", "native-pseudo-font-family-setup.js");
-    const auto initial = capture("FixtureIcon", 12.0F, 1U);
+    const auto initial = capture("FixtureIcon", 11.7F, 1U);
     execute(engine,
         "document.getElementById('single-icon').classList.add('inherited')",
         "native-pseudo-font-family-inherit.js");
-    const auto inherited = capture("ParentFace", 60.0F, 1U);
+    const auto inherited = capture("ParentFace", 58.5F, 1U);
     execute(engine,
         "document.getElementById('single-icon').classList.remove('inherited')",
         "native-pseudo-font-family-inherit-restore.js");
-    const auto inherited_restored = capture("FixtureIcon", 12.0F, 1U);
+    const auto inherited_restored = capture("FixtureIcon", 11.7F, 1U);
     require(initial.checksum != inherited.checksum
             && initial.checksum == inherited_restored.checksum
             && initial.node_ids == inherited_restored.node_ids,
@@ -959,11 +962,11 @@ void test_generated_pseudo_font_family_scene_and_scale_gate()
     execute(engine,
         "document.getElementById('single-icon').classList.add('alternate')",
         "native-pseudo-font-family-alternate.js");
-    const auto alternate = capture("FixtureIconAlternate", 18.0F, 1U);
+    const auto alternate = capture("FixtureIconAlternate", 17.55F, 1U);
     execute(engine,
         "document.getElementById('single-icon').classList.remove('alternate')",
         "native-pseudo-font-family-restore.js");
-    const auto restored = capture("FixtureIcon", 12.0F, 1U);
+    const auto restored = capture("FixtureIcon", 11.7F, 1U);
     require(initial.checksum != alternate.checksum
             && initial.checksum == restored.checksum
             && initial.node_ids == restored.node_ids,
@@ -980,10 +983,11 @@ void test_generated_pseudo_font_family_scene_and_scale_gate()
       (() => {
         const rules = document.getElementById('pseudo-font-rules');
         rules.textContent += `
-          #bulk > .bulk-icon { display:block; height:20px; font-family:ParentFace; }
+          #bulk > .bulk-icon { display:block; height:20px; font-family:ParentFace;
+            font-size:13px; }
           #bulk > .bulk-icon::before { content:'\\e023'; display:inline-block;
             color:rgb(12,34,56); font-family:FixtureIcon;
-            font-size:20px; line-height:20px; }
+            font-size:150%; line-height:20px; }
           #bulk.alternate > .bulk-icon::before { font-family:FixtureIconAlternate; }
         `;
         const bulk = document.createElement('main');
@@ -1001,13 +1005,13 @@ void test_generated_pseudo_font_family_scene_and_scale_gate()
     require(evaluate(engine, "document.getElementById('bulk').children.length",
                 "native-pseudo-font-family-scale-count.js") == "4096",
         "pseudo font-family scale fixture did not create 4,096 icons");
-    const auto bulk_initial = capture("FixtureIcon", 12.0F, 4096U);
+    const auto bulk_initial = capture("FixtureIcon", 11.7F, 4096U);
     execute(engine, "document.getElementById('bulk').classList.add('alternate')",
         "native-pseudo-font-family-scale-alternate.js");
-    const auto bulk_alternate = capture("FixtureIconAlternate", 18.0F, 4096U);
+    const auto bulk_alternate = capture("FixtureIconAlternate", 17.55F, 4096U);
     execute(engine, "document.getElementById('bulk').classList.remove('alternate')",
         "native-pseudo-font-family-scale-restore.js");
-    const auto bulk_restored = capture("FixtureIcon", 12.0F, 4096U);
+    const auto bulk_restored = capture("FixtureIcon", 11.7F, 4096U);
     require(bulk_initial.checksum != bulk_alternate.checksum
             && bulk_initial.checksum == bulk_restored.checksum
             && bulk_initial.node_ids == bulk_restored.node_ids,
@@ -1036,7 +1040,7 @@ void test_generated_pseudo_font_family_scene_and_scale_gate()
     require(elapsed < 5000.0,
         "4,096 pseudo icons across 100 family cycles exceeded 5 seconds: "
             + std::to_string(elapsed));
-    const auto bulk_after_cycles = capture("FixtureIcon", 12.0F, 4096U);
+    const auto bulk_after_cycles = capture("FixtureIcon", 11.7F, 4096U);
     require(bulk_after_cycles.checksum == bulk_initial.checksum
             && bulk_after_cycles.node_ids == bulk_initial.node_ids,
         "scaled family cycles did not restore the original retained scene");

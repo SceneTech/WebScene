@@ -57,6 +57,17 @@
                 outer_local_storage_by_origin.erase(known);
             }
         }
+        const auto local_quota = storage_quota_bytes == 0U
+            ? 5U * 1024U * 1024U
+            : std::min<uint64_t>(storage_quota_bytes, 5U * 1024U * 1024U);
+        outer_local_storage.persistence = profile_storage;
+        outer_local_storage.origin = next_origin;
+        outer_local_storage.quota_bytes = local_quota;
+        outer_local_storage.local = true;
+        outer_local_storage.accessible = !next_origin.empty() && next_origin != "null";
+        outer_session_storage.origin = next_origin;
+        outer_session_storage.local = false;
+        outer_session_storage.accessible = !next_origin.empty() && next_origin != "null";
         outer_storage_origin = next_origin;
     }
 
@@ -122,6 +133,10 @@
             "The document navigated before directory enumeration completed");
         cancel_file_grant_create_file_promises(
             "The document navigated before file creation completed");
+        cancel_file_grant_create_directory_promises(
+            "The document navigated before directory creation completed");
+        cancel_file_grant_remove_promises(
+            "The document navigated before entry removal completed");
         fullscreen_element = nullptr;
         document_fullscreen = false;
         { std::lock_guard lock(host_request_mutex); host_requests.clear(); }
@@ -163,6 +178,7 @@
         {
             std::lock_guard lock(document_generation_mutex);
             document_generation.fetch_add(1U, std::memory_order_acq_rel);
+            frame_navigation_generations.clear();
         }
         std::erase_if(retired_frame_preparations, [](const auto& future) {
             return !future.valid()
@@ -183,6 +199,7 @@
         resize_listeners.clear();
         media_query_lists.clear();
         timers.clear();
+        pending_file_reading_tasks.clear();
         active_timer_id = 0U;
         active_timer_cancelled = false;
         pending_window_messages.clear();
@@ -198,7 +215,9 @@
         resize_observers_pending = false;
         frame_load_listeners.clear();
         frame_dom_content_loaded_listeners.clear();
+        frame_pagehide_dispatched.clear();
         frame_event_listeners.clear();
+        window_selections.clear();
 #if defined(WEBSCENE_NATIVE_ENGINE_WITH_V8_INSPECTOR)
         for (auto& [id, frame] : actual_frame_contexts) {
             static_cast<void>(id);
@@ -214,6 +233,7 @@
         frame_base_addresses.clear();
         provisional_frame_bodies.clear();
         frame_session_storage.clear();
+        frame_local_storage.clear();
         canvas_contexts.clear();
         canvas_states.clear();
 
@@ -242,6 +262,7 @@
         dispatching_user_input = false;
         executing_legacy_clipboard_command = false;
         active_element = nullptr;
+        focused_document_owner_id = 0U;
         focus_visible = false;
         last_user_activation = {};
         last_animation_frame_timestamp_ms = 0;
@@ -263,6 +284,9 @@
         pending_stylesheet_replacements.clear();
         pending_stylesheet_replacement_bytes = 0U;
         stylesheet_cssom_sources.clear();
+        adopted_stylesheet_publications.clear();
+        adopted_stylesheet_owner_scopes.clear();
+        next_adopted_stylesheet_owner_id = 0xf0000000U;
         detached_documents.clear();
         detached_document_roots.clear();
         node_wrappers.clear();
@@ -353,7 +377,8 @@
         auto scripts = compiled ? std::vector<frame_script>{} : parse_frame_scripts(html);
         if (compiled) {
             for (const auto& entry : compiled->scripts)
-                scripts.push_back({entry.url, entry.source, entry.defer, scripts.size(), entry.module, entry.name});
+                scripts.push_back({entry.url, entry.source, {}, entry.defer,
+                    scripts.size(), 0U, entry.module, entry.name});
         }
         // Preserve parallel host prefetch for ordinary documents. Once a
         // controller is claimed, parser requests wait for the client realm and

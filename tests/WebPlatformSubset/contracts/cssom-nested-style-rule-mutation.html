@@ -1,0 +1,240 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Nested CSSStyleRule reflection and mutation stays live</title>
+<body>
+<script>
+  const state = window.__webSceneWptState = {
+    complete: false, harness: null, results: [], diagnostics: []
+  };
+
+  function record(name, error) {
+    state.results.push({
+      name,
+      status: error ? "FAIL" : "PASS",
+      message: error ? String(error && error.message || error) : null,
+      stack: error && error.stack ? String(error.stack) : null
+    });
+  }
+
+  function exercise(document, view, prefix) {
+    const style = document.createElement("style");
+    const host = document.createElement("div");
+    const child = document.createElement("span");
+    const descendant = document.createElement("span");
+    host.className = `${prefix} active`;
+    child.className = "child nested-decoration";
+    descendant.className = "desc";
+    host.append(child, descendant);
+    style.textContent = `.${prefix} {
+      color: rgb(1, 2, 3);
+      & > .child { display: block; }
+      background: rgb(4, 5, 6);
+      .desc { visibility: hidden; }
+      @media (min-width: 1px) {
+        & > .nested-decoration { width: 7px; }
+      }
+    }`;
+    document.head.appendChild(style);
+    document.body.appendChild(host);
+
+    const sheet = style.sheet;
+    const outer = sheet.cssRules[0];
+    const rules = outer.cssRules;
+    const direct = rules[0];
+    const declarations = rules[1];
+    const implicit = rules[2];
+    const media = rules[3];
+    const mediaChild = media.cssRules[0];
+    const authoredText = style.textContent;
+    const discovered = [];
+    const collect = list => {
+      for (const rule of list) {
+        if (rule instanceof view.CSSStyleRule) {
+          if (rule.selectorText.includes("nested-decoration")) discovered.push(rule);
+          if (rule.cssRules?.length) collect(rule.cssRules);
+        } else if (rule.cssRules) collect(rule.cssRules);
+      }
+    };
+    collect(sheet.cssRules);
+    const initial = {
+      constructor: outer.constructor.name,
+      styleRule: outer instanceof view.CSSStyleRule,
+      rule: outer instanceof view.CSSRule,
+      grouping: outer instanceof view.CSSGroupingRule,
+      sameObject: outer.cssRules === rules,
+      ruleList: rules instanceof view.CSSRuleList,
+      length: rules.length,
+      parentStyle: outer.style.cssText,
+      direct: [direct.constructor.name, direct.selectorText,
+        direct.parentRule === outer, direct.parentStyleSheet === sheet,
+        direct.cssRules.length],
+      declarations: [declarations.constructor.name,
+        declarations instanceof view.CSSNestedDeclarations,
+        declarations instanceof view.CSSRule,
+        declarations.type, declarations.style.background,
+        declarations.parentRule === outer,
+        declarations.parentStyleSheet === sheet],
+      implicit: implicit.selectorText,
+      media: [media.constructor.name, media.parentRule === outer,
+        mediaChild.selectorText, mediaChild.parentRule === media,
+        mediaChild.parentStyleSheet === sheet],
+      discovered: discovered.length,
+      display: view.getComputedStyle(child).display,
+      visibility: view.getComputedStyle(descendant).visibility,
+      width: view.getComputedStyle(child).width
+    };
+
+    const errors = {};
+    for (const [name, invoke] of Object.entries({
+      missingInsert: () => outer.insertRule(),
+      missingDelete: () => outer.deleteRule(),
+      range: () => outer.insertRule("&.x {}", 99),
+      multiple: () => outer.insertRule("&.x {} &.y {}", 0),
+      imported: () => outer.insertRule('@import url("x.css");', 0),
+      namespace: () => outer.insertRule('@namespace x url("x");', 0)
+    })) {
+      try { invoke(); errors[name] = "none"; }
+      catch (error) { errors[name] = error.name; }
+    }
+
+    const declarationIndex = outer.insertRule("outline-width: 3px;", 0);
+    const insertedDeclaration = rules[declarationIndex];
+    const nestedIndex = outer.insertRule(
+      "&.active { display: none; }", rules.length);
+    const inserted = rules[nestedIndex];
+    const afterInsert = {
+      declarationIndex,
+      declaration: insertedDeclaration instanceof view.CSSNestedDeclarations,
+      declarationValue: insertedDeclaration.style.outlineWidth,
+      nestedIndex,
+      selector: inserted.selectorText,
+      parent: inserted.parentRule === outer,
+      sheet: inserted.parentStyleSheet === sheet,
+      display: view.getComputedStyle(host).display,
+      serialized: outer.cssText.includes("outline-width: 3px")
+        && outer.cssText.includes("&.active")
+    };
+
+    direct.style.display = "inline-block";
+    direct.selectorText = "& > .renamed-child";
+    child.className = "renamed-child nested-decoration";
+    declarations.style.background = "rgb(7, 8, 9)";
+    const afterMutation = {
+      selector: direct.selectorText,
+      display: view.getComputedStyle(child).display,
+      background: view.getComputedStyle(host).backgroundColor,
+      childSerialized: direct.cssText.includes("inline-block"),
+      parentSerialized: outer.cssText.includes("rgb(7, 8, 9)")
+    };
+
+    outer.deleteRule(nestedIndex);
+    const afterDelete = {
+      length: rules.length,
+      parentRule: inserted.parentRule,
+      parentStyleSheet: inserted.parentStyleSheet,
+      display: view.getComputedStyle(host).display,
+      textStable: style.textContent === authoredText
+    };
+
+    sheet.deleteRule(0);
+    outer.insertRule("&.active { display: none; }", outer.cssRules.length);
+    const detached = {
+      parentStyleSheet: outer.parentStyleSheet,
+      childParentStyleSheet: direct.parentStyleSheet,
+      length: outer.cssRules.length,
+      serialized: outer.cssText.includes("display: none"),
+      display: view.getComputedStyle(host).display,
+      textStable: style.textContent === authoredText
+    };
+
+    style.remove();
+    host.remove();
+    return { initial, errors, afterInsert, afterMutation, afterDelete, detached };
+  }
+
+  try {
+    const frame = document.createElement("iframe");
+    document.body.appendChild(frame);
+    const main = exercise(document, window, "nested-main");
+    const nested = exercise(frame.contentDocument, frame.contentWindow, "nested-frame");
+    const both = predicate => predicate(main) && predicate(nested);
+
+    record("nested style rules expose browser-shaped CSSOM identity",
+      both(value => value.initial.constructor === "CSSStyleRule"
+          && value.initial.styleRule && value.initial.rule
+          && !value.initial.grouping && value.initial.sameObject
+          && value.initial.ruleList && value.initial.length === 4
+          && value.initial.parentStyle === "color: rgb(1, 2, 3);"
+          && value.initial.direct[0] === "CSSStyleRule"
+          && value.initial.direct[1] === "& > .child"
+          && value.initial.direct[2] && value.initial.direct[3]
+          && value.initial.direct[4] === 0
+          && value.initial.declarations[0] === "CSSNestedDeclarations"
+          && value.initial.declarations.slice(1, 3).every(Boolean)
+          && value.initial.declarations[3] === 0
+          && value.initial.declarations[4] === "rgb(4, 5, 6)"
+          && value.initial.declarations.slice(5).every(Boolean)
+          && value.initial.implicit === "& .desc"
+          && value.initial.media[0] === "CSSMediaRule"
+          && value.initial.media.slice(1).every(Boolean)
+          && value.initial.discovered === 1
+          && value.initial.display === "block"
+          && value.initial.visibility === "hidden")
+        ? null : new Error(JSON.stringify({ main: main.initial, nested: nested.initial })));
+    record("nested style mutation reports browser exception names",
+      both(value => value.errors.missingInsert === "TypeError"
+          && value.errors.missingDelete === "TypeError"
+          && value.errors.range === "IndexSizeError"
+          && value.errors.multiple === "SyntaxError"
+          && value.errors.imported === "HierarchyRequestError"
+          && value.errors.namespace === "HierarchyRequestError")
+        ? null : new Error(JSON.stringify({ main: main.errors, nested: nested.errors })));
+    record("nested insertion publishes declarations and style rules synchronously",
+      both(value => value.afterInsert.declarationIndex === 0
+          && value.afterInsert.declaration
+          && value.afterInsert.declarationValue === "3px"
+          && value.afterInsert.nestedIndex === 5
+          && value.afterInsert.selector === "&.active"
+          && value.afterInsert.parent && value.afterInsert.sheet
+          && value.afterInsert.display === "none"
+          && value.afterInsert.serialized)
+        ? null : new Error(JSON.stringify({ main: main.afterInsert, nested: nested.afterInsert })));
+    record("nested selector and declaration mutation recascade synchronously",
+      both(value => value.afterMutation.selector === "& > .renamed-child"
+          && value.afterMutation.display === "inline-block"
+          && value.afterMutation.background === "rgb(7, 8, 9)"
+          && value.afterMutation.childSerialized
+          && value.afterMutation.parentSerialized)
+        ? null : new Error(JSON.stringify({ main: main.afterMutation, nested: nested.afterMutation })));
+    record("nested deletion detaches the removed rule and preserves owner text",
+      both(value => value.afterDelete.length === 5
+          && value.afterDelete.parentRule === null
+          && value.afterDelete.parentStyleSheet === null
+          && value.afterDelete.display === "block"
+          && value.afterDelete.textStable)
+        ? null : new Error(JSON.stringify({ main: main.afterDelete, nested: nested.afterDelete })));
+    record("detached nested rule trees mutate without recascading",
+      both(value => value.detached.parentStyleSheet === null
+          && value.detached.childParentStyleSheet === null
+          && value.detached.length === 6
+          && value.detached.serialized
+          && value.detached.display === "block"
+          && value.detached.textStable)
+        ? null : new Error(JSON.stringify({ main: main.detached, nested: nested.detached })));
+    state.diagnostics.push(JSON.stringify({ main, nested }));
+    frame.remove();
+  } catch (error) {
+    record("nested CSSStyleRule setup", error);
+  }
+
+  const failure = state.results.find(result => result.status !== "PASS");
+  state.harness = failure
+    ? { status: 1, message: failure.message, stack: failure.stack }
+    : { status: 0, message: null, stack: null };
+  state.complete = true;
+  const evidence = document.createElement("pre");
+  evidence.id = "cssom-nested-style-rule-evidence";
+  evidence.hidden = true;
+  evidence.textContent = JSON.stringify(state);
+  document.body.appendChild(evidence);
+</script>

@@ -117,6 +117,38 @@ if(BUILD_TESTING)
         COMMAND webscene_file_grant_create_file_header_tests)
     set_tests_properties(webscene_file_grant_create_file_header_tests PROPERTIES
         LABELS "native;file-system-access;abi;c11" TIMEOUT 10)
+    add_executable(webscene_file_grant_create_directory_contract_tests
+        tests/file_grant_create_directory_contract_tests.cpp)
+    target_compile_features(webscene_file_grant_create_directory_contract_tests PRIVATE cxx_std_20)
+    target_include_directories(webscene_file_grant_create_directory_contract_tests PRIVATE native)
+    add_test(NAME webscene_file_grant_create_directory_contract_tests
+        COMMAND webscene_file_grant_create_directory_contract_tests)
+    set_tests_properties(webscene_file_grant_create_directory_contract_tests PROPERTIES
+        LABELS "native;file-system-access;security;lifecycle;performance" TIMEOUT 20)
+    add_executable(webscene_file_grant_create_directory_header_tests
+        tests/file_grant_create_directory_header_tests.c)
+    target_compile_features(webscene_file_grant_create_directory_header_tests PRIVATE c_std_11)
+    target_include_directories(webscene_file_grant_create_directory_header_tests PRIVATE native)
+    add_test(NAME webscene_file_grant_create_directory_header_tests
+        COMMAND webscene_file_grant_create_directory_header_tests)
+    set_tests_properties(webscene_file_grant_create_directory_header_tests PROPERTIES
+        LABELS "native;file-system-access;abi;c11" TIMEOUT 10)
+    add_executable(webscene_file_grant_remove_contract_tests
+        tests/file_grant_remove_contract_tests.cpp)
+    target_compile_features(webscene_file_grant_remove_contract_tests PRIVATE cxx_std_20)
+    target_include_directories(webscene_file_grant_remove_contract_tests PRIVATE native)
+    add_test(NAME webscene_file_grant_remove_contract_tests
+        COMMAND webscene_file_grant_remove_contract_tests)
+    set_tests_properties(webscene_file_grant_remove_contract_tests PROPERTIES
+        LABELS "native;file-system-access;security;lifecycle;performance" TIMEOUT 20)
+    add_executable(webscene_file_grant_remove_header_tests
+        tests/file_grant_remove_header_tests.c)
+    target_compile_features(webscene_file_grant_remove_header_tests PRIVATE c_std_11)
+    target_include_directories(webscene_file_grant_remove_header_tests PRIVATE native)
+    add_test(NAME webscene_file_grant_remove_header_tests
+        COMMAND webscene_file_grant_remove_header_tests)
+    set_tests_properties(webscene_file_grant_remove_header_tests PROPERTIES
+        LABELS "native;file-system-access;abi;c11" TIMEOUT 10)
     add_executable(webscene_file_grant_release_contract_tests
         tests/file_grant_release_contract_tests.cpp)
     target_compile_features(webscene_file_grant_release_contract_tests PRIVATE cxx_std_20)
@@ -142,6 +174,17 @@ if(BUILD_TESTING)
         COMMAND webscene_indexeddb_storage_tests)
     set_tests_properties(webscene_indexeddb_storage_tests PROPERTIES
         LABELS "storage;durability;performance" TIMEOUT 20)
+    add_executable(webscene_profile_storage_tests
+        tests/profile_storage_tests.cpp
+        native/webscene_profile_storage.cpp)
+    target_compile_features(webscene_profile_storage_tests PRIVATE cxx_std_20)
+    target_include_directories(webscene_profile_storage_tests PRIVATE native)
+    target_link_libraries(webscene_profile_storage_tests PRIVATE Threads::Threads)
+    add_test(NAME webscene_profile_storage_tests
+        COMMAND webscene_profile_storage_tests)
+    set_tests_properties(webscene_profile_storage_tests PROPERTIES
+        LABELS "storage;cookies;web-storage;durability;security;performance"
+        TIMEOUT 20)
     add_executable(webscene_graphics_scene_abi_layout_tests tests/graphics_scene_abi_layout_tests.c)
     target_compile_features(webscene_graphics_scene_abi_layout_tests PRIVATE c_std_11)
     target_include_directories(webscene_graphics_scene_abi_layout_tests PRIVATE native)
@@ -218,7 +261,8 @@ endif()
 add_library(webscene_native_engine ${webscene_runtime_kind}
     native/webscene_native_engine.cpp
     native/webscene_secure_random.cpp
-    native/webscene_indexeddb_storage.cpp)
+    native/webscene_indexeddb_storage.cpp
+    native/webscene_profile_storage.cpp)
 if(TARGET webscene_core)
     target_link_libraries(webscene_native_engine PRIVATE webscene_core)
 else()
@@ -606,6 +650,15 @@ else()
 endif()
 
 if(BUILD_TESTING)
+    add_executable(webscene_css_pseudo_font_size_tests
+        tests/css_pseudo_font_size_tests.cpp
+        native/webscene_native_dom.cpp)
+    target_compile_features(webscene_css_pseudo_font_size_tests PRIVATE cxx_std_20)
+    target_include_directories(webscene_css_pseudo_font_size_tests PRIVATE native)
+    add_test(NAME webscene_css_pseudo_font_size_tests
+        COMMAND webscene_css_pseudo_font_size_tests)
+    set_tests_properties(webscene_css_pseudo_font_size_tests PROPERTIES
+        LABELS "native;css;layout;performance" TIMEOUT 10)
     add_executable(webscene_css_property_identity_tests
         tests/css_property_identity_tests.cpp
         native/webscene_native_dom.cpp)
@@ -991,6 +1044,12 @@ if(WEBSCENE_NATIVE_ENGINE_ENABLE_V8)
         add_test(NAME webscene_native_indexeddb_contract COMMAND webscene_native_engine_tests)
         add_test(NAME webscene_native_panel_listener_lifecycle COMMAND webscene_native_engine_tests)
         add_test(NAME webscene_native_navigation_realm COMMAND webscene_native_engine_tests)
+        add_test(NAME webscene_native_query_iframe_worker_bootstrap
+            COMMAND webscene_native_engine_tests)
+        set_tests_properties(webscene_native_query_iframe_worker_bootstrap PROPERTIES
+            ENVIRONMENT "WEBSCENE_NATIVE_ENGINE_TEST_FILTER=query-iframe-worker-bootstrap"
+            LABELS "native;runtime;iframe;worker;messageport;security;lifecycle;performance"
+            TIMEOUT 30)
         add_test(NAME webscene_native_file_system_access
             COMMAND webscene_native_engine_tests)
         set_tests_properties(webscene_native_file_system_access PROPERTIES

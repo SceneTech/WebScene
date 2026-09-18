@@ -13,6 +13,7 @@
       "type": "contract",
       "capabilities": [
         "cross-task-source-timer-fairness",
+        "file-reading-task-source-fairness",
         "remote-protocol-handshake-timing",
         "websocket-filereader-worker-messageport-fairness"
       ],
@@ -20,7 +21,7 @@
         "vscode-remote-extension-host-handshake-289",
         "chromium-task-source-control"
       ],
-      "reason": "A product-shaped 1,071,438-byte framed protocol write remains bounded across twenty cold/warm cycles while Worker, MessagePort, window-message, WebSocket, and FileReader work stays continuously ready. Due timers alternate with other observable task sources, preserving run-to-completion and microtask checkpoints while preventing protocol flush starvation."
+      "reason": "A product-shaped 1,071,438-byte framed protocol write remains bounded across twenty cold/warm cycles while Worker, MessagePort, window-message, WebSocket, and FileReader work stays continuously ready. Due timers alternate with other observable task sources, and FileReader completes within 25 ms under a 4,096-timer application backlog while preserving its asynchronous event order."
     }
   ],
   "harnessBlocked": [],

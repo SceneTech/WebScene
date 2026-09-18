@@ -7,7 +7,7 @@ namespace webscene_native::css {
 struct specified_property_sample final { std::string_view name; std::string_view value; };
 
 inline constexpr auto specified_property_samples = std::to_array<specified_property_sample>({
-    {"all","unset"},{"content","\"x\""},
+    {"all","unset"},{"content","\"x\""},{"aspect-ratio","16 / 9"},
     {"width","12px"},{"height","20%"},{"min-width","1rem"},{"min-height","2px"},
     {"max-width","none"},{"max-height","fit-content"},
     {"left","1px"},{"top","2px"},{"right","3px"},{"bottom","4px"},{"inset","1px 2px 3px 4px"},

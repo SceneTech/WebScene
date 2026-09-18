@@ -440,6 +440,8 @@ struct node_style final {
         bool visibility_hidden{false};
         bool align_self_specified{false};
         bool border_box{false};
+        float aspect_ratio_width{0};
+        float aspect_ratio_height{0};
         bool elliptical_border_radius{false};
     };
 
@@ -526,6 +528,8 @@ struct node_style final {
     float transform_rotate_degrees{0};
     float flex_grow{0};
     float flex_shrink{1};
+    float aspect_ratio_width{0};
+    float aspect_ratio_height{0};
     css_length flex_basis{};
     float opacity{1};
     uint32_t background_rgba{0};
@@ -816,6 +820,9 @@ struct node_style final {
     bool table_layout_fixed : 1 {false};
     uint64_t inline_property_mask{0};
     uint64_t important_property_mask{0};
+    bool aspect_ratio_inline{false};
+    bool aspect_ratio_inline_important{false};
+    bool aspect_ratio_important{false};
 private:
     void ensure_unique_pseudo_elements()
     {
@@ -1146,6 +1153,7 @@ struct dom_node final {
         bool selection_explicitly_empty{false};
         bool checkedness_initialized{false};
         bool checkedness{false};
+        bool indeterminate{false};
         bool value_initialized{false};
         bool dirty_value{false};
         bool input_focused{false};

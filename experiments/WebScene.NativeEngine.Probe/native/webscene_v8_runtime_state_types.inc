@@ -6,6 +6,18 @@
         dom_node* owner{nullptr};
     };
 
+    struct window_selection_state final {
+      uint32_t root_id{0U};
+      uint32_t anchor_node_id{0U};
+      uint32_t focus_node_id{0U};
+      size_t anchor_offset{0U};
+      size_t focus_offset{0U};
+      bool has_range{false};
+      uint64_t text_generation{std::numeric_limits<uint64_t>::max()};
+      std::vector<dom_node *> text_nodes;
+      v8::Global<v8::Object> object;
+    };
+
     struct timer_task final {
         uint32_t id;
         bool animation_frame;
@@ -92,10 +104,14 @@
     struct message_port_runtime_wake final {
         std::mutex mutex;
         bool stopped{false};
+        std::atomic<bool> reachability_changed{false};
         std::function<void()> notify;
 
-        void signal()
+        void signal(bool changed = false)
         {
+            if (changed) {
+                reachability_changed.store(true, std::memory_order_release);
+            }
             std::function<void()> callback;
             {
                 std::lock_guard lock(mutex);
@@ -103,6 +119,11 @@
                 callback = notify;
             }
             if (callback) callback();
+        }
+
+        bool consume_reachability_change()
+        {
+            return reachability_changed.exchange(false, std::memory_order_acq_rel);
         }
 
         void stop()
@@ -130,6 +151,9 @@
         std::shared_ptr<message_port_endpoint> endpoint;
         v8::Global<v8::Context> context;
         v8::Global<v8::Object> wrapper;
+        uint32_t event_target_id{};
+        bool started{false};
+        bool active_listener_rooted{false};
         bool transferred{false};
         bool reclaimed{false};
     };
@@ -137,6 +161,7 @@
     struct pending_window_message final {
         v8::Global<v8::Context> target_context;
         v8::Global<v8::Context> source_context;
+        v8::Global<v8::Object> source_window;
         clone_packet packet;
         std::string target_origin;
         std::string source_origin;
@@ -243,11 +268,20 @@
     struct frame_script final {
         std::string source;
         std::string code;
+        std::string nonce;
         bool defer{false};
         size_t index{0};
+        size_t document_offset{0};
         bool module{false};
         std::string compiled_name;
         bool no_module{false};
+    };
+
+    struct frame_script_content_security_policy final {
+        bool present{false};
+        bool restrict_scripts{false};
+        size_t effective_offset{0};
+        std::vector<std::string> sources;
     };
 
     enum class reflected_token_list_kind : uint8_t {
@@ -321,6 +355,8 @@
     struct frame_hydration_state final {
         dom_node* body{nullptr};
         std::vector<frame_script> scripts;
+        frame_script_content_security_policy script_policy;
+        uint64_t navigation_generation{0U};
         std::string body_opening;
         std::string base_address;
         v8::Global<v8::Context> context;
@@ -371,6 +407,11 @@
     struct session_storage_state final {
         std::vector<std::string> keys;
         std::unordered_map<std::string, std::string> values;
+        std::weak_ptr<browser_profile_storage> persistence;
+        std::string origin;
+        uint64_t quota_bytes{5U * 1024U * 1024U};
+        bool local{false};
+        bool accessible{true};
     };
 
     struct canvas_path_segment final {
@@ -662,6 +703,7 @@
         std::mutex mutex;
         std::vector<stored_cookie> cookies;
         uint64_t next_creation_order{1U};
+        std::weak_ptr<browser_profile_storage> persistence;
     };
 
     struct pending_fetch_task final {
@@ -715,12 +757,14 @@
         std::string body_opening;
         std::vector<std::string> stylesheets;
         std::vector<frame_script> scripts;
+        frame_script_content_security_policy script_policy;
         std::chrono::steady_clock::time_point started{};
         std::chrono::steady_clock::time_point completed{};
     };
 
     struct pending_frame_preparation final {
         std::string source;
+        uint64_t navigation_generation{0U};
         std::shared_future<std::shared_ptr<const prepared_frame>> future;
     };
 
@@ -1095,3 +1139,16 @@
     {
         return optional_isolate_locker(isolate, shared_isolate != nullptr);
     }
+    struct adopted_stylesheet_entry final
+    {
+        uint32_t owner_id{0U};
+        std::string source;
+    };
+    struct adopted_stylesheet_publication final
+    {
+        uint32_t root_id{0U};
+        uint32_t cascade_root_id{0U};
+        uint32_t shadow_scope_root_id{0U};
+        std::string base_address;
+        std::vector<adopted_stylesheet_entry> entries;
+    };

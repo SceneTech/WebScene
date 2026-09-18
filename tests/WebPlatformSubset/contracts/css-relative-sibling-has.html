@@ -1,0 +1,112 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Relative sibling :has() matching and reverse invalidation</title>
+<link rel="help" href="https://drafts.csswg.org/selectors-4/#relational">
+<style>
+  .result { display:block; width:11px; height:13px; }
+  .notebook-row:has(+ .notebook-row.selected) > .adjacent-result { width:41px; }
+  .general-row:has(~ .general-row [data-ready]) > .general-result { height:43px; }
+  .rendered-markdown p:has(+ [data-code] > .chat-codeblock-pill-widget) { --code-pill: pass; }
+  .quota-bit:not(.output-buffer):has(+ .quota-bit.output-buffer:not([style*="display: none"])) {
+    --quota-boundary: pass;
+  }
+</style>
+<body>
+<main id="root">
+  <section id="notebook">
+    <div id="adjacent-subject" class="notebook-row"><i class="adjacent-result result"></i></div>
+    text<!-- comments and text do not break element adjacency -->
+    <div id="adjacent-marker" class="notebook-row selected"></div>
+  </section>
+  <section id="general-list">
+    <div id="general-subject" class="general-row"><i class="general-result result"></i></div>
+    <div class="general-row"></div>
+    <div id="general-marker-row" class="general-row"><b id="general-marker" data-ready></b></div>
+  </section>
+  <section class="rendered-markdown">
+    <p id="chat-paragraph">paragraph</p>
+    <div data-code><span class="chat-codeblock-pill-widget"></span></div>
+  </section>
+  <section>
+    <i id="quota-subject" class="quota-bit"></i>
+    <i id="quota-output" class="quota-bit output-buffer"></i>
+  </section>
+</main>
+<script>
+  const state = window.__webSceneWptState = {
+    complete: false, harness: null, results: [], errors: [], diagnostics: []
+  };
+  function assert(condition, message) {
+    if (!condition) throw new Error(message);
+  }
+  function test(name, body) {
+    try {
+      body();
+      state.results.push({ name, status: "PASS", message: null, stack: null });
+    } catch (error) {
+      state.results.push({
+        name, status: "FAIL", message: String(error && error.message || error),
+        stack: error && error.stack ? String(error.stack) : null
+      });
+    }
+  }
+  const width = node => getComputedStyle(node).width;
+  const height = node => getComputedStyle(node).height;
+  const custom = (node, name) => getComputedStyle(node).getPropertyValue(name).trim();
+  const adjacentSubject = document.getElementById("adjacent-subject");
+  const adjacentMarker = document.getElementById("adjacent-marker");
+  const adjacentResult = adjacentSubject.querySelector(".adjacent-result");
+  const generalSubject = document.getElementById("general-subject");
+  const generalMarker = document.getElementById("general-marker");
+  const generalResult = generalSubject.querySelector(".general-result");
+
+  test("unchanged Code OSS adjacent notebook selector matches across non-elements", () => {
+    assert(adjacentSubject.matches(":has(+ .notebook-row.selected)"),
+      "adjacent notebook row did not match");
+    assert(width(adjacentResult) === "41px", `adjacent width was ${width(adjacentResult)}`);
+  });
+  test("unchanged Code OSS chained chat selector matches", () => {
+    const paragraph = document.getElementById("chat-paragraph");
+    assert(paragraph.matches(":has(+ [data-code] > .chat-codeblock-pill-widget)"),
+      "paragraph did not match the adjacent code-pill chain");
+    assert(custom(paragraph, "--code-pill") === "pass", "code-pill style did not apply");
+  });
+  test("nested functional selector in an adjacent arm matches", () => {
+    const subject = document.getElementById("quota-subject");
+    assert(subject.matches(':has(+ .quota-bit.output-buffer:not([style*="display: none"]))'),
+      "quota boundary did not match");
+    assert(custom(subject, "--quota-boundary") === "pass", "quota style did not apply");
+  });
+  test("adjacent sibling class mutation invalidates the preceding subject", () => {
+    adjacentMarker.classList.remove("selected");
+    assert(width(adjacentResult) === "11px", "removed selected class retained adjacent style");
+    adjacentMarker.classList.add("selected");
+    assert(width(adjacentResult) === "41px", "restored selected class did not restore adjacent style");
+  });
+  test("general sibling descendant mutation invalidates preceding subjects", () => {
+    assert(generalSubject.matches(":has(~ .general-row [data-ready])"),
+      "general sibling descendant did not match");
+    assert(height(generalResult) === "43px", `general height was ${height(generalResult)}`);
+    generalMarker.removeAttribute("data-ready");
+    assert(height(generalResult) === "13px", "removed descendant attribute retained general style");
+    generalMarker.setAttribute("data-ready", "");
+    assert(height(generalResult) === "43px", "restored descendant attribute did not restore general style");
+  });
+  test("adjacent insertion and removal update the surviving subject", () => {
+    adjacentMarker.remove();
+    assert(width(adjacentResult) === "11px", "removed final adjacent sibling retained style");
+    document.getElementById("notebook").appendChild(adjacentMarker);
+    assert(width(adjacentResult) === "41px", "reinserted adjacent sibling did not restore style");
+  });
+  test("relative sibling matching is forward-only", () => {
+    assert(!adjacentMarker.matches(":has(+ .notebook-row)"),
+      "relative adjacent matching searched backwards");
+    assert(!document.getElementById("general-marker-row").matches(":has(~ [data-ready])"),
+      "relative general matching searched backwards or into itself");
+  });
+  const failure = state.results.find(result => result.status !== "PASS");
+  state.harness = failure
+    ? { status: 1, message: failure.message, stack: failure.stack }
+    : { status: 0, message: null, stack: null };
+  state.complete = true;
+</script>

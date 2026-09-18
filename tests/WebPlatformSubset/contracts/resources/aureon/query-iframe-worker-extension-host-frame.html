@@ -1,0 +1,34 @@
+<!doctype html>
+<script>
+(() => {
+  const searchParams = new URL(document.location.href).searchParams;
+  const vscodeWebWorkerExtHostId =
+    searchParams.get('vscodeWebWorkerExtHostId') || '';
+  const parentOrigin = window.origin;
+  self.onmessage = event => {
+    if (event.origin !== parentOrigin
+        || event.data.type !== 'vscode.bootstrap.nls') return;
+    const source = `await import(${JSON.stringify(event.data.workerUrl)});`;
+    const blob = new Blob([source], {type:'application/javascript'});
+    const worker = new Worker(URL.createObjectURL(blob), {
+      name:'ExtensionHostWorker', type:'module'
+    });
+    worker.onerror = workerEvent => parent.postMessage({
+      vscodeWebWorkerExtHostId,
+      type:'worker-error',
+      message:workerEvent.message
+    }, parentOrigin);
+    worker.onmessage = workerEvent => {
+      const {data} = workerEvent;
+      parent.postMessage({vscodeWebWorkerExtHostId, data}, parentOrigin, [data]);
+    };
+    self.onmessage = bridgeEvent =>
+      worker.postMessage(bridgeEvent.data, bridgeEvent.ports);
+  };
+  parent.postMessage({
+    vscodeWebWorkerExtHostId,
+    type:'vscode.bootstrap.nls',
+    observedSearch:document.location.search
+  }, '*');
+})();
+</script>

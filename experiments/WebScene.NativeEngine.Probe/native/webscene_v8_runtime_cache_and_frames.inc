@@ -1209,7 +1209,18 @@
         auto& frame_storage = frame_session_storage.try_emplace(
             frame.id,
             std::make_unique<session_storage_state>()).first->second;
+        auto& frame_local = frame_local_storage.try_emplace(
+            frame.id,
+            std::make_unique<session_storage_state>()).first->second;
         const auto same_origin_access = iframe_owner_allows_same_origin_access(frame);
+        frame_local->local = true;
+        frame_local->origin = same_origin_access
+            ? outer_storage_origin : resource_origin(frame_base_addresses[&frame_body]);
+        frame_local->quota_bytes = storage_quota_bytes == 0U
+            ? 5U * 1024U * 1024U
+            : std::min<uint64_t>(storage_quota_bytes, 5U * 1024U * 1024U);
+        frame_local->accessible = !frame_local->origin.empty()
+            && frame_local->origin != "null";
         global->Set(
             local_context,
             js_string(isolate, "sessionStorage"),
@@ -1219,21 +1230,23 @@
             js_string(isolate, "localStorage"),
             create_session_storage(
                 local_context,
-                same_origin_access ? outer_local_storage : *frame_storage)).Check();
+                same_origin_access ? outer_local_storage : *frame_local)).Check();
         actual_frame_windows[frame.id].Reset(isolate, global);
         actual_frame_contexts[frame.id].Reset(isolate, local_context);
         actual_frame_documents[frame.id].Reset(isolate, frame_document_value);
+        frame_pagehide_dispatched.erase(frame.id);
         if (same_origin_access) {
-            const auto proxy_entry = frame_windows.find(frame.id);
-            if (proxy_entry != frame_windows.end() && !proxy_entry->second.IsEmpty()) {
-                auto owner_context = context.Get(isolate);
-                v8::Context::Scope owner_scope(owner_context);
-                auto proxy = proxy_entry->second.Get(isolate);
-                proxy->Set(
-                    owner_context,
-                    js_string(isolate, "document"),
-                    frame_document_value).Check();
-            }
+            // Every browsing context has a WindowProxy even when script has
+            // not read iframe.contentWindow yet. Materialize it before child
+            // script can post a message so MessageEvent.source can retain the
+            // stable proxy across the initial document replacement.
+            auto owner_context = context.Get(isolate);
+            v8::Context::Scope owner_scope(owner_context);
+            auto proxy = frame_window(frame);
+            proxy->Set(
+                owner_context,
+                js_string(isolate, "document"),
+                frame_document_value).Check();
         } else {
             const auto proxy_entry = frame_windows.find(frame.id);
             if (proxy_entry != frame_windows.end() && !proxy_entry->second.IsEmpty()) {
@@ -1322,6 +1335,9 @@
             get_window_scroll_y).Check();
         install_screen(local_context, global);
         global->Set(local_context, js_string(isolate, "setTimeout"), v8::Function::New(local_context, set_timeout).ToLocalChecked()).Check();
+        global->Set(local_context,
+            js_string(isolate, "__webSceneQueueFileReadingTask"),
+            v8::Function::New(local_context, queue_file_reading_task).ToLocalChecked()).Check();
         global->Set(local_context, js_string(isolate, "clearTimeout"), v8::Function::New(local_context, clear_timeout).ToLocalChecked()).Check();
         global->Set(local_context, js_string(isolate, "setInterval"), v8::Function::New(local_context, set_interval).ToLocalChecked()).Check();
         global->Set(local_context, js_string(isolate, "clearInterval"), v8::Function::New(local_context, clear_timeout).ToLocalChecked()).Check();
@@ -1440,6 +1456,11 @@
             local_context,
             js_string(isolate, "getSelection"),
             v8::Function::New(local_context, get_selection).ToLocalChecked()).Check();
+        global
+            ->Set(
+                local_context, js_string(isolate, "find"),
+                v8::Function::New(local_context, window_find).ToLocalChecked())
+            .Check();
         global->Set(local_context, js_string(isolate, "atob"),
             v8::Function::New(local_context, window_atob).ToLocalChecked()).Check();
         global->Set(local_context, js_string(isolate, "btoa"),
@@ -2046,7 +2067,9 @@
             if (!stale) {
                 const auto candidate_source = candidate->attributes.find("src");
                 stale = candidate_source == candidate->attributes.end()
-                    || candidate_source->second != iterator->second.source;
+                    || candidate_source->second != iterator->second.source
+                    || current_iframe_navigation_generation(candidate->id)
+                        != iterator->second.navigation_generation;
             }
             if (stale
                 && iterator->second.future.valid()
@@ -2080,20 +2103,26 @@
         const auto outer_base_address = document_base_address;
         const auto allow_host_prefetch = !has_claimed_service_worker_for_url(
             resolve_resource_url(source, outer_base_address));
-        const auto generation = document_generation.load(std::memory_order_acquire);
+        const auto document_generation_value =
+            document_generation.load(std::memory_order_acquire);
+        const auto navigation_generation =
+            current_iframe_navigation_generation(frame.id);
+        const auto frame_id = frame.id;
 
         pending_frame_preparation preparation;
         preparation.source = source;
+        preparation.navigation_generation = navigation_generation;
         preparation.future = std::async(
             std::launch::async,
-            [this, source, outer_base_address, document_future, generation,
+            [this, source, outer_base_address, document_future,
+                document_generation_value, navigation_generation, frame_id,
                 allow_host_prefetch]()
                 -> std::shared_ptr<const prepared_frame> {
                 const auto started = std::chrono::steady_clock::now();
                 try {
                     const auto& document = document_future.get();
                     if (document_generation.load(std::memory_order_acquire)
-                        != generation) return {};
+                        != document_generation_value) return {};
                     const immutable_text_source* content = nullptr;
                     if (document.from_fresh_cache && document.cached.content != nullptr) {
                         content = document.cached.content.get();
@@ -2105,8 +2134,14 @@
                         result->started = started;
                         {
                             std::lock_guard lock(document_generation_mutex);
+                            const auto frame_generation =
+                                frame_navigation_generations.find(frame_id);
                             if (document_generation.load(std::memory_order_acquire)
-                                != generation) return {};
+                                    != document_generation_value
+                                || frame_generation
+                                    == frame_navigation_generations.end()
+                                || frame_generation->second
+                                    != navigation_generation) return {};
                             prepare_frame_resource_plan(
                                 *result, outer_base_address, allow_host_prefetch);
                         }
@@ -2122,8 +2157,13 @@
                     result->started = started;
                     {
                         std::lock_guard lock(document_generation_mutex);
+                        const auto frame_generation =
+                            frame_navigation_generations.find(frame_id);
                         if (document_generation.load(std::memory_order_acquire)
-                            != generation) return {};
+                                != document_generation_value
+                            || frame_generation == frame_navigation_generations.end()
+                            || frame_generation->second
+                                != navigation_generation) return {};
                         prepare_frame_resource_plan(
                             *result, outer_base_address, allow_host_prefetch);
                     }
@@ -2164,6 +2204,7 @@
         result.body_opening = opening_tag("body");
         result.stylesheets = parse_frame_stylesheets(result.html);
         result.scripts = parse_frame_scripts(result.html);
+        result.script_policy = parse_frame_script_policy(result.html);
         // Keep speculative host I/O for uncontrolled documents. A claimed
         // controller must see each request first, so controlled parser
         // resources wait until the nested client realm exists.
@@ -2175,7 +2216,9 @@
                 WEBSCENE_RESOURCE_STYLESHEET);
         }
         for (const auto& script : result.scripts) {
-            if (!script.source.empty()) {
+            if (!script.source.empty()
+                && frame_script_policy_allows(
+                    result.script_policy, script, result.base_address)) {
                 start_resource_prefetch(
                     script.source,
                     result.base_address,
@@ -2193,6 +2236,8 @@
         const auto source = frame.attributes.find("src");
         if (source == frame.attributes.end()
             || source->second != known->second.source
+            || current_iframe_navigation_generation(frame.id)
+                != known->second.navigation_generation
             || !known->second.future.valid()) {
             if (known->second.future.valid()
                 && known->second.future.wait_for(std::chrono::seconds(0))
@@ -2241,6 +2286,10 @@
         const frame_script& script)
     {
         if (!iframe_sandbox_allows(frame, "allow-scripts")) return true;
+        if (!frame_script_policy_allows(
+                hydration.script_policy, script, hydration.base_address)) {
+            return true;
+        }
         auto local_frame_context = hydration.context.Get(isolate);
         if (local_frame_context.IsEmpty()) {
             frame_last_error_value = "Iframe context was discarded during hydration";
@@ -2269,7 +2318,7 @@
             local_frame_context,
             js_string(isolate, "document")).ToLocalChecked().As<v8::Object>();
         if(script.module)document_value->Set(local_frame_context,js_string(isolate,"currentScript"),v8::Null(isolate)).Check();
-        else set_current_script(local_frame_context, document_value, name);
+        else set_current_script(local_frame_context, document_value, name, script.nonce);
         std::string error;
         const auto script_source = immutable_source != nullptr
             ? immutable_source->view()
@@ -2295,6 +2344,11 @@
             ++frame_script_error_count;
             return frame_hydration_result::failed;
         }
+        const auto stale_generation = [&] {
+            return hydration.navigation_generation
+                != current_iframe_navigation_generation(frame.id);
+        };
+        if (stale_generation()) return frame_hydration_result::complete;
         activate_css_cascade(hydration.body);
         const auto restore_outer = [&](frame_hydration_result result) {
             activate_css_cascade(context.Get(isolate));
@@ -2310,7 +2364,12 @@
             while (hydration.next_script < hydration.scripts.size()) {
                 const auto& script = hydration.scripts[hydration.next_script++];
                 if (script.defer != defer) continue;
-                if (!execute_frame_hydration_script(frame, hydration, script)) {
+                const auto executed = execute_frame_hydration_script(
+                    frame, hydration, script);
+                if (stale_generation()) {
+                    return restore_outer(frame_hydration_result::complete);
+                }
+                if (!executed) {
                     // A parser-inserted script fetch or evaluation failure does
                     // not abort parsing the containing document. Keep the
                     // diagnostic/error counter and advance to the next script.
@@ -2417,6 +2476,9 @@
         if (!dispatch_lifecycle_event(document_value, "DOMContentLoaded")) {
             return restore_outer(frame_hydration_result::failed);
         }
+        if (stale_generation()) {
+            return restore_outer(frame_hydration_result::complete);
+        }
         if (iframe_owner_allows_same_origin_access(frame)) {
             if (const auto found = frame_dom_content_loaded_listeners.find(frame.id);
                 found != frame_dom_content_loaded_listeners.end()
@@ -2450,6 +2512,9 @@
                     }
                 }
                 perform_microtask_checkpoint();
+                if (stale_generation()) {
+                    return restore_outer(frame_hydration_result::complete);
+                }
             }
         }
         document_value->Set(
@@ -2475,6 +2540,9 @@
                 frame_last_error_value = "Iframe body load handler failed: " + error;
                 ++frame_script_error_count;
                 return restore_outer(frame_hydration_result::failed);
+            }
+            if (stale_generation()) {
+                return restore_outer(frame_hydration_result::complete);
             }
         }
         if (!dispatch_lifecycle_event(frame_global, "load")) {
@@ -2533,8 +2601,14 @@
             profile_startup ? this : nullptr,
             finish_frame_profile);
 #endif
-        if (auto existing = frame_hydration_states.find(frame.id);
-            existing != frame_hydration_states.end()) {
+        auto existing = frame_hydration_states.find(frame.id);
+        if (existing != frame_hydration_states.end()
+            && existing->second.navigation_generation
+                != current_iframe_navigation_generation(frame.id)) {
+            frame_hydration_states.erase(existing);
+            existing = frame_hydration_states.end();
+        }
+        if (existing != frame_hydration_states.end()) {
 #if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
             const auto cooperative = cooperative_iframe_hydration;
 #else
@@ -2602,12 +2676,14 @@
         const auto preparation = take_frame_preparation(frame, html);
         std::vector<std::string> stylesheets;
         std::vector<frame_script> scripts;
+        frame_script_content_security_policy script_policy;
         std::string html_opening;
         std::string body_opening;
         if (preparation != nullptr) {
             frame_base_address = preparation->base_address;
             stylesheets = preparation->stylesheets;
             scripts = preparation->scripts;
+            script_policy = preparation->script_policy;
             html_opening = preparation->html_opening;
             body_opening = preparation->body_opening;
         } else {
@@ -2638,6 +2714,7 @@
             body_opening = opening_tag("body");
             stylesheets = parse_frame_stylesheets(html);
             scripts = parse_frame_scripts(html);
+            script_policy = parse_frame_script_policy(html);
         }
         // Navigation replaces the previous document's layout root. Preserve
         // existing JS references until the frame is disposed, but never stack
@@ -2648,12 +2725,15 @@
             auto* previous_root = static_cast<dom_node*>(previous_context->GetAlignedPointerFromEmbedderData(
                 1, v8::kEmbedderDataTypeTagDefault));
             if (previous_root != nullptr && previous_root->parent == &frame) {
-                previous_root->mutable_authored_style().declarations["display"] = "none";
-                previous_root->style.inline_property_mask |= inline_display;
-                previous_root->style.display = display_mode::none;
-                previous_root->visible = false;
-                static_cast<void>(deactivate_connected_stylesheets(*previous_root, false));
-                cancel_detached_frame_context_tasks(previous_context);
+              window_selections.erase(previous_root->id);
+              previous_root->mutable_authored_style().declarations["display"] =
+                  "none";
+              previous_root->style.inline_property_mask |= inline_display;
+              previous_root->style.display = display_mode::none;
+              previous_root->visible = false;
+              static_cast<void>(
+                  deactivate_connected_stylesheets(*previous_root, false));
+              cancel_detached_frame_context_tasks(previous_context);
             }
         }
         auto& frame_body = document.create_element("body");
@@ -2873,6 +2953,9 @@
         frame_hydration_state hydration;
         hydration.body = &frame_body;
         hydration.scripts = std::move(scripts);
+        hydration.script_policy = std::move(script_policy);
+        hydration.navigation_generation =
+            current_iframe_navigation_generation(frame.id);
         hydration.body_opening = std::move(body_opening);
         hydration.base_address = frame_base_address;
         hydration.context.Reset(isolate, local_frame_context);

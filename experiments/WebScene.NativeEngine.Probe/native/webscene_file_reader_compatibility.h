@@ -8,7 +8,12 @@ inline constexpr std::string_view fileReaderCompatibilityScript = R"JS(
   if (typeof globalThis.FileReader === 'function') return;
   if (typeof globalThis.Blob !== 'function' || typeof globalThis.Blob.prototype.arrayBuffer !== 'function')
     throw new Error('Native Blob.arrayBuffer is required for FileReader');
-  const schedule = callback => globalThis.setTimeout(callback, 0);
+  const nativeSchedule = globalThis.__webSceneQueueFileReadingTask;
+  delete globalThis.__webSceneQueueFileReadingTask;
+  const schedule = callback => {
+    if (typeof nativeSchedule === 'function' && nativeSchedule(callback)) return;
+    globalThis.setTimeout(callback, 0);
+  };
   const failure = (message, name) => new DOMException(message, name);
   const bytesToBinary = bytes => {
     let result = '';

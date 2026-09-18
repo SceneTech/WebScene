@@ -416,6 +416,664 @@ void test_same_origin_iframe_navigation_document_replacement()
     webscene_engine_destroy(engine);
 }
 
+void test_query_iframe_worker_extension_host_bootstrap()
+{
+    constexpr std::string_view address{
+        "https://extension-host.test/index.html"};
+    constexpr std::string_view frame_address{
+        "https://extension-host.test/webWorkerExtensionHostIframe.html?&vscodeWebWorkerExtHostId=extension-host-id"};
+    resource_server server{.content = {
+        {std::string{address}, "<!doctype html><title>extension host</title><body></body>"},
+        {std::string{frame_address}, R"HTML(<!doctype html><body><script>
+          (() => {
+            const searchParams = new URL(document.location.href).searchParams;
+            const vscodeWebWorkerExtHostId =
+              searchParams.get('vscodeWebWorkerExtHostId') || '';
+            const parentOrigin = window.origin;
+            self.onmessage = event => {
+              if (event.origin !== parentOrigin
+                  || event.data.type !== 'vscode.bootstrap.nls') return;
+              const source = `await import(${JSON.stringify(event.data.workerUrl)});`;
+              const blob = new Blob([source], {type:'application/javascript'});
+              const worker = new Worker(URL.createObjectURL(blob), {
+                name:'ExtensionHostWorker', type:'module'
+              });
+              worker.onmessage = workerEvent => {
+                const {data} = workerEvent;
+                parent.postMessage({vscodeWebWorkerExtHostId, data}, parentOrigin, [data]);
+              };
+              self.onmessage = bridgeEvent =>
+                worker.postMessage(bridgeEvent.data, bridgeEvent.ports);
+            };
+            parent.postMessage({
+              vscodeWebWorkerExtHostId,
+              type:'vscode.bootstrap.nls',
+              observedSearch:document.location.search
+            }, '*');
+          })();
+        </script></body>)HTML"},
+        {"https://extension-host.test/extensionHostWorker.js", R"JS(
+          const channel = new MessageChannel();
+          channel.port1.onmessage = event => channel.port1.postMessage(event.data + 1);
+          postMessage(channel.port2, [channel.port2]);
+        )JS"}
+    }};
+    webscene_engine_options options{};
+    options.struct_size = sizeof(options);
+    options.resource_load_callback = load_test_resource;
+    options.resource_load_user_data = &server;
+    auto* engine = webscene_engine_create_with_options(&options);
+    require(engine != nullptr, "query iframe extension-host engine creation failed");
+    require(webscene_engine_load_url(engine, address.data(), address.size()) != 0U,
+        "query iframe extension-host outer document failed");
+    require(evaluate_until_equals(engine, "location.href", "query-iframe-ready.js",
+            R"("https://extension-host.test/index.html")", 2'500)
+            == R"("https://extension-host.test/index.html")",
+        "query iframe extension-host outer document did not become ready");
+
+    webscene_engine_memory_metrics memory_before{
+        sizeof(webscene_engine_memory_metrics)};
+    require(webscene_engine_get_memory_metrics(engine, &memory_before) != 0,
+        "query iframe extension-host baseline memory metrics unavailable");
+    const auto rss_before = service_worker_test_current_rss_bytes();
+
+    execute(engine, R"JS(
+      globalThis.__extensionHost = {
+        complete:false, error:null, bootstrap:false, source:false,
+        search:null, port:false, reply:null, cycles:0, durations:[],
+        p95:null, max:null, frame:null, started:0
+      };
+      (() => {
+        const state = __extensionHost;
+        const finish = error => {
+          if (error) state.error = String(error && error.stack || error);
+          if (state.frame) state.frame.remove();
+          state.frame = null;
+          removeEventListener('message', onmessage);
+          const ordered = state.durations.slice().sort((a, b) => a - b);
+          state.p95 = ordered[Math.max(0, Math.ceil(ordered.length * .95) - 1)];
+          state.max = ordered[ordered.length - 1];
+          state.complete = true;
+        };
+        const start = () => {
+          state.started = performance.now();
+          const frame = document.createElement('iframe');
+          state.frame = frame;
+          frame.setAttribute('sandbox', 'allow-same-origin allow-scripts');
+          frame.src = './webWorkerExtensionHostIframe.html?&vscodeWebWorkerExtHostId=extension-host-id';
+          document.body.appendChild(frame);
+        };
+        const onmessage = event => {
+          try {
+            if (event.data?.vscodeWebWorkerExtHostId !== 'extension-host-id') return;
+            const frame = state.frame;
+            state.source = event.source === frame.contentWindow;
+            if (event.data.type === 'vscode.bootstrap.nls') {
+              state.bootstrap = true;
+              state.search = event.data.observedSearch;
+              frame.contentWindow.postMessage({
+                type:'vscode.bootstrap.nls',
+                workerUrl:'https://extension-host.test/extensionHostWorker.js'
+              }, '*');
+              return;
+            }
+            const port = event.data.data;
+            state.port = port instanceof MessagePort && event.ports[0] === port;
+            port.onmessage = reply => {
+              state.reply = reply.data;
+              port.close();
+              frame.remove();
+              state.frame = null;
+              state.durations.push(performance.now() - state.started);
+              ++state.cycles;
+              if (state.cycles < 20) setTimeout(start, 0);
+              else finish();
+            };
+            port.postMessage(41);
+          } catch (error) {
+            finish(error);
+          }
+        };
+        addEventListener('message', onmessage);
+        start();
+      })();
+    )JS", "query-iframe-extension-host-bootstrap.js");
+    require(evaluate_until_equals(engine, "__extensionHost.complete",
+            "query-iframe-extension-host-complete.js", "true", 30'000) == "true",
+        "query iframe extension-host bootstrap timed out: "
+            + evaluate(engine, "JSON.stringify(__extensionHost)",
+                "query-iframe-extension-host-timeout.js")
+            + " / " + last_error(engine));
+    require(evaluate(engine, R"JS((() => {
+      const s=__extensionHost;
+      return s.error===null && s.bootstrap && s.source && s.port && s.reply===42
+        && s.search==='?&vscodeWebWorkerExtHostId=extension-host-id'
+        && s.cycles===20 && s.p95<=250 && s.max<=2500;
+    })())JS", "query-iframe-extension-host-result.js") == "true",
+        "query iframe extension-host bootstrap diverged: "
+            + evaluate(engine, "JSON.stringify(__extensionHost)",
+                "query-iframe-extension-host-detail.js"));
+    require(webscene_engine_request_low_memory(engine) != 0,
+        "query iframe extension-host low-memory request failed");
+    webscene_engine_memory_metrics memory_after{
+        sizeof(webscene_engine_memory_metrics)};
+    for (auto attempt = 0; attempt < 500; ++attempt) {
+        require(webscene_engine_get_memory_metrics(engine, &memory_after) != 0,
+            "query iframe extension-host final memory metrics unavailable");
+        if (memory_after.low_memory_notifications
+            > memory_before.low_memory_notifications) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    const auto rss_after = service_worker_test_current_rss_bytes();
+    require(
+        memory_after.low_memory_notifications
+                > memory_before.low_memory_notifications
+            && memory_after.v8_used_heap_bytes
+                <= memory_before.v8_used_heap_bytes + 8U * 1024U * 1024U
+            && memory_after.native_dom_node_count
+                <= memory_before.native_dom_node_count + 8U
+            && memory_after.native_wrapper_handle_count
+                <= memory_before.native_wrapper_handle_count + 16U,
+        "query iframe extension-host cycles retained heap, DOM nodes, or wrappers");
+    require(rss_before == 0U || rss_after <= rss_before + 64U * 1024U * 1024U,
+        "query iframe extension-host cycles retained more than 64 MiB RSS");
+    std::cout << "Query iframe extension-host lifecycle gate: cycles=20 p95="
+              << evaluate(engine, "__extensionHost.p95", "query-iframe-p95.js")
+              << "ms max="
+              << evaluate(engine, "__extensionHost.max", "query-iframe-max.js")
+              << "ms heapBefore=" << memory_before.v8_used_heap_bytes
+              << " heapAfter=" << memory_after.v8_used_heap_bytes
+              << " rssBefore=" << rss_before << " rssAfter=" << rss_after << '\n';
+    webscene_engine_destroy(engine);
+}
+
+void test_nested_window_find_selection() {
+  constexpr std::string_view address{"https://iframe-find.test/index.html"};
+  resource_server server{
+      .content = {{std::string{address},
+                   "<!doctype html><title>frame find</title><body></body>"},
+                  {"https://iframe-find.test/fake.html?id=markdown-preview",
+                   "<!doctype html><title>Fake</title><body></body>"},
+                  {"https://cross-origin-find.test/fake.html",
+                   "<!doctype "
+                   "html><body><script>parent.__windowFindEscape=true;</"
+                   "script></body>"}}};
+  webscene_engine_options options{};
+  options.struct_size = sizeof(options);
+  options.resource_load_callback = load_test_resource;
+  options.resource_load_user_data = &server;
+  auto *engine = webscene_engine_create_with_options(&options);
+  require(engine != nullptr, "nested Window.find engine creation failed");
+  require(webscene_engine_load_url(engine, address.data(), address.size()) !=
+              0U,
+          "nested Window.find outer document failed");
+  require(evaluate_until_equals(engine, "location.href", "window-find-ready.js",
+                                R"("https://iframe-find.test/index.html")",
+                                2'500) ==
+              R"("https://iframe-find.test/index.html")",
+          "nested Window.find outer document did not become ready");
+
+  execute(engine, R"JS(
+      globalThis.__windowFind = {complete:false,error:null};
+      (() => {
+        const state = __windowFind;
+        try {
+          const frame = document.createElement('iframe');
+          frame.setAttribute('sandbox', 'allow-same-origin allow-scripts');
+          frame.src = './fake.html?id=markdown-preview';
+          document.body.appendChild(frame);
+          const proxy = frame.contentWindow;
+          proxy.addEventListener('DOMContentLoaded', event => {
+            try {
+              const doc = event.target;
+              doc.open();
+              doc.write('<!doctype html><body><p id="a">Alpha beta alpha BETA alphabet</p><p id="b">omega beta</p><p id="c">café 😀 target</p></body>');
+              doc.close();
+              const selection = proxy.getSelection();
+              state.stable = selection === proxy.getSelection()
+                && selection === doc.getSelection();
+              const snap = result => ({
+                result, text:selection.toString(),
+                parent:selection.anchorNode?.parentElement?.id || null,
+                anchor:selection.anchorOffset, focus:selection.focusOffset,
+                count:selection.rangeCount, collapsed:selection.isCollapsed
+              });
+              state.alpha1 = snap(proxy.find('alpha', false, false, true, false, false, false));
+              state.alpha2 = snap(proxy.find('alpha', false, false, true, false, false, false));
+              state.alpha3 = snap(proxy.find('alpha', false, false, true, false, false, false));
+              state.case1 = snap(proxy.find('BETA', true, false, true, false, false, false));
+              state.case2 = snap(proxy.find('BETA', true, false, true, false, false, false));
+              selection.removeAllRanges();
+              state.cleared = snap(null);
+              state.backward1 = snap(proxy.find('beta', false, true, true, false, false, false));
+              state.backward2 = snap(proxy.find('beta', false, true, true, false, false, false));
+              selection.empty();
+              state.whole1 = snap(proxy.find('alpha', false, false, true, true, false, false));
+              state.whole2 = snap(proxy.find('alpha', false, false, true, true, false, false));
+              state.whole3 = snap(proxy.find('alpha', false, false, true, true, false, false));
+              const beforeMiss = selection.toString();
+              state.miss = snap(proxy.find('absent', false, false, true, false, false, false));
+              state.missPreserved = selection.toString() === beforeMiss;
+              const range = selection.getRangeAt(0);
+              state.range = {
+                startContainer:range.startContainer === selection.anchorNode,
+                endContainer:range.endContainer === selection.focusNode,
+                startOffset:range.startOffset,
+                selectionStart:selection.anchorOffset,
+                endOffset:range.endOffset,
+                selectionEnd:selection.focusOffset
+              };
+              selection.collapse(selection.anchorNode);
+              state.collapsed = snap(null);
+              state.afterCollapse = snap(proxy.find('beta', false, false, true, false, false, false));
+              selection.removeAllRanges();
+              state.unicode = snap(proxy.find('😀', true, false, false, true, false, false));
+              doc.open();
+              doc.write('<!doctype html><body><p>replacement text</p></body>');
+              doc.close();
+              state.replacementReset = selection.rangeCount === 0
+                && selection.anchorNode === null && selection.toString() === '';
+              state.selectionAfterReplacementStable = selection === proxy.getSelection();
+              frame.remove();
+              state.detachReset = selection.rangeCount === 0
+                && selection.anchorNode === null;
+              const opaque = document.createElement('iframe');
+              opaque.setAttribute('sandbox', 'allow-scripts');
+              opaque.src = './fake.html?id=markdown-preview';
+              document.body.appendChild(opaque);
+              const cross = document.createElement('iframe');
+              cross.setAttribute('sandbox', 'allow-same-origin allow-scripts');
+              cross.src = 'https://cross-origin-find.test/fake.html';
+              document.body.appendChild(cross);
+              state.failClosed = opaque.contentWindow === null
+                && opaque.contentDocument === null
+                && cross.contentWindow === null
+                && cross.contentDocument === null;
+              opaque.remove(); cross.remove();
+              state.complete = true;
+            } catch (error) { state.error = String(error && error.stack || error); state.complete = true; }
+          });
+        } catch (error) { state.error = String(error && error.stack || error); state.complete = true; }
+      })();
+    )JS",
+          "window-find-markdown-sequence.js");
+  require(evaluate_until_equals(engine, "__windowFind.complete",
+                                "window-find-complete.js", "true",
+                                3'000) == "true",
+          "nested Window.find sequence timed out: " +
+              evaluate(engine, "JSON.stringify(__windowFind)",
+                       "window-find-timeout.js"));
+  require(evaluate(engine, R"JS((() => {
+      const s=__windowFind;
+      return s.error===null && s.stable
+        && JSON.stringify(s.alpha1)==='{"result":true,"text":"Alpha","parent":"a","anchor":0,"focus":5,"count":1,"collapsed":false}'
+        && JSON.stringify(s.alpha2)==='{"result":true,"text":"alpha","parent":"a","anchor":11,"focus":16,"count":1,"collapsed":false}'
+        && JSON.stringify(s.alpha3)==='{"result":true,"text":"alpha","parent":"a","anchor":22,"focus":27,"count":1,"collapsed":false}'
+        && s.case1.text==='BETA' && s.case1.anchor===17 && s.case2.text==='BETA'
+        && s.cleared.count===0 && s.cleared.collapsed && s.cleared.parent===null
+        && s.backward1.parent==='b' && s.backward1.anchor===6
+        && s.backward2.parent==='a' && s.backward2.anchor===17
+        && s.whole1.text==='Alpha' && s.whole1.anchor===0
+        && s.whole2.text==='alpha' && s.whole2.anchor===11
+        && s.whole3.text==='Alpha' && s.whole3.anchor===0
+        && !s.miss.result && s.missPreserved
+        && s.range.startContainer && s.range.endContainer
+        && s.range.startOffset===s.range.selectionStart
+        && s.range.endOffset===s.range.selectionEnd
+        && s.collapsed.collapsed && s.collapsed.count===1
+        && s.afterCollapse.text==='beta' && s.afterCollapse.anchor===6
+        && s.unicode.text==='😀' && s.unicode.parent==='c'
+        && s.unicode.anchor===5 && s.unicode.focus===7
+        && s.replacementReset && s.selectionAfterReplacementStable
+        && s.detachReset && s.failClosed;
+    })())JS",
+                   "window-find-result.js") == "true",
+          "nested Window.find/Selection diverged from Chrome: " +
+              evaluate(engine, "JSON.stringify(__windowFind)",
+                       "window-find-detail.js"));
+
+  webscene_engine_memory_metrics memory_before{sizeof(memory_before)};
+  require(webscene_engine_get_memory_metrics(engine, &memory_before) != 0,
+          "Window.find memory baseline was unavailable");
+  const auto rss_before = service_worker_test_current_rss_bytes();
+  execute(engine, R"JS(
+      globalThis.__windowFindGate = {complete:false,error:null,cycles:0,p95:0};
+      (async () => {
+        try {
+          for (let cycle=0; cycle<100; ++cycle) {
+            await new Promise((resolve,reject) => {
+              const frame=document.createElement('iframe');
+              frame.setAttribute('sandbox','allow-same-origin allow-scripts');
+              frame.src='./fake.html?id=markdown-preview';
+              document.body.appendChild(frame);
+              const proxy=frame.contentWindow;
+              const timeout=setTimeout(()=>reject(new Error(`cycle ${cycle} timed out`)),1000);
+              proxy.addEventListener('DOMContentLoaded',event=>{
+                try {
+                  const doc=event.target;
+                  doc.open(); doc.write(`<body><p>cycle ${cycle} needle tail</p></body>`); doc.close();
+                  const selection=proxy.getSelection();
+                  if (!proxy.find('needle',false,false,true,false,false,false)
+                      || selection.toString()!=='needle') throw new Error(`cycle ${cycle} find failed`);
+                  frame.remove();
+                  if (selection.rangeCount!==0 || selection.anchorNode!==null)
+                    throw new Error(`cycle ${cycle} selection survived detach`);
+                  ++__windowFindGate.cycles;
+                  clearTimeout(timeout); setTimeout(resolve,0);
+                } catch(error) { clearTimeout(timeout); reject(error); }
+              });
+            });
+          }
+          const bulk=document.createElement('div');
+          bulk.id='window-find-bulk';
+          bulk.innerHTML='<span>noise</span>'.repeat(100000)+'<span>target-token</span>';
+          document.body.appendChild(bulk);
+          if (!find('target-token',true,false,false,true,false,false))
+            throw new Error('bulk warm-up find failed');
+          getSelection().removeAllRanges();
+          const durations=[];
+          for (let iteration=0; iteration<10; ++iteration) {
+            getSelection().removeAllRanges();
+            const started=performance.now();
+            if (!find('target-token',true,false,false,true,false,false))
+              throw new Error(`bulk find ${iteration} failed`);
+            durations.push(performance.now()-started);
+          }
+          durations.sort((a,b)=>a-b);
+          __windowFindGate.p95=durations[Math.ceil(durations.length*.95)-1];
+          bulk.remove();
+          getSelection().removeAllRanges();
+        } catch(error) { __windowFindGate.error=String(error&&error.stack||error); }
+        finally { __windowFindGate.complete=true; }
+      })();
+    )JS",
+          "window-find-lifecycle-performance.js");
+  require(evaluate_until_equals(engine, "__windowFindGate.complete",
+                                "window-find-gate-complete.js", "true",
+                                30'000) == "true",
+          "Window.find lifecycle/performance gate timed out");
+  require(evaluate(engine, R"JS((() => {
+      const s=__windowFindGate;
+      return s.error===null && s.cycles===100 && s.p95<=50;
+    })())JS",
+                   "window-find-gate-result.js") == "true",
+          "Window.find lifecycle/performance gate diverged: " +
+              evaluate(engine, "JSON.stringify(__windowFindGate)",
+                       "window-find-gate-detail.js"));
+  require(event_listener_inventory(engine).find(R"("targets":[])") !=
+              std::string::npos,
+          "Window.find frame cycles retained listeners: " +
+              event_listener_inventory(engine));
+  require(webscene_engine_request_low_memory(engine) != 0,
+          "Window.find low-memory request was rejected");
+  webscene_engine_memory_metrics memory_after{sizeof(memory_after)};
+  for (auto attempt = 0; attempt < 250; ++attempt) {
+    require(webscene_engine_get_memory_metrics(engine, &memory_after) != 0,
+            "Window.find final memory metrics were unavailable");
+    if (memory_after.low_memory_notifications >
+        memory_before.low_memory_notifications)
+      break;
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+  const auto rss_after = service_worker_test_current_rss_bytes();
+  std::cout << "Window.find gate: textNodes=100000 cycles=100 p95="
+            << evaluate(engine, "__windowFindGate.p95", "window-find-p95.js")
+            << "ms heapBefore=" << memory_before.v8_used_heap_bytes
+            << " heapAfter=" << memory_after.v8_used_heap_bytes
+            << " nodesBefore=" << memory_before.native_dom_node_count
+            << " nodesAfter=" << memory_after.native_dom_node_count
+            << " rssBefore=" << rss_before << " rssAfter=" << rss_after << '\n';
+  require(memory_after.low_memory_notifications >
+                  memory_before.low_memory_notifications &&
+              memory_after.v8_used_heap_bytes <=
+                  memory_before.v8_used_heap_bytes + 4U * 1024U * 1024U &&
+              memory_after.native_dom_node_count <=
+                  memory_before.native_dom_node_count + 16U,
+          "Window.find cycles retained V8 heap or native DOM nodes");
+  require(rss_before == 0U || rss_after <= rss_before + 512U * 1024U * 1024U,
+          "Window.find 100,000-text-node high-water RSS exceeded 512 MiB");
+  webscene_engine_destroy(engine);
+}
+
+void test_nested_window_focus_ownership() {
+  constexpr std::string_view address{"https://iframe-focus.test/index.html"};
+  resource_server server{
+      .content = {{std::string{address},
+                   "<!doctype html><title>frame focus</title><body></body>"},
+                  {"https://iframe-focus.test/fake.html?id=markdown-preview",
+                   "<!doctype html><title>Fake</title><body></body>"},
+                  {"https://cross-origin-focus.test/fake.html",
+                   "<!doctype html><body>cross origin</body>"}}};
+  webscene_engine_options options{};
+  options.struct_size = sizeof(options);
+  options.resource_load_callback = load_test_resource;
+  options.resource_load_user_data = &server;
+  auto *engine = webscene_engine_create_with_options(&options);
+  require(engine != nullptr, "nested Window.focus engine creation failed");
+  require(webscene_engine_load_url(engine, address.data(), address.size()) !=
+              0U,
+          "nested Window.focus outer document failed");
+  require(evaluate_until_equals(
+              engine, "location.href", "window-focus-ready.js",
+              R"("https://iframe-focus.test/index.html")",
+              2'500) == R"("https://iframe-focus.test/index.html")",
+          "nested Window.focus outer document did not become ready");
+
+  execute(engine, R"JS(
+      globalThis.__windowFocus = { complete:false, error:null, events:[] };
+      (() => {
+        try {
+          const outer = document.createElement('button');
+          outer.id = 'outer-focus';
+          document.body.appendChild(outer);
+          const frame = document.createElement('iframe');
+          frame.setAttribute('sandbox', 'allow-same-origin allow-scripts');
+          frame.src = './fake.html?id=markdown-preview';
+          document.body.appendChild(frame);
+          const proxy = frame.contentWindow;
+          proxy.addEventListener('DOMContentLoaded', event => {
+            try {
+              const doc = event.target;
+              doc.open();
+              doc.write('<!doctype html><body><button id="inner-focus">inner</button></body>');
+              doc.close();
+              __windowFocus.onBlur = () => __windowFocus.events.push('outer-window:blur');
+              __windowFocus.onFocus = () => __windowFocus.events.push('outer-window:focus');
+              addEventListener('blur', __windowFocus.onBlur);
+              addEventListener('focus', __windowFocus.onFocus);
+              __windowFocus.initial = {
+                outer:document.activeElement?.tagName,
+                inner:doc.activeElement?.tagName,
+                outerHas:document.hasFocus(), innerHas:doc.hasFocus()
+              };
+              proxy.focus();
+              __windowFocus.windowFocus = {
+                outer:document.activeElement?.id,
+                inner:doc.activeElement?.tagName,
+                outerHas:document.hasFocus(), innerHas:doc.hasFocus()
+              };
+              doc.querySelector('#inner-focus').focus();
+              __windowFocus.innerFocus = {
+                outer:document.activeElement?.id,
+                inner:doc.activeElement?.id,
+                innerHas:doc.hasFocus()
+              };
+              outer.focus();
+              __windowFocus.outerFocus = {
+                outer:document.activeElement?.id,
+                inner:doc.activeElement?.tagName,
+                innerHas:doc.hasFocus()
+              };
+              proxy.focus();
+              __windowFocus.frame = frame;
+              __windowFocus.proxy = proxy;
+              __windowFocus.document = doc;
+              __windowFocus.complete = true;
+            } catch (error) {
+              __windowFocus.error = String(error && error.stack || error);
+              __windowFocus.complete = true;
+            }
+          });
+        } catch (error) {
+          __windowFocus.error = String(error && error.stack || error);
+          __windowFocus.complete = true;
+        }
+      })();
+    )JS",
+          "window-focus-markdown-sequence.js");
+  require(evaluate_until_equals(engine, "__windowFocus.complete",
+                                "window-focus-complete.js", "true",
+                                3'000) == "true",
+          "nested Window.focus sequence timed out: " +
+              evaluate(engine,
+                       "JSON.stringify({complete:__windowFocus.complete,error:_"
+                       "_windowFocus.error,events:__windowFocus.events})",
+                       "window-focus-timeout.js"));
+  require(
+      evaluate(engine, R"JS((() => {
+      const s=__windowFocus;
+      return s.error===null
+        && JSON.stringify(s.initial)==='{"outer":"BODY","inner":"BODY","outerHas":true,"innerHas":false}'
+        && JSON.stringify(s.windowFocus)==='{"outer":"","inner":"BODY","outerHas":true,"innerHas":true}'
+        && JSON.stringify(s.innerFocus)==='{"outer":"","inner":"inner-focus","innerHas":true}'
+        && JSON.stringify(s.outerFocus)==='{"outer":"outer-focus","inner":"BODY","innerHas":false}'
+        && s.events.join(',')==='outer-window:blur,outer-window:focus,outer-window:blur';
+    })())JS",
+               "window-focus-result.js") == "true",
+      "nested Window.focus ownership diverged from Chrome: " +
+          evaluate(
+              engine,
+              "JSON.stringify({error:__windowFocus.error,events:__windowFocus."
+              "events,initial:__windowFocus.initial,windowFocus:__windowFocus."
+              "windowFocus,innerFocus:__windowFocus.innerFocus,outerFocus:__"
+              "windowFocus.outerFocus})",
+              "window-focus-detail.js"));
+  require(!take_typed_host_request(engine),
+          "child Window.focus escaped into a top-level host focus request");
+  execute_and_wait(engine, "focus()", "window-focus-top-level-request.js");
+  require(
+      take_typed_host_request(engine).kind ==
+              WEBSCENE_HOST_REQUEST_WINDOW_FOCUS_V1 &&
+          !take_typed_host_request(engine),
+      "top-level Window.focus did not retain its single typed host request");
+
+  require(webscene_engine_set_window_focused_v1(engine, 0U) != 0,
+          "nested Window.focus host blur was rejected");
+  require(evaluate_until_equals(
+              engine,
+              "!document.hasFocus() && !__windowFocus.document.hasFocus()",
+              "window-focus-host-blur.js", "true", 2'000) == "true",
+          "host blur did not clear top-level and child document focus");
+  require(webscene_engine_set_window_focused_v1(engine, 1U) != 0,
+          "nested Window.focus host return was rejected");
+  require(evaluate_until_equals(
+              engine,
+              "document.hasFocus() && __windowFocus.document.hasFocus()",
+              "window-focus-host-return.js", "true", 2'000) == "true",
+          "host focus return did not restore the selected child document");
+  const auto detach_security = evaluate(engine, R"JS((() => {
+      const frame=__windowFocus.frame, doc=__windowFocus.document;
+      frame.remove();
+      const opaque=document.createElement('iframe');
+      opaque.setAttribute('sandbox','allow-scripts');
+      opaque.src='./fake.html?id=markdown-preview';
+      document.body.appendChild(opaque);
+      const cross=document.createElement('iframe');
+      cross.setAttribute('sandbox','allow-same-origin allow-scripts');
+      cross.src='https://cross-origin-focus.test/fake.html';
+      document.body.appendChild(cross);
+      const result={
+        detached:document.activeElement===document.body && !doc.hasFocus(),
+        failClosed:opaque.contentWindow===null && opaque.contentDocument===null
+          && cross.contentWindow===null && cross.contentDocument===null
+      };
+      opaque.remove(); cross.remove();
+      return result;
+    })())JS",
+                                        "window-focus-detach-security.js");
+  require(detach_security == R"({"detached":true,"failClosed":true})",
+          "nested focus detach/security boundary diverged: " + detach_security);
+  execute_and_wait(engine, R"JS(
+      removeEventListener('blur', __windowFocus.onBlur);
+      removeEventListener('focus', __windowFocus.onFocus);
+    )JS",
+                   "window-focus-remove-listeners.js");
+
+  webscene_engine_memory_metrics memory_before{sizeof(memory_before)};
+  require(webscene_engine_get_memory_metrics(engine, &memory_before) != 0,
+          "nested focus memory baseline was unavailable");
+  const auto rss_before = service_worker_test_current_rss_bytes();
+  execute(engine, R"JS(
+      globalThis.__windowFocusGate={complete:false,error:null,cycles:0,p95:0};
+      try {
+        const durations=[];
+        for(let cycle=0;cycle<100;++cycle){
+          const started=performance.now();
+          const frame=document.createElement('iframe');
+          document.body.appendChild(frame);
+          const doc=frame.contentDocument;
+          const button=doc.createElement('button');
+          doc.body.appendChild(button);
+          frame.contentWindow.focus();
+          if(document.activeElement!==frame || !doc.hasFocus()) throw new Error(`entry ${cycle}`);
+          button.focus();
+          if(document.activeElement!==frame || doc.activeElement!==button) throw new Error(`inner ${cycle}`);
+          frame.remove();
+          if(document.activeElement!==document.body || doc.hasFocus()) throw new Error(`detach ${cycle}`);
+          durations.push(performance.now()-started);
+          ++__windowFocusGate.cycles;
+        }
+        durations.sort((a,b)=>a-b);
+        __windowFocusGate.p95=durations[Math.ceil(durations.length*.95)-1];
+      } catch(error) { __windowFocusGate.error=String(error&&error.stack||error); }
+      __windowFocusGate.complete=true;
+    )JS",
+          "window-focus-lifecycle-performance.js");
+  require(evaluate_until_equals(engine, "__windowFocusGate.complete",
+                                "window-focus-gate-complete.js", "true",
+                                10'000) == "true",
+          "nested focus lifecycle gate timed out");
+  require(
+      evaluate(engine,
+               "__windowFocusGate.error===null && "
+               "__windowFocusGate.cycles===100 && __windowFocusGate.p95<=10",
+               "window-focus-gate-result.js") == "true",
+      "nested focus lifecycle/performance gate diverged: " +
+          evaluate(engine, "JSON.stringify(__windowFocusGate)",
+                   "window-focus-gate-detail.js"));
+  require(!take_typed_host_request(engine),
+          "nested focus stress generated a host focus request");
+  require(webscene_engine_request_low_memory(engine) != 0,
+          "nested focus low-memory request was rejected");
+  webscene_engine_memory_metrics memory_after{sizeof(memory_after)};
+  for (auto attempt = 0; attempt < 250; ++attempt) {
+    require(webscene_engine_get_memory_metrics(engine, &memory_after) != 0,
+            "nested focus final memory metrics were unavailable");
+    if (memory_after.low_memory_notifications >
+        memory_before.low_memory_notifications)
+      break;
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+  const auto rss_after = service_worker_test_current_rss_bytes();
+  std::cout << "Nested focus gate: cycles=100 p95="
+            << evaluate(engine, "__windowFocusGate.p95", "window-focus-p95.js")
+            << "ms heapBefore=" << memory_before.v8_used_heap_bytes
+            << " heapAfter=" << memory_after.v8_used_heap_bytes
+            << " nodesBefore=" << memory_before.native_dom_node_count
+            << " nodesAfter=" << memory_after.native_dom_node_count
+            << " rssBefore=" << rss_before << " rssAfter=" << rss_after << '\n';
+  require(memory_after.low_memory_notifications >
+                  memory_before.low_memory_notifications &&
+              memory_after.v8_used_heap_bytes <=
+                  memory_before.v8_used_heap_bytes + 4U * 1024U * 1024U &&
+              memory_after.native_dom_node_count <=
+                  memory_before.native_dom_node_count + 16U,
+          "nested focus cycles retained V8 heap or native DOM nodes");
+  require(rss_before == 0U || rss_after <= rss_before + 64U * 1024U * 1024U,
+          "nested focus cycles retained more than 64 MiB RSS");
+  webscene_engine_destroy(engine);
+}
+
 size_t load_contextual_test_resource(
     void* user_data,
     uint32_t kind,

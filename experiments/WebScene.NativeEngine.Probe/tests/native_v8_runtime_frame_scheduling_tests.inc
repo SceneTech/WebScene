@@ -1317,6 +1317,11 @@ void test_session_storage_in_outer_and_frame_contexts(webscene_engine* engine)
             + 'outerValue: sessionStorage.getItem("view"),'
             + 'initialLength: sessionStorage.length,'
             + 'localTheme: localStorage.getItem("theme")};'
+            + 'globalThis.__storageEvent = null;'
+            + 'addEventListener("storage", event => {'
+            + 'globalThis.__storageEvent = {'
+            + 'key: event.key, oldValue: event.oldValue, newValue: event.newValue,'
+            + 'url: event.url, sameArea: event.storageArea === localStorage};});'
             + 'sessionStorage.setItem("go-to-date", "month");'
             + 'localStorage.setItem("layout", "compact");'
             + 'globalThis.__sessionStorageResult.value = sessionStorage.getItem("go-to-date");'
@@ -1339,6 +1344,14 @@ void test_session_storage_in_outer_and_frame_contexts(webscene_engine* engine)
             "localStorage.getItem('layout')",
             "native-local-storage-frame-sharing.js") == R"("compact")",
         "same-origin localStorage did not remain shared between outer and frame contexts");
+    const auto storage_event = evaluate(engine, R"JS((() => {
+      localStorage.setItem('event-key', 'before');
+      localStorage.setItem('event-key', 'after');
+      return globalThis.__sessionStorageFrame.contentWindow.__storageEvent;
+    })())JS", "native-local-storage-event.js");
+    require(
+        storage_event == R"({"key":"event-key","oldValue":"before","newValue":"after","url":"http://127.0.0.1/","sameArea":true})",
+        "same-origin localStorage event delivery regressed: " + storage_event);
 
     const auto coercion = evaluate(engine, R"JS(
         (() => {

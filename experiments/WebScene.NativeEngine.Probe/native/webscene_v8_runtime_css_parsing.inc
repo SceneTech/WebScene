@@ -1796,6 +1796,25 @@
             scope_root);
     }
 
+    bool css_relative_selector_matches(
+        const dom_node& scope,
+        std::string_view relative) const
+    {
+        auto anchored = std::string(":scope ");
+        anchored.append(relative);
+        const auto prepared = cached_css_selector_list(anchored);
+        return css::relative_selector_list_matches(
+            scope, *prepared,
+            [this](const dom_node& candidate,
+                   const compiled_css_selector& selector,
+                   const dom_node* root) {
+                return !selector.compounds.empty()
+                    && compiled_css_selector_matches(
+                        candidate, selector,
+                        selector.compounds.size() - 1U, root);
+            });
+    }
+
     bool compiled_css_selector_matches(const dom_node& node,const compiled_css_selector& selector,
         size_t component,const dom_node* scope_root = nullptr) const
     {

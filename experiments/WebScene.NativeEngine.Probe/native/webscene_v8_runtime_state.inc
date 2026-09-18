@@ -29,6 +29,8 @@
     static constexpr size_t maximum_frame_preparations = 16U;
     std::unordered_map<uint32_t, pending_frame_preparation>
         pending_frame_preparations;
+    std::unordered_map<uint32_t, uint64_t> frame_navigation_generations;
+    std::unordered_set<uint32_t> frame_pagehide_dispatched;
     std::vector<std::shared_future<std::shared_ptr<const prepared_frame>>>
         retired_frame_preparations;
     std::mutex document_generation_mutex;
@@ -100,6 +102,7 @@
     std::string storage_partition_key;
     uint64_t storage_quota_bytes{0};
     std::unique_ptr<indexeddb_storage> indexeddb;
+    std::shared_ptr<browser_profile_storage> profile_storage;
     std::mutex indexeddb_completion_mutex;
     std::deque<indexeddb_completion> indexeddb_completions;
     std::unordered_map<uint64_t, pending_indexeddb_promise>
@@ -128,6 +131,13 @@
     std::vector<pending_stylesheet_replacement> pending_stylesheet_replacements;
     size_t pending_stylesheet_replacement_bytes{0U};
     std::unordered_map<uint32_t, std::string> stylesheet_cssom_sources;
+    std::unordered_map<uint32_t, adopted_stylesheet_publication>
+        adopted_stylesheet_publications;
+    // Constructed sheets have no DOM owner. Synthetic owner IDs let the
+    // existing parser, layer registry and invalidation machinery distinguish
+    // repeated occurrences without creating observable <style> nodes.
+    std::unordered_map<uint32_t, uint32_t> adopted_stylesheet_owner_scopes;
+    uint32_t next_adopted_stylesheet_owner_id{0xf0000000U};
     std::unordered_map<uint64_t, v8::Global<v8::Object>> computed_style_wrappers;
     std::unordered_map<std::string, service_worker_registration_state>
         service_worker_registrations;
@@ -138,6 +148,7 @@
     bool service_worker_realm{false};
     std::unordered_set<uint64_t> detached_document_roots;
     std::unordered_map<uint64_t, v8::Global<v8::Object>> detached_documents;
+    std::unordered_map<uint32_t, window_selection_state> window_selections;
     // Document.getElementById overwhelmingly targets unique IDs. Cache the
     // first tree-order match per document root, and rebuild lazily after any
     // DOM generation change so duplicate IDs, reparents, detached nodes, and
@@ -178,6 +189,7 @@
     std::unordered_map<std::string, session_storage_state>
         outer_local_storage_by_origin;
     std::unordered_map<uint32_t, std::unique_ptr<session_storage_state>> frame_session_storage;
+    std::unordered_map<uint32_t, std::unique_ptr<session_storage_state>> frame_local_storage;
     std::vector<document_start_script> current_document_start_scripts;
     std::unordered_map<uint32_t, v8::Global<v8::Function>> frame_load_listeners;
     std::unordered_map<uint32_t, std::vector<v8::Global<v8::Function>>>
@@ -198,6 +210,8 @@
     std::vector<event_listener_registration> resize_listeners;
     std::vector<std::unique_ptr<media_query_list_state>> media_query_lists;
     std::vector<timer_task> timers;
+    static constexpr size_t maximum_pending_file_reading_tasks = 1024U;
+    std::deque<timer_task> pending_file_reading_tasks;
     static constexpr size_t maximum_pending_window_messages = 256U;
     static constexpr size_t maximum_pending_window_message_bytes =
         16U * 1024U * 1024U;
@@ -273,6 +287,18 @@
     };
     std::unordered_map<uint64_t, file_grant_create_file_promise_target>
         file_grant_create_file_promise_targets;
+    struct file_grant_create_directory_promise_target {
+        v8::Global<v8::Context> context;
+        v8::Global<v8::Promise::Resolver> resolver;
+    };
+    std::unordered_map<uint64_t, file_grant_create_directory_promise_target>
+        file_grant_create_directory_promise_targets;
+    struct file_grant_remove_promise_target {
+        v8::Global<v8::Context> context;
+        v8::Global<v8::Promise::Resolver> resolver;
+    };
+    std::unordered_map<uint64_t, file_grant_remove_promise_target>
+        file_grant_remove_promise_targets;
     std::function<void()> host_request_available;
     v8_dom_runtime::file_panel_request_sink_v2 file_panel_request_sink;
     v8_dom_runtime::file_grant_same_entry_request_sink_v2
@@ -285,10 +311,14 @@
     v8_dom_runtime::file_grant_write_request_sink_v2 file_grant_write_request_sink;
     v8_dom_runtime::file_grant_directory_request_sink_v2
         file_grant_directory_request_sink;
+    v8_dom_runtime::file_grant_remove_request_sink_v2
+        file_grant_remove_request_sink;
     v8_dom_runtime::file_grant_release_request_sink_v2
         file_grant_release_request_sink;
     v8_dom_runtime::file_grant_create_file_request_sink_v2
         file_grant_create_file_request_sink;
+    v8_dom_runtime::file_grant_create_directory_request_sink_v2
+        file_grant_create_directory_request_sink;
     std::shared_ptr<file_grant_release_dispatcher> file_grant_releases;
     std::unordered_map<std::string, std::weak_ptr<file_grant_owner>>
         file_grant_owners;
@@ -602,6 +632,7 @@
     bool dispatching_user_input{false};
     bool executing_legacy_clipboard_command{false};
     dom_node* active_element{nullptr};
+    uint32_t focused_document_owner_id{0U};
     bool focus_visible{false};
     bool document_visible{true};
     bool document_focused{true};

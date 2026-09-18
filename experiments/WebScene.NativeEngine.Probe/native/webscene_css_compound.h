@@ -301,6 +301,16 @@ inline bool compound_matches(const Host& host,const dom_node& node,
                 if (!form_control || css::is_actually_disabled(document,node)) return false;
             } else if (name == "disabled") {
                 if (!form_control || !css::is_actually_disabled(document,node)) return false;
+            } else if (name == "required") {
+                if (!forms::required_applies(node)
+                    || !node.attributes.contains("required")) return false;
+            } else if (name == "optional") {
+                if (!forms::required_applies(node)
+                    || node.attributes.contains("required")) return false;
+            } else if (name == "read-write") {
+                if (!css::is_read_write(document,node)) return false;
+            } else if (name == "read-only") {
+                if (css::is_read_write(document,node)) return false;
             } else if (name == "valid") {
                 if (!form_control || node.tag == "fieldset" || node.tag == "optgroup"
                     || node.tag == "option") return false;
@@ -329,6 +339,14 @@ inline bool compound_matches(const Host& host,const dom_node& node,
                 if (!hash || !css::target_matches(node,*hash)) return false;
             } else if (name == "checked") {
                 if (!css::checked_matches(node)) return false;
+            } else if (name == "default") {
+                if (!css::default_matches(document,node)) return false;
+            } else if (name == "indeterminate") {
+                if (!css::indeterminate_matches(node)) return false;
+            } else if (name == "in-range") {
+                if (forms::range_state(node) != forms::numeric_range_state::in_range) return false;
+            } else if (name == "out-of-range") {
+                if (forms::range_state(node) != forms::numeric_range_state::out_of_range) return false;
             } else if (name == "hover" || name == "focus" || name == "focus-visible" || name == "focus-within") {
                 if (!css::interaction_matches(document,node,name,
                     host.selector_interaction_state(),host.is_text_control(&node))) return false;
@@ -341,32 +359,11 @@ inline bool compound_matches(const Host& host,const dom_node& node,
                         return host.css_selector_matches(node, item, scope_root);
                     })) return false;
             } else if (name == "has") {
-                bool any = false;
-                size_t start = 0;
-                while (start <= argument.size()) {
-                    auto end = argument.find(',', start);
-                    if (end == std::string::npos) end = argument.size();
-                    const auto relative = trim_css_view(
-                        argument.substr(start, end - start));
-                    if (!relative.empty()) {
-                        if (relative.front() == '>') {
-                            const auto child_selector = trim_css_view(relative.substr(1U));
-                            any = !child_selector.empty() && std::any_of(
-                                node.children.begin(),
-                                node.children.end(),
-                                [&](const auto* child) {
-                                    return is_element(child)
-                                        && host.css_selector_matches(
-                                            *child, child_selector, &node);
-                                });
-                        } else if (relative.front() != '+' && relative.front() != '~') {
-                            any = host.query_selector_node(
-                                const_cast<dom_node&>(node), relative, false) != nullptr;
-                        }
-                    }
-                    if (any || end == argument.size()) break;
-                    start = end + 1U;
-                }
+                const auto any = css_selector_list_any(argument,
+                    [&](std::string_view relative) {
+                        return !relative.empty()
+                            && host.css_relative_selector_matches(node, relative);
+                });
                 if (!any) return false;
             } else {
                 // Stateful and vendor pseudo-classes are not active unless the

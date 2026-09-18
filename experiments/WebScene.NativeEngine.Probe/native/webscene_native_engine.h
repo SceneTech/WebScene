@@ -152,6 +152,12 @@ typedef struct webscene_scene_header {
 // (background/foreground pairs). stroke_width carries the width in CSS pixels.
 // Shadow kinds 17/18: flags bit 0 selects an inverse rounded hole;
 // producers must bracket inverse shadows with clip commands 12/13.
+// Clip kind 12 uses flags bit 31 to select an SVG path stored in the indexed
+// scene string; the remaining bits are its string index. A zero flag retains
+// the rounded-rectangle fields used by existing producers and presenters.
+// Group kind 30 uses flags bit 31 for brightness, bit 30 for grayscale, and
+// bit 29 for contrast; stroke_width carries the bounded non-negative amount.
+// A zero flag retains the opacity-group alpha stored in the low byte of rgba.
 typedef struct webscene_scene_command {
     uint32_t kind;
     uint32_t flags;
@@ -989,6 +995,35 @@ typedef struct webscene_engine_options {
     void* resource_load_v5_user_data;
 } webscene_engine_options;
 
+/*
+ * Profile data is local application data, protected by owner-only filesystem
+ * permissions but not encrypted by WebScene. Hosts should select an OS-backed
+ * protected location and may layer platform credential/encryption facilities.
+ * Clear only while no engine has the partition open; BUSY is returned instead
+ * of racing a live writer. The partition key is hashed below storage_directory,
+ * so it is never interpreted as a path and cannot broaden the deletion scope.
+ */
+enum {
+    WEBSCENE_PROFILE_CLEAR_COOKIES_V1 = 1U << 0U,
+    WEBSCENE_PROFILE_CLEAR_LOCAL_STORAGE_V1 = 1U << 1U,
+    WEBSCENE_PROFILE_CLEAR_ALL_SITE_DATA_V1 = 1U << 2U
+};
+enum {
+    WEBSCENE_PROFILE_STATUS_OK_V1 = 0U,
+    WEBSCENE_PROFILE_STATUS_INVALID_ARGUMENT_V1 = 1U,
+    WEBSCENE_PROFILE_STATUS_BUSY_V1 = 2U,
+    WEBSCENE_PROFILE_STATUS_IO_ERROR_V1 = 3U,
+    WEBSCENE_PROFILE_STATUS_CORRUPT_V1 = 4U,
+    WEBSCENE_PROFILE_STATUS_QUOTA_EXCEEDED_V1 = 5U
+};
+WEBSCENE_API uint32_t webscene_profile_clear_data_v1(
+    const char* storage_directory,
+    size_t storage_directory_length,
+    const char* storage_partition_key,
+    size_t storage_partition_key_length,
+    uint64_t storage_quota_bytes,
+    uint32_t flags);
+
 enum {
     WEBSCENE_DOCUMENT_SCRIPT_ALL_FRAMES = 1U << 0U
 };
@@ -1364,8 +1399,8 @@ WEBSCENE_API uint8_t webscene_engine_request_low_memory(webscene_engine* engine)
  * worker; returning visible before the deadline cancels it.
  */
 WEBSCENE_API uint8_t webscene_engine_set_visible(webscene_engine* engine, uint8_t visible);
-/* Publishes native key-window focus to document.hasFocus() and standard
- * top-level focus/blur events. Repeated values are coalesced. */
+/* Publishes native key-window focus to document.hasFocus() and dispatches
+ * focus/blur on the selected browsing context. Repeated values are coalesced. */
 WEBSCENE_API uint8_t webscene_engine_set_window_focused_v1(
     webscene_engine* engine, uint8_t focused);
 /* Synchronizes fullscreen changes initiated by native window controls. Script
@@ -1948,6 +1983,80 @@ WEBSCENE_API void webscene_file_grant_create_file_request_release_v2(
 WEBSCENE_API uint8_t webscene_engine_complete_file_grant_create_file_request_v2(
     webscene_engine* engine,
     const webscene_file_grant_create_file_completion_v2* completion);
+
+/* Atomically gets or creates one direct directory child beneath an opaque directory
+ * grant. A successful completion carries metadata and a newly derived opaque
+ * directory grant; paths, bookmarks, descriptors, and native objects stay native. */
+enum {
+    WEBSCENE_FILE_GRANT_CREATE_DIRECTORY_SUCCESS_V2 = 0,
+    WEBSCENE_FILE_GRANT_CREATE_DIRECTORY_CANCELLED_V2 = 1,
+    WEBSCENE_FILE_GRANT_CREATE_DIRECTORY_DENIED_V2 = 2,
+    WEBSCENE_FILE_GRANT_CREATE_DIRECTORY_NOT_FOUND_V2 = 3,
+    WEBSCENE_FILE_GRANT_CREATE_DIRECTORY_TYPE_MISMATCH_V2 = 4,
+    WEBSCENE_FILE_GRANT_CREATE_DIRECTORY_CHANGED_V2 = 5,
+    WEBSCENE_FILE_GRANT_CREATE_DIRECTORY_IO_ERROR_V2 = 6,
+    WEBSCENE_FILE_GRANT_CREATE_DIRECTORY_LIMIT_V2 = 7,
+    WEBSCENE_FILE_GRANT_CREATE_DIRECTORY_MAXIMUM_NAME_BYTES_V2 = 1024 * 1024,
+    WEBSCENE_FILE_GRANT_CREATE_DIRECTORY_MAXIMUM_PENDING_OPERATIONS_V2 = 64
+};
+typedef struct webscene_file_grant_create_directory_request_v2 {
+    uint32_t struct_size, version;
+    uint64_t request_id;
+    webscene_file_panel_token_v2 directory_grant_id;
+    webscene_file_panel_string_v2 display_name;
+    uint64_t reserved;
+} webscene_file_grant_create_directory_request_v2;
+typedef struct webscene_file_grant_create_directory_completion_v2 {
+    uint32_t struct_size, version;
+    uint64_t request_id;
+    uint32_t status, capabilities;
+    webscene_file_grant_metadata_v2 metadata;
+    webscene_file_panel_string_v2 display_name;
+    webscene_file_panel_token_v2 grant_id;
+} webscene_file_grant_create_directory_completion_v2;
+WEBSCENE_API const webscene_file_grant_create_directory_request_v2*
+webscene_engine_take_file_grant_create_directory_request_v2(webscene_engine* engine);
+WEBSCENE_API void webscene_file_grant_create_directory_request_release_v2(
+    const webscene_file_grant_create_directory_request_v2* request);
+WEBSCENE_API uint8_t webscene_engine_complete_file_grant_create_directory_request_v2(
+    webscene_engine* engine,
+    const webscene_file_grant_create_directory_completion_v2* completion);
+
+/* Removes one direct child beneath an opaque directory grant. Recursive
+ * removal is bounded and native-owned; no path, bookmark, descriptor, deleted
+ * metadata, or platform object crosses this ABI. */
+enum {
+    WEBSCENE_FILE_GRANT_REMOVE_SUCCESS_V2 = 0,
+    WEBSCENE_FILE_GRANT_REMOVE_CANCELLED_V2 = 1,
+    WEBSCENE_FILE_GRANT_REMOVE_DENIED_V2 = 2,
+    WEBSCENE_FILE_GRANT_REMOVE_NOT_FOUND_V2 = 3,
+    WEBSCENE_FILE_GRANT_REMOVE_INVALID_MODIFICATION_V2 = 4,
+    WEBSCENE_FILE_GRANT_REMOVE_CHANGED_V2 = 5,
+    WEBSCENE_FILE_GRANT_REMOVE_IO_ERROR_V2 = 6,
+    WEBSCENE_FILE_GRANT_REMOVE_LIMIT_V2 = 7,
+    WEBSCENE_FILE_GRANT_REMOVE_MAXIMUM_NAME_BYTES_V2 = 1024 * 1024,
+    WEBSCENE_FILE_GRANT_REMOVE_MAXIMUM_PENDING_OPERATIONS_V2 = 64
+};
+typedef struct webscene_file_grant_remove_request_v2 {
+    uint32_t struct_size, version;
+    uint64_t request_id;
+    webscene_file_panel_token_v2 directory_grant_id;
+    webscene_file_panel_string_v2 display_name;
+    uint8_t recursive;
+    uint8_t reserved_bytes[7];
+} webscene_file_grant_remove_request_v2;
+typedef struct webscene_file_grant_remove_completion_v2 {
+    uint32_t struct_size, version;
+    uint64_t request_id;
+    uint32_t status, reserved;
+} webscene_file_grant_remove_completion_v2;
+WEBSCENE_API const webscene_file_grant_remove_request_v2*
+webscene_engine_take_file_grant_remove_request_v2(webscene_engine* engine);
+WEBSCENE_API void webscene_file_grant_remove_request_release_v2(
+    const webscene_file_grant_remove_request_v2* request);
+WEBSCENE_API uint8_t webscene_engine_complete_file_grant_remove_request_v2(
+    webscene_engine* engine,
+    const webscene_file_grant_remove_completion_v2* completion);
 
 /* One-way release of a live opaque file grant after the final browser-side
  * wrapper or in-flight structured-clone packet relinquishes ownership. The

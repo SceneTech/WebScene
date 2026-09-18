@@ -108,10 +108,41 @@ inline std::vector<css_compound_dependencies> compile_invalidation_plan(
             } else if (pseudo.name == "checked") {
                 for (const auto* name : {"checked", "selected", "type"})
                     add(output.attributes[name], route);
+            } else if (pseudo.name == "default") {
+                // Authored defaults update the subject directly. Submit-button
+                // ownership/order changes can select a different control, so
+                // those rare mutations conservatively recascade the document.
+                add(output.attributes["checked"], route);
+                add(output.attributes["selected"], route);
+                for (const auto* name : {"type", "form", "id"})
+                    output.attributes[name].scope |= invalidation_fallback;
+                output.child_list_sensitive = true;
+                output.child_list.scope |= invalidation_fallback;
+            } else if (pseudo.name == "indeterminate") {
+                for (const auto* name : {"$live-form-indeterminate", "checked", "type", "name"})
+                    add(output.attributes[name], route);
+                output.child_list_sensitive = true;
+                add(output.child_list, route);
+            } else if (pseudo.name == "in-range" || pseudo.name == "out-of-range") {
+                for (const auto* name : {"$live-form-range", "type", "min", "max"})
+                    add(output.attributes[name], route);
+            } else if (pseudo.name == "read-only" || pseudo.name == "read-write") {
+                add(output.attributes["readonly"], route);
+                add(output.attributes["type"], route);
+                auto inherited_route = css_invalidation_route{
+                    css_invalidation_step::inclusive_descendants};
+                inherited_route.insert(inherited_route.end(), route.begin(), route.end());
+                add(output.attributes["disabled"], inherited_route);
+                add(output.attributes["contenteditable"], inherited_route);
+                // Moving the first legend changes inherited disabled state.
+                output.child_list_sensitive = true;
+                add(output.child_list, inherited_route);
             } else if (pseudo.name == "required" || pseudo.name == "optional"
                 || pseudo.name == "valid" || pseudo.name == "invalid") {
                 add(output.attributes["required"], route);
-                if (pseudo.name == "valid" || pseudo.name == "invalid") {
+                if (pseudo.name == "required" || pseudo.name == "optional") {
+                    add(output.attributes["type"], route);
+                } else {
                     // Non-text controls retain their existing authored-value
                     // dependency while text controls also observe live value.
                     add(output.attributes["value"], route);
@@ -138,6 +169,18 @@ inline std::vector<css_compound_dependencies> compile_invalidation_plan(
                 if (std::any_of(arm.combinators.begin(), arm.combinators.end(),
                         [](char value) { return value == '+' || value == '~'; }))
                     output.child_list_sensitive = true;
+                if (has && !arm.combinators.empty()
+                    && (arm.combinators.front() == '+'
+                        || arm.combinators.front() == '~')) {
+                    // On removal, the changed final sibling no longer exists to
+                    // seed a reverse route. Visit the surviving sibling subjects;
+                    // stable outer-compound keys filter the bounded child list.
+                    auto surviving_subjects = css_invalidation_route{
+                        css_invalidation_step::children};
+                    surviving_subjects.insert(
+                        surviving_subjects.end(), route.begin(), route.end());
+                    add(output.child_list, surviving_subjects);
+                }
                 for (size_t i = 0; i < arm.compiled_compounds.size(); ++i) {
                     css_invalidation_route nested_route;
                     if (has) {

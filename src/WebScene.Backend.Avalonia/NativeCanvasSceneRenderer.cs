@@ -42,6 +42,13 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
     private const uint LayerRemove = 2;
     private const uint LayerUnchangedPrefix = 4;
     private const uint OffscreenCanvasLayer = 1u << 31;
+    private const uint DomPolygonClipResource = 1u << 31;
+    private const uint DomPolygonClipIndexMask = ~DomPolygonClipResource;
+    private const uint DomBrightnessFilter = 1u << 31;
+    private const uint DomGrayscaleFilter = 1u << 30;
+    private const uint DomContrastFilter = 1u << 29;
+    private const uint DomColorFilterMask =
+        DomBrightnessFilter | DomGrayscaleFilter | DomContrastFilter;
 
     private readonly Dictionary<uint, RetainedLayer> s_layers = new();
     private readonly List<RetainedLayer> s_orderedLayers = [];
@@ -644,13 +651,8 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
                 switch (command.Kind)
                 {
                     case 30:
-                        opacity.Color = new SKColor(
-                            255,
-                            255,
-                            255,
-                            (byte)(command.Rgba & 0xff));
-                        backdrop.SaveLayer(opacity);
-                        overlay.SaveLayer(opacity);
+                        SaveDomGroup(backdrop, command, opacity);
+                        SaveDomGroup(overlay, command, opacity);
                         break;
                     case 31:
                         backdrop.Restore();
@@ -799,12 +801,14 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
                     case 12:
                         backdrop.Save();
                         overlay.Save();
-                        ClipDomRoundedRect(
+                        ClipDomShape(
                             backdrop,
+                            view,
                             command,
                             ResolveDomCornerRadii(commands, commandIndex));
-                        ClipDomRoundedRect(
+                        ClipDomShape(
                             overlay,
+                            view,
                             command,
                             ResolveDomCornerRadii(commands, commandIndex));
                         break;
@@ -829,6 +833,59 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
         canvas.Translate(command.X, command.Y);
         canvas.Scale(command.Width, command.Height);
         canvas.Translate(-command.X, -command.Y);
+    }
+
+    private static void SaveDomGroup(
+        SKCanvas canvas,
+        in SceneCommand command,
+        SKPaint paint)
+    {
+        paint.Color = new SKColor(
+            255,
+            255,
+            255,
+            (command.Flags & DomColorFilterMask) != 0
+                ? (byte)255 : (byte)(command.Rgba & 0xff));
+        if ((command.Flags & DomColorFilterMask) == 0)
+        {
+            paint.ColorFilter = null;
+            canvas.SaveLayer(paint);
+            return;
+        }
+        var amount = Math.Max(0, command.StrokeWidth);
+        float[] matrix;
+        if ((command.Flags & DomBrightnessFilter) != 0)
+        {
+            matrix = [
+                amount, 0, 0, 0, 0,
+                0, amount, 0, 0, 0,
+                0, 0, amount, 0, 0,
+                0, 0, 0, 1, 0
+            ];
+        }
+        else if ((command.Flags & DomGrayscaleFilter) != 0)
+        {
+            matrix = [
+                1 - 0.7874f * amount, 0.7152f * amount, 0.0722f * amount, 0, 0,
+                0.2126f * amount, 1 - 0.2848f * amount, 0.0722f * amount, 0, 0,
+                0.2126f * amount, 0.7152f * amount, 1 - 0.9278f * amount, 0, 0,
+                0, 0, 0, 1, 0
+            ];
+        }
+        else
+        {
+            var intercept = 127.5f * (1 - amount);
+            matrix = [
+                amount, 0, 0, 0, intercept,
+                0, amount, 0, 0, intercept,
+                0, 0, amount, 0, intercept,
+                0, 0, 0, 1, 0
+            ];
+        }
+        using var filter = SKColorFilter.CreateColorMatrix(matrix);
+        paint.ColorFilter = filter;
+        canvas.SaveLayer(paint);
+        paint.ColorFilter = null;
     }
 
     private static void ApplyRotation(SKCanvas canvas, in SceneCommand command)
@@ -1769,6 +1826,31 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
                 radii.BottomLeft
             ]);
         canvas.ClipRoundRect(rounded, SKClipOperation.Intersect, antialias: true);
+    }
+
+    private static void ClipDomShape(
+        SKCanvas canvas,
+        NativeSceneView* view,
+        in SceneCommand command,
+        in DomCornerRadii radii)
+    {
+        if ((command.Flags & DomPolygonClipResource) == 0)
+        {
+            ClipDomRoundedRect(canvas, command, radii);
+            return;
+        }
+        ClipDomPath(canvas, DomStringAt(view, command.Flags & DomPolygonClipIndexMask));
+    }
+
+    private static void ClipDomPath(SKCanvas canvas, string pathData)
+    {
+        using var path = SKPath.ParseSvgPathData(pathData);
+        if (path is null)
+        {
+            canvas.ClipRect(SKRect.Empty, SKClipOperation.Intersect, antialias: false);
+            return;
+        }
+        canvas.ClipPath(path, SKClipOperation.Intersect, antialias: true);
     }
 
     private void DrawDomText(
@@ -3612,7 +3694,7 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
             && Resources.AsSpan().SequenceEqual(other.Resources);
     }
     private sealed record OrderedGpuPaint(SceneCommand Command, DomCornerRadii Radii, SKPicture? Picture,
-        DomPictureInput? Input = null);
+        DomPictureInput? Input = null, string? ClipPath = null);
 
     private bool ValidateOrderedCanvasPlacements(NativeSceneView* view, bool checkpoint)
     {
@@ -3678,7 +3760,11 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
                     var input = new DomPictureInput(
                         MemoryMarshal.AsBytes(commands.Slice(Math.Max(0, start - 1), index - Math.Max(0, start - 1))).ToArray(),
                         commands.Slice(start, index - start).ToArray()
-                            .Select(command => DomStringAt(view, command.Flags)).ToArray(),
+                            .Select(command => command.Kind == 12
+                                    && (command.Flags & DomPolygonClipResource) != 0
+                                ? DomStringAt(view, command.Flags & DomPolygonClipIndexMask)
+                                : DomStringAt(view, command.Flags))
+                            .ToArray(),
                         view->Header.ViewportWidth, view->Header.ViewportHeight,
                         _presenterDeviceScaleFactor, NativeTextShaping.FontRegistrationVersion);
                     var previous = _orderedGpuPaint is not null && result.Count < _orderedGpuPaint.Count
@@ -3696,7 +3782,19 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
                     }
                 }
                 if (index != commands.Length)
-                    result.Add(new(commands[index], ResolveDomCornerRadii(commands, index), null));
+                {
+                    ref readonly var command = ref commands[index];
+                    var clipPath = command.Kind == 12
+                            && (command.Flags & DomPolygonClipResource) != 0
+                        ? DomStringAt(view, command.Flags & DomPolygonClipIndexMask)
+                        : null;
+                    result.Add(new(
+                        command,
+                        ResolveDomCornerRadii(commands, index),
+                        null,
+                        null,
+                        clipPath));
+                }
                 start = index + 1;
             }
             return result;
@@ -3732,12 +3830,16 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
                 switch (command.Kind)
                 {
                     case 12:
-                        canvas.Save(); ClipDomRoundedRect(canvas, command, entry.Radii); break;
+                        canvas.Save();
+                        if (entry.ClipPath is null)
+                            ClipDomRoundedRect(canvas, command, entry.Radii);
+                        else
+                            ClipDomPath(canvas, entry.ClipPath);
+                        break;
                     case 15: ApplyScale(canvas, command); break;
                     case 19: ApplyRotation(canvas, command); break;
                     case 30:
-                        opacity.Color = new SKColor(255, 255, 255, (byte)(command.Rgba & 255));
-                        canvas.SaveLayer(opacity); break;
+                        SaveDomGroup(canvas, command, opacity); break;
                     case 13: case 16: case 20: case 31:
                         // Never allow an invalid stream to pop the host's state.
                         if (canvas.SaveCount <= save + 1) throw new InvalidOperationException("Unbalanced GPU scene state.");

@@ -756,6 +756,8 @@ inline specified_css_value compile_specified_value(css_property_id property, std
     }
 
     switch (property) {
+    case css_property_id::aspect_ratio:
+        set_component_list(); break;
     case css_property_id::contain:
     case css_property_id::cursor:
     case css_property_id::font_family:

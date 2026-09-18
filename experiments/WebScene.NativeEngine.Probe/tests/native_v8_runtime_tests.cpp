@@ -153,6 +153,14 @@ int main()
             test_indexeddb_runtime_contract();
             return 0;
         }
+        if (selected == "web-storage") {
+            auto* focused_engine = webscene_engine_create(0);
+            require(focused_engine != nullptr,
+                "Web Storage focused engine creation failed");
+            test_session_storage_in_outer_and_frame_contexts(focused_engine);
+            webscene_engine_destroy(focused_engine);
+            return 0;
+        }
         if (selected == "navigation-realm") {
             test_navigation_replaces_top_level_realm();
             return 0;
@@ -168,6 +176,18 @@ int main()
         if (selected == "iframe-navigation-lifecycle") {
             test_same_origin_iframe_navigation_document_replacement();
             return 0;
+        }
+        if (selected == "query-iframe-worker-bootstrap") {
+            test_query_iframe_worker_extension_host_bootstrap();
+            return 0;
+        }
+        if (selected == "window-find-selection") {
+          test_nested_window_find_selection();
+          return 0;
+        }
+        if (selected == "nested-window-focus") {
+          test_nested_window_focus_ownership();
+          return 0;
         }
         if (selected == "idle-v8-platform") {
             test_idle_v8_foreground_completion();
@@ -189,6 +209,14 @@ int main()
         }
         if (selected == "stylesheet-mutation-performance") {
             test_batched_stylesheet_rule_mutation_performance();
+            return 0;
+        }
+        if (selected == "nested-style-rule-cssom") {
+            test_nested_style_rule_cssom_performance_and_lifecycle();
+            return 0;
+        }
+        if (selected == "adopted-stylesheets") {
+            test_adopted_stylesheet_multi_root_contract_and_lifecycle();
             return 0;
         }
         if (selected == "iframe-sandbox") {
@@ -381,6 +409,7 @@ int main()
         if (selected == "response-header-cookie") {
             test_response_header_cookie_contracts();
             test_request_headers_reach_resource_callback_v5();
+            test_durable_profile_restart_contract();
             test_parallel_resource_prefetch();
             test_fetch_carries_document_origin_to_resource_host();
             test_tradingview_save_acknowledgement_uses_multipart_post();
@@ -413,6 +442,14 @@ int main()
             test_compiled_css_invalidation_scaling();
             test_compiled_css_route_scaling();
             test_compiled_css_route_scaling(true, true);
+            return 0;
+        }
+        if (selected == "nested-functional-selectors") {
+            test_nested_functional_selector_scaling();
+            return 0;
+        }
+        if (selected == "relative-sibling-has") {
+            test_relative_sibling_has_scaling();
             return 0;
         }
         if (selected == "live-form-state") {
@@ -567,6 +604,7 @@ int main()
         if (selected == "websocket-file-reader") {
             test_native_websocket_browser_api();
             test_native_websocket_protocol_handshake_timing();
+            test_native_file_reader_task_source_fairness();
             return 0;
         }
         if (selected == "stylesheet-cssom") {
@@ -1203,6 +1241,7 @@ int main()
     test_media_query_inherited_value_propagation_work();
     test_media_query_matching_scales_linearly();
     test_attribute_invalidation_scopes_subject_and_descendant_rules();
+    test_relative_sibling_has_scaling();
     test_live_form_state_selectors_and_scaling();
     test_compiled_subject_index_scaling();
     test_cascade_layer_mutation_scaling();
@@ -1229,6 +1268,7 @@ int main()
     test_resource_cache_policy_matrix();
     test_due_timer_precedes_dynamic_resource_wave();
     test_dynamic_frame_resources_use_each_document_base_url();
+    test_query_iframe_worker_extension_host_bootstrap();
     test_iframe_preparation_discovers_subresources_during_outer_script();
     test_deferred_frame_script_observes_window_dom_content_loaded();
     test_worker_starts_after_engine_configuration();
@@ -1266,6 +1306,7 @@ int main()
     test_hidden_engine_reclamation_is_debounced_and_cancelable(engine);
     test_native_websocket_browser_api();
     test_native_websocket_protocol_handshake_timing();
+    test_native_file_reader_task_source_fairness();
     execute(
         engine,
         "if (typeof IntersectionObserver !== 'function' || "

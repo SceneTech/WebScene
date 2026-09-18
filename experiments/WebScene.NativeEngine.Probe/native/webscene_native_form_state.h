@@ -1,7 +1,70 @@
 #pragma once
 #include "webscene_native_dom.h"
+#include <charconv>
+#include <cmath>
 
 namespace webscene_native::forms {
+enum class numeric_range_state : uint8_t {
+    not_applicable,
+    in_range,
+    out_of_range,
+};
+
+inline bool form_keyword_equals(std::string_view value,std::string_view expected)
+    {
+        if(value.size()!=expected.size()) return false;
+        for(size_t index=0;index<expected.size();++index) {
+            auto character=value[index];
+            if(character>='A' && character<='Z') character+='a'-'A';
+            if(character!=expected[index]) return false;
+        }
+        return true;
+    }
+
+inline std::optional<double> finite_number(std::string_view text)
+    {
+        if(text.empty()) return std::nullopt;
+        double result{};
+        const auto parsed=std::from_chars(text.data(),text.data()+text.size(),result);
+        if(parsed.ec!=std::errc{} || parsed.ptr!=text.data()+text.size()
+            || !std::isfinite(result)) return std::nullopt;
+        return result;
+    }
+
+inline numeric_range_state range_state(
+    const dom_node& node,std::optional<std::string_view> live_value=std::nullopt)
+    {
+        if(node.tag!="input") return numeric_range_state::not_applicable;
+        const auto authored_type=node.attributes.find("type");
+        const auto type=authored_type==node.attributes.end()
+            ? std::string_view{"text"}:std::string_view{authored_type->second};
+        const auto range=form_keyword_equals(type,"range");
+        if(!range && !form_keyword_equals(type,"number"))
+            return numeric_range_state::not_applicable;
+        const auto bound=[&](std::string_view name)->std::optional<double> {
+            const auto authored=node.attributes.find(std::string(name));
+            return authored==node.attributes.end()
+                ? std::nullopt:finite_number(authored->second);
+        };
+        auto minimum=bound("min");
+        auto maximum=bound("max");
+        if(range) {
+            if(!minimum) minimum=0.0;
+            if(!maximum) maximum=100.0;
+            if(*maximum<*minimum) maximum=*minimum;
+        }
+        std::string_view value;
+        if(live_value) value=*live_value;
+        else if(node.form_control().value_initialized) value=node.form_control().value;
+        else if(const auto authored=node.attributes.find("value");authored!=node.attributes.end())
+            value=authored->second;
+        auto number=finite_number(value);
+        if(!number && range) number=*minimum+(*maximum-*minimum)*0.5;
+        if(!number) return numeric_range_state::not_applicable;
+        return (minimum && *number<*minimum) || (maximum && *number>*maximum)
+            ? numeric_range_state::out_of_range:numeric_range_state::in_range;
+    }
+
 inline void collect_descendants_by_tag(
         dom_node& root,
         std::string_view tag,
@@ -152,6 +215,26 @@ inline bool supports_text_selection(const dom_node* node)
             && type->second != "reset" && type->second != "file"
             && type->second != "image" && type->second != "range"
             && type->second != "color";
+    }
+
+inline bool required_applies(const dom_node& node)
+    {
+        if (node.tag == "select" || node.tag == "textarea") return true;
+        if (node.tag != "input") return false;
+        const auto authored = node.attributes.find("type");
+        if (authored == node.attributes.end()) return true;
+        const auto equals = [&](std::string_view expected) {
+            if (authored->second.size() != expected.size()) return false;
+            for (size_t index = 0; index < expected.size(); ++index) {
+                auto character = authored->second[index];
+                if (character >= 'A' && character <= 'Z') character += 'a' - 'A';
+                if (character != expected[index]) return false;
+            }
+            return true;
+        };
+        return !equals("hidden") && !equals("range") && !equals("color")
+            && !equals("button") && !equals("submit") && !equals("reset")
+            && !equals("image");
     }
 
 inline bool is_text_control(const dom_node* node)

@@ -1,0 +1,29 @@
+{
+  "profile": "webscene-webview-consumer-resource-matrix-1",
+  "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+  "runtime": "v8",
+  "viewport": {
+    "width": 800,
+    "height": 600,
+    "deviceScaleFactor": 1
+  },
+  "required": [
+    {
+      "path": "contracts/fixtures/vscode-markdown-preview-645f29c/index.html",
+      "type": "contract",
+      "capabilities": [
+        "service-worker-vscode-markdown-resource-broker",
+        "service-worker-code-oss-consumer-resource-matrix",
+        "service-worker-bounded-concurrent-response-bodies"
+      ],
+      "evidence": [
+        "vscode-oss-645f29c-service-worker-v6",
+        "vscode-oss-representative-webview-consumers"
+      ],
+      "reason": "Exact pinned Code OSS v6 worker coverage for Markdown plus representative notebook, custom-editor, extension-detail, chat/MCP, Mermaid, Simple Browser, and release-note resources, including admission failures, 32 concurrent one MiB bodies, validator reuse, and 100-cycle latency.",
+      "nativeNavigation": true
+    }
+  ],
+  "harnessBlocked": [],
+  "excluded": []
+}

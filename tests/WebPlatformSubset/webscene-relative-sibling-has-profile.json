@@ -1,0 +1,29 @@
+{
+  "profile": "webscene-relative-sibling-has-1",
+  "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+  "runtime": "v8",
+  "viewport": {
+    "width": 800,
+    "height": 600,
+    "deviceScaleFactor": 1
+  },
+  "required": [
+    {
+      "path": "contracts/css-relative-sibling-has.html",
+      "type": "contract",
+      "capabilities": [
+        "relative-adjacent-has",
+        "relative-general-sibling-has",
+        "reverse-sibling-invalidation"
+      ],
+      "evidence": [
+        "selectors-level-4-relational-pseudo-class",
+        "unchanged-code-oss-relative-sibling-has",
+        "direct-chromium-native-contract"
+      ],
+      "reason": "Chrome/native oracle for unchanged Code OSS adjacent and general-sibling :has() matching plus live reverse invalidation."
+    }
+  ],
+  "harnessBlocked": [],
+  "excluded": []
+}

@@ -70,11 +70,10 @@
     }
 
     static void throw_dom_exception(
-        const v8::FunctionCallbackInfo<v8::Value>& info,
+        v8::Isolate* isolate,
         const char* message,
         const char* name)
     {
-        auto* isolate = info.GetIsolate();
         auto local_context = isolate->GetCurrentContext();
         auto exception = v8::Object::New(isolate);
         exception->Set(
@@ -103,6 +102,14 @@
             }
         }
         isolate->ThrowException(exception);
+    }
+
+    static void throw_dom_exception(
+        const v8::FunctionCallbackInfo<v8::Value>& info,
+        const char* message,
+        const char* name)
+    {
+        throw_dom_exception(info.GetIsolate(), message, name);
     }
 
     static void attach_shadow(const v8::FunctionCallbackInfo<v8::Value>& info)
@@ -785,6 +792,11 @@
 
     uint32_t cascade_layer_scope_id(uint32_t stylesheet_owner_id)
     {
+        if (const auto adopted = adopted_stylesheet_owner_scopes.find(
+                stylesheet_owner_id);
+            adopted != adopted_stylesheet_owner_scopes.end()) {
+            return adopted->second;
+        }
         if (stylesheet_owner_id != 0U) {
             auto* owner = document.find_by_native_id(stylesheet_owner_id);
             if (owner != nullptr) {
@@ -808,6 +820,141 @@
         }
         return active_css_cascade_root == nullptr
             ? document.body().id : active_css_cascade_root->id;
+    }
+
+    uint32_t allocate_adopted_stylesheet_owner_id()
+    {
+        while (next_adopted_stylesheet_owner_id != 0U) {
+            const auto candidate = next_adopted_stylesheet_owner_id++;
+            if (document.find_by_native_id(candidate) == nullptr
+                && !adopted_stylesheet_owner_scopes.contains(candidate)) {
+                return candidate;
+            }
+        }
+        next_adopted_stylesheet_owner_id = 0xf0000000U;
+        return allocate_adopted_stylesheet_owner_id();
+    }
+
+    void erase_adopted_stylesheet_rules(
+        adopted_stylesheet_publication& publication)
+    {
+        std::unordered_set<uint32_t> owners;
+        for (const auto& entry : publication.entries) owners.insert(entry.owner_id);
+        std::erase_if(css_rules, [&](const auto& rule) {
+            return owners.contains(rule.stylesheet_owner_id);
+        });
+        for (const auto& entry : publication.entries) {
+            rebuild_cascade_layer_order_for_stylesheet(entry.owner_id, {});
+            adopted_stylesheet_owner_scopes.erase(entry.owner_id);
+        }
+    }
+
+    void append_adopted_stylesheet_rules(
+        adopted_stylesheet_publication& publication)
+    {
+        for (auto& entry : publication.entries) {
+            adopted_stylesheet_owner_scopes.insert_or_assign(
+                entry.owner_id, publication.root_id);
+            if (!entry.source.empty()) {
+                add_stylesheet(
+                    entry.source,
+                    publication.base_address,
+                    entry.owner_id,
+                    publication.shadow_scope_root_id);
+            }
+        }
+    }
+
+    void reappend_adopted_stylesheets_for_cascade_root(uint32_t cascade_root_id)
+    {
+        std::vector<adopted_stylesheet_publication*> publications;
+        for (auto& [root_id, publication] : adopted_stylesheet_publications) {
+            static_cast<void>(root_id);
+            if (publication.cascade_root_id == cascade_root_id) {
+                publications.push_back(&publication);
+            }
+        }
+        std::sort(publications.begin(), publications.end(), [](const auto* left, const auto* right) {
+            return left->root_id < right->root_id;
+        });
+        for (auto* publication : publications) erase_adopted_stylesheet_rules(*publication);
+        for (auto* publication : publications) append_adopted_stylesheet_rules(*publication);
+    }
+
+    static void publish_adopted_stylesheets(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        auto* root = unwrap_node(info.This());
+        if (self == nullptr || root == nullptr
+            || (root != &self->document.body()
+                && !self->document.is_shadow_root(*root))
+            || info.Length() < 1 || !info[0]->IsArray()) {
+            info.GetReturnValue().Set(v8::False(info.GetIsolate()));
+            return;
+        }
+        constexpr auto maximum_sheets = uint32_t{1024U};
+        constexpr auto maximum_bytes = size_t{32U * 1024U * 1024U};
+        const auto input = info[0].As<v8::Array>();
+        if (input->Length() > maximum_sheets) {
+            info.GetReturnValue().Set(v8::False(info.GetIsolate()));
+            return;
+        }
+        std::vector<std::string> sources;
+        sources.reserve(input->Length());
+        size_t bytes = 0U;
+        const auto context = info.GetIsolate()->GetCurrentContext();
+        for (uint32_t index = 0; index < input->Length(); ++index) {
+            v8::Local<v8::Value> value;
+            v8::Local<v8::String> string;
+            if (!input->Get(context, index).ToLocal(&value)
+                || !value->ToString(context).ToLocal(&string)) {
+                return;
+            }
+            auto source = to_wtf8(info.GetIsolate(), string);
+            if (source.size() > maximum_bytes - std::min(bytes, maximum_bytes)) {
+                info.GetReturnValue().Set(v8::False(info.GetIsolate()));
+                return;
+            }
+            bytes += source.size();
+            sources.push_back(std::move(source));
+        }
+
+        self->flush_pending_stylesheet_replacements();
+        auto* cascade_root = self->css_cascade_root_for_node(*root);
+        if (cascade_root == nullptr) {
+            info.GetReturnValue().Set(v8::False(info.GetIsolate()));
+            return;
+        }
+        auto* previous_root = const_cast<dom_node*>(self->active_css_cascade_root);
+        self->activate_css_cascade(cascade_root);
+        auto& publication = self->adopted_stylesheet_publications[root->id];
+        self->erase_adopted_stylesheet_rules(publication);
+        publication.root_id = root->id;
+        publication.cascade_root_id = cascade_root->id;
+        publication.shadow_scope_root_id = self->document.is_shadow_root(*root)
+            ? root->id : 0U;
+        publication.base_address = self->effective_document_base(cascade_root);
+        while (publication.entries.size() < sources.size()) {
+            publication.entries.push_back({
+                self->allocate_adopted_stylesheet_owner_id(), {}});
+        }
+        publication.entries.resize(sources.size());
+        for (size_t index = 0; index < sources.size(); ++index) {
+            publication.entries[index].source = std::move(sources[index]);
+        }
+        if (publication.entries.empty()) {
+            self->adopted_stylesheet_publications.erase(root->id);
+        } else {
+            self->append_adopted_stylesheet_rules(publication);
+        }
+        self->rebuild_css_rule_indexes_and_root_variables();
+        self->schedule_style_recascade(*cascade_root, true, "adopted-stylesheet-change");
+        self->document.mark_dirty();
+        if (previous_root != nullptr && previous_root != cascade_root) {
+            self->activate_css_cascade(previous_root);
+        }
+        info.GetReturnValue().Set(v8::True(info.GetIsolate()));
     }
 
     std::string cascade_layer_registration_key(
@@ -1090,14 +1237,20 @@
     void destroy_detached_frame_contexts(dom_node& root)
     {
         std::unordered_set<uint32_t> node_ids;
+        std::unordered_map<uint32_t, dom_node*> detached_frames;
         std::vector<v8::Local<v8::Context>> detached_contexts;
-        visit_subtree(root, [&](const dom_node& node) {
+        visit_subtree(root, [&](dom_node& node) {
             node_ids.insert(node.id);
+            if (node.tag == "iframe") detached_frames.emplace(node.id, &node);
         });
         for (const auto id : node_ids) {
             const auto found = actual_frame_contexts.find(id);
             if (found != actual_frame_contexts.end()
                 && !found->second.IsEmpty()) {
+                if (const auto frame = detached_frames.find(id);
+                    frame != detached_frames.end()) {
+                    dispatch_iframe_pagehide(*frame->second);
+                }
                 const auto local_context = found->second.Get(isolate);
                 const auto* frame_root = static_cast<const dom_node*>(
                     local_context->GetAlignedPointerFromEmbedderData(
@@ -1122,9 +1275,12 @@
             }
             actual_frame_contexts.erase(id);
             frame_hydration_states.erase(id);
+            retire_iframe_navigation(id);
+            frame_pagehide_dispatched.erase(id);
             actual_frame_windows.erase(id);
             actual_frame_documents.erase(id);
             frame_session_storage.erase(id);
+            frame_local_storage.erase(id);
             frame_load_listeners.erase(id);
             frame_dom_content_loaded_listeners.erase(id);
         }
@@ -1459,9 +1615,10 @@
         auto stylesheets_changed = false;
         for (auto* child : children) {
             if (child != nullptr) {
-                if (is_connected(*child)) {
-                    notify_custom_elements_subtree(*child, "disconnected");
-                }
+              clear_selections_containing(*child);
+              if (is_connected(*child)) {
+                notify_custom_elements_subtree(*child, "disconnected");
+              }
                 stylesheets_changed |= deactivate_connected_stylesheets(*child, false);
             }
         }
@@ -1624,6 +1781,11 @@
         for (const auto id : node_ids) {
             erase_pending_stylesheet_replacement(id);
             stylesheet_cssom_sources.erase(id);
+            if (auto adopted = adopted_stylesheet_publications.find(id);
+                adopted != adopted_stylesheet_publications.end()) {
+                erase_adopted_stylesheet_rules(adopted->second);
+                adopted_stylesheet_publications.erase(adopted);
+            }
         }
         std::erase_if(canvas_states, [&](const auto& entry) {
             return node_ids.contains(static_cast<uint32_t>(entry.first));
@@ -1672,11 +1834,24 @@
             }
             actual_frame_contexts.erase(id);
             frame_hydration_states.erase(id);
+            retire_iframe_navigation(id);
+            frame_pagehide_dispatched.erase(id);
             actual_frame_documents.erase(id);
             frame_session_storage.erase(id);
+            frame_local_storage.erase(id);
             frame_load_listeners.erase(id);
             frame_dom_content_loaded_listeners.erase(id);
+            window_selections.erase(id);
         }
+        if (node_ids.contains(focused_document_owner_id)) {
+          focused_document_owner_id = 0U;
+        }
+        std::erase_if(window_selections, [&](const auto &entry) {
+          const auto &selection = entry.second;
+          return node_ids.contains(entry.first) ||
+                 node_ids.contains(selection.anchor_node_id) ||
+                 node_ids.contains(selection.focus_node_id);
+        });
         if (!frame_context.IsEmpty()) {
             auto local_frame_context = frame_context.Get(isolate);
             auto* frame_root = static_cast<dom_node*>(
@@ -2225,6 +2400,80 @@
         return true;
     }
 
+    uint64_t current_iframe_navigation_generation(uint32_t frame_id)
+    {
+        std::lock_guard lock(document_generation_mutex);
+        return frame_navigation_generations.try_emplace(frame_id, 1U)
+            .first->second;
+    }
+
+    void dispatch_iframe_pagehide(dom_node& frame)
+    {
+        const auto known = actual_frame_contexts.find(frame.id);
+        if (known == actual_frame_contexts.end() || known->second.IsEmpty()
+            || frame_pagehide_dispatched.contains(frame.id)) return;
+        frame_pagehide_dispatched.insert(frame.id);
+        auto local_context = known->second.Get(isolate);
+        v8::Context::Scope context_scope(local_context);
+        auto target = local_context->Global();
+        v8::Local<v8::Value> dispatcher;
+        if (!target->Get(local_context, js_string(isolate, "dispatchEvent"))
+                .ToLocal(&dispatcher)
+            || !dispatcher->IsFunction()) return;
+        auto event = create_event_instance(local_context);
+        event->Set(local_context, js_string(isolate, "type"),
+            js_string(isolate, "pagehide")).Check();
+        event->Set(local_context, js_string(isolate, "bubbles"),
+            v8::False(isolate)).Check();
+        event->Set(local_context, js_string(isolate, "cancelable"),
+            v8::False(isolate)).Check();
+        event->Set(local_context, js_string(isolate, "persisted"),
+            v8::False(isolate)).Check();
+        v8::TryCatch try_catch(isolate);
+        v8::Local<v8::Value> arguments[] = {event};
+        static_cast<void>(dispatcher.As<v8::Function>()->Call(
+            local_context, target, 1, arguments));
+        perform_microtask_checkpoint();
+    }
+
+    void begin_iframe_navigation(dom_node& frame)
+    {
+        dispatch_iframe_pagehide(frame);
+        {
+            std::lock_guard lock(document_generation_mutex);
+            ++frame_navigation_generations.try_emplace(frame.id, 0U)
+                .first->second;
+        }
+        frame.attributes.erase("object-html");
+        frame.attributes.erase("frame-html");
+        frame.attributes.erase("data-webscene-remote-result");
+        if (auto preparation = pending_frame_preparations.find(frame.id);
+            preparation != pending_frame_preparations.end()) {
+            if (preparation->second.future.valid()) {
+                retired_frame_preparations.push_back(
+                    std::move(preparation->second.future));
+            }
+            pending_frame_preparations.erase(preparation);
+        }
+        std::erase(pending_frame_hydrations, &frame);
+    }
+
+    void retire_iframe_navigation(uint32_t frame_id)
+    {
+        {
+            std::lock_guard lock(document_generation_mutex);
+            frame_navigation_generations.erase(frame_id);
+        }
+        if (auto preparation = pending_frame_preparations.find(frame_id);
+            preparation != pending_frame_preparations.end()) {
+            if (preparation->second.future.valid()) {
+                retired_frame_preparations.push_back(
+                    std::move(preparation->second.future));
+            }
+            pending_frame_preparations.erase(preparation);
+        }
+    }
+
     void enqueue_iframe_hydration_if_needed(dom_node& node)
     {
         if (!is_connected(node)) return;
@@ -2337,8 +2586,14 @@
             location->Set(local_context, js_string(isolate, "href"),
                 js_string(isolate, source.c_str())).Check();
             object->Set(local_context, js_string(isolate, "location"), location).Check();
-            object->Set(local_context, js_string(isolate, "document"),
-                frame_document(node)).Check();
+            const auto actual_document = actual_frame_documents.find(node.id);
+            object->Set(
+                local_context,
+                js_string(isolate, "document"),
+                actual_document != actual_frame_documents.end()
+                        && !actual_document->second.IsEmpty()
+                    ? v8::Local<v8::Value>(actual_document->second.Get(isolate))
+                    : v8::Local<v8::Value>(frame_document(node))).Check();
         }
         object->Set(local_context, js_string(isolate, "postMessage"),
             v8::Function::New(local_context, window_post_message).ToLocalChecked()).Check();
@@ -4519,7 +4774,9 @@
                 synthetic,
                 "click",
                 *node,
-                &default_prevented)) {
+                &default_prevented,
+                nullptr,
+                false)) {
             if (checkable_activation.active) {
                 if (default_prevented) {
                     self->restore_checkable_click_activation(checkable_activation);
@@ -4532,8 +4789,10 @@
                 self->queue_external_navigation(*node);
             }
             if (form_control_changed && self->is_connected(*node)) {
-                self->dispatch_input_event_type(synthetic, "input", *node);
-                self->dispatch_input_event_type(synthetic, "change", *node);
+                self->dispatch_input_event_type(
+                    synthetic, "input", *node, nullptr, nullptr, false);
+                self->dispatch_input_event_type(
+                    synthetic, "change", *node, nullptr, nullptr, false);
             }
         }
     }
@@ -4687,28 +4946,37 @@
         dom_node* node = self->document.is_shadow_root(*root)
             ? nullptr
             : &exposed_body_for_root(*root);
-        if (self->active_element != nullptr) {
-            const auto* active_shadow_root =
-                self->document.containing_shadow_root(*self->active_element);
-            if (!self->document.is_shadow_root(*root)
-                && active_shadow_root != nullptr
-                && self->focus_document_owner(root)
-                    == self->focus_document_owner(self->active_element)) {
-                const auto* state = self->document.shadow_dom(*active_shadow_root);
-                if (state != nullptr && state->host != nullptr) node = state->host;
-                info.GetReturnValue().Set(self->wrap_node(*node));
-                return;
+        const auto root_owner = self->focus_document_owner(root);
+        if (root_owner != self->focused_document_owner_id) {
+          if (auto *owner = find_node_by_native_id(
+                  *root, self->focused_document_owner_id);
+              owner != nullptr && owner->tag == "iframe") {
+            node = owner;
+          }
+        } else if (self->active_element != nullptr) {
+          const auto *active_shadow_root =
+              self->document.containing_shadow_root(*self->active_element);
+          if (!self->document.is_shadow_root(*root) &&
+              active_shadow_root != nullptr &&
+              self->focus_document_owner(root) ==
+                  self->focus_document_owner(self->active_element)) {
+            const auto *state = self->document.shadow_dom(*active_shadow_root);
+            if (state != nullptr && state->host != nullptr)
+              node = state->host;
+            info.GetReturnValue().Set(self->wrap_node(*node));
+            return;
+          }
+          const auto active_owner =
+              self->focus_document_owner(self->active_element);
+          if (root_owner == active_owner &&
+              self->subtree_contains(*root, self->active_element)) {
+            node = self->active_element;
+          } else if (root_owner == 0U && active_owner != 0U) {
+            if (auto *owner = find_node_by_native_id(*root, active_owner);
+                owner != nullptr) {
+              node = owner;
             }
-            const auto root_owner = self->focus_document_owner(root);
-            const auto active_owner = self->focus_document_owner(self->active_element);
-            if (root_owner == active_owner
-                && self->subtree_contains(*root, self->active_element)) {
-                node = self->active_element;
-            } else if (root_owner == 0U && active_owner != 0U) {
-                if (auto* owner = find_node_by_native_id(*root, active_owner); owner != nullptr) {
-                    node = owner;
-                }
-            }
+          }
         }
         info.GetReturnValue().Set(node == nullptr
             ? v8::Local<v8::Value>(v8::Null(info.GetIsolate()))
@@ -4761,9 +5029,18 @@
 
     static void document_has_focus(const v8::FunctionCallbackInfo<v8::Value>& info)
     {
-        const auto* self = current(info.GetIsolate());
-        info.GetReturnValue().Set(v8::Boolean::New(
-            info.GetIsolate(), self != nullptr && self->document_focused));
+      auto *self = current(info.GetIsolate());
+      auto *root = info.This()->InternalFieldCount() > 0
+                       ? static_cast<dom_node *>(
+                             info.This()->GetAlignedPointerFromInternalField(
+                                 0, v8::kEmbedderDataTypeTagDefault))
+                       : nullptr;
+      const auto owner_id =
+          root == nullptr ? 0U : self->focus_document_owner(root);
+      info.GetReturnValue().Set(v8::Boolean::New(
+          info.GetIsolate(),
+          self != nullptr && self->document_focused &&
+              (owner_id == 0U || owner_id == self->focused_document_owner_id)));
     }
 
     static void get_document_fullscreen_element(
@@ -4914,6 +5191,44 @@
             info.GetReturnValue().Set(dispatched);
             return;
         }
+        if (command_name == "selectall") {
+            auto* selection_root = root;
+            if (selection_root == nullptr) {
+                selection_root = static_cast<dom_node*>(
+                    context->GetAlignedPointerFromEmbedderData(
+                        1, v8::kEmbedderDataTypeTagDefault));
+            }
+            if (selection_root == nullptr) {
+                selection_root = &self->document.body();
+            }
+            auto& selection = self->window_selections
+                .try_emplace(selection_root->id).first->second;
+            selection.root_id = selection_root->id;
+            self->refresh_selection_text_nodes(selection, *selection_root);
+            if (selection.text_nodes.empty()) {
+                selection.has_range = false;
+                selection.anchor_node_id = 0U;
+                selection.focus_node_id = 0U;
+                selection.anchor_offset = 0U;
+                selection.focus_offset = 0U;
+                info.GetReturnValue().Set(false);
+                return;
+            }
+            auto* first = selection.text_nodes.front();
+            auto* last = selection.text_nodes.back();
+            selection.has_range = true;
+            selection.anchor_node_id = first->id;
+            selection.focus_node_id = last->id;
+            selection.anchor_offset = 0U;
+            selection.focus_offset = decode_wtf8_to_utf16(
+                last->text_content).size();
+            self->record_feature(
+                "web-api", "Document.execCommand", "supported",
+                "selectAll publishes a realm-local Selection over visible document text",
+                "web-api-binding");
+            info.GetReturnValue().Set(true);
+            return;
+        }
         // Other legacy editing commands still have no executor. Return false
         // without mutating the DOM so callers can choose their supported
         // asynchronous or application-level fallback.
@@ -4921,6 +5236,52 @@
             "unsupported legacy editing commands return false without mutation",
             "web-api-binding");
         info.GetReturnValue().Set(false);
+    }
+
+    static void document_query_command_supported(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* isolate = info.GetIsolate();
+        auto* self = current(isolate);
+        bool document_receiver = self != nullptr
+            && self->is_document_object(info.This());
+        if (self != nullptr && !document_receiver) {
+            for (const auto& [_, value] : self->detached_documents) {
+                if (!value.IsEmpty() && info.This()->StrictEquals(value.Get(isolate))) {
+                    document_receiver = true;
+                    break;
+                }
+            }
+        }
+        if (!document_receiver || info.Length() == 0) {
+            isolate->ThrowException(v8::Exception::TypeError(js_string(
+                isolate,
+                "Document.queryCommandSupported requires a Document receiver and a command argument")));
+            return;
+        }
+        const auto context = isolate->GetCurrentContext();
+        v8::Local<v8::String> command;
+        if (!info[0]->ToString(context).ToLocal(&command)) return;
+        auto* root = unwrap_node(info.This());
+        if (root != nullptr && (root->xml_mode || root->tag == "#document-root")) {
+            info.GetReturnValue().Set(false);
+            return;
+        }
+        v8::String::Utf8Value command_utf8(isolate, command);
+        std::string command_name = *command_utf8 == nullptr
+            ? std::string{} : std::string(*command_utf8, command_utf8.length());
+        std::transform(
+            command_name.begin(), command_name.end(), command_name.begin(),
+            [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
+        const auto supported = command_name == "copy" || command_name == "cut"
+            || command_name == "paste" || command_name == "selectall";
+        if (supported) {
+            self->record_feature(
+                "web-api", "Document.queryCommandSupported", "supported",
+                "reports only bounded legacy editing commands implemented by WebScene",
+                "web-api-binding");
+        }
+        info.GetReturnValue().Set(supported);
     }
 
     static void return_empty_string(const v8::FunctionCallbackInfo<v8::Value>& info)
@@ -5282,20 +5643,699 @@
         info.GetReturnValue().Set(v8::Null(info.GetIsolate()));
     }
 
+    static uint32_t selection_root_id(v8::Local<v8::Object> receiver) {
+      if (receiver.IsEmpty() || receiver->InternalFieldCount() == 0)
+        return 0U;
+      auto data = receiver->GetInternalField(0);
+      if (!data->IsValue())
+        return 0U;
+      auto value = data.As<v8::Value>();
+      return value->IsUint32() ? value.As<v8::Uint32>()->Value() : 0U;
+    }
+
+    window_selection_state *selection_for(v8::Local<v8::Object> receiver) {
+      const auto root_id = selection_root_id(receiver);
+      const auto found = window_selections.find(root_id);
+      return found == window_selections.end() ? nullptr : &found->second;
+    }
+
+    static bool selection_contains_node(const dom_node &root,
+                                        const dom_node &node) {
+      for (auto *current_node = &node; current_node != nullptr;
+           current_node = current_node->parent) {
+        if (current_node == &root)
+          return true;
+      }
+      return false;
+    }
+
+    bool validate_selection(window_selection_state &selection) {
+      if (!selection.has_range)
+        return false;
+      auto *root = document.find_by_native_id(selection.root_id);
+      auto *anchor = document.find_by_native_id(selection.anchor_node_id);
+      auto *focus = document.find_by_native_id(selection.focus_node_id);
+      if (root == nullptr || anchor == nullptr || focus == nullptr ||
+          !selection_contains_node(*root, *anchor) ||
+          !selection_contains_node(*root, *focus)) {
+        selection.has_range = false;
+        selection.anchor_node_id = 0U;
+        selection.focus_node_id = 0U;
+        selection.anchor_offset = 0U;
+        selection.focus_offset = 0U;
+        return false;
+      }
+      const auto anchor_length =
+          decode_wtf8_to_utf16(anchor->text_content).size();
+      const auto focus_length =
+          decode_wtf8_to_utf16(focus->text_content).size();
+      selection.anchor_offset =
+          std::min(selection.anchor_offset, anchor_length);
+      selection.focus_offset = std::min(selection.focus_offset, focus_length);
+      return true;
+    }
+
+    void refresh_selection_text_nodes(window_selection_state &selection,
+                                      dom_node &root) {
+      if (selection.text_generation == document.scene_generation())
+        return;
+      selection.text_nodes.clear();
+      const auto collect = [&](const auto &recurse, dom_node &node,
+                               bool hidden) -> void {
+        hidden = hidden || !node.visible ||
+                 node.style.display == display_mode::none ||
+                 node.attributes.contains("hidden") || node.tag == "script" ||
+                 node.tag == "style" || node.tag == "noscript" ||
+                 node.tag == "template";
+        if (hidden)
+          return;
+        if (node.kind == dom_node_kind::text && !node.text_content.empty())
+          selection.text_nodes.push_back(&node);
+        for (auto *child : node.children) {
+          if (child != nullptr)
+            recurse(recurse, *child, hidden);
+        }
+      };
+      collect(collect, root, false);
+      selection.text_generation = document.scene_generation();
+    }
+
+    v8::Local<v8::Object> wrap_selection_node(dom_node &node) {
+      auto node_context = context_for_node(node);
+      v8::Context::Scope node_scope(node_context);
+      return wrap_node(node);
+    }
+
+    void clear_selections_containing(const dom_node &subtree) {
+      for (auto &[root_id, selection] : window_selections) {
+        static_cast<void>(root_id);
+        selection.text_generation = std::numeric_limits<uint64_t>::max();
+        selection.text_nodes.clear();
+        if (!selection.has_range)
+          continue;
+        auto *anchor = document.find_by_native_id(selection.anchor_node_id);
+        auto *focus = document.find_by_native_id(selection.focus_node_id);
+        if ((anchor != nullptr && subtree_contains(subtree, anchor)) ||
+            (focus != nullptr && subtree_contains(subtree, focus))) {
+          selection.has_range = false;
+          selection.anchor_node_id = 0U;
+          selection.focus_node_id = 0U;
+          selection.anchor_offset = 0U;
+          selection.focus_offset = 0U;
+        }
+      }
+    }
+
+    static window_selection_state *
+    selection_callback_state(v8::Isolate *isolate,
+                             v8::Local<v8::Object> receiver) {
+      auto *self = current(isolate);
+      return self == nullptr ? nullptr : self->selection_for(receiver);
+    }
+
+    static void
+    selection_anchor_node_get(v8::Local<v8::Name>,
+                              const v8::PropertyCallbackInfo<v8::Value> &info) {
+      auto *self = current(info.GetIsolate());
+      auto *selection =
+          self == nullptr ? nullptr : self->selection_for(info.Holder());
+      if (selection == nullptr || !self->validate_selection(*selection)) {
+        info.GetReturnValue().Set(v8::Null(info.GetIsolate()));
+        return;
+      }
+      auto *node = self->document.find_by_native_id(selection->anchor_node_id);
+      info.GetReturnValue().Set(self->wrap_selection_node(*node));
+    }
+
+    static void
+    selection_focus_node_get(v8::Local<v8::Name>,
+                             const v8::PropertyCallbackInfo<v8::Value> &info) {
+      auto *self = current(info.GetIsolate());
+      auto *selection =
+          self == nullptr ? nullptr : self->selection_for(info.Holder());
+      if (selection == nullptr || !self->validate_selection(*selection)) {
+        info.GetReturnValue().Set(v8::Null(info.GetIsolate()));
+        return;
+      }
+      auto *node = self->document.find_by_native_id(selection->focus_node_id);
+      info.GetReturnValue().Set(self->wrap_selection_node(*node));
+    }
+
+    static void selection_anchor_offset_get(
+        v8::Local<v8::Name>, const v8::PropertyCallbackInfo<v8::Value> &info) {
+      auto *selection =
+          selection_callback_state(info.GetIsolate(), info.Holder());
+      auto *self = current(info.GetIsolate());
+      const auto offset =
+          selection != nullptr && self->validate_selection(*selection)
+              ? selection->anchor_offset
+              : 0U;
+      info.GetReturnValue().Set(v8::Number::New(info.GetIsolate(), offset));
+    }
+
+    static void selection_focus_offset_get(
+        v8::Local<v8::Name>, const v8::PropertyCallbackInfo<v8::Value> &info) {
+      auto *selection =
+          selection_callback_state(info.GetIsolate(), info.Holder());
+      auto *self = current(info.GetIsolate());
+      const auto offset =
+          selection != nullptr && self->validate_selection(*selection)
+              ? selection->focus_offset
+              : 0U;
+      info.GetReturnValue().Set(v8::Number::New(info.GetIsolate(), offset));
+    }
+
+    static void
+    selection_range_count_get(v8::Local<v8::Name>,
+                              const v8::PropertyCallbackInfo<v8::Value> &info) {
+      auto *selection =
+          selection_callback_state(info.GetIsolate(), info.Holder());
+      auto *self = current(info.GetIsolate());
+      info.GetReturnValue().Set(v8::Integer::New(
+          info.GetIsolate(),
+          selection != nullptr && self->validate_selection(*selection) ? 1
+                                                                       : 0));
+    }
+
+    static void selection_is_collapsed_get(
+        v8::Local<v8::Name>, const v8::PropertyCallbackInfo<v8::Value> &info) {
+      auto *selection =
+          selection_callback_state(info.GetIsolate(), info.Holder());
+      auto *self = current(info.GetIsolate());
+      const auto valid =
+          selection != nullptr && self->validate_selection(*selection);
+      info.GetReturnValue().Set(v8::Boolean::New(
+          info.GetIsolate(),
+          !valid || (selection->anchor_node_id == selection->focus_node_id &&
+                     selection->anchor_offset == selection->focus_offset)));
+    }
+
+    static void
+    selection_type_get(v8::Local<v8::Name>,
+                       const v8::PropertyCallbackInfo<v8::Value> &info) {
+      auto *selection =
+          selection_callback_state(info.GetIsolate(), info.Holder());
+      auto *self = current(info.GetIsolate());
+      const auto valid =
+          selection != nullptr && self->validate_selection(*selection);
+      const auto collapsed =
+          !valid || (selection->anchor_node_id == selection->focus_node_id &&
+                     selection->anchor_offset == selection->focus_offset);
+      info.GetReturnValue().Set(js_string(info.GetIsolate(), !valid ? "None"
+                                                             : collapsed
+                                                                 ? "Caret"
+                                                                 : "Range"));
+    }
+
+    static void selection_remove_all_ranges(
+        const v8::FunctionCallbackInfo<v8::Value> &info) {
+      auto *selection =
+          selection_callback_state(info.GetIsolate(), info.This());
+      if (selection == nullptr)
+        return;
+      selection->has_range = false;
+      selection->anchor_node_id = 0U;
+      selection->focus_node_id = 0U;
+      selection->anchor_offset = 0U;
+      selection->focus_offset = 0U;
+    }
+
+    static void
+    selection_collapse(const v8::FunctionCallbackInfo<v8::Value> &info) {
+      auto *self = current(info.GetIsolate());
+      auto *selection =
+          self == nullptr ? nullptr : self->selection_for(info.This());
+      if (selection == nullptr)
+        return;
+      if (info.Length() == 0 || info[0]->IsNullOrUndefined()) {
+        selection_remove_all_ranges(info);
+        return;
+      }
+      auto *node =
+          info[0]->IsObject() ? unwrap_node(info[0].As<v8::Object>()) : nullptr;
+      auto *root = self->document.find_by_native_id(selection->root_id);
+      if (node == nullptr || root == nullptr ||
+          !selection_contains_node(*root, *node)) {
+        info.GetIsolate()->ThrowException(v8::Exception::TypeError(
+            js_string(info.GetIsolate(),
+                      "Selection.collapse node is outside this document")));
+        return;
+      }
+      const auto requested =
+          info.Length() > 1
+              ? info[1]
+                    ->IntegerValue(info.GetIsolate()->GetCurrentContext())
+                    .FromMaybe(0)
+              : 0;
+      const auto maximum = node->kind == dom_node_kind::text
+                               ? decode_wtf8_to_utf16(node->text_content).size()
+                               : node->children.size();
+      if (requested < 0 || static_cast<size_t>(requested) > maximum) {
+        info.GetIsolate()->ThrowException(v8::Exception::RangeError(
+            js_string(info.GetIsolate(),
+                      "Selection.collapse offset is outside the node")));
+        return;
+      }
+      selection->has_range = true;
+      selection->anchor_node_id = node->id;
+      selection->focus_node_id = node->id;
+      selection->anchor_offset = static_cast<size_t>(requested);
+      selection->focus_offset = static_cast<size_t>(requested);
+    }
+
+    static void
+    selection_to_string(const v8::FunctionCallbackInfo<v8::Value> &info) {
+      auto *self = current(info.GetIsolate());
+      auto *selection =
+          self == nullptr ? nullptr : self->selection_for(info.This());
+      if (selection == nullptr || !self->validate_selection(*selection)) {
+        info.GetReturnValue().Set(js_string(info.GetIsolate(), ""));
+        return;
+      }
+      auto *root = self->document.find_by_native_id(selection->root_id);
+      auto *anchor = self->document.find_by_native_id(selection->anchor_node_id);
+      auto *focus = self->document.find_by_native_id(selection->focus_node_id);
+      if (root == nullptr || anchor == nullptr || focus == nullptr) {
+        info.GetReturnValue().Set(js_string(info.GetIsolate(), ""));
+        return;
+      }
+      if (anchor == focus) {
+        auto units = decode_wtf8_to_utf16(anchor->text_content);
+        const auto start =
+            std::min(selection->anchor_offset, selection->focus_offset);
+        const auto end =
+            std::max(selection->anchor_offset, selection->focus_offset);
+        if (end <= start) {
+          info.GetReturnValue().Set(js_string(info.GetIsolate(), ""));
+          return;
+        }
+        info.GetReturnValue().Set(
+            v8::String::NewFromTwoByte(info.GetIsolate(), units.data() + start,
+                                       v8::NewStringType::kNormal,
+                                       static_cast<int>(end - start))
+                .ToLocalChecked());
+        return;
+      }
+      self->refresh_selection_text_nodes(*selection, *root);
+      const auto anchor_it = std::find(selection->text_nodes.begin(),
+                                       selection->text_nodes.end(), anchor);
+      const auto focus_it = std::find(selection->text_nodes.begin(),
+                                      selection->text_nodes.end(), focus);
+      if (anchor_it == selection->text_nodes.end() ||
+          focus_it == selection->text_nodes.end()) {
+        info.GetReturnValue().Set(js_string(info.GetIsolate(), ""));
+        return;
+      }
+      const auto forward = anchor_it < focus_it;
+      auto first_it = forward ? anchor_it : focus_it;
+      auto last_it = forward ? focus_it : anchor_it;
+      const auto first_offset = forward ? selection->anchor_offset
+                                        : selection->focus_offset;
+      const auto last_offset = forward ? selection->focus_offset
+                                       : selection->anchor_offset;
+      std::vector<uint16_t> selected;
+      for (auto it = first_it; it <= last_it; ++it) {
+        auto units = decode_wtf8_to_utf16((*it)->text_content);
+        const auto begin = it == first_it
+            ? std::min(first_offset, units.size()) : 0U;
+        const auto end = it == last_it
+            ? std::min(last_offset, units.size()) : units.size();
+        if (end > begin)
+          selected.insert(selected.end(), units.begin() + begin,
+                          units.begin() + end);
+      }
+      if (selected.empty()) {
+        info.GetReturnValue().Set(js_string(info.GetIsolate(), ""));
+        return;
+      }
+      info.GetReturnValue().Set(
+          v8::String::NewFromTwoByte(info.GetIsolate(), selected.data(),
+                                     v8::NewStringType::kNormal,
+                                     static_cast<int>(selected.size()))
+              .ToLocalChecked());
+    }
+
+    static void
+    selection_get_range_at(const v8::FunctionCallbackInfo<v8::Value> &info) {
+      auto *self = current(info.GetIsolate());
+      auto *selection =
+          self == nullptr ? nullptr : self->selection_for(info.This());
+      const auto index =
+          info.Length() > 0
+              ? info[0]
+                    ->IntegerValue(info.GetIsolate()->GetCurrentContext())
+                    .FromMaybe(-1)
+              : -1;
+      if (index != 0 || selection == nullptr ||
+          !self->validate_selection(*selection)) {
+        info.GetIsolate()->ThrowException(v8::Exception::RangeError(js_string(
+            info.GetIsolate(), "Selection range index is out of bounds")));
+        return;
+      }
+      auto local_context = info.GetIsolate()->GetCurrentContext();
+      auto range = v8::Object::New(info.GetIsolate());
+      auto *anchor =
+          self->document.find_by_native_id(selection->anchor_node_id);
+      auto *focus = self->document.find_by_native_id(selection->focus_node_id);
+      range
+          ->Set(local_context, js_string(info.GetIsolate(), "startContainer"),
+                self->wrap_selection_node(*anchor))
+          .Check();
+      range
+          ->Set(local_context, js_string(info.GetIsolate(), "startOffset"),
+                v8::Number::New(info.GetIsolate(), selection->anchor_offset))
+          .Check();
+      range
+          ->Set(local_context, js_string(info.GetIsolate(), "endContainer"),
+                self->wrap_selection_node(*focus))
+          .Check();
+      range
+          ->Set(local_context, js_string(info.GetIsolate(), "endOffset"),
+                v8::Number::New(info.GetIsolate(), selection->focus_offset))
+          .Check();
+      range
+          ->Set(local_context, js_string(info.GetIsolate(), "collapsed"),
+                v8::Boolean::New(
+                    info.GetIsolate(),
+                    selection->anchor_node_id == selection->focus_node_id &&
+                        selection->anchor_offset == selection->focus_offset))
+          .Check();
+      info.GetReturnValue().Set(range);
+    }
+
+    v8::Local<v8::Object> ensure_selection(dom_node &root) {
+      auto [entry, inserted] = window_selections.try_emplace(root.id);
+      auto &selection = entry->second;
+      selection.root_id = root.id;
+      if (!inserted && !selection.object.IsEmpty()) {
+        return selection.object.Get(isolate);
+      }
+      auto local_context = isolate->GetCurrentContext();
+      auto object_template = v8::ObjectTemplate::New(isolate);
+      object_template->SetInternalFieldCount(1);
+      object_template->SetNativeDataProperty(js_string(isolate, "anchorNode"),
+                                             selection_anchor_node_get);
+      object_template->SetNativeDataProperty(js_string(isolate, "baseNode"),
+                                             selection_anchor_node_get);
+      object_template->SetNativeDataProperty(js_string(isolate, "focusNode"),
+                                             selection_focus_node_get);
+      object_template->SetNativeDataProperty(js_string(isolate, "extentNode"),
+                                             selection_focus_node_get);
+      object_template->SetNativeDataProperty(js_string(isolate, "anchorOffset"),
+                                             selection_anchor_offset_get);
+      object_template->SetNativeDataProperty(js_string(isolate, "baseOffset"),
+                                             selection_anchor_offset_get);
+      object_template->SetNativeDataProperty(js_string(isolate, "focusOffset"),
+                                             selection_focus_offset_get);
+      object_template->SetNativeDataProperty(js_string(isolate, "extentOffset"),
+                                             selection_focus_offset_get);
+      object_template->SetNativeDataProperty(js_string(isolate, "rangeCount"),
+                                             selection_range_count_get);
+      object_template->SetNativeDataProperty(js_string(isolate, "isCollapsed"),
+                                             selection_is_collapsed_get);
+      object_template->SetNativeDataProperty(js_string(isolate, "type"),
+                                             selection_type_get);
+      object_template->Set(
+          js_string(isolate, "removeAllRanges"),
+          v8::FunctionTemplate::New(isolate, selection_remove_all_ranges));
+      object_template->Set(
+          js_string(isolate, "empty"),
+          v8::FunctionTemplate::New(isolate, selection_remove_all_ranges));
+      object_template->Set(
+          js_string(isolate, "removeRange"),
+          v8::FunctionTemplate::New(isolate, selection_remove_all_ranges));
+      object_template->Set(
+          js_string(isolate, "collapse"),
+          v8::FunctionTemplate::New(isolate, selection_collapse));
+      object_template->Set(
+          js_string(isolate, "getRangeAt"),
+          v8::FunctionTemplate::New(isolate, selection_get_range_at));
+      object_template->Set(
+          js_string(isolate, "toString"),
+          v8::FunctionTemplate::New(isolate, selection_to_string));
+      auto object =
+          object_template->NewInstance(local_context).ToLocalChecked();
+      object->SetInternalField(0,
+                               v8::Integer::NewFromUnsigned(isolate, root.id));
+      selection.object.Reset(isolate, object);
+      return object;
+    }
+
     static void get_selection(const v8::FunctionCallbackInfo<v8::Value>& info)
     {
-        auto context = info.GetIsolate()->GetCurrentContext();
-        auto selection = v8::Object::New(info.GetIsolate());
-        auto no_op = v8::Function::New(context, console_log).ToLocalChecked();
-        selection->Set(context, js_string(info.GetIsolate(), "removeAllRanges"), no_op).Check();
-        selection->Set(context, js_string(info.GetIsolate(), "empty"), no_op).Check();
-        selection->Set(context, js_string(info.GetIsolate(), "collapse"), no_op).Check();
-        selection->Set(
-            context,
-            js_string(info.GetIsolate(), "toString"),
-            v8::Function::New(context, return_empty_string).ToLocalChecked()).Check();
-        selection->Set(context, js_string(info.GetIsolate(), "rangeCount"), v8::Integer::New(info.GetIsolate(), 0)).Check();
-        info.GetReturnValue().Set(selection);
+      auto *self = current(info.GetIsolate());
+      if (self == nullptr) {
+        info.GetReturnValue().Set(v8::Null(info.GetIsolate()));
+        return;
+      }
+      auto local_context = info.GetIsolate()->GetCurrentContext();
+      auto *root = static_cast<dom_node *>(
+          local_context->GetAlignedPointerFromEmbedderData(
+              1, v8::kEmbedderDataTypeTagDefault));
+      if (root == nullptr)
+        root = &self->document.body();
+      info.GetReturnValue().Set(self->ensure_selection(*root));
+    }
+
+    static bool window_find_word_unit(uint16_t unit) {
+      return (unit >= '0' && unit <= '9') || (unit >= 'A' && unit <= 'Z') ||
+             (unit >= 'a' && unit <= 'z') || unit == '_' || unit >= 0x80U;
+    }
+
+    static uint16_t window_find_fold_ascii(uint16_t unit) {
+      return unit >= 'A' && unit <= 'Z'
+                 ? static_cast<uint16_t>(unit + ('a' - 'A'))
+                 : unit;
+    }
+
+    static bool window_find_matches(const std::vector<uint16_t> &text,
+                                    const std::vector<uint16_t> &query,
+                                    size_t offset, bool case_sensitive,
+                                    bool whole_word) {
+      if (query.empty() || offset > text.size() ||
+          query.size() > text.size() - offset)
+        return false;
+      for (size_t index = 0U; index < query.size(); ++index) {
+        const auto left = case_sensitive
+                              ? text[offset + index]
+                              : window_find_fold_ascii(text[offset + index]);
+        const auto right = case_sensitive
+                               ? query[index]
+                               : window_find_fold_ascii(query[index]);
+        if (left != right)
+          return false;
+      }
+      if (!whole_word)
+        return true;
+      const auto before_word =
+          offset > 0U && window_find_word_unit(text[offset - 1U]);
+      const auto after = offset + query.size();
+      const auto after_word =
+          after < text.size() && window_find_word_unit(text[after]);
+      return !before_word && !after_word;
+    }
+
+    static bool window_find_matches_ascii(std::string_view text,
+                                          std::string_view query, size_t offset,
+                                          bool case_sensitive,
+                                          bool whole_word) {
+      if (query.empty() || offset > text.size() ||
+          query.size() > text.size() - offset)
+        return false;
+      for (size_t index = 0U; index < query.size(); ++index) {
+        const auto left = static_cast<uint16_t>(
+            static_cast<unsigned char>(text[offset + index]));
+        const auto right =
+            static_cast<uint16_t>(static_cast<unsigned char>(query[index]));
+        if ((case_sensitive ? left : window_find_fold_ascii(left)) !=
+            (case_sensitive ? right : window_find_fold_ascii(right))) {
+          return false;
+        }
+      }
+      if (!whole_word)
+        return true;
+      const auto before_word =
+          offset > 0U &&
+          window_find_word_unit(static_cast<uint8_t>(text[offset - 1U]));
+      const auto after = offset + query.size();
+      const auto after_word =
+          after < text.size() &&
+          window_find_word_unit(static_cast<uint8_t>(text[after]));
+      return !before_word && !after_word;
+    }
+
+    static void window_find(const v8::FunctionCallbackInfo<v8::Value> &info) {
+      auto *self = current(info.GetIsolate());
+      if (self == nullptr || info.Length() == 0) {
+        info.GetReturnValue().Set(v8::False(info.GetIsolate()));
+        return;
+      }
+      const auto query_text = to_wtf8(info.GetIsolate(), info[0]);
+      const auto query = decode_wtf8_to_utf16(query_text);
+      constexpr size_t maximum_query_units = 1024U * 1024U;
+      if (query.empty() || query.size() > maximum_query_units) {
+        info.GetReturnValue().Set(v8::False(info.GetIsolate()));
+        return;
+      }
+      const auto case_sensitive =
+          info.Length() > 1 && info[1]->BooleanValue(info.GetIsolate());
+      const auto backwards =
+          info.Length() > 2 && info[2]->BooleanValue(info.GetIsolate());
+      const auto wrap_around =
+          info.Length() > 3 && info[3]->BooleanValue(info.GetIsolate());
+      const auto whole_word =
+          info.Length() > 4 && info[4]->BooleanValue(info.GetIsolate());
+      auto local_context = info.GetIsolate()->GetCurrentContext();
+      auto *root = static_cast<dom_node *>(
+          local_context->GetAlignedPointerFromEmbedderData(
+              1, v8::kEmbedderDataTypeTagDefault));
+      if (root == nullptr)
+        root = &self->document.body();
+      auto &selection =
+          self->window_selections.try_emplace(root->id).first->second;
+      selection.root_id = root->id;
+      static_cast<void>(self->validate_selection(selection));
+
+      self->refresh_selection_text_nodes(selection, *root);
+      const auto &text_nodes = selection.text_nodes;
+      if (text_nodes.empty()) {
+        info.GetReturnValue().Set(v8::False(info.GetIsolate()));
+        return;
+      }
+
+      const auto ascii_query =
+          std::all_of(query_text.begin(), query_text.end(),
+                      [](unsigned char value) { return value < 0x80U; });
+      const auto text_length = [&](const dom_node &node) {
+        if (ascii_query &&
+            std::all_of(node.text_content.begin(), node.text_content.end(),
+                        [](unsigned char value) { return value < 0x80U; })) {
+          return node.text_content.size();
+        }
+        return decode_wtf8_to_utf16(node.text_content).size();
+      };
+      size_t current_index = backwards ? text_nodes.size() - 1U : 0U;
+      size_t current_offset =
+          backwards ? text_length(*text_nodes[current_index]) : 0U;
+      auto has_current = false;
+      if (selection.has_range) {
+        const auto current = std::find_if(
+            text_nodes.begin(), text_nodes.end(), [&](const auto *node) {
+              return node->id == (backwards ? selection.anchor_node_id
+                                            : selection.focus_node_id);
+            });
+        if (current != text_nodes.end()) {
+          current_index = static_cast<size_t>(current - text_nodes.begin());
+          current_offset =
+              backwards ? selection.anchor_offset : selection.focus_offset;
+          has_current = true;
+        }
+      }
+
+      struct match_result {
+        size_t node_index;
+        size_t offset;
+      };
+      std::optional<match_result> match;
+      const auto find_forward = [&](size_t first_node, size_t first_offset,
+                                    size_t last_node,
+                                    std::optional<size_t> last_limit) {
+        for (size_t node_index = first_node;
+             !match.has_value() && node_index <= last_node; ++node_index) {
+          const auto &raw = text_nodes[node_index]->text_content;
+          const auto ascii_text =
+              ascii_query &&
+              std::all_of(raw.begin(), raw.end(),
+                          [](unsigned char value) { return value < 0x80U; });
+          const auto units =
+              ascii_text ? std::vector<uint16_t>{} : decode_wtf8_to_utf16(raw);
+          const auto text_size = ascii_text ? raw.size() : units.size();
+          const auto start = node_index == first_node ? first_offset : 0U;
+          const auto limit = last_limit.has_value() && node_index == last_node
+                                 ? std::min(*last_limit, text_size)
+                                 : text_size;
+          for (size_t offset = std::min(start, text_size);
+               offset + query.size() <= limit; ++offset) {
+            const auto matches =
+                ascii_text
+                    ? window_find_matches_ascii(raw, query_text, offset,
+                                                case_sensitive, whole_word)
+                    : window_find_matches(units, query, offset, case_sensitive,
+                                          whole_word);
+            if (matches) {
+              match = match_result{node_index, offset};
+              break;
+            }
+          }
+        }
+      };
+      const auto find_backward = [&](size_t first_node, size_t first_limit,
+                                     size_t last_node,
+                                     std::optional<size_t> last_floor) {
+        for (size_t node_index = first_node; !match.has_value();) {
+          const auto &raw = text_nodes[node_index]->text_content;
+          const auto ascii_text =
+              ascii_query &&
+              std::all_of(raw.begin(), raw.end(),
+                          [](unsigned char value) { return value < 0x80U; });
+          const auto units =
+              ascii_text ? std::vector<uint16_t>{} : decode_wtf8_to_utf16(raw);
+          const auto text_size = ascii_text ? raw.size() : units.size();
+          auto limit = node_index == first_node
+                           ? std::min(first_limit, text_size)
+                           : text_size;
+          const auto floor = last_floor.has_value() && node_index == last_node
+                                 ? std::min(*last_floor, text_size)
+                                 : 0U;
+          while (limit >= query.size() && limit - query.size() >= floor) {
+            const auto offset = limit - query.size();
+            const auto matches =
+                ascii_text
+                    ? window_find_matches_ascii(raw, query_text, offset,
+                                                case_sensitive, whole_word)
+                    : window_find_matches(units, query, offset, case_sensitive,
+                                          whole_word);
+            if (matches) {
+              match = match_result{node_index, offset};
+              break;
+            }
+            if (limit == 0U)
+              break;
+            --limit;
+          }
+          if (match.has_value() || node_index == last_node)
+            break;
+          --node_index;
+        }
+      };
+
+      if (!backwards) {
+        find_forward(current_index, current_offset, text_nodes.size() - 1U,
+                     std::nullopt);
+        if (!match.has_value() && wrap_around && has_current) {
+          find_forward(0U, 0U, current_index, current_offset);
+        } else if (!match.has_value() && wrap_around && !has_current) {
+          find_forward(0U, 0U, text_nodes.size() - 1U, std::nullopt);
+        }
+      } else {
+        find_backward(current_index, current_offset, 0U, std::nullopt);
+        if (!match.has_value() && wrap_around && has_current) {
+          const auto last_index = text_nodes.size() - 1U;
+          const auto last_size = text_length(*text_nodes[last_index]);
+          find_backward(last_index, last_size, current_index, current_offset);
+        }
+      }
+      if (!match.has_value()) {
+        info.GetReturnValue().Set(v8::False(info.GetIsolate()));
+        return;
+      }
+      auto *node = text_nodes[match->node_index];
+      selection.has_range = true;
+      selection.anchor_node_id = node->id;
+      selection.focus_node_id = node->id;
+      selection.anchor_offset = match->offset;
+      selection.focus_offset = match->offset + query.size();
+      info.GetReturnValue().Set(v8::True(info.GetIsolate()));
     }
 
     static bool insertion_would_create_cycle(
@@ -5466,6 +6506,7 @@
         if (self->is_connected(*child)) {
             self->notify_custom_elements_subtree(*child, "disconnected");
         }
+        self->clear_selections_containing(*child);
         self->deactivate_connected_stylesheets(*child);
         const auto changes_base = self->subtree_contains_base(*child);
         std::erase(parent->children, child);
@@ -5537,6 +6578,7 @@
         if (self->is_connected(*previous)) {
             self->notify_custom_elements_subtree(*previous, "disconnected");
         }
+        self->clear_selections_containing(*previous);
         self->deactivate_connected_stylesheets(*previous, false);
         const auto insertion_index = static_cast<size_t>(
             iterator - parent->children.begin());
@@ -5585,6 +6627,7 @@
         if (self->is_connected(*node)) {
             self->notify_custom_elements_subtree(*node, "disconnected");
         }
+        self->clear_selections_containing(*node);
         self->deactivate_connected_stylesheets(*node);
         const auto changes_base = self->subtree_contains_base(*node);
         std::erase(node->parent->children, node);

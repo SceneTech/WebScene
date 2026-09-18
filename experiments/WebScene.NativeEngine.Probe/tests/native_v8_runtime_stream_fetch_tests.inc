@@ -1342,6 +1342,159 @@ void test_vscode_markdown_css_image_resource_broker()
     require(readme.find("# Code OSS on AppScene") != std::string::npos,
         "VS Code Markdown fixture did not contain the current README");
 
+    constexpr std::string_view cache_address{
+        "https://vscode-webview.test/index.html?id=cache-replacement"};
+    constexpr std::string_view cache_worker_one{
+        "https://vscode-webview.test/service-worker.js?"
+        "vscode-resource-base-authority=vscode-resource.test&platform=electron&version=1"};
+    constexpr std::string_view cache_worker_two{
+        "https://vscode-webview.test/service-worker.js?"
+        "vscode-resource-base-authority=vscode-resource.test&platform=electron&version=2"};
+    resource_server cache_server{.content = {
+        {std::string{cache_address},
+            "<!doctype html><title>cache replacement</title>"},
+        {std::string{cache_worker_one}, exact_worker},
+        {std::string{cache_worker_two}, exact_worker}
+    }};
+    webscene_engine_options cache_options{};
+    cache_options.struct_size = sizeof(cache_options);
+    cache_options.resource_load_callback = load_test_resource;
+    cache_options.resource_load_user_data = &cache_server;
+    auto* cache_engine = webscene_engine_create_with_options(&cache_options);
+    require(cache_engine != nullptr, "cache replacement engine creation failed");
+    require(webscene_engine_load_url(
+            cache_engine, cache_address.data(), cache_address.size()) != 0U,
+        "cache replacement navigation failed");
+    require(evaluate_until_equals(
+            cache_engine, "location.href", "cache-replacement-navigation.js",
+            R"("https://vscode-webview.test/index.html?id=cache-replacement")", 2'500)
+            == R"("https://vscode-webview.test/index.html?id=cache-replacement")",
+        "cache replacement document did not become ready");
+    webscene_engine_memory_metrics cache_memory_before{
+        sizeof(webscene_engine_memory_metrics)};
+    require(webscene_engine_get_memory_metrics(
+            cache_engine, &cache_memory_before) != 0,
+        "cache replacement memory baseline unavailable");
+    const auto cache_rss_before = service_worker_test_current_rss_bytes();
+    execute(cache_engine, R"JS(
+      globalThis.__cacheReplacement = {
+        complete:false, error:null, requests:[], byteStarts:0, durations:[], p95:0
+      };
+      (async () => {
+        const state = __cacheReplacement;
+        const body = 'unchanged-code-cached-body';
+        let worker;
+        navigator.serviceWorker.addEventListener('message', event => {
+          const request = event.data || {};
+          if (request.channel !== 'load-resource') return;
+          state.requests.push({path:request.path, ifNoneMatch:request.ifNoneMatch});
+          if (request.ifNoneMatch === '"cache-replacement-v1"') {
+            worker.postMessage({channel:'did-load-resource', data:{
+              id:request.id, status:304, path:request.path,
+              mime:'text/plain', mtime:1700000000000
+            }});
+            return;
+          }
+          worker.postMessage({channel:'did-load-resource', data:{
+            id:request.id, status:200, path:request.path, mime:'text/plain',
+            etag:'"cache-replacement-v1"', mtime:1700000000000
+          }});
+          const bytes = new TextEncoder().encode(body);
+          state.byteStarts++;
+          worker.postMessage({channel:'did-load-resource-chunk', data:{
+            id:request.id, data:bytes
+          }}, [bytes.buffer]);
+          worker.postMessage({channel:'did-load-resource-end', data:{id:request.id}});
+        });
+        try {
+          const changed = new Promise(resolve => navigator.serviceWorker.addEventListener(
+            'controllerchange', resolve, {once:true}));
+          let registration = await navigator.serviceWorker.register(
+            'service-worker.js?vscode-resource-base-authority=vscode-resource.test&platform=electron&version=1');
+          if (!navigator.serviceWorker.controller) await changed;
+          worker = navigator.serviceWorker.controller || registration.active;
+          const resource =
+            'https://file+.vscode-resource.test/workspace/cache.txt?replacement=1';
+          const initial = await fetch(resource);
+          if (initial.status !== 200 || await initial.text() !== body) {
+            throw new Error(`initial cache response mismatch ${initial.status}`);
+          }
+          await new Promise(resolve => setTimeout(resolve, 25));
+          registration = await navigator.serviceWorker.register(
+            'service-worker.js?vscode-resource-base-authority=vscode-resource.test&platform=electron&version=2');
+          worker = registration.active;
+          if (!worker) throw new Error('replacement worker did not activate');
+          const cached = await fetch(resource);
+          if (cached.status !== 200 || await cached.text() !== body
+              || cached.headers.get('etag') !== '"cache-replacement-v1"') {
+            throw new Error(`replacement cache response mismatch ${cached.status}`);
+          }
+          for (let cycle = 0; cycle < 100; ++cycle) {
+            const started = performance.now();
+            const response = await fetch(resource);
+            if (response.status !== 200 || await response.text() !== body) {
+              throw new Error(`replacement cache cycle ${cycle} failed`);
+            }
+            state.durations.push(performance.now() - started);
+          }
+          const ordered = [...state.durations].sort((left, right) => left - right);
+          state.p95 = ordered[Math.ceil(ordered.length * .95) - 1];
+          if (state.p95 > 100) {
+            throw new Error(`replacement cache p95 ${state.p95}`);
+          }
+          if (state.requests.length !== 102
+              || state.requests[1].ifNoneMatch !== '"cache-replacement-v1"'
+              || state.requests.some((request, index) =>
+                index > 0 && request.ifNoneMatch !== '"cache-replacement-v1"')
+              || state.byteStarts !== 1) {
+            throw new Error(`replacement validator mismatch ${JSON.stringify(state)}`);
+          }
+        } catch (error) { state.error = String(error?.stack || error); }
+        state.complete = true;
+      })();
+    )JS", "cache-replacement.js");
+    require(evaluate_until_equals(
+            cache_engine, "__cacheReplacement.complete", "cache-replacement-complete.js",
+            "true", 5'000) == "true",
+        "unchanged Code cache replacement gate timed out");
+    require(evaluate(cache_engine,
+            "__cacheReplacement.error", "cache-replacement-error.js") == "null",
+        "unchanged Code cache replacement gate failed: "
+            + evaluate(cache_engine,
+                "__cacheReplacement.error", "cache-replacement-error.js"));
+    webscene_engine_request_low_memory(cache_engine);
+    webscene_engine_memory_metrics cache_memory_after{
+        sizeof(webscene_engine_memory_metrics)};
+    for (auto attempt = 0; attempt < 250; ++attempt) {
+        require(webscene_engine_get_memory_metrics(
+                cache_engine, &cache_memory_after) != 0,
+            "cache replacement final memory metrics unavailable");
+        if (cache_memory_after.low_memory_notifications
+            > cache_memory_before.low_memory_notifications) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    require(cache_memory_after.low_memory_notifications
+            > cache_memory_before.low_memory_notifications,
+        "cache replacement low-memory collection did not complete");
+    require(cache_memory_after.v8_used_heap_bytes
+            <= cache_memory_before.v8_used_heap_bytes + 8U * 1024U * 1024U,
+        "cache replacement retained more than 8 MiB V8 heap");
+    std::cout << "Cache replacement gate: cycles=100 p95="
+              << evaluate(cache_engine, "__cacheReplacement.p95",
+                    "cache-replacement-p95.js")
+              << "ms requests="
+              << evaluate(cache_engine, "__cacheReplacement.requests.length",
+                    "cache-replacement-request-count.js")
+              << " byteStarts="
+              << evaluate(cache_engine, "__cacheReplacement.byteStarts",
+                    "cache-replacement-byte-count.js")
+              << " heapBefore=" << cache_memory_before.v8_used_heap_bytes
+              << " heapAfter=" << cache_memory_after.v8_used_heap_bytes << '\n';
+    webscene_engine_destroy(cache_engine);
+    require(service_worker_test_current_rss_bytes()
+            <= cache_rss_before + 64U * 1024U * 1024U,
+        "cache replacement retained more than 64 MiB RSS after teardown");
+
     constexpr std::string_view localhost_address{
         "https://vscode-webview.test/index.html?id=localhost-mapping"};
     constexpr std::string_view localhost_worker_address{

@@ -10,6 +10,30 @@
     static constexpr size_t maximum_service_worker_fetches = 32U;
     static constexpr size_t maximum_service_worker_fetch_body_bytes =
         64U * 1024U * 1024U;
+    static constexpr size_t maximum_service_worker_caches = 32U;
+    static constexpr size_t maximum_service_worker_cache_entries = 256U;
+
+    struct service_worker_cache_entry final {
+        uint32_t status{200U};
+        std::string status_text{"OK"};
+        std::vector<std::pair<std::string, std::string>> headers;
+        std::string body;
+        std::string url;
+        std::string response_type{"basic"};
+        bool redirected{false};
+    };
+
+    struct service_worker_cache final {
+        std::unordered_map<std::string, service_worker_cache_entry> entries;
+        std::vector<std::string> order;
+    };
+
+    struct service_worker_cache_storage final {
+        std::mutex mutex;
+        std::unordered_map<std::string, service_worker_cache> caches;
+        std::vector<std::string> order;
+        size_t bytes{};
+    };
 
     struct service_worker_body_lease final {
         service_worker_body_lease(
@@ -111,6 +135,273 @@
         auto* isolate = info.GetIsolate();
         auto context = isolate->GetCurrentContext();
         const auto operation = to_utf8(isolate, info[0]);
+        const auto cache_name = [&]() {
+            return info.Length() > 1 ? to_utf8(isolate, info[1]) : std::string{};
+        };
+        const auto cache_key = [&]() {
+            return info.Length() > 2 ? to_utf8(isolate, info[2]) : std::string{};
+        };
+        const auto validate_cache_identity = [&](const std::string& name,
+                                                  const std::string* key = nullptr) {
+            if (name.size() > 256U
+                || (key != nullptr && (key->empty() || key->size() > 8192U))) {
+                isolate->ThrowException(v8::Exception::TypeError(
+                    js_string(isolate, "Invalid CacheStorage key")));
+                return false;
+            }
+            return true;
+        };
+        if (operation == "cache-open") {
+            const auto name = cache_name();
+            if (!validate_cache_identity(name)) return;
+            std::lock_guard lock(runtime->cache_storage->mutex);
+            if (!runtime->cache_storage->caches.contains(name)) {
+                if (runtime->cache_storage->caches.size()
+                    >= maximum_service_worker_caches) {
+                    throw_dom_exception(
+                        info, "CacheStorage quota exceeded", "QuotaExceededError");
+                    return;
+                }
+                runtime->cache_storage->caches.emplace(name, service_worker_cache{});
+                runtime->cache_storage->order.push_back(name);
+            }
+            info.GetReturnValue().Set(v8::True(isolate));
+            return;
+        }
+        if (operation == "cache-storage-has") {
+            const auto name = cache_name();
+            if (!validate_cache_identity(name)) return;
+            std::lock_guard lock(runtime->cache_storage->mutex);
+            info.GetReturnValue().Set(v8::Boolean::New(
+                isolate, runtime->cache_storage->caches.contains(name)));
+            return;
+        }
+        if (operation == "cache-storage-delete") {
+            const auto name = cache_name();
+            if (!validate_cache_identity(name)) return;
+            std::lock_guard lock(runtime->cache_storage->mutex);
+            const auto found = runtime->cache_storage->caches.find(name);
+            if (found == runtime->cache_storage->caches.end()) {
+                info.GetReturnValue().Set(v8::False(isolate));
+                return;
+            }
+            for (const auto& [key, entry] : found->second.entries) {
+                static_cast<void>(key);
+                runtime->cache_storage->bytes -= entry.body.size();
+            }
+            runtime->cache_storage->caches.erase(found);
+            std::erase(runtime->cache_storage->order, name);
+            info.GetReturnValue().Set(v8::True(isolate));
+            return;
+        }
+        if (operation == "cache-storage-keys") {
+            std::lock_guard lock(runtime->cache_storage->mutex);
+            auto result = v8::Array::New(
+                isolate, static_cast<int>(runtime->cache_storage->order.size()));
+            for (uint32_t index = 0U;
+                 index < runtime->cache_storage->order.size(); ++index) {
+                result->Set(context, index, js_dom_string(
+                    isolate, runtime->cache_storage->order[index])).Check();
+            }
+            info.GetReturnValue().Set(result);
+            return;
+        }
+        if (operation == "cache-match") {
+            const auto name = cache_name();
+            const auto key = cache_key();
+            if (!validate_cache_identity(name, &key)) return;
+            std::lock_guard lock(runtime->cache_storage->mutex);
+            const auto cache = runtime->cache_storage->caches.find(name);
+            if (cache == runtime->cache_storage->caches.end()) {
+                info.GetReturnValue().Set(v8::Undefined(isolate));
+                return;
+            }
+            const auto found = cache->second.entries.find(key);
+            if (found == cache->second.entries.end()) {
+                info.GetReturnValue().Set(v8::Undefined(isolate));
+                return;
+            }
+            const auto& entry = found->second;
+            auto result = v8::Object::New(isolate);
+            result->Set(context, js_string(isolate, "status"),
+                v8::Integer::NewFromUnsigned(isolate, entry.status)).Check();
+            result->Set(context, js_string(isolate, "statusText"),
+                js_dom_string(isolate, entry.status_text)).Check();
+            result->Set(context, js_string(isolate, "url"),
+                js_dom_string(isolate, entry.url)).Check();
+            result->Set(context, js_string(isolate, "type"),
+                js_dom_string(isolate, entry.response_type)).Check();
+            result->Set(context, js_string(isolate, "redirected"),
+                v8::Boolean::New(isolate, entry.redirected)).Check();
+            auto headers = v8::Array::New(
+                isolate, static_cast<int>(entry.headers.size()));
+            for (uint32_t index = 0U; index < entry.headers.size(); ++index) {
+                auto pair = v8::Array::New(isolate, 2);
+                pair->Set(context, 0,
+                    js_dom_string(isolate, entry.headers[index].first)).Check();
+                pair->Set(context, 1,
+                    js_dom_string(isolate, entry.headers[index].second)).Check();
+                headers->Set(context, index, pair).Check();
+            }
+            result->Set(context, js_string(isolate, "headers"), headers).Check();
+            auto body = v8::ArrayBuffer::New(isolate, entry.body.size());
+            if (!entry.body.empty()) {
+                std::memcpy(body->GetBackingStore()->Data(),
+                    entry.body.data(), entry.body.size());
+            }
+            result->Set(context, js_string(isolate, "body"), body).Check();
+            info.GetReturnValue().Set(result);
+            return;
+        }
+        if (operation == "cache-delete-entry") {
+            const auto name = cache_name();
+            const auto key = cache_key();
+            if (!validate_cache_identity(name, &key)) return;
+            std::lock_guard lock(runtime->cache_storage->mutex);
+            const auto cache = runtime->cache_storage->caches.find(name);
+            if (cache == runtime->cache_storage->caches.end()) {
+                info.GetReturnValue().Set(v8::False(isolate));
+                return;
+            }
+            const auto found = cache->second.entries.find(key);
+            if (found == cache->second.entries.end()) {
+                info.GetReturnValue().Set(v8::False(isolate));
+                return;
+            }
+            runtime->cache_storage->bytes -= found->second.body.size();
+            cache->second.entries.erase(found);
+            std::erase(cache->second.order, key);
+            info.GetReturnValue().Set(v8::True(isolate));
+            return;
+        }
+        if (operation == "cache-entry-keys") {
+            const auto name = cache_name();
+            if (!validate_cache_identity(name)) return;
+            std::lock_guard lock(runtime->cache_storage->mutex);
+            const auto cache = runtime->cache_storage->caches.find(name);
+            const auto count = cache == runtime->cache_storage->caches.end()
+                ? 0U : static_cast<uint32_t>(cache->second.order.size());
+            auto result = v8::Array::New(isolate, static_cast<int>(count));
+            if (cache != runtime->cache_storage->caches.end()) {
+                for (uint32_t index = 0U; index < count; ++index) {
+                    result->Set(context, index, js_dom_string(
+                        isolate, cache->second.order[index])).Check();
+                }
+            }
+            info.GetReturnValue().Set(result);
+            return;
+        }
+        if (operation == "cache-put") {
+            const auto name = cache_name();
+            const auto key = cache_key();
+            if (!validate_cache_identity(name, &key) || info.Length() < 4
+                || !info[3]->IsObject()) return;
+            auto value = info[3].As<v8::Object>();
+            const auto property = [&](const char* property_name) {
+                v8::Local<v8::Value> result;
+                if (!value->Get(context, js_string(isolate, property_name)).ToLocal(&result)) {
+                    return v8::Local<v8::Value>{};
+                }
+                return result;
+            };
+            service_worker_cache_entry entry;
+            const auto status = property("status");
+            const auto status_text = property("statusText");
+            const auto url = property("url");
+            const auto response_type = property("type");
+            const auto redirected = property("redirected");
+            const auto headers_value = property("headers");
+            const auto body_value = property("body");
+            if (status.IsEmpty() || status_text.IsEmpty() || url.IsEmpty()
+                || response_type.IsEmpty() || redirected.IsEmpty()
+                || headers_value.IsEmpty() || body_value.IsEmpty()
+                || !headers_value->IsArray() || !body_value->IsArrayBufferView()) {
+                isolate->ThrowException(v8::Exception::TypeError(
+                    js_string(isolate, "Invalid cache response record")));
+                return;
+            }
+            entry.status = status->Uint32Value(context).FromMaybe(0U);
+            entry.status_text = to_utf8(isolate, status_text);
+            entry.url = to_utf8(isolate, url);
+            entry.response_type = to_utf8(isolate, response_type);
+            entry.redirected = redirected->BooleanValue(isolate);
+            if ((entry.status != 0U
+                    && (entry.status < 200U || entry.status > 599U))
+                || entry.status_text.size() > 1024U || entry.url.size() > 8192U
+                || entry.response_type.size() > 64U) {
+                isolate->ThrowException(v8::Exception::TypeError(
+                    js_string(isolate, "Invalid cache response metadata")));
+                return;
+            }
+            auto headers = headers_value.As<v8::Array>();
+            size_t header_bytes = 0U;
+            if (headers->Length() > 64U) {
+                isolate->ThrowException(v8::Exception::TypeError(
+                    js_string(isolate, "Cache response has too many headers")));
+                return;
+            }
+            for (uint32_t index = 0U; index < headers->Length(); ++index) {
+                v8::Local<v8::Value> pair_value;
+                if (!headers->Get(context, index).ToLocal(&pair_value)
+                    || !pair_value->IsArray()) {
+                    isolate->ThrowException(v8::Exception::TypeError(
+                        js_string(isolate, "Invalid cache response headers")));
+                    return;
+                }
+                auto pair = pair_value.As<v8::Array>();
+                v8::Local<v8::Value> header_name;
+                v8::Local<v8::Value> header_value;
+                if (pair->Length() != 2U
+                    || !pair->Get(context, 0).ToLocal(&header_name)
+                    || !pair->Get(context, 1).ToLocal(&header_value)) return;
+                auto header = std::pair{
+                    to_utf8(isolate, header_name), to_utf8(isolate, header_value)};
+                header_bytes += header.first.size() + header.second.size();
+                if (header_bytes > 64U * 1024U) {
+                    isolate->ThrowException(v8::Exception::TypeError(
+                        js_string(isolate, "Cache response headers are too large")));
+                    return;
+                }
+                entry.headers.push_back(std::move(header));
+            }
+            auto body = body_value.As<v8::ArrayBufferView>();
+            if (body->ByteLength() > maximum_service_worker_fetch_body_bytes) {
+                throw_dom_exception(
+                    info, "CacheStorage quota exceeded", "QuotaExceededError");
+                return;
+            }
+            const auto backing = body->Buffer()->GetBackingStore();
+            if (body->ByteLength() != 0U) {
+                const auto* bytes = static_cast<const char*>(backing->Data())
+                    + body->ByteOffset();
+                entry.body.assign(bytes, body->ByteLength());
+            }
+            std::lock_guard lock(runtime->cache_storage->mutex);
+            const auto cache = runtime->cache_storage->caches.find(name);
+            if (cache == runtime->cache_storage->caches.end()) {
+                isolate->ThrowException(v8::Exception::TypeError(
+                    js_string(isolate, "Cache is unavailable")));
+                return;
+            }
+            const auto prior = cache->second.entries.find(key);
+            const auto prior_bytes = prior == cache->second.entries.end()
+                ? 0U : prior->second.body.size();
+            if (runtime->cache_storage->bytes - prior_bytes
+                    > maximum_service_worker_fetch_body_bytes - entry.body.size()
+                || (prior == cache->second.entries.end()
+                    && cache->second.entries.size()
+                        >= maximum_service_worker_cache_entries)) {
+                throw_dom_exception(
+                    info, "CacheStorage quota exceeded", "QuotaExceededError");
+                return;
+            }
+            runtime->cache_storage->bytes = runtime->cache_storage->bytes
+                - prior_bytes + entry.body.size();
+            if (prior == cache->second.entries.end()) cache->second.order.push_back(key);
+            cache->second.entries.insert_or_assign(key, std::move(entry));
+            info.GetReturnValue().Set(v8::True(isolate));
+            return;
+        }
         if (operation == "claim") {
             std::lock_guard lock(runtime->mutex);
             if (!runtime->stopped) runtime->claimed = true;
@@ -304,6 +595,10 @@
         std::vector<service_worker_client_descriptor> clients)
     {
         auto state = std::make_shared<service_worker_runtime_state>();
+        if (registration.runtime != nullptr
+            && registration.runtime->cache_storage != nullptr) {
+            state->cache_storage = registration.runtime->cache_storage;
+        }
         for (auto& client : clients) {
             state->clients.emplace(client.id, std::move(client));
         }
@@ -693,6 +988,8 @@
                             type:response.type
                           };
                         };
+)JS",
+                        R"JS(
                         const cacheState = new WeakMap();
                         const cacheStorageState = new WeakMap();
                         const cacheKey = request => {
@@ -714,8 +1011,14 @@
                           constructor() { throw new TypeError('Illegal constructor'); }
                           match(request) {
                             const state = requireCache(this);
-                            const stored = state.entries.get(cacheKey(request));
-                            return Promise.resolve(stored?.response.clone());
+                            const stored = __webSceneServiceWorkerGlobalControl(
+                              'cache-match', state.name, cacheKey(request));
+                            return Promise.resolve(stored === undefined ? undefined
+                              : new Response(stored.body, {
+                                status:stored.status, statusText:stored.statusText,
+                                headers:stored.headers, url:stored.url,
+                                redirected:stored.redirected, type:stored.type
+                              }));
                           }
                           async put(request, response) {
                             const state = requireCache(this);
@@ -731,33 +1034,23 @@
                             }
                             const clone = response.clone();
                             const body = new Uint8Array(await clone.arrayBuffer());
-                            const prior = state.entries.get(key)?.bytes ?? 0;
-                            const nextBytes = state.storage.bytes - prior + body.byteLength;
-                            if (nextBytes > 64 * 1024 * 1024
-                                || (!state.entries.has(key) && state.entries.size >= 256)) {
-                              throw new DOMException('Cache quota exceeded', 'QuotaExceededError');
-                            }
-                            state.entries.set(key, {bytes:body.byteLength,
-                              response:new Response(body, {
+                            __webSceneServiceWorkerGlobalControl(
+                              'cache-put', state.name, key, {
                                 status:response.status, statusText:response.statusText,
-                                headers:response.headers, url:response.url,
-)JS",
-                        R"JS(                                redirected:response.redirected, type:response.type
-                              })});
-                            state.storage.bytes = nextBytes;
+                                headers:[...response.headers], body,
+                                url:response.url, redirected:response.redirected,
+                                type:response.type
+                              });
                           }
                           delete(request) {
                             const state = requireCache(this);
-                            const key = cacheKey(request);
-                            const entry = state.entries.get(key);
-                            if (!entry) return Promise.resolve(false);
-                            state.entries.delete(key);
-                            state.storage.bytes -= entry.bytes;
-                            return Promise.resolve(true);
+                            return Promise.resolve(__webSceneServiceWorkerGlobalControl(
+                              'cache-delete-entry', state.name, cacheKey(request)));
                           }
                           keys() {
-                            const state = requireCache(this);
-                            return Promise.resolve([...state.entries.keys()].map(key =>
+                            const keys = __webSceneServiceWorkerGlobalControl(
+                              'cache-entry-keys', requireCache(this).name);
+                            return Promise.resolve(keys.map(key =>
                               new Request(key.slice(key.indexOf(' ') + 1), {
                                 method:key.slice(0, key.indexOf(' '))})));
                           }
@@ -767,41 +1060,45 @@
                           open(name) {
                             const storage = requireCacheStorage(this);
                             const key = String(name);
-                            let value = storage.caches.get(key);
+                            __webSceneServiceWorkerGlobalControl('cache-open', key);
+                            let value = storage.wrappers.get(key);
                             if (!value) {
-                              if (storage.caches.size >= 32) {
-                                return Promise.reject(new DOMException(
-                                  'CacheStorage quota exceeded', 'QuotaExceededError'));
-                              }
                               value = Object.create(Cache.prototype);
-                              cacheState.set(value, {entries:new Map(), storage});
-                              storage.caches.set(key, value);
+                              cacheState.set(value, {name:key});
+                              storage.wrappers.set(key, value);
                             }
                             return Promise.resolve(value);
                           }
                           has(name) {
-                            return Promise.resolve(
-                              requireCacheStorage(this).caches.has(String(name)));
+                            requireCacheStorage(this);
+                            return Promise.resolve(__webSceneServiceWorkerGlobalControl(
+                              'cache-storage-has', String(name)));
                           }
                           delete(name) {
-                            const storage = requireCacheStorage(this);
                             const key = String(name);
-                            const value = storage.caches.get(key);
-                            if (!value) return Promise.resolve(false);
-                            for (const entry of requireCache(value).entries.values()) {
-                              storage.bytes -= entry.bytes;
-                            }
-                            storage.caches.delete(key);
-                            return Promise.resolve(true);
+                            const storage = requireCacheStorage(this);
+                            const deleted = __webSceneServiceWorkerGlobalControl(
+                              'cache-storage-delete', key);
+                            if (deleted) storage.wrappers.delete(key);
+                            return Promise.resolve(deleted);
                           }
                           keys() {
-                            return Promise.resolve(
-                              [...requireCacheStorage(this).caches.keys()]);
+                            requireCacheStorage(this);
+                            return Promise.resolve(__webSceneServiceWorkerGlobalControl(
+                              'cache-storage-keys'));
                           }
                           async match(request) {
-                            const storage = requireCacheStorage(this);
-                            for (const cache of storage.caches.values()) {
-                              const response = await cache.match(request);
+                            requireCacheStorage(this);
+                            for (const name of __webSceneServiceWorkerGlobalControl(
+                                'cache-storage-keys')) {
+                              const stored = __webSceneServiceWorkerGlobalControl(
+                                'cache-match', name, cacheKey(request));
+                              const response = stored === undefined ? undefined
+                                : new Response(stored.body, {
+                                  status:stored.status, statusText:stored.statusText,
+                                  headers:stored.headers, url:stored.url,
+                                  redirected:stored.redirected, type:stored.type
+                                });
                               if (response) return response;
                             }
                             return undefined;
@@ -821,7 +1118,7 @@
                           }
                         }
                         const caches = Object.create(CacheStorage.prototype);
-                        cacheStorageState.set(caches, {caches:new Map(), bytes:0});
+                        cacheStorageState.set(caches, {wrappers:new Map()});
                         function Client() { throw new TypeError('Illegal constructor'); }
                         function WindowClient() { throw new TypeError('Illegal constructor'); }
                         function Clients() { throw new TypeError('Illegal constructor'); }
@@ -2388,6 +2685,8 @@
         size_t active_fetches{};
         std::shared_ptr<std::atomic_size_t> queued_response_bytes{
             std::make_shared<std::atomic_size_t>(0U)};
+        std::shared_ptr<service_worker_cache_storage> cache_storage{
+            std::make_shared<service_worker_cache_storage>()};
         std::function<void()> notify_client;
         bool stopped{false};
         bool activated{false};

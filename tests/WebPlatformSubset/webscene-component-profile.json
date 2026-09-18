@@ -2435,6 +2435,14 @@
       "nativeNavigation": true
     },
     {
+      "path": "contracts/service-worker-cache-replacement.html",
+      "type": "contract",
+      "capabilities": ["service-worker-cache-storage", "service-worker-active-worker-replacement", "service-worker-cache-response-clone"],
+      "evidence": ["service-workers-cache-derived", "chromium-153-direct-neutral-contract", "vscode-oss-webview-cache-replacement-376"],
+      "reason": "Candidate cache-continuity slice for WebScene #266/#376. It preserves bounded in-memory CacheStorage names and complete cloned Response metadata/body across replacement of the same active Service Worker registration. The reduced Chrome/native contract replaces a v1 worker with v2, verifies the prior cached response, runs 100 replace-match-delete cycles within the latency bound, and deletes the shared cache deterministically. The native companion gate additionally runs the pinned unchanged Code OSS v6 worker through streamed 200 then cached 304 reuse after replacement. Durable cross-engine storage remains separately scoped.",
+      "nativeNavigation": true
+    },
+    {
       "path": "contracts/controlled-connected-resources.html",
       "type": "contract",
       "capabilities": ["service-worker-connected-script", "service-worker-connected-style", "service-worker-connected-image"],

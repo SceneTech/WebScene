@@ -1,0 +1,94 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Service Worker CacheStorage replacement continuity</title>
+<script>
+  const state = window.__webSceneWptState = {
+    complete:false, harness:null, results:[], errors:[], diagnostics:[]
+  };
+  const record = (name, condition, detail = 'Contract failed') => state.results.push({
+    name, status:condition ? 'PASS' : 'FAIL',
+    message:condition ? null : detail, stack:null
+  });
+  let nextId = 0;
+  const request = (worker, command) => new Promise((resolve, reject) => {
+    const id = ++nextId;
+    const timeout = setTimeout(() => {
+      navigator.serviceWorker.removeEventListener('message', listener);
+      reject(new Error(`${command} timed out`));
+    }, 2000);
+    const listener = event => {
+      if (event.data?.channel !== 'cache-replacement-result'
+          || event.data.id !== id) return;
+      clearTimeout(timeout);
+      navigator.serviceWorker.removeEventListener('message', listener);
+      resolve(event.data);
+    };
+    navigator.serviceWorker.addEventListener('message', listener);
+    worker.postMessage({command, id});
+  });
+  const activatedWorker = async registration => {
+    const worker = registration.installing || registration.waiting || registration.active;
+    if (!worker) throw new Error('registration has no worker');
+    if (worker.state !== 'activated') {
+      await new Promise(resolve => worker.addEventListener('statechange', () => {
+        if (worker.state === 'activated') resolve();
+      }));
+    }
+    return registration.active || worker;
+  };
+  (async () => {
+    const changed = new Promise(resolve => navigator.serviceWorker.addEventListener(
+      'controllerchange', resolve, {once:true}));
+    const firstRegistration = await navigator.serviceWorker.register(
+      'service-worker-cache-replacement-worker.js?v=1', {scope:'./'});
+    if (!navigator.serviceWorker.controller) await changed;
+    const firstWorker = await activatedWorker(firstRegistration);
+    const seeded = await request(firstWorker, 'seed');
+    record('initial active worker stores complete response metadata',
+      seeded.snapshot?.found && seeded.snapshot.status === 201
+        && seeded.snapshot.statusText === 'Cached'
+        && seeded.snapshot.etag === '"replacement-v1"'
+        && seeded.snapshot.marker === 'seeded'
+        && seeded.snapshot.body === 'cached-across-worker-replacement',
+      JSON.stringify(seeded));
+    const secondRegistration = await navigator.serviceWorker.register(
+      'service-worker-cache-replacement-worker.js?v=2', {scope:'./'});
+    const secondWorker = await activatedWorker(secondRegistration);
+    const replaced = await request(secondWorker, 'report');
+    record('replacement active worker sees the origin CacheStorage names',
+      replaced.snapshot?.names.includes('worker-replacement-cache-v1'),
+      JSON.stringify(replaced));
+    record('replacement active worker clones cached response metadata and body',
+      replaced.snapshot?.found && replaced.snapshot.status === 201
+        && replaced.snapshot.statusText === 'Cached'
+        && replaced.snapshot.etag === '"replacement-v1"'
+        && replaced.snapshot.marker === 'seeded'
+        && replaced.snapshot.body === 'cached-across-worker-replacement'
+        && replaced.snapshot.script === '?v=2',
+      JSON.stringify(replaced));
+    const cycles = await request(secondWorker, 'cycles');
+    state.diagnostics.push(JSON.stringify({
+      name:'cache-replacement-cycles', cycles:cycles.cycles, p95:cycles.p95,
+      names:cycles.snapshot?.names
+    }));
+    record('100 cache replace-match-delete cycles preserve the seed and latency bound',
+      cycles.cycles === 100 && cycles.p95 <= 100
+        && cycles.snapshot?.body === 'cached-across-worker-replacement',
+      JSON.stringify(cycles));
+    const deleted = await request(secondWorker, 'delete');
+    record('replacement worker deletes the shared cache deterministically',
+      deleted.deleted === true
+        && !deleted.names.includes('worker-replacement-cache-v1'),
+      JSON.stringify(deleted));
+    await secondRegistration.unregister();
+  })().catch(error => {
+    state.errors.push(String(error && error.stack || error));
+    record('contract completed', false, state.errors[0]);
+  }).finally(() => {
+    const failure = state.results.find(result => result.status !== 'PASS');
+    state.harness = failure
+      ? {status:1, message:failure.message, stack:failure.stack}
+      : {status:0, message:null, stack:null};
+    state.complete = true;
+  });
+</script>

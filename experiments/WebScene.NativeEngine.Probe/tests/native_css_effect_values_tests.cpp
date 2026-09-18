@@ -182,6 +182,53 @@ uint64_t acknowledge_scene_after(webscene_engine* engine, uint64_t minimum_revis
     }
     fail("effect mutation did not publish a newer scene within five seconds");
 }
+
+struct damage_snapshot final {
+    uint64_t revision{};
+    uint32_t count{};
+    float left{};
+    float top{};
+    float right{};
+    float bottom{};
+};
+
+damage_snapshot acknowledge_damage_after(webscene_engine* engine, uint64_t minimum_revision)
+{
+    const webscene_scene_acquire_options_v3 options{
+        sizeof(webscene_scene_acquire_options_v3),
+        WEBSCENE_SCENE_VIEW_VERSION_3,
+        0U};
+    for (auto attempt = 0; attempt < 2500; ++attempt) {
+        const webscene_scene_view_v3* lease = nullptr;
+        const auto status = webscene_engine_acquire_latest_scene_v3(engine, &options, &lease);
+        if (status == WEBSCENE_SCENE_ACQUIRE_SUCCESS && lease != nullptr) {
+            const auto* scene = lease->cpu_view;
+            if (scene != nullptr && scene->header.revision > minimum_revision) {
+                damage_snapshot result{
+                    scene->header.revision,
+                    scene->header.damage_rect_count,
+                    scene->header.viewport_width,
+                    scene->header.viewport_height,
+                    0.0F,
+                    0.0F};
+                for (uint32_t index = 0; index < scene->header.damage_rect_count; ++index) {
+                    const auto& rect = scene->damage_rects[index];
+                    result.left = std::min(result.left, rect.x);
+                    result.top = std::min(result.top, rect.y);
+                    result.right = std::max(result.right, rect.x + rect.width);
+                    result.bottom = std::max(result.bottom, rect.y + rect.height);
+                }
+                require(webscene_scene_acknowledge_v3(lease) != 0U,
+                    "damage scene acknowledgement failed");
+                webscene_scene_release_v3(lease);
+                return result;
+            }
+            webscene_scene_release_v3(lease);
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    fail("effect damage mutation did not publish a newer scene within five seconds");
+}
 } // namespace
 
 int main()
@@ -359,6 +406,24 @@ int main()
     )JS", "native-effects-lifecycle-fixture.js");
 
     auto scene_revision = wait_for_inset_clip_scene(engine, 1U).revision;
+    execute_and_wait(engine, R"JS(
+      (() => {
+        const first = document.getElementById('effects').firstElementChild;
+        first.style.filter = 'blur(4px)';
+        first.style.background = 'rgb(80, 40, 120)';
+      })()
+    )JS", "native-effects-blur-damage.js");
+    const auto blur_damage = acknowledge_damage_after(engine, scene_revision);
+    require(blur_damage.count == 1U,
+        "blurred descendant mutation did not retain localized damage");
+    require(blur_damage.right - blur_damage.left >= 20.0F
+            && blur_damage.bottom - blur_damage.top >= 14.0F,
+        "localized damage did not include the foreground blur extent");
+    scene_revision = blur_damage.revision;
+    execute_and_wait(engine, R"JS(
+      document.getElementById('effects').firstElementChild.style.removeProperty('filter')
+    )JS", "native-effects-blur-damage-restore.js");
+    scene_revision = acknowledge_scene_after(engine, scene_revision);
     const auto started = std::chrono::steady_clock::now();
     for (auto cycle = 0; cycle < 100; ++cycle) {
         execute_and_wait(engine, R"JS(
@@ -437,6 +502,8 @@ int main()
               << " peak-textual-style-count-delta=" << peak_textual_style_count_delta
               << " peak-textual-style-bytes-delta=" << peak_textual_style_bytes_delta
               << " retained-heap-growth=" << retained_heap_growth
+              << " blur-damage=" << (blur_damage.right - blur_damage.left)
+              << 'x' << (blur_damage.bottom - blur_damage.top)
               << '\n';
     return 0;
 }

@@ -149,6 +149,25 @@ void test_compiled_css_invalidation_plans()
             == std::vector<css_invalidation_route>{{css_invalidation_step::parent,
                 css_invalidation_step::ancestors}},
         "relational invalidation must reverse the relative combinators");
+    auto adjacent_has = compile(".row:has(+ .row.selected)");
+    require(adjacent_has[0].classes.at("selected").routes
+            == std::vector<css_invalidation_route>{{css_invalidation_step::previous_sibling}},
+        "adjacent :has dependency must route to the previous sibling");
+    require(std::find(adjacent_has[0].child_list.routes.begin(),
+            adjacent_has[0].child_list.routes.end(),
+            css_invalidation_route{css_invalidation_step::children})
+            != adjacent_has[0].child_list.routes.end(),
+        "adjacent :has removal must revisit surviving sibling subjects");
+    auto general_has = compile(".row:has(~ .row [data-ready])");
+    require(general_has[0].attributes.at("data-ready").routes
+            == std::vector<css_invalidation_route>{{css_invalidation_step::ancestors,
+                css_invalidation_step::preceding_siblings}},
+        "general-sibling :has dependency must reverse descendant and sibling steps");
+    require(std::find(general_has[0].child_list.routes.begin(),
+            general_has[0].child_list.routes.end(),
+            css_invalidation_route{css_invalidation_step::children})
+            != general_has[0].child_list.routes.end(),
+        "general-sibling :has removal must revisit surviving sibling subjects");
     require(compile(".target:is(.on ~ .target)")[0].child_list_sensitive,
         "nested sibling matching must record child-list sensitivity");
     require(compile(".target:not(:last-child)")[0].child_list_sensitive,

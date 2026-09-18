@@ -425,6 +425,10 @@ int main()
             test_nested_functional_selector_scaling();
             return 0;
         }
+        if (selected == "relative-sibling-has") {
+            test_relative_sibling_has_scaling();
+            return 0;
+        }
         if (selected == "live-form-state") {
             test_live_form_state_selectors_and_scaling();
             return 0;
@@ -1204,6 +1208,7 @@ int main()
     test_media_query_inherited_value_propagation_work();
     test_media_query_matching_scales_linearly();
     test_attribute_invalidation_scopes_subject_and_descendant_rules();
+    test_relative_sibling_has_scaling();
     test_live_form_state_selectors_and_scaling();
     test_compiled_subject_index_scaling();
     test_cascade_layer_mutation_scaling();

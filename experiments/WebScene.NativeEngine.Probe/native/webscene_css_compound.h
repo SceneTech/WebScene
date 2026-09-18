@@ -343,23 +343,8 @@ inline bool compound_matches(const Host& host,const dom_node& node,
             } else if (name == "has") {
                 const auto any = css_selector_list_any(argument,
                     [&](std::string_view relative) {
-                    if (!relative.empty()) {
-                        if (relative.front() == '>') {
-                            const auto child_selector = trim_css_view(relative.substr(1U));
-                            return !child_selector.empty() && std::any_of(
-                                node.children.begin(),
-                                node.children.end(),
-                                [&](const auto* child) {
-                                    return is_element(child)
-                                        && host.css_selector_matches(
-                                            *child, child_selector, &node);
-                                });
-                        } else if (relative.front() != '+' && relative.front() != '~') {
-                            return host.query_selector_node(
-                                const_cast<dom_node&>(node), relative, false) != nullptr;
-                        }
-                    }
-                    return false;
+                        return !relative.empty()
+                            && host.css_relative_selector_matches(node, relative);
                 });
                 if (!any) return false;
             } else {

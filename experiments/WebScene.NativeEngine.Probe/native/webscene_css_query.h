@@ -60,6 +60,18 @@ public:
         const auto prepared=prepare(text);
         return matches(node,*prepared,scope);
     }
+    bool css_relative_selector_matches(
+        const dom_node& scope, std::string_view relative) const {
+        auto anchored = std::string(":scope ");
+        anchored.append(relative);
+        const auto prepared = prepare(anchored);
+        return relative_selector_list_matches(
+            scope, *prepared,
+            [&](const dom_node& candidate, const compiled_css_selector& selector,
+                const dom_node* root) {
+                return matches_prepared(candidate, selector, root);
+            });
+    }
     // Reuse the stylesheet's prepared selector without reparsing its outer syntax.
     // Nested functional selectors retain the same bounded cache as DOM queries.
     bool matches_prepared(const dom_node& node,const compiled_css_selector& selector,

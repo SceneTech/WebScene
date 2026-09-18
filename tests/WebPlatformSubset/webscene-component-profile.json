@@ -1981,6 +1981,13 @@
       "reason": "Candidate contract for depth-aware :has() relative selector lists used by unchanged Code OSS. It protects nested functional and quoted commas, top-level alternatives, standards specificity, and targeted class/attribute invalidation."
     },
     {
+      "path": "contracts/css-relative-sibling-has.html",
+      "type": "contract",
+      "capabilities": ["relative-adjacent-has", "relative-general-sibling-has", "reverse-sibling-invalidation"],
+      "evidence": ["selectors-level-4-relational-pseudo-class", "unchanged-code-oss-relative-sibling-has", "direct-chromium-native-contract"],
+      "reason": "Candidate contract for unchanged Code OSS :has(+ ...) and :has(~ ...) matching, chained relative selectors, reverse class/attribute invalidation, and sibling insertion/removal."
+    },
+    {
       "path": "css/selectors/is-specificity.html",
       "type": "testharness",
       "capabilities": ["is-selector-specificity", "complex-functional-selector-list"],

@@ -250,6 +250,48 @@ inline const dom_node* previous_element_sibling(const dom_node& node)
         return nullptr;
     }
 
+// A relative selector is matched by anchoring its first compound to :scope and
+// testing only nodes reachable in the direction of its first combinator.  The
+// ordinary selector matcher still verifies every chained combinator.  Scanning
+// all following sibling subtrees for a sibling-leading arm is necessary for
+// chains such as `:scope + .a + .b`, while keeping work inside one sibling list.
+template<typename MatchSelector>
+inline bool relative_selector_list_matches(
+    const dom_node& scope,
+    const compiled_css_selector_list& selectors,
+    const MatchSelector& match_selector)
+{
+    const auto visit_subtree = [&](const auto& self, const dom_node& root,
+                                   const compiled_css_selector& selector) -> bool {
+        if (root.kind == dom_node_kind::element
+            && match_selector(root, selector, &scope)) return true;
+        for (const auto* child : root.children) {
+            if (child != nullptr && self(self, *child, selector)) return true;
+        }
+        return false;
+    };
+    for (const auto& selector : selectors.selectors) {
+        if (selector.compounds.size() < 2U || selector.combinators.empty()) continue;
+        const auto first = selector.combinators.front();
+        if (first == '+' || first == '~') {
+            if (scope.parent == nullptr) continue;
+            const auto& siblings = scope.parent->children;
+            const auto found = std::find(siblings.begin(), siblings.end(), &scope);
+            if (found == siblings.end()) continue;
+            for (auto current = std::next(found); current != siblings.end(); ++current) {
+                if (*current != nullptr && visit_subtree(
+                        visit_subtree, **current, selector)) return true;
+            }
+            continue;
+        }
+        for (const auto* child : scope.children) {
+            if (child != nullptr && visit_subtree(
+                    visit_subtree, *child, selector)) return true;
+        }
+    }
+    return false;
+}
+
 // Ephemeral memoization for one immutable DOM/interaction-state matching pass.
 // Never retain this across author callbacks or selector-state transitions.
 // A relation entry answers whether this node OR an earlier sibling/ancestor

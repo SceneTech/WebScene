@@ -165,6 +165,10 @@ int main()
             webscene_engine_destroy(focused_engine);
             return 0;
         }
+        if (selected == "iframe-navigation-lifecycle") {
+            test_same_origin_iframe_navigation_document_replacement();
+            return 0;
+        }
         if (selected == "idle-v8-platform") {
             test_idle_v8_foreground_completion();
             return 0;

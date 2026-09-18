@@ -120,6 +120,247 @@ struct contextual_resource_server final {
     std::string content_type;
 };
 
+void test_same_origin_iframe_navigation_document_replacement()
+{
+    constexpr std::string_view address{
+        "https://iframe-navigation.test/index.html"};
+    resource_server server{.content = {
+        {std::string{address}, "<!doctype html><title>frame navigation</title><body></body>"},
+        {"https://iframe-navigation.test/fake.html?id=markdown-preview",
+            "<!doctype html><title>Fake</title><body></body>"},
+        {"https://cross-origin.test/fake.html",
+            "<!doctype html><title>Cross origin</title><body>"
+            "<script>parent.__crossOriginEscape=true;</script></body>"}
+    }};
+    webscene_engine_options options{};
+    options.struct_size = sizeof(options);
+    options.resource_load_callback = load_test_resource;
+    options.resource_load_user_data = &server;
+    auto* engine = webscene_engine_create_with_options(&options);
+    require(engine != nullptr, "iframe navigation engine creation failed");
+    require(webscene_engine_load_url(engine, address.data(), address.size()) != 0U,
+        "iframe navigation outer document failed");
+    require(evaluate_until_equals(engine, "location.href", "iframe-navigation-ready.js",
+            R"("https://iframe-navigation.test/index.html")", 2'500)
+            == R"("https://iframe-navigation.test/index.html")",
+        "iframe navigation outer document did not become ready");
+
+    execute(engine, R"JS(
+      globalThis.__iframeNavigation = {
+        complete:false, error:null, lifecycle:0, stable:false,
+        target:false, fakePath:false, replaced:false,
+        markdownAdvanced:false, replacementStable:false
+      };
+      (() => {
+        try {
+          const frame = document.createElement('iframe');
+          frame.setAttribute('sandbox', 'allow-same-origin allow-scripts');
+          frame.src = './fake.html?id=markdown-preview';
+          document.body.appendChild(frame);
+          const initialWindow = frame.contentWindow;
+          let handled = false;
+          initialWindow.addEventListener('DOMContentLoaded', event => {
+            if (handled) return;
+            handled = true;
+            ++__iframeNavigation.lifecycle;
+            try {
+              const contentDocument = event.target;
+              __iframeNavigation.stable = frame.contentWindow === initialWindow;
+              __iframeNavigation.target = contentDocument === frame.contentDocument;
+              __iframeNavigation.fakePath = contentDocument.location.pathname
+                .endsWith('/fake.html');
+              globalThis.__finishIframeMarkdown = marker => {
+                __iframeNavigation.markdownAdvanced = marker?.textContent === 'Markdown';
+                __iframeNavigation.replacementStable = frame.contentWindow === initialWindow;
+                delete globalThis.__finishIframeMarkdown;
+                frame.remove();
+                __iframeNavigation.complete = true;
+              };
+              setTimeout(() => {
+                try {
+                  contentDocument.open();
+                  contentDocument.write(
+                    "<!doctype html><html><body><main id='markdown-body'>Markdown</main>"
+                    + "<script>parent.__finishIframeMarkdown(document.querySelector('#markdown-body'));</script>"
+                    + "</body></html>");
+                  contentDocument.close();
+                  __iframeNavigation.replaced = frame.contentDocument
+                    .querySelector('#markdown-body')?.textContent === 'Markdown';
+                } catch (error) {
+                  __iframeNavigation.error = String(error && error.stack || error);
+                  frame.remove();
+                  __iframeNavigation.complete = true;
+                }
+              }, 0);
+            } catch (error) {
+              __iframeNavigation.error = String(error && error.stack || error);
+              __iframeNavigation.complete = true;
+            }
+          });
+        } catch (error) {
+          __iframeNavigation.error = String(error && error.stack || error);
+          __iframeNavigation.complete = true;
+        }
+      })();
+    )JS", "iframe-navigation-markdown-sequence.js");
+    require(evaluate_until_equals(engine, "__iframeNavigation.complete",
+            "iframe-navigation-complete.js", "true", 3'000) == "true",
+        "pre-navigation DOMContentLoaded listener did not observe the navigated frame: "
+            + evaluate(engine, "JSON.stringify(__iframeNavigation)",
+                "iframe-navigation-timeout-detail.js")
+            + " / " + last_error(engine));
+    require(evaluate(engine, R"JS((() => {
+      const s=__iframeNavigation;
+      return s.error===null && s.lifecycle===1 && s.stable && s.target
+        && s.fakePath && s.replaced && s.markdownAdvanced && s.replacementStable;
+    })())JS", "iframe-navigation-result.js") == "true",
+        "same-origin iframe navigation/document replacement diverged: "
+            + evaluate(engine, "JSON.stringify(__iframeNavigation)",
+                "iframe-navigation-result-detail.js"));
+
+    webscene_engine_memory_metrics memory_before{sizeof(memory_before)};
+    require(webscene_engine_get_memory_metrics(engine, &memory_before) != 0,
+        "iframe navigation memory baseline was unavailable");
+    const auto rss_before = service_worker_test_current_rss_bytes();
+    execute(engine, R"JS(
+      globalThis.__iframeLifecycleGate = {
+        complete:false, error:null, cycles:0, maximumLiveFrames:0,
+        p95:0, opaqueDenied:false, crossOriginDenied:false
+      };
+      (async () => {
+        try {
+          const denied = document.createElement('iframe');
+          denied.setAttribute('sandbox', 'allow-scripts');
+          denied.src = './fake.html?id=markdown-preview';
+          document.body.appendChild(denied);
+          __iframeLifecycleGate.opaqueDenied =
+            denied.contentWindow === null && denied.contentDocument === null;
+          denied.remove();
+
+          const crossOrigin = document.createElement('iframe');
+          globalThis.__crossOriginEscape = false;
+          crossOrigin.setAttribute('sandbox', 'allow-same-origin allow-scripts');
+          crossOrigin.src = 'https://cross-origin.test/fake.html';
+          document.body.appendChild(crossOrigin);
+          await new Promise(resolve => setTimeout(resolve, 150));
+          __iframeLifecycleGate.crossOriginDenied =
+            crossOrigin.contentWindow === null && crossOrigin.contentDocument === null
+              && globalThis.__crossOriginEscape === false;
+          crossOrigin.remove();
+
+          for (let cycle = 0; cycle < 100; ++cycle) {
+            await new Promise((resolve, reject) => {
+              const frame = document.createElement('iframe');
+              frame.setAttribute('sandbox', 'allow-same-origin allow-scripts');
+              frame.src = './fake.html?id=markdown-preview';
+              document.body.appendChild(frame);
+              const proxy = frame.contentWindow;
+              const timeout = setTimeout(
+                () => reject(new Error(`cycle ${cycle} timed out`)), 1000);
+              proxy.addEventListener('DOMContentLoaded', event => {
+                try {
+                  const contentDocument = event.target;
+                  contentDocument.open();
+                  contentDocument.write(
+                    `<!doctype html><body><main data-cycle="${cycle}">${cycle}</main></body>`);
+                  contentDocument.close();
+                  if (frame.contentWindow !== proxy
+                      || frame.contentDocument !== contentDocument
+                      || contentDocument.querySelector('main')?.textContent !== String(cycle)) {
+                    throw new Error(`cycle ${cycle} identity/replacement mismatch`);
+                  }
+                  ++__iframeLifecycleGate.cycles;
+                  __iframeLifecycleGate.maximumLiveFrames = Math.max(
+                    __iframeLifecycleGate.maximumLiveFrames,
+                    document.querySelectorAll('iframe').length);
+                  clearTimeout(timeout);
+                  frame.remove();
+                  setTimeout(resolve, 0);
+                } catch (error) { clearTimeout(timeout); reject(error); }
+              });
+            });
+          }
+
+          await new Promise((resolve, reject) => {
+            const frame = document.createElement('iframe');
+            frame.setAttribute('sandbox', 'allow-same-origin allow-scripts');
+            frame.src = './fake.html?id=markdown-preview';
+            document.body.appendChild(frame);
+            const proxy = frame.contentWindow;
+            const timeout = setTimeout(() => reject(new Error('bulk frame timed out')), 1000);
+            proxy.addEventListener('DOMContentLoaded', event => {
+              try {
+                const contentDocument = event.target;
+                const payload = 'x'.repeat(1024 * 1024);
+                const durations = [];
+                for (let iteration = 0; iteration < 10; ++iteration) {
+                  const started = performance.now();
+                  contentDocument.open();
+                  contentDocument.write(
+                    `<!doctype html><body><main id="bulk">${payload}</main></body>`);
+                  contentDocument.close();
+                  if (contentDocument.querySelector('#bulk')?.textContent.length
+                      !== payload.length) {
+                    throw new Error(`bulk replacement ${iteration} was truncated`);
+                  }
+                  durations.push(performance.now() - started);
+                }
+                durations.sort((a, b) => a - b);
+                __iframeLifecycleGate.p95 = durations[Math.ceil(durations.length * .95) - 1];
+                clearTimeout(timeout);
+                frame.remove();
+                setTimeout(resolve, 0);
+              } catch (error) { clearTimeout(timeout); reject(error); }
+            });
+          });
+        } catch (error) {
+          __iframeLifecycleGate.error = String(error && error.stack || error);
+        } finally { __iframeLifecycleGate.complete = true; }
+      })();
+    )JS", "iframe-navigation-lifecycle-gate.js");
+    require(evaluate_until_equals(engine, "__iframeLifecycleGate.complete",
+            "iframe-navigation-lifecycle-gate-complete.js", "true", 20'000) == "true",
+        "iframe navigation lifecycle/performance gate timed out");
+    require(evaluate(engine, R"JS((() => {
+      const s=__iframeLifecycleGate;
+      return s.error===null && s.cycles===100 && s.maximumLiveFrames===1
+        && s.opaqueDenied && s.crossOriginDenied && s.p95 <= 250;
+    })())JS", "iframe-navigation-lifecycle-gate-result.js") == "true",
+        "iframe navigation security/lifecycle/performance gate diverged: "
+            + evaluate(engine, "JSON.stringify(__iframeLifecycleGate)",
+                "iframe-navigation-lifecycle-gate-detail.js"));
+    require(event_listener_inventory(engine).find(R"("targets":[])") != std::string::npos,
+        "detached iframe retained DOMContentLoaded listeners: "
+            + event_listener_inventory(engine));
+
+    require(webscene_engine_request_low_memory(engine) != 0,
+        "iframe navigation low-memory request was rejected");
+    webscene_engine_memory_metrics memory_after{sizeof(memory_after)};
+    for (auto attempt = 0; attempt < 250; ++attempt) {
+        require(webscene_engine_get_memory_metrics(engine, &memory_after) != 0,
+            "iframe navigation final memory metrics were unavailable");
+        if (memory_after.low_memory_notifications
+            > memory_before.low_memory_notifications) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    const auto rss_after = service_worker_test_current_rss_bytes();
+    require(memory_after.low_memory_notifications
+            > memory_before.low_memory_notifications
+            && memory_after.v8_used_heap_bytes
+                <= memory_before.v8_used_heap_bytes + 8U * 1024U * 1024U
+            && memory_after.native_dom_node_count
+                <= memory_before.native_dom_node_count + 8U,
+        "iframe navigation cycles retained heap or DOM nodes");
+    require(rss_before == 0U || rss_after <= rss_before + 64U * 1024U * 1024U,
+        "iframe navigation cycles retained more than 64 MiB RSS");
+    std::cout << "Iframe navigation lifecycle gate: cycles=100 bulkMiB=1 p95="
+              << evaluate(engine, "__iframeLifecycleGate.p95", "iframe-p95.js")
+              << "ms heapBefore=" << memory_before.v8_used_heap_bytes
+              << " heapAfter=" << memory_after.v8_used_heap_bytes
+              << " rssBefore=" << rss_before << " rssAfter=" << rss_after << '\n';
+    webscene_engine_destroy(engine);
+}
+
 size_t load_contextual_test_resource(
     void* user_data,
     uint32_t kind,

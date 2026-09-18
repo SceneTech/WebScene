@@ -1824,6 +1824,9 @@
             frame_dom_content_loaded_listeners.erase(id);
             window_selections.erase(id);
         }
+        if (node_ids.contains(focused_document_owner_id)) {
+          focused_document_owner_id = 0U;
+        }
         std::erase_if(window_selections, [&](const auto &entry) {
           const auto &selection = entry.second;
           return node_ids.contains(entry.first) ||
@@ -4825,28 +4828,37 @@
         dom_node* node = self->document.is_shadow_root(*root)
             ? nullptr
             : &exposed_body_for_root(*root);
-        if (self->active_element != nullptr) {
-            const auto* active_shadow_root =
-                self->document.containing_shadow_root(*self->active_element);
-            if (!self->document.is_shadow_root(*root)
-                && active_shadow_root != nullptr
-                && self->focus_document_owner(root)
-                    == self->focus_document_owner(self->active_element)) {
-                const auto* state = self->document.shadow_dom(*active_shadow_root);
-                if (state != nullptr && state->host != nullptr) node = state->host;
-                info.GetReturnValue().Set(self->wrap_node(*node));
-                return;
+        const auto root_owner = self->focus_document_owner(root);
+        if (root_owner != self->focused_document_owner_id) {
+          if (auto *owner = find_node_by_native_id(
+                  *root, self->focused_document_owner_id);
+              owner != nullptr && owner->tag == "iframe") {
+            node = owner;
+          }
+        } else if (self->active_element != nullptr) {
+          const auto *active_shadow_root =
+              self->document.containing_shadow_root(*self->active_element);
+          if (!self->document.is_shadow_root(*root) &&
+              active_shadow_root != nullptr &&
+              self->focus_document_owner(root) ==
+                  self->focus_document_owner(self->active_element)) {
+            const auto *state = self->document.shadow_dom(*active_shadow_root);
+            if (state != nullptr && state->host != nullptr)
+              node = state->host;
+            info.GetReturnValue().Set(self->wrap_node(*node));
+            return;
+          }
+          const auto active_owner =
+              self->focus_document_owner(self->active_element);
+          if (root_owner == active_owner &&
+              self->subtree_contains(*root, self->active_element)) {
+            node = self->active_element;
+          } else if (root_owner == 0U && active_owner != 0U) {
+            if (auto *owner = find_node_by_native_id(*root, active_owner);
+                owner != nullptr) {
+              node = owner;
             }
-            const auto root_owner = self->focus_document_owner(root);
-            const auto active_owner = self->focus_document_owner(self->active_element);
-            if (root_owner == active_owner
-                && self->subtree_contains(*root, self->active_element)) {
-                node = self->active_element;
-            } else if (root_owner == 0U && active_owner != 0U) {
-                if (auto* owner = find_node_by_native_id(*root, active_owner); owner != nullptr) {
-                    node = owner;
-                }
-            }
+          }
         }
         info.GetReturnValue().Set(node == nullptr
             ? v8::Local<v8::Value>(v8::Null(info.GetIsolate()))
@@ -4899,9 +4911,18 @@
 
     static void document_has_focus(const v8::FunctionCallbackInfo<v8::Value>& info)
     {
-        const auto* self = current(info.GetIsolate());
-        info.GetReturnValue().Set(v8::Boolean::New(
-            info.GetIsolate(), self != nullptr && self->document_focused));
+      auto *self = current(info.GetIsolate());
+      auto *root = info.This()->InternalFieldCount() > 0
+                       ? static_cast<dom_node *>(
+                             info.This()->GetAlignedPointerFromInternalField(
+                                 0, v8::kEmbedderDataTypeTagDefault))
+                       : nullptr;
+      const auto owner_id =
+          root == nullptr ? 0U : self->focus_document_owner(root);
+      info.GetReturnValue().Set(v8::Boolean::New(
+          info.GetIsolate(),
+          self != nullptr && self->document_focused &&
+              (owner_id == 0U || owner_id == self->focused_document_owner_id)));
     }
 
     static void get_document_fullscreen_element(

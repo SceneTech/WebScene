@@ -2455,37 +2455,50 @@
 
     bool set_active_element(dom_node* next, const webscene_input_event& input)
     {
-        if (active_element == next) return true;
-        auto* previous = active_element;
-        auto* related_target = previous != nullptr && next != nullptr
-                && focus_document_owner(previous) == focus_document_owner(next)
-            ? next
-            : nullptr;
-        if (previous != nullptr) {
-            previous->mutable_form_control().input_focused = false;
-            previous->mutable_form_control().caret_visible = false;
-            // The document regains focus before blur/focusout listeners run.
-            // This also allows a listener to focus another element without
-            // recursively blurring the element whose transition is in flight.
-            active_element = nullptr;
-            recascade_focus_subject(*previous, "focus-before-blur");
-            current_related_target = related_target;
-            if (!dispatch_input_event_type(input, "blur", *previous)) {
-                current_related_target = nullptr;
-                return false;
-            }
-            current_related_target = related_target;
-            if (!dispatch_input_event_type(input, "focusout", *previous)) {
-                current_related_target = nullptr;
-                return false;
-            }
-            // A focus/blur listener may have completed a newer focus change.
-            // Preserve that result instead of overwriting it with this request.
-            if (active_element != nullptr) {
-                current_related_target = nullptr;
-                document.mark_dirty();
-                return true;
-            }
+      const auto next_owner = next == nullptr ? focused_document_owner_id
+                                              : focus_document_owner(next);
+      if (active_element == next && focused_document_owner_id == next_owner)
+        return true;
+      auto *previous = active_element;
+      auto *related_target =
+          previous != nullptr && next != nullptr &&
+                  focus_document_owner(previous) == focus_document_owner(next)
+              ? next
+              : nullptr;
+      if (previous != nullptr) {
+        previous->mutable_form_control().input_focused = false;
+        previous->mutable_form_control().caret_visible = false;
+        // The document regains focus before blur/focusout listeners run.
+        // This also allows a listener to focus another element without
+        // recursively blurring the element whose transition is in flight.
+        active_element = nullptr;
+        recascade_focus_subject(*previous, "focus-before-blur");
+        current_related_target = related_target;
+        if (!dispatch_input_event_type(input, "blur", *previous)) {
+          current_related_target = nullptr;
+          return false;
+        }
+        current_related_target = related_target;
+        if (!dispatch_input_event_type(input, "focusout", *previous)) {
+          current_related_target = nullptr;
+          return false;
+        }
+        // A focus/blur listener may have completed a newer focus change.
+        // Preserve that result instead of overwriting it with this request.
+        if (active_element != nullptr) {
+          current_related_target = nullptr;
+          document.mark_dirty();
+          return true;
+        }
+        }
+        if (next != nullptr && !set_focus_document_owner(next_owner)) {
+          current_related_target = nullptr;
+          return false;
+        }
+        if (active_element != nullptr) {
+          current_related_target = nullptr;
+          document.mark_dirty();
+          return true;
         }
         active_element = next;
         if (next != nullptr && is_text_control(next)) {
@@ -2549,9 +2562,20 @@
     bool blur_active_element_before_detach(dom_node& detached_root)
     {
         document.unregister_modal_subtree(detached_root);
-        if (!subtree_contains(detached_root, active_element)) return true;
+        auto *focused_owner =
+            focused_document_owner_id == 0U
+                ? nullptr
+                : document.find_by_native_id(focused_document_owner_id);
+        const auto removes_focused_document =
+            focused_owner != nullptr &&
+            subtree_contains(detached_root, focused_owner);
+        if (!subtree_contains(detached_root, active_element) &&
+            !removes_focused_document)
+          return true;
         webscene_input_event synthetic{};
-        if (!set_active_element(nullptr, synthetic)) return false;
+        if (subtree_contains(detached_root, active_element) &&
+            !set_active_element(nullptr, synthetic))
+          return false;
 
         // A blur/focusout listener can synchronously focus another node. Preserve
         // focus outside the subtree, but never retain a node that is about to be
@@ -2566,6 +2590,9 @@
                 "focus-detached-reentrant");
             document.mark_dirty();
         }
+        if (removes_focused_document && focused_document_owner_id != 0U &&
+            !set_focus_document_owner(0U))
+          return false;
         return true;
     }
 

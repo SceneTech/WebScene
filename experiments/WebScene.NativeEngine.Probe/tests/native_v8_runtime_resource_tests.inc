@@ -609,6 +609,245 @@ void test_nested_window_find_selection() {
   webscene_engine_destroy(engine);
 }
 
+void test_nested_window_focus_ownership() {
+  constexpr std::string_view address{"https://iframe-focus.test/index.html"};
+  resource_server server{
+      .content = {{std::string{address},
+                   "<!doctype html><title>frame focus</title><body></body>"},
+                  {"https://iframe-focus.test/fake.html?id=markdown-preview",
+                   "<!doctype html><title>Fake</title><body></body>"},
+                  {"https://cross-origin-focus.test/fake.html",
+                   "<!doctype html><body>cross origin</body>"}}};
+  webscene_engine_options options{};
+  options.struct_size = sizeof(options);
+  options.resource_load_callback = load_test_resource;
+  options.resource_load_user_data = &server;
+  auto *engine = webscene_engine_create_with_options(&options);
+  require(engine != nullptr, "nested Window.focus engine creation failed");
+  require(webscene_engine_load_url(engine, address.data(), address.size()) !=
+              0U,
+          "nested Window.focus outer document failed");
+  require(evaluate_until_equals(
+              engine, "location.href", "window-focus-ready.js",
+              R"("https://iframe-focus.test/index.html")",
+              2'500) == R"("https://iframe-focus.test/index.html")",
+          "nested Window.focus outer document did not become ready");
+
+  execute(engine, R"JS(
+      globalThis.__windowFocus = { complete:false, error:null, events:[] };
+      (() => {
+        try {
+          const outer = document.createElement('button');
+          outer.id = 'outer-focus';
+          document.body.appendChild(outer);
+          const frame = document.createElement('iframe');
+          frame.setAttribute('sandbox', 'allow-same-origin allow-scripts');
+          frame.src = './fake.html?id=markdown-preview';
+          document.body.appendChild(frame);
+          const proxy = frame.contentWindow;
+          proxy.addEventListener('DOMContentLoaded', event => {
+            try {
+              const doc = event.target;
+              doc.open();
+              doc.write('<!doctype html><body><button id="inner-focus">inner</button></body>');
+              doc.close();
+              __windowFocus.onBlur = () => __windowFocus.events.push('outer-window:blur');
+              __windowFocus.onFocus = () => __windowFocus.events.push('outer-window:focus');
+              addEventListener('blur', __windowFocus.onBlur);
+              addEventListener('focus', __windowFocus.onFocus);
+              __windowFocus.initial = {
+                outer:document.activeElement?.tagName,
+                inner:doc.activeElement?.tagName,
+                outerHas:document.hasFocus(), innerHas:doc.hasFocus()
+              };
+              proxy.focus();
+              __windowFocus.windowFocus = {
+                outer:document.activeElement?.id,
+                inner:doc.activeElement?.tagName,
+                outerHas:document.hasFocus(), innerHas:doc.hasFocus()
+              };
+              doc.querySelector('#inner-focus').focus();
+              __windowFocus.innerFocus = {
+                outer:document.activeElement?.id,
+                inner:doc.activeElement?.id,
+                innerHas:doc.hasFocus()
+              };
+              outer.focus();
+              __windowFocus.outerFocus = {
+                outer:document.activeElement?.id,
+                inner:doc.activeElement?.tagName,
+                innerHas:doc.hasFocus()
+              };
+              proxy.focus();
+              __windowFocus.frame = frame;
+              __windowFocus.proxy = proxy;
+              __windowFocus.document = doc;
+              __windowFocus.complete = true;
+            } catch (error) {
+              __windowFocus.error = String(error && error.stack || error);
+              __windowFocus.complete = true;
+            }
+          });
+        } catch (error) {
+          __windowFocus.error = String(error && error.stack || error);
+          __windowFocus.complete = true;
+        }
+      })();
+    )JS",
+          "window-focus-markdown-sequence.js");
+  require(evaluate_until_equals(engine, "__windowFocus.complete",
+                                "window-focus-complete.js", "true",
+                                3'000) == "true",
+          "nested Window.focus sequence timed out: " +
+              evaluate(engine,
+                       "JSON.stringify({complete:__windowFocus.complete,error:_"
+                       "_windowFocus.error,events:__windowFocus.events})",
+                       "window-focus-timeout.js"));
+  require(
+      evaluate(engine, R"JS((() => {
+      const s=__windowFocus;
+      return s.error===null
+        && JSON.stringify(s.initial)==='{"outer":"BODY","inner":"BODY","outerHas":true,"innerHas":false}'
+        && JSON.stringify(s.windowFocus)==='{"outer":"","inner":"BODY","outerHas":true,"innerHas":true}'
+        && JSON.stringify(s.innerFocus)==='{"outer":"","inner":"inner-focus","innerHas":true}'
+        && JSON.stringify(s.outerFocus)==='{"outer":"outer-focus","inner":"BODY","innerHas":false}'
+        && s.events.join(',')==='outer-window:blur,outer-window:focus,outer-window:blur';
+    })())JS",
+               "window-focus-result.js") == "true",
+      "nested Window.focus ownership diverged from Chrome: " +
+          evaluate(
+              engine,
+              "JSON.stringify({error:__windowFocus.error,events:__windowFocus."
+              "events,initial:__windowFocus.initial,windowFocus:__windowFocus."
+              "windowFocus,innerFocus:__windowFocus.innerFocus,outerFocus:__"
+              "windowFocus.outerFocus})",
+              "window-focus-detail.js"));
+  require(!take_typed_host_request(engine),
+          "child Window.focus escaped into a top-level host focus request");
+  execute_and_wait(engine, "focus()", "window-focus-top-level-request.js");
+  require(
+      take_typed_host_request(engine).kind ==
+              WEBSCENE_HOST_REQUEST_WINDOW_FOCUS_V1 &&
+          !take_typed_host_request(engine),
+      "top-level Window.focus did not retain its single typed host request");
+
+  require(webscene_engine_set_window_focused_v1(engine, 0U) != 0,
+          "nested Window.focus host blur was rejected");
+  require(evaluate_until_equals(
+              engine,
+              "!document.hasFocus() && !__windowFocus.document.hasFocus()",
+              "window-focus-host-blur.js", "true", 2'000) == "true",
+          "host blur did not clear top-level and child document focus");
+  require(webscene_engine_set_window_focused_v1(engine, 1U) != 0,
+          "nested Window.focus host return was rejected");
+  require(evaluate_until_equals(
+              engine,
+              "document.hasFocus() && __windowFocus.document.hasFocus()",
+              "window-focus-host-return.js", "true", 2'000) == "true",
+          "host focus return did not restore the selected child document");
+  const auto detach_security = evaluate(engine, R"JS((() => {
+      const frame=__windowFocus.frame, doc=__windowFocus.document;
+      frame.remove();
+      const opaque=document.createElement('iframe');
+      opaque.setAttribute('sandbox','allow-scripts');
+      opaque.src='./fake.html?id=markdown-preview';
+      document.body.appendChild(opaque);
+      const cross=document.createElement('iframe');
+      cross.setAttribute('sandbox','allow-same-origin allow-scripts');
+      cross.src='https://cross-origin-focus.test/fake.html';
+      document.body.appendChild(cross);
+      const result={
+        detached:document.activeElement===document.body && !doc.hasFocus(),
+        failClosed:opaque.contentWindow===null && opaque.contentDocument===null
+          && cross.contentWindow===null && cross.contentDocument===null
+      };
+      opaque.remove(); cross.remove();
+      return result;
+    })())JS",
+                                        "window-focus-detach-security.js");
+  require(detach_security == R"({"detached":true,"failClosed":true})",
+          "nested focus detach/security boundary diverged: " + detach_security);
+  execute_and_wait(engine, R"JS(
+      removeEventListener('blur', __windowFocus.onBlur);
+      removeEventListener('focus', __windowFocus.onFocus);
+    )JS",
+                   "window-focus-remove-listeners.js");
+
+  webscene_engine_memory_metrics memory_before{sizeof(memory_before)};
+  require(webscene_engine_get_memory_metrics(engine, &memory_before) != 0,
+          "nested focus memory baseline was unavailable");
+  const auto rss_before = service_worker_test_current_rss_bytes();
+  execute(engine, R"JS(
+      globalThis.__windowFocusGate={complete:false,error:null,cycles:0,p95:0};
+      try {
+        const durations=[];
+        for(let cycle=0;cycle<100;++cycle){
+          const started=performance.now();
+          const frame=document.createElement('iframe');
+          document.body.appendChild(frame);
+          const doc=frame.contentDocument;
+          const button=doc.createElement('button');
+          doc.body.appendChild(button);
+          frame.contentWindow.focus();
+          if(document.activeElement!==frame || !doc.hasFocus()) throw new Error(`entry ${cycle}`);
+          button.focus();
+          if(document.activeElement!==frame || doc.activeElement!==button) throw new Error(`inner ${cycle}`);
+          frame.remove();
+          if(document.activeElement!==document.body || doc.hasFocus()) throw new Error(`detach ${cycle}`);
+          durations.push(performance.now()-started);
+          ++__windowFocusGate.cycles;
+        }
+        durations.sort((a,b)=>a-b);
+        __windowFocusGate.p95=durations[Math.ceil(durations.length*.95)-1];
+      } catch(error) { __windowFocusGate.error=String(error&&error.stack||error); }
+      __windowFocusGate.complete=true;
+    )JS",
+          "window-focus-lifecycle-performance.js");
+  require(evaluate_until_equals(engine, "__windowFocusGate.complete",
+                                "window-focus-gate-complete.js", "true",
+                                10'000) == "true",
+          "nested focus lifecycle gate timed out");
+  require(
+      evaluate(engine,
+               "__windowFocusGate.error===null && "
+               "__windowFocusGate.cycles===100 && __windowFocusGate.p95<=10",
+               "window-focus-gate-result.js") == "true",
+      "nested focus lifecycle/performance gate diverged: " +
+          evaluate(engine, "JSON.stringify(__windowFocusGate)",
+                   "window-focus-gate-detail.js"));
+  require(!take_typed_host_request(engine),
+          "nested focus stress generated a host focus request");
+  require(webscene_engine_request_low_memory(engine) != 0,
+          "nested focus low-memory request was rejected");
+  webscene_engine_memory_metrics memory_after{sizeof(memory_after)};
+  for (auto attempt = 0; attempt < 250; ++attempt) {
+    require(webscene_engine_get_memory_metrics(engine, &memory_after) != 0,
+            "nested focus final memory metrics were unavailable");
+    if (memory_after.low_memory_notifications >
+        memory_before.low_memory_notifications)
+      break;
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+  const auto rss_after = service_worker_test_current_rss_bytes();
+  std::cout << "Nested focus gate: cycles=100 p95="
+            << evaluate(engine, "__windowFocusGate.p95", "window-focus-p95.js")
+            << "ms heapBefore=" << memory_before.v8_used_heap_bytes
+            << " heapAfter=" << memory_after.v8_used_heap_bytes
+            << " nodesBefore=" << memory_before.native_dom_node_count
+            << " nodesAfter=" << memory_after.native_dom_node_count
+            << " rssBefore=" << rss_before << " rssAfter=" << rss_after << '\n';
+  require(memory_after.low_memory_notifications >
+                  memory_before.low_memory_notifications &&
+              memory_after.v8_used_heap_bytes <=
+                  memory_before.v8_used_heap_bytes + 4U * 1024U * 1024U &&
+              memory_after.native_dom_node_count <=
+                  memory_before.native_dom_node_count + 16U,
+          "nested focus cycles retained V8 heap or native DOM nodes");
+  require(rss_before == 0U || rss_after <= rss_before + 64U * 1024U * 1024U,
+          "nested focus cycles retained more than 64 MiB RSS");
+  webscene_engine_destroy(engine);
+}
+
 size_t load_contextual_test_resource(
     void* user_data,
     uint32_t kind,

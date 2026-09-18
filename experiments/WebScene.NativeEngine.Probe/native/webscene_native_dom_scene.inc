@@ -467,67 +467,111 @@ void native_document::append_scene(
         }
         return result;
     }();
-    const auto linear_mask_resource = [&]() -> std::optional<uint32_t> {
+    const auto mask_resource = [&]() -> std::optional<uint32_t> {
         const auto& effects = node.style.textual().effect_values;
         const auto known = effects.find("mask-image");
         if (known == effects.end()) return std::nullopt;
         auto image = std::string_view{known->second};
-        while (!image.empty()
-            && std::isspace(static_cast<unsigned char>(image.front())))
-            image.remove_prefix(1U);
-        while (!image.empty()
-            && std::isspace(static_cast<unsigned char>(image.back())))
-            image.remove_suffix(1U);
-        constexpr auto prefix = std::string_view{"linear-gradient("};
-        if (image.size() <= prefix.size()) return std::nullopt;
-        for (size_t index = 0U; index < prefix.size(); ++index) {
-            const auto character = static_cast<unsigned char>(image[index]);
-            const auto lower = character >= 'A' && character <= 'Z'
-                ? static_cast<char>(character - 'A' + 'a')
-                : static_cast<char>(character);
-            if (lower != prefix[index]) return std::nullopt;
-        }
-        auto depth = 1U;
-        auto close = std::string_view::npos;
-        for (size_t index = prefix.size(); index < image.size(); ++index) {
-            if (image[index] == '(') ++depth;
-            else if (image[index] == ')' && --depth == 0U) {
-                close = index;
-                break;
+        const auto trim = [](std::string_view value) {
+            while (!value.empty()
+                && std::isspace(static_cast<unsigned char>(value.front()))) {
+                value.remove_prefix(1U);
             }
+            while (!value.empty()
+                && std::isspace(static_cast<unsigned char>(value.back()))) {
+                value.remove_suffix(1U);
+            }
+            return value;
+        };
+        const auto starts_with_ascii_case_insensitive = [](
+            std::string_view value, std::string_view prefix) {
+            if (value.size() < prefix.size()) return false;
+            for (size_t index = 0U; index < prefix.size(); ++index) {
+                const auto character = static_cast<unsigned char>(value[index]);
+                const auto lower = character >= 'A' && character <= 'Z'
+                    ? static_cast<char>(character - 'A' + 'a')
+                    : static_cast<char>(character);
+                if (lower != prefix[index]) return false;
+            }
+            return true;
+        };
+        image = trim(image);
+        if (image.size() == 4U
+            && starts_with_ascii_case_insensitive(image, "none")) {
+            return std::nullopt;
         }
-        if (close != image.size() - 1U) return std::nullopt;
+        const auto invalid = [&]() {
+            return append_scene_string(
+                "webscene-mask-invalid-v1", strings, string_bytes);
+        };
         const auto value = [&](std::string_view name, std::string_view fallback) {
             const auto found = effects.find(std::string{name});
             return found == effects.end() ? std::string{fallback} : found->second;
         };
         const auto composite = value("mask-composite", "add");
-        if (composite != "add") return std::nullopt;
+        if (composite != "add") return invalid();
         const auto mode = value("mask-mode", "match-source");
-        if (mode != "match-source" && mode != "alpha") return std::nullopt;
+        if (mode != "match-source" && mode != "alpha") return invalid();
         auto repeat = value("mask-repeat", "repeat");
         for (auto& character : repeat) {
             const auto byte = static_cast<unsigned char>(character);
-            if (byte >= 'A' && byte <= 'Z') character = static_cast<char>(byte - 'A' + 'a');
+            if (byte >= 'A' && byte <= 'Z') {
+                character = static_cast<char>(byte - 'A' + 'a');
+            }
         }
         if (repeat != "repeat" && repeat != "no-repeat"
             && repeat != "repeat-x" && repeat != "repeat-y") {
-            return std::nullopt;
+            return invalid();
         }
         const auto position = value("mask-position", "0% 0%");
         const auto size = value("mask-size", "auto");
         if (position.find(',') != std::string::npos
             || size.find(',') != std::string::npos) {
-            return std::nullopt;
+            return invalid();
         }
-        auto resource = std::string{"webscene-bg-v2\t"};
-        resource.append(image);
+
+        constexpr auto gradient_prefix = std::string_view{"linear-gradient("};
+        if (starts_with_ascii_case_insensitive(image, gradient_prefix)) {
+            auto depth = 1U;
+            auto close = std::string_view::npos;
+            for (size_t index = gradient_prefix.size(); index < image.size(); ++index) {
+                if (image[index] == '(') ++depth;
+                else if (image[index] == ')' && --depth == 0U) {
+                    close = index;
+                    break;
+                }
+            }
+            if (close != image.size() - 1U) return invalid();
+            auto resource = std::string{"webscene-bg-v2\t"};
+            resource.append(image);
+            resource += '\t';
+            resource += repeat;
+            resource += '\t';
+            resource += position;
+            resource += '\t';
+            resource += size;
+            return append_scene_string(resource, strings, string_bytes);
+        }
+
+        if (!starts_with_ascii_case_insensitive(image, "url(")) {
+            return invalid();
+        }
+        const auto markup = effects.find("-webscene-mask-markup");
+        const auto view_box = effects.find("-webscene-mask-view-box");
+        if (markup == effects.end() || markup->second.empty()
+            || view_box == effects.end() || view_box->second.empty()) {
+            return invalid();
+        }
+        auto resource = std::string{"webscene-mask-svg-v1\t"};
+        resource += view_box->second;
         resource += '\t';
         resource += repeat;
         resource += '\t';
         resource += position;
         resource += '\t';
         resource += size;
+        resource += '\t';
+        resource += markup->second;
         return append_scene_string(resource, strings, string_bytes);
     }();
     const auto has_opacity_group = opacity < 0.999F;
@@ -545,7 +589,7 @@ void native_document::append_scene(
                 255L)),
             node.id});
     }
-    if (linear_mask_resource.has_value()) {
+    if (mask_resource.has_value()) {
         commands.push_back(webscene_scene_command{
             30U,
             1U << 26U,
@@ -2216,9 +2260,9 @@ void native_document::append_scene(
                 31U, 0U, node.layout.x, node.layout.y,
                 node.layout.width, node.layout.height, 0U, node.id});
         }
-        if (linear_mask_resource.has_value()) {
+        if (mask_resource.has_value()) {
             commands.push_back(webscene_scene_command{
-                47U, *linear_mask_resource,
+                47U, *mask_resource,
                 node.layout.x, node.layout.y,
                 node.layout.width, node.layout.height,
                 0U, node.id});
@@ -2584,9 +2628,9 @@ void native_document::append_scene(
             31U, 0U, node.layout.x, node.layout.y,
             node.layout.width, node.layout.height, 0U, node.id});
     }
-    if (linear_mask_resource.has_value()) {
+    if (mask_resource.has_value()) {
         commands.push_back(webscene_scene_command{
-            47U, *linear_mask_resource,
+            47U, *mask_resource,
             node.layout.x, node.layout.y,
             node.layout.width, node.layout.height,
             0U, node.id});

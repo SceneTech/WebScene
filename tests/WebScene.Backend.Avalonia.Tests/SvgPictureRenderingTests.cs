@@ -104,6 +104,35 @@ public sealed class SvgPictureRenderingTests
         Assert.Equal(firstDarkSquare, bitmap.GetPixel(20, 20));
     }
 
+    [Fact]
+    public void RepeatedSvgMaskUnionsTilesBeforeDestinationInComposition()
+    {
+        const string markup = """
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 4 4">
+              <rect width="2" height="4" fill="#fff"/>
+            </svg>
+            """;
+        const string resource =
+            "webscene-mask-svg-v1\t0 0 4 4\trepeat\t0% 0%\t4px 4px\t"
+            + markup;
+        using var bitmap = new SKBitmap(
+            12, 4, SKColorType.Bgra8888, SKAlphaType.Premul);
+        using var canvas = new SKCanvas(bitmap);
+        var foreground = new SKColor(40, 120, 220);
+        canvas.Clear(foreground);
+
+        new NativeCanvasSceneRenderer().DrawDomSvgMaskForTest(
+            canvas, resource, new SceneCommand { Width = 12, Height = 4 });
+        canvas.Flush();
+
+        Assert.Equal(foreground, bitmap.GetPixel(1, 2));
+        Assert.Equal(SKColors.Transparent, bitmap.GetPixel(3, 2));
+        Assert.Equal(foreground, bitmap.GetPixel(5, 2));
+        Assert.Equal(SKColors.Transparent, bitmap.GetPixel(7, 2));
+        Assert.Equal(foreground, bitmap.GetPixel(9, 2));
+        Assert.Equal(SKColors.Transparent, bitmap.GetPixel(11, 2));
+    }
+
     [Theory]
     [InlineData("#9de640", 157, 230, 64)]
     [InlineData("#d19afc", 209, 154, 252)]

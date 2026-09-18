@@ -98,7 +98,47 @@ template<typename Decision,typename Protected,typename LoadSvg>
 bool apply_paint_value(dom_node& node,const std::string& name,const std::string& value,
     Decision& decision,Protected&& is_inline,LoadSvg&& load_svg)
 {
-    if (name == "box-shadow" && !is_inline(inline_box_shadow)) {
+    if (name == "mask-image") {
+            auto& effects = node.style.mutable_textual().effect_values;
+            effects.erase("-webscene-mask-markup");
+            effects.erase("-webscene-mask-view-box");
+            effects.erase("-webscene-mask-resolved-url");
+            const auto normalized = normalize_effect_value(name, value);
+            if (!normalized.has_value()) {
+                decision.classification = "unsupported";
+                decision.semantic_slice = "invalid retained-effect syntax";
+                return true;
+            }
+            effects[name] = *normalized;
+            const auto url = first_css_url(*normalized);
+            if (!url.has_value()) {
+                decision.classification = "partially-supported";
+                decision.semantic_slice =
+                    "syntax and computed value; retained-scene paint is separately qualified";
+                return true;
+            }
+            std::string markup;
+            std::string resolved_url;
+            std::string view_box;
+            if (!load_svg(*url, markup, resolved_url, view_box)) {
+                decision.classification = "unsupported";
+                decision.semantic_slice = "URL-backed SVG mask resource load failed";
+                return true;
+            }
+            if (view_box.empty()) {
+                decision.classification = "unsupported";
+                decision.semantic_slice =
+                    "SVG masks with an explicit viewBox or numeric width and height";
+                return true;
+            }
+            effects[name] = "url(\"" + resolved_url + "\")";
+            effects["-webscene-mask-resolved-url"] = std::move(resolved_url);
+            effects["-webscene-mask-markup"] = std::move(markup);
+            effects["-webscene-mask-view-box"] = std::move(view_box);
+            decision.classification = "partially-supported";
+            decision.semantic_slice =
+                "single URL-backed SVG alpha mask with explicit viewBox or numeric dimensions";
+        } else if (name == "box-shadow" && !is_inline(inline_box_shadow)) {
             auto complete = true;
             if (!apply_box_shadow_value(node.style, value, complete)) {
                 decision.classification = "unsupported";

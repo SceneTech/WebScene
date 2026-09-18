@@ -664,8 +664,8 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
                         overlay.Restore();
                         break;
                     case 47:
-                        DrawDomLinearMask(backdrop, view, command);
-                        DrawDomLinearMask(overlay, view, command);
+                        DrawDomMask(backdrop, view, command);
+                        DrawDomMask(overlay, view, command);
                         break;
                     case 15:
                         ApplyScale(backdrop, command);
@@ -1218,14 +1218,28 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
             radii);
     }
 
-    private static void DrawDomLinearMask(
+    private void DrawDomMask(
         SKCanvas canvas,
         NativeSceneView* view,
         in SceneCommand command)
     {
+        var resource = DomStringAt(view, command.Flags);
+        if (TryDecodeDomSvgTiledResource(
+                resource, "webscene-mask-svg-v1\t", out var svg))
+        {
+            DrawDomSvgBackground(
+                canvas, svg, command, default, SKBlendMode.DstIn);
+            return;
+        }
+        if (!resource.StartsWith("webscene-bg-v2\t", StringComparison.Ordinal))
+        {
+            ClearDomMaskRect(canvas, command.X, command.Y,
+                command.Width, command.Height);
+            return;
+        }
         DrawDomBackgroundLayers(
             canvas,
-            DomStringAt(view, command.Flags),
+            resource,
             command,
             default,
             SKBlendMode.DstIn);
@@ -1542,7 +1556,7 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
         tileWidth = ResolveDomBackgroundLength(tokens[0], width, width);
         tileHeight = tokens.Count > 1
             ? ResolveDomBackgroundLength(tokens[1], height, height)
-            : tileWidth;
+            : height;
     }
 
     private static void ResolveDomBackgroundPosition(
@@ -2320,7 +2334,8 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
         in DomCornerRadii radii)
     {
         var resource = DomStringAt(view, command.Flags);
-        if (TryDecodeDomSvgBackgroundResource(resource, out var background))
+        if (TryDecodeDomSvgTiledResource(
+                resource, "webscene-bg-svg-v1\t", out var background))
         {
             DrawDomSvgBackground(canvas, background, command, radii);
             return;
@@ -2384,17 +2399,31 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
         string resource,
         in SceneCommand command)
     {
-        if (TryDecodeDomSvgBackgroundResource(resource, out var background))
+        if (TryDecodeDomSvgTiledResource(
+                resource, "webscene-bg-svg-v1\t", out var background))
         {
             DrawDomSvgBackground(canvas, background, command, default);
         }
     }
 
-    private static bool TryDecodeDomSvgBackgroundResource(
+    internal void DrawDomSvgMaskForTest(
+        SKCanvas canvas,
+        string resource,
+        in SceneCommand command)
+    {
+        if (TryDecodeDomSvgTiledResource(
+                resource, "webscene-mask-svg-v1\t", out var mask))
+        {
+            DrawDomSvgBackground(
+                canvas, mask, command, default, SKBlendMode.DstIn);
+        }
+    }
+
+    private static bool TryDecodeDomSvgTiledResource(
         string value,
+        string prefix,
         out DomSvgBackgroundResource resource)
     {
-        const string prefix = "webscene-bg-svg-v1\t";
         resource = default;
         if (!value.StartsWith(prefix, StringComparison.Ordinal))
         {
@@ -2418,7 +2447,8 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
         SKCanvas canvas,
         in DomSvgBackgroundResource resource,
         in SceneCommand command,
-        in DomCornerRadii radii)
+        in DomCornerRadii radii,
+        SKBlendMode blendMode = SKBlendMode.SrcOver)
     {
         var viewBox = ParseSvgNumbers(resource.ViewBox);
         if (viewBox.Length < 4
@@ -2427,6 +2457,11 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
             || command.Width <= 0
             || command.Height <= 0)
         {
+            if (blendMode == SKBlendMode.DstIn)
+            {
+                ClearDomMaskRect(canvas, command.X, command.Y,
+                    command.Width, command.Height);
+            }
             return;
         }
         if (!s_svgPictures.TryGetValue(resource.Markup, out var svg))
@@ -2434,6 +2469,11 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
             var acquired = SharedSvgPictureCache.Acquire(resource.Markup);
             if (acquired is null)
             {
+                if (blendMode == SKBlendMode.DstIn)
+                {
+                    ClearDomMaskRect(canvas, command.X, command.Y,
+                        command.Width, command.Height);
+                }
                 return;
             }
             svg = acquired;
@@ -2450,6 +2490,11 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
             out var tileHeight);
         if (tileWidth <= 0 || tileHeight <= 0)
         {
+            if (blendMode == SKBlendMode.DstIn)
+            {
+                ClearDomMaskRect(canvas, command.X, command.Y,
+                    command.Width, command.Height);
+            }
             return;
         }
         ResolveDomBackgroundPosition(
@@ -2478,10 +2523,27 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
             while (firstY + tileHeight <= command.Y) firstY += tileHeight;
         }
 
+        if (blendMode == SKBlendMode.DstIn)
+        {
+            ClearDomMaskOutsideCoverage(canvas, command,
+                repeatX, repeatY, firstX, firstY, tileWidth, tileHeight);
+        }
+
+        using var blendPaint = new SKPaint { BlendMode = blendMode };
         var restore = canvas.Save();
         try
         {
             ClipDomBackground(canvas, command, radii);
+            if (blendMode != SKBlendMode.SrcOver)
+            {
+                canvas.SaveLayer(
+                    new SKRect(
+                        command.X,
+                        command.Y,
+                        command.X + command.Width,
+                        command.Y + command.Height),
+                    blendPaint);
+            }
             var endX = repeatX ? command.X + command.Width : firstX + tileWidth;
             var endY = repeatY ? command.Y + command.Height : firstY + tileHeight;
             for (var y = firstY; y < endY; y += tileHeight)

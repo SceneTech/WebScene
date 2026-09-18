@@ -406,6 +406,67 @@
                           globalThis, ServiceWorkerGlobalScope.prototype);
                         const control = globalThis.__webSceneServiceWorkerGlobalControl;
                         delete globalThis.__webSceneServiceWorkerGlobalControl;
+                        Object.defineProperty(ReadableStream.prototype, 'tee', {
+                          enumerable:true, configurable:true, writable:true,
+                          value:function() {
+                            if (!(this instanceof ReadableStream)) {
+                              throw new TypeError('Illegal invocation');
+                            }
+                            if (this.locked) throw new TypeError('ReadableStream is locked');
+                            const reader = this.getReader();
+                            const controllers = [undefined, undefined];
+                            const cancelled = [false, false];
+                            const reasons = [undefined, undefined];
+                            let resolveCancellation;
+                            const cancellation = new Promise(resolve => {
+                              resolveCancellation = resolve;
+                            });
+                            let reading;
+                            let finished = false;
+                            const pump = () => {
+                              if (finished) return Promise.resolve();
+                              if (!reading) {
+                                reading = reader.read().then(({value, done}) => {
+                                  if (done) {
+                                    finished = true;
+                                    for (let index = 0; index < controllers.length; ++index) {
+                                      if (!cancelled[index]) controllers[index].close();
+                                    }
+                                    if (cancelled[0] || cancelled[1]) resolveCancellation();
+                                    return;
+                                  }
+                                  for (let index = 0; index < controllers.length; ++index) {
+                                    if (!cancelled[index]) controllers[index].enqueue(value);
+                                  }
+                                }, error => {
+                                  finished = true;
+                                  for (let index = 0; index < controllers.length; ++index) {
+                                    if (!cancelled[index]) controllers[index].error(error);
+                                  }
+                                  if (cancelled[0] || cancelled[1]) resolveCancellation();
+                                }).finally(() => { reading = undefined; });
+                              }
+                              return reading;
+                            };
+                            const branch = index => new ReadableStream({
+                              start(controller) { controllers[index] = controller; },
+                              pull() { return pump(); },
+                              cancel(reason) {
+                                if (cancelled[index]) return cancellation;
+                                cancelled[index] = true;
+                                reasons[index] = reason;
+                                if (cancelled[0] && cancelled[1] && !finished) {
+                                  finished = true;
+                                  resolveCancellation(reader.cancel([reasons[0], reasons[1]]));
+                                }
+                                return cancellation;
+                              }
+                            });
+                            return [branch(0), branch(1)];
+                          }
+                        });
+)JS",
+                        R"JS(
                         const extendableEventState = new WeakMap();
                         class ExtendableEvent extends Event {
                           constructor(type, init = {}) {

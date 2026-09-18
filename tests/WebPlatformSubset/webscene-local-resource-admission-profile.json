@@ -1,0 +1,26 @@
+{
+  "profile": "webscene-local-resource-admission-1",
+  "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+  "runtime": "v8",
+  "viewport": {
+    "width": 800,
+    "height": 600,
+    "deviceScaleFactor": 1
+  },
+  "required": [
+    {
+      "path": "contracts/service-worker-local-resource-admission.html",
+      "type": "contract",
+      "capabilities": [
+        "service-worker-local-resource-admission",
+        "service-worker-host-response-status",
+        "service-worker-resource-stream-retirement"
+      ],
+      "evidence": ["vscode-webview-local-resource-roots-364"],
+      "reason": "WPT-derived product-neutral host simulator for admitted, denied, missing, ranged, cached, and retired local resource responses. The native companion gate runs the pinned unchanged Code OSS v6 worker.",
+      "nativeNavigation": true
+    }
+  ],
+  "harnessBlocked": [],
+  "excluded": []
+}

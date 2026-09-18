@@ -1,0 +1,189 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Service Worker local resource admission</title>
+<script>
+  const state = window.__webSceneWptState = {
+    complete:false, harness:null, results:[], errors:[], diagnostics:[]
+  };
+  const record = (name, condition, detail = 'Contract failed') => state.results.push({
+    name, status:condition ? 'PASS' : 'FAIL',
+    message:condition ? null : detail, stack:null
+  });
+  const encode = value => new TextEncoder().encode(value);
+  const wait = duration => new Promise(resolve => setTimeout(resolve, duration));
+  (async () => {
+    const changed = new Promise(resolve => navigator.serviceWorker.addEventListener(
+      'controllerchange', resolve, {once:true}));
+    const registration = await navigator.serviceWorker.register(
+      'service-worker-local-resource-admission-worker.js');
+    if (!navigator.serviceWorker.controller) await changed;
+    const worker = navigator.serviceWorker.controller || registration.active;
+    const root = '/workspace/allowed';
+    const body = 'admitted-resource-body';
+    const largeBody = 'x'.repeat(64 * 1024);
+    const requests = [];
+    let byteStarts = 0;
+    const admit = request => {
+      if (request.scheme !== 'file' || request.authority !== '') return false;
+      let path;
+      try { path = decodeURIComponent(request.path).replace(/\\/g, '/'); }
+      catch { return false; }
+      if (path.includes('\0')) return false;
+      const parts = path.split('/');
+      if (parts.some(part => part === '..' || part === '.')) return false;
+      return path.startsWith(root + '/');
+    };
+    const postBody = (request, value, status = 200, range = undefined) => {
+      worker.postMessage({channel:'did-load-resource', data:{
+        id:request.id, status, path:request.path, mime:'text/plain',
+        etag:'"admission-v1"', range
+      }});
+      const bytes = encode(value);
+      byteStarts++;
+      worker.postMessage({channel:'did-load-resource-chunk', data:{
+        id:request.id, data:bytes
+      }}, [bytes.buffer]);
+      worker.postMessage({channel:'did-load-resource-end', data:{id:request.id}});
+    };
+    navigator.serviceWorker.addEventListener('message', event => {
+      const request = event.data || {};
+      if (request.channel !== 'load-resource') return;
+      requests.push(request);
+      if (!admit(request)) {
+        worker.postMessage({channel:'did-load-resource', data:{
+          id:request.id, status:401, path:request.path
+        }});
+        if (request.path === root) {
+          const late = encode('late-denied-body');
+          worker.postMessage({channel:'did-load-resource-chunk', data:{
+            id:request.id, data:late
+          }}, [late.buffer]);
+          worker.postMessage({channel:'did-load-resource-end', data:{id:request.id}});
+        }
+        return;
+      }
+      if (request.path.endsWith('/missing.txt')) {
+        worker.postMessage({channel:'did-load-resource', data:{
+          id:request.id, status:404, path:request.path
+        }});
+        return;
+      }
+      if (request.ifNoneMatch === '"admission-v1"') {
+        worker.postMessage({channel:'did-load-resource', data:{
+          id:request.id, status:304, path:request.path, mime:'text/plain'
+        }});
+        return;
+      }
+      const value = request.path.endsWith('/large.txt') ? largeBody : body;
+      if (request.range) {
+        const end = request.range.end === undefined
+          ? value.length - 1 : Math.min(request.range.end, value.length - 1);
+        postBody(request, value.slice(request.range.start, end + 1), 206,
+          `bytes ${request.range.start}-${end}/${value.length}`);
+      } else {
+        postBody(request, value);
+      }
+    });
+    const resource = path => `https://file+.resource.test${path}`;
+    const admitted = await fetch(resource('/workspace/allowed/asset.txt'));
+    record('admitted descendant streams with preserved URL components',
+      admitted.status === 200 && await admitted.text() === body
+        && requests[0]?.scheme === 'file' && requests[0]?.authority === '',
+      JSON.stringify(requests[0]));
+    const head = await fetch(resource('/workspace/allowed/asset.txt?head=1'), {
+      method:'HEAD'
+    });
+    const headText = await head.text();
+    record('admitted HEAD preserves Service Worker response status and metadata',
+      head.status === 200 && head.headers.get('etag') === '"admission-v1"',
+      JSON.stringify({status:head.status, text:headText,
+        etag:head.headers.get('etag')}));
+    const deniedPaths = [
+      '/workspace/allowed',
+      '/workspace/allowed-sibling/asset.txt',
+      '/workspace/allowed/%2e%2e/secret.txt',
+      '/workspace/allowed/%E0%A4%A/secret.txt'
+    ];
+    const byteStartsBeforeDenial = byteStarts;
+    const denialStatuses = [];
+    for (const path of deniedPaths) {
+      denialStatuses.push((await fetch(resource(path))).status);
+    }
+    denialStatuses.push((await fetch(
+      'https://https+.resource.test/workspace/allowed/asset.txt')).status);
+    denialStatuses.push((await fetch(
+      'https://file+server.resource.test/workspace/allowed/asset.txt')).status);
+    const missing = await fetch(resource('/workspace/allowed/missing.txt'));
+    record('root, sibling, traversal, malformed and foreign requests fail before bytes',
+      denialStatuses.every(status => status === 401)
+        && missing.status === 404 && byteStarts === byteStartsBeforeDenial,
+      JSON.stringify({denialStatuses, missing:missing.status, byteStarts}));
+    const ranged = await fetch(resource('/workspace/allowed/asset.txt?range=1'), {
+      headers:{Range:'bytes=2-7'}
+    });
+    const invalidRange = await fetch(
+      resource('/workspace/allowed/asset.txt?bad-range=1'), {
+        headers:{Range:'items=0-1'}
+      });
+    record('single byte ranges preserve 206 metadata and malformed ranges return 416',
+      ranged.status === 206 && await ranged.text() === body.slice(2, 8)
+        && ranged.headers.get('content-range') === `bytes 2-7/${body.length}`
+        && invalidRange.status === 416);
+    await wait(20);
+    const bodyStartsBeforeCache = byteStarts;
+    const cached = await fetch(resource('/workspace/allowed/asset.txt'));
+    record('conditional cache reuse preserves the admitted response without new bytes',
+      cached.status === 200 && await cached.text() === body
+        && requests.some(request => request.ifNoneMatch === '"admission-v1"')
+        && byteStarts === bodyStartsBeforeCache,
+      JSON.stringify({byteStarts, requests:requests.length}));
+    const durations = [];
+    for (let cycle = 0; cycle < 100; ++cycle) {
+      const started = performance.now();
+      const path = cycle % 2 === 0
+        ? '/workspace/allowed/large.txt'
+        : '/workspace/denied/large.txt';
+      const response = await fetch(resource(`${path}?cycle=${cycle}`));
+      if (cycle % 2 === 0) {
+        const bytes = await response.arrayBuffer();
+        if (response.status !== 200 || bytes.byteLength !== 65536) {
+          throw new Error(`admitted cycle ${cycle} failed`);
+        }
+        durations.push(performance.now() - started);
+      } else if (response.status !== 401) {
+        throw new Error(`denied cycle ${cycle} failed`);
+      }
+    }
+    const ordered = [...durations].sort((left, right) => left - right);
+    const p95 = ordered[Math.ceil(ordered.length * .95) - 1];
+    const report = await new Promise(resolve => {
+      const listener = event => {
+        if (event.data?.channel !== 'admission-report') return;
+        navigator.serviceWorker.removeEventListener('message', listener);
+        resolve(event.data);
+      };
+      navigator.serviceWorker.addEventListener('message', listener);
+      worker.postMessage({channel:'report'});
+    });
+    const forbiddenCacheEntry = report.cached.some(url =>
+      url.includes('/workspace/denied/') || url.includes('/workspace/allowed-sibling/')
+        || url.includes('/secret.txt'));
+    state.diagnostics.push(JSON.stringify({name:'admission-cycles', cycles:100, p95,
+      requests:requests.length, byteStarts, cached:report.cached.length,
+      headBodyBytes:headText.length}));
+    record('100 admission cycles meet latency and drain stream/request state',
+      p95 <= 100 && report.pending === 0 && report.writers === 0
+        && report.observations.ignored >= 2 && !forbiddenCacheEntry,
+      JSON.stringify({p95, report}));
+    await registration.unregister();
+  })().catch(error => {
+    state.errors.push(String(error && error.stack || error));
+    record('contract completed', false, state.errors[0]);
+  }).finally(() => {
+    const failure = state.results.find(result => result.status !== 'PASS');
+    state.harness = failure
+      ? {status:1, message:failure.message, stack:failure.stack}
+      : {status:0, message:null, stack:null};
+    state.complete = true;
+  });
+</script>

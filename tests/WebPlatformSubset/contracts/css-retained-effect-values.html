@@ -9,11 +9,8 @@
   #effect {
     width: 120px;
     height: 80px;
-    mask-image: linear-gradient(black, transparent);
-    mask-size: 20px 30px;
-    mask-position: 4px 6px;
-    mask-repeat: no-repeat;
-    mask-composite: add;
+    -webkit-mask: linear-gradient(black, transparent) no-repeat 4px 6px / 20px 30px;
+    mask: linear-gradient(black, transparent) no-repeat 4px 6px / 20px 30px;
     clip-path: inset(1px 2px 3px 4px);
     filter: brightness(0.5) grayscale(1);
     backdrop-filter: blur(3px);
@@ -36,6 +33,7 @@
     assert_equals(style.getPropertyValue('mask-position'), '0% 0%');
     assert_equals(style.getPropertyValue('mask-repeat'), 'repeat');
     assert_equals(style.getPropertyValue('mask-composite'), 'add');
+    assert_equals(style.getPropertyValue('mask-mode'), 'match-source');
     assert_equals(style.getPropertyValue('clip-path'), 'none');
     assert_equals(style.getPropertyValue('filter'), 'none');
     assert_equals(style.getPropertyValue('backdrop-filter'), 'none');
@@ -60,6 +58,17 @@
     assert_equals(style.getPropertyValue('mask-repeat'), 'no-repeat');
     assert_equals(style.getPropertyValue('mask-composite'), 'add');
   }, 'mask repeat and composite expose computed values');
+
+  test(() => {
+    effect.style.setProperty('mask',
+      'linear-gradient(black, transparent) no-repeat center / 40px 30px');
+    const style = getComputedStyle(effect);
+    assert_regexp_match(style.getPropertyValue('mask-image'), /^linear-gradient\(/);
+    assert_equals(style.getPropertyValue('mask-position'), 'center');
+    assert_equals(style.getPropertyValue('mask-size'), '40px 30px');
+    assert_equals(style.getPropertyValue('mask-repeat'), 'no-repeat');
+    effect.style.removeProperty('mask');
+  }, 'single-layer mask shorthand expands into effective retained longhands');
 
   test(() => {
     assert_equals(getComputedStyle(effect).getPropertyValue('clip-path'),

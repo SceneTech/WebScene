@@ -6,13 +6,26 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace webscene_native::css {
+
+inline std::string ascii_lower(std::string_view value)
+{
+    auto result = std::string(value);
+    for (auto& character : result) {
+        if (character >= 'A' && character <= 'Z') {
+            character = static_cast<char>(character + ('a' - 'A'));
+        }
+    }
+    return result;
+}
 
 inline bool is_effect_property(std::string_view name) noexcept
 {
     return name == "mask-image" || name == "mask-size" || name == "mask-position"
-        || name == "mask-repeat" || name == "mask-composite" || name == "clip-path"
+        || name == "mask-repeat" || name == "mask-composite" || name == "mask-mode"
+        || name == "clip-path"
         || name == "filter" || name == "backdrop-filter";
 }
 
@@ -22,6 +35,7 @@ inline std::string_view effect_initial_value(std::string_view name) noexcept
     if (name == "mask-position") return "0% 0%";
     if (name == "mask-repeat") return "repeat";
     if (name == "mask-composite") return "add";
+    if (name == "mask-mode") return "match-source";
     return "none";
 }
 
@@ -111,6 +125,171 @@ inline bool valid_effect_keyword_list(
     return found;
 }
 
+struct parsed_mask_shorthand final {
+    std::string image{"none"};
+    std::string position{"0% 0%"};
+    std::string size{"auto"};
+    std::string repeat{"repeat"};
+    std::string composite{"add"};
+    std::string mode{"match-source"};
+};
+
+inline std::optional<parsed_mask_shorthand> parse_single_mask_shorthand(
+    std::string_view authored)
+{
+    const auto trim = [](std::string_view value) {
+        while (!value.empty()
+            && std::isspace(static_cast<unsigned char>(value.front()))) {
+            value.remove_prefix(1U);
+        }
+        while (!value.empty()
+            && std::isspace(static_cast<unsigned char>(value.back()))) {
+            value.remove_suffix(1U);
+        }
+        return value;
+    };
+    authored = trim(authored);
+    if (authored.empty()) return std::nullopt;
+    const auto lowered = ascii_lower(authored);
+    if (lowered.starts_with("var(") && lowered.ends_with(')')) {
+        auto depth = 0;
+        for (size_t index = 0U; index < lowered.size(); ++index) {
+            if (lowered[index] == '(') ++depth;
+            else if (lowered[index] == ')') {
+                if (depth == 0) return std::nullopt;
+                --depth;
+                if (depth == 0 && index != lowered.size() - 1U) {
+                    depth = 1;
+                    break;
+                }
+            }
+        }
+        if (depth == 0) return std::nullopt;
+    }
+    if (lowered == "initial" || lowered == "inherit" || lowered == "unset"
+        || lowered == "revert" || lowered == "revert-layer") {
+        parsed_mask_shorthand result;
+        result.image = result.position = result.size = result.repeat =
+            result.composite = result.mode = lowered;
+        return result;
+    }
+    if (lowered == "none") return parsed_mask_shorthand{};
+
+    std::vector<std::string> tokens;
+    auto start = std::string_view::npos;
+    auto depth = 0U;
+    char quote = 0;
+    for (size_t index = 0U; index <= authored.size(); ++index) {
+        const auto at_end = index == authored.size();
+        const auto character = at_end ? ' ' : authored[index];
+        if (quote != 0) {
+            if (!at_end && character == '\\' && index + 1U < authored.size()) ++index;
+            else if (!at_end && character == quote) quote = 0;
+        } else if (!at_end && (character == '\'' || character == '"')) {
+            quote = character;
+        } else if (!at_end && character == '(') {
+            ++depth;
+        } else if (!at_end && character == ')' && depth != 0U) {
+            --depth;
+        } else if (!at_end && character == ',' && depth == 0U) {
+            return std::nullopt;
+        }
+        const auto separator = depth == 0U && quote == 0
+            && (at_end || std::isspace(static_cast<unsigned char>(character))
+                || character == '/');
+        if (!separator && start == std::string_view::npos) start = index;
+        if (separator && start != std::string_view::npos) {
+            tokens.emplace_back(authored.substr(start, index - start));
+            start = std::string_view::npos;
+        }
+        if (!at_end && depth == 0U && quote == 0 && character == '/') {
+            tokens.emplace_back("/");
+        }
+    }
+    if (depth != 0U || quote != 0 || tokens.empty()) return std::nullopt;
+
+    parsed_mask_shorthand result;
+    std::vector<std::string> position;
+    std::vector<std::string> size;
+    auto after_slash = false;
+    auto has_image = false;
+    for (const auto& token : tokens) {
+        const auto lower = ascii_lower(token);
+        if (token == "/") {
+            if (after_slash || position.empty()) return std::nullopt;
+            after_slash = true;
+            continue;
+        }
+        if (lower.starts_with("url(")
+                || lower.starts_with("linear-gradient(")
+                || lower.starts_with("radial-gradient(")
+                || lower.starts_with("repeating-linear-gradient(")
+                || lower.starts_with("repeating-radial-gradient(")) {
+            if (has_image || after_slash) return std::nullopt;
+            result.image = token;
+            has_image = true;
+            continue;
+        }
+        if (lower == "none") {
+            if (has_image || after_slash) return std::nullopt;
+            result.image = lower;
+            has_image = true;
+            continue;
+        }
+        if (lower == "no-repeat" || lower == "repeat" || lower == "repeat-x"
+            || lower == "repeat-y") {
+            if (after_slash || result.repeat != "repeat") return std::nullopt;
+            result.repeat = lower;
+            continue;
+        }
+        if (lower == "add" || lower == "exclude" || lower == "intersect"
+            || lower == "subtract") {
+            if (after_slash || result.composite != "add") return std::nullopt;
+            result.composite = lower;
+            continue;
+        }
+        if (lower == "alpha" || lower == "luminance" || lower == "match-source") {
+            if (after_slash || result.mode != "match-source") return std::nullopt;
+            result.mode = lower;
+            continue;
+        }
+        if (lower == "border-box" || lower == "padding-box"
+            || lower == "content-box" || lower == "fill-box"
+            || lower == "stroke-box" || lower == "view-box" || lower == "no-clip") {
+            return std::nullopt;
+        }
+        const auto numeric = !lower.empty()
+            && (std::isdigit(static_cast<unsigned char>(lower.front()))
+                || lower.front() == '.' || lower.front() == '-'
+                || lower.front() == '+');
+        const auto functional_length = lower.starts_with("var(")
+            || lower.starts_with("calc(") || lower.starts_with("min(")
+            || lower.starts_with("max(") || lower.starts_with("clamp(");
+        const auto position_keyword = lower == "left" || lower == "right"
+            || lower == "top" || lower == "bottom" || lower == "center";
+        const auto size_keyword = lower == "auto" || lower == "contain"
+            || lower == "cover";
+        if (after_slash
+                ? !numeric && !functional_length && !size_keyword
+                : !numeric && !functional_length && !position_keyword) {
+            return std::nullopt;
+        }
+        auto& geometry = after_slash ? size : position;
+        if (geometry.size() == 2U) return std::nullopt;
+        geometry.push_back(token);
+    }
+    if (after_slash && size.empty()) return std::nullopt;
+    if (!position.empty()) {
+        result.position = position.front();
+        if (position.size() > 1U) result.position += " " + position[1];
+    }
+    if (!size.empty()) {
+        result.size = size.front();
+        if (size.size() > 1U) result.size += " " + size[1];
+    }
+    return result;
+}
+
 inline std::optional<std::string> normalize_effect_value(
     std::string_view name,
     std::string_view input)
@@ -124,7 +303,11 @@ inline std::optional<std::string> normalize_effect_value(
     });
     if (normalized == "initial" || normalized == "unset" || normalized == "revert"
         || normalized == "revert-layer") return std::string(effect_initial_value(name));
-    if (normalized == "inherit" || normalized == "none") return normalized;
+    if (normalized == "inherit") return normalized;
+    if (normalized == "none") {
+        if (name == "mask-mode") return std::nullopt;
+        return normalized;
+    }
 
     if (name == "filter" || name == "backdrop-filter") {
         return contains_only_named_functions(normalized, {
@@ -150,6 +333,10 @@ inline std::optional<std::string> normalize_effect_value(
     }
     if (name == "mask-composite") {
         return valid_effect_keyword_list(normalized, {"add", "exclude", "intersect", "subtract"})
+            ? std::optional<std::string>(normalized) : std::nullopt;
+    }
+    if (name == "mask-mode") {
+        return valid_effect_keyword_list(normalized, {"alpha", "luminance", "match-source"})
             ? std::optional<std::string>(normalized) : std::nullopt;
     }
     if (name == "mask-size") {

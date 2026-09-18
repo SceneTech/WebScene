@@ -19,6 +19,39 @@ void apply_resolved_declaration(native_document& document,dom_node& node,
     bool defer_transition_configuration = false)
 {
     const auto& name=declaration.name;
+    if (name == "mask") {
+        const auto parsed = parse_single_mask_shorthand(value);
+        if (!parsed.has_value()) {
+            decision.classification = "unsupported";
+            decision.semantic_slice = "single mask layer without geometry-box syntax";
+            return;
+        }
+        const std::array<std::pair<std::string_view, const std::string*>, 6> components{{
+            {"mask-image", &parsed->image},
+            {"mask-position", &parsed->position},
+            {"mask-size", &parsed->size},
+            {"mask-repeat", &parsed->repeat},
+            {"mask-composite", &parsed->composite},
+            {"mask-mode", &parsed->mode},
+        }};
+        for (const auto& [component_name, component_value] : components) {
+            css_declaration component{
+                std::string(component_name), *component_value, declaration.important};
+            component.property = property_id(component.name);
+            component.specified = compile_specified_value(
+                component.property, component.value);
+            apply_resolved_declaration(
+                document,
+                node,
+                component,
+                component.value,
+                inline_origin,
+                decision,
+                load_svg,
+                defer_transition_configuration);
+        }
+        return;
+    }
     const auto may_require_application_expansion =
         name.starts_with("border-") || name.starts_with("inset-");
     const auto* effective_metadata = may_require_application_expansion

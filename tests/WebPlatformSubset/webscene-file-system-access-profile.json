@@ -25,6 +25,15 @@
   ],
   "harnessBlocked": [
     {
+      "path": "contracts/file-system-access-directory-existing.html",
+      "type": "testharness",
+      "capabilities": [
+        "file-system-directory-handle-async-iteration",
+        "file-system-directory-handle-existing-child-lookup"
+      ],
+      "reason": "Chromium/WPT oracle uses origin-private filesystem handles; the native runner receives host-issued opaque directory grants and exercises equivalent bounded paging, derived grants, lookup errors, early cursor release, mutation/status mapping and lifecycle behavior through the host directory bridge."
+    },
+    {
       "path": "contracts/file-system-access-create-writable.html",
       "type": "testharness",
       "capabilities": [

@@ -229,6 +229,70 @@
         }
     }
 
+    static void request_file_grant_directory(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        auto isolate = info.GetIsolate();
+        auto local_context = isolate->GetCurrentContext();
+        auto resolver = v8::Promise::Resolver::New(local_context).ToLocalChecked();
+        info.GetReturnValue().Set(resolver->GetPromise());
+        const auto reject = [&](std::string_view message, std::string_view name) {
+            reject_file_panel_promise(
+                isolate, local_context, resolver, message, name);
+        };
+        if (self == nullptr || !self->file_grant_directory_request_sink) {
+            reject("Native directory enumeration is unavailable",
+                "NotSupportedError");
+            return;
+        }
+        if (info.Length() != 4 || !info[0]->IsUint32()
+            || !info[3]->IsUint32()) {
+            reject("Malformed native directory request", "TypeError");
+            return;
+        }
+        if (self->file_grant_directory_promise_targets.size()
+            >= WEBSCENE_FILE_GRANT_DIRECTORY_MAXIMUM_PENDING_OPERATIONS_V2) {
+            reject("Too many pending directory operations", "QuotaExceededError");
+            return;
+        }
+        file_grant_directory_request_lease_v2 request;
+        request.view.request_id = ++self->next_host_request_id;
+        request.view.action = info[0].As<v8::Uint32>()->Value();
+        request.view.maximum_entries = info[3].As<v8::Uint32>()->Value();
+        const auto copy_token = [](v8::Local<v8::Value> value,
+                                   std::vector<std::uint8_t>& destination) {
+            if (value->IsNullOrUndefined()) return true;
+            if (!value->IsUint8Array()) return false;
+            const auto bytes = value.As<v8::Uint8Array>();
+            if (bytes->ByteLength() == 0
+                || bytes->ByteLength() > file_panel_maximum_token_bytes_v2)
+                return false;
+            const auto store = bytes->Buffer()->GetBackingStore();
+            const auto* first = static_cast<const std::uint8_t*>(store->Data())
+                + bytes->ByteOffset();
+            destination.assign(first, first + bytes->ByteLength());
+            return true;
+        };
+        if (!copy_token(info[1], request.directory_grant_id)
+            || !copy_token(info[2], request.cursor)) {
+            reject("Malformed opaque directory token", "DataError");
+            return;
+        }
+        request.bind();
+        file_grant_directory_promise_target target;
+        target.context.Reset(isolate, local_context);
+        target.resolver.Reset(isolate, resolver);
+        self->file_grant_directory_promise_targets.emplace(
+            request.view.request_id, std::move(target));
+        if (!self->file_grant_directory_request_sink(request.view)) {
+            self->file_grant_directory_promise_targets.erase(
+                request.view.request_id);
+            reject("The native directory authority rejected the request",
+                "NotAllowedError");
+        }
+    }
+
     static void request_file_panel(
         const v8::FunctionCallbackInfo<v8::Value>& info)
     {
@@ -644,6 +708,88 @@
         perform_microtask_checkpoint();
     }
 
+    void complete_native_file_grant_directory(
+        file_grant_directory_completion_data_v2& completion)
+    {
+        const auto found = file_grant_directory_promise_targets.find(
+            completion.request_id);
+        if (found == file_grant_directory_promise_targets.end()) return;
+        auto target = std::move(found->second);
+        file_grant_directory_promise_targets.erase(found);
+        auto local_context = target.context.Get(isolate);
+        auto resolver = target.resolver.Get(isolate);
+        if (local_context.IsEmpty() || resolver.IsEmpty()) return;
+        v8::Context::Scope context_scope(local_context);
+        if (completion.status != WEBSCENE_FILE_GRANT_DIRECTORY_SUCCESS_V2) {
+            const auto name = completion.status
+                    == WEBSCENE_FILE_GRANT_DIRECTORY_CANCELLED_V2
+                ? "AbortError"
+                : completion.status == WEBSCENE_FILE_GRANT_DIRECTORY_DENIED_V2
+                    ? "NotAllowedError"
+                    : completion.status
+                            == WEBSCENE_FILE_GRANT_DIRECTORY_NOT_FOUND_V2
+                        ? "NotFoundError"
+                        : completion.status
+                                == WEBSCENE_FILE_GRANT_DIRECTORY_CHANGED_V2
+                            ? "InvalidStateError"
+                            : completion.status
+                                    == WEBSCENE_FILE_GRANT_DIRECTORY_LIMIT_V2
+                                ? "QuotaExceededError" : "NotReadableError";
+            reject_file_panel_promise(isolate, local_context, resolver,
+                "The native directory operation failed", name);
+            perform_microtask_checkpoint();
+            return;
+        }
+        auto result = v8::Object::New(isolate);
+        auto entries = v8::Array::New(
+            isolate, static_cast<int>(completion.entries.size()));
+        for (std::size_t index = 0; index < completion.entries.size(); ++index) {
+            const auto& entry = completion.entries[index];
+            auto value = v8::Object::New(isolate);
+            value->Set(local_context, js_string(isolate, "kind"),
+                v8::Integer::NewFromUnsigned(isolate, entry.kind)).Check();
+            value->Set(local_context, js_string(isolate, "capabilities"),
+                v8::Integer::NewFromUnsigned(isolate, entry.capabilities)).Check();
+            value->Set(local_context, js_string(isolate, "name"),
+                js_string(isolate, entry.display_name.c_str())).Check();
+            auto grant = v8::ArrayBuffer::New(isolate, entry.grant_id.size());
+            if (!entry.grant_id.empty()) std::memcpy(
+                grant->GetBackingStore()->Data(), entry.grant_id.data(),
+                entry.grant_id.size());
+            value->Set(local_context, js_string(isolate, "grant"),
+                v8::Uint8Array::New(grant, 0, entry.grant_id.size())).Check();
+            entries->Set(local_context, static_cast<std::uint32_t>(index), value)
+                .Check();
+        }
+        auto cursor = v8::ArrayBuffer::New(
+            isolate, completion.next_cursor.size());
+        if (!completion.next_cursor.empty()) std::memcpy(
+            cursor->GetBackingStore()->Data(), completion.next_cursor.data(),
+            completion.next_cursor.size());
+        result->Set(local_context, js_string(isolate, "entries"), entries).Check();
+        result->Set(local_context, js_string(isolate, "cursor"),
+            v8::Uint8Array::New(cursor, 0, completion.next_cursor.size())).Check();
+        result->Set(local_context, js_string(isolate, "skippedSymlinks"),
+            v8::BigInt::NewFromUnsigned(isolate,
+                completion.skipped_symlinks)).Check();
+        resolver->Resolve(local_context, result).Check();
+        perform_microtask_checkpoint();
+    }
+
+    void cancel_file_grant_directory_promises(const char* message)
+    {
+        for (auto& [_, target] : file_grant_directory_promise_targets) {
+            auto local_context = target.context.Get(isolate);
+            auto resolver = target.resolver.Get(isolate);
+            if (local_context.IsEmpty() || resolver.IsEmpty()) continue;
+            v8::Context::Scope context_scope(local_context);
+            reject_file_panel_promise(
+                isolate, local_context, resolver, message, "AbortError");
+        }
+        file_grant_directory_promise_targets.clear();
+        perform_microtask_checkpoint();
+    }
+
     void install_file_system_access_api(v8::Local<v8::Context> local_context)
     {
         auto global = local_context->Global();
@@ -661,17 +807,23 @@
             js_string(isolate, "__webSceneWriteFileGrant"),
             v8::Function::New(local_context, request_file_grant_write)
                 .ToLocalChecked()).Check();
+        global->Set(local_context,
+            js_string(isolate, "__webSceneDirectoryGrant"),
+            v8::Function::New(local_context, request_file_grant_directory)
+                .ToLocalChecked()).Check();
         constexpr std::string_view source = R"JS(
           (() => {
             const requestPanel = globalThis.__webSceneRequestFilePanel;
             const compareGrants = globalThis.__webSceneCompareFileGrants;
             const readFileGrant = globalThis.__webSceneReadFileGrant;
             const writeFileGrant = globalThis.__webSceneWriteFileGrant;
+            const directoryGrant = globalThis.__webSceneDirectoryGrant;
             const createNativeFile = globalThis.__webSceneCreateNativeFile;
             delete globalThis.__webSceneRequestFilePanel;
             delete globalThis.__webSceneCompareFileGrants;
             delete globalThis.__webSceneReadFileGrant;
             delete globalThis.__webSceneWriteFileGrant;
+            delete globalThis.__webSceneDirectoryGrant;
             delete globalThis.__webSceneCreateNativeFile;
             const states = new WeakMap();
             const handles = new Map();
@@ -951,11 +1103,127 @@
                   }
                 });
             }
+            const validateEntryName = value => {
+              const name = String(value);
+              if (!name || name === '.' || name === '..'
+                  || name.includes('/') || name.includes('\\')
+                  || name.includes('\0')) {
+                throw new TypeError('Entry name must be one valid path component');
+              }
+              return name;
+            };
+            const directoryState = handle => {
+              const state = stateFor(handle);
+              if (state.kind !== 'directory') throw new TypeError('Illegal invocation');
+              if ((state.capabilities & 4) === 0) {
+                throw new DOMException(
+                  'The directory handle does not grant enumerate access',
+                  'NotAllowedError');
+              }
+              return state;
+            };
+            const releaseDirectoryCursor = async cursor => {
+              if (cursor && cursor.byteLength) {
+                await directoryGrant(2, null, cursor, 0);
+              }
+            };
+            async function* iterateDirectory(handle, mode) {
+              const state = directoryState(handle);
+              let cursor = new Uint8Array();
+              let total = 0;
+              try {
+                do {
+                  const page = await directoryGrant(
+                    1, state.token, cursor.byteLength ? cursor : null, 32);
+                  cursor = page.cursor;
+                  if (page.entries.length === 0 && cursor.byteLength !== 0) {
+                    throw new DOMException(
+                      'Native directory page made no progress', 'DataError');
+                  }
+                  total += page.entries.length;
+                  if (total > 10000) {
+                    throw new DOMException(
+                      'Native directory snapshot exceeds its entry limit',
+                      'QuotaExceededError');
+                  }
+                  for (const raw of page.entries) {
+                    const child = createHandle(raw);
+                    if (mode === 'keys') yield child.name;
+                    else if (mode === 'values') yield child;
+                    else yield [child.name, child];
+                  }
+                } while (cursor.byteLength !== 0);
+              } finally {
+                if (cursor.byteLength !== 0) {
+                  await releaseDirectoryCursor(cursor);
+                }
+              }
+            }
+            function entries() {
+              directoryState(this);
+              return iterateDirectory(this, 'entries');
+            }
+            function keys() {
+              directoryState(this);
+              return iterateDirectory(this, 'keys');
+            }
+            function values() {
+              directoryState(this);
+              return iterateDirectory(this, 'values');
+            }
+            const getExistingHandle = async (handle, name, options, kind) => {
+              const state = directoryState(handle);
+              name = validateEntryName(name);
+              if (options == null) options = {};
+              if (typeof options !== 'object') {
+                throw new TypeError('Handle options must be an object');
+              }
+              if (Boolean(options.create)) {
+                throw new DOMException(
+                  'Creating directory entries requires native create authority',
+                  'NotSupportedError');
+              }
+              let cursor = new Uint8Array();
+              let total = 0;
+              try {
+                do {
+                  const page = await directoryGrant(
+                    1, state.token, cursor.byteLength ? cursor : null, 32);
+                  cursor = page.cursor;
+                  total += page.entries.length;
+                  if (total > 10000) {
+                    throw new DOMException(
+                      'Native directory snapshot exceeds its entry limit',
+                      'QuotaExceededError');
+                  }
+                  for (const raw of page.entries) {
+                    if (raw.name !== name) continue;
+                    const child = createHandle(raw);
+                    if (child.kind !== kind) {
+                      throw new DOMException(
+                        `The entry is not a ${kind}`, 'TypeMismatchError');
+                    }
+                    return child;
+                  }
+                  if (page.entries.length === 0 && cursor.byteLength !== 0) {
+                    throw new DOMException(
+                      'Native directory page made no progress', 'DataError');
+                  }
+                } while (cursor.byteLength !== 0);
+                throw new DOMException('The entry was not found', 'NotFoundError');
+              } finally {
+                if (cursor.byteLength !== 0) {
+                  await releaseDirectoryCursor(cursor);
+                }
+              }
+            };
             function getFileHandle(name, options = {}) {
-              stateFor(this); return unavailable('getFileHandle');
+              try { return getExistingHandle(this, name, options, 'file'); }
+              catch (error) { return Promise.reject(error); }
             }
             function getDirectoryHandle(name, options = {}) {
-              stateFor(this); return unavailable('getDirectoryHandle');
+              try { return getExistingHandle(this, name, options, 'directory'); }
+              catch (error) { return Promise.reject(error); }
             }
             function removeEntry(name, options = {}) {
               stateFor(this); return unavailable('removeEntry');
@@ -971,6 +1239,14 @@
               [Symbol.toStringTag]: { configurable: true, value: 'FileSystemFileHandle' }
             });
             Object.defineProperties(FileSystemDirectoryHandle.prototype, {
+              entries: { enumerable: true, configurable: true, writable: true,
+                value: entries },
+              keys: { enumerable: true, configurable: true, writable: true,
+                value: keys },
+              values: { enumerable: true, configurable: true, writable: true,
+                value: values },
+              [Symbol.asyncIterator]: { configurable: true, writable: true,
+                value: entries },
               getFileHandle: { enumerable: true, configurable: true, writable: true,
                 value: getFileHandle },
               getDirectoryHandle: { enumerable: true, configurable: true, writable: true,
@@ -995,7 +1271,7 @@
                 }
                 return existing;
               }
-              if (handles.size >= 4096) {
+              if (handles.size >= 16384) {
                 throw new DOMException('Too many retained file system handles', 'QuotaExceededError');
               }
               const kind = raw.kind === 1 ? 'file' : 'directory';

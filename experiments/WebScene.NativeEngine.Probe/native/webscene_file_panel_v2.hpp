@@ -1149,4 +1149,290 @@ private:
     bool retiring_{};
 };
 
+struct file_grant_directory_request_lease_v2 final {
+    webscene_file_grant_directory_request_v2 view{};
+    std::vector<std::uint8_t> directory_grant_id;
+    std::vector<std::uint8_t> cursor;
+
+    void bind() {
+        view.struct_size = sizeof(view);
+        view.version = 2;
+        view.directory_grant_id = {
+            directory_grant_id.empty() ? nullptr : directory_grant_id.data(),
+            directory_grant_id.size()};
+        view.cursor = {cursor.empty() ? nullptr : cursor.data(), cursor.size()};
+    }
+};
+static_assert(std::is_standard_layout_v<file_grant_directory_request_lease_v2>);
+static_assert(offsetof(file_grant_directory_request_lease_v2, view) == 0);
+
+struct file_grant_directory_entry_data_v2 final {
+    std::uint64_t byte_count{};
+    std::int64_t modification_time_ns{};
+    std::uint32_t kind{};
+    std::uint32_t capabilities{};
+    std::string display_name;
+    std::vector<std::uint8_t> grant_id;
+};
+
+struct file_grant_directory_completion_data_v2 final {
+    std::uint64_t request_id{};
+    std::uint32_t status{WEBSCENE_FILE_GRANT_DIRECTORY_IO_ERROR_V2};
+    std::uint32_t action{};
+    std::vector<file_grant_directory_entry_data_v2> entries;
+    std::vector<std::uint8_t> next_cursor;
+    std::uint64_t skipped_symlinks{};
+};
+
+using file_grant_directory_completion_callback_v2 =
+    std::function<void(file_grant_directory_completion_data_v2&&)>;
+
+struct file_grant_directory_metrics_v2 final {
+    std::size_t queued_requests{};
+    std::size_t pending_requests{};
+    std::size_t retained_input_bytes{};
+    std::uint64_t completed_requests{};
+    std::uint64_t retired_requests{};
+    std::uint64_t copied_completion_bytes{};
+    std::uint64_t rejected_operations{};
+};
+
+class file_grant_directory_broker_v2 final {
+public:
+    bool queue(const webscene_file_grant_directory_request_v2& source,
+               file_grant_directory_completion_callback_v2 callback) {
+        auto lease = copy_request(source);
+        if (!lease) { reject(); return false; }
+        const auto id = lease->view.request_id;
+        const auto retained = lease->directory_grant_id.size()
+            + lease->cursor.size();
+        std::lock_guard lock(mutex_);
+        if (retiring_
+            || pending_.size()
+                >= WEBSCENE_FILE_GRANT_DIRECTORY_MAXIMUM_PENDING_OPERATIONS_V2
+            || pending_.contains(id)) {
+            ++rejected_operations_;
+            return false;
+        }
+        pending_.emplace(id, pending_request{lease->view.action,
+            lease->view.maximum_entries, retained, std::move(callback)});
+        retained_input_bytes_ += retained;
+        queued_.push_back(std::move(lease));
+        return true;
+    }
+
+    std::unique_ptr<file_grant_directory_request_lease_v2> take() {
+        std::lock_guard lock(mutex_);
+        if (queued_.empty()) return {};
+        auto result = std::move(queued_.front());
+        queued_.pop_front();
+        result->bind();
+        return result;
+    }
+
+    bool complete(const webscene_file_grant_directory_completion_v2& source) {
+        file_grant_directory_completion_callback_v2 callback;
+        std::optional<file_grant_directory_completion_data_v2> completion;
+        {
+            std::lock_guard lock(mutex_);
+            const auto found = pending_.find(source.request_id);
+            if (found == pending_.end()
+                || !(completion = copy_completion(source, found->second))) {
+                ++rejected_operations_;
+                return false;
+            }
+            callback = std::move(found->second.callback);
+            retained_input_bytes_ -= found->second.retained_bytes;
+            pending_.erase(found);
+            copied_completion_bytes_ += completion->next_cursor.size();
+            for (const auto& entry : completion->entries)
+                copied_completion_bytes_ += entry.display_name.size()
+                    + entry.grant_id.size();
+            ++completed_requests_;
+        }
+        if (callback) {
+            try { callback(std::move(*completion)); }
+            catch (...) { }
+        }
+        return true;
+    }
+
+    void retire() {
+        std::vector<std::pair<std::uint64_t, pending_request>> pending;
+        {
+            std::lock_guard lock(mutex_);
+            if (retiring_) return;
+            retiring_ = true;
+            pending.reserve(pending_.size());
+            for (auto& [id, request] : pending_)
+                pending.emplace_back(id, std::move(request));
+            retired_requests_ += pending_.size();
+            pending_.clear();
+            queued_.clear();
+            retained_input_bytes_ = 0;
+        }
+        for (auto& [id, request] : pending) {
+            if (!request.callback) continue;
+            try {
+                request.callback(file_grant_directory_completion_data_v2{
+                    id, WEBSCENE_FILE_GRANT_DIRECTORY_CANCELLED_V2,
+                    request.action, {}, {}, 0});
+            } catch (...) { }
+        }
+        std::lock_guard lock(mutex_);
+        retiring_ = false;
+    }
+
+    file_grant_directory_metrics_v2 metrics() const {
+        std::lock_guard lock(mutex_);
+        return {queued_.size(), pending_.size(), retained_input_bytes_,
+            completed_requests_, retired_requests_, copied_completion_bytes_,
+            rejected_operations_};
+    }
+
+private:
+    struct pending_request final {
+        std::uint32_t action{};
+        std::uint32_t maximum_entries{};
+        std::size_t retained_bytes{};
+        file_grant_directory_completion_callback_v2 callback;
+    };
+
+    static bool valid_token(webscene_file_panel_token_v2 token) {
+        return token.data != nullptr && token.byte_count != 0
+            && token.byte_count <= file_panel_maximum_token_bytes_v2;
+    }
+    static bool empty_token(webscene_file_panel_token_v2 token) {
+        return token.data == nullptr && token.byte_count == 0;
+    }
+    static bool safe_name(std::string_view name) {
+        return !name.empty() && name != "." && name != ".."
+            && name.find('/') == std::string_view::npos
+            && name.find('\\') == std::string_view::npos
+            && file_panel_valid_utf8_v2(name);
+    }
+    void reject() { std::lock_guard lock(mutex_); ++rejected_operations_; }
+
+    static std::unique_ptr<file_grant_directory_request_lease_v2> copy_request(
+        const webscene_file_grant_directory_request_v2& source) {
+        if (source.struct_size < sizeof(source) || source.version != 2
+            || source.request_id == 0 || source.reserved != 0
+            || source.reserved_entries != 0
+            || source.action < WEBSCENE_FILE_GRANT_DIRECTORY_ENUMERATE_V2
+            || source.action > WEBSCENE_FILE_GRANT_DIRECTORY_RELEASE_CURSOR_V2)
+            return {};
+        const bool enumerate =
+            source.action == WEBSCENE_FILE_GRANT_DIRECTORY_ENUMERATE_V2;
+        if ((enumerate && (!valid_token(source.directory_grant_id)
+                || source.maximum_entries == 0
+                || source.maximum_entries
+                    > WEBSCENE_FILE_GRANT_DIRECTORY_MAXIMUM_PAGE_ENTRIES_V2))
+            || (!enumerate && (!empty_token(source.directory_grant_id)
+                || !valid_token(source.cursor)
+                || source.maximum_entries != 0))) return {};
+        auto result = std::make_unique<file_grant_directory_request_lease_v2>();
+        result->view = source;
+        if (!empty_token(source.directory_grant_id))
+            result->directory_grant_id.assign(source.directory_grant_id.data,
+                source.directory_grant_id.data
+                    + source.directory_grant_id.byte_count);
+        if (!empty_token(source.cursor)) result->cursor.assign(source.cursor.data,
+            source.cursor.data + source.cursor.byte_count);
+        result->bind();
+        return result;
+    }
+
+    static std::optional<file_grant_directory_completion_data_v2>
+    copy_completion(const webscene_file_grant_directory_completion_v2& source,
+                    const pending_request& pending) {
+        if (source.struct_size < sizeof(source) || source.version != 2
+            || source.request_id == 0 || source.action != pending.action
+            || source.status > WEBSCENE_FILE_GRANT_DIRECTORY_LIMIT_V2)
+            return std::nullopt;
+        file_grant_directory_completion_data_v2 result;
+        result.request_id = source.request_id;
+        result.status = source.status;
+        result.action = source.action;
+        const bool success =
+            source.status == WEBSCENE_FILE_GRANT_DIRECTORY_SUCCESS_V2;
+        const bool enumerate =
+            source.action == WEBSCENE_FILE_GRANT_DIRECTORY_ENUMERATE_V2;
+        if (!success || !enumerate) {
+            if (source.entries != nullptr || source.entry_count != 0
+                || !empty_token(source.next_cursor)
+                || source.skipped_symlinks != 0) return std::nullopt;
+            return result;
+        }
+        if (source.entry_count > pending.maximum_entries
+            || (source.entry_count == 0) != (source.entries == nullptr)
+            || (!empty_token(source.next_cursor)
+                && !valid_token(source.next_cursor))) return std::nullopt;
+        std::size_t copied_bytes = source.next_cursor.byte_count;
+        if (copied_bytes > WEBSCENE_FILE_GRANT_DIRECTORY_MAXIMUM_NAME_BYTES_V2)
+            return std::nullopt;
+        if (!empty_token(source.next_cursor)) result.next_cursor.assign(
+            source.next_cursor.data,
+            source.next_cursor.data + source.next_cursor.byte_count);
+        result.skipped_symlinks = source.skipped_symlinks;
+        result.entries.reserve(source.entry_count);
+        for (std::size_t index = 0; index < source.entry_count; ++index) {
+            const auto& entry = source.entries[index];
+            if (entry.struct_size < sizeof(entry) || entry.version != 2
+                || entry.reserved != 0
+                || entry.metadata.struct_size < sizeof(entry.metadata)
+                || entry.metadata.version != 2 || entry.metadata.reserved != 0
+                || (entry.metadata.kind != WEBSCENE_FILE_PANEL_ENTRY_FILE_V2
+                    && entry.metadata.kind
+                        != WEBSCENE_FILE_PANEL_ENTRY_DIRECTORY_V2)
+                || !valid_token(entry.grant_id)
+                || (entry.capabilities & ~(WEBSCENE_FILE_PANEL_GRANT_READ_V2
+                        | WEBSCENE_FILE_PANEL_GRANT_WRITE_V2
+                        | WEBSCENE_FILE_PANEL_GRANT_ENUMERATE_V2
+                        | WEBSCENE_FILE_PANEL_GRANT_CREATE_V2
+                        | WEBSCENE_FILE_PANEL_GRANT_DELETE_V2)) != 0
+                || (entry.metadata.kind == WEBSCENE_FILE_PANEL_ENTRY_FILE_V2
+                    && (entry.capabilities
+                        & (WEBSCENE_FILE_PANEL_GRANT_ENUMERATE_V2
+                            | WEBSCENE_FILE_PANEL_GRANT_CREATE_V2)) != 0)
+                || (entry.metadata.kind
+                        == WEBSCENE_FILE_PANEL_ENTRY_DIRECTORY_V2
+                    && (entry.capabilities
+                        & WEBSCENE_FILE_PANEL_GRANT_ENUMERATE_V2) == 0))
+                return std::nullopt;
+            const auto name = file_panel_string_view_v2(entry.display_name,
+                WEBSCENE_FILE_GRANT_DIRECTORY_MAXIMUM_NAME_BYTES_V2);
+            if (!name || !safe_name(*name)) return std::nullopt;
+            copied_bytes += name->size() + entry.grant_id.byte_count;
+            if (copied_bytes
+                > WEBSCENE_FILE_GRANT_DIRECTORY_MAXIMUM_NAME_BYTES_V2)
+                return std::nullopt;
+            file_grant_directory_entry_data_v2 copied;
+            copied.byte_count = entry.metadata.byte_count;
+            copied.modification_time_ns = entry.metadata.modification_time_ns;
+            copied.kind = entry.metadata.kind;
+            copied.capabilities = entry.capabilities;
+            copied.display_name.assign(*name);
+            copied.grant_id.assign(entry.grant_id.data,
+                entry.grant_id.data + entry.grant_id.byte_count);
+            if (std::any_of(result.entries.begin(), result.entries.end(),
+                    [&](const auto& existing) {
+                        return existing.display_name == copied.display_name
+                            || existing.grant_id == copied.grant_id;
+                    })) return std::nullopt;
+            result.entries.push_back(std::move(copied));
+        }
+        return result;
+    }
+
+    mutable std::mutex mutex_;
+    std::deque<std::unique_ptr<file_grant_directory_request_lease_v2>> queued_;
+    std::unordered_map<std::uint64_t, pending_request> pending_;
+    std::size_t retained_input_bytes_{};
+    std::uint64_t completed_requests_{};
+    std::uint64_t retired_requests_{};
+    std::uint64_t copied_completion_bytes_{};
+    std::uint64_t rejected_operations_{};
+    bool retiring_{};
+};
+
 } // namespace webscene_native

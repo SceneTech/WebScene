@@ -76,12 +76,16 @@
       assert_equals(FileSystemFileHandle.prototype[name].length, length, `${name}.length`);
     }
     for (const [name, length] of [
+      ["entries", 0], ["keys", 0], ["values", 0],
       ["getFileHandle", 1], ["getDirectoryHandle", 1], ["removeEntry", 1], ["resolve", 1]
     ]) {
       assert_equals(typeof FileSystemDirectoryHandle.prototype[name], "function", `${name} was absent`);
       assert_equals(FileSystemDirectoryHandle.prototype[name].name, name, `${name}.name`);
       assert_equals(FileSystemDirectoryHandle.prototype[name].length, length, `${name}.length`);
     }
+    assert_equals(FileSystemDirectoryHandle.prototype[Symbol.asyncIterator],
+      FileSystemDirectoryHandle.prototype.entries,
+      "directory @@asyncIterator must be entries");
     for (const [name, length] of [["write", 1], ["seek", 1], ["truncate", 1]]) {
       const descriptor = Object.getOwnPropertyDescriptor(
         FileSystemWritableFileStream.prototype, name);

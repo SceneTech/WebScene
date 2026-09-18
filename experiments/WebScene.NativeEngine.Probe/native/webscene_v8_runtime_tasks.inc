@@ -2762,6 +2762,14 @@
             }
             prevented = keypress_prevented;
         }
+        if (prevented && pending_text_input_from_keydown) {
+            // Cocoa commits printable text separately through NSTextInputClient.
+            // A cancelled keydown/keypress has already suppressed the browser's
+            // editing default action, so consume that later host commit without
+            // mutating the control or publishing beforeinput/input. OTP widgets
+            // commonly handle the digit in keydown and depend on this contract.
+            pending_text_input_target_id = 0U;
+        }
         if (!prevented && target->tag == "select"
             && select_popup_is_candidate(*target)) {
             if (select_popup_is_open(*target)) {

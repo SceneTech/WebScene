@@ -59,6 +59,18 @@
     const afterPunctuation = observed.slice();
     const valueAfterPunctuation = first.value;
 
+    const cancelDigit = event => {
+      if (event.key === "5") {
+        event.target.value = event.key;
+        event.preventDefault();
+      }
+    };
+    first.addEventListener("keydown", cancelDigit);
+    await test_driver.send_keys(first, "5");
+    first.removeEventListener("keydown", cancelDigit);
+    const afterCancelledText = observed.slice();
+    const valueAfterCancelledText = first.value;
+
     await test_driver.send_keys(first, "\uE004");
     return {
       afterClick,
@@ -67,6 +79,8 @@
       valueAfterText,
       afterPunctuation,
       valueAfterPunctuation,
+      afterCancelledText,
+      valueAfterCancelledText,
       finalEvents: observed.slice(),
       finalActive: document.activeElement,
       finalValue: first.value
@@ -139,9 +153,18 @@
 
   promise_test(async () => {
     const state = await lifecycle;
-    const tabEvents = state.finalEvents.slice(state.afterPunctuation.length);
+    const cancelledEvents = state.afterCancelledText.slice(state.afterPunctuation.length);
+    assert_array_equals(cancelledEvents.map(event => event.type), ["keydown", "keyup"],
+      "cancelled printable key has no editing events");
+    assert_equals(state.valueAfterCancelledText, "5",
+      "the host text commit does not repeat a digit handled by keydown");
+  }, "preventDefault on printable keydown suppresses its text edit and input events");
+
+  promise_test(async () => {
+    const state = await lifecycle;
+    const tabEvents = state.finalEvents.slice(state.afterCancelledText.length);
     assert_equals(state.finalActive, second, "Tab transfers focus to the next control");
-    assert_equals(state.finalValue, "Z;=,-./`[\\]'", "focus transfer preserves the edited value");
+    assert_equals(state.finalValue, "5", "focus transfer preserves the edited value");
     assert_equals(matching(tabEvents, "keydown", "first").length, 1, "Tab keydown targets the old focus");
     assert_equals(matching(tabEvents, "blur", "first").length, 1, "old focus blur count");
     assert_equals(matching(tabEvents, "focusout", "first").length, 1, "old focusout count");

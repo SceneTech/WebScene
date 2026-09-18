@@ -67,7 +67,37 @@ void test_native_text_input_focus_events_and_caret(webscene_engine* engine)
             + typed + "; error=" + last_error(engine) + "; diagnostics=" + diagnostics(engine));
     }
 
-    animation_frame(engine, 100.0, 28U);
+    execute(engine, R"JS(
+      __nativeTextEvents.length = 0;
+      __nativeTextInput.value = '';
+      __nativeTextInput.addEventListener('keydown', event => {
+        if (event.key === '5') {
+          event.target.value = event.key;
+          event.preventDefault();
+        }
+      }, {once:true});
+    )JS", "native-cancelled-text-setup.js");
+    require(evaluate(engine, "__nativeTextInput.value",
+                "native-cancelled-text-ready.js") == R"("")",
+        "cancelled text fixture did not become ready");
+    keyboard_input(engine, WEBSCENE_INPUT_KEY_DOWN, '5', 28U);
+    keyboard_input(engine, WEBSCENE_INPUT_TEXT, '5', 29U);
+    keyboard_input(engine, WEBSCENE_INPUT_KEY_UP, '5', 30U);
+    const auto cancelled_text = evaluate(engine, R"JS((() => ({
+      value: __nativeTextInput.value,
+      events: __nativeTextEvents.map(event => event.type)
+    }))())JS", "native-cancelled-text-result.js");
+    require(cancelled_text == R"({"value":"5","events":["keydown","keyup"]})",
+        "cancelled keydown repeated its committed text: " + cancelled_text);
+    execute(engine, R"JS(
+      __nativeTextInput.value = 'trend';
+      __nativeTextInput.setSelectionRange(5, 5);
+    )JS", "native-cancelled-text-reset.js");
+    require(evaluate(engine, "__nativeTextInput.value",
+                "native-cancelled-text-reset-ready.js") == R"("trend")",
+        "cancelled text fixture did not reset");
+
+    animation_frame(engine, 100.0, 31U);
     require(
         evaluate(engine, "__nativeTextInput.value", "native-text-input-frame-ready.js")
             == "\"trend\"",
@@ -76,8 +106,8 @@ void test_native_text_input_focus_events_and_caret(webscene_engine* engine)
     // transition fixtures. Re-arm the caret after this fixture's first frame so
     // the blink assertion measures a local 500 ms phase instead of depending
     // on timestamp ordering between otherwise independent tests.
-    keyboard_input(engine, WEBSCENE_INPUT_KEY_DOWN, 35U, 28U);
-    keyboard_input(engine, WEBSCENE_INPUT_KEY_UP, 35U, 29U);
+    keyboard_input(engine, WEBSCENE_INPUT_KEY_DOWN, 35U, 32U);
+    keyboard_input(engine, WEBSCENE_INPUT_KEY_UP, 35U, 33U);
     require(
         evaluate(engine, "true", "native-text-input-caret-rearmed.js") == "true",
         "native text input caret reset did not drain");

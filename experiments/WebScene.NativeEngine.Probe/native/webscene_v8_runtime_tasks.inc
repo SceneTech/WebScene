@@ -411,7 +411,9 @@
 
         auto target_context = task.target_context.Get(isolate);
         auto source_context = task.source_context.Get(isolate);
-        if (target_context.IsEmpty() || source_context.IsEmpty()) {
+        auto source_window = task.source_window.Get(isolate);
+        if (target_context.IsEmpty() || source_context.IsEmpty()
+            || source_window.IsEmpty()) {
             return true;
         }
 
@@ -469,7 +471,7 @@
         event->Set(
             target_context,
             js_string(isolate, "source"),
-            source_context->Global()).Check();
+            source_window).Check();
         event->Set(
             target_context,
             js_string(isolate, "lastEventId"),

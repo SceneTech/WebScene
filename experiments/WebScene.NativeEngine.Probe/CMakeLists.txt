@@ -1016,6 +1016,12 @@ if(WEBSCENE_NATIVE_ENGINE_ENABLE_V8)
         add_test(NAME webscene_native_indexeddb_contract COMMAND webscene_native_engine_tests)
         add_test(NAME webscene_native_panel_listener_lifecycle COMMAND webscene_native_engine_tests)
         add_test(NAME webscene_native_navigation_realm COMMAND webscene_native_engine_tests)
+        add_test(NAME webscene_native_query_iframe_worker_bootstrap
+            COMMAND webscene_native_engine_tests)
+        set_tests_properties(webscene_native_query_iframe_worker_bootstrap PROPERTIES
+            ENVIRONMENT "WEBSCENE_NATIVE_ENGINE_TEST_FILTER=query-iframe-worker-bootstrap"
+            LABELS "native;runtime;iframe;worker;messageport;security;lifecycle;performance"
+            TIMEOUT 30)
         add_test(NAME webscene_native_file_system_access
             COMMAND webscene_native_engine_tests)
         set_tests_properties(webscene_native_file_system_access PROPERTIES

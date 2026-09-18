@@ -1,0 +1,64 @@
+<!doctype html>
+<title>Query-bearing iframe extension host Worker bootstrap</title>
+<body>
+<script>
+window.__webSceneWptState = {complete:false,harness:null,results:[],errors:[],diagnostics:[]};
+window.record = (name, condition) => __webSceneWptState.results.push({
+  name,status:condition?'PASS':'FAIL',message:condition?null:'Contract failed',stack:null
+});
+window.finish = () => {
+  const state=__webSceneWptState;
+  state.harness={status:state.results.some(result=>result.status!=='PASS')?1:0,message:null,stack:null};
+  state.complete=true;
+};
+
+const extensionHostId = 'extension-host-id';
+const frame = document.createElement('iframe');
+frame.setAttribute('sandbox', 'allow-same-origin allow-scripts');
+frame.src = './resources/aureon/query-iframe-worker-extension-host-frame.html'
+  + '?&vscodeWebWorkerExtHostId=' + extensionHostId;
+
+addEventListener('message', event => {
+  if (event.data?.vscodeWebWorkerExtHostId !== extensionHostId) return;
+  if (event.data.type === 'worker-error') {
+    __webSceneWptState.errors.push(event.data.message);
+    record('Query-bearing iframe Worker completes without errors', false);
+    finish();
+    return;
+  }
+  record('Navigated iframe message exposes its stable WindowProxy',
+    event.source === frame.contentWindow);
+  record('Navigated iframe message preserves its same origin',
+    event.origin === origin);
+  if (event.data.type === 'vscode.bootstrap.nls') {
+    record('Iframe document observes the extension-host query',
+      event.data.observedSearch
+        === '?&vscodeWebWorkerExtHostId=extension-host-id');
+    frame.contentWindow.postMessage({
+      type:'vscode.bootstrap.nls',
+      workerUrl:new URL(
+        './resources/aureon/query-iframe-worker-extension-host-module.js',
+        location.href).href
+    }, '*');
+    return;
+  }
+
+  const port = event.data.data;
+  record('Iframe forwards the Worker MessagePort transfer',
+    port instanceof MessagePort && event.ports[0] === port);
+  port.onmessage = reply => {
+    record('Transferred extension-host port remains operational',
+      reply.data === 42);
+    port.close();
+    frame.remove();
+    finish();
+  };
+  port.postMessage(41);
+});
+
+frame.onerror = () => {
+  record('Query-bearing iframe resource loads', false);
+  finish();
+};
+document.body.appendChild(frame);
+</script>

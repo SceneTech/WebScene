@@ -149,6 +149,7 @@
     struct pending_window_message final {
         v8::Global<v8::Context> target_context;
         v8::Global<v8::Context> source_context;
+        v8::Global<v8::Object> source_window;
         clone_packet packet;
         std::string target_origin;
         std::string source_origin;

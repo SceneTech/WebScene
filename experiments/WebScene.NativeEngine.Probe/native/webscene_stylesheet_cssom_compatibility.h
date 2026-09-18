@@ -7,8 +7,8 @@ namespace webscene_native {
 // owner's parsed native rules. Bridge dynamic CSSOM operations to a native
 // staged rule-set replacement so one task publishes each owner's final rules
 // and recascades once.
-// This is a bounded adapter, not a complete CSSOM implementation: adopted
-// sheet publication and imported-sheet inspection remain unsupported.
+// This is a bounded adapter, not a complete CSSOM implementation: imported-
+// sheet inspection remains unsupported.
 // Semantics: https://www.w3.org/TR/cssom-1/
 inline constexpr std::string_view cssCompatibilityScript = R"JS(
 // SCENETECH_CSS_COMPATIBILITY_V1
@@ -16,6 +16,7 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
   'use strict';
   if (typeof globalThis.__webSceneAugmentStyleSheet === 'function') return;
   const sheets = new WeakMap();
+  const adoptionRoots = new WeakMap();
   const styleSheetInstances = new WeakSet();
   const exception = (message, name) => { throw new DOMException(message, name); };
   const text = value => {
@@ -33,6 +34,37 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
   const mediaListInstances = new WeakSet();
   const ruleListInstances = new WeakSet();
   let makeConstructedStyleSheet;
+  const publishedSource = state => {
+    const source = state.rules.map(rule => rule.cssText).join('\n');
+    return state.disabled ? ''
+      : state.mediaText.trim() ? `@media ${state.mediaText} {\n${source}\n}`
+      : source;
+  };
+  const publishAdoptionRoot = rootState => {
+    if (typeof rootState.root.__webScenePublishAdoptedStyleSheets !== 'function') return;
+    const sources = rootState.list.map(sheet => publishedSource(sheets.get(sheet)));
+    if (!rootState.root.__webScenePublishAdoptedStyleSheets(sources))
+      exception('The adopted stylesheet publication exceeds native bounds', 'QuotaExceededError');
+  };
+  const linkAdopter = (sheet, rootState) => {
+    let links = adoptionRoots.get(sheet);
+    if (!links) adoptionRoots.set(sheet, links = new Set());
+    if (rootState.linkedSheets.has(sheet)) return;
+    rootState.linkedSheets.add(sheet);
+    links.add(typeof WeakRef === 'function' ? new WeakRef(rootState) : rootState);
+  };
+  const notifyAdopters = sheet => {
+    const links = adoptionRoots.get(sheet);
+    if (!links) return;
+    for (const link of [...links]) {
+      const rootState = typeof link?.deref === 'function' ? link.deref() : link;
+      if (!rootState) {
+        links.delete(link);
+      } else if (rootState.list.includes(sheet)) {
+        publishAdoptionRoot(rootState);
+      }
+    }
+  };
   const interfaceConstructor = (name, instances, parent) => {
     const constructor = { [name]: function() {
       throw new TypeError('Illegal constructor');
@@ -468,21 +500,20 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
   };
   const publish = state => {
     const source = state.rules.map(rule => rule.cssText).join('\n');
-    const publishedSource = state.disabled ? ''
+    const nativeSource = state.disabled ? ''
       : state.mediaText.trim() ? `@media ${state.mediaText} {\n${source}\n}`
       : source;
     if (state.constructed) {
-      // An unadopted constructed sheet is pure CSSOM state. A later adoption
-      // slice will bind it to explicit document/shadow-root registries.
+      notifyAdopters(state.sheet);
     } else if (typeof state.sheet.__webSceneStageRules === 'function') {
       // CSSOM mutation does not replace the style element's DOM text nodes.
       // Stage the final serialized rule set in native state; synchronous
       // style/layout reads and the browser-task boundary flush it.
       state.sheet.__webSceneStageRules(
-        publishedSource, collectLayerNames(state.rules));
+        nativeSource, collectLayerNames(state.rules));
     } else {
-      state.owner.textContent = publishedSource;
-      state.ownerSource = publishedSource;
+      state.owner.textContent = nativeSource;
+      state.ownerSource = nativeSource;
     }
     state.source = source;
   };
@@ -923,6 +954,156 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
       baseURL, constructed: true
     });
   };
+  const makeAdoptedStyleSheetList = root => {
+    const ownerDocument = root === globalThis.document
+      ? root : root.host?.ownerDocument || globalThis.document;
+    const backing = [];
+    const rootState = {
+      root, ownerDocument, list: null, linkedSheets: new WeakSet()
+    };
+    const validate = sheet => {
+      if (!styleSheetInstances.has(sheet)) {
+        if (sheet && typeof sheet === 'object'
+            && sheet.constructor?.name === 'CSSStyleSheet')
+          exception('The stylesheet belongs to another document', 'NotAllowedError');
+        throw new TypeError('adoptedStyleSheets entries must be CSSStyleSheet objects');
+      }
+      const state = sheets.get(sheet);
+      if (!state.constructed)
+        exception('Only constructed stylesheets may be adopted', 'NotAllowedError');
+      if (state.document !== ownerDocument)
+        exception('The stylesheet was constructed in another document', 'NotAllowedError');
+      return sheet;
+    };
+    const commit = () => {
+      for (const sheet of backing) linkAdopter(sheet, rootState);
+      publishAdoptionRoot(rootState);
+    };
+    const indexKey = key => typeof key === 'string'
+      && /^(0|[1-9][0-9]*)$/.test(key);
+    let proxy;
+    const mutation = (name, prepare) => (...args) => {
+      const next = prepare ? prepare(args) : args;
+      const result = Array.prototype[name].apply(backing, next);
+      commit();
+      return name === 'sort' || name === 'reverse' || name === 'copyWithin'
+        || name === 'fill' ? proxy : result;
+    };
+    const mutators = {
+      push: mutation('push', args => args.map(validate)),
+      unshift: mutation('unshift', args => args.map(validate)),
+      pop: mutation('pop'),
+      shift: mutation('shift'),
+      reverse: mutation('reverse'),
+      sort: mutation('sort'),
+      copyWithin: mutation('copyWithin'),
+      fill: mutation('fill', args => {
+        if (args.length) args[0] = validate(args[0]);
+        return args;
+      }),
+      splice: mutation('splice', args => [
+        ...args.slice(0, 2), ...args.slice(2).map(validate)
+      ])
+    };
+    proxy = new Proxy(backing, {
+      get(target, key, receiver) {
+        if (Object.prototype.hasOwnProperty.call(mutators, key)) return mutators[key];
+        return Reflect.get(target, key, receiver);
+      },
+      set(target, key, value) {
+        if (key === 'length') {
+          const length = Number(value) >>> 0;
+          if (length >= backing.length) return true;
+          backing.splice(length);
+          commit();
+          return true;
+        }
+        if (indexKey(key)) {
+          const index = Number(key);
+          if (index > backing.length) return true;
+          validate(value);
+        }
+        const changed = Reflect.set(target, key, value, target);
+        if (changed) commit();
+        return changed;
+      },
+      defineProperty(target, key, descriptor) {
+        if (key === 'length' && 'value' in descriptor) {
+          const length = Number(descriptor.value) >>> 0;
+          if (length >= backing.length) return true;
+          backing.splice(length);
+          commit();
+          return true;
+        }
+        if (indexKey(key) && 'value' in descriptor) {
+          const index = Number(key);
+          if (index > backing.length) return true;
+          validate(descriptor.value);
+        }
+        const changed = Reflect.defineProperty(target, key, descriptor);
+        if (changed) commit();
+        return changed;
+      },
+      deleteProperty(target, key) {
+        if (indexKey(key)) {
+          const index = Number(key);
+          if (index === backing.length - 1) {
+            backing.pop();
+            commit();
+          }
+          return true;
+        }
+        const changed = Reflect.deleteProperty(target, key);
+        if (changed) commit();
+        return changed;
+      }
+    });
+    rootState.list = proxy;
+    return { rootState, proxy };
+  };
+  const rootLists = new WeakMap();
+  const adoptionListFor = root => {
+    let entry = rootLists.get(root);
+    if (!entry) {
+      entry = makeAdoptedStyleSheetList(root);
+      rootLists.set(root, entry);
+    }
+    return entry;
+  };
+  const setAdoptedStyleSheets = function(value) {
+    const entry = adoptionListFor(this);
+    let replacement;
+    try {
+      replacement = Array.from(value);
+    } catch (error) {
+      throw error instanceof TypeError ? error
+        : new TypeError('adoptedStyleSheets must be assigned an iterable');
+    }
+    const validated = replacement.map(sheet => {
+      if (!styleSheetInstances.has(sheet)) {
+        if (sheet && typeof sheet === 'object'
+            && sheet.constructor?.name === 'CSSStyleSheet')
+          exception('The stylesheet belongs to another document', 'NotAllowedError');
+        throw new TypeError('adoptedStyleSheets entries must be CSSStyleSheet objects');
+      }
+      const state = sheets.get(sheet);
+      if (!state.constructed || state.document !== entry.rootState.ownerDocument)
+        exception('The stylesheet cannot be adopted by this root', 'NotAllowedError');
+      return sheet;
+    });
+    entry.proxy.splice(0, entry.proxy.length, ...validated);
+  };
+  if (globalThis.document) Object.defineProperty(globalThis.document, 'adoptedStyleSheets', {
+    configurable: true, enumerable: true,
+    get() { return adoptionListFor(this).proxy; },
+    set: setAdoptedStyleSheets
+  });
+  if (globalThis.ShadowRoot?.prototype) Object.defineProperty(
+    globalThis.ShadowRoot.prototype, 'adoptedStyleSheets', {
+      configurable: true, enumerable: true,
+      get() { return adoptionListFor(this).proxy; },
+      set: setAdoptedStyleSheets
+    });
   const augment = sheet => {
     if (!sheet || typeof sheet.insertRule === 'function') return sheet;
     const document = sheet.ownerNode?.ownerDocument || globalThis.document;

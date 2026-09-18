@@ -310,6 +310,9 @@
         pending_stylesheet_replacements.clear();
         pending_stylesheet_replacement_bytes = 0U;
         stylesheet_cssom_sources.clear();
+        adopted_stylesheet_publications.clear();
+        adopted_stylesheet_owner_scopes.clear();
+        next_adopted_stylesheet_owner_id = 0xf0000000U;
         detached_documents.clear();
         node_wrappers.clear();
         attr_wrappers.clear();

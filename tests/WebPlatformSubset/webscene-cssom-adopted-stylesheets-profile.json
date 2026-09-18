@@ -1,0 +1,27 @@
+{
+  "profile": "webscene-cssom-adopted-stylesheets-1",
+  "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+  "runtime": "v8",
+  "viewport": {
+    "width": 800,
+    "height": 600,
+    "deviceScaleFactor": 1
+  },
+  "required": [
+    {
+      "path": "contracts/cssom-adopted-stylesheets-multi-root.html",
+      "type": "contract",
+      "capabilities": [
+        "cssom-adopted-stylesheets-observable-array",
+        "cssom-adopted-stylesheets-document-publication",
+        "cssom-adopted-stylesheets-shadow-root-publication",
+        "cssom-adopted-stylesheets-live-invalidation",
+        "cssom-adopted-stylesheets-root-retirement"
+      ],
+      "evidence": ["cssom-adopted-stylesheets-407"],
+      "reason": "Pinned Code OSS and WPT-derived regression for constructed stylesheet adoption, browser ObservableArray semantics, author ordering, document and shadow-root isolation, live mutation, and 100-cycle main/iframe retirement."
+    }
+  ],
+  "harnessBlocked": [],
+  "excluded": []
+}

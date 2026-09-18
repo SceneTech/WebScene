@@ -2853,6 +2853,10 @@
                     owner->id,
                     shadow_root == nullptr ? 0U : shadow_root->id);
             }
+            // Adopted sheets are the final author sheets for their document or
+            // shadow root. Reappend them after any owner-backed replacement so
+            // later <style> mutation cannot move normal author rules past them.
+            reappend_adopted_stylesheets_for_cascade_root(root->id);
             rebuild_css_rule_indexes_and_root_variables();
             schedule_style_recascade(*root, true, "stylesheet-change");
         }
@@ -3347,6 +3351,9 @@
                     style->id,
                     shadow_root == nullptr ? 0U : shadow_root->id);
             }
+        }
+        if (auto* root = css_cascade_root_for_node(node); root != nullptr) {
+            reappend_adopted_stylesheets_for_cascade_root(root->id);
         }
         recascade_after_stylesheet_change();
     }

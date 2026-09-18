@@ -6119,7 +6119,8 @@ v8_dom_runtime::v8_dom_runtime(
     file_grant_release_request_sink_v2 file_grant_release_request_sink,
     file_grant_create_file_request_sink_v2 file_grant_create_file_request_sink,
     file_grant_create_directory_request_sink_v2
-        file_grant_create_directory_request_sink)
+        file_grant_create_directory_request_sink,
+    file_grant_remove_request_sink_v2 file_grant_remove_request_sink)
     : impl_(std::make_unique<implementation>(
         document,
         std::move(viewport_provider),
@@ -6141,7 +6142,8 @@ v8_dom_runtime::v8_dom_runtime(
         std::move(file_grant_directory_request_sink),
         std::move(file_grant_release_request_sink),
         std::move(file_grant_create_file_request_sink),
-        std::move(file_grant_create_directory_request_sink)))
+        std::move(file_grant_create_directory_request_sink),
+        std::move(file_grant_remove_request_sink)))
 {
 }
 
@@ -8111,6 +8113,23 @@ void v8_dom_runtime::complete_file_grant_create_directory_request(
         if (impl_->console_messages.size() < 1024)
             impl_->console_messages.push_back(
                 "error\nNative file grant create-directory completion: "
+                + impl_->last_error);
+    }
+}
+void v8_dom_runtime::complete_file_grant_remove_request(
+    file_grant_remove_completion_data_v2& completion) {
+    if (impl_ == nullptr) return;
+    v8::Locker locker(impl_->isolate);
+    v8::Isolate::Scope isolate_scope(impl_->isolate);
+    v8::HandleScope handles(impl_->isolate);
+    v8::TryCatch caught(impl_->isolate);
+    impl_->complete_native_file_grant_remove(completion);
+    if (caught.HasCaught()) {
+        impl_->last_error = impl_->describe_reported_exception(caught);
+        std::lock_guard lock(impl_->console_message_mutex);
+        if (impl_->console_messages.size() < 1024)
+            impl_->console_messages.push_back(
+                "error\nNative file grant remove completion: "
                 + impl_->last_error);
     }
 }

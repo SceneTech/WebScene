@@ -297,6 +297,8 @@ public:
         std::function<bool(const webscene_file_grant_create_file_request_v2&)>;
     using file_grant_create_directory_request_sink_v2 = std::function<bool(
         const webscene_file_grant_create_directory_request_v2&)>;
+    using file_grant_remove_request_sink_v2 =
+        std::function<bool(const webscene_file_grant_remove_request_v2&)>;
     using file_grant_release_request_sink_v2 =
         std::function<bool(const webscene_file_grant_release_request_v2&)>;
     using inspector_message_sink =
@@ -331,7 +333,8 @@ public:
         file_grant_create_file_request_sink_v2
             file_grant_create_file_request_sink = {},
         file_grant_create_directory_request_sink_v2
-            file_grant_create_directory_request_sink = {});
+            file_grant_create_directory_request_sink = {},
+        file_grant_remove_request_sink_v2 file_grant_remove_request_sink = {});
     ~v8_dom_runtime();
 
     v8_dom_runtime(const v8_dom_runtime&) = delete;
@@ -392,6 +395,8 @@ public:
         file_grant_create_file_completion_data_v2& completion);
     void complete_file_grant_create_directory_request(
         file_grant_create_directory_completion_data_v2& completion);
+    void complete_file_grant_remove_request(
+        file_grant_remove_completion_data_v2& completion);
     void complete_host_request(native_host_completion& completion);
     bool try_take_host_request(std::string& request);
     std::unique_ptr<native_host_request> take_typed_host_request();

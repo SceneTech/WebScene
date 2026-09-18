@@ -1,0 +1,208 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Standalone constructed CSSStyleSheet mutation and replacement</title>
+<body>
+<script>
+  const state = window.__webSceneWptState = {
+    complete: false, harness: null, results: [], errors: [], diagnostics: []
+  };
+
+  function record(name, error) {
+    state.results.push({
+      name,
+      status: error ? "FAIL" : "PASS",
+      message: error ? String(error && error.message || error) : null,
+      stack: error && error.stack ? String(error.stack) : null
+    });
+  }
+
+  function check(value, message) {
+    if (!value) throw new Error(message);
+  }
+
+  (async () => {
+    try {
+      const sheet = new CSSStyleSheet({
+        disabled: true, media: "screen, print", baseURL: "./assets/"
+      });
+      const rules = sheet.cssRules;
+      const media = sheet.media;
+      record("constructor exposes browser-shaped standalone sheet reflection", (() => {
+        try {
+          check(CSSStyleSheet.name === "CSSStyleSheet" && CSSStyleSheet.length === 0,
+            "constructor name/length");
+          check(sheet instanceof CSSStyleSheet
+              && Object.getPrototypeOf(sheet) === CSSStyleSheet.prototype,
+            "constructor brand/prototype");
+          check(sheet.ownerNode === null && sheet.ownerRule === null
+              && sheet.href === null && sheet.title === null
+              && sheet.type === "text/css", "base reflection");
+          check(sheet.disabled && media === sheet.media
+              && media.mediaText === "screen, print" && media.length === 2
+              && media.item(0) === "screen" && media.item(1) === "print",
+            "constructor options");
+          check(rules === sheet.cssRules && rules === sheet.rules && rules.length === 0,
+            "SameObject empty rules");
+          let callError = "";
+          try { CSSStyleSheet(); } catch (error) { callError = error.name; }
+          check(callError === "TypeError", "constructor call guard");
+          check(new CSSStyleSheet({ title: "ignored" }).title === null,
+            "title option must remain unsupported/null");
+          let baseURLError = "";
+          try { new CSSStyleSheet({ baseURL: "https://test:test/" }); }
+          catch (error) { baseURLError = error.name; }
+          check(baseURLError === "NotAllowedError", "invalid baseURL guard");
+          return null;
+        } catch (error) { return error; }
+      })());
+
+      const sanitizer = new CSSStyleSheet();
+      sanitizer.insertRule(".temp{}");
+      const sanitizerRule = sanitizer.cssRules[0];
+      sanitizerRule.style.cssText =
+        "display:block;position:absolute;background-image:url(evil);width:12px";
+      const allowed = [];
+      for (let index = 0; index < sanitizerRule.style.length; index++) {
+        const name = sanitizerRule.style[index];
+        if (["display", "position", "width"].includes(name)) {
+          allowed.push(`${name}: ${sanitizerRule.style.getPropertyValue(name)}`);
+        }
+      }
+      record("Code OSS Markdown sanitizer receives a live CSSStyleDeclaration", (() => {
+        try {
+          check(sanitizerRule instanceof CSSStyleRule
+              && sanitizerRule.parentStyleSheet === sanitizer,
+            "style-rule ownership");
+          check(allowed.join(";")
+              === "display: block;position: absolute;width: 12px",
+            `sanitized declarations: ${allowed.join(";")}`);
+          check(sanitizerRule.cssText.includes("background-image"),
+            "complete declaration remains reflected");
+          return null;
+        } catch (error) { return error; }
+      })());
+
+      sheet.disabled = false;
+      const firstIndex = sheet.insertRule(".first { color: red; }");
+      const first = rules[0];
+      const secondIndex = sheet.insertRule(".second { color: blue; }");
+      const second = rules[0];
+      sheet.deleteRule(1);
+      record("insert/delete preserve order, SameObject lists, and detached snapshots", (() => {
+        try {
+          check(firstIndex === 0 && secondIndex === 0 && rules.length === 1,
+            "insert/delete order");
+          check(rules[0] === second && first.parentStyleSheet === null
+              && first.parentRule === null, "detached ownership");
+          check(first.selectorText === ".first" && first.style.color === "red"
+              && first.cssText.includes("color: red"), "detached snapshot");
+          return null;
+        } catch (error) { return error; }
+      })());
+
+      const syncOld = rules[0];
+      const syncResult = sheet.replaceSync(
+        "@import url('ignored.css'); .sync { color: green; }");
+      record("replaceSync replaces synchronously, ignores imports, and detaches old rules", (() => {
+        try {
+          check(syncResult === undefined && rules === sheet.cssRules
+              && rules.length === 1 && rules[0].selectorText === ".sync"
+              && rules[0].style.color === "green", "synchronous replacement");
+          check(syncOld.parentStyleSheet === null
+              && syncOld.cssText.includes("color: blue"), "old rule snapshot");
+          return null;
+        } catch (error) { return error; }
+      })());
+
+      const sequence = [];
+      const promise = sheet.replace(".async { color: blue; }").then(value => {
+        sequence.push("fulfilled");
+        return value;
+      });
+      sequence.push("sync");
+      const immediate = [rules.length, rules[0].selectorText];
+      queueMicrotask(() => sequence.push("microtask"));
+      const resolved = await promise;
+      record("replace mutates synchronously and fulfills with the sheet in Promise order", (() => {
+        try {
+          check(immediate[0] === 1 && immediate[1] === ".async",
+            "synchronous rule visibility");
+          check(resolved === sheet && sequence.join("|") === "sync|fulfilled|microtask",
+            `Promise result/order: ${sequence.join("|")}`);
+          return null;
+        } catch (error) { return error; }
+      })());
+
+      const errors = [];
+      for (const invoke of [
+        () => sheet.insertRule("@import url('x.css');"),
+        () => sheet.insertRule(".bad{}", 99),
+        () => sheet.deleteRule(99),
+        () => sheet.replaceSync(),
+        () => sheet.replaceSync(Symbol("css"))
+      ]) {
+        try { invoke(); errors.push("none"); }
+        catch (error) { errors.push(error.name); }
+      }
+      for (const invoke of [() => sheet.replace(), () => sheet.replace(Symbol("css"))]) {
+        try { await invoke(); errors.push("fulfilled"); }
+        catch (error) { errors.push(error.name); }
+      }
+      record("constructed mutation reports browser exception names", (() => {
+        try {
+          check(errors.join("|") === [
+            "SyntaxError", "IndexSizeError", "IndexSizeError",
+            "TypeError", "TypeError", "TypeError", "TypeError"
+          ].join("|"), `errors: ${errors.join("|")}`);
+          return null;
+        } catch (error) { return error; }
+      })());
+
+      const firstReplace = sheet.replace(".one{}");
+      const secondReplace = sheet.replace(".two{}");
+      await Promise.all([firstReplace, secondReplace]);
+      record("concurrent replacements settle and retain last-call order", (() => {
+        try {
+          check(rules.length === 1 && rules[0].selectorText === ".two",
+            "last replacement did not win");
+          return null;
+        } catch (error) { return error; }
+      })());
+
+      const target = document.createElement("div");
+      target.className = "two";
+      document.body.appendChild(target);
+      record("unadopted constructed sheets do not affect document cascade", (() => {
+        try {
+          check(getComputedStyle(target).display === "block"
+              && getComputedStyle(target).color === "rgb(0, 0, 0)",
+            "unadopted sheet changed computed style");
+          target.remove();
+          return null;
+        } catch (error) { return error; }
+      })());
+
+      state.diagnostics.push(JSON.stringify({
+        constructor: [CSSStyleSheet.name, CSSStyleSheet.length],
+        media: media.mediaText,
+        sanitizer: allowed,
+        finalRule: rules[0]?.cssText,
+        errors,
+        sequence
+      }));
+    } catch (error) {
+      record("constructed stylesheet setup", error);
+    }
+
+    const failure = state.results.find(result => result.status !== "PASS");
+    state.harness = failure
+      ? { status: 1, message: failure.message, stack: failure.stack }
+      : { status: 0, message: null, stack: null };
+    state.complete = true;
+    const evidence = document.createElement("pre");
+    evidence.id = "cssom-constructed-stylesheet-standalone-evidence";
+    evidence.hidden = true;
+    evidence.textContent = JSON.stringify(state);
+    document.body.appendChild(evidence);
+  })();
+</script>

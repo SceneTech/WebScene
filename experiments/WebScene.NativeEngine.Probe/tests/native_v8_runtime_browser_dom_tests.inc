@@ -2120,6 +2120,129 @@ void test_native_mutable_stylesheet_cssom(webscene_engine* engine)
         "owner stylesheet replacement rejection diverged: "
             + evaluate(engine, "globalThis.__ownerSheetReplacement",
                 "native-owner-stylesheet-replacement-result.js"));
+
+    execute(engine, R"JS((async () => {
+      globalThis.__constructedSheetContract = { status: 'pending' };
+      try {
+        const sheet = new CSSStyleSheet({
+          disabled: true, media: 'screen, print', baseURL: './assets/'
+        });
+        const rules = sheet.cssRules;
+        const media = sheet.media;
+        if (CSSStyleSheet.name !== 'CSSStyleSheet' || CSSStyleSheet.length !== 0
+            || !(sheet instanceof CSSStyleSheet)
+            || Object.getPrototypeOf(sheet) !== CSSStyleSheet.prototype
+            || sheet.ownerNode !== null || sheet.ownerRule !== null
+            || sheet.href !== null || sheet.title !== null
+            || sheet.type !== 'text/css' || !sheet.disabled
+            || media !== sheet.media || media.mediaText !== 'screen, print'
+            || media.length !== 2 || media.item(0) !== 'screen'
+            || media.item(1) !== 'print' || rules !== sheet.cssRules
+            || rules !== sheet.rules || rules.length !== 0) {
+          throw new Error('constructed sheet constructor/options/reflection diverged');
+        }
+        let constructorCall = '';
+        try { CSSStyleSheet(); } catch (error) { constructorCall = error.name; }
+        if (constructorCall !== 'TypeError')
+          throw new Error('constructed sheet call guard diverged');
+        if (new CSSStyleSheet({ title: 'ignored' }).title !== null)
+          throw new Error('constructed sheet title option diverged');
+        let baseURLError = '';
+        try { new CSSStyleSheet({ baseURL: 'https://test:test/' }); }
+        catch (error) { baseURLError = error.name; }
+        if (baseURLError !== 'NotAllowedError')
+          throw new Error('constructed sheet baseURL validation diverged');
+
+        sheet.insertRule('.temp{}');
+        const sanitizerRule = rules[0];
+        sanitizerRule.style.cssText =
+          'display:block;position:absolute;background-image:url(evil);width:12px';
+        const allowed = [];
+        for (let index = 0; index < sanitizerRule.style.length; index++) {
+          const name = sanitizerRule.style[index];
+          if (['display', 'position', 'width'].includes(name))
+            allowed.push(`${name}: ${sanitizerRule.style.getPropertyValue(name)}`);
+        }
+        if (!(sanitizerRule instanceof CSSStyleRule)
+            || sanitizerRule.parentStyleSheet !== sheet
+            || allowed.join(';') !== 'display: block;position: absolute;width: 12px') {
+          throw new Error('Code OSS constructed-sheet sanitizer contract diverged');
+        }
+
+        const detached = rules[0];
+        const listIdentity = rules;
+        sheet.replaceSync("@import url('ignored.css'); .sync { color: green; }");
+        if (sheet.cssRules !== listIdentity || rules.length !== 1
+            || rules[0].selectorText !== '.sync'
+            || rules[0].style.color !== 'green'
+            || detached.parentStyleSheet !== null
+            || !detached.cssText.includes('background-image')) {
+          throw new Error('replaceSync identity/import/detach behavior diverged');
+        }
+
+        const sequence = [];
+        const replacement = sheet.replace('.async { color: blue; }').then(value => {
+          sequence.push('fulfilled');
+          return value;
+        });
+        sequence.push('sync');
+        const immediate = rules[0];
+        queueMicrotask(() => sequence.push('microtask'));
+        const resolved = await replacement;
+        if (resolved !== sheet || immediate.selectorText !== '.async'
+            || sequence.join('|') !== 'sync|fulfilled|microtask') {
+          throw new Error('replace Promise mutation/result/order diverged');
+        }
+        const errors = [];
+        for (const invoke of [
+          () => sheet.insertRule("@import url('x.css');"),
+          () => sheet.insertRule('.bad{}', 99),
+          () => sheet.deleteRule(99),
+          () => sheet.replaceSync(),
+          () => sheet.replaceSync(Symbol('css'))
+        ]) {
+          try { invoke(); errors.push('none'); }
+          catch (error) { errors.push(error.name); }
+        }
+        for (const invoke of [() => sheet.replace(), () => sheet.replace(Symbol('css'))]) {
+          try { await invoke(); errors.push('fulfilled'); }
+          catch (error) { errors.push(error.name); }
+        }
+        if (errors.join('|')
+            !== 'SyntaxError|IndexSizeError|IndexSizeError|TypeError|TypeError|TypeError|TypeError') {
+          throw new Error(`constructed sheet errors diverged: ${errors.join('|')}`);
+        }
+        const first = sheet.replace('.one{}');
+        const second = sheet.replace('.two{}');
+        await Promise.all([first, second]);
+        const target = document.createElement('div');
+        target.className = 'two';
+        document.body.appendChild(target);
+        if (rules.length !== 1 || rules[0].selectorText !== '.two'
+            || getComputedStyle(target).display !== 'block'
+            || getComputedStyle(target).color !== 'rgb(0, 0, 0)') {
+          throw new Error('concurrent replacement or unadopted cascade diverged');
+        }
+        target.remove();
+        globalThis.__constructedSheetContract = {
+          status: 'passed', ruleCount: rules.length, allowed, errors, sequence
+        };
+      } catch (error) {
+        globalThis.__constructedSheetContract = {
+          status: 'failed', error: String(error), stack: String(error?.stack || '')
+        };
+      }
+    })())JS", "native-constructed-stylesheet-contract.js");
+    const auto constructed_status = evaluate_until_equals(
+        engine,
+        "globalThis.__constructedSheetContract?.status ?? 'pending'",
+        "native-constructed-stylesheet-contract-status.js",
+        R"("passed")",
+        500);
+    require(constructed_status == R"("passed")",
+        "constructed stylesheet contract diverged: "
+            + evaluate(engine, "globalThis.__constructedSheetContract",
+                "native-constructed-stylesheet-contract-result.js"));
 }
 
 void test_batched_stylesheet_rule_mutation_performance()
@@ -2158,8 +2281,253 @@ void test_batched_stylesheet_rule_mutation_performance()
             + oversized_result);
     require(webscene_engine_request_low_memory(engine) != 0,
         "oversized stylesheet source low-memory request was rejected");
+    acknowledge_latest_scene(
+        "constructed stylesheet publication baseline had no settled scene");
     require(webscene_engine_set_runtime_work_metrics_enabled(engine, 1U) != 0,
         "stylesheet mutation runtime-work metrics could not be enabled");
+    webscene_engine_metrics constructed_control_engine_before{};
+    webscene_engine_get_metrics(engine, &constructed_control_engine_before);
+    webscene_runtime_work_metrics constructed_control_work_before{
+        sizeof(webscene_runtime_work_metrics)};
+    require(webscene_engine_get_runtime_work_metrics(
+                engine, &constructed_control_work_before) != 0,
+        "constructed stylesheet control work metrics were unavailable");
+    require(evaluate(engine, R"JS((() => {
+          const started = performance.now();
+          let checksum = 0;
+          while (performance.now() - started < 25) {
+            for (let index = 0; index < 4096; index++) checksum += index;
+          }
+          return { status: 'control', checksum: checksum > 0 };
+        })())JS",
+                "constructed-stylesheet-publication-control.js")
+            == R"({"status":"control","checksum":true})",
+        "constructed stylesheet publication control evaluation failed");
+    webscene_engine_metrics constructed_control_engine_after{};
+    webscene_engine_get_metrics(engine, &constructed_control_engine_after);
+    webscene_runtime_work_metrics constructed_control_work_after{
+        sizeof(webscene_runtime_work_metrics)};
+    require(webscene_engine_get_runtime_work_metrics(
+                engine, &constructed_control_work_after) != 0,
+        "constructed stylesheet final control work metrics were unavailable");
+    acknowledge_latest_scene(
+        "constructed stylesheet heartbeat control had no scene");
+    webscene_engine_metrics constructed_engine_before{};
+    webscene_engine_get_metrics(engine, &constructed_engine_before);
+    webscene_runtime_work_metrics constructed_work_before{
+        sizeof(webscene_runtime_work_metrics)};
+    require(webscene_engine_get_runtime_work_metrics(
+                engine, &constructed_work_before) != 0,
+        "constructed stylesheet baseline work metrics were unavailable");
+    webscene_engine_memory_metrics constructed_memory_before{
+        sizeof(webscene_engine_memory_metrics)};
+    require(webscene_engine_get_memory_metrics(
+                engine, &constructed_memory_before) != 0,
+        "constructed stylesheet baseline memory metrics were unavailable");
+    const auto constructed_rss_before = file_system_access_test_peak_rss_bytes();
+    const auto constructed_insertion_first = evaluate(engine, R"JS((() => {
+      const sheet = new CSSStyleSheet();
+      const rules = sheet.cssRules;
+      const durations = [];
+      for (let cycle = 0; cycle < 10; cycle++) {
+        const started = performance.now();
+        while (rules.length) sheet.deleteRule(0);
+        for (let index = 0; index < 64; index++) {
+          sheet.insertRule(
+            `.inserted-${cycle}-${index} { height: ${index + 1}px; }`, index);
+        }
+        if (rules.length !== 64
+            || rules[63].selectorText !== `.inserted-${cycle}-63`
+            || rules[63].style.height !== '64px') {
+          throw new Error('constructed insertion state diverged');
+        }
+        durations.push(performance.now() - started);
+      }
+      globalThis.__constructedInsertionPerformance = { sheet, rules, durations };
+      return { status: 'partial', cycles: durations.length };
+    })())JS", "constructed-stylesheet-insertion-performance-first.js");
+    require(constructed_insertion_first == R"({"status":"partial","cycles":10})",
+        "constructed stylesheet first insertion batch failed: "
+            + constructed_insertion_first);
+    const auto constructed_insertion_result = evaluate(engine, R"JS((() => {
+      const state = globalThis.__constructedInsertionPerformance;
+      const { sheet, rules, durations } = state;
+      for (let cycle = 10; cycle < 20; cycle++) {
+        const started = performance.now();
+        while (rules.length) sheet.deleteRule(0);
+        for (let index = 0; index < 64; index++) {
+          sheet.insertRule(
+            `.inserted-${cycle}-${index} { height: ${index + 1}px; }`, index);
+        }
+        if (rules.length !== 64
+            || rules[63].selectorText !== `.inserted-${cycle}-63`
+            || rules[63].style.height !== '64px') {
+          throw new Error('constructed insertion state diverged');
+        }
+        durations.push(performance.now() - started);
+      }
+      const ordered = durations.slice().sort((left, right) => left - right);
+      const p95 = ordered[18], maximum = ordered[19];
+      if (p95 > 16 || maximum > 500)
+        throw new Error(`constructed insertion latency exceeded ${p95}/${maximum}`);
+      delete globalThis.__constructedInsertionPerformance;
+      return { status: 'passed', cycles: durations.length, p95, max: maximum };
+    })())JS", "constructed-stylesheet-insertion-performance-second.js");
+    require(constructed_insertion_result.find(R"("status":"passed")")
+            != std::string::npos,
+        "constructed stylesheet insertion performance workload failed: "
+            + constructed_insertion_result);
+    webscene_engine_metrics constructed_insertion_engine_after{};
+    webscene_engine_get_metrics(engine, &constructed_insertion_engine_after);
+    webscene_runtime_work_metrics constructed_insertion_work_after{
+        sizeof(webscene_runtime_work_metrics)};
+    require(webscene_engine_get_runtime_work_metrics(
+                engine, &constructed_insertion_work_after) != 0,
+        "constructed stylesheet insertion work metrics were unavailable");
+    webscene_engine_memory_metrics constructed_insertion_memory_after{
+        sizeof(webscene_engine_memory_metrics)};
+    require(webscene_engine_get_memory_metrics(
+                engine, &constructed_insertion_memory_after) != 0,
+        "constructed stylesheet insertion memory metrics were unavailable");
+    require(
+        constructed_insertion_engine_after.layout_passes
+                == constructed_engine_before.layout_passes
+            && constructed_insertion_engine_after.published_scenes
+                == constructed_engine_before.published_scenes
+            && constructed_insertion_work_after.scene_builds
+                == constructed_work_before.scene_builds
+            && constructed_insertion_memory_after.native_css_rule_count
+                == constructed_memory_before.native_css_rule_count
+            && constructed_insertion_memory_after.pending_scene_count
+                == constructed_memory_before.pending_scene_count,
+        "unadopted constructed insertion caused invalidation or publication");
+    webscene_engine_get_metrics(engine, &constructed_engine_before);
+    require(webscene_engine_get_runtime_work_metrics(
+                engine, &constructed_work_before) != 0,
+        "constructed stylesheet replacement baseline work metrics were unavailable");
+    const auto constructed_performance_result = evaluate(engine, R"JS((() => {
+      globalThis.__constructedSheetPerformance = { status: 'pending' };
+      try {
+        let sheet = new CSSStyleSheet();
+        const rules = sheet.cssRules;
+        const durations = [];
+        let previous = null;
+        for (let cycle = 0; cycle < 20; cycle++) {
+          const source = Array.from({ length: 64 }, (_, index) =>
+            `.constructed-${cycle}-${index} { width: ${index + 1}px; }`).join('\n');
+          const started = performance.now();
+          sheet.replaceSync(source);
+          if (sheet.cssRules !== rules || rules.length !== 64
+              || rules[63].selectorText !== `.constructed-${cycle}-63`
+              || rules[63].style.width !== '64px'
+              || (previous && previous.parentStyleSheet !== null)) {
+            throw new Error('constructed replacement state or detachment diverged');
+          }
+          previous = rules[0];
+          durations.push(performance.now() - started);
+        }
+        const ordered = durations.slice().sort((left, right) => left - right);
+        const p95 = ordered[18], maximum = ordered[19];
+        if (p95 > 16 || maximum > 500)
+          throw new Error(`constructed replacement latency exceeded ${p95}/${maximum}`);
+        sheet = null;
+
+        for (let cycle = 0; cycle < 100; cycle++) {
+          const lifecycle = new CSSStyleSheet({ media: 'screen' });
+          lifecycle.replaceSync(
+            `.lifecycle-${cycle} { display: block; width: ${cycle + 1}px; }`
+            + ` @media (min-width: 1px) { .nested-${cycle} { height: 1px; } }`);
+          const lifecycleRules = lifecycle.cssRules;
+          const snapshot = lifecycleRules[0];
+          snapshot.style.setProperty('display', 'grid');
+          if (snapshot.style.display !== 'grid'
+              || snapshot.parentStyleSheet !== lifecycle
+              || lifecycleRules.length !== 2) {
+            throw new Error('constructed lifecycle declaration mutation diverged');
+          }
+          lifecycle.replaceSync(`.final-${cycle} { color: rgb(1, 2, 3); }`);
+          if (snapshot.parentStyleSheet !== null || lifecycleRules.length !== 1
+              || lifecycleRules[0].selectorText !== `.final-${cycle}`) {
+            throw new Error('constructed lifecycle replacement/detach diverged');
+          }
+        }
+        globalThis.__constructedSheetPerformance = {
+          status: 'passed', cycles: durations.length, lifecycleCycles: 100,
+          p95, max: maximum, ruleCount: rules.length
+        };
+      } catch (error) {
+        globalThis.__constructedSheetPerformance = {
+          status: 'failed', error: String(error), stack: String(error?.stack || '')
+        };
+      }
+      return globalThis.__constructedSheetPerformance;
+    })())JS", "constructed-stylesheet-performance.js");
+    require(constructed_performance_result.find(R"("status":"passed")")
+            != std::string::npos,
+        "constructed stylesheet performance workload failed: "
+            + constructed_performance_result);
+    webscene_engine_metrics constructed_engine_after{};
+    webscene_engine_get_metrics(engine, &constructed_engine_after);
+    webscene_runtime_work_metrics constructed_work_after{
+        sizeof(webscene_runtime_work_metrics)};
+    require(webscene_engine_get_runtime_work_metrics(
+                engine, &constructed_work_after) != 0,
+        "constructed stylesheet final work metrics were unavailable");
+    webscene_engine_memory_metrics constructed_memory_after{
+        sizeof(webscene_engine_memory_metrics)};
+    require(webscene_engine_get_memory_metrics(
+                engine, &constructed_memory_after) != 0,
+        "constructed stylesheet final memory metrics were unavailable");
+    std::cout << "Constructed stylesheet native work: layout="
+              << constructed_engine_before.layout_passes << "/"
+              << constructed_engine_after.layout_passes << " scenes="
+              << constructed_engine_before.published_scenes << "/"
+              << constructed_engine_after.published_scenes << " builds="
+              << constructed_work_before.scene_builds << "/"
+              << constructed_work_after.scene_builds << " rules="
+              << constructed_memory_before.native_css_rule_count << "/"
+              << constructed_memory_after.native_css_rule_count << " pending="
+              << constructed_memory_before.pending_scene_count << "/"
+              << constructed_memory_after.pending_scene_count << " insertion="
+              << constructed_insertion_result << " replacement="
+              << constructed_performance_result << '\n';
+    require(
+        constructed_engine_after.layout_passes
+                == constructed_engine_before.layout_passes
+            && constructed_engine_after.published_scenes
+                == constructed_engine_before.published_scenes
+            && constructed_work_after.scene_builds
+                == constructed_work_before.scene_builds
+            && constructed_memory_after.native_css_rule_count
+                == constructed_memory_before.native_css_rule_count
+            && constructed_memory_after.pending_scene_count
+                == constructed_memory_before.pending_scene_count,
+        "unadopted constructed stylesheet exceeded control-task invalidation or publication");
+    require(webscene_engine_request_low_memory(engine) != 0,
+        "constructed stylesheet lifecycle low-memory request was rejected");
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    webscene_engine_memory_metrics constructed_memory_collected{
+        sizeof(webscene_engine_memory_metrics)};
+    require(webscene_engine_get_memory_metrics(
+                engine, &constructed_memory_collected) != 0,
+        "constructed stylesheet collected memory metrics were unavailable");
+    const auto constructed_rss_after = file_system_access_test_peak_rss_bytes();
+    require(constructed_memory_collected.v8_used_heap_bytes
+            <= constructed_memory_before.v8_used_heap_bytes + 8U * 1024U * 1024U,
+        "100 constructed stylesheet cycles retained more than 8 MiB of V8 heap");
+    require(constructed_memory_collected.native_dom_node_count
+            <= constructed_memory_before.native_dom_node_count + 16U,
+        "100 constructed stylesheet cycles retained native declaration scratch nodes");
+    require(constructed_rss_before == 0U
+            || constructed_rss_after <= constructed_rss_before + 64U * 1024U * 1024U,
+        "100 constructed stylesheet cycles increased peak RSS by more than 64 MiB");
+    std::cout << "Constructed stylesheet gate: "
+              << evaluate(engine, "globalThis.__constructedSheetPerformance",
+                  "constructed-stylesheet-performance-metrics.js")
+              << " heapBefore=" << constructed_memory_before.v8_used_heap_bytes
+              << " heapAfter=" << constructed_memory_collected.v8_used_heap_bytes
+              << " rssBefore=" << constructed_rss_before
+              << " rssAfter=" << constructed_rss_after << '\n';
     execute_and_wait(engine, R"JS((() => {
       const style = document.createElement('style');
       const target = document.createElement('div');

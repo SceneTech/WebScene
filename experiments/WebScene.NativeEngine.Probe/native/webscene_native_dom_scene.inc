@@ -429,16 +429,53 @@ void native_document::append_scene(
         return lower(static_cast<unsigned char>(left))
             == lower(static_cast<unsigned char>(right));
     };
-    const auto resolve_inset_clip = [&]() -> std::optional<layout_rect> {
+    struct effect_clip_geometry final {
+        layout_rect bounds;
+        float radius{};
+    };
+    const auto resolve_effect_clip = [&]() -> std::optional<effect_clip_geometry> {
         const auto& effects = node.style.textual().effect_values;
         const auto known = effects.find("clip-path");
         if (known == effects.end()) return std::nullopt;
         const std::string_view value = known->second;
         constexpr std::string_view inset_prefix = "inset(";
-        if (value.size() < inset_prefix.size() + 1U || value.back() != ')') return std::nullopt;
-        for (size_t index = 0; index < inset_prefix.size(); ++index) {
-            if (!ascii_equal(value[index], inset_prefix[index])) return std::nullopt;
+        constexpr std::string_view circle_prefix = "circle(";
+        if (value.empty() || value.back() != ')') return std::nullopt;
+        const auto has_prefix = [&](std::string_view prefix) {
+            if (value.size() < prefix.size() + 1U) return false;
+            for (size_t index = 0; index < prefix.size(); ++index) {
+                if (!ascii_equal(value[index], prefix[index])) return false;
+            }
+            return true;
+        };
+        if (has_prefix(circle_prefix)) {
+            auto arguments = value.substr(
+                circle_prefix.size(), value.size() - circle_prefix.size() - 1U);
+            while (!arguments.empty()
+                && std::isspace(static_cast<unsigned char>(arguments.front()))) {
+                arguments.remove_prefix(1U);
+            }
+            while (!arguments.empty()
+                && std::isspace(static_cast<unsigned char>(arguments.back()))) {
+                arguments.remove_suffix(1U);
+            }
+            const auto parsed = css::parse_ascii_inset_length(arguments);
+            if (!parsed.has_value() || parsed->value < 0) return std::nullopt;
+            const auto radius = parsed->percent
+                ? std::hypot(node.layout.width, node.layout.height)
+                    * parsed->value / 141.421356F
+                : parsed->value;
+            const auto center_x = node.layout.x + node.layout.width * 0.5F;
+            const auto center_y = node.layout.y + node.layout.height * 0.5F;
+            return effect_clip_geometry{
+                layout_rect{
+                    center_x - radius,
+                    center_y - radius,
+                    radius * 2.0F,
+                    radius * 2.0F},
+                radius};
         }
+        if (!has_prefix(inset_prefix)) return std::nullopt;
         const std::string_view arguments(value.data() + 6U, value.size() - 7U);
         std::array<css::ascii_inset_length, 4> parsed{};
         size_t count = 0U;
@@ -470,23 +507,28 @@ void native_document::append_scene(
         const auto right_pixels = pixels(right, node.layout.width);
         const auto bottom_pixels = pixels(bottom, node.layout.height);
         const auto left_pixels = pixels(left, node.layout.width);
-        return layout_rect{
-            node.layout.x + left_pixels,
-            node.layout.y + top_pixels,
-            std::max(0.0F, node.layout.width - left_pixels - right_pixels),
-            std::max(0.0F, node.layout.height - top_pixels - bottom_pixels)};
+        return effect_clip_geometry{
+            layout_rect{
+                node.layout.x + left_pixels,
+                node.layout.y + top_pixels,
+                std::max(0.0F, node.layout.width - left_pixels - right_pixels),
+                std::max(0.0F, node.layout.height - top_pixels - bottom_pixels)}};
     };
-    const auto inset_clip = resolve_inset_clip();
-    if (inset_clip.has_value()) {
+    const auto effect_clip = resolve_effect_clip();
+    if (effect_clip.has_value()) {
         commands.push_back(webscene_scene_command{
             12U,
             0U,
-            inset_clip->x,
-            inset_clip->y,
-            inset_clip->width,
-            inset_clip->height,
+            effect_clip->bounds.x,
+            effect_clip->bounds.y,
+            effect_clip->bounds.width,
+            effect_clip->bounds.height,
             0U,
-            node.id});
+            node.id,
+            effect_clip->radius,
+            effect_clip->radius,
+            effect_clip->radius,
+            effect_clip->radius});
     }
     const auto paint_box_in_foreground = [&] {
         auto fixed_layer = false;
@@ -2143,7 +2185,7 @@ void native_document::append_scene(
                 scrollbar.thumb_rgba, std::max(0.0F, scrollbar.thumb_radius - border));
         }
     }
-    if (inset_clip.has_value()) {
+    if (effect_clip.has_value()) {
         commands.push_back(webscene_scene_command{
             13U, 0U, 0, 0, 0, 0, 0U, node.id});
     }

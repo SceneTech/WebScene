@@ -13,10 +13,11 @@ import re
 import stat
 import subprocess
 import sys
+import tempfile
 import unicodedata
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 DEFAULT_MAXIMUM_ENTRIES = 10_000
 DEFAULT_MAXIMUM_EVIDENCE_BYTES = 8 * 1024 * 1024
 MAXIMUM_TOOL_OUTPUT_BYTES = 1024 * 1024
@@ -93,6 +94,9 @@ def snapshot_tree(root: Path, maximum_entries: int) -> dict[str, dict]:
                 "device": metadata.st_dev,
                 "inode": metadata.st_ino,
                 "mode": metadata.st_mode,
+                "links": metadata.st_nlink,
+                "uid": metadata.st_uid,
+                "gid": metadata.st_gid,
                 "size": metadata.st_size,
                 "mtimeNs": metadata.st_mtime_ns,
             }
@@ -146,10 +150,36 @@ def stable_metadata(entry: dict) -> tuple:
         # Directory identity and timestamps are not stable across equivalent
         # Windows scans. The entry inventory detects additions and removals.
         return ("directory",)
-    fields = ("type", "device", "inode", "mode", "size", "mtimeNs")
+    fields = ["type", "device", "inode", "mode", "size", "mtimeNs"]
+    # Windows reports POSIX ownership/link fields that are not stable file
+    # identity. Ownership and hard-link invariants apply to macOS packages.
+    if os.name != "nt":
+        fields[4:4] = ["links", "uid", "gid"]
     return tuple(entry.get(field) for field in fields) + (
         entry.get("target"), entry.get("resolvedRelative"), entry.get("macho")
     )
+
+
+def file_metadata(path: Path) -> dict:
+    metadata = path.stat(follow_symlinks=False)
+    return {
+        "type": "file",
+        "device": metadata.st_dev,
+        "inode": metadata.st_ino,
+        "mode": metadata.st_mode,
+        "links": metadata.st_nlink,
+        "uid": metadata.st_uid,
+        "gid": metadata.st_gid,
+        "size": metadata.st_size,
+        "mtimeNs": metadata.st_mtime_ns,
+        "macho": is_macho(path),
+    }
+
+
+def stable_normalization_metadata(entry: dict) -> tuple:
+    if os.name == "nt":
+        return tuple(entry.get(field) for field in ("type", "size", "macho"))
+    return stable_metadata(entry)
 
 
 def run_tool(arguments: list[str]) -> str:
@@ -169,6 +199,174 @@ def run_tool(arguments: list[str]) -> str:
     if completed.returncode:
         raise AuditError(f"{arguments[0]} failed: {output.strip()[-4096:]}")
     return output
+
+
+def normalize_single_architecture(bundle: Path, architecture: str,
+                                  maximum_entries: int = DEFAULT_MAXIMUM_ENTRIES,
+                                  runner=run_tool) -> dict:
+    """Atomically thin every universal Mach-O in a safe final-bundle inventory."""
+    if not re.fullmatch(r"[A-Za-z0-9_]+", architecture):
+        raise AuditError(f"invalid requested architecture: {architecture}")
+    bundle = bundle.resolve()
+    before = snapshot_tree(bundle, maximum_entries)
+    candidates = []
+    for relative in sorted(path for path, entry in before.items()
+                           if entry["type"] == "file" and entry.get("macho")):
+        entry = before[relative]
+        if os.name != "nt" and entry["links"] != 1:
+            raise AuditError(f"Mach-O has multiple hard links: {relative}")
+        path = bundle / relative
+        architectures = parse_architectures(runner(["lipo", "-archs", str(path)]))
+        if architecture not in architectures:
+            raise AuditError(
+                f"requested architecture {architecture} is absent from {relative}: "
+                f"{architectures}"
+            )
+        candidates.append({
+            "path": relative,
+            "architectures": architectures,
+            "bytes": entry["size"],
+            "sha256": sha256(path),
+        })
+
+    results = []
+    peak_temporary_bytes = 0
+    for candidate in candidates:
+        relative = candidate["path"]
+        path = bundle / relative
+        original = before[relative]
+        if candidate["architectures"] == [architecture]:
+            results.append({
+                "path": relative,
+                "action": "unchanged",
+                "originalArchitectures": candidate["architectures"],
+                "resultArchitectures": [architecture],
+                "originalBytes": candidate["bytes"],
+                "resultBytes": candidate["bytes"],
+                "originalSha256": candidate["sha256"],
+                "resultSha256": candidate["sha256"],
+            })
+            continue
+        current = path.stat(follow_symlinks=False)
+        current_metadata = file_metadata(path)
+        if (stable_normalization_metadata(current_metadata)
+                != stable_normalization_metadata(original)
+                or sha256(path) != candidate["sha256"]):
+            raise AuditError(f"Mach-O mutated before normalization: {relative}")
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{path.name}.webscene-thin-", dir=path.parent
+        )
+        os.close(descriptor)
+        temporary = Path(temporary_name)
+        try:
+            runner(["lipo", str(path), "-thin", architecture,
+                    "-output", str(temporary)])
+            temporary_metadata = temporary.stat(follow_symlinks=False)
+            if (not stat.S_ISREG(temporary_metadata.st_mode)
+                    or (os.name != "nt" and temporary_metadata.st_nlink != 1)
+                    or not is_macho(temporary)):
+                raise AuditError(f"lipo produced an unsafe non-Mach-O file: {relative}")
+            result_architectures = parse_architectures(
+                runner(["lipo", "-archs", str(temporary)])
+            )
+            if result_architectures != [architecture]:
+                raise AuditError(
+                    f"lipo result has wrong architectures for {relative}: "
+                    f"{result_architectures}"
+                )
+            if (os.name != "nt"
+                    and (temporary_metadata.st_uid != original["uid"]
+                         or temporary_metadata.st_gid != original["gid"])):
+                try:
+                    os.chown(temporary, original["uid"], original["gid"])
+                except OSError as error:
+                    raise AuditError(
+                        f"cannot preserve ownership while normalizing {relative}"
+                    ) from error
+            os.chmod(temporary, stat.S_IMODE(original["mode"]))
+            os.utime(temporary, ns=(current.st_atime_ns, original["mtimeNs"]))
+            result_metadata = temporary.stat(follow_symlinks=False)
+            if (os.name != "nt" and (
+                    stat.S_IMODE(result_metadata.st_mode)
+                    != stat.S_IMODE(original["mode"])
+                    or result_metadata.st_uid != original["uid"]
+                    or result_metadata.st_gid != original["gid"]
+                    or result_metadata.st_mtime_ns != original["mtimeNs"])):
+                raise AuditError(f"cannot preserve metadata while normalizing {relative}")
+            result_bytes = result_metadata.st_size
+            if result_bytes > candidate["bytes"]:
+                raise AuditError(f"lipo result grew while normalizing {relative}")
+            peak_temporary_bytes = max(peak_temporary_bytes, result_bytes)
+            result_hash = sha256(temporary)
+            if os.name != "nt":
+                with temporary.open("rb") as stream:
+                    os.fsync(stream.fileno())
+            if (stable_normalization_metadata(current_metadata)
+                    != stable_normalization_metadata(file_metadata(path))
+                    or sha256(path) != candidate["sha256"]):
+                raise AuditError(f"Mach-O mutated during normalization: {relative}")
+            os.replace(temporary, path)
+            if os.name != "nt":
+                directory_descriptor = os.open(path.parent, os.O_RDONLY)
+                try:
+                    os.fsync(directory_descriptor)
+                finally:
+                    os.close(directory_descriptor)
+            results.append({
+                "path": relative,
+                "action": "thinned",
+                "originalArchitectures": candidate["architectures"],
+                "resultArchitectures": [architecture],
+                "originalBytes": candidate["bytes"],
+                "resultBytes": result_bytes,
+                "originalSha256": candidate["sha256"],
+                "resultSha256": result_hash,
+            })
+        finally:
+            temporary.unlink(missing_ok=True)
+
+    after = snapshot_tree(bundle, maximum_entries)
+    if set(before) != set(after):
+        changed = sorted(set(before) ^ set(after))
+        raise AuditError(f"bundle inventory changed during normalization: {changed[0]}")
+    result_by_path = {item["path"]: item for item in results}
+    for relative in sorted(before):
+        if relative not in result_by_path:
+            if stable_metadata(before[relative]) != stable_metadata(after[relative]):
+                raise AuditError(f"bundle mutated during normalization: {relative}")
+            continue
+        result = result_by_path[relative]
+        if ((os.name != "nt" and after[relative]["links"] != 1)
+                or not after[relative].get("macho")):
+            raise AuditError(f"normalized Mach-O became unsafe: {relative}")
+        if result["action"] == "unchanged":
+            if (stable_metadata(before[relative]) != stable_metadata(after[relative])
+                    or sha256(bundle / relative) != result["resultSha256"]):
+                raise AuditError(f"unchanged Mach-O was modified: {relative}")
+        elif (after[relative]["size"] != result["resultBytes"]
+              or (os.name != "nt" and (
+                  after[relative]["mode"] != before[relative]["mode"]
+                  or after[relative]["uid"] != before[relative]["uid"]
+                  or after[relative]["gid"] != before[relative]["gid"]
+                  or after[relative]["mtimeNs"] != before[relative]["mtimeNs"]))
+              or sha256(bundle / relative) != result["resultSha256"]):
+            raise AuditError(f"normalized Mach-O mutated after replacement: {relative}")
+
+    original_bytes = sum(item["originalBytes"] for item in results)
+    result_bytes = sum(item["resultBytes"] for item in results)
+    return {
+        "enabled": True,
+        "requestedArchitecture": architecture,
+        "files": results,
+        "summary": {
+            "machoFiles": len(results),
+            "thinnedFiles": sum(item["action"] == "thinned" for item in results),
+            "originalBytes": original_bytes,
+            "resultBytes": result_bytes,
+            "savedBytes": original_bytes - result_bytes,
+            "peakTemporaryBytes": peak_temporary_bytes,
+        },
+    }
 
 
 def parse_architectures(output: str) -> list[str]:
@@ -382,7 +580,7 @@ def audit_bundle(bundle: Path, executable: str, architectures: list[str],
                  maximum_deployment_target: str,
                  system_prefixes: tuple[str, ...] = DEFAULT_SYSTEM_PREFIXES,
                  maximum_entries: int = DEFAULT_MAXIMUM_ENTRIES,
-                 runner=run_tool) -> dict:
+                 runner=run_tool, normalization: dict | None = None) -> dict:
     bundle = bundle.resolve()
     executable = normalized_relative(executable, "executable path")
     expected_architectures = sorted(set(architectures))
@@ -515,6 +713,19 @@ def audit_bundle(bundle: Path, executable: str, architectures: list[str],
         "executable": executable,
         "binaries": binaries,
         "symlinks": symlinks,
+        "normalization": normalization or {
+            "enabled": False,
+            "requestedArchitecture": None,
+            "files": [],
+            "summary": {
+                "machoFiles": len(binaries),
+                "thinnedFiles": 0,
+                "originalBytes": sum(item["bytes"] for item in binaries),
+                "resultBytes": sum(item["bytes"] for item in binaries),
+                "savedBytes": 0,
+                "peakTemporaryBytes": 0,
+            },
+        },
     }
 
 

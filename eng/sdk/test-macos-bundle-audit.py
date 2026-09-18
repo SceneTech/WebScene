@@ -133,6 +133,44 @@ class Fixture:
         )
 
 
+class NormalizationRunner:
+    def __init__(self, bundle, architectures=None, behavior="success"):
+        self.bundle = bundle.resolve()
+        self.architectures = architectures or {}
+        self.outputs = {}
+        self.behavior = behavior
+        self.calls = []
+
+    def runner(self, arguments):
+        self.calls.append(tuple(arguments))
+        if arguments[:2] == ["lipo", "-archs"]:
+            path = Path(arguments[2]).resolve()
+            values = self.outputs.get(str(path))
+            if values is None:
+                relative = path.relative_to(self.bundle).as_posix()
+                values = self.architectures.get(relative, ["arm64"])
+            return " ".join(values) + "\n"
+        if len(arguments) == 6 and arguments[0] == "lipo" and arguments[2] == "-thin":
+            source = Path(arguments[1])
+            architecture = arguments[3]
+            output = Path(arguments[5])
+            if self.behavior == "interrupt":
+                output.write_bytes(MAGIC + b"partial")
+                raise audit.AuditError("simulated interrupted lipo")
+            if self.behavior == "mutate":
+                source.write_bytes(source.read_bytes() + b"changed")
+            if self.behavior == "malformed":
+                output.write_text("not a Mach-O")
+            elif self.behavior == "grow":
+                output.write_bytes(source.read_bytes() + b"unexpected growth")
+            else:
+                data = source.read_bytes()
+                output.write_bytes(data[:4] + data[4:max(8, len(data) // 2)])
+            self.outputs[str(output.resolve())] = [architecture]
+            return ""
+        raise AssertionError(arguments)
+
+
 class BundleAuditTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
@@ -342,7 +380,8 @@ class BundleAuditTests(unittest.TestCase):
 
     def test_packager_runs_audit_before_outer_signature(self):
         source = (ROOT / "src/WebScene.Sdk/tools/package_macos.py").read_text()
-        audit_position = source.index("evidence = audit_bundle(")
+        normalization_position = source.index("normalization = normalize_single_architecture(")
+        audit_position = source.index("pre_signature_evidence = audit_bundle(")
         evidence_position = source.index("evidence_path.write_bytes(")
         signature_position = source.index(
             "run('codesign', '--force', '--sign', '-', str(bundle))"
@@ -350,12 +389,148 @@ class BundleAuditTests(unittest.TestCase):
         verification_position = source.index(
             "run('codesign', '--verify', '--deep', '--strict', str(bundle))"
         )
+        self.assertLess(normalization_position, audit_position)
         self.assertLess(audit_position, evidence_position)
         self.assertLess(evidence_position, signature_position)
         self.assertLess(signature_position, verification_position)
         for option in ("--architecture", "--maximum-deployment-target",
                        "--maximum-audit-entries", "--maximum-audit-evidence-bytes"):
             self.assertIn(option, source)
+
+    def test_single_architecture_normalization_is_atomic_and_idempotent(self):
+        extension_relative = "Contents/PlugIns/sample.node"
+        self.fixture.extension.write_bytes(b"\xca\xfe\xba\xbf" + bytes(range(128)))
+        if os.name != "nt":
+            self.fixture.extension.chmod(0o555)
+        original_mtime = self.fixture.extension.stat().st_mtime_ns
+        runner = NormalizationRunner(
+            self.fixture.bundle,
+            {extension_relative: ["arm64", "x86_64"]},
+        )
+        evidence = audit.normalize_single_architecture(
+            self.fixture.bundle, "arm64", runner=runner.runner
+        )
+        extension = next(item for item in evidence["files"]
+                         if item["path"] == extension_relative)
+        self.assertEqual(extension["action"], "thinned")
+        self.assertEqual(extension["originalArchitectures"], ["arm64", "x86_64"])
+        self.assertEqual(extension["resultArchitectures"], ["arm64"])
+        self.assertLess(extension["resultBytes"], extension["originalBytes"])
+        self.assertEqual(evidence["summary"]["peakTemporaryBytes"],
+                         extension["resultBytes"])
+        if os.name != "nt":
+            self.assertEqual(self.fixture.extension.stat().st_mode & 0o777, 0o555)
+            self.assertEqual(self.fixture.extension.stat().st_mtime_ns, original_mtime)
+        self.assertFalse(any(".webscene-thin-" in item.name
+                             for item in self.fixture.extension.parent.iterdir()))
+        stable = (self.fixture.extension.read_bytes(),
+                  self.fixture.extension.stat().st_mtime_ns)
+        repeated = audit.normalize_single_architecture(
+            self.fixture.bundle, "arm64",
+            runner=NormalizationRunner(self.fixture.bundle).runner
+        )
+        self.assertEqual((self.fixture.extension.read_bytes(),
+                          self.fixture.extension.stat().st_mtime_ns), stable)
+        self.assertEqual(repeated["summary"]["thinnedFiles"], 0)
+
+    def test_missing_slice_preflight_leaves_every_binary_unchanged(self):
+        paths = {
+            relative: (self.fixture.bundle / relative).read_bytes()
+            for relative in self.fixture.commands
+        }
+        runner = NormalizationRunner(self.fixture.bundle, {
+            "Contents/Frameworks/libfixture.dylib": ["arm64", "x86_64"],
+            "Contents/PlugIns/sample.node": ["x86_64"],
+        })
+        with self.assertRaisesRegex(audit.AuditError, "absent.*sample[.]node"):
+            audit.normalize_single_architecture(
+                self.fixture.bundle, "arm64", runner=runner.runner
+            )
+        for relative, data in paths.items():
+            self.assertEqual((self.fixture.bundle / relative).read_bytes(), data)
+
+    def test_interrupted_and_malformed_lipo_leave_no_partial_file(self):
+        relative = "Contents/PlugIns/sample.node"
+        for behavior, pattern in (("interrupt", "interrupted"),
+                                  ("malformed", "unsafe non-Mach-O"),
+                                  ("grow", "result grew")):
+            with self.subTest(behavior=behavior):
+                fixture = Fixture(Path(self.temporary.name) / behavior)
+                original = fixture.extension.read_bytes()
+                runner = NormalizationRunner(
+                    fixture.bundle, {relative: ["arm64", "x86_64"]}, behavior
+                )
+                with self.assertRaisesRegex(audit.AuditError, pattern):
+                    audit.normalize_single_architecture(
+                        fixture.bundle, "arm64", runner=runner.runner
+                    )
+                self.assertEqual(fixture.extension.read_bytes(), original)
+                self.assertFalse(any(".webscene-thin-" in item.name
+                                     for item in fixture.extension.parent.iterdir()))
+
+    def test_source_mutation_during_lipo_is_rejected_without_replacement(self):
+        relative = "Contents/PlugIns/sample.node"
+        original = self.fixture.extension.read_bytes()
+        runner = NormalizationRunner(
+            self.fixture.bundle, {relative: ["arm64", "x86_64"]}, "mutate"
+        )
+        with self.assertRaisesRegex(audit.AuditError, "mutated during normalization"):
+            audit.normalize_single_architecture(
+                self.fixture.bundle, "arm64", runner=runner.runner
+            )
+        self.assertEqual(self.fixture.extension.read_bytes(), original + b"changed")
+        self.assertFalse(any(".webscene-thin-" in item.name
+                             for item in self.fixture.extension.parent.iterdir()))
+
+    @unittest.skipIf(os.name == "nt", "hard-link fixture uses Unix bundle semantics")
+    def test_hardlinked_macho_is_rejected(self):
+        alias = self.fixture.bundle / "Contents/PlugIns/alias.node"
+        os.link(self.fixture.extension, alias)
+        with self.assertRaisesRegex(audit.AuditError, "multiple hard links"):
+            audit.normalize_single_architecture(
+                self.fixture.bundle, "arm64",
+                runner=NormalizationRunner(self.fixture.bundle).runner
+            )
+
+    def test_normalization_bounds_ten_thousand_entries(self):
+        fixture = Fixture(Path(self.temporary.name) / "normalize-scale")
+        fixture.extension.write_bytes(b"\xca\xfe\xba\xbf" + bytes(range(128)))
+        payload = fixture.bundle / "payload"
+        payload.mkdir()
+        for index in range(9_992):
+            (payload / f"{index:04x}").write_bytes(b"")
+        fd_root = (Path("/proc/self/fd") if Path("/proc/self/fd").is_dir()
+                   else Path("/dev/fd"))
+        before_fds = len(list(fd_root.iterdir())) if fd_root.is_dir() else None
+        before_rss = (resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+                      if resource is not None else None)
+        runner = NormalizationRunner(fixture.bundle, {
+            "Contents/PlugIns/sample.node": ["arm64", "x86_64"],
+        })
+        started = time.monotonic()
+        evidence = audit.normalize_single_architecture(
+            fixture.bundle, "arm64", maximum_entries=10_000,
+            runner=runner.runner,
+        )
+        elapsed = time.monotonic() - started
+        after_rss = (resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+                     if resource is not None else None)
+        after_fds = len(list(fd_root.iterdir())) if fd_root.is_dir() else None
+        self.assertEqual(evidence["summary"]["machoFiles"], 3)
+        self.assertEqual(evidence["summary"]["thinnedFiles"], 1)
+        self.assertGreater(evidence["summary"]["peakTemporaryBytes"], 0)
+        self.assertLessEqual(evidence["summary"]["peakTemporaryBytes"], 132)
+        self.assertFalse(any(".webscene-thin-" in item.name
+                             for item in fixture.extension.parent.iterdir()))
+        self.assertLess(elapsed, 15.0)
+        if before_fds is not None:
+            self.assertLessEqual(after_fds, before_fds + 2)
+        if before_rss is not None:
+            rss_multiplier = 1 if sys.platform == "darwin" else 1024
+            self.assertLessEqual(max(0, after_rss - before_rss) * rss_multiplier,
+                                 128 * 1024 * 1024)
+        self.assertLess(len(audit.encode_evidence(
+            {"normalization": evidence}, 64 * 1024)), 64 * 1024)
 
     def test_ten_thousand_entry_limits_time_fds_rss_and_evidence(self):
         fixture = Fixture(Path(self.temporary.name) / "scale")

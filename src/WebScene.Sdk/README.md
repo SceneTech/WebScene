@@ -30,9 +30,14 @@ allowlisted-system dependency closure. The scan rejects escaping, dangling, and
 case-mismatched paths, unsafe symlinks, concurrent bundle mutation, and bundles over
 the configured entry or evidence limits.
 
-`package_macos.py` runs the audit after it has copied, stripped, and individually
-signed native files, writes `Contents/Resources/webscene-macho-audit.json`, and then
-signs and verifies the outer bundle. The evidence format is installed at
+For a single-architecture package, `package_macos.py` first thins every universal
+Mach-O file with a validated same-directory atomic replacement. It preserves file
+mode, ownership, and modification time and leaves already-thin inputs byte-for-byte
+unchanged. The packager then audits the complete normalized graph, signs every nested
+Mach-O file, audits the signed graph into
+`Contents/Resources/webscene-macho-audit.json`, and signs and verifies the outer
+bundle. The evidence records each normalization action, architecture set, size, and
+digest. The evidence format is installed at
 `share/webscene/schemas/webscene-macho-audit.schema.json`. Consumers can also run the
 audit directly:
 

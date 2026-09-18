@@ -4,9 +4,9 @@
   "title": "WebScene macOS bundle Mach-O audit evidence",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "configuration", "summary", "executable", "binaries", "symlinks"],
+  "required": ["schemaVersion", "configuration", "summary", "executable", "binaries", "symlinks", "normalization"],
   "properties": {
-    "schemaVersion": { "const": 1 },
+    "schemaVersion": { "const": 2 },
     "configuration": {
       "type": "object",
       "additionalProperties": false,
@@ -91,6 +91,63 @@
           "resolvedPath": { "$ref": "#/$defs/path" }
         }
       }
+    },
+    "normalization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "requestedArchitecture", "files", "summary"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "requestedArchitecture": { "type": ["string", "null"], "pattern": "^[A-Za-z0-9_]+$" },
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "action", "originalArchitectures", "resultArchitectures", "originalBytes", "resultBytes", "originalSha256", "resultSha256"],
+            "properties": {
+              "path": { "$ref": "#/$defs/path" },
+              "action": { "enum": ["unchanged", "thinned"] },
+              "originalArchitectures": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "pattern": "^[A-Za-z0-9_]+$" } },
+              "resultArchitectures": { "type": "array", "minItems": 1, "maxItems": 1, "uniqueItems": true, "items": { "type": "string", "pattern": "^[A-Za-z0-9_]+$" } },
+              "originalBytes": { "type": "integer", "minimum": 4 },
+              "resultBytes": { "type": "integer", "minimum": 4 },
+              "originalSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+              "resultSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+            }
+          }
+        },
+        "summary": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["machoFiles", "thinnedFiles", "originalBytes", "resultBytes", "savedBytes", "peakTemporaryBytes"],
+          "properties": {
+            "machoFiles": { "type": "integer", "minimum": 0 },
+            "thinnedFiles": { "type": "integer", "minimum": 0 },
+            "originalBytes": { "type": "integer", "minimum": 0 },
+            "resultBytes": { "type": "integer", "minimum": 0 },
+            "savedBytes": { "type": "integer", "minimum": 0 },
+            "peakTemporaryBytes": { "type": "integer", "minimum": 0 }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "enabled": { "const": true } }, "required": ["enabled"] },
+          "then": {
+            "properties": {
+              "requestedArchitecture": { "type": "string" },
+              "files": { "minItems": 1 }
+            }
+          },
+          "else": {
+            "properties": {
+              "requestedArchitecture": { "type": "null" },
+              "files": { "maxItems": 0 }
+            }
+          }
+        }
+      ]
     }
   },
   "$defs": {

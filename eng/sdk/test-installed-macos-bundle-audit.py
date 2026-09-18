@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import plistlib
 import resource
 import subprocess
 import sys
@@ -50,6 +51,13 @@ def main():
         plugins = bundle / "Contents/PlugIns"
         for directory in (macos, frameworks, plugins):
             directory.mkdir(parents=True)
+        with (bundle / "Contents/Info.plist").open("wb") as stream:
+            plistlib.dump({
+                "CFBundleExecutable": "Fixture",
+                "CFBundleIdentifier": "dev.webscene.audit-fixture",
+                "CFBundlePackageType": "APPL",
+                "LSMinimumSystemVersion": "13.0",
+            }, stream)
         source = work / "fixture.c"
         source.write_text("int fixture_value(void) { return 0; }\n")
         host_source = work / "host.c"
@@ -57,20 +65,88 @@ def main():
             "extern int fixture_value(void); int main(void) { return fixture_value(); }\n"
         )
         extension_source = work / "extension.c"
-        extension_source.write_text(
-            "extern int fixture_value(void); "
-            "int extension_entry(void) { return fixture_value(); }\n"
-        )
+        extension_source.write_text("int extension_entry(void) { return 42; }\n")
         library = frameworks / "libfixture.dylib"
         host = macos / "Fixture"
         extension = plugins / "sample.node"
+        alternate_architecture = "x86_64" if architecture == "arm64" else "arm64"
         common = ["-arch", architecture, "-mmacosx-version-min=13.0"]
         run(["xcrun", "clang", *common, "-dynamiclib", str(source),
              "-install_name", "@rpath/libfixture.dylib", "-o", str(library)])
         run(["xcrun", "clang", *common, str(host_source), str(library),
              "-Wl,-rpath,@executable_path/../Frameworks", "-o", str(host)])
-        run(["xcrun", "clang", *common, "-bundle", str(extension_source), str(library),
-             "-Wl,-rpath,@loader_path/../Frameworks", "-o", str(extension)])
+        extension_slices = []
+        for slice_architecture in (architecture, alternate_architecture):
+            output = work / f"sample-{slice_architecture}.node"
+            run([
+                "xcrun", "clang", "-arch", slice_architecture,
+                "-mmacosx-version-min=13.0", "-bundle", str(extension_source),
+                "-o", str(output),
+            ])
+            extension_slices.append(output)
+        run(["xcrun", "lipo", "-create", *map(str, extension_slices),
+             "-output", str(extension)])
+        original_extension_bytes = extension.stat().st_size
+        initial_architectures = run(
+            ["xcrun", "lipo", "-archs", str(extension)], capture_output=True
+        ).stdout.split()
+        if set(initial_architectures) != {"arm64", "x86_64"}:
+            raise RuntimeError(f"fixture is not universal: {initial_architectures}")
+
+        run([
+            sys.executable, str(package_tool), "--bundle", str(bundle),
+            "--sdk", str(prefix), "--executable", "Fixture",
+            "--architecture", architecture,
+            "--maximum-deployment-target", "15.0",
+            "--maximum-audit-entries", "10000",
+            "--maximum-audit-evidence-bytes", str(64 * 1024),
+        ], stdout=subprocess.DEVNULL)
+        final_architectures = run(
+            ["xcrun", "lipo", "-archs", str(extension)], capture_output=True
+        ).stdout.split()
+        if final_architectures != [architecture]:
+            raise RuntimeError(f"installed packager did not thin .node: {final_architectures}")
+        package_evidence_path = (
+            bundle / "Contents/Resources/webscene-macho-audit.json"
+        )
+        package_payload = package_evidence_path.read_bytes()
+        package_evidence = json.loads(package_payload)
+        normalization = package_evidence["normalization"]
+        extension_normalization = next(
+            item for item in normalization["files"] if item["path"].endswith(".node")
+        )
+        if extension_normalization["action"] != "thinned":
+            raise RuntimeError("installed packager did not record .node thinning")
+        if set(extension_normalization["originalArchitectures"]) != {"arm64", "x86_64"}:
+            raise RuntimeError("installed packager recorded wrong original .node slices")
+        if extension_normalization["resultArchitectures"] != [architecture]:
+            raise RuntimeError("installed packager recorded wrong resulting .node slice")
+        if normalization["summary"]["peakTemporaryBytes"] > original_extension_bytes:
+            raise RuntimeError("normalization exceeded its temporary disk bound")
+        if normalization["summary"]["savedBytes"] <= 0:
+            raise RuntimeError("normalization did not reduce the universal bundle")
+        if any(".webscene-thin-" in item.name for item in plugins.iterdir()):
+            raise RuntimeError("normalization left a temporary file")
+        if os.fsencode(temporary) in package_payload:
+            raise RuntimeError("package evidence contains an absolute temporary path")
+        run(["xcrun", "codesign", "--verify", "--deep", "--strict", str(bundle)])
+
+        loader_source = work / "loader.c"
+        loader_source.write_text(
+            "#include <dlfcn.h>\n"
+            "typedef int (*entry_t)(void);\n"
+            "int main(int argc, char **argv) {\n"
+            "  if (argc != 2) return 2;\n"
+            "  void *handle = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);\n"
+            "  if (!handle) return 3;\n"
+            "  entry_t entry = (entry_t)dlsym(handle, \"extension_entry\");\n"
+            "  if (!entry || entry() != 42) return 4;\n"
+            "  return dlclose(handle) == 0 ? 0 : 5;\n"
+            "}\n"
+        )
+        loader = work / "load-extension"
+        run(["xcrun", "clang", *common, str(loader_source), "-o", str(loader)])
+        run([str(loader), str(extension)])
 
         evidence_path = work / "evidence.json"
         command = [
@@ -117,14 +193,15 @@ def main():
             raise RuntimeError("installed audit evidence exceeded 64 KiB")
 
         run(["xcrun", "install_name_tool", "-change", "@rpath/libfixture.dylib",
-             "@rpath/missing.dylib", str(extension)])
+             "@rpath/missing.dylib", str(host)])
         rejected = subprocess.run(command, text=True, stdout=subprocess.PIPE,
                                   stderr=subprocess.STDOUT, check=False)
         if rejected.returncode == 0 or "unresolved bundled dependency" not in rejected.stdout:
-            raise RuntimeError("installed tool accepted a dangling native-extension dependency")
+            raise RuntimeError("installed tool accepted a dangling bundled dependency")
         print(
-            f"installed macOS bundle audit: 3 Mach-O files, 10 stable passes in "
-            f"{elapsed:.3f}s, {len(expected)} evidence bytes"
+            f"installed macOS bundle audit: universal .node thinned, signed, loaded; "
+            f"3 Mach-O files, 10 stable passes in {elapsed:.3f}s, "
+            f"{len(expected)} evidence bytes"
         )
     return 0
 

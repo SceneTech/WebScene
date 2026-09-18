@@ -1,0 +1,107 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Nested :has() selector-list matching, specificity, and invalidation</title>
+<link rel="help" href="https://drafts.csswg.org/selectors-4/#relational">
+<style>
+  .result { display:block; width:11px; height:13px; }
+  .host:has(.monaco-icon-label:is(.item-color, .badge)) > .nested-result {
+    width:41px;
+  }
+  .host:has([data-token="a,b"]) > .quoted-result {
+    height:43px;
+  }
+  .host:has(.missing, .branch:is(.active, .fallback)) > .list-result {
+    width:47px;
+  }
+  .specificity-host:has(:is(.missing, #specificity-marker)) {
+    --has-specificity: pass;
+  }
+  div.specificity-host.ready {
+    --has-specificity: lower-specificity-won;
+  }
+</style>
+<body>
+<main id="root">
+  <section id="nested-host" class="host">
+    <span class="monaco-icon-label badge"></span>
+    <i class="nested-result result"></i>
+  </section>
+  <section id="quoted-host" class="host">
+    <span id="quoted-marker" data-token="a,b"></span>
+    <i class="quoted-result result"></i>
+  </section>
+  <section id="list-host" class="host">
+    <span id="list-marker" class="branch active"></span>
+    <i class="list-result result"></i>
+  </section>
+  <div id="specificity-host" class="specificity-host ready">
+    <span id="specificity-marker"></span>
+  </div>
+</main>
+<script>
+  const state = window.__webSceneWptState = {
+    complete: false, harness: null, results: [], errors: [], diagnostics: []
+  };
+  function assert(condition, message) {
+    if (!condition) throw new Error(message);
+  }
+  function test(name, body) {
+    try {
+      body();
+      state.results.push({ name, status: "PASS", message: null, stack: null });
+    } catch (error) {
+      state.results.push({
+        name, status: "FAIL", message: String(error && error.message || error),
+        stack: error && error.stack ? String(error.stack) : null
+      });
+    }
+  }
+  const width = node => getComputedStyle(node).width;
+  const height = node => getComputedStyle(node).height;
+  const nestedHost = document.getElementById("nested-host");
+  const quotedHost = document.getElementById("quoted-host");
+  const listHost = document.getElementById("list-host");
+  const nestedResult = nestedHost.querySelector(".nested-result");
+  const quotedResult = quotedHost.querySelector(".quoted-result");
+  const listResult = listHost.querySelector(".list-result");
+
+  test("nested selector-list commas stay inside a :has() arm", () => {
+    assert(nestedHost.matches(":has(.monaco-icon-label:is(.item-color, .badge))"),
+      "nested :is() list did not match inside :has()");
+    assert(width(nestedResult) === "41px", `nested width was ${width(nestedResult)}`);
+  });
+  test("quoted commas stay inside a :has() attribute selector", () => {
+    assert(quotedHost.matches(':has([data-token="a,b"])'),
+      "quoted attribute comma split the :has() list");
+    assert(height(quotedResult) === "43px", `quoted height was ${height(quotedResult)}`);
+  });
+  test(":has() keeps top-level arms around nested selector lists", () => {
+    assert(listHost.matches(":has(.missing, .branch:is(.active, .fallback))"),
+      "nested second :has() arm did not match");
+    assert(width(listResult) === "47px", `list width was ${width(listResult)}`);
+  });
+  test("nested :has() retains maximum argument specificity", () => {
+    const value = getComputedStyle(document.getElementById("specificity-host"))
+      .getPropertyValue("--has-specificity").trim();
+    assert(value === "pass", `specificity winner was ${value}`);
+  });
+  test("class mutation invalidates a nested :has() dependency", () => {
+    const marker = document.getElementById("list-marker");
+    marker.classList.remove("active");
+    assert(width(listResult) === "11px", "removed nested class retained :has() style");
+    marker.classList.add("fallback");
+    assert(width(listResult) === "47px", "fallback nested class did not restore :has() style");
+  });
+  test("attribute mutation invalidates a quoted-comma :has() dependency", () => {
+    const marker = document.getElementById("quoted-marker");
+    marker.setAttribute("data-token", "off");
+    assert(height(quotedResult) === "13px", "changed attribute retained :has() style");
+    marker.setAttribute("data-token", "a,b");
+    assert(height(quotedResult) === "43px", "restored attribute did not restore :has() style");
+  });
+  const failure = state.results.find(result => result.status !== "PASS");
+  state.harness = failure
+    ? { status: 1, message: failure.message, stack: failure.stack }
+    : { status: 0, message: null, stack: null };
+  state.complete = true;
+</script>

@@ -417,6 +417,10 @@ int main()
             test_compiled_css_route_scaling(true, true);
             return 0;
         }
+        if (selected == "nested-functional-selectors") {
+            test_nested_functional_selector_scaling();
+            return 0;
+        }
         if (selected == "live-form-state") {
             test_live_form_state_selectors_and_scaling();
             return 0;

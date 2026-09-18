@@ -1974,6 +1974,13 @@
       "reason": "Candidate contract for depth-aware :is(), :where(), and :not() argument matching. It protects commas in nested functions and quoted attribute values, standards specificity, and live class/attribute invalidation."
     },
     {
+      "path": "contracts/css-nested-has-selector-lists.html",
+      "type": "contract",
+      "capabilities": ["nested-has-selector-lists", "has-selector-specificity", "has-class-invalidation", "has-attribute-invalidation"],
+      "evidence": ["selectors-level-4-relational-pseudo-class", "unchanged-code-oss-nested-has-selector", "direct-chromium-native-contract"],
+      "reason": "Candidate contract for depth-aware :has() relative selector lists used by unchanged Code OSS. It protects nested functional and quoted commas, top-level alternatives, standards specificity, and targeted class/attribute invalidation."
+    },
+    {
       "path": "css/selectors/is-specificity.html",
       "type": "testharness",
       "capabilities": ["is-selector-specificity", "complex-functional-selector-list"],

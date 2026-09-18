@@ -308,28 +308,35 @@ void test_nested_functional_selector_scaling()
             .functional-host:not(:is(.blocked, [data-off]), .excluded) > .functional-leaf {
               height:43px;
             }
+            .functional-host:has(.functional-marker:is(.active, [data-token="a,b"])) > .functional-leaf {
+              --nested-has-state: active;
+            }
           ` + Array.from({length: unrelated}, (_, index) =>
-            `.noise-${index}:is(:not(.unused-a-${index}, [data-unused-${index}]), .unused-b-${index}) { color:rgb(7,8,9); }`
+            `.noise-${index}:has(.unused-a-${index}:is(.unused-b-${index}, [data-unused="${index},x"])) { color:rgb(7,8,9); }`
           ).join('');
           const root = document.createElement('main');
           root.id = 'nested-functional-root';
           root.innerHTML = `<section class="functional-host">${
-            '<i class="functional-leaf"></i>'.repeat(affected)}</section>` +
+            '<i class="functional-leaf"></i>'.repeat(affected)}<b class="functional-marker active"></b></section>` +
             Array.from({length: unrelated}, (_, index) =>
               `<aside class="noise-${index}"></aside>`).join('');
           document.head.appendChild(style);
           document.body.appendChild(root);
           const host = root.firstElementChild;
-          const leaves = Array.from(host.children);
+          const marker = host.lastElementChild;
+          const leaves = Array.from(host.querySelectorAll('.functional-leaf'));
           const snapshot = enabled => leaves.every(node => {
             const computed = getComputedStyle(node);
             return computed.width === (enabled ? '11px' : '41px') &&
-              computed.height === (enabled ? '13px' : '43px');
+              computed.height === (enabled ? '13px' : '43px') &&
+              computed.getPropertyValue('--nested-has-state').trim() ===
+                (enabled ? '' : 'active');
           });
           globalThis.mutateNestedFunctional = () => {
             for (let index = 0; index < TRANSITIONS; ++index) {
               const enabled = (index & 1) === 0;
               host.toggleAttribute('data-off', enabled);
+              marker.classList.toggle('active', !enabled);
               if (!snapshot(enabled)) return false;
             }
             return true;
@@ -338,6 +345,7 @@ void test_nested_functional_selector_scaling()
           return [leaves.length, snapshot(false), first.width, first.height,
             host.matches(':is(:not(.blocked, [data-off]), .fallback)'),
             host.matches(':not(:is(.blocked, [data-off]), .excluded)'),
+            host.matches(':has(.functional-marker:is(.active, [data-token="a,b"]))'),
             leaves.filter(node => getComputedStyle(node).width === '41px').length,
             leaves.filter(node => getComputedStyle(node).height === '43px').length];
         })(COUNTS))JS"};
@@ -349,7 +357,7 @@ void test_nested_functional_selector_scaling()
                 + std::to_string(unrelated_count) + "]");
         const auto setup = evaluate(
             engine, setup_source, "nested-functional-scale-setup.js");
-        require(setup == "[128,true,\"41px\",\"43px\",true,true,128,128]",
+        require(setup == "[128,true,\"41px\",\"43px\",true,true,true,128,128]",
             "nested functional selector scale setup diverged: " + setup);
 #if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
         std::this_thread::sleep_for(std::chrono::milliseconds(260));
@@ -402,18 +410,25 @@ void test_nested_functional_selector_scaling()
             delta[index] = runtime_counter_diagnostic(engine, names[index])
                 - before[index];
         }
-        require(delta[0] > 0U && delta[1] > 0U && delta[2] == 0U,
-            "nested functional selector mutation used no plan or document fallback");
-        for (const auto value : delta) {
-            require(value <= static_cast<uint64_t>(
-                    transition_count * (affected_count * 20 + 64)),
-                "nested functional selector work exceeded its linear bound");
-        }
         std::cout << "nested-functional-counters unrelated=" << unrelated_count;
         for (size_t index = 0; index < names.size(); ++index) {
             std::cout << ' ' << names[index] << '=' << delta[index];
         }
         std::cout << '\n';
+        require(delta[0] > 0U && delta[1] > 0U && delta[2] == 0U,
+            "nested functional selector mutation used no plan or document fallback");
+        const std::array<uint64_t, 7> upper_bounds{
+            transition_count * 8U,
+            transition_count * affected_count * 5U,
+            0U,
+            transition_count * affected_count * (affected_count * 3U + 64U),
+            transition_count * affected_count * 10U,
+            transition_count * affected_count * 3U,
+            transition_count * affected_count * 10U};
+        for (size_t index = 0; index < delta.size(); ++index) {
+            require(delta[index] <= upper_bounds[index],
+                "nested functional selector work exceeded its affected-tree bound");
+        }
         observations.push_back(delta);
 #endif
 

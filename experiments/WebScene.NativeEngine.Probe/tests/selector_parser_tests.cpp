@@ -98,6 +98,23 @@ void require_wtf8_domstring_round_trip()
         "non-WTF-8 invalid input remains rejected");
 }
 
+void require_nested_has_selector_list_tokenization()
+{
+    std::vector<std::string> arms;
+    const auto matched = webscene_native::css::css_selector_list_any(
+        R"(.monaco-icon-label:is(.item-color, .badge), [data-token="a,b"], .fallback)",
+        [&](std::string_view arm) {
+            arms.emplace_back(arm);
+            return arm == ".fallback";
+        });
+    require(matched, "depth-aware selector-list traversal did not reach the final arm");
+    require(arms == std::vector<std::string>{
+            ".monaco-icon-label:is(.item-color, .badge)",
+            "[data-token=\"a,b\"]",
+            ".fallback"},
+        "nested function or quoted attribute comma split an outer :has() arm");
+}
+
 void test_compiled_css_invalidation_plans()
 {
     using namespace webscene_native::css;
@@ -187,6 +204,7 @@ int main()
     require_specificity();
     require_validation();
     require_wtf8_domstring_round_trip();
+    require_nested_has_selector_list_tokenization();
     test_compiled_css_invalidation_plans();
     std::cout << "selector parser tests passed\n";
     return 0;

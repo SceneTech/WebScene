@@ -6,7 +6,8 @@ The macOS ARM64 SDK uses one qualified C++ closure:
   SHA-256 values in `WebSceneMacOSProfile.cmake`;
 - the pinned Homebrew libc++ and Clang resource header trees recorded in that
   profile;
-- C++20, architecture `arm64`, and deployment target `26.0`;
+- C++20, architecture `arm64`, and a minimum deployment target of `26.0`
+  (consumers may select a newer target when a bundled dependency requires it);
 - macOS's `/usr/lib/libc++.1.dylib` and `/usr/lib/libSystem.B.dylib` at runtime.
 
 The SDK does not stage or load Homebrew libc++, libc++abi, or libunwind dylibs.

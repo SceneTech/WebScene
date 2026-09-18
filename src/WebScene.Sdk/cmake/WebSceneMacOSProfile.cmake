@@ -42,9 +42,9 @@ function(webscene_require_macos_profile)
       "The macOS SDK requires architecture ${WebScene_MACOS_ARCHITECTURE}; "
       "found ${CMAKE_OSX_ARCHITECTURES}")
   endif()
-  if(NOT CMAKE_OSX_DEPLOYMENT_TARGET VERSION_EQUAL WebScene_MACOS_DEPLOYMENT_TARGET)
+  if(CMAKE_OSX_DEPLOYMENT_TARGET VERSION_LESS WebScene_MACOS_DEPLOYMENT_TARGET)
     message(FATAL_ERROR
-      "The macOS SDK requires deployment target ${WebScene_MACOS_DEPLOYMENT_TARGET}; "
+      "The macOS SDK requires minimum deployment target ${WebScene_MACOS_DEPLOYMENT_TARGET}; "
       "found ${CMAKE_OSX_DEPLOYMENT_TARGET}")
   endif()
 endfunction()

@@ -20,6 +20,8 @@ const int _canvasEvenOdd = 1 << 16;
 const int _domPolygonClipResource = 1 << 31;
 const int _domPolygonClipIndexMask = _domPolygonClipResource - 1;
 const int _domBrightnessFilter = 1 << 31;
+const int _domGrayscaleFilter = 1 << 30;
+const int _domColorFilterMask = _domBrightnessFilter | _domGrayscaleFilter;
 
 final class SceneApplyResult {
   const SceneApplyResult({
@@ -959,18 +961,26 @@ final class WebSceneSceneProjector extends ChangeNotifier {
   }
 
   static ui.Paint _domGroupPaint(WebSceneSceneCommand command) {
-    if (command.flags & _domBrightnessFilter == 0) {
+    if (command.flags & _domColorFilterMask == 0) {
       return ui.Paint()
         ..color = ui.Color.fromARGB(command.rgba & 0xff, 255, 255, 255);
     }
     final amount = command.strokeWidth.clamp(0.0, double.infinity).toDouble();
+    final matrix = command.flags & _domBrightnessFilter != 0
+        ? <double>[
+            amount, 0, 0, 0, 0,
+            0, amount, 0, 0, 0,
+            0, 0, amount, 0, 0,
+            0, 0, 0, 1, 0,
+          ]
+        : <double>[
+            1 - 0.7874 * amount, 0.7152 * amount, 0.0722 * amount, 0, 0,
+            0.2126 * amount, 1 - 0.2848 * amount, 0.0722 * amount, 0, 0,
+            0.2126 * amount, 0.7152 * amount, 1 - 0.9278 * amount, 0, 0,
+            0, 0, 0, 1, 0,
+          ];
     return ui.Paint()
-      ..colorFilter = ui.ColorFilter.matrix([
-        amount, 0, 0, 0, 0,
-        0, amount, 0, 0, 0,
-        0, 0, amount, 0, 0,
-        0, 0, 0, 1, 0,
-      ]);
+      ..colorFilter = ui.ColorFilter.matrix(matrix);
   }
 
   static String _domString(WebSceneSceneView scene, int index) =>

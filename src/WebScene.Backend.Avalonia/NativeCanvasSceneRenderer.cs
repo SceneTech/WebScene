@@ -45,6 +45,8 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
     private const uint DomPolygonClipResource = 1u << 31;
     private const uint DomPolygonClipIndexMask = ~DomPolygonClipResource;
     private const uint DomBrightnessFilter = 1u << 31;
+    private const uint DomGrayscaleFilter = 1u << 30;
+    private const uint DomColorFilterMask = DomBrightnessFilter | DomGrayscaleFilter;
 
     private readonly Dictionary<uint, RetainedLayer> s_layers = new();
     private readonly List<RetainedLayer> s_orderedLayers = [];
@@ -840,21 +842,29 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
             255,
             255,
             255,
-            (command.Flags & DomBrightnessFilter) != 0
+            (command.Flags & DomColorFilterMask) != 0
                 ? (byte)255 : (byte)(command.Rgba & 0xff));
-        if ((command.Flags & DomBrightnessFilter) == 0)
+        if ((command.Flags & DomColorFilterMask) == 0)
         {
             paint.ColorFilter = null;
             canvas.SaveLayer(paint);
             return;
         }
         var amount = Math.Max(0, command.StrokeWidth);
-        using var filter = SKColorFilter.CreateColorMatrix([
-            amount, 0, 0, 0, 0,
-            0, amount, 0, 0, 0,
-            0, 0, amount, 0, 0,
-            0, 0, 0, 1, 0
-        ]);
+        var matrix = (command.Flags & DomBrightnessFilter) != 0
+            ? new float[] {
+                amount, 0, 0, 0, 0,
+                0, amount, 0, 0, 0,
+                0, 0, amount, 0, 0,
+                0, 0, 0, 1, 0
+            }
+            : new float[] {
+                1 - 0.7874f * amount, 0.7152f * amount, 0.0722f * amount, 0, 0,
+                0.2126f * amount, 1 - 0.2848f * amount, 0.0722f * amount, 0, 0,
+                0.2126f * amount, 0.7152f * amount, 1 - 0.9278f * amount, 0, 0,
+                0, 0, 0, 1, 0
+            };
+        using var filter = SKColorFilter.CreateColorMatrix(matrix);
         paint.ColorFilter = filter;
         canvas.SaveLayer(paint);
         paint.ColorFilter = null;

@@ -44,6 +44,7 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
     private const uint OffscreenCanvasLayer = 1u << 31;
     private const uint DomPolygonClipResource = 1u << 31;
     private const uint DomPolygonClipIndexMask = ~DomPolygonClipResource;
+    private const uint DomBrightnessFilter = 1u << 31;
 
     private readonly Dictionary<uint, RetainedLayer> s_layers = new();
     private readonly List<RetainedLayer> s_orderedLayers = [];
@@ -646,13 +647,8 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
                 switch (command.Kind)
                 {
                     case 30:
-                        opacity.Color = new SKColor(
-                            255,
-                            255,
-                            255,
-                            (byte)(command.Rgba & 0xff));
-                        backdrop.SaveLayer(opacity);
-                        overlay.SaveLayer(opacity);
+                        SaveDomGroup(backdrop, command, opacity);
+                        SaveDomGroup(overlay, command, opacity);
                         break;
                     case 31:
                         backdrop.Restore();
@@ -833,6 +829,35 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
         canvas.Translate(command.X, command.Y);
         canvas.Scale(command.Width, command.Height);
         canvas.Translate(-command.X, -command.Y);
+    }
+
+    private static void SaveDomGroup(
+        SKCanvas canvas,
+        in SceneCommand command,
+        SKPaint paint)
+    {
+        paint.Color = new SKColor(
+            255,
+            255,
+            255,
+            (command.Flags & DomBrightnessFilter) != 0
+                ? (byte)255 : (byte)(command.Rgba & 0xff));
+        if ((command.Flags & DomBrightnessFilter) == 0)
+        {
+            paint.ColorFilter = null;
+            canvas.SaveLayer(paint);
+            return;
+        }
+        var amount = Math.Max(0, command.StrokeWidth);
+        using var filter = SKColorFilter.CreateColorMatrix([
+            amount, 0, 0, 0, 0,
+            0, amount, 0, 0, 0,
+            0, 0, amount, 0, 0,
+            0, 0, 0, 1, 0
+        ]);
+        paint.ColorFilter = filter;
+        canvas.SaveLayer(paint);
+        paint.ColorFilter = null;
     }
 
     private static void ApplyRotation(SKCanvas canvas, in SceneCommand command)
@@ -3786,8 +3811,7 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
                     case 15: ApplyScale(canvas, command); break;
                     case 19: ApplyRotation(canvas, command); break;
                     case 30:
-                        opacity.Color = new SKColor(255, 255, 255, (byte)(command.Rgba & 255));
-                        canvas.SaveLayer(opacity); break;
+                        SaveDomGroup(canvas, command, opacity); break;
                     case 13: case 16: case 20: case 31:
                         // Never allow an invalid stream to pop the host's state.
                         if (canvas.SaveCount <= save + 1) throw new InvalidOperationException("Unbalanced GPU scene state.");

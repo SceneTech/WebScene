@@ -1594,6 +1594,54 @@ WEBSCENE_API uint8_t webscene_engine_complete_file_grant_same_entry_request_v2(
     webscene_engine* engine,
     const webscene_file_grant_same_entry_completion_v2* completion);
 
+/* Resolve one live opaque grant relative to a live directory grant without
+ * exposing native paths. SUCCESS returns zero or more ordered UTF-8 display
+ * components; the same directory is SUCCESS with zero components.
+ * NOT_DESCENDANT is a successful browser result and also carries no
+ * components. Request storage is immutable until release and completion
+ * strings are copied before return. Limits match the native ancestry
+ * authority: 16 pending requests, 64 components, 1 MiB total UTF-8 names,
+ * and 1 KiB per opaque grant token. */
+enum {
+    WEBSCENE_FILE_GRANT_ANCESTRY_SUCCESS_V2 = 0,
+    WEBSCENE_FILE_GRANT_ANCESTRY_NOT_DESCENDANT_V2 = 1,
+    WEBSCENE_FILE_GRANT_ANCESTRY_CANCELLED_V2 = 2,
+    WEBSCENE_FILE_GRANT_ANCESTRY_DENIED_V2 = 3,
+    WEBSCENE_FILE_GRANT_ANCESTRY_NOT_FOUND_V2 = 4,
+    WEBSCENE_FILE_GRANT_ANCESTRY_CHANGED_V2 = 5,
+    WEBSCENE_FILE_GRANT_ANCESTRY_IO_ERROR_V2 = 6,
+    WEBSCENE_FILE_GRANT_ANCESTRY_LIMIT_V2 = 7,
+    WEBSCENE_FILE_GRANT_ANCESTRY_MAXIMUM_COMPONENTS_V2 = 64,
+    WEBSCENE_FILE_GRANT_ANCESTRY_MAXIMUM_NAME_BYTES_V2 = 1024 * 1024,
+    WEBSCENE_FILE_GRANT_ANCESTRY_MAXIMUM_PENDING_OPERATIONS_V2 = 16
+};
+typedef struct webscene_file_grant_ancestry_request_v2 {
+    uint32_t struct_size, version;
+    uint64_t request_id;
+    webscene_file_panel_token_v2 base_directory_grant_id;
+    webscene_file_panel_token_v2 possible_descendant_grant_id;
+    uint64_t reserved;
+} webscene_file_grant_ancestry_request_v2;
+typedef struct webscene_file_grant_ancestry_component_v2 {
+    uint32_t struct_size, version;
+    webscene_file_panel_string_v2 display_name;
+} webscene_file_grant_ancestry_component_v2;
+typedef struct webscene_file_grant_ancestry_completion_v2 {
+    uint32_t struct_size, version;
+    uint64_t request_id;
+    uint32_t status, reserved;
+    const webscene_file_grant_ancestry_component_v2* components;
+    size_t component_count;
+    webscene_file_panel_string_v2 error_code;
+} webscene_file_grant_ancestry_completion_v2;
+WEBSCENE_API const webscene_file_grant_ancestry_request_v2*
+webscene_engine_take_file_grant_ancestry_request_v2(webscene_engine* engine);
+WEBSCENE_API void webscene_file_grant_ancestry_request_release_v2(
+    const webscene_file_grant_ancestry_request_v2* request);
+WEBSCENE_API uint8_t webscene_engine_complete_file_grant_ancestry_request_v2(
+    webscene_engine* engine,
+    const webscene_file_grant_ancestry_completion_v2* completion);
+
 /* Bounded reads over an opaque native file grant. Each request asks for one
  * offset range and owns immutable token storage until release. Successful
  * completions include current metadata so the browser runtime can reject a

@@ -236,6 +236,12 @@
     };
     std::unordered_map<uint64_t, file_grant_same_entry_promise_target>
         file_grant_same_entry_promise_targets;
+    struct file_grant_ancestry_promise_target {
+        v8::Global<v8::Context> context;
+        v8::Global<v8::Promise::Resolver> resolver;
+    };
+    std::unordered_map<uint64_t, file_grant_ancestry_promise_target>
+        file_grant_ancestry_promise_targets;
     struct file_grant_read_promise_target {
         v8::Global<v8::Context> context;
         v8::Global<v8::Promise::Resolver> resolver;
@@ -258,6 +264,8 @@
     v8_dom_runtime::file_panel_request_sink_v2 file_panel_request_sink;
     v8_dom_runtime::file_grant_same_entry_request_sink_v2
         file_grant_same_entry_request_sink;
+    v8_dom_runtime::file_grant_ancestry_request_sink_v2
+        file_grant_ancestry_request_sink;
     v8_dom_runtime::file_grant_read_request_sink_v2 file_grant_read_request_sink;
     v8_dom_runtime::file_grant_write_request_sink_v2 file_grant_write_request_sink;
     v8_dom_runtime::file_grant_directory_request_sink_v2

@@ -283,6 +283,8 @@ public:
         std::function<bool(const webscene_file_panel_request_v2&)>;
     using file_grant_same_entry_request_sink_v2 =
         std::function<bool(const webscene_file_grant_same_entry_request_v2&)>;
+    using file_grant_ancestry_request_sink_v2 =
+        std::function<bool(const webscene_file_grant_ancestry_request_v2&)>;
     using file_grant_read_request_sink_v2 =
         std::function<bool(const webscene_file_grant_read_request_v2&)>;
     using file_grant_write_request_sink_v2 =
@@ -310,6 +312,8 @@ public:
         file_panel_request_sink_v2 file_panel_request_sink = {},
         file_grant_same_entry_request_sink_v2
             file_grant_same_entry_request_sink = {},
+        file_grant_ancestry_request_sink_v2
+            file_grant_ancestry_request_sink = {},
         file_grant_read_request_sink_v2 file_grant_read_request_sink = {},
         file_grant_write_request_sink_v2 file_grant_write_request_sink = {},
         file_grant_directory_request_sink_v2
@@ -362,6 +366,8 @@ public:
     void complete_file_panel_request(file_panel_completion_data_v2& completion);
     void complete_file_grant_same_entry_request(
         file_grant_same_entry_completion_data_v2& completion);
+    void complete_file_grant_ancestry_request(
+        file_grant_ancestry_completion_data_v2& completion);
     void complete_file_grant_read_request(
         file_grant_read_completion_data_v2& completion);
     void complete_file_grant_write_request(

@@ -15,6 +15,8 @@
         v8_dom_runtime::file_panel_request_sink_v2 file_panel_request_sink_value,
         v8_dom_runtime::file_grant_same_entry_request_sink_v2
             file_grant_same_entry_request_sink_value,
+        v8_dom_runtime::file_grant_ancestry_request_sink_v2
+            file_grant_ancestry_request_sink_value,
         v8_dom_runtime::file_grant_read_request_sink_v2
             file_grant_read_request_sink_value,
         v8_dom_runtime::file_grant_write_request_sink_v2
@@ -33,6 +35,8 @@
         , file_panel_request_sink(std::move(file_panel_request_sink_value))
         , file_grant_same_entry_request_sink(
             std::move(file_grant_same_entry_request_sink_value))
+        , file_grant_ancestry_request_sink(
+            std::move(file_grant_ancestry_request_sink_value))
         , file_grant_read_request_sink(
             std::move(file_grant_read_request_sink_value))
         , file_grant_write_request_sink(
@@ -229,6 +233,7 @@
         host_promise_targets.clear();
         file_panel_promise_targets.clear();
         file_grant_same_entry_promise_targets.clear();
+        file_grant_ancestry_promise_targets.clear();
         file_grant_read_promise_targets.clear();
         file_grant_write_promise_targets.clear();
         file_grant_directory_promise_targets.clear();

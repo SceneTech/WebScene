@@ -112,6 +112,8 @@
             "The document navigated before the file picker completed");
         cancel_file_grant_same_entry_promises(
             "The document navigated before the entry comparison completed");
+        cancel_file_grant_ancestry_promises(
+            "The document navigated before directory resolution completed");
         cancel_file_grant_read_promises(
             "The document navigated before the file read completed");
         cancel_file_grant_write_promises(

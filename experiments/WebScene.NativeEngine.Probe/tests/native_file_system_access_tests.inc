@@ -40,6 +40,40 @@ bool complete_file_grant_same_entry(
         engine, &completion) != 0;
 }
 
+const webscene_file_grant_ancestry_request_v2*
+take_file_grant_ancestry_request(webscene_engine* engine)
+{
+    const webscene_file_grant_ancestry_request_v2* request = nullptr;
+    for (int attempt = 0; attempt < 250 && request == nullptr; ++attempt) {
+        request = webscene_engine_take_file_grant_ancestry_request_v2(engine);
+        if (request == nullptr)
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    require(request != nullptr,
+        "native file grant ancestry request was not published");
+    return request;
+}
+
+bool complete_file_grant_ancestry(
+    webscene_engine* engine,
+    uint64_t request_id,
+    uint32_t status,
+    const std::vector<std::string>& names = {},
+    std::string_view error_code = {})
+{
+    std::vector<webscene_file_grant_ancestry_component_v2> components;
+    components.reserve(names.size());
+    for (const auto& name : names) components.push_back({
+        sizeof(webscene_file_grant_ancestry_component_v2), 2U,
+        {name.data(), name.size()}});
+    const webscene_file_grant_ancestry_completion_v2 completion{
+        sizeof(completion), 2U, request_id, status, 0U,
+        components.empty() ? nullptr : components.data(), components.size(),
+        {error_code.empty() ? nullptr : error_code.data(), error_code.size()}};
+    return webscene_engine_complete_file_grant_ancestry_request_v2(
+        engine, &completion) != 0;
+}
+
 const webscene_file_grant_read_request_v2*
 take_file_grant_read_request(webscene_engine* engine)
 {
@@ -765,16 +799,111 @@ void test_native_file_system_access_picker_and_handle_contract()
         "existing file lookup changed");
 
     execute(engine.get(), R"JS(
+      globalThis.__resolveSame='pending';
+      __directoryHandle.resolve(__directoryHandle).then(
+        value=>{__resolveSame=JSON.stringify(value)},
+        error=>{__resolveSame=error.name});
+    )JS", "file-directory-resolve-same.js");
+    auto* ancestry_request = take_file_grant_ancestry_request(engine.get());
+    require(ancestry_request->base_directory_grant_id.byte_count
+                == directory_grant.size()
+            && ancestry_request->possible_descendant_grant_id.byte_count
+                == directory_grant.size()
+            && std::memcmp(ancestry_request->base_directory_grant_id.data,
+                directory_grant.data(), directory_grant.size()) == 0,
+        "same-directory resolve lost its opaque grants");
+    auto ancestry_request_id = ancestry_request->request_id;
+    webscene_file_grant_ancestry_request_release_v2(ancestry_request);
+    require(complete_file_grant_ancestry(engine.get(), ancestry_request_id,
+            WEBSCENE_FILE_GRANT_ANCESTRY_SUCCESS_V2),
+        "same-directory ancestry completion was rejected");
+    require(evaluate(engine.get(), "__resolveSame",
+                "file-directory-resolve-same-result.js") == "\"[]\"",
+        "same-directory resolve did not return an empty sequence");
+
+    execute(engine.get(), R"JS(
+      globalThis.__resolveNested='pending';
+      __directoryHandle.resolve(__openHandles[0]).then(
+        value=>{__resolveNested=value.join('/')},
+        error=>{__resolveNested=error.name});
+    )JS", "file-directory-resolve-nested.js");
+    ancestry_request = take_file_grant_ancestry_request(engine.get());
+    require(ancestry_request->base_directory_grant_id.byte_count
+                == directory_grant.size()
+            && ancestry_request->possible_descendant_grant_id.byte_count
+                == first_grant.size()
+            && std::memcmp(
+                ancestry_request->possible_descendant_grant_id.data,
+                first_grant.data(), first_grant.size()) == 0,
+        "descendant resolve lost its independently selected opaque grant");
+    ancestry_request_id = ancestry_request->request_id;
+    webscene_file_grant_ancestry_request_release_v2(ancestry_request);
+    require(complete_file_grant_ancestry(engine.get(), ancestry_request_id,
+            WEBSCENE_FILE_GRANT_ANCESTRY_SUCCESS_V2,
+            {"nested\xF0\x9F\x98\x8A", "alpha.txt"}),
+        "nested ancestry completion was rejected");
+    require(evaluate(engine.get(), "__resolveNested",
+                "file-directory-resolve-nested-result.js")
+            == "\"nested😊/alpha.txt\"",
+        "resolve lost ordered Unicode components");
+
+    execute(engine.get(), R"JS(
+      globalThis.__resolveUnrelated='pending';
+      __directoryHandle.resolve(__openHandles[0]).then(
+        value=>{__resolveUnrelated=value===null?'null':'unexpected'},
+        error=>{__resolveUnrelated=error.name});
+    )JS", "file-directory-resolve-unrelated.js");
+    ancestry_request = take_file_grant_ancestry_request(engine.get());
+    ancestry_request_id = ancestry_request->request_id;
+    webscene_file_grant_ancestry_request_release_v2(ancestry_request);
+    require(complete_file_grant_ancestry(engine.get(), ancestry_request_id,
+            WEBSCENE_FILE_GRANT_ANCESTRY_NOT_DESCENDANT_V2),
+        "not-descendant ancestry completion was rejected");
+    require(evaluate(engine.get(), "__resolveUnrelated",
+                "file-directory-resolve-unrelated-result.js") == "\"null\"",
+        "unrelated resolve did not return null");
+
+    struct ancestry_status_case { uint32_t status; const char* expected_name; };
+    constexpr ancestry_status_case ancestry_status_cases[] = {
+        {WEBSCENE_FILE_GRANT_ANCESTRY_CANCELLED_V2, "AbortError"},
+        {WEBSCENE_FILE_GRANT_ANCESTRY_DENIED_V2, "NotAllowedError"},
+        {WEBSCENE_FILE_GRANT_ANCESTRY_NOT_FOUND_V2, "NotFoundError"},
+        {WEBSCENE_FILE_GRANT_ANCESTRY_CHANGED_V2, "InvalidStateError"},
+        {WEBSCENE_FILE_GRANT_ANCESTRY_IO_ERROR_V2, "NotReadableError"},
+        {WEBSCENE_FILE_GRANT_ANCESTRY_LIMIT_V2, "QuotaExceededError"}};
+    for (const auto& status_case : ancestry_status_cases) {
+        execute(engine.get(), R"JS(
+          globalThis.__resolveFailure='pending';
+          __directoryHandle.resolve(__openHandles[0]).then(
+            ()=>{__resolveFailure='unexpected'},
+            error=>{__resolveFailure=error.name});
+        )JS", "file-directory-resolve-status.js");
+        ancestry_request = take_file_grant_ancestry_request(engine.get());
+        ancestry_request_id = ancestry_request->request_id;
+        webscene_file_grant_ancestry_request_release_v2(ancestry_request);
+        require(complete_file_grant_ancestry(engine.get(), ancestry_request_id,
+                status_case.status, {}, "native-error"),
+            "native ancestry error completion was rejected");
+        require(evaluate(engine.get(), "__resolveFailure",
+                    "file-directory-resolve-status-result.js")
+                == std::string("\"") + status_case.expected_name + "\"",
+            "native ancestry status mapped to the wrong DOMException");
+        require(!complete_file_grant_ancestry(engine.get(), ancestry_request_id,
+                status_case.status, {}, "native-error"),
+            "native ancestry request completed more than once");
+    }
+
+    execute(engine.get(), R"JS(
       globalThis.__directoryErrors='pending';
       Promise.all([
         __directoryHandle.getFileHandle('../bad').catch(e=>e.name),
         __directoryHandle.getDirectoryHandle('new', {create:true}).catch(e=>e.name),
-        __directoryHandle.resolve(__directoryHandle).catch(e=>e.name)
+        __directoryHandle.resolve({}).catch(e=>e.name)
       ]).then(values=>{__directoryErrors=values.join(':')});
     )JS", "file-directory-errors.js");
     require(evaluate(engine.get(), "__directoryErrors",
                 "file-directory-errors-result.js")
-            == "\"TypeError:NotSupportedError:NotSupportedError\"",
+            == "\"TypeError:NotSupportedError:TypeError\"",
         "directory authority boundaries changed");
 
     execute(engine.get(), R"JS(
@@ -896,6 +1025,14 @@ void test_native_file_system_access_picker_and_handle_contract()
         require(evaluate(engine.get(), "__directoryCycle",
                     "file-directory-lifecycle-result.js") == "\"done\"",
             "directory lifecycle iteration did not drain");
+    }
+    if (const auto* filter = std::getenv("WEBSCENE_NATIVE_ENGINE_TEST_FILTER");
+        filter != nullptr
+        && std::string_view(filter) == "file-system-directory-resolve") {
+        require(webscene_engine_take_file_grant_ancestry_request_v2(engine.get())
+                    == nullptr,
+            "focused ancestry request queue did not drain");
+        return;
     }
 
     activate_file_picker(engine.get(), 50004U);
@@ -1456,6 +1593,9 @@ void test_native_file_system_access_lifecycle_and_performance()
     require(webscene_engine_take_file_grant_same_entry_request_v2(engine.get())
                 == nullptr,
         "same-entry request queue did not drain after 100 cycles");
+    require(webscene_engine_take_file_grant_ancestry_request_v2(engine.get())
+                == nullptr,
+        "ancestry request queue did not drain after 100 cycles");
     require(webscene_engine_take_file_grant_read_request_v2(engine.get()) == nullptr,
         "file read request queue did not drain after 100 cycles");
     require(webscene_engine_take_file_grant_write_request_v2(engine.get()) == nullptr,
@@ -1564,6 +1704,16 @@ void test_native_file_system_access_lifecycle_and_performance()
         take_file_grant_directory_request(engine.get());
     const auto stale_directory_id = stale_directory->request_id;
     webscene_file_grant_directory_request_release_v2(stale_directory);
+    execute(engine.get(), R"JS(
+      globalThis.__retiredAncestry='pending';
+      __directoryHandle.resolve(__stableHandle).then(
+        ()=>{__retiredAncestry='unexpected'},
+        error=>{__retiredAncestry=error.name});
+    )JS", "file-picker-ancestry-before-navigation.js");
+    const auto* stale_ancestry =
+        take_file_grant_ancestry_request(engine.get());
+    const auto stale_ancestry_id = stale_ancestry->request_id;
+    webscene_file_grant_ancestry_request_release_v2(stale_ancestry);
     const auto path = std::filesystem::temp_directory_path()
         / ("webscene-picker-navigation-"
             + std::to_string(std::chrono::steady_clock::now()
@@ -1599,6 +1749,10 @@ void test_native_file_system_access_lifecycle_and_performance()
                 WEBSCENE_FILE_GRANT_DIRECTORY_ENUMERATE_V2,
                 WEBSCENE_FILE_GRANT_DIRECTORY_SUCCESS_V2),
         "stale directory completion survived navigation retirement");
+    require(!complete_file_grant_ancestry(engine.get(), stale_ancestry_id,
+                WEBSCENE_FILE_GRANT_ANCESTRY_SUCCESS_V2,
+                {"stable.txt"}),
+        "stale ancestry completion survived navigation retirement");
     bool released_stable = false;
     bool released_directory = false;
     for (int index = 0; index < 2; ++index) {

@@ -85,6 +85,68 @@
         }
     }
 
+    static void request_file_grant_ancestry(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        auto isolate = info.GetIsolate();
+        auto local_context = isolate->GetCurrentContext();
+        auto resolver = v8::Promise::Resolver::New(local_context).ToLocalChecked();
+        info.GetReturnValue().Set(resolver->GetPromise());
+        const auto reject = [&](std::string_view message, std::string_view name) {
+            reject_file_panel_promise(
+                isolate, local_context, resolver, message, name);
+        };
+        if (self == nullptr || !self->file_grant_ancestry_request_sink) {
+            reject("Native file grant ancestry is unavailable",
+                "NotSupportedError");
+            return;
+        }
+        if (info.Length() != 2 || !info[0]->IsUint8Array()
+            || !info[1]->IsUint8Array()) {
+            reject("File grant ancestry requires two opaque tokens", "TypeError");
+            return;
+        }
+        if (self->file_grant_ancestry_promise_targets.size()
+            >= WEBSCENE_FILE_GRANT_ANCESTRY_MAXIMUM_PENDING_OPERATIONS_V2) {
+            reject("Too many pending file grant ancestry queries",
+                "QuotaExceededError");
+            return;
+        }
+        file_grant_ancestry_request_lease_v2 request;
+        request.view.request_id = ++self->next_host_request_id;
+        const auto copy_token = [](v8::Local<v8::Value> value,
+                                   std::vector<std::uint8_t>& destination) {
+            const auto bytes = value.As<v8::Uint8Array>();
+            if (bytes->ByteLength() == 0
+                || bytes->ByteLength() > file_panel_maximum_token_bytes_v2)
+                return false;
+            const auto store = bytes->Buffer()->GetBackingStore();
+            const auto* first = static_cast<const std::uint8_t*>(store->Data())
+                + bytes->ByteOffset();
+            destination.assign(first, first + bytes->ByteLength());
+            return true;
+        };
+        if (!copy_token(info[0], request.base_directory_grant_id)
+            || !copy_token(
+                info[1], request.possible_descendant_grant_id)) {
+            reject("Malformed opaque file grant token", "DataError");
+            return;
+        }
+        request.bind();
+        file_grant_ancestry_promise_target target;
+        target.context.Reset(isolate, local_context);
+        target.resolver.Reset(isolate, resolver);
+        self->file_grant_ancestry_promise_targets.emplace(
+            request.view.request_id, std::move(target));
+        if (!self->file_grant_ancestry_request_sink(request.view)) {
+            self->file_grant_ancestry_promise_targets.erase(
+                request.view.request_id);
+            reject("The native file grant authority rejected the ancestry query",
+                "NotAllowedError");
+        }
+    }
+
     static void request_file_grant_read(
         const v8::FunctionCallbackInfo<v8::Value>& info)
     {
@@ -575,6 +637,68 @@
         perform_microtask_checkpoint();
     }
 
+    void complete_native_file_grant_ancestry(
+        file_grant_ancestry_completion_data_v2& completion)
+    {
+        const auto found = file_grant_ancestry_promise_targets.find(
+            completion.request_id);
+        if (found == file_grant_ancestry_promise_targets.end()) return;
+        auto target = std::move(found->second);
+        file_grant_ancestry_promise_targets.erase(found);
+        auto local_context = target.context.Get(isolate);
+        auto resolver = target.resolver.Get(isolate);
+        if (local_context.IsEmpty() || resolver.IsEmpty()) return;
+        v8::Context::Scope context_scope(local_context);
+        if (completion.status
+            == WEBSCENE_FILE_GRANT_ANCESTRY_NOT_DESCENDANT_V2) {
+            resolver->Resolve(local_context, v8::Null(isolate)).Check();
+            perform_microtask_checkpoint();
+            return;
+        }
+        if (completion.status != WEBSCENE_FILE_GRANT_ANCESTRY_SUCCESS_V2) {
+            const auto name = completion.status
+                    == WEBSCENE_FILE_GRANT_ANCESTRY_CANCELLED_V2
+                ? "AbortError"
+                : completion.status == WEBSCENE_FILE_GRANT_ANCESTRY_DENIED_V2
+                    ? "NotAllowedError"
+                    : completion.status
+                            == WEBSCENE_FILE_GRANT_ANCESTRY_NOT_FOUND_V2
+                        ? "NotFoundError"
+                        : completion.status
+                                == WEBSCENE_FILE_GRANT_ANCESTRY_CHANGED_V2
+                            ? "InvalidStateError"
+                            : completion.status
+                                    == WEBSCENE_FILE_GRANT_ANCESTRY_LIMIT_V2
+                                ? "QuotaExceededError" : "NotReadableError";
+            reject_file_panel_promise(isolate, local_context, resolver,
+                "The native file grant ancestry query failed", name);
+            perform_microtask_checkpoint();
+            return;
+        }
+        auto result = v8::Array::New(
+            isolate, static_cast<int>(completion.components.size()));
+        for (std::size_t index = 0; index < completion.components.size(); ++index) {
+            result->Set(local_context, static_cast<std::uint32_t>(index),
+                js_string(isolate, completion.components[index].c_str())).Check();
+        }
+        resolver->Resolve(local_context, result).Check();
+        perform_microtask_checkpoint();
+    }
+
+    void cancel_file_grant_ancestry_promises(const char* message)
+    {
+        for (auto& [_, target] : file_grant_ancestry_promise_targets) {
+            auto local_context = target.context.Get(isolate);
+            auto resolver = target.resolver.Get(isolate);
+            if (local_context.IsEmpty() || resolver.IsEmpty()) continue;
+            v8::Context::Scope context_scope(local_context);
+            reject_file_panel_promise(
+                isolate, local_context, resolver, message, "AbortError");
+        }
+        file_grant_ancestry_promise_targets.clear();
+        perform_microtask_checkpoint();
+    }
+
     void complete_native_file_grant_read(
         file_grant_read_completion_data_v2& completion)
     {
@@ -800,6 +924,10 @@
             v8::Function::New(local_context, request_file_grant_same_entry)
                 .ToLocalChecked()).Check();
         global->Set(local_context,
+            js_string(isolate, "__webSceneResolveFileGrants"),
+            v8::Function::New(local_context, request_file_grant_ancestry)
+                .ToLocalChecked()).Check();
+        global->Set(local_context,
             js_string(isolate, "__webSceneReadFileGrant"),
             v8::Function::New(local_context, request_file_grant_read)
                 .ToLocalChecked()).Check();
@@ -827,6 +955,7 @@
           (() => {
             const requestPanel = globalThis.__webSceneRequestFilePanel;
             const compareGrants = globalThis.__webSceneCompareFileGrants;
+            const resolveGrants = globalThis.__webSceneResolveFileGrants;
             const readFileGrant = globalThis.__webSceneReadFileGrant;
             const writeFileGrant = globalThis.__webSceneWriteFileGrant;
             const directoryGrant = globalThis.__webSceneDirectoryGrant;
@@ -837,6 +966,7 @@
             const createNativeFile = globalThis.__webSceneCreateNativeFile;
             delete globalThis.__webSceneRequestFilePanel;
             delete globalThis.__webSceneCompareFileGrants;
+            delete globalThis.__webSceneResolveFileGrants;
             delete globalThis.__webSceneReadFileGrant;
             delete globalThis.__webSceneWriteFileGrant;
             delete globalThis.__webSceneDirectoryGrant;
@@ -1259,7 +1389,11 @@
               stateFor(this); return unavailable('removeEntry');
             }
             function resolve(possibleDescendant) {
-              stateFor(this); return unavailable('resolve');
+              try {
+                return resolveGrants(
+                  directoryState(this).token,
+                  stateFor(possibleDescendant).token);
+              } catch (error) { return Promise.reject(error); }
             }
             Object.defineProperties(FileSystemFileHandle.prototype, {
               getFile: { enumerable: true, configurable: true, writable: true,

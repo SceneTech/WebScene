@@ -29,6 +29,7 @@
 #endif
         file_panel_broker_v2_.retire();
         file_grant_same_entry_broker_v2_.retire();
+        file_grant_ancestry_broker_v2_.retire();
         file_grant_read_broker_v2_.retire();
         file_grant_write_broker_v2_.retire();
         file_grant_directory_broker_v2_.retire();
@@ -334,6 +335,16 @@
                             std::move(completion));
                     });
             },
+            [this](const webscene_file_grant_ancestry_request_v2& request) {
+                return queue_file_grant_ancestry_request_v2(
+                    request,
+                    [this](
+                            webscene_native::file_grant_ancestry_completion_data_v2&&
+                                completion) {
+                        complete_file_grant_ancestry_request_v2(
+                            std::move(completion));
+                    });
+            },
             [this](const webscene_file_grant_read_request_v2& request) {
                 return queue_file_grant_read_request_v2(
                     request,
@@ -392,6 +403,7 @@
             diagnostics_.publish(std::move(failure));
             file_panel_broker_v2_.retire();
             file_grant_same_entry_broker_v2_.retire();
+            file_grant_ancestry_broker_v2_.retire();
             file_grant_read_broker_v2_.retire();
             file_grant_write_broker_v2_.retire();
             file_grant_directory_broker_v2_.retire();
@@ -1106,6 +1118,14 @@
                     changed = true;
                     continue;
                 }
+                if (auto* ancestry = std::get_if<
+                        webscene_native::file_grant_ancestry_completion_data_v2>(
+                            &request)) {
+                    if (runtime_)
+                        runtime_->complete_file_grant_ancestry_request(*ancestry);
+                    changed = true;
+                    continue;
+                }
                 if (auto* read = std::get_if<
                         webscene_native::file_grant_read_completion_data_v2>(
                             &request)) {
@@ -1157,6 +1177,7 @@
                 if (auto* url = std::get_if<url_request>(&request)) {
                     file_panel_broker_v2_.retire();
                     file_grant_same_entry_broker_v2_.retire();
+                    file_grant_ancestry_broker_v2_.retire();
                     file_grant_read_broker_v2_.retire();
                     file_grant_write_broker_v2_.retire();
                     file_grant_directory_broker_v2_.retire();
@@ -1550,6 +1571,7 @@
 #endif
         file_panel_broker_v2_.retire();
         file_grant_same_entry_broker_v2_.retire();
+        file_grant_ancestry_broker_v2_.retire();
         file_grant_read_broker_v2_.retire();
         file_grant_write_broker_v2_.retire();
         file_grant_directory_broker_v2_.retire();

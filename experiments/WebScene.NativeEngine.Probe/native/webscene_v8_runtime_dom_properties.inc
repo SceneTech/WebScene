@@ -3534,18 +3534,38 @@
         auto* self = current(info.GetIsolate());
         auto* node = unwrap_node(info.Holder());
         if (node == nullptr || node->tag != "input") return;
-        const auto previous = node->mutable_form_control().checkedness_initialized
-            ? node->mutable_form_control().checkedness
-            : node->attributes.contains("checked");
         const auto checked = value->BooleanValue(info.GetIsolate());
-        node->mutable_form_control().checkedness_initialized = true;
-        node->mutable_form_control().checkedness = checked;
-        if (previous == checked) return;
-        if (self->is_connected(*node)) {
-            self->recascade_dynamic_state_subject(*node, "checked-property");
-        } else {
-            self->document.mark_dirty();
+        const auto group = self->radio_group_members(*node);
+        if (checked) {
+            for (auto* candidate : group) {
+                if (candidate != node) self->set_native_checkedness(*candidate, false);
+            }
         }
+        self->set_native_checkedness(*node, checked);
+    }
+
+    static void get_indeterminate(
+        v8::Local<v8::Name>, const v8::PropertyCallbackInfo<v8::Value>& info)
+    {
+        auto* node = unwrap_node(info.Holder());
+        if (node == nullptr || node->tag != "input") return;
+        info.GetReturnValue().Set(v8::Boolean::New(
+            info.GetIsolate(), node->form_control().indeterminate));
+    }
+
+    static void set_indeterminate(
+        v8::Local<v8::Name>, v8::Local<v8::Value> value,
+        const v8::PropertyCallbackInfo<void>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        auto* node = unwrap_node(info.Holder());
+        if (node == nullptr || node->tag != "input") return;
+        const auto indeterminate = value->BooleanValue(info.GetIsolate());
+        if (node->form_control().indeterminate == indeterminate) return;
+        node->mutable_form_control().indeterminate = indeterminate;
+        if (self->is_connected(*node))
+            self->recascade_dynamic_state_subject(*node, "indeterminate-property");
+        else self->document.mark_dirty();
     }
 
     static void get_selected(v8::Local<v8::Name>, const v8::PropertyCallbackInfo<v8::Value>& info)

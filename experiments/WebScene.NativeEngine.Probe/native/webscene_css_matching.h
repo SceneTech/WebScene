@@ -266,10 +266,37 @@ inline bool direction_matches(const native_document& document,const dom_node& no
 inline bool checked_matches(const dom_node& node) {
     const auto type=node.attributes.find("type");
     const bool checkable=node.tag=="input" && type!=node.attributes.end() &&
-        (type->second=="checkbox" || type->second=="radio");
+        (html_keyword_equals(type->second,"checkbox") || html_keyword_equals(type->second,"radio"));
     if(checkable) return node.form_control().checkedness_initialized ?
         node.form_control().checkedness : node.attributes.contains("checked");
     return node.tag=="option" && forms::option_is_selected(const_cast<dom_node&>(node));
+}
+inline bool indeterminate_matches(const dom_node& node) {
+    const auto type=node.attributes.find("type");
+    if(node.tag!="input" || type==node.attributes.end()) return false;
+    if(html_keyword_equals(type->second,"checkbox"))
+        return node.form_control().indeterminate;
+    if(!html_keyword_equals(type->second,"radio")) return false;
+    const auto name=node.attributes.find("name");
+    if(name==node.attributes.end() || name->second.empty()) return !checked_matches(node);
+    auto* root=&node;
+    while(root->parent!=nullptr && root->parent->tag!="iframe") root=root->parent;
+    const auto any_checked=[&](const auto& recurse,const dom_node& current)->bool {
+        if(current.tag=="input") {
+            const auto candidate_type=current.attributes.find("type");
+            const auto candidate_name=current.attributes.find("name");
+            if(candidate_type!=current.attributes.end()
+                && html_keyword_equals(candidate_type->second,"radio")
+                && candidate_name!=current.attributes.end()
+                && candidate_name->second==name->second
+                && checked_matches(current)) return true;
+        }
+        if(&current!=root && current.tag=="iframe") return false;
+        for(const auto* child:current.children)
+            if(child!=nullptr && recurse(recurse,*child)) return true;
+        return false;
+    };
+    return !any_checked(any_checked,*root);
 }
 inline bool target_matches(const dom_node& node,std::string_view hash) {
     if(hash.starts_with('#')) hash.remove_prefix(1);

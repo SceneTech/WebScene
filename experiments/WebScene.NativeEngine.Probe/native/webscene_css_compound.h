@@ -339,6 +339,8 @@ inline bool compound_matches(const Host& host,const dom_node& node,
                 if (!hash || !css::target_matches(node,*hash)) return false;
             } else if (name == "checked") {
                 if (!css::checked_matches(node)) return false;
+            } else if (name == "indeterminate") {
+                if (!css::indeterminate_matches(node)) return false;
             } else if (name == "hover" || name == "focus" || name == "focus-visible" || name == "focus-within") {
                 if (!css::interaction_matches(document,node,name,
                     host.selector_interaction_state(),host.is_text_control(&node))) return false;

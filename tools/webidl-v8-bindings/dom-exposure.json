@@ -296,6 +296,7 @@
         { "name": "selectionEnd", "getter": "get_selection_end", "setter": "set_selection_end" },
         { "name": "selectionDirection", "getter": "get_selection_direction", "setter": "set_selection_direction" },
         { "name": "checked", "getter": "get_checked", "setter": "set_checked" },
+        { "name": "indeterminate", "getter": "get_indeterminate", "setter": "set_indeterminate" },
         { "name": "selected", "getter": "get_selected", "setter": "set_selected" },
         { "name": "multiple", "getter": "get_multiple", "setter": "set_multiple" },
         { "name": "disabled", "getter": "get_disabled", "setter": "set_disabled" },

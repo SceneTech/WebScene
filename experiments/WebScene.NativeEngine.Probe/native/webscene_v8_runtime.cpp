@@ -534,6 +534,8 @@ struct v8_dom_runtime::implementation final {
             get_selection_direction,
             set_selection_direction);
         element->InstanceTemplate()->SetNativeDataProperty(js_string(isolate, "checked"), get_checked, set_checked);
+        element->InstanceTemplate()->SetNativeDataProperty(
+            js_string(isolate, "indeterminate"), get_indeterminate, set_indeterminate);
         element->InstanceTemplate()->SetNativeDataProperty(js_string(isolate, "selected"), get_selected, set_selected);
         element->InstanceTemplate()->SetNativeDataProperty(js_string(isolate, "multiple"), get_multiple, set_multiple);
         element->InstanceTemplate()->SetNativeDataProperty(js_string(isolate, "disabled"), get_disabled, set_disabled);

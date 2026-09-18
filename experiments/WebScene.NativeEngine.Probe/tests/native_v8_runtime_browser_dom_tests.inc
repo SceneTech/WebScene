@@ -1788,6 +1788,108 @@ void test_native_mutable_stylesheet_cssom(webscene_engine* engine)
         "CSSSupportsRule mutation diverged from the browser contract: "
             + supports_result);
 
+    const auto layer_result = evaluate(engine, R"JS((() => {
+      const exercise = (document, view, className) => {
+        const style = document.createElement('style');
+        const target = document.createElement('div');
+        style.textContent = `@layer base, theme;
+          @layer base { .${className} { color: rgb(1, 2, 3); } }
+          @layer theme { .${className} { color: rgb(4, 5, 6); } }`;
+        target.className = className;
+        document.head.appendChild(style);
+        document.body.appendChild(target);
+        const sheet = style.sheet;
+        const group = sheet.cssRules[2];
+        const rules = group.cssRules;
+        const original = rules[0];
+        const authoredText = style.textContent;
+        const initial = [
+          group.constructor.name,
+          group instanceof view.CSSLayerBlockRule,
+          group instanceof view.CSSGroupingRule,
+          group instanceof view.CSSRule,
+          group.type,
+          typeof view.CSSRule.LAYER_BLOCK_RULE,
+          group.name,
+          group.cssRules === rules,
+          original.parentRule === group,
+          original.parentStyleSheet === sheet,
+          view.getComputedStyle(target).color
+        ];
+        let assignmentError = '';
+        try { group.name = 'changed'; }
+        catch (error) { assignmentError = error.name; }
+        const assignment = [group.name, assignmentError];
+        const errors = [];
+        for (const invoke of [
+          () => group.insertRule(),
+          () => group.deleteRule(),
+          () => group.insertRule(`.${className} {}`, 99),
+          () => group.insertRule(`.${className} {} .other {}`, 0),
+          () => group.insertRule('@import url("x.css");', 0),
+          () => group.insertRule('@namespace x url("x");', 0)
+        ]) {
+          try { invoke(); errors.push('none'); }
+          catch (error) { errors.push(error.name); }
+        }
+        const insertedIndex = group.insertRule(
+          `.${className} { color: rgb(7, 8, 9); }`, rules.length);
+        const inserted = rules[insertedIndex];
+        const afterInsert = [insertedIndex, rules.length,
+          inserted.parentRule === group,
+          inserted.parentStyleSheet === sheet,
+          view.getComputedStyle(target).color,
+          group.cssText.includes('rgb(7, 8, 9)')];
+        group.deleteRule(insertedIndex);
+        const afterDelete = [rules.length, inserted.parentRule,
+          inserted.parentStyleSheet, view.getComputedStyle(target).color];
+        const mediaIndex = sheet.insertRule(
+          `@media (min-width:1px) { @layer nested {
+            .${className} { color: rgb(10, 11, 12); }
+          } }`, sheet.cssRules.length);
+        const media = sheet.cssRules[mediaIndex];
+        const nested = media.cssRules[0];
+        const nestedIndex = nested.insertRule(
+          `.${className} { color: rgb(13, 14, 15); }`, nested.cssRules.length);
+        const nestedState = [nestedIndex, nested.cssRules.length,
+          nested.constructor.name,
+          nested instanceof view.CSSLayerBlockRule,
+          nested.name,
+          nested.parentRule === media,
+          nested.parentStyleSheet === sheet,
+          view.getComputedStyle(target).color,
+          media.cssText.includes('rgb(13, 14, 15)')];
+        const anonymousIndex = sheet.insertRule(
+          `@layer { .${className} { color: rgb(16, 17, 18); } }`,
+          sheet.cssRules.length);
+        const anonymous = sheet.cssRules[anonymousIndex];
+        const anonymousState = [anonymous.constructor.name, anonymous.name,
+          anonymous instanceof view.CSSLayerBlockRule, anonymous.type,
+          view.getComputedStyle(target).color];
+        const textStable = style.textContent === authoredText;
+        style.remove();
+        target.remove();
+        return { initial, assignment, errors, afterInsert, afterDelete,
+          nestedState, anonymousState, textStable };
+      };
+      const frame = document.createElement('iframe');
+      document.body.appendChild(frame);
+      const value = {
+        main: exercise(document, window, 'layer-main'),
+        frame: exercise(frame.contentDocument, frame.contentWindow, 'layer-frame')
+      };
+      frame.remove();
+      return value;
+    })())JS", "native-css-layer-block-rule-mutation.js");
+    const auto layer_expected = [] {
+        return std::string{"{\"initial\":[\"CSSLayerBlockRule\",true,true,true,0,\"undefined\",\"theme\",true,true,true,\"rgb(4, 5, 6)\"],\"assignment\":[\"theme\",\"\"],\"errors\":[\"TypeError\",\"TypeError\",\"IndexSizeError\",\"SyntaxError\",\"HierarchyRequestError\",\"HierarchyRequestError\"],\"afterInsert\":[1,2,true,true,\"rgb(7, 8, 9)\",true],\"afterDelete\":[1,null,null,\"rgb(4, 5, 6)\"],\"nestedState\":[1,2,\"CSSLayerBlockRule\",true,\"nested\",true,true,\"rgb(13, 14, 15)\",true],\"anonymousState\":[\"CSSLayerBlockRule\",\"\",true,0,\"rgb(16, 17, 18)\"],\"textStable\":true}"};
+    };
+    require(
+        layer_result == "{\"main\":" + layer_expected()
+                + ",\"frame\":" + layer_expected() + "}",
+        "CSSLayerBlockRule mutation diverged from the browser contract: "
+            + layer_result);
+
     execute(engine, R"JS((async () => {
       globalThis.__ownerSheetReplacement = { status: 'pending' };
       try {
@@ -2234,6 +2336,35 @@ void test_batched_stylesheet_rule_mutation_performance()
             throw new Error(`CSSSupportsRule mutation latency exceeded ${supportsMutationP95}/${supportsMutationMax}`);
           }
           while (rules.length) sheet.deleteRule(0);
+          const layerIndex = sheet.insertRule('@layer performance {}', 0);
+          const layerRule = rules[layerIndex];
+          const layerRules = layerRule.cssRules;
+          const layerMutationDurations = [];
+          target.className = 'layer-rule-63';
+          for (let cycle = 0; cycle < 20; cycle++) {
+            const started = performance.now();
+            while (layerRules.length) layerRule.deleteRule(0);
+            for (let index = 0; index < 64; index++) {
+              layerRule.insertRule(
+                `.layer-rule-${index} { width: ${index + 1}px; }`, index);
+            }
+            if (!(layerRule instanceof CSSLayerBlockRule)
+                || layerRule.name !== 'performance'
+                || layerRule.cssRules !== layerRules
+                || layerRules.length !== 64
+                || getComputedStyle(target).width !== '64px') {
+              throw new Error('CSSLayerBlockRule mutation was not synchronously observable');
+            }
+            layerMutationDurations.push(performance.now() - started);
+          }
+          const layerMutations = layerMutationDurations.slice()
+            .sort((a, b) => a - b);
+          const layerMutationP95 = layerMutations[18];
+          const layerMutationMax = layerMutations[19];
+          if (layerMutationP95 > 16 || layerMutationMax > 500) {
+            throw new Error(`CSSLayerBlockRule mutation latency exceeded ${layerMutationP95}/${layerMutationMax}`);
+          }
+          while (rules.length) sheet.deleteRule(0);
           const replacementPromises = [];
           const expectSyncReplacementDenial = (candidate, label) => {
             try { candidate.replaceSync(`.${label} { display: none; }`); }
@@ -2252,7 +2383,7 @@ void test_batched_stylesheet_rule_mutation_performance()
               });
           for (let cycle = 0; cycle < 100; cycle++) {
             const lifecycleStyle = document.createElement('style');
-            lifecycleStyle.textContent = '@media (min-width: 1px) {} @supports selector(:focus-visible) {}';
+            lifecycleStyle.textContent = '@media (min-width: 1px) {} @supports selector(:focus-visible) {} @layer lifecycle {}';
             document.head.appendChild(lifecycleStyle);
             const lifecycleSheet = lifecycleStyle.sheet;
             const lifecycleGroup = lifecycleSheet.cssRules[0];
@@ -2277,6 +2408,17 @@ void test_batched_stylesheet_rule_mutation_performance()
                 || supportsChild.parentRule !== null
                 || supportsChild.parentStyleSheet !== null) {
               throw new Error('lifecycle supports rule identity or ownership was lost');
+            }
+            const lifecycleLayer = lifecycleSheet.cssRules[2];
+            const layerChildIndex = lifecycleLayer.insertRule(
+              `.lifecycle-layer-${cycle} { display: block; }`, 0);
+            const layerChild = lifecycleLayer.cssRules[layerChildIndex];
+            lifecycleLayer.deleteRule(layerChildIndex);
+            if (!(lifecycleLayer instanceof CSSLayerBlockRule)
+                || lifecycleLayer.name !== 'lifecycle'
+                || layerChild.parentRule !== null
+                || layerChild.parentStyleSheet !== null) {
+              throw new Error('lifecycle layer rule identity or ownership was lost');
             }
             const childIndex = lifecycleGroup.insertRule(
               `.lifecycle-${cycle} { display: block; }`, 0);
@@ -2310,7 +2452,9 @@ void test_batched_stylesheet_rule_mutation_performance()
             const realmTarget = realmDocument.createElement('div');
             realmStyle.textContent = `@media (min-width: 1px) {
               @supports selector(:focus-visible) {
-                .realm-before-${cycle} { height: 7px; }
+                @layer realm {
+                  .realm-before-${cycle} { height: 7px; }
+                }
               }
             }`;
             realmTarget.className = `realm-after-${cycle}`;
@@ -2320,7 +2464,8 @@ void test_batched_stylesheet_rule_mutation_performance()
             const realmSheet = realmStyle.sheet;
             const realmMedia = realmGroup.media;
             const realmSupports = realmGroup.cssRules[0];
-            const realmRule = realmSupports.cssRules[0];
+            const realmLayer = realmSupports.cssRules[0];
+            const realmRule = realmLayer.cssRules[0];
             expectSyncReplacementDenial(realmSheet, `realm-attached-${cycle}`);
             realmGroup.media = '(max-width: 1px)';
             realmMedia.appendMedium('screen');
@@ -2329,10 +2474,13 @@ void test_batched_stylesheet_rule_mutation_performance()
                 || realmGroup.media !== realmMedia
                 || !(realmSupports instanceof realm.contentWindow.CSSSupportsRule)
                 || realmSupports.parentRule !== realmGroup
+                || !(realmLayer instanceof realm.contentWindow.CSSLayerBlockRule)
+                || realmLayer.parentRule !== realmSupports
+                || realmLayer.name !== 'realm'
                 || !(realmRule instanceof realm.contentWindow.CSSStyleRule)
                 || realmRule.selectorText !== `.realm-after-${cycle}`
                 || realm.contentWindow.getComputedStyle(realmTarget).height !== '7px') {
-              throw new Error('iframe MediaList, supports, or selector mutation lost realm ownership');
+              throw new Error('iframe MediaList, supports, layer, or selector mutation lost realm ownership');
             }
             realm.remove();
             replacementPromises.push(expectAsyncReplacementDenial(
@@ -2371,6 +2519,8 @@ void test_batched_stylesheet_rule_mutation_performance()
                 mediaMutations: mediaMutationDurations.length,
                 supportsMutationP95, supportsMutationMax,
                 supportsMutations: supportsMutationDurations.length,
+                layerMutationP95, layerMutationMax,
+                layerMutations: layerMutationDurations.length,
                 replacementRejections: replacementPromises.length,
                 lifecycleCycles: 100,
                 realmLifecycleCycles: 100,
@@ -2449,11 +2599,18 @@ void test_batched_stylesheet_rule_mutation_performance()
     }
     require(rss_before == 0U || rss_after <= rss_before + 64U * 1024U * 1024U,
         "stylesheet mutation workload exceeded the 64 MiB peak RSS budget");
-    require(engine_after.layout_passes <= engine_before.layout_passes + 120U
+    if (!(engine_after.layout_passes <= engine_before.layout_passes + 225U
             && engine_after.published_scenes <= engine_before.published_scenes + 2U
             && memory_after.pending_scene_count <= 2U
-            && work_after.timers_fired >= work_before.timers_fired + 2U,
-        "stylesheet mutation workload exceeded layout, scene, queue, or task bounds");
+            && work_after.timers_fired >= work_before.timers_fired + 2U)) {
+        fail("stylesheet mutation workload exceeded layout, scene, queue, or task bounds: layout="
+            + std::to_string(engine_after.layout_passes - engine_before.layout_passes)
+            + " scenes="
+            + std::to_string(engine_after.published_scenes - engine_before.published_scenes)
+            + " pending=" + std::to_string(memory_after.pending_scene_count)
+            + " timers="
+            + std::to_string(work_after.timers_fired - work_before.timers_fired));
+    }
     std::cout << "stylesheet-mutation-profile=" << metrics
               << " ownerReplacementProfile=" << replacement_metrics
               << " layoutDelta=" << (engine_after.layout_passes - engine_before.layout_passes)

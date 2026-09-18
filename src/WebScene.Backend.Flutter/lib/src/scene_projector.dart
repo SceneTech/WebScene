@@ -23,8 +23,10 @@ const int _domBrightnessFilter = 1 << 31;
 const int _domGrayscaleFilter = 1 << 30;
 const int _domContrastFilter = 1 << 29;
 const int _domBlurFilter = 1 << 28;
+const int _domSaturateFilter = 1 << 27;
 const int _domColorFilterMask =
-    _domBrightnessFilter | _domGrayscaleFilter | _domContrastFilter;
+    _domBrightnessFilter | _domGrayscaleFilter | _domContrastFilter |
+    _domSaturateFilter;
 const int _domEffectFilterMask = _domColorFilterMask | _domBlurFilter;
 
 final class SceneApplyResult {
@@ -987,6 +989,14 @@ final class WebSceneSceneProjector extends ChangeNotifier {
         1 - 0.7874 * amount, 0.7152 * amount, 0.0722 * amount, 0, 0,
         0.2126 * amount, 1 - 0.2848 * amount, 0.0722 * amount, 0, 0,
         0.2126 * amount, 0.7152 * amount, 1 - 0.9278 * amount, 0, 0,
+        0, 0, 0, 1, 0,
+      ];
+    } else if (command.flags & _domSaturateFilter != 0) {
+      final inverse = 1 - amount;
+      matrix = <double>[
+        0.2126 + 0.7874 * amount, 0.7152 * inverse, 0.0722 * inverse, 0, 0,
+        0.2126 * inverse, 0.7152 + 0.2848 * amount, 0.0722 * inverse, 0, 0,
+        0.2126 * inverse, 0.7152 * inverse, 0.0722 + 0.9278 * amount, 0, 0,
         0, 0, 0, 1, 0,
       ];
     } else {

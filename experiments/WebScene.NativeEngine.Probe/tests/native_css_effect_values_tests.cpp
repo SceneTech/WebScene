@@ -57,6 +57,7 @@ struct clip_scene_counts final {
     uint32_t blur_filter_begins{};
     uint32_t command_count{};
     bool transform_clip_nested{};
+    bool compound_filter_ordered{};
 };
 
 clip_scene_counts wait_for_inset_clip_scene(webscene_engine* engine, uint32_t expected_count)
@@ -78,6 +79,8 @@ clip_scene_counts wait_for_inset_clip_scene(webscene_engine* engine, uint32_t ex
                 latest.command_count = scene->header.command_count;
                 uint32_t transform_clip_node = 0U;
                 auto transform_clip_stage = 0U;
+                uint32_t compound_filter_node = 0U;
+                auto compound_filter_stage = 0U;
                 for (uint32_t index = 0; index < scene->header.command_count; ++index) {
                     const auto& command = scene->commands[index];
                     if (transform_clip_stage == 0U && command.kind == 15U) {
@@ -95,6 +98,30 @@ clip_scene_counts wait_for_inset_clip_scene(webscene_engine* engine, uint32_t ex
                         } else if (transform_clip_stage == 5U && command.kind == 16U) {
                             latest.transform_clip_nested = true;
                             transform_clip_stage = 6U;
+                        }
+                    }
+                    if (command.kind == 30U) {
+                        if (compound_filter_stage == 0U
+                            && (command.flags & (1U << 30U)) != 0U
+                            && std::abs(command.stroke_width - 0.25F) < 0.01F) {
+                            compound_filter_node = command.node_id;
+                            compound_filter_stage = 1U;
+                        } else if (command.node_id == compound_filter_node
+                            && compound_filter_stage == 1U
+                            && (command.flags & (1U << 29U)) != 0U
+                            && std::abs(command.stroke_width - 1.5F) < 0.01F) {
+                            compound_filter_stage = 2U;
+                        } else if (command.node_id == compound_filter_node
+                            && compound_filter_stage == 2U
+                            && (command.flags & (1U << 27U)) != 0U
+                            && std::abs(command.stroke_width - 1.08F) < 0.01F) {
+                            compound_filter_stage = 3U;
+                        } else if (command.node_id == compound_filter_node
+                            && compound_filter_stage == 3U
+                            && (command.flags & (1U << 28U)) != 0U
+                            && std::abs(command.stroke_width - 2.0F) < 0.01F) {
+                            latest.compound_filter_ordered = true;
+                            compound_filter_stage = 4U;
                         }
                     }
                     if (command.kind == 12U
@@ -182,6 +209,7 @@ int main()
             clip-path: inset(0px 1px); filter: brightness(0.5); backdrop-filter: blur(1px); }
           #effects.alternate > span { clip-path: circle(25%); filter: contrast(2); }
           #effects > span:first-child { transform: scale(1.25) rotate(3deg); }
+          #compound-filter { filter: blur(2px) saturate(1.08) contrast(1.5) grayscale(0.25); }
           #effects > span:last-child { filter: blur(2px); }
         `;
         document.head.appendChild(rules);
@@ -190,6 +218,7 @@ int main()
         const fragment = document.createDocumentFragment();
         for (let index = 0; index < 4096; index++) fragment.appendChild(document.createElement('span'));
         host.appendChild(fragment);
+        host.children[4094].id = 'compound-filter';
         document.body.appendChild(host);
         const first = host.firstElementChild;
         const style = getComputedStyle(first);
@@ -201,6 +230,10 @@ int main()
         }
         if (getComputedStyle(host.lastElementChild).getPropertyValue('filter') !== 'blur(2px)') {
           throw new Error('initial blur filter value failed');
+        }
+        if (getComputedStyle(document.getElementById('compound-filter')).getPropertyValue('filter')
+            !== 'blur(2px) saturate(1.08) contrast(1.5) grayscale(0.25)') {
+          throw new Error('initial compound filter list failed');
         }
       })()
     )JS", "native-effects-fixture.js");
@@ -268,8 +301,10 @@ int main()
         "retained scene did not preserve all 4096 clipped fills");
     require(initial_clip_scene.transform_clip_nested,
         "transform commands did not wrap the inset clip scope");
-    require(initial_clip_scene.blur_filter_begins == 1U,
-        "retained scene did not emit the bounded foreground blur group");
+    require(initial_clip_scene.blur_filter_begins == 2U,
+        "retained scene did not emit both bounded foreground blur groups");
+    require(initial_clip_scene.compound_filter_ordered,
+        "retained scene did not preserve compound foreground filter order");
     const auto initial_scene_command_bytes =
         static_cast<uint64_t>(initial_clip_scene.command_count)
             * sizeof(webscene_scene_command);
@@ -382,6 +417,7 @@ int main()
               << " clip-ends=" << initial_clip_scene.inset_clip_ends
               << " clipped-fills=" << initial_clip_scene.clipped_fills
               << " blur-filter-begins=" << initial_clip_scene.blur_filter_begins
+              << " compound-filter-ordered=" << initial_clip_scene.compound_filter_ordered
               << " transform-clip-nested=" << initial_clip_scene.transform_clip_nested
               << " initial-scene-command-bytes=" << initial_scene_command_bytes
               << " peak-textual-style-count-delta=" << peak_textual_style_count_delta

@@ -48,8 +48,9 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
     private const uint DomGrayscaleFilter = 1u << 30;
     private const uint DomContrastFilter = 1u << 29;
     private const uint DomBlurFilter = 1u << 28;
+    private const uint DomSaturateFilter = 1u << 27;
     private const uint DomColorFilterMask =
-        DomBrightnessFilter | DomGrayscaleFilter | DomContrastFilter;
+        DomBrightnessFilter | DomGrayscaleFilter | DomContrastFilter | DomSaturateFilter;
     private const uint DomEffectFilterMask = DomColorFilterMask | DomBlurFilter;
 
     private readonly Dictionary<uint, RetainedLayer> s_layers = new();
@@ -880,6 +881,16 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
                 1 - 0.7874f * amount, 0.7152f * amount, 0.0722f * amount, 0, 0,
                 0.2126f * amount, 1 - 0.2848f * amount, 0.0722f * amount, 0, 0,
                 0.2126f * amount, 0.7152f * amount, 1 - 0.9278f * amount, 0, 0,
+                0, 0, 0, 1, 0
+            ];
+        }
+        else if ((command.Flags & DomSaturateFilter) != 0)
+        {
+            var inverse = 1 - amount;
+            matrix = [
+                0.2126f + 0.7874f * amount, 0.7152f * inverse, 0.0722f * inverse, 0, 0,
+                0.2126f * inverse, 0.7152f + 0.2848f * amount, 0.0722f * inverse, 0, 0,
+                0.2126f * inverse, 0.7152f * inverse, 0.0722f + 0.9278f * amount, 0, 0,
                 0, 0, 0, 1, 0
             ];
         }

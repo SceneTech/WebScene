@@ -339,73 +339,105 @@ void native_document::append_scene(
         || opacity <= 0.001F) {
         return;
     }
-    const auto resolve_single_filter = [&](std::string_view name, float maximum)
-        -> std::optional<float> {
-        const auto& effects = node.style.textual().effect_values;
-        const auto known = effects.find("filter");
-        if (known == effects.end()) return std::nullopt;
-        auto value = std::string_view{known->second};
-        if (value.size() < name.size() + 2U
-            || value[name.size()] != '(' || value.back() != ')') return std::nullopt;
-        for (size_t index = 0; index < name.size(); ++index) {
-            const auto character = static_cast<unsigned char>(value[index]);
-            const auto lower = character >= 'A' && character <= 'Z'
-                ? static_cast<char>(character - 'A' + 'a')
-                : static_cast<char>(character);
-            if (lower != name[index]) return std::nullopt;
-        }
-        value.remove_prefix(name.size() + 1U);
-        value.remove_suffix(1U);
-        while (!value.empty()
-            && std::isspace(static_cast<unsigned char>(value.front()))) {
-            value.remove_prefix(1U);
-        }
-        while (!value.empty()
-            && std::isspace(static_cast<unsigned char>(value.back()))) {
-            value.remove_suffix(1U);
-        }
-        const auto parsed = css::parse_ascii_number_prefix(value);
-        if (!parsed.has_value() || parsed->value < 0) return std::nullopt;
-        const auto suffix = value.substr(parsed->consumed);
-        const auto amount = suffix.empty()
-            ? parsed->value
-            : suffix == "%" ? parsed->value / 100.0F : -1.0F;
-        return amount >= 0 && amount <= maximum
-            ? std::optional<float>{amount} : std::nullopt;
+    struct retained_foreground_filter final {
+        uint32_t flags{};
+        float amount{};
     };
-    const auto brightness_filter = resolve_single_filter("brightness", 10.0F);
-    const auto grayscale_filter = resolve_single_filter("grayscale", 1.0F);
-    const auto contrast_filter = resolve_single_filter("contrast", 10.0F);
-    const auto blur_filter = [&]() -> std::optional<float> {
+    const auto foreground_filters = [&]() {
+        std::vector<retained_foreground_filter> result;
         const auto& effects = node.style.textual().effect_values;
         const auto known = effects.find("filter");
-        if (known == effects.end()) return std::nullopt;
-        auto value = std::string_view{known->second};
-        constexpr auto name = std::string_view{"blur"};
-        if (value.size() < name.size() + 2U
-            || value[name.size()] != '(' || value.back() != ')') return std::nullopt;
-        for (size_t index = 0; index < name.size(); ++index) {
-            const auto character = static_cast<unsigned char>(value[index]);
-            const auto lower = character >= 'A' && character <= 'Z'
-                ? static_cast<char>(character - 'A' + 'a')
-                : static_cast<char>(character);
-            if (lower != name[index]) return std::nullopt;
+        if (known == effects.end()) return result;
+        auto remaining = std::string_view{known->second};
+        const auto trim = [](std::string_view value) {
+            while (!value.empty()
+                && std::isspace(static_cast<unsigned char>(value.front())))
+                value.remove_prefix(1U);
+            while (!value.empty()
+                && std::isspace(static_cast<unsigned char>(value.back())))
+                value.remove_suffix(1U);
+            return value;
+        };
+        const auto equals_ascii_case_insensitive = [](std::string_view left,
+            std::string_view right) {
+            if (left.size() != right.size()) return false;
+            for (size_t index = 0; index < left.size(); ++index) {
+                const auto character = static_cast<unsigned char>(left[index]);
+                const auto lower = character >= 'A' && character <= 'Z'
+                    ? static_cast<char>(character - 'A' + 'a')
+                    : static_cast<char>(character);
+                if (lower != right[index]) return false;
+            }
+            return true;
+        };
+        remaining = trim(remaining);
+        if (equals_ascii_case_insensitive(remaining, "none")) return result;
+        constexpr size_t maximum_filter_functions = 16U;
+        while (!remaining.empty()) {
+            if (result.size() >= maximum_filter_functions) {
+                result.clear();
+                return result;
+            }
+            const auto opening = remaining.find('(');
+            const auto closing = opening == std::string_view::npos
+                ? std::string_view::npos : remaining.find(')', opening + 1U);
+            if (opening == 0U || opening == std::string_view::npos
+                || closing == std::string_view::npos) {
+                result.clear();
+                return result;
+            }
+            const auto name = trim(remaining.substr(0U, opening));
+            const auto argument = trim(
+                remaining.substr(opening + 1U, closing - opening - 1U));
+            const auto parsed = css::parse_ascii_number_prefix(argument);
+            if (!parsed.has_value() || parsed->value < 0.0F) {
+                result.clear();
+                return result;
+            }
+            const auto suffix = argument.substr(parsed->consumed);
+            uint32_t flags = 0U;
+            float amount = -1.0F;
+            float maximum = 0.0F;
+            if (equals_ascii_case_insensitive(name, "blur")) {
+                flags = 1U << 28U;
+                maximum = 256.0F;
+                amount = suffix == "px" || (suffix.empty() && parsed->value == 0.0F)
+                    ? parsed->value : -1.0F;
+            } else {
+                if (equals_ascii_case_insensitive(name, "brightness")) {
+                    flags = 1U << 31U;
+                    maximum = 10.0F;
+                } else if (equals_ascii_case_insensitive(name, "grayscale")) {
+                    flags = 1U << 30U;
+                    maximum = 1.0F;
+                } else if (equals_ascii_case_insensitive(name, "contrast")) {
+                    flags = 1U << 29U;
+                    maximum = 10.0F;
+                } else if (equals_ascii_case_insensitive(name, "saturate")) {
+                    flags = 1U << 27U;
+                    maximum = 10.0F;
+                } else {
+                    result.clear();
+                    return result;
+                }
+                amount = suffix.empty()
+                    ? parsed->value
+                    : suffix == "%" ? parsed->value / 100.0F : -1.0F;
+            }
+            if (amount < 0.0F || amount > maximum) {
+                result.clear();
+                return result;
+            }
+            result.push_back(retained_foreground_filter{flags, amount});
+            remaining.remove_prefix(closing + 1U);
+            if (!remaining.empty()
+                && !std::isspace(static_cast<unsigned char>(remaining.front()))) {
+                result.clear();
+                return result;
+            }
+            remaining = trim(remaining);
         }
-        value.remove_prefix(name.size() + 1U);
-        value.remove_suffix(1U);
-        while (!value.empty()
-            && std::isspace(static_cast<unsigned char>(value.front())))
-            value.remove_prefix(1U);
-        while (!value.empty()
-            && std::isspace(static_cast<unsigned char>(value.back())))
-            value.remove_suffix(1U);
-        const auto parsed = css::parse_ascii_number_prefix(value);
-        if (!parsed.has_value() || parsed->value < 0.0F) return std::nullopt;
-        const auto suffix = value.substr(parsed->consumed);
-        if (suffix != "px" && !(suffix.empty() && parsed->value == 0.0F))
-            return std::nullopt;
-        return parsed->value <= 256.0F
-            ? std::optional<float>{parsed->value} : std::nullopt;
+        return result;
     }();
     const auto has_opacity_group = opacity < 0.999F;
     if (has_opacity_group) {
@@ -422,10 +454,13 @@ void native_document::append_scene(
                 255L)),
             node.id});
     }
-    if (brightness_filter.has_value()) {
+    // SaveLayer effects apply when their groups restore. Open in reverse CSS
+    // order so restoration applies the authored function list left-to-right.
+    for (auto filter = foreground_filters.rbegin();
+         filter != foreground_filters.rend(); ++filter) {
         commands.push_back(webscene_scene_command{
             30U,
-            1U << 31U,
+            filter->flags,
             node.layout.x,
             node.layout.y,
             node.layout.width,
@@ -436,55 +471,7 @@ void native_document::append_scene(
             0,
             0,
             0,
-            *brightness_filter});
-    }
-    if (grayscale_filter.has_value()) {
-        commands.push_back(webscene_scene_command{
-            30U,
-            1U << 30U,
-            node.layout.x,
-            node.layout.y,
-            node.layout.width,
-            node.layout.height,
-            255U,
-            node.id,
-            0,
-            0,
-            0,
-            0,
-            *grayscale_filter});
-    }
-    if (contrast_filter.has_value()) {
-        commands.push_back(webscene_scene_command{
-            30U,
-            1U << 29U,
-            node.layout.x,
-            node.layout.y,
-            node.layout.width,
-            node.layout.height,
-            255U,
-            node.id,
-            0,
-            0,
-            0,
-            0,
-            *contrast_filter});
-    }
-    if (blur_filter.has_value()) {
-        commands.push_back(webscene_scene_command{
-            30U,
-            1U << 28U,
-            node.layout.x,
-            node.layout.y,
-            node.layout.width,
-            node.layout.height,
-            255U,
-            node.id,
-            0,
-            0,
-            0,
-            0,
-            *blur_filter});
+            filter->amount});
     }
     const auto resolve_transform_origin = [](css_length value, float available, float fallback) {
         if (value.unit == length_unit::pixels) return value.value;
@@ -2046,22 +2033,8 @@ void native_document::append_scene(
         if (has_scale_transform) {
             commands.push_back(webscene_scene_command{16U, 0U, 0, 0, 0, 0, 0U, node.id});
         }
-        if (blur_filter.has_value()) {
-            commands.push_back(webscene_scene_command{
-                31U, 0U, node.layout.x, node.layout.y,
-                node.layout.width, node.layout.height, 0U, node.id});
-        }
-        if (contrast_filter.has_value()) {
-            commands.push_back(webscene_scene_command{
-                31U, 0U, node.layout.x, node.layout.y,
-                node.layout.width, node.layout.height, 0U, node.id});
-        }
-        if (grayscale_filter.has_value()) {
-            commands.push_back(webscene_scene_command{
-                31U, 0U, node.layout.x, node.layout.y,
-                node.layout.width, node.layout.height, 0U, node.id});
-        }
-        if (brightness_filter.has_value()) {
+        for (size_t filter_index = 0U;
+             filter_index < foreground_filters.size(); ++filter_index) {
             commands.push_back(webscene_scene_command{
                 31U, 0U, node.layout.x, node.layout.y,
                 node.layout.width, node.layout.height, 0U, node.id});
@@ -2418,22 +2391,8 @@ void native_document::append_scene(
     if (has_scale_transform) {
         commands.push_back(webscene_scene_command{16U, 0U, 0, 0, 0, 0, 0U, node.id});
     }
-    if (blur_filter.has_value()) {
-        commands.push_back(webscene_scene_command{
-            31U, 0U, node.layout.x, node.layout.y,
-            node.layout.width, node.layout.height, 0U, node.id});
-    }
-    if (contrast_filter.has_value()) {
-        commands.push_back(webscene_scene_command{
-            31U, 0U, node.layout.x, node.layout.y,
-            node.layout.width, node.layout.height, 0U, node.id});
-    }
-    if (grayscale_filter.has_value()) {
-        commands.push_back(webscene_scene_command{
-            31U, 0U, node.layout.x, node.layout.y,
-            node.layout.width, node.layout.height, 0U, node.id});
-    }
-    if (brightness_filter.has_value()) {
+    for (size_t filter_index = 0U;
+         filter_index < foreground_filters.size(); ++filter_index) {
         commands.push_back(webscene_scene_command{
             31U, 0U, node.layout.x, node.layout.y,
             node.layout.width, node.layout.height, 0U, node.id});

@@ -7805,6 +7805,14 @@ v8_dom_runtime::memory_metrics v8_dom_runtime::read_memory_metrics() const noexc
             + 2U * sizeof(void*) + source.capacity() + 1U;
     }
     result.native_wrapper_storage_bytes +=
+        impl_->stylesheet_cssom_addresses.bucket_count() * sizeof(void*);
+    for (const auto& [owner_id, address] : impl_->stylesheet_cssom_addresses) {
+        static_cast<void>(owner_id);
+        result.native_wrapper_storage_bytes +=
+            sizeof(std::pair<const uint32_t, std::string>)
+            + 2U * sizeof(void*) + address.capacity() + 1U;
+    }
+    result.native_wrapper_storage_bytes +=
         impl_->pending_stylesheet_replacements.capacity()
             * sizeof(impl_->pending_stylesheet_replacements.front())
         + impl_->pending_stylesheet_replacement_bytes;

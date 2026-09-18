@@ -1309,9 +1309,15 @@
                         nullptr,
                         controlled);
                 if (loaded) {
+                    stylesheet_cssom_sources.insert_or_assign(node.id, stylesheet);
+                    stylesheet_cssom_addresses.insert_or_assign(
+                        node.id, stylesheet_name);
+                    const auto* shadow_root = document.containing_shadow_root(node);
                     const auto first_new_rule = add_stylesheet(
                         std::move(stylesheet),
-                        stylesheet_name);
+                        stylesheet_name,
+                        node.id,
+                        shadow_root == nullptr ? 0U : shadow_root->id);
 #if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
                     binding_callback_timer recascade_timer(
                         profile_startup ? &startup_stylesheet_recascade : nullptr);

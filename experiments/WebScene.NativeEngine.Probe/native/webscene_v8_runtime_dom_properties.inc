@@ -272,6 +272,7 @@
                 if (ancestor->tag != "style") continue;
                 erase_pending_stylesheet_replacement(ancestor->id);
                 stylesheet_cssom_sources.erase(ancestor->id);
+                stylesheet_cssom_addresses.erase(ancestor->id);
                 break;
             }
             activate_connected_stylesheet(node);
@@ -510,6 +511,7 @@
         if (node->tag == "style") {
             self->erase_pending_stylesheet_replacement(node->id);
             self->stylesheet_cssom_sources.erase(node->id);
+            self->stylesheet_cssom_addresses.erase(node->id);
         }
         self->detach_all_children(*node);
         node->text_content.clear();

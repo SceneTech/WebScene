@@ -1485,6 +1485,311 @@
                 diagnostic.detail, "compiled-stylesheet");
     }
 
+    std::string expand_stylesheet_imports(
+        std::string source,
+        const std::string& stylesheet_address)
+    {
+        constexpr auto maximum_depth = size_t{16U};
+        constexpr auto maximum_imports = size_t{1024U};
+        constexpr auto maximum_bytes = size_t{32U * 1024U * 1024U};
+        size_t import_count = 0U;
+        size_t loaded_bytes = source.size();
+        std::unordered_set<std::string> ancestors;
+        if (!stylesheet_address.empty()) ancestors.insert(stylesheet_address);
+
+        const auto trim = [](std::string_view value) {
+            const auto first = value.find_first_not_of(" \t\n\f\r");
+            if (first == std::string_view::npos) return std::string{};
+            const auto last = value.find_last_not_of(" \t\n\f\r");
+            return std::string(value.substr(first, last - first + 1U));
+        };
+        const auto keyword_at = [](std::string_view value, size_t offset,
+                                   std::string_view keyword) {
+            if (offset + keyword.size() > value.size()) return false;
+            for (size_t index = 0U; index < keyword.size(); ++index) {
+                if (std::tolower(static_cast<unsigned char>(value[offset + index]))
+                    != std::tolower(static_cast<unsigned char>(keyword[index]))) {
+                    return false;
+                }
+            }
+            const auto end = offset + keyword.size();
+            return end == value.size()
+                || !std::isalnum(static_cast<unsigned char>(value[end]));
+        };
+        const auto statement_end = [](std::string_view value, size_t start) {
+            auto parentheses = 0;
+            char quote = 0;
+            auto comment = false;
+            for (auto index = start; index < value.size(); ++index) {
+                const auto character = value[index];
+                const auto next = index + 1U < value.size() ? value[index + 1U] : 0;
+                if (comment) {
+                    if (character == '*' && next == '/') {
+                        comment = false;
+                        ++index;
+                    }
+                    continue;
+                }
+                if (quote != 0) {
+                    if (character == '\\') ++index;
+                    else if (character == quote) quote = 0;
+                    continue;
+                }
+                if (character == '/' && next == '*') {
+                    comment = true;
+                    ++index;
+                } else if (character == '\'' || character == '"') {
+                    quote = character;
+                } else if (character == '(') {
+                    ++parentheses;
+                } else if (character == ')' && parentheses > 0) {
+                    --parentheses;
+                } else if (character == ';' && parentheses == 0) {
+                    return index;
+                } else if (character == '{' && parentheses == 0) {
+                    return std::string_view::npos;
+                }
+            }
+            return std::string_view::npos;
+        };
+        const auto absolutize_urls = [&](std::string_view value, const std::string& base) {
+            std::string result;
+            result.reserve(value.size());
+            char quote = 0;
+            auto comment = false;
+            for (size_t index = 0U; index < value.size();) {
+                const auto character = value[index];
+                const auto next = index + 1U < value.size() ? value[index + 1U] : 0;
+                if (comment) {
+                    result.push_back(character);
+                    ++index;
+                    if (character == '*' && next == '/') {
+                        result.push_back(next);
+                        ++index;
+                        comment = false;
+                    }
+                    continue;
+                }
+                if (quote != 0) {
+                    result.push_back(character);
+                    ++index;
+                    if (character == '\\' && index < value.size()) {
+                        result.push_back(value[index++]);
+                    } else if (character == quote) {
+                        quote = 0;
+                    }
+                    continue;
+                }
+                if (character == '/' && next == '*') {
+                    result.append("/*");
+                    index += 2U;
+                    comment = true;
+                    continue;
+                }
+                if (character == '\'' || character == '"') {
+                    quote = character;
+                    result.push_back(character);
+                    ++index;
+                    continue;
+                }
+                auto open = index;
+                if (keyword_at(value, index, "url")) {
+                    open += 3U;
+                    while (open < value.size()
+                        && std::isspace(static_cast<unsigned char>(value[open]))) ++open;
+                }
+                if (open >= value.size() || value[open] != '(') {
+                    result.push_back(character);
+                    ++index;
+                    continue;
+                }
+                auto close = open + 1U;
+                char url_quote = 0;
+                for (; close < value.size(); ++close) {
+                    if (url_quote != 0) {
+                        if (value[close] == '\\') ++close;
+                        else if (value[close] == url_quote) url_quote = 0;
+                    } else if (value[close] == '\'' || value[close] == '"') {
+                        url_quote = value[close];
+                    } else if (value[close] == ')') {
+                        break;
+                    }
+                }
+                if (close >= value.size()) {
+                    result.append(value.substr(index));
+                    break;
+                }
+                auto raw = trim(value.substr(open + 1U, close - open - 1U));
+                if (raw.size() >= 2U
+                    && (raw.front() == '\'' || raw.front() == '"')
+                    && raw.back() == raw.front()) {
+                    raw = raw.substr(1U, raw.size() - 2U);
+                }
+                const auto resolved = resolve_resource_url(raw, base);
+                result += "url(\"";
+                for (const auto byte : resolved) {
+                    if (byte == '\\' || byte == '"') result.push_back('\\');
+                    result.push_back(byte);
+                }
+                result += "\")";
+                index = close + 1U;
+            }
+            return result;
+        };
+
+        std::function<std::string(std::string, const std::string&, size_t)> expand;
+        expand = [&](std::string css, const std::string& base, size_t depth) {
+            if (depth >= maximum_depth || import_count >= maximum_imports
+                || loaded_bytes >= maximum_bytes) {
+                return css;
+            }
+            std::string output;
+            output.reserve(css.size());
+            size_t cursor = 0U;
+            auto imports_allowed = true;
+            while (cursor < css.size()) {
+                const auto trivia_begin = cursor;
+                for (;;) {
+                    while (cursor < css.size()
+                        && std::isspace(static_cast<unsigned char>(css[cursor]))) {
+                        ++cursor;
+                    }
+                    if (cursor + 1U < css.size() && css[cursor] == '/'
+                        && css[cursor + 1U] == '*') {
+                        const auto close = css.find("*/", cursor + 2U);
+                        cursor = close == std::string::npos ? css.size() : close + 2U;
+                        continue;
+                    }
+                    break;
+                }
+                output.append(css, trivia_begin, cursor - trivia_begin);
+                if (cursor >= css.size()) break;
+
+                const auto end = statement_end(css, cursor);
+                if (end == std::string::npos) {
+                    output.append(css, cursor, std::string::npos);
+                    break;
+                }
+                if (keyword_at(css, cursor, "@charset")) {
+                    output.append(css, cursor, end - cursor + 1U);
+                    cursor = end + 1U;
+                    continue;
+                }
+                if (keyword_at(css, cursor, "@layer") && imports_allowed) {
+                    output.append(css, cursor, end - cursor + 1U);
+                    cursor = end + 1U;
+                    continue;
+                }
+                if (!keyword_at(css, cursor, "@import") || !imports_allowed) {
+                    output.append(css, cursor, std::string::npos);
+                    break;
+                }
+
+                ++import_count;
+                auto position = cursor + 7U;
+                while (position < end
+                    && std::isspace(static_cast<unsigned char>(css[position]))) {
+                    ++position;
+                }
+                std::string href;
+                if (position < end && (css[position] == '\'' || css[position] == '"')) {
+                    const auto quote = css[position++];
+                    while (position < end && css[position] != quote) {
+                        if (css[position] == '\\' && position + 1U < end) ++position;
+                        href.push_back(css[position++]);
+                    }
+                    if (position < end) ++position;
+                } else if (keyword_at(css, position, "url")
+                    && position + 3U < end && css[position + 3U] == '(') {
+                    position += 4U;
+                    while (position < end
+                        && std::isspace(static_cast<unsigned char>(css[position]))) ++position;
+                    char quote = 0;
+                    if (position < end && (css[position] == '\'' || css[position] == '"'))
+                        quote = css[position++];
+                    while (position < end
+                        && ((quote != 0 && css[position] != quote)
+                            || (quote == 0 && css[position] != ')'))) {
+                        if (css[position] == '\\' && position + 1U < end) ++position;
+                        href.push_back(css[position++]);
+                    }
+                    if (quote != 0 && position < end) ++position;
+                    while (position < end && css[position] != ')') ++position;
+                    if (position < end) ++position;
+                    href = trim(href);
+                }
+                auto qualifiers = trim(std::string_view(css).substr(position, end - position));
+                if (href.empty()) {
+                    cursor = end + 1U;
+                    continue;
+                }
+
+                std::string imported;
+                std::string resolved;
+                if (!load_parser_text_resource(
+                        href,
+                        base,
+                        WEBSCENE_RESOURCE_STYLESHEET,
+                        WEBSCENE_REQUEST_DESTINATION_STYLE,
+                        imported,
+                        resolved)
+                    || imported.size() > maximum_bytes - std::min(loaded_bytes, maximum_bytes)
+                    || ancestors.contains(resolved)) {
+                    cursor = end + 1U;
+                    continue;
+                }
+                loaded_bytes += imported.size();
+                ancestors.insert(resolved);
+                imported = absolutize_urls(imported, resolved);
+                auto expanded = expand(std::move(imported), resolved, depth + 1U);
+                ancestors.erase(resolved);
+
+                auto lower = copy_ascii_lower(qualifiers);
+                std::string layer;
+                auto anonymous_layer = false;
+                if (lower.starts_with("layer")) {
+                    auto consumed = size_t{5U};
+                    if (consumed < qualifiers.size() && qualifiers[consumed] == '(') {
+                        const auto close = qualifiers.find(')', consumed + 1U);
+                        if (close != std::string::npos) {
+                            layer = trim(std::string_view(qualifiers).substr(
+                                consumed + 1U, close - consumed - 1U));
+                            consumed = close + 1U;
+                        }
+                    } else {
+                        anonymous_layer = true;
+                    }
+                    qualifiers = trim(std::string_view(qualifiers).substr(consumed));
+                    lower = copy_ascii_lower(qualifiers);
+                }
+                std::string supports;
+                if (lower.starts_with("supports(")) {
+                    auto depth_count = 1;
+                    auto close = size_t{9U};
+                    for (; close < qualifiers.size() && depth_count > 0; ++close) {
+                        if (qualifiers[close] == '(') ++depth_count;
+                        else if (qualifiers[close] == ')') --depth_count;
+                    }
+                    if (depth_count == 0) {
+                        supports = trim(std::string_view(qualifiers).substr(9U, close - 10U));
+                        qualifiers = trim(std::string_view(qualifiers).substr(close));
+                    }
+                }
+                if (!qualifiers.empty())
+                    expanded = "@media " + qualifiers + " {\n" + expanded + "\n}";
+                if (!supports.empty())
+                    expanded = "@supports (" + supports + ") {\n" + expanded + "\n}";
+                if (!layer.empty() || anonymous_layer)
+                    expanded = "@layer" + (layer.empty() ? std::string{} : " " + layer)
+                        + " {\n" + expanded + "\n}";
+                output += expanded;
+                cursor = end + 1U;
+            }
+            return output;
+        };
+        return expand(std::move(source), stylesheet_address, 0U);
+    }
+
     size_t add_stylesheet(
         std::string css,
         const std::string& stylesheet_address = {},
@@ -1494,6 +1799,9 @@
         // Font registration belongs to document consumption, not transport:
         // cached, imported, inline and dynamically added sheets all come here.
         if (stylesheet_consumer) stylesheet_consumer(stylesheet_address, css);
+        if (copy_ascii_lower(css).find("@import") != std::string::npos) {
+            css = expand_stylesheet_imports(std::move(css), stylesheet_address);
+        }
         // A newly registered face can change metrics without changing the CSS
         // family/weight cache key (including dynamically inserted font rules).
         if (copy_ascii_lower(css).find("@font-face") != std::string::npos)

@@ -10,8 +10,9 @@ self.addEventListener('fetch', event => {
   const range = event.request.headers.get('range');
   const validator = event.request.headers.get('if-none-match');
   const token = event.request.headers.get('x-broker-token');
+  const csrf = event.request.headers.get('x-csrf-token');
   observations.push({path:url.pathname, method:event.request.method,
-    range, validator, token});
+    range, validator, token, csrf});
   if (url.pathname.endsWith('/range')) {
     event.respondWith(new Response('2345', {status:206, headers:{
       'content-type':'application/octet-stream',

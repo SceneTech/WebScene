@@ -1372,6 +1372,45 @@ typedef size_t (*webscene_resource_load_callback_v4)(
     char* destination,
     size_t destination_capacity);
 
+/* v5 preserves the bounded author request-header list that accompanies fetch.
+ * Header buffers are borrowed only for the callback invocation. Cookie,
+ * Origin and Referer remain available through their dedicated fields so hosts
+ * can apply transport policy without reconstructing browser-owned metadata. */
+typedef struct webscene_resource_request_context_v5 {
+    uint32_t struct_size;
+    uint32_t initiator;
+    const char* origin;
+    size_t origin_length;
+    const char* referrer;
+    size_t referrer_length;
+    uint32_t mode;
+    uint32_t destination;
+    const char* method;
+    size_t method_length;
+    const char* body;
+    size_t body_length;
+    const char* content_type;
+    size_t content_type_length;
+    uint32_t credentials;
+    const char* cookie;
+    size_t cookie_length;
+    const webscene_resource_header_v4* headers;
+    size_t header_count;
+} webscene_resource_request_context_v5;
+
+typedef size_t (*webscene_resource_load_callback_v5)(
+    void* user_data,
+    uint32_t kind,
+    const char* url,
+    size_t url_length,
+    const char* entity_tag,
+    size_t entity_tag_length,
+    int64_t last_modified_unix_seconds,
+    const webscene_resource_request_context_v5* request_context,
+    webscene_resource_response_v4* response,
+    char* destination,
+    size_t destination_capacity);
+
 /*
  * Asynchronous notification emitted after an immutable scene has been
  * published. Consumers use this edge to schedule a compositor paint; they
@@ -1495,6 +1534,8 @@ typedef struct webscene_engine_options {
     const char* storage_partition_key;
     size_t storage_partition_key_length;
     uint64_t storage_quota_bytes;
+    webscene_resource_load_callback_v5 resource_load_callback_v5;
+    void* resource_load_v5_user_data;
 } webscene_engine_options;
 
 /*

@@ -12,6 +12,8 @@
         void* resource_load_v3_user_data = nullptr,
         webscene_resource_load_callback_v4 resource_load_callback_v4 = nullptr,
         void* resource_load_v4_user_data = nullptr,
+        webscene_resource_load_callback_v5 resource_load_callback_v5 = nullptr,
+        void* resource_load_v5_user_data = nullptr,
         webscene_scene_published_callback scene_published_callback = nullptr,
         void* scene_published_user_data = nullptr,
         webscene_text_measure_callback text_measure_callback = nullptr,
@@ -46,6 +48,8 @@
         , resource_load_v3_user_data_(resource_load_v3_user_data)
         , resource_load_callback_v4_(resource_load_callback_v4)
         , resource_load_v4_user_data_(resource_load_v4_user_data)
+        , resource_load_callback_v5_(resource_load_callback_v5)
+        , resource_load_v5_user_data_(resource_load_v5_user_data)
         , stylesheet_consumed_callback_(stylesheet_consumed_callback)
         , stylesheet_consumed_user_data_(stylesheet_consumed_user_data)
         , webgpu_policy_callback_(webgpu_policy_callback)

@@ -185,6 +185,98 @@ void test_response_header_cookie_contracts()
     webscene_engine_destroy(engine);
 }
 
+struct request_header_v5_server final {
+    std::mutex mutex;
+    std::vector<std::pair<std::string, std::string>> headers;
+};
+
+size_t load_request_header_resource_v5(
+    void* user_data,
+    uint32_t,
+    const char* url,
+    size_t url_length,
+    const char*,
+    size_t,
+    int64_t,
+    const webscene_resource_request_context_v5* context,
+    webscene_resource_response_v4* response,
+    char* destination,
+    size_t destination_capacity)
+{
+    auto& server = *static_cast<request_header_v5_server*>(user_data);
+    const std::string_view address(url, url_length);
+    static constexpr std::string_view document = R"HTML(
+      <!doctype html><script>
+      globalThis.__requestHeadersDone = false;
+      fetch('/api', {headers:{
+        'Accept':'application/json',
+        'X-CSRF-Token':'csrf-probe'
+      }}).then(() => globalThis.__requestHeadersDone = true);
+      </script>)HTML";
+    static constexpr std::string_view payload{"{}"};
+    const auto is_api = address.ends_with("/api");
+    if (is_api && context != nullptr) {
+        std::lock_guard lock(server.mutex);
+        server.headers.clear();
+        for (size_t index = 0U; index < context->header_count; ++index) {
+            const auto& header = context->headers[index];
+            server.headers.emplace_back(
+                std::string(header.name, header.name_length),
+                std::string(header.value, header.value_length));
+        }
+    }
+    if (response != nullptr) {
+        response->status = 200U;
+        response->status_text = "OK";
+        response->status_text_length = 2U;
+        response->final_url = url;
+        response->final_url_length = url_length;
+    }
+    const auto body = is_api ? payload : document;
+    constexpr size_t header_size = 2U + sizeof(uint32_t) + sizeof(int64_t) * 2U;
+    const auto required = header_size + body.size();
+    if (destination == nullptr || destination_capacity < required) return required;
+    std::memset(destination, 0, header_size);
+    destination[0] = 1;
+    std::copy(body.begin(), body.end(), destination + header_size);
+    return required;
+}
+
+void test_request_headers_reach_resource_callback_v5()
+{
+    request_header_v5_server server;
+    webscene_engine_options options{};
+    options.struct_size = sizeof(options);
+    options.resource_load_callback_v5 = load_request_header_resource_v5;
+    options.resource_load_v5_user_data = &server;
+    auto* engine = webscene_engine_create_with_options(&options);
+    require(engine != nullptr, "request-header v5 engine creation failed");
+    constexpr std::string_view address{"https://auth.test/index.html"};
+    require(webscene_engine_load_url(engine, address.data(), address.size()) != 0U,
+        "request-header v5 navigation failed");
+    for (auto attempt = 0; attempt < 500; ++attempt) {
+        if (evaluate(engine, "globalThis.__requestHeadersDone === true",
+                "request-header-v5-state.js") == "true") break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    require(
+        evaluate(engine, "globalThis.__requestHeadersDone === true",
+            "request-header-v5-result.js") == "true",
+        "request-header v5 fetch did not complete");
+    {
+        std::lock_guard lock(server.mutex);
+        const auto has_header = [&](std::string_view name, std::string_view value) {
+            return std::ranges::any_of(server.headers, [&](const auto& header) {
+                return header.first == name && header.second == value;
+            });
+        };
+        require(has_header("accept", "application/json")
+                && has_header("x-csrf-token", "csrf-probe"),
+            "author request headers did not reach resource callback v5");
+    }
+    webscene_engine_destroy(engine);
+}
+
 struct durable_profile_server final {
     std::atomic<uint32_t> phase{1U};
     std::mutex mutex;

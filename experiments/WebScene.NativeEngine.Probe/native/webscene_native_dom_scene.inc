@@ -700,6 +700,7 @@ void native_document::append_scene(
         std::string path;
         bool even_odd{};
         bool relative_path{};
+        bool object_bounding_box{};
     };
     const auto resolve_effect_clip = [&]() -> std::optional<effect_clip_geometry> {
         const auto& effects = node.style.textual().effect_values;
@@ -711,6 +712,7 @@ void native_document::append_scene(
         constexpr std::string_view ellipse_prefix = "ellipse(";
         constexpr std::string_view path_prefix = "path(";
         constexpr std::string_view polygon_prefix = "polygon(";
+        constexpr std::string_view url_prefix = "url(";
         if (value.empty() || value.back() != ')') return std::nullopt;
         const auto has_prefix = [&](std::string_view prefix) {
             if (value.size() < prefix.size() + 1U) return false;
@@ -820,6 +822,14 @@ void native_document::append_scene(
                 0.0F,
                 path.str()};
         }
+        const auto invalid_resource_clip = [&]() {
+            return effect_clip_geometry{
+                layout_rect{node.layout.x, node.layout.y, node.layout.width, node.layout.height},
+                0.0F,
+                "M0 0",
+                false,
+                true};
+        };
         if (has_prefix(path_prefix)) {
             auto arguments = value.substr(
                 path_prefix.size(), value.size() - path_prefix.size() - 1U);
@@ -856,7 +866,7 @@ void native_document::append_scene(
             if (arguments.size() < 2U
                 || (arguments.front() != '\'' && arguments.front() != '"')
                 || arguments.back() != arguments.front()) {
-                return std::nullopt;
+                return invalid_resource_clip();
             }
             const auto quote = arguments.front();
             auto encoded = arguments.substr(1U, arguments.size() - 2U);
@@ -866,13 +876,13 @@ void native_document::append_scene(
                 const auto character = static_cast<unsigned char>(encoded[index]);
                 if (character == static_cast<unsigned char>(quote)
                     || character == '\n' || character == '\r' || character == '\f') {
-                    return std::nullopt;
+                    return invalid_resource_clip();
                 }
                 if (character != '\\') {
                     decoded.push_back(static_cast<char>(character));
                     continue;
                 }
-                if (++index == encoded.size()) return std::nullopt;
+                if (++index == encoded.size()) return invalid_resource_clip();
                 if (encoded[index] == '\n') continue;
                 if (encoded[index] == '\r') {
                     if (index + 1U < encoded.size() && encoded[index + 1U] == '\n') ++index;
@@ -890,7 +900,9 @@ void native_document::append_scene(
                     hexadecimal = hexadecimal * 16U + nibble;
                 }
                 if (digits != 0U) {
-                    if (hexadecimal == 0U || hexadecimal > 0x7FU) return std::nullopt;
+                    if (hexadecimal == 0U || hexadecimal > 0x7FU) {
+                        return invalid_resource_clip();
+                    }
                     decoded.push_back(static_cast<char>(hexadecimal));
                     if (index < encoded.size()
                         && std::isspace(static_cast<unsigned char>(encoded[index]))) {
@@ -903,7 +915,9 @@ void native_document::append_scene(
                 }
                 decoded.push_back(encoded[index]);
             }
-            if (decoded.empty() || decoded.size() > 16384U) return std::nullopt;
+            if (decoded.empty() || decoded.size() > 16384U) {
+                return invalid_resource_clip();
+            }
             return effect_clip_geometry{
                 layout_rect{
                     node.layout.x,
@@ -914,6 +928,198 @@ void native_document::append_scene(
                 std::move(decoded),
                 even_odd,
                 true};
+        }
+        if (has_prefix(url_prefix)) {
+            const auto trim = [](std::string_view token) {
+                while (!token.empty()
+                    && std::isspace(static_cast<unsigned char>(token.front()))) {
+                    token.remove_prefix(1U);
+                }
+                while (!token.empty()
+                    && std::isspace(static_cast<unsigned char>(token.back()))) {
+                    token.remove_suffix(1U);
+                }
+                return token;
+            };
+            auto reference = trim(value.substr(
+                url_prefix.size(), value.size() - url_prefix.size() - 1U));
+            if (reference.size() >= 2U
+                && (reference.front() == '\'' || reference.front() == '"')
+                && reference.back() == reference.front()) {
+                reference = trim(reference.substr(1U, reference.size() - 2U));
+            }
+            if (reference.size() < 2U || reference.size() > 257U
+                || reference.front() != '#') {
+                return invalid_resource_clip();
+            }
+            reference.remove_prefix(1U);
+            if (reference.empty()
+                || std::any_of(reference.begin(), reference.end(), [](unsigned char byte) {
+                    return std::isspace(byte) || std::iscntrl(byte);
+                })) {
+                return invalid_resource_clip();
+            }
+            const auto definition = std::find_if(
+                nodes_.begin(), nodes_.end(), [&](const auto& candidate) {
+                    if (candidate->id_attribute != reference) return false;
+                    constexpr std::string_view expected = "clippath";
+                    if (candidate->tag.size() != expected.size()) return false;
+                    for (size_t index = 0U; index < expected.size(); ++index) {
+                        if (!ascii_equal(candidate->tag[index], expected[index])) return false;
+                    }
+                    return true;
+                });
+            if (definition == nodes_.end()
+                || containing_shadow_root(node)
+                    != containing_shadow_root(**definition)) {
+                return invalid_resource_clip();
+            }
+            const auto& clip = **definition;
+            const auto root = [](const dom_node& candidate) {
+                auto* current = &candidate;
+                while (current->parent != nullptr) current = current->parent;
+                return current;
+            };
+            if (root(node) != root(clip)) return invalid_resource_clip();
+            if (clip.attributes.contains("transform") || clip.children.size() > 64U) {
+                return invalid_resource_clip();
+            }
+            auto object_bounding_box = false;
+            auto units = clip.attributes.find("clipPathUnits");
+            if (units == clip.attributes.end()) {
+                units = clip.attributes.find("clippathunits");
+            }
+            if (units != clip.attributes.end()) {
+                auto normalized = units->second;
+                std::transform(
+                    normalized.begin(), normalized.end(), normalized.begin(),
+                    [](unsigned char byte) { return static_cast<char>(std::tolower(byte)); });
+                if (normalized == "objectboundingbox") object_bounding_box = true;
+                else if (normalized != "userspaceonuse") return invalid_resource_clip();
+            }
+            const auto number = [&](const dom_node& shape, std::string_view name,
+                                    float fallback) -> std::optional<float> {
+                const auto found = shape.attributes.find(std::string{name});
+                if (found == shape.attributes.end()) return fallback;
+                if (found->second.size() > 64U) return std::nullopt;
+                const auto token = trim(found->second);
+                auto copy = std::string{token};
+                char* end = nullptr;
+                const auto parsed = std::strtof(copy.c_str(), &end);
+                while (end != nullptr && *end != '\0'
+                    && std::isspace(static_cast<unsigned char>(*end))) ++end;
+                if (end == copy.c_str() || end == nullptr || *end != '\0'
+                    || !std::isfinite(parsed)) return std::nullopt;
+                return parsed;
+            };
+            std::ostringstream path;
+            path.precision(std::numeric_limits<float>::max_digits10);
+            auto fill_rule = std::optional<bool>{};
+            size_t geometry_count = 0U;
+            const auto apply_rule = [&](const dom_node& shape) {
+                const auto authored = shape.attributes.find("clip-rule");
+                if (authored == shape.attributes.end()) return true;
+                auto normalized = authored->second;
+                std::transform(
+                    normalized.begin(), normalized.end(), normalized.begin(),
+                    [](unsigned char byte) { return static_cast<char>(std::tolower(byte)); });
+                const auto even_odd = normalized == "evenodd";
+                if (!even_odd && normalized != "nonzero") return false;
+                if (fill_rule.has_value() && *fill_rule != even_odd) return false;
+                fill_rule = even_odd;
+                return true;
+            };
+            if (!apply_rule(clip)) return invalid_resource_clip();
+            for (const auto* child : clip.children) {
+                if (child == nullptr || child->tag == "#text") continue;
+                if (child->tag == "title" || child->tag == "desc") continue;
+                if (child->attributes.contains("transform") || !apply_rule(*child)) {
+                    return invalid_resource_clip();
+                }
+                if (++geometry_count > 64U) return invalid_resource_clip();
+                if (child->tag == "path") {
+                    const auto data = child->attributes.find("d");
+                    if (data == child->attributes.end() || data->second.empty()
+                        || data->second.size() > 16384U) return invalid_resource_clip();
+                    path << data->second << ' ';
+                } else if (child->tag == "rect") {
+                    if (child->attributes.contains("rx") || child->attributes.contains("ry")) {
+                        return invalid_resource_clip();
+                    }
+                    const auto x = number(*child, "x", 0.0F);
+                    const auto y = number(*child, "y", 0.0F);
+                    const auto width = number(*child, "width", -1.0F);
+                    const auto height = number(*child, "height", -1.0F);
+                    if (!x || !y || !width || !height || *width < 0.0F || *height < 0.0F) {
+                        return invalid_resource_clip();
+                    }
+                    path << 'M' << *x << ' ' << *y << 'H' << *x + *width
+                         << 'V' << *y + *height << 'H' << *x << "Z ";
+                } else if (child->tag == "circle" || child->tag == "ellipse") {
+                    const auto cx = number(*child, "cx", 0.0F);
+                    const auto cy = number(*child, "cy", 0.0F);
+                    const auto rx = number(
+                        *child, child->tag == "circle" ? "r" : "rx", -1.0F);
+                    const auto ry = child->tag == "circle"
+                        ? rx : number(*child, "ry", -1.0F);
+                    if (!cx || !cy || !rx || !ry || *rx < 0.0F || *ry < 0.0F) {
+                        return invalid_resource_clip();
+                    }
+                    path << 'M' << *cx - *rx << ' ' << *cy
+                         << 'A' << *rx << ' ' << *ry << " 0 1 0 "
+                         << *cx + *rx << ' ' << *cy
+                         << 'A' << *rx << ' ' << *ry << " 0 1 0 "
+                         << *cx - *rx << ' ' << *cy << "Z ";
+                } else if (child->tag == "polygon") {
+                    const auto authored = child->attributes.find("points");
+                    if (authored == child->attributes.end()
+                        || authored->second.empty() || authored->second.size() > 4096U) {
+                        return invalid_resource_clip();
+                    }
+                    std::vector<float> points;
+                    const auto* cursor = authored->second.c_str();
+                    const auto* limit = cursor + authored->second.size();
+                    while (cursor < limit) {
+                        while (cursor < limit
+                            && (std::isspace(static_cast<unsigned char>(*cursor))
+                                || *cursor == ',')) ++cursor;
+                        if (cursor == limit) break;
+                        char* end = nullptr;
+                        const auto parsed = std::strtof(cursor, &end);
+                        if (end == cursor || !std::isfinite(parsed) || points.size() >= 256U) {
+                            return invalid_resource_clip();
+                        }
+                        points.push_back(parsed);
+                        cursor = end;
+                    }
+                    if (points.size() < 4U || (points.size() & 1U) != 0U) {
+                        return invalid_resource_clip();
+                    }
+                    path << 'M' << points[0] << ' ' << points[1];
+                    for (size_t index = 2U; index < points.size(); index += 2U) {
+                        path << 'L' << points[index] << ' ' << points[index + 1U];
+                    }
+                    path << "Z ";
+                } else {
+                    return invalid_resource_clip();
+                }
+                const auto path_size = path.tellp();
+                if (path_size == std::streampos{-1}
+                    || static_cast<std::streamoff>(path_size) > 16384) {
+                    return invalid_resource_clip();
+                }
+            }
+            auto flattened = path.str();
+            if (geometry_count == 0U || flattened.empty() || flattened.size() > 16384U) {
+                return invalid_resource_clip();
+            }
+            return effect_clip_geometry{
+                layout_rect{node.layout.x, node.layout.y, node.layout.width, node.layout.height},
+                0.0F,
+                std::move(flattened),
+                fill_rule.value_or(false),
+                true,
+                object_bounding_box};
         }
         if (has_prefix(polygon_prefix)) {
             auto arguments = value.substr(
@@ -1034,11 +1240,13 @@ void native_document::append_scene(
         constexpr uint32_t polygon_clip_resource = 1U << 31U;
         constexpr uint32_t clip_even_odd = 1U << 30U;
         constexpr uint32_t clip_relative_path = 1U << 29U;
+        constexpr uint32_t clip_object_bounding_box = 1U << 28U;
         const auto flags = effect_clip->path.empty()
             ? 0U
             : polygon_clip_resource
                 | (effect_clip->even_odd ? clip_even_odd : 0U)
                 | (effect_clip->relative_path ? clip_relative_path : 0U)
+                | (effect_clip->object_bounding_box ? clip_object_bounding_box : 0U)
                 | append_scene_string(effect_clip->path, strings, string_bytes);
         commands.push_back(webscene_scene_command{
             12U,

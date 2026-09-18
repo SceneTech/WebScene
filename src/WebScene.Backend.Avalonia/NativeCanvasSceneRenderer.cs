@@ -45,8 +45,10 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
     private const uint DomPolygonClipResource = 1u << 31;
     private const uint DomClipEvenOdd = 1u << 30;
     private const uint DomClipRelativePath = 1u << 29;
+    private const uint DomClipObjectBoundingBox = 1u << 28;
     private const uint DomPolygonClipIndexMask =
-        ~(DomPolygonClipResource | DomClipEvenOdd | DomClipRelativePath);
+        ~(DomPolygonClipResource | DomClipEvenOdd | DomClipRelativePath
+            | DomClipObjectBoundingBox);
     private const uint DomBrightnessFilter = 1u << 31;
     private const uint DomGrayscaleFilter = 1u << 30;
     private const uint DomContrastFilter = 1u << 29;
@@ -1982,49 +1984,80 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
             ClipDomRoundedRect(canvas, command, radii);
             return;
         }
-        var relative = (command.Flags & DomClipRelativePath) != 0;
-        if (relative)
-        {
-            canvas.Translate(command.X, command.Y);
-        }
-        try
-        {
-            ClipDomPath(
-                canvas,
-                DomStringAt(view, command.Flags & DomPolygonClipIndexMask),
-                (command.Flags & DomClipEvenOdd) != 0);
-        }
-        finally
-        {
-            // Restoring a saved canvas would also restore the prior clip. Undo
-            // only the matrix so the device-space clip remains active.
-            if (relative)
-            {
-                canvas.Translate(-command.X, -command.Y);
-            }
-        }
+        ClipDomPath(
+            canvas,
+            DomStringAt(view, command.Flags & DomPolygonClipIndexMask),
+            (command.Flags & DomClipEvenOdd) != 0,
+            (command.Flags & DomClipRelativePath) != 0,
+            (command.Flags & DomClipObjectBoundingBox) != 0,
+            command.X,
+            command.Y,
+            command.Width,
+            command.Height);
     }
 
     private static void ClipDomPath(
         SKCanvas canvas,
         string pathData,
-        bool evenOdd = false)
+        bool evenOdd = false,
+        bool relative = false,
+        bool objectBoundingBox = false,
+        float x = 0,
+        float y = 0,
+        float width = 0,
+        float height = 0)
     {
         using var path = SKPath.ParseSvgPathData(pathData);
-        if (path is null)
+        if (path is null || (objectBoundingBox && (width <= 0 || height <= 0)))
         {
             canvas.ClipRect(SKRect.Empty, SKClipOperation.Intersect, antialias: false);
             return;
         }
         path.FillType = evenOdd ? SKPathFillType.EvenOdd : SKPathFillType.Winding;
-        canvas.ClipPath(path, SKClipOperation.Intersect, antialias: true);
+        if (relative)
+        {
+            canvas.Translate(x, y);
+        }
+        if (objectBoundingBox)
+        {
+            canvas.Scale(width, height);
+        }
+        try
+        {
+            canvas.ClipPath(path, SKClipOperation.Intersect, antialias: true);
+        }
+        finally
+        {
+            // Restoring a saved canvas would also restore the prior clip. Undo
+            // only the matrix so the device-space clip remains active.
+            if (objectBoundingBox)
+            {
+                canvas.Scale(1 / width, 1 / height);
+            }
+            if (relative)
+            {
+                canvas.Translate(-x, -y);
+            }
+        }
     }
 
     internal static void ClipDomPathForTest(
         SKCanvas canvas,
         string pathData,
-        bool evenOdd = false)
-        => ClipDomPath(canvas, pathData, evenOdd);
+        bool evenOdd = false,
+        bool objectBoundingBox = false,
+        float x = 0,
+        float y = 0,
+        float width = 0,
+        float height = 0)
+        => ClipDomPath(
+            canvas, pathData, evenOdd,
+            relative: objectBoundingBox,
+            objectBoundingBox: objectBoundingBox,
+            x: x,
+            y: y,
+            width: width,
+            height: height);
 
     private void DrawDomText(
         SKCanvas canvas,

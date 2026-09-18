@@ -21,7 +21,8 @@ const int _canvasEvenOdd = 1 << 16;
 const int _domPolygonClipResource = 1 << 31;
 const int _domClipEvenOdd = 1 << 30;
 const int _domClipRelativePath = 1 << 29;
-const int _domPolygonClipIndexMask = _domClipRelativePath - 1;
+const int _domClipObjectBoundingBox = 1 << 28;
+const int _domPolygonClipIndexMask = _domClipObjectBoundingBox - 1;
 const int _domBrightnessFilter = 1 << 31;
 const int _domGrayscaleFilter = 1 << 30;
 const int _domContrastFilter = 1 << 29;
@@ -971,12 +972,22 @@ final class WebSceneSceneProjector extends ChangeNotifier {
         path.fillType = ui.PathFillType.evenOdd;
       }
       final relative = (command.flags & _domClipRelativePath) != 0;
+      final objectBoundingBox =
+          (command.flags & _domClipObjectBoundingBox) != 0;
+      if (objectBoundingBox && (command.width <= 0 || command.height <= 0)) {
+        canvas.clipRect(ui.Rect.zero, doAntiAlias: false);
+        return;
+      }
       if (relative) canvas.translate(command.x, command.y);
+      if (objectBoundingBox) canvas.scale(command.width, command.height);
       try {
         canvas.clipPath(path, doAntiAlias: true);
       } finally {
         // Restoring a saved canvas would also discard the clip. Undo only the
         // matrix so the clip remains in device coordinates.
+        if (objectBoundingBox) {
+          canvas.scale(1 / command.width, 1 / command.height);
+        }
         if (relative) canvas.translate(-command.x, -command.y);
       }
     } catch (_) {

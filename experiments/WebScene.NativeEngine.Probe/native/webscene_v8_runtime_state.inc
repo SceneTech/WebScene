@@ -102,6 +102,8 @@
     std::deque<indexeddb_completion> indexeddb_completions;
     std::unordered_map<uint64_t, pending_indexeddb_promise>
         pending_indexeddb_promises;
+    std::unordered_map<uint64_t, indexeddb_durable_request_target>
+        indexeddb_durable_request_targets;
     std::atomic<bool> indexeddb_work_ready{false};
     uint64_t next_indexeddb_operation_id{1U};
     std::unordered_map<uint64_t, v8::Global<v8::Object>> node_wrappers;
@@ -266,6 +268,8 @@
         file_grant_same_entry_request_sink;
     v8_dom_runtime::file_grant_ancestry_request_sink_v2
         file_grant_ancestry_request_sink;
+    v8_dom_runtime::file_grant_durable_request_sink_v2
+        file_grant_durable_request_sink;
     v8_dom_runtime::file_grant_read_request_sink_v2 file_grant_read_request_sink;
     v8_dom_runtime::file_grant_write_request_sink_v2 file_grant_write_request_sink;
     v8_dom_runtime::file_grant_directory_request_sink_v2

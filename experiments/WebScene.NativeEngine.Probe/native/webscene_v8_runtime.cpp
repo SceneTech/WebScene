@@ -6097,6 +6097,7 @@ v8_dom_runtime::v8_dom_runtime(
     file_panel_request_sink_v2 file_panel_request_sink,
     file_grant_same_entry_request_sink_v2 file_grant_same_entry_request_sink,
     file_grant_ancestry_request_sink_v2 file_grant_ancestry_request_sink,
+    file_grant_durable_request_sink_v2 file_grant_durable_request_sink,
     file_grant_read_request_sink_v2 file_grant_read_request_sink,
     file_grant_write_request_sink_v2 file_grant_write_request_sink,
     file_grant_directory_request_sink_v2 file_grant_directory_request_sink,
@@ -6116,6 +6117,7 @@ v8_dom_runtime::v8_dom_runtime(
         std::move(file_panel_request_sink),
         std::move(file_grant_same_entry_request_sink),
         std::move(file_grant_ancestry_request_sink),
+        std::move(file_grant_durable_request_sink),
         std::move(file_grant_read_request_sink),
         std::move(file_grant_write_request_sink),
         std::move(file_grant_directory_request_sink),
@@ -7983,6 +7985,26 @@ void v8_dom_runtime::complete_file_grant_ancestry_request(
         if (impl_->console_messages.size() < 1024)
             impl_->console_messages.push_back(
                 "error\nNative file grant ancestry completion: "
+                + impl_->last_error);
+    }
+}
+void v8_dom_runtime::complete_file_grant_durable_request(
+    file_grant_durable_completion_data_v2& completion) {
+    if (impl_ == nullptr) return;
+    v8::Locker locker(impl_->isolate);
+    v8::Isolate::Scope isolate_scope(impl_->isolate);
+    v8::HandleScope handles(impl_->isolate);
+    v8::TryCatch caught(impl_->isolate);
+    impl_->complete_native_file_grant_durable(completion);
+    if (caught.HasCaught() && !caught.Exception().IsEmpty()) {
+        const auto realm = impl_->isolate->GetCurrentContext();
+        impl_->last_error = realm.IsEmpty()
+            ? "Native durable file grant completion raised an exception"
+            : impl_->describe_reported_exception(caught, realm);
+        std::lock_guard lock(impl_->console_message_mutex);
+        if (impl_->console_messages.size() < 1024)
+            impl_->console_messages.push_back(
+                "error\nNative durable file grant completion: "
                 + impl_->last_error);
     }
 }

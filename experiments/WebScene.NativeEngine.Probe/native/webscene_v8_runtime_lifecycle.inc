@@ -17,6 +17,8 @@
             file_grant_same_entry_request_sink_value,
         v8_dom_runtime::file_grant_ancestry_request_sink_v2
             file_grant_ancestry_request_sink_value,
+        v8_dom_runtime::file_grant_durable_request_sink_v2
+            file_grant_durable_request_sink_value,
         v8_dom_runtime::file_grant_read_request_sink_v2
             file_grant_read_request_sink_value,
         v8_dom_runtime::file_grant_write_request_sink_v2
@@ -37,6 +39,8 @@
             std::move(file_grant_same_entry_request_sink_value))
         , file_grant_ancestry_request_sink(
             std::move(file_grant_ancestry_request_sink_value))
+        , file_grant_durable_request_sink(
+            std::move(file_grant_durable_request_sink_value))
         , file_grant_read_request_sink(
             std::move(file_grant_read_request_sink_value))
         , file_grant_write_request_sink(
@@ -226,6 +230,7 @@
             indexeddb_completions.clear();
         }
         pending_indexeddb_promises.clear();
+        indexeddb_durable_request_targets.clear();
         // Native host and file completions can still be pending when a window
         // closes. Their persistent context/resolver handles must be released
         // while the isolate is alive; member destruction happens after this

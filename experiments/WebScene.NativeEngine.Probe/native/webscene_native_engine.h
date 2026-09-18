@@ -1642,6 +1642,60 @@ WEBSCENE_API uint8_t webscene_engine_complete_file_grant_ancestry_request_v2(
     webscene_engine* engine,
     const webscene_file_grant_ancestry_completion_v2* completion);
 
+/* Persist and restore opaque grants without exposing live tokens or native
+ * location material to storage. Every request is bound to an exact host-owned
+ * storage partition plus serialized origin. EXPORT returns a fixed 32-byte
+ * locator. RESTORE returns a fresh live grant. REVOKE deletes the durable
+ * record. Request storage is immutable until release and completion storage is
+ * copied before return. */
+enum {
+    WEBSCENE_FILE_GRANT_DURABLE_EXPORT_V2 = 1,
+    WEBSCENE_FILE_GRANT_DURABLE_RESTORE_V2 = 2,
+    WEBSCENE_FILE_GRANT_DURABLE_REVOKE_V2 = 3
+};
+enum {
+    WEBSCENE_FILE_GRANT_DURABLE_SUCCESS_V2 = 0,
+    WEBSCENE_FILE_GRANT_DURABLE_CANCELLED_V2 = 1,
+    WEBSCENE_FILE_GRANT_DURABLE_DENIED_V2 = 2,
+    WEBSCENE_FILE_GRANT_DURABLE_NOT_FOUND_V2 = 3,
+    WEBSCENE_FILE_GRANT_DURABLE_CHANGED_V2 = 4,
+    WEBSCENE_FILE_GRANT_DURABLE_STALE_V2 = 5,
+    WEBSCENE_FILE_GRANT_DURABLE_TAMPERED_V2 = 6,
+    WEBSCENE_FILE_GRANT_DURABLE_IO_ERROR_V2 = 7,
+    WEBSCENE_FILE_GRANT_DURABLE_LIMIT_V2 = 8,
+    WEBSCENE_FILE_GRANT_DURABLE_LOCATOR_BYTES_V2 = 32,
+    WEBSCENE_FILE_GRANT_DURABLE_MAXIMUM_PARTITION_BYTES_V2 = 1024,
+    WEBSCENE_FILE_GRANT_DURABLE_MAXIMUM_ORIGIN_BYTES_V2 = 4096,
+    WEBSCENE_FILE_GRANT_DURABLE_MAXIMUM_RECORDS_V2 = 1024,
+    WEBSCENE_FILE_GRANT_DURABLE_MAXIMUM_PENDING_OPERATIONS_V2 = 16
+};
+typedef struct webscene_file_grant_durable_request_v2 {
+    uint32_t struct_size, version;
+    uint64_t request_id;
+    uint32_t action, reserved;
+    webscene_file_panel_token_v2 grant_id;
+    webscene_file_panel_token_v2 locator;
+    webscene_file_panel_string_v2 storage_partition;
+    webscene_file_panel_string_v2 serialized_origin;
+} webscene_file_grant_durable_request_v2;
+typedef struct webscene_file_grant_durable_completion_v2 {
+    uint32_t struct_size, version;
+    uint64_t request_id;
+    uint32_t status, action;
+    webscene_file_panel_token_v2 locator;
+    webscene_file_panel_token_v2 grant_id;
+    uint32_t kind, capabilities;
+    webscene_file_panel_string_v2 display_name;
+    webscene_file_panel_string_v2 error_code;
+} webscene_file_grant_durable_completion_v2;
+WEBSCENE_API const webscene_file_grant_durable_request_v2*
+webscene_engine_take_file_grant_durable_request_v2(webscene_engine* engine);
+WEBSCENE_API void webscene_file_grant_durable_request_release_v2(
+    const webscene_file_grant_durable_request_v2* request);
+WEBSCENE_API uint8_t webscene_engine_complete_file_grant_durable_request_v2(
+    webscene_engine* engine,
+    const webscene_file_grant_durable_completion_v2* completion);
+
 /* Bounded reads over an opaque native file grant. Each request asks for one
  * offset range and owns immutable token storage until release. Successful
  * completions include current metadata so the browser runtime can reject a

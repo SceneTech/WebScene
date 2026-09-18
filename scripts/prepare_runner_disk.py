@@ -179,7 +179,15 @@ def main() -> int:
         stale_seconds=args.system_stale_seconds,
         maximum_entries=args.maximum_entries,
         maximum_seconds=args.maximum_seconds,
-        allowed_prefixes=("rustc", "tmp", "cmake-", "cargo-", "dotnet-"),
+        allowed_prefixes=(
+            "rustc",
+            "tmp",
+            "cmake-",
+            "cargo-",
+            "dotnet-",
+            "dotnet.",
+            "webscene-popup-verify.",
+        ),
     )
     reclaimed = max(0, result.free_after - result.free_before)
     system_reclaimed = max(0, system_result.free_after - system_result.free_before)

@@ -62,6 +62,34 @@ test('actual Blob bytes are read asynchronously with one ordered event delivery'
   assert.equal(reader.error, null);
 });
 
+test('native file-reading task source is used ahead of the timer fallback', async () => {
+  const scheduled = [];
+  const FileReader = setup({
+    __webSceneQueueFileReadingTask(callback) {
+      scheduled.push(callback);
+      return true;
+    },
+    setTimeout() { throw new Error('timer fallback must not run'); }
+  });
+  const reader = new FileReader();
+  const events = [];
+  for (const name of ['loadstart', 'progress', 'load', 'loadend']) {
+    reader.addEventListener(name, () => events.push(name));
+  }
+  const loaded = new Promise(resolve => { reader.onloadend = resolve; });
+  reader.readAsArrayBuffer(new Blob([Uint8Array.of(7, 8, 9)]));
+  assert.equal(scheduled.length, 1);
+  scheduled.shift()();
+  for (let attempt = 0; attempt < 8 && scheduled.length === 0; attempt++) {
+    await Promise.resolve();
+  }
+  assert.equal(scheduled.length, 1);
+  scheduled.shift()();
+  await loaded;
+  assert.deepEqual(events, ['loadstart', 'progress', 'load', 'loadend']);
+  assert.deepEqual(Array.from(new Uint8Array(reader.result)), [7, 8, 9]);
+});
+
 test('VS Code onload can immediately read the next socket Blob without stale loadend', async () => {
   const FileReader = setup();
   const reader = new FileReader();

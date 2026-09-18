@@ -1,0 +1,121 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Dedicated Worker active MessagePort lifetime</title>
+<body>
+<script>
+window.__webSceneWptState = {
+  complete:false,harness:null,results:[],errors:[],diagnostics:[]
+};
+window.record = (name, condition, message = 'Contract failed') =>
+  __webSceneWptState.results.push({
+    name,status:condition?'PASS':'FAIL',message:condition?null:message,stack:null
+  });
+window.finish = () => {
+  const state = __webSceneWptState;
+  state.harness = {
+    status:state.results.some(result => result.status !== 'PASS') ? 1 : 0,
+    message:null,stack:null
+  };
+  state.complete = true;
+};
+
+function createPortWorker() {
+  const source = `
+    let mode = 0;
+    onmessage = event => {
+      const port = event.data;
+      const currentMode = mode++;
+      const receive = message => {
+        if (message.data === 0) {
+          port.postMessage(0);
+          return;
+        }
+        port.postMessage(message.data + 1);
+        if ((currentMode & 1) === 0) port.onmessage = null;
+        else port.removeEventListener('message', receive);
+        message.target.close();
+      };
+      if ((currentMode & 1) === 0) port.onmessage = receive;
+      else {
+        port.addEventListener('message', receive);
+        port.start();
+      }
+    }`;
+  const url = URL.createObjectURL(new Blob([source], {type:'text/javascript'}));
+  const worker = new Worker(url);
+  URL.revokeObjectURL(url);
+  return worker;
+}
+
+try {
+  const worker = createPortWorker();
+  worker.onerror = event => {
+    __webSceneWptState.errors.push(event.message);
+    record('Dedicated Worker completed without errors', false, event.message);
+    finish();
+  };
+  const started = performance.now();
+  let cycle = 0;
+  const runCycle = () => {
+    if (cycle === 100) {
+      record('onmessage and EventTarget listeners deliver across Worker transfer', true);
+      record('100 Worker transfer and listener-release cycles stay below 5 seconds',
+        performance.now() - started < 5000);
+      worker.terminate();
+      const terminatingWorker = createPortWorker();
+      const terminating = new MessageChannel();
+      terminating.port1.onmessage = event => {
+        if (event.data !== 0) return;
+        terminatingWorker.terminate();
+        terminating.port1.onmessage = null;
+        terminating.port1.close();
+        setTimeout(() => {
+          record('Worker termination releases an armed transferred MessagePort', true);
+          finish();
+        }, 20);
+      };
+      terminatingWorker.postMessage(terminating.port2, [terminating.port2]);
+      terminating.port1.postMessage(0);
+      return;
+    }
+    const current = cycle;
+    const channel = new MessageChannel();
+    const stale = () => {};
+    channel.port2.addEventListener('message', stale);
+    channel.port2.start();
+    let armed = false;
+    channel.port1.onmessage = event => {
+      if (!armed) {
+        armed = true;
+        if (event.data !== 0) {
+          record(`Worker cycle ${current} armed in order`, false);
+          finish();
+          return;
+        }
+        if (typeof gc === 'function') {
+          for (let collection = 0; collection < 4; ++collection) gc();
+        }
+        setTimeout(() => channel.port1.postMessage(current + 1), 0);
+        return;
+      }
+      if (event.data !== current + 2) {
+        record(`Worker cycle ${current} delivered exactly once`, false);
+        finish();
+        return;
+      }
+      channel.port1.onmessage = null;
+      channel.port1.close();
+      ++cycle;
+      setTimeout(runCycle, 0);
+    };
+    worker.postMessage(channel.port2, [channel.port2]);
+    channel.port1.postMessage(0);
+  };
+  runCycle();
+} catch (error) {
+  __webSceneWptState.errors.push(String(error));
+  record('Dedicated Worker MessagePort lifetime contract completed', false,
+    String(error));
+  finish();
+}
+</script>

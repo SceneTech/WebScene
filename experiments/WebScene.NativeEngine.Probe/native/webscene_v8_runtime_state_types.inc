@@ -104,10 +104,14 @@
     struct message_port_runtime_wake final {
         std::mutex mutex;
         bool stopped{false};
+        std::atomic<bool> reachability_changed{false};
         std::function<void()> notify;
 
-        void signal()
+        void signal(bool changed = false)
         {
+            if (changed) {
+                reachability_changed.store(true, std::memory_order_release);
+            }
             std::function<void()> callback;
             {
                 std::lock_guard lock(mutex);
@@ -115,6 +119,11 @@
                 callback = notify;
             }
             if (callback) callback();
+        }
+
+        bool consume_reachability_change()
+        {
+            return reachability_changed.exchange(false, std::memory_order_acq_rel);
         }
 
         void stop()
@@ -142,6 +151,9 @@
         std::shared_ptr<message_port_endpoint> endpoint;
         v8::Global<v8::Context> context;
         v8::Global<v8::Object> wrapper;
+        uint32_t event_target_id{};
+        bool started{false};
+        bool active_listener_rooted{false};
         bool transferred{false};
         bool reclaimed{false};
     };

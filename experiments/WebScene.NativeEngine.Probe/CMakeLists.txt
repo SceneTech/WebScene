@@ -622,6 +622,15 @@ else()
 endif()
 
 if(BUILD_TESTING)
+    add_executable(webscene_css_pseudo_font_size_tests
+        tests/css_pseudo_font_size_tests.cpp
+        native/webscene_native_dom.cpp)
+    target_compile_features(webscene_css_pseudo_font_size_tests PRIVATE cxx_std_20)
+    target_include_directories(webscene_css_pseudo_font_size_tests PRIVATE native)
+    add_test(NAME webscene_css_pseudo_font_size_tests
+        COMMAND webscene_css_pseudo_font_size_tests)
+    set_tests_properties(webscene_css_pseudo_font_size_tests PROPERTIES
+        LABELS "native;css;layout;performance" TIMEOUT 10)
     add_executable(webscene_css_property_identity_tests
         tests/css_property_identity_tests.cpp
         native/webscene_native_dom.cpp)

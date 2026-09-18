@@ -1,5 +1,6 @@
 #pragma once
 #include "webscene_css_pseudo_values.h"
+#include "webscene_css_text_values.h"
 #include "webscene_css_variables.h"
 
 namespace webscene_native::css {
@@ -125,6 +126,9 @@ void apply_pseudo_declaration(dom_node& node,node_style::pseudo_element& pseudo,
         }
         const auto result = css::apply_pseudo_value(
             pseudo, node.style.foreground_rgba, node.style.border_box, name, value);
+        if (name == "font-size" && result.classification == "supported") {
+            pseudo.font_size = resolved_pseudo_font_size(node, value);
+        }
         if (name == "font-family" && result.classification == "supported") {
             pseudo.font_family_important = declaration.important;
         }

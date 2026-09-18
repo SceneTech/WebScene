@@ -175,6 +175,7 @@
         pending_window_message_bytes = 0U;
         pending_dialog_close_events.clear();
         pending_programmatic_scroll_events.clear();
+        discrete_wheel_scroll.reset();
         pending_promise_rejections.clear();
         pending_interop_promises.clear();
         pending_callback_promises.clear();

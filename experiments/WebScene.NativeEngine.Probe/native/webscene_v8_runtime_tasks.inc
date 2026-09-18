@@ -552,6 +552,131 @@
                 current_input_sequence});
     }
 
+    void cancel_discrete_wheel_scroll(const dom_node* target = nullptr)
+    {
+        if (discrete_wheel_scroll == nullptr) return;
+        if (target != nullptr
+            && discrete_wheel_scroll->target_id != target->id) return;
+        discrete_wheel_scroll.reset();
+    }
+
+    std::pair<float, float> discrete_wheel_scroll_base(
+        const dom_node& target,
+        float delta_x,
+        float delta_y) const noexcept
+    {
+        if (discrete_wheel_scroll == nullptr
+            || discrete_wheel_scroll->target_id != target.id) {
+            return {target.scroll_left, target.scroll_top};
+        }
+        const auto remaining_x =
+            discrete_wheel_scroll->target_x - target.scroll_left;
+        const auto remaining_y =
+            discrete_wheel_scroll->target_y - target.scroll_top;
+        // Same-direction ticks extend the existing destination. A reversal
+        // cancels the old destination and starts from the currently painted
+        // position, so the old animation never fights the user's input.
+        if (delta_x * remaining_x + delta_y * remaining_y < -0.01F) {
+            return {target.scroll_left, target.scroll_top};
+        }
+        return {
+            discrete_wheel_scroll->target_x,
+            discrete_wheel_scroll->target_y};
+    }
+
+    void begin_discrete_wheel_scroll(
+        dom_node& target,
+        float target_x,
+        float target_y,
+        v8::Local<v8::Context> target_context,
+        uint64_t input_sequence)
+    {
+        const auto distance = std::hypot(
+            target_x - target.scroll_left,
+            target_y - target.scroll_top);
+        auto animation = std::make_unique<discrete_wheel_scroll_animation>();
+        animation->target_id = target.id;
+        animation->context.Reset(isolate, target_context);
+        animation->start_x = target.scroll_left;
+        animation->start_y = target.scroll_top;
+        animation->target_x = target_x;
+        animation->target_y = target_y;
+        animation->start_timestamp_ms = last_animation_frame_timestamp_ms > 0.0
+            ? last_animation_frame_timestamp_ms
+            : -1.0;
+        // A short distance should feel immediate; a coalesced burst gets a
+        // little more time instead of crossing hundreds of pixels in one
+        // frame. The bounded curve never becomes free-running momentum.
+        animation->duration_ms = std::clamp(
+            120.0 + static_cast<double>(distance) * 0.08,
+            120.0,
+            180.0);
+        animation->input_sequence = input_sequence;
+        discrete_wheel_scroll = std::move(animation);
+    }
+
+    bool advance_discrete_wheel_scroll(double timestamp_ms)
+    {
+        if (discrete_wheel_scroll == nullptr) return false;
+        auto* target = document.find_by_native_id(
+            discrete_wheel_scroll->target_id);
+        auto target_context = discrete_wheel_scroll->context.Get(isolate);
+        if (target == nullptr || !is_connected(*target)
+            || target_context.IsEmpty()) {
+            discrete_wheel_scroll.reset();
+            return false;
+        }
+        activate_css_cascade(target_context);
+        v8::Context::Scope context_scope(target_context);
+        auto& animation = *discrete_wheel_scroll;
+        const auto maximum_x = std::max(
+            0.0F, target->scroll_content_width - target->scroll_viewport_width);
+        const auto maximum_y = std::max(
+            0.0F, target->scroll_content_height - target->scroll_viewport_height);
+        animation.target_x = std::clamp(animation.target_x, 0.0F, maximum_x);
+        animation.target_y = std::clamp(animation.target_y, 0.0F, maximum_y);
+        if (!std::isfinite(timestamp_ms) || timestamp_ms < 0.0) {
+            timestamp_ms = last_animation_frame_timestamp_ms;
+        }
+        if (animation.start_timestamp_ms < 0.0) {
+            // The first requested compositor frame is also the first visual
+            // response. Seed one nominal frame of elapsed time so a host that
+            // was previously idle does not emit an unchanged warm-up frame.
+            animation.start_timestamp_ms = timestamp_ms
+                - std::min(1000.0 / 60.0, animation.duration_ms);
+        }
+        const auto progress = std::clamp(
+            (timestamp_ms - animation.start_timestamp_ms)
+                / animation.duration_ms,
+            0.0,
+            1.0);
+        const auto remaining = 1.0 - progress;
+        const auto eased = 1.0 - remaining * remaining * remaining;
+        const auto next_x = progress >= 1.0
+            ? animation.target_x
+            : animation.start_x
+                + (animation.target_x - animation.start_x)
+                    * static_cast<float>(eased);
+        const auto next_y = progress >= 1.0
+            ? animation.target_y
+            : animation.start_y
+                + (animation.target_y - animation.start_y)
+                    * static_cast<float>(eased);
+        const auto changed = std::abs(next_x - target->scroll_left) > 0.01F
+            || std::abs(next_y - target->scroll_top) > 0.01F;
+        if (changed) {
+            document.set_scroll_offset(*target, next_x, next_y);
+            current_input_sequence = animation.input_sequence;
+            enqueue_programmatic_scroll_event(*target);
+        }
+        if (progress >= 1.0
+            || (std::abs(animation.target_x - target->scroll_left) <= 0.01F
+                && std::abs(animation.target_y - target->scroll_top) <= 0.01F)) {
+            discrete_wheel_scroll.reset();
+        }
+        return changed;
+    }
+
     bool drain_programmatic_scroll_event_task()
     {
         if (pending_programmatic_scroll_events.empty()) return true;
@@ -3080,6 +3205,11 @@
         activate_css_cascade(local_context);
         v8::Context::Scope context_scope(local_context);
         v8::TryCatch try_catch(isolate);
+        if (input.kind == WEBSCENE_INPUT_POINTER_DOWN) {
+            // Direct manipulation always wins over an in-flight coarse-wheel
+            // interpolation.
+            cancel_discrete_wheel_scroll();
+        }
         const auto report_input_exception = [&] {
 #if defined(WEBSCENE_NATIVE_ENGINE_WITH_V8_INSPECTOR)
             report_inspector_exception(try_catch, local_context);
@@ -3466,6 +3596,15 @@
             }
         }
         if (input.kind == WEBSCENE_INPUT_WHEEL && !wheel_default_prevented) {
+            const auto discrete_wheel =
+                (input.flags & WEBSCENE_INPUT_WHEEL_DISCRETE) != 0U;
+            const auto platform_smoothed_wheel =
+                (input.flags & (WEBSCENE_INPUT_WHEEL_PRECISE
+                    | WEBSCENE_INPUT_WHEEL_NATIVE_MOMENTUM)) != 0U;
+            const auto animate_wheel = discrete_wheel
+                && !platform_smoothed_wheel
+                && !css::get_active_accessibility_preferences().reduced_motion;
+            if (!animate_wheel) cancel_discrete_wheel_scroll();
             for (auto* scroll_target = target; scroll_target != nullptr;
                 scroll_target = scroll_target->parent) {
                 // A loaded document exposes HTML beneath the retained native
@@ -3496,23 +3635,44 @@
                 const auto root_viewport_scroll_y = scroll_target == &document.body()
                     && (exposed_root->style.overflow_y == overflow_mode::visible
                         || exposed_root->style.scroll_y_enabled);
+                const auto [base_x, base_y] = animate_wheel
+                    ? discrete_wheel_scroll_base(
+                        *scroll_target,
+                        static_cast<float>(input.delta_x),
+                        static_cast<float>(input.delta_y))
+                    : std::pair{
+                        scroll_target->scroll_left,
+                        scroll_target->scroll_top};
                 const auto next_x = (scroll_target->style.scroll_x_enabled
                         || root_viewport_scroll_x)
                     ? std::clamp(
-                        scroll_target->scroll_left + static_cast<float>(input.delta_x),
+                        base_x + static_cast<float>(input.delta_x),
                         0.0F,
                         maximum_x)
                     : scroll_target->scroll_left;
                 const auto next_y = (scroll_target->style.scroll_y_enabled
                         || root_viewport_scroll_y)
                     ? std::clamp(
-                        scroll_target->scroll_top + static_cast<float>(input.delta_y),
+                        base_y + static_cast<float>(input.delta_y),
                         0.0F,
                         maximum_y)
                     : scroll_target->scroll_top;
-                if (std::abs(next_x - scroll_target->scroll_left) <= 0.01F
-                    && std::abs(next_y - scroll_target->scroll_top) <= 0.01F) {
+                const auto comparison_x = animate_wheel
+                    ? base_x : scroll_target->scroll_left;
+                const auto comparison_y = animate_wheel
+                    ? base_y : scroll_target->scroll_top;
+                if (std::abs(next_x - comparison_x) <= 0.01F
+                    && std::abs(next_y - comparison_y) <= 0.01F) {
                     continue;
+                }
+                if (animate_wheel) {
+                    begin_discrete_wheel_scroll(
+                        *scroll_target,
+                        next_x,
+                        next_y,
+                        local_context,
+                        input.sequence);
+                    break;
                 }
                 document.set_scroll_offset(*scroll_target, next_x, next_y);
                 if (!dispatch_input_event_type(input, "scroll", *scroll_target)) {

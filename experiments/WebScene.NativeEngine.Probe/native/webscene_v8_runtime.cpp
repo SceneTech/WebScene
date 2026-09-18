@@ -6347,6 +6347,14 @@ void v8_dom_runtime::signal_animation_frame(double timestamp_ms)
     }
 }
 
+bool v8_dom_runtime::advance_discrete_wheel_scroll(double timestamp_ms)
+{
+    auto isolate_locker = impl_->lock_shared_isolate();
+    v8::Isolate::Scope isolate_scope(impl_->isolate);
+    v8::HandleScope handle_scope(impl_->isolate);
+    return impl_->advance_discrete_wheel_scroll(timestamp_ms);
+}
+
 bool v8_dom_runtime::pump_animation_frame_task()
 {
     auto isolate_locker = impl_->lock_shared_isolate();
@@ -6377,6 +6385,7 @@ uint8_t v8_dom_runtime::host_animation_frame_demand() const noexcept
     auto demand = impl_->has_waiting_animation_frame_task()
         ? uint8_t{1U}
         : uint8_t{0U};
+    if (impl_->discrete_wheel_scroll != nullptr) demand |= uint8_t{4U};
 #if defined(WEBSCENE_NATIVE_ENGINE_ENABLE_GRAPHICS) && (defined(__APPLE__) || defined(_WIN32))
     for(const auto& [key,canvas]:impl_->gpu_canvases)if(canvas.context->has_current_texture()){demand|=1U;break;}
 #endif

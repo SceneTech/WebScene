@@ -2598,6 +2598,7 @@
             root.scroll_content_height - root.scroll_viewport_height);
         const auto next_left = std::clamp(static_cast<float>(left), 0.0F, maximum_left);
         const auto next_top = std::clamp(static_cast<float>(top), 0.0F, maximum_top);
+        self->cancel_discrete_wheel_scroll(&root);
         if (std::abs(next_left - root.scroll_left) <= 0.01F
             && std::abs(next_top - root.scroll_top) <= 0.01F) {
             return;

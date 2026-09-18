@@ -302,7 +302,9 @@ public sealed unsafe class UnoNativeSceneSurface : SKCanvasElement, INativeWebSc
         var input = new InputEvent
         {
             Kind = 4,
-            Flags = EncodeModifiers() << 16,
+            // WinUI exposes mouse-wheel detents here, so let WebScene
+            // interpolate the coarse target offset on compositor frames.
+            Flags = (EncodeModifiers() << 16) | (1U << 22),
             Sequence = NextSequence(),
             X = point.Position.X,
             Y = point.Position.Y,

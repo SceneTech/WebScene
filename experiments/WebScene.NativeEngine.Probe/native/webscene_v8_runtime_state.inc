@@ -206,6 +206,8 @@
     std::vector<pending_dialog_close_event> pending_dialog_close_events;
     std::vector<pending_programmatic_scroll_event>
         pending_programmatic_scroll_events;
+    std::unique_ptr<discrete_wheel_scroll_animation>
+        discrete_wheel_scroll;
     native_websocket_transport websocket_transport;
     std::unordered_map<uint64_t, websocket_binding> websocket_bindings;
     uint8_t next_async_message_task_source{0U};

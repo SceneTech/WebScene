@@ -1640,6 +1640,59 @@ WEBSCENE_API uint8_t webscene_engine_complete_file_grant_read_request_v2(
     webscene_engine* engine,
     const webscene_file_grant_read_completion_v2* completion);
 
+/* Atomic writes over an opaque native file grant. BEGIN returns a private
+ * transaction token. CHUNK copies one nonempty offset range. COMMIT publishes
+ * exactly final_byte_count bytes atomically; ABORT discards the transaction.
+ * Request storage remains immutable until release and completion storage is
+ * copied before return. Limits: 64 pending operations, 16 concurrent
+ * transactions in the native authority, 1 MiB per chunk, 1 GiB per
+ * transaction, and 1 KiB opaque grant/transaction tokens. */
+enum {
+    WEBSCENE_FILE_GRANT_WRITE_BEGIN_V2 = 1,
+    WEBSCENE_FILE_GRANT_WRITE_CHUNK_V2 = 2,
+    WEBSCENE_FILE_GRANT_WRITE_COMMIT_V2 = 3,
+    WEBSCENE_FILE_GRANT_WRITE_ABORT_V2 = 4
+};
+enum {
+    WEBSCENE_FILE_GRANT_WRITE_SUCCESS_V2 = 0,
+    WEBSCENE_FILE_GRANT_WRITE_CANCELLED_V2 = 1,
+    WEBSCENE_FILE_GRANT_WRITE_DENIED_V2 = 2,
+    WEBSCENE_FILE_GRANT_WRITE_NOT_FOUND_V2 = 3,
+    WEBSCENE_FILE_GRANT_WRITE_CHANGED_V2 = 4,
+    WEBSCENE_FILE_GRANT_WRITE_IO_ERROR_V2 = 5,
+    WEBSCENE_FILE_GRANT_WRITE_LIMIT_V2 = 6,
+    WEBSCENE_FILE_GRANT_WRITE_MAXIMUM_CHUNK_BYTES_V2 = 1024 * 1024,
+    WEBSCENE_FILE_GRANT_WRITE_MAXIMUM_TRANSACTION_BYTES_V2 = 1024 * 1024 * 1024,
+    WEBSCENE_FILE_GRANT_WRITE_MAXIMUM_PENDING_OPERATIONS_V2 = 64
+};
+typedef struct webscene_file_grant_write_request_v2 {
+    uint32_t struct_size, version;
+    uint64_t request_id;
+    uint32_t action, reserved;
+    webscene_file_panel_token_v2 grant_id;
+    webscene_file_panel_token_v2 transaction_id;
+    uint64_t offset;
+    const uint8_t* data;
+    size_t byte_count;
+    uint64_t final_byte_count;
+} webscene_file_grant_write_request_v2;
+typedef struct webscene_file_grant_write_completion_v2 {
+    uint32_t struct_size, version;
+    uint64_t request_id;
+    uint32_t status, action;
+    webscene_file_panel_token_v2 transaction_id;
+    webscene_file_grant_metadata_v2 metadata;
+    uint64_t offset;
+    size_t byte_count;
+} webscene_file_grant_write_completion_v2;
+WEBSCENE_API const webscene_file_grant_write_request_v2*
+webscene_engine_take_file_grant_write_request_v2(webscene_engine* engine);
+WEBSCENE_API void webscene_file_grant_write_request_release_v2(
+    const webscene_file_grant_write_request_v2* request);
+WEBSCENE_API uint8_t webscene_engine_complete_file_grant_write_request_v2(
+    webscene_engine* engine,
+    const webscene_file_grant_write_completion_v2* completion);
+
 /* Typed native desktop request ABI. Request memory is immutable and remains
  * valid until release. Byte payloads are capped at 16 MiB, strings are UTF-8,
  * and at most 16 completion-bearing operations may be pending per document. */

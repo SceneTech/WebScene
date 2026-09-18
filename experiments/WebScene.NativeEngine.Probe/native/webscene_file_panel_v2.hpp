@@ -885,4 +885,268 @@ private:
     bool retiring_{};
 };
 
+inline constexpr std::size_t file_grant_write_maximum_pending_v2 =
+    WEBSCENE_FILE_GRANT_WRITE_MAXIMUM_PENDING_OPERATIONS_V2;
+
+struct file_grant_write_request_lease_v2 final {
+    webscene_file_grant_write_request_v2 view{};
+    std::vector<std::uint8_t> grant_id;
+    std::vector<std::uint8_t> transaction_id;
+    std::vector<std::uint8_t> bytes;
+
+    void bind() {
+        view.struct_size = sizeof(view);
+        view.version = 2;
+        view.grant_id = {grant_id.empty() ? nullptr : grant_id.data(),
+            grant_id.size()};
+        view.transaction_id = {
+            transaction_id.empty() ? nullptr : transaction_id.data(),
+            transaction_id.size()};
+        view.data = bytes.empty() ? nullptr : bytes.data();
+        view.byte_count = bytes.size();
+    }
+};
+static_assert(std::is_standard_layout_v<file_grant_write_request_lease_v2>);
+static_assert(offsetof(file_grant_write_request_lease_v2, view) == 0);
+
+struct file_grant_write_completion_data_v2 final {
+    std::uint64_t request_id{};
+    std::uint32_t status{WEBSCENE_FILE_GRANT_WRITE_IO_ERROR_V2};
+    std::uint32_t action{};
+    std::vector<std::uint8_t> transaction_id;
+    std::uint64_t byte_count{};
+    std::int64_t modification_time_ns{};
+    std::uint64_t offset{};
+    std::size_t written_byte_count{};
+};
+
+using file_grant_write_completion_callback_v2 =
+    std::function<void(file_grant_write_completion_data_v2&&)>;
+
+struct file_grant_write_metrics_v2 final {
+    std::size_t queued_requests{};
+    std::size_t pending_requests{};
+    std::size_t retained_input_bytes{};
+    std::uint64_t completed_requests{};
+    std::uint64_t retired_requests{};
+    std::uint64_t copied_request_bytes{};
+    std::uint64_t rejected_operations{};
+};
+
+class file_grant_write_broker_v2 final {
+public:
+    bool queue(const webscene_file_grant_write_request_v2& source,
+               file_grant_write_completion_callback_v2 callback) {
+        auto lease = copy_request(source);
+        if (!lease) { reject(); return false; }
+        const auto id = lease->view.request_id;
+        const auto retained = lease->grant_id.size()
+            + lease->transaction_id.size() + lease->bytes.size();
+        const auto copied = lease->bytes.size();
+        std::lock_guard lock(mutex_);
+        if (retiring_ || pending_.size() >= file_grant_write_maximum_pending_v2
+            || pending_.contains(id)) {
+            ++rejected_operations_;
+            return false;
+        }
+        pending_.emplace(id, pending_request{lease->view.action,
+            lease->view.offset, lease->view.byte_count,
+            lease->view.final_byte_count, retained, std::move(callback)});
+        retained_input_bytes_ += retained;
+        copied_request_bytes_ += copied;
+        queued_.push_back(std::move(lease));
+        return true;
+    }
+
+    std::unique_ptr<file_grant_write_request_lease_v2> take() {
+        std::lock_guard lock(mutex_);
+        if (queued_.empty()) return {};
+        auto result = std::move(queued_.front());
+        queued_.pop_front();
+        result->bind();
+        return result;
+    }
+
+    bool complete(const webscene_file_grant_write_completion_v2& source) {
+        file_grant_write_completion_callback_v2 callback;
+        std::optional<file_grant_write_completion_data_v2> completion;
+        {
+            std::lock_guard lock(mutex_);
+            const auto found = pending_.find(source.request_id);
+            if (found == pending_.end()
+                || !(completion = copy_completion(source, found->second))) {
+                ++rejected_operations_;
+                return false;
+            }
+            callback = std::move(found->second.callback);
+            retained_input_bytes_ -= found->second.retained_bytes;
+            pending_.erase(found);
+            ++completed_requests_;
+        }
+        if (callback) {
+            try { callback(std::move(*completion)); }
+            catch (...) { }
+        }
+        return true;
+    }
+
+    void retire() {
+        std::vector<std::pair<std::uint64_t, pending_request>> pending;
+        {
+            std::lock_guard lock(mutex_);
+            if (retiring_) return;
+            retiring_ = true;
+            pending.reserve(pending_.size());
+            for (auto& [id, request] : pending_)
+                pending.emplace_back(id, std::move(request));
+            retired_requests_ += pending_.size();
+            pending_.clear();
+            queued_.clear();
+            retained_input_bytes_ = 0;
+        }
+        for (auto& [id, request] : pending) {
+            if (!request.callback) continue;
+            try {
+                request.callback(file_grant_write_completion_data_v2{
+                    id, WEBSCENE_FILE_GRANT_WRITE_CANCELLED_V2,
+                    request.action, {}, 0, 0, request.offset, 0});
+            } catch (...) { }
+        }
+        std::lock_guard lock(mutex_);
+        retiring_ = false;
+    }
+
+    file_grant_write_metrics_v2 metrics() const {
+        std::lock_guard lock(mutex_);
+        return {queued_.size(), pending_.size(), retained_input_bytes_,
+            completed_requests_, retired_requests_, copied_request_bytes_,
+            rejected_operations_};
+    }
+
+private:
+    struct pending_request final {
+        std::uint32_t action{};
+        std::uint64_t offset{};
+        std::size_t byte_count{};
+        std::uint64_t final_byte_count{};
+        std::size_t retained_bytes{};
+        file_grant_write_completion_callback_v2 callback;
+    };
+
+    void reject() { std::lock_guard lock(mutex_); ++rejected_operations_; }
+
+    static bool valid_token(webscene_file_panel_token_v2 token) {
+        return token.data != nullptr && token.byte_count != 0
+            && token.byte_count <= file_panel_maximum_token_bytes_v2;
+    }
+
+    static std::unique_ptr<file_grant_write_request_lease_v2> copy_request(
+        const webscene_file_grant_write_request_v2& source) {
+        if (source.struct_size < sizeof(source) || source.version != 2
+            || source.request_id == 0 || source.reserved != 0
+            || source.action < WEBSCENE_FILE_GRANT_WRITE_BEGIN_V2
+            || source.action > WEBSCENE_FILE_GRANT_WRITE_ABORT_V2)
+            return {};
+        const bool begin = source.action == WEBSCENE_FILE_GRANT_WRITE_BEGIN_V2;
+        const bool chunk = source.action == WEBSCENE_FILE_GRANT_WRITE_CHUNK_V2;
+        const bool commit = source.action == WEBSCENE_FILE_GRANT_WRITE_COMMIT_V2;
+        const bool empty_grant = source.grant_id.data == nullptr
+            && source.grant_id.byte_count == 0;
+        const bool empty_transaction = source.transaction_id.data == nullptr
+            && source.transaction_id.byte_count == 0;
+        if ((begin && (!valid_token(source.grant_id) || !empty_transaction
+                || source.offset != 0 || source.data != nullptr
+                || source.byte_count != 0 || source.final_byte_count != 0))
+            || (!begin && (!empty_grant || !valid_token(source.transaction_id)))
+            || (chunk && (source.data == nullptr || source.byte_count == 0
+                || source.byte_count > WEBSCENE_FILE_GRANT_WRITE_MAXIMUM_CHUNK_BYTES_V2
+                || source.offset > WEBSCENE_FILE_GRANT_WRITE_MAXIMUM_TRANSACTION_BYTES_V2
+                    - source.byte_count || source.final_byte_count != 0))
+            || (!chunk && !begin && (source.offset != 0 || source.data != nullptr
+                || source.byte_count != 0))
+            || (commit && source.final_byte_count
+                > WEBSCENE_FILE_GRANT_WRITE_MAXIMUM_TRANSACTION_BYTES_V2)
+            || (!commit && source.final_byte_count != 0)) return {};
+        auto result = std::make_unique<file_grant_write_request_lease_v2>();
+        result->view = source;
+        if (!empty_grant) result->grant_id.assign(source.grant_id.data,
+            source.grant_id.data + source.grant_id.byte_count);
+        if (!empty_transaction) result->transaction_id.assign(
+            source.transaction_id.data,
+            source.transaction_id.data + source.transaction_id.byte_count);
+        if (chunk) result->bytes.assign(source.data,
+            source.data + source.byte_count);
+        result->bind();
+        return result;
+    }
+
+    static std::optional<file_grant_write_completion_data_v2> copy_completion(
+        const webscene_file_grant_write_completion_v2& source,
+        const pending_request& pending) {
+        if (source.struct_size < sizeof(source) || source.version != 2
+            || source.request_id == 0 || source.action != pending.action
+            || source.status > WEBSCENE_FILE_GRANT_WRITE_LIMIT_V2)
+            return std::nullopt;
+        file_grant_write_completion_data_v2 result;
+        result.request_id = source.request_id;
+        result.status = source.status;
+        result.action = source.action;
+        const bool success = source.status == WEBSCENE_FILE_GRANT_WRITE_SUCCESS_V2;
+        const bool begin = source.action == WEBSCENE_FILE_GRANT_WRITE_BEGIN_V2;
+        const bool chunk = source.action == WEBSCENE_FILE_GRANT_WRITE_CHUNK_V2;
+        const bool commit = source.action == WEBSCENE_FILE_GRANT_WRITE_COMMIT_V2;
+        const bool empty_transaction = source.transaction_id.data == nullptr
+            && source.transaction_id.byte_count == 0;
+        if ((success && begin && !valid_token(source.transaction_id))
+            || ((!success || !begin) && !empty_transaction)) return std::nullopt;
+        if (success && begin) result.transaction_id.assign(
+            source.transaction_id.data,
+            source.transaction_id.data + source.transaction_id.byte_count);
+        if (!success) {
+            if (source.metadata.byte_count != 0
+                || source.metadata.modification_time_ns != 0
+                || source.metadata.kind != 0 || source.metadata.reserved != 0
+                || source.offset != 0 || source.byte_count != 0)
+                return std::nullopt;
+            return result;
+        }
+        if (chunk) {
+            if (source.offset != pending.offset
+                || source.byte_count != pending.byte_count
+                || source.metadata.byte_count != 0
+                || source.metadata.modification_time_ns != 0
+                || source.metadata.kind != 0 || source.metadata.reserved != 0)
+                return std::nullopt;
+            result.offset = source.offset;
+            result.written_byte_count = source.byte_count;
+        } else if (commit) {
+            if (source.metadata.struct_size < sizeof(source.metadata)
+                || source.metadata.version != 2
+                || source.metadata.kind != WEBSCENE_FILE_PANEL_ENTRY_FILE_V2
+                || source.metadata.reserved != 0
+                || source.metadata.byte_count != pending.final_byte_count
+                || source.offset != 0 || source.byte_count != 0)
+                return std::nullopt;
+            result.byte_count = source.metadata.byte_count;
+            result.modification_time_ns = source.metadata.modification_time_ns;
+        } else if (source.offset != 0 || source.byte_count != 0
+            || source.metadata.byte_count != 0
+            || source.metadata.modification_time_ns != 0
+            || (source.metadata.kind != 0
+                && source.metadata.kind != WEBSCENE_FILE_PANEL_ENTRY_FILE_V2)
+            || source.metadata.reserved != 0) return std::nullopt;
+        return result;
+    }
+
+    mutable std::mutex mutex_;
+    std::deque<std::unique_ptr<file_grant_write_request_lease_v2>> queued_;
+    std::unordered_map<std::uint64_t, pending_request> pending_;
+    std::size_t retained_input_bytes_{};
+    std::uint64_t completed_requests_{};
+    std::uint64_t retired_requests_{};
+    std::uint64_t copied_request_bytes_{};
+    std::uint64_t rejected_operations_{};
+    bool retiring_{};
+};
+
 } // namespace webscene_native

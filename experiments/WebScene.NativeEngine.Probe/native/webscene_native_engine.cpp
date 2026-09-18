@@ -443,6 +443,22 @@ struct webscene_engine final {
         const webscene_file_grant_read_completion_v2& completion) {
         return file_grant_read_broker_v2_.complete(completion);
     }
+    bool queue_file_grant_write_request_v2(
+        const webscene_file_grant_write_request_v2& request,
+        webscene_native::file_grant_write_completion_callback_v2 callback) {
+        if (!file_grant_write_broker_v2_.queue(request, std::move(callback)))
+            return false;
+        notify_host_work();
+        return true;
+    }
+    std::unique_ptr<webscene_native::file_grant_write_request_lease_v2>
+    take_file_grant_write_request_v2() {
+        return file_grant_write_broker_v2_.take();
+    }
+    bool complete_file_grant_write_request_v2(
+        const webscene_file_grant_write_completion_v2& completion) {
+        return file_grant_write_broker_v2_.complete(completion);
+    }
 private:
 #if defined(WEBSCENE_GRAPHICS_SCENE_TESTS)
     friend void test_native_gpu_scene_leases();
@@ -524,6 +540,7 @@ private:
     webscene_native::file_grant_same_entry_broker_v2
         file_grant_same_entry_broker_v2_;
     webscene_native::file_grant_read_broker_v2 file_grant_read_broker_v2_;
+    webscene_native::file_grant_write_broker_v2 file_grant_write_broker_v2_;
 #if defined(WEBSCENE_NATIVE_ENGINE_WITH_V8)
     std::unique_ptr<webscene_native::v8_dom_runtime> runtime_;
     std::atomic<bool> file_service_enabled_{false};
@@ -2083,4 +2100,24 @@ uint8_t webscene_engine_complete_file_grant_read_request_v2(
     } catch (...) {
         return 0;
     }
+}
+const webscene_file_grant_write_request_v2*
+webscene_engine_take_file_grant_write_request_v2(webscene_engine* engine) {
+    if (engine == nullptr) return nullptr;
+    try {
+        auto request = engine->take_file_grant_write_request_v2();
+        return request ? &request.release()->view : nullptr;
+    } catch (...) { return nullptr; }
+}
+void webscene_file_grant_write_request_release_v2(
+    const webscene_file_grant_write_request_v2* request) {
+    delete reinterpret_cast<const
+        webscene_native::file_grant_write_request_lease_v2*>(request);
+}
+uint8_t webscene_engine_complete_file_grant_write_request_v2(
+    webscene_engine* engine,
+    const webscene_file_grant_write_completion_v2* completion) {
+    if (engine == nullptr || completion == nullptr) return 0;
+    try { return engine->complete_file_grant_write_request_v2(*completion); }
+    catch (...) { return 0; }
 }

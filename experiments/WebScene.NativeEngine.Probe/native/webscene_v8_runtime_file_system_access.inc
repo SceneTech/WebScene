@@ -148,6 +148,87 @@
         }
     }
 
+    static void request_file_grant_write(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        auto isolate = info.GetIsolate();
+        auto local_context = isolate->GetCurrentContext();
+        auto resolver = v8::Promise::Resolver::New(local_context).ToLocalChecked();
+        info.GetReturnValue().Set(resolver->GetPromise());
+        const auto reject = [&](std::string_view message, std::string_view name) {
+            reject_file_panel_promise(
+                isolate, local_context, resolver, message, name);
+        };
+        if (self == nullptr || !self->file_grant_write_request_sink) {
+            reject("Native file grant writes are unavailable", "NotSupportedError");
+            return;
+        }
+        if (info.Length() != 6 || !info[0]->IsUint32()
+            || !info[3]->IsNumber() || !info[5]->IsNumber()) {
+            reject("Malformed native file write", "TypeError");
+            return;
+        }
+        if (self->file_grant_write_promise_targets.size()
+            >= file_grant_write_maximum_pending_v2) {
+            reject("Too many pending file writes", "QuotaExceededError");
+            return;
+        }
+        const auto action = info[0].As<v8::Uint32>()->Value();
+        const auto offset_value = info[3].As<v8::Number>()->Value();
+        const auto final_value = info[5].As<v8::Number>()->Value();
+        constexpr auto maximum_safe_integer = 9007199254740991.0;
+        if (!std::isfinite(offset_value) || offset_value < 0
+            || std::floor(offset_value) != offset_value
+            || offset_value > maximum_safe_integer
+            || !std::isfinite(final_value) || final_value < 0
+            || std::floor(final_value) != final_value
+            || final_value > maximum_safe_integer) {
+            reject("File write offsets must be non-negative safe integers",
+                "TypeError");
+            return;
+        }
+        file_grant_write_request_lease_v2 request;
+        request.view.request_id = ++self->next_host_request_id;
+        request.view.action = action;
+        request.view.offset = static_cast<std::uint64_t>(offset_value);
+        request.view.final_byte_count = static_cast<std::uint64_t>(final_value);
+        const auto copy_bytes = [](v8::Local<v8::Value> value,
+                                   std::vector<std::uint8_t>& destination,
+                                   std::size_t maximum) {
+            if (value->IsNullOrUndefined()) return true;
+            if (!value->IsUint8Array()) return false;
+            const auto bytes = value.As<v8::Uint8Array>();
+            if (bytes->ByteLength() == 0 || bytes->ByteLength() > maximum)
+                return false;
+            const auto store = bytes->Buffer()->GetBackingStore();
+            const auto* first = static_cast<const std::uint8_t*>(store->Data())
+                + bytes->ByteOffset();
+            destination.assign(first, first + bytes->ByteLength());
+            return true;
+        };
+        if (!copy_bytes(info[1], request.grant_id,
+                file_panel_maximum_token_bytes_v2)
+            || !copy_bytes(info[2], request.transaction_id,
+                file_panel_maximum_token_bytes_v2)
+            || !copy_bytes(info[4], request.bytes,
+                WEBSCENE_FILE_GRANT_WRITE_MAXIMUM_CHUNK_BYTES_V2)) {
+            reject("Malformed native file write payload", "DataError");
+            return;
+        }
+        request.bind();
+        file_grant_write_promise_target target;
+        target.context.Reset(isolate, local_context);
+        target.resolver.Reset(isolate, resolver);
+        self->file_grant_write_promise_targets.emplace(
+            request.view.request_id, std::move(target));
+        if (!self->file_grant_write_request_sink(request.view)) {
+            self->file_grant_write_promise_targets.erase(request.view.request_id);
+            reject("The native file grant authority rejected the write",
+                "NotAllowedError");
+        }
+    }
+
     static void request_file_panel(
         const v8::FunctionCallbackInfo<v8::Value>& info)
     {
@@ -501,6 +582,68 @@
         perform_microtask_checkpoint();
     }
 
+    void complete_native_file_grant_write(
+        file_grant_write_completion_data_v2& completion)
+    {
+        const auto found = file_grant_write_promise_targets.find(
+            completion.request_id);
+        if (found == file_grant_write_promise_targets.end()) return;
+        auto target = std::move(found->second);
+        file_grant_write_promise_targets.erase(found);
+        auto local_context = target.context.Get(isolate);
+        auto resolver = target.resolver.Get(isolate);
+        if (local_context.IsEmpty() || resolver.IsEmpty()) return;
+        v8::Context::Scope context_scope(local_context);
+        if (completion.status != WEBSCENE_FILE_GRANT_WRITE_SUCCESS_V2) {
+            const auto name = completion.status == WEBSCENE_FILE_GRANT_WRITE_CANCELLED_V2
+                ? "AbortError"
+                : completion.status == WEBSCENE_FILE_GRANT_WRITE_DENIED_V2
+                    ? "NotAllowedError"
+                    : completion.status == WEBSCENE_FILE_GRANT_WRITE_NOT_FOUND_V2
+                        ? "NotFoundError"
+                        : completion.status == WEBSCENE_FILE_GRANT_WRITE_LIMIT_V2
+                            ? "QuotaExceededError" : "NotReadableError";
+            reject_file_panel_promise(isolate, local_context, resolver,
+                "The native file write failed", name);
+            perform_microtask_checkpoint();
+            return;
+        }
+        auto result = v8::Object::New(isolate);
+        auto transaction = v8::ArrayBuffer::New(
+            isolate, completion.transaction_id.size());
+        if (!completion.transaction_id.empty()) {
+            std::memcpy(transaction->GetBackingStore()->Data(),
+                completion.transaction_id.data(),
+                completion.transaction_id.size());
+        }
+        result->Set(local_context, js_string(isolate, "transaction"),
+            v8::Uint8Array::New(transaction, 0,
+                completion.transaction_id.size())).Check();
+        result->Set(local_context, js_string(isolate, "size"),
+            v8::Number::New(isolate,
+                static_cast<double>(completion.byte_count))).Check();
+        result->Set(local_context, js_string(isolate, "lastModified"),
+            v8::Number::New(isolate,
+                static_cast<double>(completion.modification_time_ns)
+                    / 1'000'000.0)).Check();
+        resolver->Resolve(local_context, result).Check();
+        perform_microtask_checkpoint();
+    }
+
+    void cancel_file_grant_write_promises(const char* message)
+    {
+        for (auto& [_, target] : file_grant_write_promise_targets) {
+            auto local_context = target.context.Get(isolate);
+            auto resolver = target.resolver.Get(isolate);
+            if (local_context.IsEmpty() || resolver.IsEmpty()) continue;
+            v8::Context::Scope context_scope(local_context);
+            reject_file_panel_promise(
+                isolate, local_context, resolver, message, "AbortError");
+        }
+        file_grant_write_promise_targets.clear();
+        perform_microtask_checkpoint();
+    }
+
     void install_file_system_access_api(v8::Local<v8::Context> local_context)
     {
         auto global = local_context->Global();
@@ -514,15 +657,21 @@
             js_string(isolate, "__webSceneReadFileGrant"),
             v8::Function::New(local_context, request_file_grant_read)
                 .ToLocalChecked()).Check();
+        global->Set(local_context,
+            js_string(isolate, "__webSceneWriteFileGrant"),
+            v8::Function::New(local_context, request_file_grant_write)
+                .ToLocalChecked()).Check();
         constexpr std::string_view source = R"JS(
           (() => {
             const requestPanel = globalThis.__webSceneRequestFilePanel;
             const compareGrants = globalThis.__webSceneCompareFileGrants;
             const readFileGrant = globalThis.__webSceneReadFileGrant;
+            const writeFileGrant = globalThis.__webSceneWriteFileGrant;
             const createNativeFile = globalThis.__webSceneCreateNativeFile;
             delete globalThis.__webSceneRequestFilePanel;
             delete globalThis.__webSceneCompareFileGrants;
             delete globalThis.__webSceneReadFileGrant;
+            delete globalThis.__webSceneWriteFileGrant;
             delete globalThis.__webSceneCreateNativeFile;
             const states = new WeakMap();
             const handles = new Map();
@@ -543,8 +692,14 @@
             function FileSystemHandle() { throw new TypeError('Illegal constructor'); }
             function FileSystemFileHandle() { throw new TypeError('Illegal constructor'); }
             function FileSystemDirectoryHandle() { throw new TypeError('Illegal constructor'); }
+            function FileSystemWritableFileStream() {
+              throw new TypeError('Illegal constructor');
+            }
             Object.setPrototypeOf(FileSystemFileHandle.prototype, FileSystemHandle.prototype);
             Object.setPrototypeOf(FileSystemDirectoryHandle.prototype, FileSystemHandle.prototype);
+            Object.setPrototypeOf(
+              FileSystemWritableFileStream.prototype, WritableStream.prototype);
+            Object.setPrototypeOf(FileSystemWritableFileStream, WritableStream);
             function isSameEntry(other) {
               try {
                 return compareGrants(stateFor(this).token, stateFor(other).token);
@@ -610,8 +765,191 @@
                   state.name, expectedModified, expectedSize, read);
               });
             }
+            const writerStates = new WeakMap();
+            const maximumWriteBytes = 1024 * 1024 * 1024;
+            const checkPosition = (value, name) => {
+              value = Number(value);
+              if (!Number.isSafeInteger(value) || value < 0) {
+                throw new TypeError(`${name} must be a non-negative safe integer`);
+              }
+              if (value > maximumWriteBytes) {
+                throw new DOMException(
+                  `${name} exceeds the native transaction limit`, 'QuotaExceededError');
+              }
+              return value;
+            };
+            const fileWriteBytes = async value => {
+              if (value === null || value === undefined) {
+                throw new TypeError('File write data is required');
+              }
+              if (typeof value === 'string') return textEncoder.encode(value);
+              if (value instanceof ArrayBuffer) return new Uint8Array(value.slice(0));
+              if (ArrayBuffer.isView(value)) return new Uint8Array(
+                value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength));
+              if (value instanceof Blob) return new Uint8Array(await value.arrayBuffer());
+              throw new TypeError('Unsupported file write data');
+            };
+            const abortWriterState = async (state, suppressFailure = false) => {
+              const transaction = state.transaction;
+              state.transaction = undefined;
+              if (transaction) {
+                try { await writeFileGrant(4, null, transaction, 0, null, 0); }
+                catch (error) { if (!suppressFailure) throw error; }
+              }
+            };
+            const performWriterCommand = async (state, command) => {
+              try {
+                let type = 'write';
+                let data = command;
+                let position;
+                if (command !== null && typeof command === 'object'
+                    && !(command instanceof Blob)
+                    && !(command instanceof ArrayBuffer)
+                    && !ArrayBuffer.isView(command)) {
+                  type = String(command.type || '');
+                  if (type === 'write') {
+                    if (!Object.prototype.hasOwnProperty.call(command, 'data')) {
+                      throw new DOMException('write requires data', 'SyntaxError');
+                    }
+                    data = command.data;
+                    if (command.position !== undefined) {
+                      position = checkPosition(command.position, 'position');
+                    }
+                  } else if (type === 'seek') {
+                    if (command.position === undefined) {
+                      throw new DOMException('seek requires position', 'SyntaxError');
+                    }
+                    state.cursor = checkPosition(command.position, 'position');
+                    return;
+                  } else if (type === 'truncate') {
+                    if (command.size === undefined) {
+                      throw new DOMException('truncate requires size', 'SyntaxError');
+                    }
+                    state.size = checkPosition(command.size, 'size');
+                    return;
+                  } else {
+                    throw new DOMException('Unknown file write command', 'SyntaxError');
+                  }
+                }
+                const bytes = await fileWriteBytes(data);
+                let offset = position === undefined ? state.cursor : position;
+                if (offset > maximumWriteBytes - bytes.byteLength) {
+                  throw new DOMException(
+                    'File write exceeds the native transaction limit',
+                    'QuotaExceededError');
+                }
+                for (let start = 0; start < bytes.byteLength; start += 1024 * 1024) {
+                  const chunk = bytes.subarray(start,
+                    Math.min(bytes.byteLength, start + 1024 * 1024));
+                  await writeFileGrant(2, null, state.transaction,
+                    offset + start, chunk, 0);
+                }
+                state.cursor = offset + bytes.byteLength;
+                state.size = Math.max(state.size, state.cursor);
+              } catch (error) {
+                await abortWriterState(state, true);
+                throw error;
+              }
+            };
+            const queueWriterCommand = (stream, command) => {
+              if (!writerStates.has(stream)) {
+                return Promise.reject(new TypeError('Illegal invocation'));
+              }
+              let writer;
+              try { writer = WritableStream.prototype.getWriter.call(stream); }
+              catch (error) { return Promise.reject(error); }
+              const result = writer.write(command);
+              writer.releaseLock();
+              return result;
+            };
+            function write(data) { return queueWriterCommand(this, data); }
+            function seek(position) {
+              return queueWriterCommand(this, {type:'seek', position});
+            }
+            function truncate(size) {
+              return queueWriterCommand(this, {type:'truncate', size});
+            }
+            Object.defineProperties(FileSystemWritableFileStream.prototype, {
+              write: {enumerable:true, configurable:true, writable:true, value:write},
+              seek: {enumerable:true, configurable:true, writable:true, value:seek},
+              truncate: {enumerable:true, configurable:true, writable:true, value:truncate},
+              [Symbol.toStringTag]: {
+                configurable:true, value:'FileSystemWritableFileStream'}
+            });
             function createWritable(options = {}) {
-              stateFor(this); return unavailable('createWritable');
+              let state;
+              try {
+                state = stateFor(this);
+                if (state.kind !== 'file') throw new TypeError('Illegal invocation');
+                if ((state.capabilities & 2) === 0) {
+                  throw new DOMException(
+                    'The file handle does not grant write access', 'NotAllowedError');
+                }
+                if (options == null) options = {};
+                if (typeof options !== 'object') {
+                  throw new TypeError('Writable options must be an object');
+                }
+                const mode = String(options.mode || 'siloed');
+                if (mode !== 'siloed') {
+                  throw new DOMException(
+                    'Exclusive writable locks require native lock authority',
+                    'NotSupportedError');
+                }
+              } catch (error) { return Promise.reject(error); }
+              const keepExistingData = Boolean(options.keepExistingData);
+              return writeFileGrant(1, state.token, null, 0, null, 0)
+                .then(async begun => {
+                  const writerState = {
+                    transaction:begun.transaction, cursor:0, size:0
+                  };
+                  try {
+                    if (keepExistingData) {
+                      let offset = 0;
+                      let expectedSize;
+                      let expectedModified;
+                      do {
+                        const read = await readFileGrant(
+                          state.token, offset, 1024 * 1024);
+                        if (expectedSize === undefined) {
+                          expectedSize = read.size;
+                          expectedModified = read.modificationTimeNs;
+                        } else if (read.size !== expectedSize
+                            || read.modificationTimeNs !== expectedModified) {
+                          throw new DOMException(
+                            'The file changed while opening the writer',
+                            'NotReadableError');
+                        }
+                        if (read.bytes.byteLength !== 0) {
+                          await writeFileGrant(2, null,
+                            writerState.transaction, offset, read.bytes, 0);
+                          offset += read.bytes.byteLength;
+                        }
+                        if (read.eof) break;
+                      } while (true);
+                      writerState.size = expectedSize;
+                    }
+                    const stream = new WritableStream({
+                      write(command) {
+                        return performWriterCommand(writerState, command);
+                      },
+                      async close() {
+                        const transaction = writerState.transaction;
+                        if (!transaction) throw new TypeError('Writer is closed');
+                        writerState.transaction = undefined;
+                        await writeFileGrant(
+                          3, null, transaction, 0, null, writerState.size);
+                      },
+                      abort() { return abortWriterState(writerState); }
+                    });
+                    Object.setPrototypeOf(stream,
+                      FileSystemWritableFileStream.prototype);
+                    writerStates.set(stream, writerState);
+                    return stream;
+                  } catch (error) {
+                    await abortWriterState(writerState, true);
+                    throw error;
+                  }
+                });
             }
             function getFileHandle(name, options = {}) {
               stateFor(this); return unavailable('getFileHandle');
@@ -746,6 +1084,10 @@
               FileSystemHandle: { configurable: true, writable: true, value: FileSystemHandle },
               FileSystemFileHandle: { configurable: true, writable: true, value: FileSystemFileHandle },
               FileSystemDirectoryHandle: { configurable: true, writable: true, value: FileSystemDirectoryHandle },
+              FileSystemWritableFileStream: {
+                configurable: true, writable: true,
+                value: FileSystemWritableFileStream
+              },
               showOpenFilePicker: { configurable: true, enumerable: true,
                 writable: true, value: showOpenFilePicker },
               showDirectoryPicker: { configurable: true, enumerable: true,

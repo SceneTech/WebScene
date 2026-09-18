@@ -25,6 +25,16 @@
   ],
   "harnessBlocked": [
     {
+      "path": "contracts/file-system-access-create-writable.html",
+      "type": "testharness",
+      "capabilities": [
+        "file-system-file-handle-create-writable",
+        "file-system-writable-file-stream",
+        "atomic-file-writes"
+      ],
+      "reason": "Chromium/WPT oracle uses origin-private filesystem handles; the native runner receives host-issued opaque grants and exercises equivalent begin/chunk/commit/abort, cursor, truncation, keepExistingData, error, atomicity and lifecycle behavior through the host writer bridge."
+    },
+    {
       "path": "contracts/file-system-access-get-file.html",
       "type": "testharness",
       "capabilities": [

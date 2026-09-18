@@ -26,6 +26,65 @@
             js_string(v8::Isolate::GetCurrent(), name)).ToLocal(&value);
     }
 
+    static void request_file_grant_same_entry(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        auto isolate = info.GetIsolate();
+        auto local_context = isolate->GetCurrentContext();
+        auto resolver = v8::Promise::Resolver::New(local_context).ToLocalChecked();
+        info.GetReturnValue().Set(resolver->GetPromise());
+        const auto reject = [&](std::string_view message, std::string_view name) {
+            reject_file_panel_promise(
+                isolate, local_context, resolver, message, name);
+        };
+        if (self == nullptr || !self->file_grant_same_entry_request_sink) {
+            reject("Native file grant identity is unavailable", "NotSupportedError");
+            return;
+        }
+        if (info.Length() != 2 || !info[0]->IsUint8Array()
+            || !info[1]->IsUint8Array()) {
+            reject("File grant identity requires two opaque tokens", "TypeError");
+            return;
+        }
+        if (self->file_grant_same_entry_promise_targets.size()
+            >= file_grant_same_entry_maximum_pending_v2) {
+            reject("Too many pending file grant comparisons", "QuotaExceededError");
+            return;
+        }
+        file_grant_same_entry_request_lease_v2 request;
+        request.view.request_id = ++self->next_host_request_id;
+        const auto copy_token = [](v8::Local<v8::Value> value,
+                                   std::vector<std::uint8_t>& destination) {
+            const auto bytes = value.As<v8::Uint8Array>();
+            if (bytes->ByteLength() == 0
+                || bytes->ByteLength() > file_panel_maximum_token_bytes_v2)
+                return false;
+            const auto store = bytes->Buffer()->GetBackingStore();
+            const auto* first = static_cast<const std::uint8_t*>(store->Data())
+                + bytes->ByteOffset();
+            destination.assign(first, first + bytes->ByteLength());
+            return true;
+        };
+        if (!copy_token(info[0], request.first_grant_id)
+            || !copy_token(info[1], request.second_grant_id)) {
+            reject("Malformed opaque file grant token", "DataError");
+            return;
+        }
+        request.bind();
+        file_grant_same_entry_promise_target target;
+        target.context.Reset(isolate, local_context);
+        target.resolver.Reset(isolate, resolver);
+        self->file_grant_same_entry_promise_targets.emplace(
+            request.view.request_id, std::move(target));
+        if (!self->file_grant_same_entry_request_sink(request.view)) {
+            self->file_grant_same_entry_promise_targets.erase(
+                request.view.request_id);
+            reject("The native file grant authority rejected the comparison",
+                "NotAllowedError");
+        }
+    }
+
     static void request_file_panel(
         const v8::FunctionCallbackInfo<v8::Value>& info)
     {
@@ -276,15 +335,53 @@
         perform_microtask_checkpoint();
     }
 
+    void complete_native_file_grant_same_entry(
+        file_grant_same_entry_completion_data_v2& completion)
+    {
+        const auto found = file_grant_same_entry_promise_targets.find(
+            completion.request_id);
+        if (found == file_grant_same_entry_promise_targets.end()) return;
+        auto target = std::move(found->second);
+        file_grant_same_entry_promise_targets.erase(found);
+        auto local_context = target.context.Get(isolate);
+        auto resolver = target.resolver.Get(isolate);
+        if (local_context.IsEmpty() || resolver.IsEmpty()) return;
+        v8::Context::Scope context_scope(local_context);
+        resolver->Resolve(local_context,
+            v8::Boolean::New(isolate,
+                completion.admitted && completion.same_entry)).Check();
+        perform_microtask_checkpoint();
+    }
+
+    void cancel_file_grant_same_entry_promises(const char* message)
+    {
+        for (auto& [_, target] : file_grant_same_entry_promise_targets) {
+            auto local_context = target.context.Get(isolate);
+            auto resolver = target.resolver.Get(isolate);
+            if (local_context.IsEmpty() || resolver.IsEmpty()) continue;
+            v8::Context::Scope context_scope(local_context);
+            reject_file_panel_promise(
+                isolate, local_context, resolver, message, "AbortError");
+        }
+        file_grant_same_entry_promise_targets.clear();
+        perform_microtask_checkpoint();
+    }
+
     void install_file_system_access_api(v8::Local<v8::Context> local_context)
     {
         auto global = local_context->Global();
         global->Set(local_context, js_string(isolate, "__webSceneRequestFilePanel"),
             v8::Function::New(local_context, request_file_panel).ToLocalChecked()).Check();
+        global->Set(local_context,
+            js_string(isolate, "__webSceneCompareFileGrants"),
+            v8::Function::New(local_context, request_file_grant_same_entry)
+                .ToLocalChecked()).Check();
         constexpr std::string_view source = R"JS(
           (() => {
             const requestPanel = globalThis.__webSceneRequestFilePanel;
+            const compareGrants = globalThis.__webSceneCompareFileGrants;
             delete globalThis.__webSceneRequestFilePanel;
+            delete globalThis.__webSceneCompareFileGrants;
             const states = new WeakMap();
             const handles = new Map();
             const textEncoder = new TextEncoder();
@@ -307,8 +404,11 @@
             Object.setPrototypeOf(FileSystemFileHandle.prototype, FileSystemHandle.prototype);
             Object.setPrototypeOf(FileSystemDirectoryHandle.prototype, FileSystemHandle.prototype);
             function isSameEntry(other) {
-              return Promise.resolve().then(() =>
-                stateFor(this).key === stateFor(other).key);
+              try {
+                return compareGrants(stateFor(this).token, stateFor(other).token);
+              } catch (error) {
+                return Promise.reject(error);
+              }
             }
             function queryPermission(options = {}) {
               return Promise.resolve().then(() => {

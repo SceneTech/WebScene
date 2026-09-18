@@ -1,0 +1,52 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>File System Access isSameEntry browser oracle</title>
+<!-- Core cases follow WPT fs/script-tests/FileSystemBaseHandle-isSameEntry.js
+     at the profile's pinned 2c705104a295c48053eeddf7fe0170d790a4e853. -->
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<body>
+<script>
+  const withRoot = (name, body) => promise_test(async t => {
+    assert_true(Boolean(navigator.storage && navigator.storage.getDirectory),
+      "origin-private file system is unavailable");
+    const root = await navigator.storage.getDirectory();
+    const fixture = `webscene-same-entry-${Date.now()}-${Math.random()}`;
+    const directory = await root.getDirectoryHandle(fixture, { create: true });
+    t.add_cleanup(() => root.removeEntry(fixture, { recursive: true }));
+    await body(directory);
+  }, name);
+
+  withRoot("isSameEntry recognizes identical and separately acquired directory handles",
+    async root => {
+      const first = await root.getDirectoryHandle("same", { create: true });
+      const repeated = await root.getDirectoryHandle("same");
+      assert_true(await first.isSameEntry(first));
+      assert_true(await first.isSameEntry(repeated));
+      assert_true(await repeated.isSameEntry(first));
+    });
+
+  withRoot("isSameEntry distinguishes different directories", async root => {
+    const first = await root.getDirectoryHandle("first", { create: true });
+    const second = await root.getDirectoryHandle("second", { create: true });
+    assert_false(await first.isSameEntry(second));
+    assert_false(await second.isSameEntry(first));
+  });
+
+  withRoot("isSameEntry recognizes separately acquired file handles", async root => {
+    const first = await root.getFileHandle("same.txt", { create: true });
+    const repeated = await root.getFileHandle("same.txt");
+    const different = await root.getFileHandle("different.txt", { create: true });
+    assert_true(await first.isSameEntry(first));
+    assert_true(await first.isSameEntry(repeated));
+    assert_false(await first.isSameEntry(different));
+  });
+
+  withRoot("isSameEntry distinguishes file and directory entries", async root => {
+    const file = await root.getFileHandle("entry", { create: true });
+    const directory = await root.getDirectoryHandle("directory", { create: true });
+    assert_false(await file.isSameEntry(directory));
+    assert_false(await directory.isSameEntry(file));
+  });
+</script>
+</body>

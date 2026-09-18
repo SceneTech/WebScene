@@ -23,5 +23,14 @@
       "reason": "Exercises the standards-shaped picker globals and branded handle prototype surface. Native companion tests own activation, bounded request transport, opaque grant identity, status mapping, navigation retirement and lifecycle budgets."
     }
   ],
-  "harnessBlocked": []
+  "harnessBlocked": [
+    {
+      "path": "contracts/file-system-access-is-same-entry.html",
+      "type": "testharness",
+      "capabilities": [
+        "file-system-handle-identity"
+      ],
+      "reason": "Chromium/WPT oracle uses origin-private filesystem handles; the native runner receives host-issued opaque grants instead and exercises the equivalent identity cases in its native File System Access contract."
+    }
+  ]
 }

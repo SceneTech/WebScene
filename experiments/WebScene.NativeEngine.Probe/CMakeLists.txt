@@ -375,6 +375,22 @@ if(WEBSCENE_NATIVE_ENGINE_ENABLE_GRAPHICS)
         target_link_libraries(webscene_graphics_dawn_event_tests PRIVATE ${webscene_graphics_libraries} Threads::Threads)
         add_test(NAME webscene_graphics_dawn_event_tests COMMAND webscene_graphics_dawn_event_tests)
         set_tests_properties(webscene_graphics_dawn_event_tests PROPERTIES LABELS "graphics;hardware" TIMEOUT 40)
+        if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+            add_executable(webscene_graphics_dawn_linux_external_provider_contract_tests
+                tests/graphics_dawn_linux_external_provider_contract_tests.cpp)
+            target_compile_features(webscene_graphics_dawn_linux_external_provider_contract_tests PRIVATE cxx_std_20)
+            target_include_directories(webscene_graphics_dawn_linux_external_provider_contract_tests PRIVATE native)
+            target_link_libraries(webscene_graphics_dawn_linux_external_provider_contract_tests PRIVATE
+                dawn::webgpu_dawn)
+            add_test(NAME webscene_graphics_dawn_linux_external_provider_contract_tests
+                COMMAND webscene_graphics_dawn_linux_external_provider_contract_tests)
+            set_tests_properties(webscene_graphics_dawn_linux_external_provider_contract_tests PROPERTIES
+                LABELS "graphics;linux;vulkan;abi;lifecycle;security" TIMEOUT 10)
+            add_custom_command(TARGET webscene_graphics_dawn_linux_external_provider_contract_tests POST_BUILD
+                COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                    "$<TARGET_FILE:dawn::webgpu_dawn>"
+                    "$<TARGET_FILE_DIR:webscene_graphics_dawn_linux_external_provider_contract_tests>")
+        endif()
         foreach(library IN LISTS webscene_graphics_libraries)
             add_custom_command(TARGET webscene_graphics_dawn_event_tests POST_BUILD
                 COMMAND "${CMAKE_COMMAND}" -E copy_if_different

@@ -9,6 +9,9 @@
         bool wake_requested{false};
         bool wrapper_weak{false};
         bool wrapper_collected{false};
+        bool terminal_failure_reported{false};
+        bool startup_settled{false};
+        uint64_t generation{1U};
         uint64_t low_memory_requested{};
         uint64_t low_memory_completed{};
         v8::Isolate* running_isolate{};
@@ -19,6 +22,7 @@
         void stop() {
             {
                 std::lock_guard lock(mutex);
+                ++generation;
                 stopped = true;
                 if (running_isolate) running_isolate->TerminateExecution();
                 incoming.clear(); outgoing.clear(); errors.clear();
@@ -31,6 +35,7 @@
     };
     std::vector<std::unique_ptr<worker_state>> dedicated_workers;
     worker_state* worker_owner{};
+    uint64_t worker_owner_generation{};
     bool force_dedicated_isolate{false};
     bool worker_module_realm{false};
     static constexpr size_t maximum_dedicated_workers = 64U;
@@ -42,6 +47,140 @@
     static constexpr size_t maximum_worker_queue_bytes = 16U * 1024U * 1024U;
     static constexpr size_t maximum_worker_errors = 16U;
     static constexpr size_t maximum_worker_error_length = 4096U;
+
+    bool worker_generation_is_current() const
+    {
+        if (worker_owner == nullptr) return true;
+        std::lock_guard lock(worker_owner->mutex);
+        return !worker_owner->stopped
+            && worker_owner->generation == worker_owner_generation;
+    }
+
+    bool load_worker_script_resource(
+        const std::string& value,
+        const std::string& base,
+        uint32_t mode,
+        std::string& content,
+        std::string& resolved_name,
+        std::string& error)
+    {
+        if (!worker_generation_is_current()) {
+            error = "Worker script load was cancelled";
+            return false;
+        }
+        const auto requested_url = resolve_resource_url(value, base);
+        const auto origin = worker_script_fetch_policy_active
+            ? worker_script_fetch_origin
+            : current_security_origin();
+        const auto credentials = worker_script_fetch_policy_active
+            ? worker_script_fetch_credentials
+            : WEBSCENE_FETCH_CREDENTIALS_SAME_ORIGIN;
+        if (mode == WEBSCENE_FETCH_MODE_SAME_ORIGIN
+            && resource_origin(requested_url) != origin) {
+            error = "Worker script violates same-origin policy: " + requested_url;
+            return false;
+        }
+        resource_request_context request_context{
+            WEBSCENE_RESOURCE_INITIATOR_SUBRESOURCE,
+            origin,
+            base,
+            mode,
+            WEBSCENE_REQUEST_DESTINATION_SCRIPT,
+            "GET",
+            {},
+            {},
+            credentials,
+            {}};
+        if (!load_resource_callback) {
+            const auto loaded = load_text_resource(
+                    requested_url,
+                    {},
+                    WEBSCENE_RESOURCE_SCRIPT,
+                    content,
+                    resolved_name,
+                    nullptr,
+                    request_context);
+            if (!worker_generation_is_current()) {
+                content.clear();
+                error = "Worker script load was cancelled";
+                return false;
+            }
+            if (!loaded) {
+                error = "Unable to load worker script: " + requested_url;
+                return false;
+            }
+            return true;
+        }
+
+        if (!worker_generation_is_current()) {
+            error = "Worker script load was cancelled";
+            return false;
+        }
+        request_context.cookie = cookie_header_for(requested_url, request_context);
+        resource_response response;
+        auto loaded = false;
+        try {
+            loaded = load_resource_callback(
+                WEBSCENE_RESOURCE_SCRIPT,
+                requested_url,
+                request_context,
+                {},
+                0,
+                response);
+        } catch (...) {
+            loaded = false;
+        }
+        if (!worker_generation_is_current()) {
+            error = "Worker script load was cancelled";
+            return false;
+        }
+        if (!loaded) {
+            error = "Unable to load worker script: " + requested_url;
+            return false;
+        }
+        accept_response_cookies(requested_url, request_context, response);
+        resolved_name = response.final_url.empty()
+            ? requested_url
+            : response.final_url;
+        if (response.has_http_metadata
+            && (response.status < 200U || response.status >= 300U)) {
+            error = "Worker script response has an unsuccessful status";
+            return false;
+        }
+
+        const auto final_origin = resource_origin(resolved_name);
+        if (mode == WEBSCENE_FETCH_MODE_SAME_ORIGIN
+            && final_origin != origin) {
+            error = "Worker script redirect violates same-origin policy";
+            return false;
+        }
+        const auto cross_origin_request =
+            resource_origin(requested_url) != origin || final_origin != origin;
+        if (mode == WEBSCENE_FETCH_MODE_CORS && cross_origin_request) {
+            auto cors_allowed = false;
+            auto credentials_allowed = false;
+            for (const auto& [raw_name, raw_value] : response.headers) {
+                const auto name = lower_html_name(raw_name);
+                if (name == "access-control-allow-origin"
+                    && (raw_value == origin
+                        || (raw_value == "*"
+                            && credentials != WEBSCENE_FETCH_CREDENTIALS_INCLUDE))) {
+                    cors_allowed = true;
+                } else if (name == "access-control-allow-credentials"
+                    && lower_html_name(raw_value) == "true") {
+                    credentials_allowed = true;
+                }
+            }
+            if (!response.has_http_metadata || !cors_allowed
+                || (credentials == WEBSCENE_FETCH_CREDENTIALS_INCLUDE
+                    && !credentials_allowed)) {
+                error = "Worker script response blocked by CORS";
+                return false;
+            }
+        }
+        content = std::move(response.content);
+        return true;
+    }
 
     static void worker_wrapper_collected(
         const v8::WeakCallbackInfo<worker_state>& info)
@@ -327,7 +466,13 @@
             auto* state = self->worker_owner;
             {
                 std::lock_guard lock(state->mutex);
+                ++state->generation;
                 state->stopped = true;
+                state->incoming.clear();
+                state->outgoing.clear();
+                state->errors.clear();
+                state->incoming_bytes = 0U;
+                state->outgoing_bytes = 0U;
             }
             state->ready.notify_all();
             if (state->notify_parent) state->notify_parent();
@@ -347,21 +492,14 @@
             const auto url = resolve_resource_url(
                 to_utf8(info.GetIsolate(),info[index]),
                 self->current_base_address());
-            if (resource_origin(url) != self->current_security_origin()) {
-                throw_dom_exception(info,"Worker script must be same origin","SecurityError");
-                return;
-            }
             std::string source,resolved,error;
-            const resource_request_context request_context{
-                WEBSCENE_RESOURCE_INITIATOR_SUBRESOURCE,
-                self->current_security_origin(),
-                self->current_base_address(),
-                WEBSCENE_FETCH_MODE_SAME_ORIGIN,
-                WEBSCENE_REQUEST_DESTINATION_SCRIPT,
-                "GET", {}, {}, WEBSCENE_FETCH_CREDENTIALS_SAME_ORIGIN, {}};
-            if (!self->load_text_resource(
-                    url, {}, WEBSCENE_RESOURCE_SCRIPT, source, resolved,
-                    nullptr, request_context)
+            if (!self->load_worker_script_resource(
+                    url,
+                    self->current_base_address(),
+                    WEBSCENE_FETCH_MODE_SAME_ORIGIN,
+                    source,
+                    resolved,
+                    error)
                 || !self->execute_in_context(realm,source,resolved,error)) {
                 info.GetIsolate()->ThrowException(v8::Exception::Error(
                     js_dom_string(info.GetIsolate(),
@@ -443,7 +581,48 @@
             isolate->ThrowException(v8::Exception::TypeError(js_string(isolate,"Worker requires new and a URL"))); return;
         }
         const auto url = resolve_resource_url(to_utf8(isolate,info[0]),self->current_base_address());
-        // Until worker CORS/credentials are qualified, enforce a same-origin script.
+        bool module = false;
+        uint32_t worker_credentials = WEBSCENE_FETCH_CREDENTIALS_SAME_ORIGIN;
+        std::string worker_name;
+        if (info.Length() > 1 && !info[1]->IsUndefined() && !info[1]->IsNull()) {
+            if (!info[1]->IsObject()) {
+                isolate->ThrowException(v8::Exception::TypeError(
+                    js_string(isolate,"WorkerOptions must be an object")));
+                return;
+            }
+            v8::Local<v8::Value> type;
+            if (!info[1].As<v8::Object>()->Get(realm,js_string(isolate,"type")).ToLocal(&type)) return;
+            if (!type->IsUndefined()) {
+                std::string text;
+                if (!storage_string(isolate,type,text)) return;
+                if(text!="classic"&&text!="module"){
+                    isolate->ThrowException(v8::Exception::TypeError(js_string(isolate,"Invalid WorkerType")));return;
+                }
+                module=text=="module";
+            }
+            v8::Local<v8::Value> credentials;
+            if (!info[1].As<v8::Object>()->Get(
+                    realm,js_string(isolate,"credentials")).ToLocal(&credentials)) return;
+            if (!credentials->IsUndefined()) {
+                std::string text;
+                if (!storage_string(isolate,credentials,text)) return;
+                if (text == "omit") {
+                    worker_credentials = WEBSCENE_FETCH_CREDENTIALS_OMIT;
+                } else if (text == "same-origin") {
+                    worker_credentials = WEBSCENE_FETCH_CREDENTIALS_SAME_ORIGIN;
+                } else if (text == "include") {
+                    worker_credentials = WEBSCENE_FETCH_CREDENTIALS_INCLUDE;
+                } else {
+                    isolate->ThrowException(v8::Exception::TypeError(
+                        js_string(isolate,"Invalid Worker credentials mode")));
+                    return;
+                }
+            }
+            v8::Local<v8::Value> name;
+            if(!info[1].As<v8::Object>()->Get(realm,js_string(isolate,"name")).ToLocal(&name))return;
+            if(!name->IsUndefined()
+                && !storage_string(isolate,name,worker_name)) return;
+        }
         // Capture a same-origin object URL before entering another isolate. The
         // worker owns its source even if the parent revokes the URL immediately.
         std::optional<std::string> embedded_source;
@@ -458,22 +637,6 @@
         if (!embedded_source
             && resource_origin(url) != self->current_security_origin()) {
             throw_dom_exception(info,"Worker script must be same origin","SecurityError"); return;
-        }
-        bool module = false;
-        std::string worker_name;
-        if (info.Length()>1 && info[1]->IsObject()) {
-            v8::Local<v8::Value> type;
-            if (!info[1].As<v8::Object>()->Get(realm,js_string(isolate,"type")).ToLocal(&type)) return;
-            if (!type->IsUndefined()) {
-                auto text=to_utf8(isolate,type);
-                if(text!="classic"&&text!="module"){
-                    isolate->ThrowException(v8::Exception::TypeError(js_string(isolate,"Invalid WorkerType")));return;
-                }
-                module=text=="module";
-            }
-            v8::Local<v8::Value> name;
-            if(!info[1].As<v8::Object>()->Get(realm,js_string(isolate,"name")).ToLocal(&name))return;
-            if(!name->IsUndefined())worker_name=to_utf8(isolate,name);
         }
         if (self->active_worker_count() >= maximum_dedicated_workers) {
             isolate->ThrowException(v8::Exception::RangeError(js_string(isolate,"Worker capacity exhausted"))); return;
@@ -502,15 +665,36 @@
         auto object_url_registry=self->object_url_registry;
         auto cookie_jar=self->cookie_jar;
         auto worker_origin=self->current_security_origin();
+        const auto worker_generation = raw->generation;
         self->dedicated_workers.push_back(std::move(state));
-        raw->thread=std::thread([raw,url,module,worker_origin=std::move(worker_origin),embedded_source=std::move(embedded_source),worker_name=std::move(worker_name),loader=std::move(loader),root=std::move(root),object_url_registry=std::move(object_url_registry),cookie_jar=std::move(cookie_jar)] {
-            auto report=[&](const std::string& text) {
+        raw->thread=std::thread([raw,url,module,worker_credentials,worker_generation,worker_origin=std::move(worker_origin),embedded_source=std::move(embedded_source),worker_name=std::move(worker_name),loader=std::move(loader),root=std::move(root),object_url_registry=std::move(object_url_registry),cookie_jar=std::move(cookie_jar)] {
+            auto report_runtime_error=[&](const std::string& text) {
                 {
                     std::lock_guard lock(raw->mutex);
-                    if(raw->stopped)return;
+                    if(raw->stopped || raw->generation != worker_generation)return;
                     if(raw->errors.size()>=maximum_worker_errors)raw->errors.pop_front();
                     raw->errors.push_back(text.substr(0U,maximum_worker_error_length));
                 }
+                if(raw->notify_parent)raw->notify_parent();
+            };
+            auto finish_with_error=[&](const std::string& text) {
+                {
+                    std::lock_guard lock(raw->mutex);
+                    if (raw->stopped || raw->generation != worker_generation
+                        || raw->terminal_failure_reported) return;
+                    raw->terminal_failure_reported = true;
+                    raw->startup_settled = true;
+                    raw->stopped = true;
+                    raw->incoming.clear();
+                    raw->outgoing.clear();
+                    raw->incoming_bytes = 0U;
+                    raw->outgoing_bytes = 0U;
+                    if (raw->errors.size() >= maximum_worker_errors)
+                        raw->errors.pop_front();
+                    raw->errors.push_back(
+                        text.substr(0U,maximum_worker_error_length));
+                }
+                raw->ready.notify_all();
                 if(raw->notify_parent)raw->notify_parent();
             };
             try {
@@ -520,6 +704,9 @@
                 child->object_url_registry = object_url_registry;
                 child->cookie_jar = cookie_jar;
                 child->inherited_worker_origin = worker_origin;
+                child->worker_script_fetch_policy_active = true;
+                child->worker_script_fetch_origin = worker_origin;
+                child->worker_script_fetch_credentials = worker_credentials;
                 struct running_guard {
                     worker_state* state;implementation* child;
                     ~running_guard(){
@@ -527,16 +714,21 @@
                         if(child->isolate)child->isolate->CancelTerminateExecution();
                     }
                 } guard{raw,child};
-                child->force_dedicated_isolate=true;child->worker_owner=raw;child->worker_module_realm=module;
-                child->runtime_work_available=[raw]{
-                    {std::lock_guard lock(raw->mutex);raw->wake_requested=true;}
+                child->force_dedicated_isolate=true;child->worker_owner=raw;child->worker_owner_generation=worker_generation;child->worker_module_realm=module;
+                child->runtime_work_available=[raw,worker_generation]{
+                    {
+                        std::lock_guard lock(raw->mutex);
+                        if (raw->stopped
+                            || raw->generation != worker_generation) return;
+                        raw->wake_requested=true;
+                    }
                     raw->ready.notify_one();
                 };
                 runtime.set_resource_root(root.string());
                 if(!runtime.initialize())throw std::runtime_error(runtime.last_error());
                 {
                     std::lock_guard lock(raw->mutex);
-                    if(raw->stopped)return;
+                    if(raw->stopped || raw->generation != worker_generation)return;
                     raw->running_isolate=child->isolate;
                 }
                 {
@@ -545,13 +737,6 @@
                     auto global=realm->Global();
                     child->document_base_address=url;
                     child->set_context_location(realm,global,url);
-                    if(embedded_source) {
-                        v8::Local<v8::Value> location;
-                        if(global->Get(realm,js_string(child->isolate,"location")).ToLocal(&location)
-                            &&location->IsObject())
-                            location.As<v8::Object>()->Set(realm,js_string(child->isolate,"origin"),js_dom_string(child->isolate,worker_origin)).Check();
-                        global->Set(realm,js_string(child->isolate,"origin"),js_dom_string(child->isolate,worker_origin)).Check();
-                    }
                     global->Set(realm,js_string(child->isolate,"postMessage"),v8::Function::New(realm,worker_post_parent,{},1).ToLocalChecked()).Check();
                     global->Set(realm,js_string(child->isolate,"close"),v8::Function::New(realm,worker_close).ToLocalChecked()).Check();
                     global->Set(realm,js_string(child->isolate,"importScripts"),v8::Function::New(realm,worker_import_scripts).ToLocalChecked()).Check();
@@ -561,29 +746,39 @@
                     global->Delete(realm,js_string(child->isolate,"window")).FromMaybe(false);
                     child->install_dedicated_worker_global_scope(realm);
                     std::string source,resolved,error;
-                    bool startup_failed = false;
                     if (embedded_source) { source = *embedded_source; resolved = url; }
-                    const resource_request_context request_context{
-                        WEBSCENE_RESOURCE_INITIATOR_SUBRESOURCE,
-                        child->current_security_origin(),
-                        child->current_base_address(),
-                        WEBSCENE_FETCH_MODE_SAME_ORIGIN,
-                        WEBSCENE_REQUEST_DESTINATION_SCRIPT,
-                        "GET", {}, {}, WEBSCENE_FETCH_CREDENTIALS_SAME_ORIGIN, {}};
-                    if(!embedded_source && !child->load_text_resource(
-                            url, {}, WEBSCENE_RESOURCE_SCRIPT, source, resolved,
-                            nullptr, request_context)) {
-                        report("Unable to load worker: "+url);
-                        startup_failed = true;
-                    }
-                    else if(!(module ? child->execute_module(realm,source,resolved,error)
-                                      : child->execute_in_context(realm,source,resolved,error))) {
-                        report(error);
-                        startup_failed = true;
-                    }
-                    if (startup_failed) {
-                        std::lock_guard lock(raw->mutex);
-                        raw->stopped = true;
+                    if(!embedded_source && !child->load_worker_script_resource(
+                            url,
+                            child->current_base_address(),
+                            WEBSCENE_FETCH_MODE_SAME_ORIGIN,
+                            source,
+                            resolved,
+                            error)) {
+                        finish_with_error(error.empty()
+                            ? "Unable to load worker: "+url
+                            : error);
+                    } else {
+                        child->document_base_address = resolved;
+                        child->set_context_location(realm,global,resolved);
+                        if(embedded_source) {
+                            v8::Local<v8::Value> location;
+                            if(global->Get(realm,js_string(child->isolate,"location")).ToLocal(&location)
+                                &&location->IsObject())
+                                location.As<v8::Object>()->Set(realm,js_string(child->isolate,"origin"),js_dom_string(child->isolate,worker_origin)).Check();
+                            global->Set(realm,js_string(child->isolate,"origin"),js_dom_string(child->isolate,worker_origin)).Check();
+                        }
+                        if(!(module ? child->execute_module(realm,source,resolved,error)
+                                    : child->execute_in_context(realm,source,resolved,error))) {
+                            finish_with_error(error.empty()
+                                ? "Unable to execute worker: "+resolved
+                                : error);
+                        } else {
+                            std::lock_guard lock(raw->mutex);
+                            if (!raw->stopped
+                                && raw->generation == worker_generation) {
+                                raw->startup_settled = true;
+                            }
+                        }
                     }
                 }
                 while(true) {
@@ -620,16 +815,16 @@
                         }
                         raw->ready.notify_all();
                     }
-                    if(packet&&!child->dispatch_worker_message(realm,realm->Global(),&*packet))report(child->last_error);
+                    if(packet&&!child->dispatch_worker_message(realm,realm->Global(),&*packet))report_runtime_error(child->last_error);
                     child->drain_tasks();
                     child->perform_microtask_checkpoint();
-                    if (!child->promote_pending_promise_error()) report(child->last_error);
+                    if (!child->promote_pending_promise_error()) report_runtime_error(child->last_error);
                 }
                 {std::lock_guard lock(raw->mutex);raw->running_isolate=nullptr;}
                 child->isolate->CancelTerminateExecution();
             } catch(const std::exception& e) {
                 {std::lock_guard lock(raw->mutex);raw->running_isolate=nullptr;}
-                report(e.what());
+                finish_with_error(e.what());
             }
             {
                 std::lock_guard lock(raw->mutex);

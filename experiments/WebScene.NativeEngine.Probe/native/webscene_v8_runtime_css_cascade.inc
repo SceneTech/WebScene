@@ -3401,6 +3401,129 @@
         return result;
     }
 
+    static bool is_listed_form_control(const dom_node& node)
+    {
+        if (node.form_control().form_associated_custom_element) return true;
+        if (node.tag == "input") return !forms::input_type_is(node, "image");
+        return node.tag == "button" || node.tag == "fieldset"
+            || node.tag == "object" || node.tag == "output"
+            || node.tag == "select" || node.tag == "textarea";
+    }
+
+    void add_live_form_control(dom_node& owner, dom_node& control)
+    {
+        auto& controls = live_form_controls[&owner];
+        if (std::find(controls.begin(), controls.end(), &control) == controls.end())
+            controls.push_back(&control);
+        live_form_owner_by_control[&control] = &owner;
+    }
+
+    void remove_live_form_control(dom_node& control)
+    {
+        const auto known = live_form_owner_by_control.find(&control);
+        if (known == live_form_owner_by_control.end()) return;
+        auto* owner = known->second;
+        live_form_owner_by_control.erase(known);
+        const auto controls = live_form_controls.find(owner);
+        if (controls == live_form_controls.end()) return;
+        std::erase(controls->second, &control);
+        if (controls->second.empty()) live_form_controls.erase(controls);
+    }
+
+    void refresh_live_form_control(dom_node& control,
+        std::unordered_set<dom_node*>& affected_owners)
+    {
+        auto* previous = static_cast<dom_node*>(nullptr);
+        if (const auto known = live_form_owner_by_control.find(&control);
+            known != live_form_owner_by_control.end()) previous = known->second;
+        auto* current = is_listed_form_control(control)
+            ? const_cast<dom_node*>(forms::form_owner(document, control))
+            : nullptr;
+        if (previous != nullptr) affected_owners.insert(previous);
+        if (current != nullptr) affected_owners.insert(current);
+        if (previous != current) {
+            remove_live_form_control(control);
+            if (current != nullptr) add_live_form_control(*current, control);
+        }
+    }
+
+    void sort_live_form_controls(
+        const std::unordered_set<dom_node*>& affected_owners)
+    {
+        for (auto* owner : affected_owners) {
+            const auto known = live_form_controls.find(owner);
+            if (known == live_form_controls.end()) continue;
+            auto& controls = known->second;
+            std::sort(controls.begin(), controls.end(),
+                [this](const auto* left, const auto* right) {
+                    return left != nullptr && right != nullptr
+                        && tree_order_before(*left, *right);
+                });
+        }
+    }
+
+    void index_live_form_controls_subtree(dom_node& root)
+    {
+        std::unordered_set<dom_node*> affected;
+        const auto visit = [&](const auto& recurse, dom_node& node) -> void {
+            if (is_listed_form_control(node))
+                refresh_live_form_control(node, affected);
+            for (auto* child : node.children)
+                if (child != nullptr) recurse(recurse, *child);
+        };
+        visit(visit, root);
+        sort_live_form_controls(affected);
+    }
+
+    void update_live_form_collection_structure(
+        dom_node& parent, dom_node* inserted, dom_node* removed)
+    {
+        ensure_explicit_form_validity_dependents();
+        std::unordered_set<dom_node*> affected;
+        const auto visit = [&](const auto& recurse, dom_node& node) -> void {
+            if (is_listed_form_control(node))
+                refresh_live_form_control(node, affected);
+            if (node.tag == "form" && !node.id_attribute.empty()) {
+                const auto dependents = explicit_form_validity_dependents.find(
+                    node.id_attribute);
+                if (dependents != explicit_form_validity_dependents.end())
+                    for (auto* dependent : dependents->second)
+                        if (dependent != nullptr)
+                            refresh_live_form_control(*dependent, affected);
+            }
+            for (auto* child : node.children)
+                if (child != nullptr) recurse(recurse, *child);
+        };
+        if (inserted != nullptr) visit(visit, *inserted);
+        if (removed != nullptr) visit(visit, *removed);
+        static_cast<void>(parent);
+        sort_live_form_controls(affected);
+    }
+
+    void update_live_form_collection_attribute(
+        dom_node& node,
+        std::string_view name,
+        const std::optional<std::string>& previous,
+        const std::optional<std::string>& current)
+    {
+        if (previous == current) return;
+        ensure_explicit_form_validity_dependents();
+        std::unordered_set<dom_node*> affected;
+        if (name == "form" || (node.tag == "input" && name == "type"))
+            refresh_live_form_control(node, affected);
+        if (node.tag == "form" && name == "id") {
+            for (const auto& token : {previous, current}) {
+                if (!token.has_value() || token->empty()) continue;
+                const auto dependents = explicit_form_validity_dependents.find(*token);
+                if (dependents == explicit_form_validity_dependents.end()) continue;
+                for (auto* dependent : dependents->second)
+                    if (dependent != nullptr)
+                        refresh_live_form_control(*dependent, affected);
+            }
+        }
+        sort_live_form_controls(affected);
+    }
+
     void index_explicit_form_validity_subtree(dom_node& root)
     {
         if (!root.id_attribute.empty())
@@ -3425,6 +3548,7 @@
         if (explicit_form_validity_dependents_initialized) return;
         explicit_form_validity_dependents_initialized = true;
         index_explicit_form_validity_subtree(document.body());
+        index_live_form_controls_subtree(document.body());
     }
 
     void update_explicit_form_validity_dependency(
@@ -3479,6 +3603,7 @@
         ensure_explicit_form_validity_dependents();
         if (inserted != nullptr)
             index_explicit_form_validity_subtree(*inserted);
+        update_live_form_collection_structure(parent, inserted, removed);
 
         std::vector<dom_node*> subjects;
         std::unordered_set<dom_node*> seen;
@@ -3567,6 +3692,7 @@
         const auto relevant_form_id = node.tag == "form" && name == "id";
         const auto relevant_owner = name == "form";
         const auto relevant_fieldset = node.tag == "fieldset" && name == "disabled";
+        update_live_form_collection_attribute(node, name, previous, current);
         if (!relevant_form_id && !relevant_owner && !relevant_fieldset) return;
 
         if (relevant_owner)
@@ -3582,7 +3708,6 @@
             if (current.has_value() && !current->empty())
                 form_validity_owners_by_id[*current].insert(&node);
         }
-
         std::vector<dom_node*> subjects;
         std::unordered_set<dom_node*> seen;
         const auto add = [&](dom_node* subject) {
@@ -3653,7 +3778,10 @@
         dom_node* inserted = nullptr,
         dom_node* removed = nullptr)
     {
-        if (!is_connected(parent)) return;
+        if (!is_connected(parent)) {
+            update_live_form_collection_structure(parent, inserted, removed);
+            return;
+        }
         auto* previous_root = const_cast<dom_node*>(active_css_cascade_root);
         auto* root = css_cascade_root_for_node(parent);
         if (root != nullptr) activate_css_cascade(root);
@@ -3678,6 +3806,9 @@
         const std::vector<dom_node*>& inserted,
         const std::vector<dom_node*>& previous_parents = {})
     {
+        for (auto* child : inserted)
+            if (child != nullptr && child->parent == &parent)
+                update_live_form_collection_structure(parent, child, nullptr);
         std::unordered_set<dom_node*> seen{&parent};
         for (auto* previous : previous_parents)
             if (previous != nullptr && seen.insert(previous).second)

@@ -5641,6 +5641,11 @@ void install_generated_dom_templates(v8::Local<v8::Context>)
     generated_HTMLFormElement_template->InstanceTemplate()->SetInternalFieldCount(2);
     generated_HTMLFormElement_template->InstanceTemplate()->SetHandler(
         v8::IndexedPropertyHandlerConfiguration(form_or_select_indexed_getter));
+    generated_HTMLFormElement_template->InstanceTemplate()->SetHandler(
+        v8::NamedPropertyHandlerConfiguration(
+            form_named_getter, nullptr, nullptr, nullptr,
+            form_controls_collection_named_enumerator, {},
+            v8::PropertyHandlerFlags::kNonMasking));
     auto generated_HTMLFormElement_signature =
         v8::Signature::New(isolate, generated_HTMLFormElement_template);
     auto generated_HTMLFormElement_length_symbol = v8::Symbol::New(

@@ -255,6 +255,11 @@
         frame_reload_reflected_sources.clear();
         frame_event_listeners.clear();
         window_selections.clear();
+        clear_highlight_bindings();
+        for (auto& binding : range_bindings) {
+            if (binding != nullptr) binding->wrapper.Reset();
+        }
+        range_bindings.clear();
 #if defined(WEBSCENE_NATIVE_ENGINE_WITH_V8_INSPECTOR)
         for (auto& [id, frame] : actual_frame_contexts) {
             static_cast<void>(id);

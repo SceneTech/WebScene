@@ -188,6 +188,14 @@
     std::unordered_set<uint64_t> detached_document_roots;
     std::unordered_map<uint64_t, v8::Global<v8::Object>> detached_documents;
     std::unordered_map<uint32_t, window_selection_state> window_selections;
+    static constexpr size_t maximum_live_ranges = 4096U;
+    std::vector<std::unique_ptr<range_binding>> range_bindings;
+    static constexpr size_t maximum_live_highlights = 1024U;
+    static constexpr size_t maximum_ranges_per_highlight = 4096U;
+    static constexpr size_t maximum_registered_highlights_per_root = 256U;
+    static constexpr size_t maximum_highlight_name_bytes = 128U;
+    std::vector<std::unique_ptr<highlight_binding>> highlight_bindings;
+    std::unordered_map<uint32_t, highlight_registry_state> highlight_registries;
     // Document.getElementById overwhelmingly targets unique IDs. Cache the
     // first tree-order match per document root, and rebuild lazily after any
     // DOM generation change so duplicate IDs, reparents, detached nodes, and

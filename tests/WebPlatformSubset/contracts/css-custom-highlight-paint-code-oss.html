@@ -1,0 +1,41 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>CSS Custom Highlight paints Code OSS find ranges</title>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<style>
+  :root { --find-background: #123456; }
+  ::highlight(chat-find-other-match) {
+    background-color: var(--find-background);
+    color: #abcdef;
+  }
+  ::highlight(chat-find-current-match) {
+    background-color: #cc3300;
+    color: #102030;
+  }
+</style>
+<p id="text">alpha <span>beta</span></p>
+<script>
+  test(() => {
+    const paragraph = document.getElementById('text');
+    const first = paragraph.firstChild;
+    const second = paragraph.lastChild.firstChild;
+    const broad = new Range();
+    broad.setStart(first, 1);
+    broad.setEnd(second, 3);
+    const current = new Range();
+    current.setStart(first, 2);
+    current.setEnd(first, 5);
+    const otherHighlight = new Highlight(broad);
+    otherHighlight.priority = 1;
+    const currentHighlight = new Highlight(current);
+    currentHighlight.priority = 10;
+    CSS.highlights.set('chat-find-other-match', otherHighlight);
+    CSS.highlights.set('chat-find-current-match', currentHighlight);
+    assert_array_equals(
+      [...CSS.highlights.keys()],
+      ['chat-find-other-match', 'chat-find-current-match']);
+    assert_equals(otherHighlight.priority, 1);
+    assert_equals(currentHighlight.priority, 10);
+  }, 'Code OSS Custom Highlight ranges span text nodes and retain overlap priority');
+</script>

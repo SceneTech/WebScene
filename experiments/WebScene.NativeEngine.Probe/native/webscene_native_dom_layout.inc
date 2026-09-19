@@ -1572,6 +1572,8 @@ void native_document::layout_children(dom_node& parent)
             auto current_line_height = 0.0F;
             auto pending_space = false;
             dom_node* pending_space_run = nullptr;
+            size_t pending_space_start = 0U;
+            size_t pending_space_end = 0U;
 #if defined(WEBSCENE_NATIVE_ENGINE_INLINE_LAYOUT_SCRATCH_CONTROL)
             std::vector<layout_rect> static_anchors(text_runs.size() + 1U);
 #else
@@ -1591,13 +1593,21 @@ void native_document::layout_children(dom_node& parent)
                     : resolved_line_height(parent, resolved_font_size(parent));
                 current_line_height = 0;
             };
-            const auto append_fragment = [&](dom_node& run, std::string text, float width) {
+            const auto append_fragment = [&](dom_node& run,
+                                             std::string text,
+                                             float width,
+                                             size_t source_byte_start,
+                                             size_t source_byte_end) {
                 const auto font_size = resolved_font_size(run);
                 const auto line_height = resolved_line_height(run, font_size);
                 if (!run.text_layout_fragments.empty()) {
                     auto& previous = run.text_layout_fragments.back();
                     if (std::abs(previous.y - (content.y + cursor_y)) < 0.01F
-                        && std::abs(previous.x + previous.width - (content.x + cursor_x)) < 0.01F) {
+                        && std::abs(previous.x + previous.width - (content.x + cursor_x)) < 0.01F
+                        && previous.source_byte_end == source_byte_start
+                        && previous.source_byte_end - previous.source_byte_start
+                            == previous.text.size()
+                        && source_byte_end - source_byte_start == text.size()) {
                         // The host shaper's advance is not necessarily additive:
                         // kerning, ligatures and platform-font calibration can make
                         // measure("one two") differ from the sum of separately
@@ -1609,6 +1619,7 @@ void native_document::layout_children(dom_node& parent)
                         cursor_x += combined_width - previous.width;
                         previous.text = std::move(combined_text);
                         previous.width = combined_width;
+                        previous.source_byte_end = source_byte_end;
                         current_line_height = std::max(current_line_height, line_height);
                         return;
                     }
@@ -1618,7 +1629,9 @@ void native_document::layout_children(dom_node& parent)
                     content.y + cursor_y,
                     width,
                     line_height,
-                    std::move(text)});
+                    std::move(text),
+                    source_byte_start,
+                    source_byte_end});
                 cursor_x += width;
                 current_line_height = std::max(current_line_height, line_height);
             };
@@ -1637,7 +1650,8 @@ void native_document::layout_children(dom_node& parent)
                     for (size_t i = 0; i <= transformed_text.size(); ++i) {
                         if (i < transformed_text.size() && transformed_text[i] != '\n') continue;
                         auto segment = transformed_text.substr(start, i - start);
-                        if (!segment.empty()) append_fragment(*run, segment, measure_text_width(segment, *run));
+                        if (!segment.empty()) append_fragment(
+                            *run, segment, measure_text_width(segment, *run), start, i);
                         if (i < transformed_text.size()) {
                             current_line_height = std::max(current_line_height, resolved_line_height(*run, resolved_font_size(*run)));
                             start_new_line();
@@ -1650,6 +1664,8 @@ void native_document::layout_children(dom_node& parent)
                     continue;
                 }
                 std::string word;
+                size_t word_start = 0U;
+                size_t word_end = 0U;
                 const auto flush_word = [&] {
                     if (word.empty()) return;
                     auto word_width = measure_text_width(word, *run);
@@ -1677,14 +1693,20 @@ void native_document::layout_children(dom_node& parent)
                         append_fragment(
                             pending_space_run != nullptr ? *pending_space_run : *run,
                             " ",
-                            space_width);
+                            space_width,
+                            pending_space_start,
+                            pending_space_end);
                     }
-                    if (!word.empty()) append_fragment(*run, word, word_width);
+                    if (!word.empty()) append_fragment(
+                        *run, word, word_width, word_start, word_end);
                     word.clear();
                     pending_space = false;
                     pending_space_run = nullptr;
                 };
-                for (const auto character : transformed_text) {
+                for (size_t source_index = 0U;
+                     source_index < transformed_text.size();
+                     ++source_index) {
+                    const auto character = transformed_text[source_index];
                     if (character == '\n' && whitespace == "pre-line") {
                         flush_word();
                         pending_space = false;
@@ -1693,10 +1715,18 @@ void native_document::layout_children(dom_node& parent)
                         start_new_line();
                     } else if (std::isspace(static_cast<unsigned char>(character))) {
                         flush_word();
-                        pending_space = true;
-                        pending_space_run = run;
+                        if (!pending_space) {
+                            pending_space_start = source_index;
+                            pending_space_end = source_index + 1U;
+                            pending_space = true;
+                            pending_space_run = run;
+                        } else if (pending_space_run == run) {
+                            pending_space_end = source_index + 1U;
+                        }
                     } else {
+                        if (word.empty()) word_start = source_index;
                         word.push_back(character);
+                        word_end = source_index + 1U;
                     }
                 }
                 flush_word();

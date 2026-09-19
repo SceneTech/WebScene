@@ -1518,6 +1518,204 @@ void test_contextual_fragment_exposes_parent_node_members(webscene_engine* engin
         "DocumentFragment ParentNode members or child identity regressed: " + result);
 }
 
+void test_live_range_boundary_contract(webscene_engine* engine)
+{
+    const auto result = evaluate(engine, R"JS(
+        (() => {
+          document.body.innerHTML = `
+            <div id="range-root"><span id="range-a">alpha</span><i id="range-start"></i><span id="range-b">beta</span><i id="range-end"></i></div>`;
+          const root = document.getElementById('range-root');
+          const a = document.getElementById('range-a').firstChild;
+          const b = document.getElementById('range-b').firstChild;
+          const range = document.createRange();
+          range.setStart(a, 1);
+          range.setEnd(b, 3);
+          const cross = [
+            range instanceof Range,
+            range.startContainer === a,
+            range.startOffset,
+            range.endContainer === b,
+            range.endOffset,
+            range.commonAncestorContainer === root,
+            range.collapsed
+          ];
+          const markers = new Range();
+          markers.setStartAfter(document.getElementById('range-start'));
+          markers.setEndBefore(document.getElementById('range-end'));
+          const marker = [
+            markers.startContainer === root,
+            markers.startOffset,
+            markers.endContainer === root,
+            markers.endOffset
+          ];
+          const contents = new Range();
+          contents.selectNodeContents(a);
+          const selected = [contents.startOffset, contents.endOffset, contents.collapsed];
+          range.setStart(b, 4);
+          const collapsedForward = range.startContainer === b
+            && range.endContainer === b && range.startOffset === 4
+            && range.endOffset === 4 && range.collapsed;
+          range.setEnd(a, 1);
+          const collapsedBackward = range.startContainer === a
+            && range.endContainer === a && range.startOffset === 1
+            && range.endOffset === 1 && range.collapsed;
+          let invalid = '';
+          try { range.setStart(a, 99); } catch (error) { invalid = error.name; }
+          return JSON.stringify({cross, marker, selected, collapsedForward, collapsedBackward, invalid});
+        })()
+    )JS", "native-live-range-boundaries.js");
+    require(
+        result == R"({"cross":[true,true,1,true,3,true,false],"marker":[true,2,true,3],"selected":[0,5,false],"collapsedForward":true,"collapsedBackward":true,"invalid":"IndexSizeError"})",
+        "live Range boundary contract regressed: " + result);
+}
+
+void test_custom_highlight_registry_contract(webscene_engine* engine)
+{
+    const auto result = evaluate(engine, R"JS(
+        (() => {
+          document.body.innerHTML = '<p id="highlight-text">alpha beta</p>';
+          const text = document.getElementById('highlight-text').firstChild;
+          const first = new Range();
+          first.setStart(text, 0);
+          first.setEnd(text, 5);
+          const second = new Range();
+          second.setStart(text, 6);
+          second.setEnd(text, 10);
+          const highlight = new Highlight(first, first);
+          highlight.add(second);
+          highlight.priority = 7;
+          const setlike = [
+            highlight.size,
+            highlight.has(first),
+            highlight.has(second),
+            [...highlight].length,
+            [...highlight.entries()].every(([left, right]) => left === right),
+            highlight.priority
+          ];
+          CSS.highlights.set('chat-find-current-match', highlight);
+          const firstRegistry = [
+            CSS.highlights.size,
+            CSS.highlights.has('chat-find-current-match'),
+            CSS.highlights.get('chat-find-current-match') === highlight,
+            [...CSS.highlights.keys()].join(','),
+            [...CSS.highlights.values()][0] === highlight
+          ];
+          highlight.clear();
+          highlight.add(first).add(second);
+          const removed = highlight.delete(first);
+          const replacement = new Highlight(first);
+          CSS.highlights.set('chat-find-current-match', replacement);
+          CSS.highlights.set('chat-find-other-match', highlight);
+          CSS.highlights.delete('chat-find-current-match');
+          CSS.highlights.set('chat-find-current-match', replacement);
+          const order = [...CSS.highlights].map(([name]) => name).join(',');
+          const visited = [];
+          CSS.highlights.forEach((value, name, registry) => {
+            visited.push(`${name}:${value.size}:${registry === CSS.highlights}`);
+          });
+          let invalid = false;
+          try { CSS.highlights.set('invalid', {}); } catch (error) {
+            invalid = error instanceof TypeError;
+          }
+          CSS.highlights.clear();
+          return JSON.stringify({
+            setlike,
+            firstRegistry,
+            removed,
+            remaining: highlight.size,
+            order,
+            visited,
+            invalid,
+            cleared: CSS.highlights.size
+          });
+        })()
+    )JS", "native-custom-highlight-registry.js");
+    require(
+        result == R"({"setlike":[2,true,true,2,true,7],"firstRegistry":[1,true,true,"chat-find-current-match",true],"removed":true,"remaining":1,"order":"chat-find-other-match,chat-find-current-match","visited":["chat-find-other-match:1:true","chat-find-current-match:1:true"],"invalid":true,"cleared":0})",
+        "Custom Highlight registry contract regressed: " + result);
+}
+
+void test_custom_highlight_retained_paint_contract(webscene_engine* engine)
+{
+    resize(engine, 640, 240, 7431U);
+    const auto result = evaluate(engine, R"JS(
+        (() => {
+          document.body.innerHTML = `
+            <style>
+              :root { --find-background: #123456; }
+              ::highlight(chat-find-other-match) {
+                background-color: var(--find-background);
+                color: #abcdef;
+              }
+              ::highlight(chat-find-current-match) {
+                background-color: #cc3300;
+                color: #102030;
+              }
+            </style>
+            <p id="highlight-paint" style="font:16px Arial;margin:0">alpha beta</p>`;
+          const text = document.getElementById('highlight-paint').firstChild;
+          const broad = new Range();
+          broad.setStart(text, 1);
+          broad.setEnd(text, 9);
+          const current = new Range();
+          current.setStart(text, 2);
+          current.setEnd(text, 5);
+          const otherHighlight = new Highlight(broad);
+          otherHighlight.priority = 1;
+          const currentHighlight = new Highlight(current);
+          currentHighlight.priority = 10;
+          CSS.highlights.set('chat-find-other-match', otherHighlight);
+          CSS.highlights.set('chat-find-current-match', currentHighlight);
+          return JSON.stringify({
+            names: [...CSS.highlights.keys()],
+            priorities: [otherHighlight.priority, currentHighlight.priority]
+          });
+        })()
+    )JS", "native-custom-highlight-retained-paint.js");
+    require(
+        result == R"({"names":["chat-find-other-match","chat-find-current-match"],"priorities":[1,10]})",
+        "Custom Highlight paint setup regressed: " + result);
+
+    webscene_engine_request_scene_checkpoint(engine);
+    auto broad_background = false;
+    auto current_background = false;
+    auto broad_foreground = false;
+    auto current_foreground = false;
+    auto broad_background_index = uint32_t{};
+    auto current_background_index = uint32_t{};
+    for (auto attempt = 0; attempt < 100; ++attempt) {
+        const auto* scene = webscene_engine_acquire_latest_scene(engine);
+        if (scene != nullptr) {
+            for (uint32_t index = 0; index < scene->header.command_count; ++index) {
+                const auto& command = scene->commands[index];
+                if (command.kind == 2U && command.rgba == 0x123456FFU) {
+                    broad_background = command.width > 0.0F;
+                    broad_background_index = index;
+                }
+                if (command.kind == 2U && command.rgba == 0xCC3300FFU) {
+                    current_background = command.width > 0.0F;
+                    current_background_index = index;
+                }
+                if (command.kind == 3U && command.rgba == 0xABCDEFFFU)
+                    broad_foreground = command.width > 0.0F;
+                if (command.kind == 3U && command.rgba == 0x102030FFU)
+                    current_foreground = command.width > 0.0F;
+            }
+            webscene_scene_acknowledge(scene);
+            webscene_scene_release(scene);
+        }
+        if (broad_background && current_background
+            && broad_foreground && current_foreground) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    require(broad_background && current_background,
+        "Custom Highlight backgrounds were absent from the retained scene");
+    require(broad_foreground && current_foreground,
+        "Custom Highlight foreground ranges were absent from the retained scene");
+    require(broad_background_index < current_background_index,
+        "higher-priority Custom Highlight did not paint after the lower priority");
+}
+
 void test_custom_element_mutation_reactions_are_pay_for_use(webscene_engine* engine)
 {
     const auto result = evaluate(engine, R"JS(

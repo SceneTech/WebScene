@@ -372,6 +372,11 @@
         frame_reload_reflected_sources.clear();
         frame_event_listeners.clear();
         window_selections.clear();
+        clear_highlight_bindings();
+        for (auto& binding : range_bindings) {
+            if (binding != nullptr) binding->wrapper.Reset();
+        }
+        range_bindings.clear();
         focused_document_owner_id = 0U;
         actual_frame_windows.clear();
         actual_frame_contexts.clear();

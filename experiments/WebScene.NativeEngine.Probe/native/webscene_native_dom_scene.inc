@@ -2888,6 +2888,235 @@ void native_document::append_scene(
         const auto font_size = resolved_font_size(node);
         const auto line_height = resolved_line_height(node, font_size);
         if (!node.text_layout_fragments.empty()) {
+            struct highlight_text_segment final {
+                size_t start_byte{};
+                size_t end_byte{};
+                uint32_t foreground_rgba{};
+                uint32_t background_rgba{};
+                int32_t priority{};
+                uint32_t registry_order{};
+                bool foreground_specified{false};
+                bool background_specified{false};
+            };
+            std::vector<highlight_text_segment> highlight_segments;
+            if (auxiliary_nodes_ != nullptr
+                && !auxiliary_nodes_->custom_highlights.empty()) {
+                const auto utf8_scalar_extent = [](std::string_view value, size_t index) {
+                    if (index >= value.size()) return std::pair<size_t, size_t>{0U, 0U};
+                    const auto first = static_cast<unsigned char>(value[index]);
+                    size_t bytes = 1U;
+                    size_t utf16_units = 1U;
+                    if ((first & 0xE0U) == 0xC0U) bytes = 2U;
+                    else if ((first & 0xF0U) == 0xE0U) bytes = 3U;
+                    else if ((first & 0xF8U) == 0xF0U) {
+                        bytes = 4U;
+                        utf16_units = 2U;
+                    }
+                    if (index + bytes > value.size()) return std::pair<size_t, size_t>{1U, 1U};
+                    for (size_t offset = 1U; offset < bytes; ++offset) {
+                        if ((static_cast<unsigned char>(value[index + offset]) & 0xC0U)
+                            != 0x80U) return std::pair<size_t, size_t>{1U, 1U};
+                    }
+                    return std::pair{bytes, utf16_units};
+                };
+                const auto utf16_length = [&](std::string_view value) {
+                    size_t bytes = 0U;
+                    size_t units = 0U;
+                    while (bytes < value.size()) {
+                        const auto [length, scalar_units] = utf8_scalar_extent(value, bytes);
+                        if (length == 0U) break;
+                        bytes += length;
+                        units += scalar_units;
+                    }
+                    return units;
+                };
+                const auto byte_offset_from_utf16 = [&](std::string_view value,
+                                                        size_t requested_units) {
+                    size_t bytes = 0U;
+                    size_t units = 0U;
+                    while (bytes < value.size() && units < requested_units) {
+                        const auto [length, scalar_units] = utf8_scalar_extent(value, bytes);
+                        if (length == 0U || units + scalar_units > requested_units) break;
+                        bytes += length;
+                        units += scalar_units;
+                    }
+                    return bytes;
+                };
+                const auto direct_child_below = [&](const dom_node& ancestor,
+                                                    const dom_node& descendant) {
+                    auto* child = &descendant;
+                    for (auto* parent = dom_parent(*child);
+                         parent != nullptr && parent != &ancestor;
+                         parent = dom_parent(*child)) child = parent;
+                    return dom_parent(*child) == &ancestor ? child : nullptr;
+                };
+                const auto boundary_compare = [&](const dom_node& left,
+                                                  size_t left_offset,
+                                                  const dom_node& right,
+                                                  size_t right_offset) {
+                    if (&left == &right) {
+                        return left_offset < right_offset
+                            ? -1 : left_offset > right_offset ? 1 : 0;
+                    }
+                    if (const auto* child = direct_child_below(left, right);
+                        child != nullptr) {
+                        const auto iterator = std::find(
+                            left.children.begin(), left.children.end(), child);
+                        const auto index = static_cast<size_t>(
+                            std::distance(left.children.begin(), iterator));
+                        return left_offset <= index ? -1 : 1;
+                    }
+                    if (const auto* child = direct_child_below(right, left);
+                        child != nullptr) {
+                        const auto iterator = std::find(
+                            right.children.begin(), right.children.end(), child);
+                        const auto index = static_cast<size_t>(
+                            std::distance(right.children.begin(), iterator));
+                        return index < right_offset ? -1 : 1;
+                    }
+                    std::vector<const dom_node*> left_path;
+                    std::vector<const dom_node*> right_path;
+                    for (auto* current = &left; current != nullptr;
+                         current = dom_parent(*current)) left_path.push_back(current);
+                    for (auto* current = &right; current != nullptr;
+                         current = dom_parent(*current)) right_path.push_back(current);
+                    std::reverse(left_path.begin(), left_path.end());
+                    std::reverse(right_path.begin(), right_path.end());
+                    size_t shared = 0U;
+                    while (shared < left_path.size() && shared < right_path.size()
+                        && left_path[shared] == right_path[shared]) ++shared;
+                    if (shared == 0U) return left.id < right.id ? -1 : 1;
+                    if (shared == left_path.size()) return -1;
+                    if (shared == right_path.size()) return 1;
+                    const auto& siblings = left_path[shared - 1U]->children;
+                    const auto left_position = std::find(
+                        siblings.begin(), siblings.end(), left_path[shared]);
+                    const auto right_position = std::find(
+                        siblings.begin(), siblings.end(), right_path[shared]);
+                    return left_position < right_position ? -1 : 1;
+                };
+                const auto node_utf16_length = utf16_length(node.text_content);
+                for (const auto& highlight : auxiliary_nodes_->custom_highlights) {
+                    auto* root = highlight.root_id == 0U
+                            || highlight.root_id > native_id_index_.size()
+                        ? nullptr : native_id_index_[highlight.root_id - 1U];
+                    auto* start = highlight.start_node_id == 0U
+                            || highlight.start_node_id > native_id_index_.size()
+                        ? nullptr : native_id_index_[highlight.start_node_id - 1U];
+                    auto* end = highlight.end_node_id == 0U
+                            || highlight.end_node_id > native_id_index_.size()
+                        ? nullptr : native_id_index_[highlight.end_node_id - 1U];
+                    if (root == nullptr || start == nullptr || end == nullptr) continue;
+                    const auto belongs_to_root = [&](const dom_node& candidate) {
+                        for (auto* current = &candidate; current != nullptr;
+                             current = dom_parent(*current)) {
+                            if (current == root) return true;
+                        }
+                        return false;
+                    };
+                    if (!belongs_to_root(node) || !belongs_to_root(*start)
+                        || !belongs_to_root(*end)) continue;
+                    if (boundary_compare(
+                            *start, highlight.start_offset, node, node_utf16_length) >= 0
+                        || boundary_compare(
+                            *end, highlight.end_offset, node, 0U) <= 0) continue;
+                    const auto local_start_utf16 = start == &node
+                        ? std::min(highlight.start_offset, node_utf16_length) : 0U;
+                    const auto local_end_utf16 = end == &node
+                        ? std::min(highlight.end_offset, node_utf16_length)
+                        : node_utf16_length;
+                    if (local_start_utf16 >= local_end_utf16) continue;
+                    const auto start_byte = byte_offset_from_utf16(
+                        node.text_content, local_start_utf16);
+                    const auto end_byte = byte_offset_from_utf16(
+                        node.text_content, local_end_utf16);
+                    if (start_byte >= end_byte) continue;
+                    highlight_segments.push_back({
+                        start_byte,
+                        end_byte,
+                        highlight.foreground_rgba,
+                        highlight.background_rgba,
+                        highlight.priority,
+                        highlight.registry_order,
+                        highlight.foreground_specified,
+                        highlight.background_specified});
+                }
+                std::stable_sort(
+                    highlight_segments.begin(),
+                    highlight_segments.end(),
+                    [](const auto& left, const auto& right) {
+                        return left.priority < right.priority
+                            || (left.priority == right.priority
+                                && left.registry_order < right.registry_order);
+                    });
+            }
+            const auto paint_highlight_fragments = [&](bool foreground) {
+                for (const auto& segment : highlight_segments) {
+                    if (foreground ? !segment.foreground_specified
+                                   : !segment.background_specified) continue;
+                    const auto color = foreground
+                        ? segment.foreground_rgba : segment.background_rgba;
+                    if ((color & 0xFFU) == 0U) continue;
+                    for (const auto& fragment : node.text_layout_fragments) {
+                        const auto overlap_start = std::max(
+                            segment.start_byte, fragment.source_byte_start);
+                        const auto overlap_end = std::min(
+                            segment.end_byte, fragment.source_byte_end);
+                        if (overlap_start >= overlap_end) continue;
+                        size_t local_start = 0U;
+                        size_t local_end = fragment.text.size();
+                        const auto source_size = fragment.source_byte_end
+                            - fragment.source_byte_start;
+                        if (source_size == fragment.text.size()) {
+                            local_start = std::min(
+                                fragment.text.size(),
+                                overlap_start - fragment.source_byte_start);
+                            local_end = std::min(
+                                fragment.text.size(),
+                                overlap_end - fragment.source_byte_start);
+                        }
+                        if (local_start >= local_end) continue;
+                        const auto prefix = std::string_view(fragment.text)
+                            .substr(0U, local_start);
+                        const auto selected = std::string_view(fragment.text)
+                            .substr(local_start, local_end - local_start);
+                        const auto selected_x = fragment.x
+                            + measure_text_width(prefix, node);
+                        const auto selected_width = measure_text_width(selected, node);
+                        if (!foreground) {
+                            commands.push_back(webscene_scene_command{
+                                2U, 0U,
+                                selected_x,
+                                fragment.y,
+                                selected_width,
+                                fragment.height,
+                                with_opacity(color),
+                                node.id});
+                            continue;
+                        }
+                        std::ostringstream resource;
+                        resource << font_size << '\t' << fragment.height << '\t'
+                            << resolved_font_weight(node) << '\t'
+                            << resolved_text_align(node) << '\t'
+                            << resolved_font_family(node) << '\t'
+                            << resolved_font_smoothing(node) << '\t'
+                            << resolved_text_transform(node, std::string(selected));
+                        commands.push_back(webscene_scene_command{
+                            3U,
+                            append_scene_string(resource.str(), strings, string_bytes),
+                            selected_x,
+                            fragment.y,
+                            selected_width,
+                            fragment.height,
+                            with_opacity(color),
+                            node.id,
+                            resolved_letter_spacing(node),
+                            resolved_word_spacing(node),
+                            0, 0, 0});
+                    }
+                }
+            };
+            paint_highlight_fragments(false);
             for (const auto& fragment : node.text_layout_fragments) {
                 std::ostringstream resource;
                 resource << font_size << '\t' << fragment.height << '\t'
@@ -2910,6 +3139,7 @@ void native_document::append_scene(
                     0,
                     0});
             }
+            paint_highlight_fragments(true);
         } else {
         const auto padding_left = resolve_length(
             node, node.style.padding_left, node.layout.width, 0);

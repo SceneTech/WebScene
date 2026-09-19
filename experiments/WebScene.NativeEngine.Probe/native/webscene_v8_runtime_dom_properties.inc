@@ -1953,8 +1953,384 @@
         node->attributes["allow"] = to_wtf8(info.GetIsolate(), value);
     }
 
-    static void range_select_node_contents(const v8::FunctionCallbackInfo<v8::Value>&)
+    static void range_collected(const v8::WeakCallbackInfo<range_binding>& info)
     {
+        auto* binding = info.GetParameter();
+        if (binding == nullptr || binding->released) return;
+        binding->wrapper.Reset();
+        binding->released = true;
+    }
+
+    static range_binding* unwrap_range(v8::Local<v8::Object> object)
+    {
+        if (object.IsEmpty() || object->InternalFieldCount() == 0) return nullptr;
+        auto field = object->GetInternalField(0);
+        return field->IsExternal()
+            ? static_cast<range_binding*>(field.As<v8::External>()->Value())
+            : nullptr;
+    }
+
+    dom_node* range_root_for_context(v8::Local<v8::Context> local_context)
+    {
+        auto* root = static_cast<dom_node*>(local_context->GetAlignedPointerFromEmbedderData(
+            1, v8::kEmbedderDataTypeTagDefault));
+        return root == nullptr ? &active_root() : root;
+    }
+
+    bool range_binding_is_live(const range_binding& binding) const
+    {
+        return !binding.released
+            && binding.owner == this
+            && binding.document_generation
+                == document_generation.load(std::memory_order_acquire)
+            && document.find_by_native_id(binding.root_id) != nullptr;
+    }
+
+    bool range_node_is_in_root(const dom_node& root, const dom_node& node) const
+    {
+        for (auto* current_node = &node; current_node != nullptr;
+             current_node = document.dom_parent(*current_node)) {
+            if (current_node == &root) return true;
+        }
+        return false;
+    }
+
+    static size_t range_maximum_offset(const dom_node& node)
+    {
+        return node.kind == dom_node_kind::text
+            ? decode_wtf8_to_utf16(node.text_content).size()
+            : node.children.size();
+    }
+
+    int compare_range_boundary_points(
+        const dom_node& left_node,
+        size_t left_offset,
+        const dom_node& right_node,
+        size_t right_offset) const
+    {
+        if (&left_node == &right_node) {
+            return left_offset < right_offset ? -1 : left_offset > right_offset ? 1 : 0;
+        }
+        const auto direct_child_below = [&](const dom_node& ancestor,
+                                            const dom_node& descendant) {
+            auto* child = &descendant;
+            for (auto* parent = document.dom_parent(*child);
+                 parent != nullptr && parent != &ancestor;
+                 parent = document.dom_parent(*child)) {
+                child = parent;
+            }
+            return document.dom_parent(*child) == &ancestor ? child : nullptr;
+        };
+        if (const auto* child = direct_child_below(left_node, right_node);
+            child != nullptr) {
+            const auto iterator = std::find(
+                left_node.children.begin(), left_node.children.end(), child);
+            const auto index = static_cast<size_t>(
+                std::distance(left_node.children.begin(), iterator));
+            return left_offset <= index ? -1 : 1;
+        }
+        if (const auto* child = direct_child_below(right_node, left_node);
+            child != nullptr) {
+            const auto iterator = std::find(
+                right_node.children.begin(), right_node.children.end(), child);
+            const auto index = static_cast<size_t>(
+                std::distance(right_node.children.begin(), iterator));
+            return index < right_offset ? -1 : 1;
+        }
+        return tree_order_before(left_node, right_node) ? -1 : 1;
+    }
+
+    range_binding* require_live_range(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        auto* binding = unwrap_range(info.This());
+        if (self == nullptr || binding == nullptr || !self->range_binding_is_live(*binding)) {
+            throw_dom_exception(info, "The Range no longer belongs to a live document", "InvalidStateError");
+            return nullptr;
+        }
+        return binding;
+    }
+
+    static bool read_range_boundary(
+        const v8::FunctionCallbackInfo<v8::Value>& info,
+        range_binding& binding,
+        dom_node*& node,
+        size_t& offset)
+    {
+        auto* self = current(info.GetIsolate());
+        if (self == nullptr || info.Length() < 2 || !info[0]->IsObject()) {
+            info.GetIsolate()->ThrowException(v8::Exception::TypeError(
+                js_string(info.GetIsolate(), "Range boundary requires a Node and offset")));
+            return false;
+        }
+        node = unwrap_node(info[0].As<v8::Object>());
+        auto* root = self->document.find_by_native_id(binding.root_id);
+        if (node == nullptr || root == nullptr || !self->range_node_is_in_root(*root, *node)) {
+            throw_dom_exception(info, "The boundary node belongs to another document", "WrongDocumentError");
+            return false;
+        }
+        const auto requested = info[1]
+            ->IntegerValue(info.GetIsolate()->GetCurrentContext()).FromMaybe(-1);
+        const auto maximum = range_maximum_offset(*node);
+        if (requested < 0 || static_cast<size_t>(requested) > maximum) {
+            throw_dom_exception(info, "The boundary offset is outside the node", "IndexSizeError");
+            return false;
+        }
+        offset = static_cast<size_t>(requested);
+        return true;
+    }
+
+    static void range_set_start(const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        auto* binding = self == nullptr ? nullptr : self->require_live_range(info);
+        if (binding == nullptr) return;
+        dom_node* node = nullptr;
+        size_t offset = 0U;
+        if (!read_range_boundary(info, *binding, node, offset)) return;
+        auto* end = self->document.find_by_native_id(binding->end_node_id);
+        if (end == nullptr
+            || self->compare_range_boundary_points(*node, offset, *end, binding->end_offset) > 0) {
+            binding->end_node_id = node->id;
+            binding->end_offset = offset;
+        }
+        binding->start_node_id = node->id;
+        binding->start_offset = offset;
+        self->registered_range_changed(*binding);
+    }
+
+    static void range_set_end(const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        auto* binding = self == nullptr ? nullptr : self->require_live_range(info);
+        if (binding == nullptr) return;
+        dom_node* node = nullptr;
+        size_t offset = 0U;
+        if (!read_range_boundary(info, *binding, node, offset)) return;
+        auto* start = self->document.find_by_native_id(binding->start_node_id);
+        if (start == nullptr
+            || self->compare_range_boundary_points(*node, offset, *start, binding->start_offset) < 0) {
+            binding->start_node_id = node->id;
+            binding->start_offset = offset;
+        }
+        binding->end_node_id = node->id;
+        binding->end_offset = offset;
+        self->registered_range_changed(*binding);
+    }
+
+    static bool range_parent_boundary(
+        const v8::FunctionCallbackInfo<v8::Value>& info,
+        dom_node*& parent,
+        size_t& offset,
+        bool after)
+    {
+        auto* self = current(info.GetIsolate());
+        if (self == nullptr || info.Length() < 1 || !info[0]->IsObject()) {
+            info.GetIsolate()->ThrowException(v8::Exception::TypeError(
+                js_string(info.GetIsolate(), "Range boundary requires a Node")));
+            return false;
+        }
+        auto* node = unwrap_node(info[0].As<v8::Object>());
+        parent = node == nullptr ? nullptr : self->document.dom_parent(*node);
+        if (node == nullptr || parent == nullptr) {
+            throw_dom_exception(info, "The boundary node has no parent", "InvalidNodeTypeError");
+            return false;
+        }
+        const auto iterator = std::find(parent->children.begin(), parent->children.end(), node);
+        if (iterator == parent->children.end()) {
+            throw_dom_exception(info, "The boundary node is not retained by its parent", "InvalidStateError");
+            return false;
+        }
+        offset = static_cast<size_t>(std::distance(parent->children.begin(), iterator))
+            + (after ? 1U : 0U);
+        return true;
+    }
+
+    static void set_range_parent_boundary(
+        const v8::FunctionCallbackInfo<v8::Value>& info,
+        bool start,
+        bool after)
+    {
+        auto* self = current(info.GetIsolate());
+        auto* binding = self == nullptr ? nullptr : self->require_live_range(info);
+        if (binding == nullptr) return;
+        dom_node* parent = nullptr;
+        size_t offset = 0U;
+        if (!range_parent_boundary(info, parent, offset, after)) return;
+        auto* root = self->document.find_by_native_id(binding->root_id);
+        if (root == nullptr || !self->range_node_is_in_root(*root, *parent)) {
+            throw_dom_exception(info, "The boundary node belongs to another document", "WrongDocumentError");
+            return;
+        }
+        auto* opposite = self->document.find_by_native_id(
+            start ? binding->end_node_id : binding->start_node_id);
+        const auto crossed = opposite == nullptr
+            || self->compare_range_boundary_points(
+                *parent, offset, *opposite,
+                start ? binding->end_offset : binding->start_offset)
+                * (start ? 1 : -1) > 0;
+        if (start) {
+            binding->start_node_id = parent->id;
+            binding->start_offset = offset;
+            if (crossed) {
+                binding->end_node_id = parent->id;
+                binding->end_offset = offset;
+            }
+        } else {
+            binding->end_node_id = parent->id;
+            binding->end_offset = offset;
+            if (crossed) {
+                binding->start_node_id = parent->id;
+                binding->start_offset = offset;
+            }
+        }
+        self->registered_range_changed(*binding);
+    }
+
+    static void range_set_start_after(const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        set_range_parent_boundary(info, true, true);
+    }
+
+    static void range_set_end_before(const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        set_range_parent_boundary(info, false, false);
+    }
+
+    static void range_select_node_contents(const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        auto* binding = self == nullptr ? nullptr : self->require_live_range(info);
+        if (binding == nullptr) return;
+        auto* node = info.Length() > 0 && info[0]->IsObject()
+            ? unwrap_node(info[0].As<v8::Object>()) : nullptr;
+        auto* root = self->document.find_by_native_id(binding->root_id);
+        if (node == nullptr || root == nullptr || !self->range_node_is_in_root(*root, *node)) {
+            throw_dom_exception(info, "The selected node belongs to another document", "WrongDocumentError");
+            return;
+        }
+        binding->start_node_id = node->id;
+        binding->start_offset = 0U;
+        binding->end_node_id = node->id;
+        binding->end_offset = range_maximum_offset(*node);
+        self->registered_range_changed(*binding);
+    }
+
+    static dom_node* range_common_ancestor(
+        implementation& self,
+        const range_binding& binding)
+    {
+        auto* start = self.document.find_by_native_id(binding.start_node_id);
+        auto* end = self.document.find_by_native_id(binding.end_node_id);
+        if (start == nullptr || end == nullptr) return nullptr;
+        std::unordered_set<const dom_node*> ancestors;
+        for (auto* node = start; node != nullptr; node = self.document.dom_parent(*node))
+            ancestors.insert(node);
+        for (auto* node = end; node != nullptr; node = self.document.dom_parent(*node))
+            if (ancestors.contains(node)) return node;
+        return nullptr;
+    }
+
+    static void range_container_get(
+        v8::Local<v8::Name> name,
+        const v8::PropertyCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        auto* binding = unwrap_range(info.Holder());
+        if (self == nullptr || binding == nullptr || !self->range_binding_is_live(*binding)) {
+            info.GetReturnValue().Set(v8::Null(info.GetIsolate()));
+            return;
+        }
+        const auto property = to_utf8(info.GetIsolate(), name);
+        auto* node = property == "startContainer"
+            ? self->document.find_by_native_id(binding->start_node_id)
+            : property == "endContainer"
+                ? self->document.find_by_native_id(binding->end_node_id)
+                : range_common_ancestor(*self, *binding);
+        info.GetReturnValue().Set(node == nullptr
+            ? v8::Local<v8::Value>(v8::Null(info.GetIsolate()))
+            : v8::Local<v8::Value>(self->wrap_node(*node)));
+    }
+
+    static void range_offset_get(
+        v8::Local<v8::Name> name,
+        const v8::PropertyCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        auto* binding = unwrap_range(info.Holder());
+        const auto property = to_utf8(info.GetIsolate(), name);
+        const auto value = self != nullptr && binding != nullptr
+                && self->range_binding_is_live(*binding)
+            ? (property == "startOffset" ? binding->start_offset : binding->end_offset)
+            : 0U;
+        info.GetReturnValue().Set(v8::Number::New(info.GetIsolate(), value));
+    }
+
+    static void range_collapsed_get(
+        v8::Local<v8::Name>,
+        const v8::PropertyCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        auto* binding = unwrap_range(info.Holder());
+        const auto collapsed = self == nullptr || binding == nullptr
+            || !self->range_binding_is_live(*binding)
+            || (binding->start_node_id == binding->end_node_id
+                && binding->start_offset == binding->end_offset);
+        info.GetReturnValue().Set(v8::Boolean::New(info.GetIsolate(), collapsed));
+    }
+
+    bool reserve_range_binding()
+    {
+        std::erase_if(range_bindings,
+            [](const auto& binding) { return binding == nullptr || binding->released; });
+        if (range_bindings.size() < maximum_live_ranges) return true;
+        isolate->LowMemoryNotification();
+        std::erase_if(range_bindings,
+            [](const auto& binding) { return binding == nullptr || binding->released; });
+        return range_bindings.size() < maximum_live_ranges;
+    }
+
+    v8::MaybeLocal<v8::Object> construct_range(v8::Local<v8::Context> local_context)
+    {
+        if (!reserve_range_binding()) {
+            throw_dom_exception(isolate, "Too many live Range objects", "QuotaExceededError");
+            return {};
+        }
+        v8::Local<v8::Value> constructor_value;
+        if (!local_context->Global()->Get(
+                local_context, js_string(isolate, "Range")).ToLocal(&constructor_value)
+            || !constructor_value->IsFunction()) return {};
+        return constructor_value.As<v8::Function>()->NewInstance(local_context, 0, nullptr);
+    }
+
+    static void range_constructor(const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        if (self == nullptr || !info.IsConstructCall()) {
+            info.GetIsolate()->ThrowException(v8::Exception::TypeError(
+                js_string(info.GetIsolate(), "Range must be constructed with new")));
+            return;
+        }
+        if (!self->reserve_range_binding()) {
+            throw_dom_exception(info, "Too many live Range objects", "QuotaExceededError");
+            return;
+        }
+        auto* root = self->range_root_for_context(info.GetIsolate()->GetCurrentContext());
+        if (root == nullptr) return;
+        auto binding = std::make_unique<range_binding>();
+        binding->owner = self;
+        binding->document_generation = self->document_generation.load(std::memory_order_acquire);
+        binding->root_id = root->id;
+        binding->start_node_id = root->id;
+        binding->end_node_id = root->id;
+        auto* raw = binding.get();
+        info.This()->SetInternalField(
+            0, v8::External::New(info.GetIsolate(), raw));
+        raw->wrapper.Reset(info.GetIsolate(), info.This());
+        raw->wrapper.SetWeak(raw, range_collected, v8::WeakCallbackType::kParameter);
+        self->range_bindings.push_back(std::move(binding));
+        info.GetReturnValue().Set(info.This());
     }
 
     static void fragment_remove_child(const v8::FunctionCallbackInfo<v8::Value>& info)
@@ -1977,17 +2353,11 @@
 
     static void create_range(const v8::FunctionCallbackInfo<v8::Value>& info)
     {
-        auto local_context = info.GetIsolate()->GetCurrentContext();
-        auto range = v8::Object::New(info.GetIsolate());
-        range->Set(
-            local_context,
-            js_string(info.GetIsolate(), "selectNodeContents"),
-            v8::Function::New(local_context, range_select_node_contents).ToLocalChecked()).Check();
-        range->Set(
-            local_context,
-            js_string(info.GetIsolate(), "createContextualFragment"),
-            v8::Function::New(local_context, range_create_contextual_fragment).ToLocalChecked()).Check();
-        info.GetReturnValue().Set(range);
+        auto* self = current(info.GetIsolate());
+        if (self == nullptr) return;
+        v8::Local<v8::Object> range;
+        if (self->construct_range(info.GetIsolate()->GetCurrentContext()).ToLocal(&range))
+            info.GetReturnValue().Set(range);
     }
 
     static void get_client_width(v8::Local<v8::Name>, const v8::PropertyCallbackInfo<v8::Value>& info)

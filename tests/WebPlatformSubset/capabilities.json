@@ -241,6 +241,30 @@
       "gap": "Implementation-first candidate for WebScene #237. The ten unchanged Code OSS selectors reduce to static closed/open layout and paint plus reduced-motion transition overrides. The candidate retains only the observed static components and details activation lifecycle without anonymous DOM nodes, scans, polling, or idle frames. Keyword-size interpolation, transition timing, discrete content-visibility transitions, the border-image gradient, implicit summaries, name-group exclusivity, and programmatic-open toggle task coalescing remain open."
     },
     {
+      "family": "live-range-boundaries",
+      "required": [],
+      "candidate": ["constructible Range", "document.createRange", "UTF-16 text boundaries", "child-index element boundaries", "setStart/setEnd", "setStartAfter/setEndBefore", "selectNodeContents", "commonAncestorContainer", "crossed-endpoint collapse"],
+      "productEvidence": ["unchanged Code OSS chat find Highlight ranges", "unchanged Markdown inner-diff marker ranges"],
+      "coverage": ["contracts/dom-range-boundaries-code-oss.html", "test_live_range_boundary_contract"],
+      "gap": "Implementation-first WebScene #741 stack base for #740. Range bindings are bounded, generation-scoped, weakly reclaimed, and perform no layout, selector, visual-tree, or frame work. Highlight registry/pseudo paint, complete mutation boundary adjustment, and the broader DOM Range surface remain open."
+    },
+    {
+      "family": "css-custom-highlight-registry",
+      "required": [],
+      "candidate": ["Highlight constructor", "Highlight ordered setlike", "Highlight priority", "CSS.highlights maplike", "document-local registry isolation", "bounded weak lifecycle"],
+      "productEvidence": ["unchanged Code OSS chat find owner merge/clear", "unchanged Markdown inner-diff registry replacement"],
+      "coverage": ["contracts/css-custom-highlight-registry-code-oss.html", "test_custom_highlight_registry_contract"],
+      "gap": "Implementation-first WebScene #743 middle stack layer for #740. The registry retains registered Highlight/Range wrappers with bounded document-local ownership and dirties only registered mutations. Functional ::highlight() cascade and retained pixels remain the top stack layer."
+    },
+    {
+      "family": "css-custom-highlight-paint",
+      "required": [],
+      "candidate": ["global ::highlight(name) rules", "color and background-color paint", "root custom-property resolution", "UTF-16 Range/text-fragment intersection", "cross-text-node ranges", "priority and registry-order overlap", "retained scene publication"],
+      "productEvidence": ["unchanged Code OSS chat find current/other match paint", "unchanged Markdown inner-diff added/removed paint"],
+      "coverage": ["contracts/css-custom-highlight-paint-code-oss.html", "test_custom_highlight_retained_paint_contract"],
+      "gap": "Implementation-first WebScene #746 top stack layer for #740. Registered ranges publish bounded retained background and foreground commands with no DOM/visual-tree nodes or idle frame work. Selector-qualified highlight rules, complete Highlight pseudo cascade and property coverage, and arbitrary DOM mutation adjustment remain outside this claim."
+    },
+    {
       "family": "list-formatting",
       "required": ["list-item marker paint", "ordered counters", "outside marker geometry", "inside marker first-line participation", "marker-before-block-child anonymous line"],
       "candidate": ["list-style shorthand on generic list-item boxes", "filled square marker rasterization", "inside marker with forced continuation-line reset"],

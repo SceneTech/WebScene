@@ -1055,6 +1055,8 @@ struct text_layout_fragment final {
     float width{0};
     float height{0};
     std::string text;
+    size_t source_byte_start{0U};
+    size_t source_byte_end{0U};
 };
 
 // One immutable dependency binding captured with the CPU scene. Resolving it
@@ -2093,6 +2095,21 @@ inline bool resolved_right_to_left(const dom_node& node) noexcept
 
 class native_document final {
 public:
+    struct custom_highlight_range final {
+        uint32_t root_id{};
+        uint32_t start_node_id{};
+        uint32_t end_node_id{};
+        size_t start_offset{};
+        size_t end_offset{};
+        uint32_t foreground_rgba{};
+        uint32_t background_rgba{};
+        int32_t priority{};
+        uint32_t registry_order{};
+        bool foreground_specified{false};
+        bool background_specified{false};
+        bool operator==(const custom_highlight_range&) const = default;
+    };
+
     // Shadow DOM state is kept entirely outside dom_node. A light-DOM-only
     // document therefore preserves both sizeof(dom_node) and every per-node
     // allocation. The side table is instantiated only by attachShadow().
@@ -2240,6 +2257,8 @@ public:
     uint32_t validation_message_anchor_id() const noexcept;
     dom_node* hit_test(dom_node& root, float x, float y);
     void clear();
+    void set_custom_highlight_ranges(
+        std::vector<custom_highlight_range> ranges);
     void layout(float viewport_width, float viewport_height);
     void build_scene(
         std::vector<webscene_scene_command>& commands,
@@ -2686,6 +2705,7 @@ private:
         std::vector<modal_dialog_entry> dialogs;
         std::vector<dom_node*> media;
         std::optional<validation_message_state> validation_message;
+        std::vector<custom_highlight_range> custom_highlights;
     };
     std::unique_ptr<auxiliary_nodes> auxiliary_nodes_;
     std::span<const modal_dialog_entry> modal_dialogs() const noexcept {

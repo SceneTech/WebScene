@@ -1,0 +1,53 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>CSS Custom Highlight registry supports Code OSS ownership updates</title>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<p id="text">alpha beta</p>
+<script>
+  const text = document.getElementById('text').firstChild;
+  const first = new Range();
+  first.setStart(text, 0);
+  first.setEnd(text, 5);
+  const second = new Range();
+  second.setStart(text, 6);
+  second.setEnd(text, 10);
+
+  test(() => {
+    const highlight = new Highlight(first, first);
+    highlight.add(second);
+    highlight.priority = 7;
+    assert_equals(highlight.size, 2);
+    assert_true(highlight.has(first));
+    assert_true(highlight.has(second));
+    assert_array_equals([...highlight], [first, second]);
+    assert_true([...highlight.entries()].every(([left, right]) => left === right));
+    assert_equals(highlight.priority, 7);
+    assert_true(highlight.delete(first));
+    highlight.clear();
+    assert_equals(highlight.size, 0);
+  }, 'Highlight exposes the ordered setlike subset used by Code OSS');
+
+  test(() => {
+    const current = new Highlight(first);
+    const other = new Highlight(second);
+    CSS.highlights.set('chat-find-current-match', current);
+    assert_equals(CSS.highlights.get('chat-find-current-match'), current);
+    CSS.highlights.set('chat-find-current-match', other);
+    CSS.highlights.set('chat-find-other-match', current);
+    CSS.highlights.delete('chat-find-current-match');
+    CSS.highlights.set('chat-find-current-match', other);
+    assert_array_equals(
+      [...CSS.highlights.keys()],
+      ['chat-find-other-match', 'chat-find-current-match']);
+    const visited = [];
+    CSS.highlights.forEach((value, name, registry) => {
+      visited.push([name, value, registry]);
+    });
+    assert_equals(visited.length, 2);
+    assert_true(visited.every(entry => entry[2] === CSS.highlights));
+    assert_throws_js(TypeError, () => CSS.highlights.set('invalid', {}));
+    CSS.highlights.clear();
+    assert_equals(CSS.highlights.size, 0);
+  }, 'CSS.highlights preserves replacement and insertion order');
+</script>

@@ -92,6 +92,7 @@ inline void configure_style_transitions(node_style& style)
         animations.opacity_transition = resolve("opacity");
         animations.color_transition = resolve("color");
         animations.background_color_transition = resolve("background-color");
+        animations.filter_transition = resolve("filter");
     }
 
 inline void apply_transition_shorthand(

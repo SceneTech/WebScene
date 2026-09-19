@@ -1,0 +1,126 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Compound filter transitions use bounded host-clock progression</title>
+<style>
+  #host {
+    display: grid;
+    grid-template-columns: repeat(16, 8px);
+  }
+  .tile {
+    width: 8px;
+    height: 8px;
+    background: rgb(80, 120, 160);
+    filter: grayscale(1) blur(2px) saturate(1.2) contrast(.8) brightness(.8);
+    transition: filter 200ms linear;
+  }
+  #host.active .tile {
+    filter: grayscale(0) blur(6px) saturate(2) contrast(1.2) brightness(1.2);
+  }
+</style>
+<div id="host"></div>
+<script>
+  const state = window.__webSceneWptState = {
+    complete: false,
+    harness: null,
+    results: [],
+    errors: [],
+    diagnostics: []
+  };
+
+  function functions(value) {
+    return Array.from(String(value).matchAll(/([a-z-]+)\(([-+.\d]+)(?:px)?\)/g),
+      match => ({ name: match[1], amount: Number(match[2]) }));
+  }
+
+  function finish(error, diagnostics) {
+    state.diagnostics = diagnostics || [];
+    state.results.push({
+      name: "compatible compound filters retain order, identities, events, and bounded cadence",
+      status: error ? "FAIL" : "PASS",
+      message: error ? String(error && error.message || error) : null,
+      stack: error && error.stack ? String(error.stack) : null
+    });
+    state.harness = error
+      ? { status: 1, message: state.results[0].message, stack: state.results[0].stack }
+      : { status: 0, message: null, stack: null };
+    state.complete = true;
+  }
+
+  try {
+    const host = document.getElementById("host");
+    for (let index = 0; index < 128; index++) {
+      const tile = document.createElement("span");
+      tile.className = "tile";
+      host.appendChild(tile);
+    }
+    const target = host.firstElementChild;
+    const events = [];
+    for (const type of ["transitionrun", "transitionstart", "transitionend",
+        "transitioncancel"]) {
+      target.addEventListener(type, event =>
+        events.push(type + ":" + event.propertyName));
+    }
+    const started = performance.now();
+    requestAnimationFrame(startTimestamp => {
+      host.classList.add("active");
+      const forward = [];
+      const reverse = [];
+      let reverseTimestamp = null;
+
+      const sample = timestamp => {
+        try {
+          const value = functions(getComputedStyle(target).filter);
+          const record = { elapsed: timestamp - startTimestamp, value };
+          (reverseTimestamp === null ? forward : reverse).push(record);
+          if (reverseTimestamp === null && timestamp - startTimestamp >= 100) {
+            if (value.map(item => item.name).join(" ")
+                !== "grayscale blur saturate contrast brightness"
+                || !(value[0].amount > 0 && value[0].amount < 1)
+                || !(value[1].amount > 2 && value[1].amount < 6)) {
+              throw new Error("forward compound midpoint was missing or reordered: "
+                + JSON.stringify(forward));
+            }
+            target.style.filter = "none";
+            reverseTimestamp = timestamp;
+          }
+          if (reverseTimestamp === null || timestamp - reverseTimestamp < 230) {
+            requestAnimationFrame(sample);
+            return;
+          }
+          const reverseIntermediate = reverse.filter(item => item.value.length === 5
+            && item.value[0].amount > 0 && item.value[0].amount < .9
+            && item.value[1].amount > 0 && item.value[1].amount < 5.9);
+          if (reverseIntermediate.length < 2) {
+            throw new Error("reverse-to-none lacked filter identity intermediates: "
+              + JSON.stringify(reverse));
+          }
+          if (getComputedStyle(target).filter !== "none") {
+            throw new Error("filter did not settle at none");
+          }
+          for (const type of ["transitionrun", "transitionstart", "transitioncancel",
+              "transitionend"]) {
+            if (!events.includes(type + ":filter")) {
+              throw new Error("missing " + type + " filter event: "
+                + JSON.stringify(events));
+            }
+          }
+          const sampleCount = forward.length + reverse.length;
+          if (sampleCount > 192) {
+            throw new Error("filter cadence exceeded the bounded sample budget: "
+              + sampleCount);
+          }
+          if (performance.now() - started > 5000) {
+            throw new Error("128-filter transition gate exceeded five seconds");
+          }
+          host.remove();
+          finish(null, [JSON.stringify({ forward, reverse, events, sampleCount })]);
+        } catch (error) {
+          finish(error, [JSON.stringify({ forward, reverse, events })]);
+        }
+      };
+      requestAnimationFrame(sample);
+    });
+  } catch (error) {
+    finish(error, []);
+  }
+</script>

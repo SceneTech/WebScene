@@ -53,6 +53,13 @@ struct css_length final {
     float pixel_offset{0};
 };
 
+struct retained_filter_function final {
+    uint32_t flags{0};
+    float amount{0};
+
+    bool operator==(const retained_filter_function&) const = default;
+};
+
 struct layout_rect final {
     float x{0};
     float y{0};
@@ -159,6 +166,7 @@ struct node_style final {
         transition_timing opacity_transition{};
         transition_timing color_transition{};
         transition_timing background_color_transition{};
+        transition_timing filter_transition{};
         std::string animation_name_value{"none"};
         std::string animation_duration_value{"0s"};
         std::string animation_delay_value{"0s"};
@@ -1463,6 +1471,21 @@ struct dom_node final {
         bool background_color_animation_initialized{false};
         bool background_color_animation_active{false};
         bool background_color_animation_start_event_sent{false};
+        std::vector<retained_filter_function> painted_filter_functions;
+        std::vector<retained_filter_function> filter_animation_from;
+        std::vector<retained_filter_function> filter_animation_target;
+        std::string filter_animation_target_value{"none"};
+        float filter_animation_duration_ms{0};
+        float filter_animation_delay_ms{0};
+        float filter_animation_x1{0.25F};
+        float filter_animation_y1{0.1F};
+        float filter_animation_x2{0.25F};
+        float filter_animation_y2{1.0F};
+        double filter_animation_started_ms{0};
+        bool filter_animation_initialized{false};
+        bool filter_animation_active{false};
+        bool filter_animation_start_event_sent{false};
+        bool filter_animation_target_is_none{true};
     };
 
     uint32_t id{0};
@@ -1784,6 +1807,14 @@ struct dom_node final {
             && animation_runtime_state->color_animation_active;
     }
 
+    std::span<const retained_filter_function> painted_filter_functions_value()
+        const noexcept
+    {
+        if (animation_runtime_state == nullptr
+            || !animation_runtime_state->filter_animation_active) return {};
+        return animation_runtime_state->painted_filter_functions;
+    }
+
     std::unique_ptr<animation_runtime_data> animation_runtime_state;
     float scroll_left{0};
     float scroll_top{0};
@@ -2005,6 +2036,8 @@ public:
         css_length& origin_x,
         css_length& origin_y);
     static uint32_t parse_color(const std::string& value);
+    static std::string serialize_filter_functions(
+        std::span<const retained_filter_function> functions);
 
 private:
     struct shadow_dom_storage final {
@@ -2266,6 +2299,10 @@ private:
     float resolve_length(css_length value, float available, float fallback) const;
     float resolve_vertical_padding(const dom_node& node, css_length value,
         float available, float fallback) const;
+    bool parse_foreground_filters(
+        const dom_node& node,
+        std::string_view value,
+        std::vector<retained_filter_function>& result) const;
     static bool is_specified(css_length value);
     float intrinsic_size(
         const dom_node& node,

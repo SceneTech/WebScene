@@ -13,6 +13,12 @@
         std::string_view raw_name)
     {
         const auto name = canonical_css_property_name(raw_name);
+        if (name == "filter") {
+            const auto painted = node.painted_filter_functions_value();
+            if (!painted.empty()) {
+                return native_document::serialize_filter_functions(painted);
+            }
+        }
         const auto authored = node.authored_style().declarations.find(name);
         if (authored != node.authored_style().declarations.end()) {
             if (const auto normalized = css::normalize_effect_value(name, authored->second)) {

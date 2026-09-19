@@ -36,6 +36,7 @@ inline constexpr std::array<std::string_view, 8> cssCompatibilityScriptParts{R"J
   const supportsRuleInstances = new WeakSet();
   const containerRuleInstances = new WeakSet();
   const layerBlockRuleInstances = new WeakSet();
+  const startingStyleRuleInstances = new WeakSet();
   const layerStatementRuleInstances = new WeakSet();
   const keyframesRuleInstances = new WeakSet();
   const keyframeRuleInstances = new WeakSet();
@@ -119,6 +120,8 @@ inline constexpr std::array<std::string_view, 8> cssCompatibilityScriptParts{R"J
     'CSSContainerRule', containerRuleInstances, CSSConditionRuleInterface);
   const CSSLayerBlockRuleInterface = interfaceConstructor(
     'CSSLayerBlockRule', layerBlockRuleInstances, CSSGroupingRuleInterface);
+  const CSSStartingStyleRuleInterface = interfaceConstructor(
+    'CSSStartingStyleRule', startingStyleRuleInstances, CSSGroupingRuleInterface);
   const CSSLayerStatementRuleInterface = interfaceConstructor(
     'CSSLayerStatementRule', layerStatementRuleInstances, CSSRuleInterface);
   const CSSKeyframesRuleInterface = interfaceConstructor(
@@ -145,6 +148,7 @@ inline constexpr std::array<std::string_view, 8> cssCompatibilityScriptParts{R"J
       ['CSSSupportsRule', CSSSupportsRuleInterface],
       ['CSSContainerRule', CSSContainerRuleInterface],
       ['CSSLayerBlockRule', CSSLayerBlockRuleInterface],
+      ['CSSStartingStyleRule', CSSStartingStyleRuleInterface],
       ['CSSLayerStatementRule', CSSLayerStatementRuleInterface],
       ['CSSKeyframesRule', CSSKeyframesRuleInterface],
       ['CSSKeyframeRule', CSSKeyframeRuleInterface],
@@ -983,11 +987,13 @@ R"JS(      source = source.slice(identifier[0].length).trim();
     const supportsMatch = /^@supports(?:\s+([^\{]*?))?\s*\{/i.exec(parsed.cssText);
     const containerMatch = /^@container(?:\s+([^\{]*?))?\s*\{/i.exec(parsed.cssText);
     const layerBlockMatch = /^@layer(?:\s+([^\{]*?))?\s*\{/i.exec(parsed.cssText);
+    const startingStyleMatch = /^@starting-style\s*\{/i.exec(parsed.cssText);
     const keyframesSpec = parseKeyframesPrelude(parsed);
     const propertyMatch = /^@property\s+(--[-_a-zA-Z0-9]+)\s*\{/i.exec(parsed.cssText);
     const layerStatementNames = parsed.body === undefined
       ? parseLayerStatementNames(parsed.cssText) : undefined;
-    const groupingMatch = mediaMatch || supportsMatch || containerMatch || layerBlockMatch;
+    const groupingMatch = mediaMatch || supportsMatch || containerMatch
+      || layerBlockMatch || startingStyleMatch;
     let keyframeChildren = null;
     const ruleTarget = {};
     const rule = keyframesSpec ? new Proxy(ruleTarget, {
@@ -1041,6 +1047,10 @@ R"JS(    if (importSpec) {
       groupingRuleInstances.add(rule);
       layerBlockRuleInstances.add(rule);
       Object.setPrototypeOf(rule, CSSLayerBlockRuleInterface.prototype);
+    } else if (startingStyleMatch) {
+      groupingRuleInstances.add(rule);
+      startingStyleRuleInstances.add(rule);
+      Object.setPrototypeOf(rule, CSSStartingStyleRuleInterface.prototype);
     } else if (keyframesSpec) {
       keyframesRuleInstances.add(rule);
       Object.setPrototypeOf(rule, CSSKeyframesRuleInterface.prototype);
@@ -1397,19 +1407,21 @@ R"JS(      Object.defineProperties(rule, {
       const isMedia = Boolean(mediaMatch);
       const isSupports = Boolean(supportsMatch);
       const isContainer = Boolean(containerMatch);
+      const isStartingStyle = Boolean(startingStyleMatch);
       let preludeText = isMedia
         ? parseMediaList(mediaMatch[1] || '').join(', ')
         : isSupports
           ? (supportsMatch[1] || '').trim()
           : isContainer
             ? (containerMatch[1] || '').trim()
-            : (layerBlockMatch[1] || '').trim();
+            : isStartingStyle ? '' : (layerBlockMatch[1] || '').trim();
       const attached = () => parent && (containingRule
         ? containingRule.cssRules && Array.from(containingRule.cssRules).includes(rule)
         : state.rules.includes(rule));
       const serialize = () => {
         const keyword = isMedia ? 'media'
-          : isSupports ? 'supports' : isContainer ? 'container' : 'layer';
+          : isSupports ? 'supports' : isContainer ? 'container'
+            : isStartingStyle ? 'starting-style' : 'layer';
         cssText = `@${keyword}${preludeText ? ' ' + preludeText : ''} {${children.map(child => child.cssText).join('')}}`;
       };
       const commitCondition = value => {
@@ -1499,7 +1511,7 @@ R"JS(        deleteRule: { writable: true, value(index) {
         descriptors.conditions = {
           enumerable: true, get: () => conditions
         };
-      } else {
+      } else if (!isStartingStyle) {
         descriptors.name = { enumerable: true, get: () => preludeText };
       }
       Object.defineProperties(rule, descriptors);

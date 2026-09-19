@@ -261,6 +261,7 @@ native_document::allocation_metrics native_document::read_allocation_metrics() c
             + string_bytes(animations->transition_duration_value)
             + string_bytes(animations->transition_delay_value)
             + string_bytes(animations->transition_timing_function_value)
+            + string_bytes(animations->transition_behavior_value)
             + string_bytes(animations->animation_name_value)
             + string_bytes(animations->animation_duration_value)
             + string_bytes(animations->animation_delay_value)

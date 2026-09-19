@@ -1841,7 +1841,7 @@
     void register_detached_subtree(dom_node& root)
     {
         if (&root == &document.body() || root.parent != nullptr) return;
-        document.cancel_web_animations(root, true);
+        document.reset_detached_style_state(root);
         // Detached leaves are the common text/topology case. A leaf cannot
         // contain an existing root and, after unlinking, cannot still be
         // contained by one. Index it directly so repeated split/normalize

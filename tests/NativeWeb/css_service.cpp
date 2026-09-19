@@ -1441,5 +1441,108 @@ int main(int argc,char** argv) {
             ==std::string::npos) return 181;
     if(!typed_sheets.remove(748)
         || !typed_sheets.state().registered_custom_properties.empty()) return 182;
+    auto starting_sheet=webscene_native::css::prepare_stylesheet(R"CSS(
+        .entry {
+          opacity: 1;
+          transform: translateX(0px);
+          transition: opacity 1000ms linear, transform 1000ms linear,
+            display 260ms allow-discrete;
+        }
+        .entry.hidden { display: none; transform: translateX(-10px); }
+        .precedence { opacity: 1; transition: opacity 1000ms linear; }
+        @starting-style {
+            .entry {
+                opacity: 0;
+                transform: translateX(-10px);
+            }
+            div { opacity: 0.25; }
+        }
+        @media (min-width: 1px) {
+          @starting-style { .nested-only { opacity: 0; } }
+        }
+    )CSS","asset://app/starting.css",[](const auto&) {return true;});
+    const auto starting_rule_count=starting_sheet?std::count_if(
+            starting_sheet->rules.begin(),starting_sheet->rules.end(),
+            [](const auto& rule) {
+                return std::find(
+                    rule->media_queries.begin(),rule->media_queries.end(),
+                    webscene_native::css::starting_style_media_marker)
+                    !=rule->media_queries.end();
+            }):0U;
+    if(!starting_sheet || starting_rule_count!=3U) {
+        std::cerr<<"starting-style preparation rules="
+            <<(starting_sheet?starting_sheet->rules.size():0U)
+            <<" starting="<<starting_rule_count<<'\n';
+        if(starting_sheet) for(const auto& diagnostic:starting_sheet->diagnostics)
+            std::cerr<<diagnostic.feature<<':'<<diagnostic.classification<<':'
+                <<diagnostic.detail<<'\n';
+        return 185;
+    }
+    webscene_native::native_document starting_document;
+    std::vector<webscene_native::dom_node*> unrelated_entry_nodes;
+    unrelated_entry_nodes.reserve(256U);
+    for(size_t index=0;index<256U;++index) {
+        auto& unrelated=starting_document.create_element("div");
+        unrelated.class_name="static";
+        starting_document.append_child(starting_document.body(),unrelated);
+        unrelated_entry_nodes.push_back(&unrelated);
+    }
+    auto& starting_node=starting_document.create_element("div");
+    starting_node.class_name="entry";
+    starting_document.append_child(starting_document.body(),starting_node);
+    auto& precedence_node=starting_document.create_element("div");
+    precedence_node.class_name="precedence";
+    starting_document.append_child(starting_document.body(),precedence_node);
+    webscene_native::css::query_host starting_query(starting_document);
+    webscene_native::css::stylesheet_owner starting_sheets;
+    starting_sheets.replace(749,std::move(*starting_sheet));
+    starting_document.signal_animation_frame(0);
+    webscene_native::css::apply_native_document_cascade(
+        starting_document,starting_sheets,starting_query,
+        [](const auto&,auto&,auto&,auto&) {return false;},
+        [](const auto&,const auto&) {});
+    if(starting_node.style.opacity!=1
+        || std::abs(starting_node.painted_opacity_value())>0.0001F
+        || std::abs(starting_node.painted_transform_translate_x_value().value+10)>0.001F)
+        return 186;
+    if(std::abs(precedence_node.painted_opacity_value()-1)>0.0001F)
+        return 193;
+    if(std::any_of(
+        unrelated_entry_nodes.begin(),unrelated_entry_nodes.end(),
+        [](const auto* node) {return node->has_animation_runtime();})) return 192;
+    starting_document.signal_animation_frame(500);
+    if(!starting_document.advance_animations()
+        || std::abs(starting_node.painted_opacity_value()-0.5F)>0.01F
+        || std::abs(starting_node.painted_transform_translate_x_value().value+5)>0.01F)
+        return 187;
+    starting_document.signal_animation_frame(1000);
+    starting_document.advance_animations();
+    if(std::abs(starting_node.painted_opacity_value()-1)>0.001F
+        || std::abs(starting_node.painted_transform_translate_x_value().value)>0.001F
+        || starting_document.has_active_animations())
+        return 188;
+    starting_node.class_name="entry hidden";
+    webscene_native::css::apply_native_document_cascade(
+        starting_document,starting_sheets,starting_query,
+        [](const auto&,auto&,auto&,auto&) {return false;},
+        [](const auto&,const auto&) {});
+    if(starting_node.style.display==webscene_native::display_mode::none
+        || starting_node.computed_display_value()!=webscene_native::display_mode::none
+        || !starting_node.css_was_rendered
+        || !starting_node.animation_runtime()->display_animation_active) return 189;
+    starting_document.signal_animation_frame(1260);
+    starting_document.advance_animations();
+    if(starting_node.style.display!=webscene_native::display_mode::none
+        || starting_node.css_was_rendered
+        || starting_node.animation_runtime()->display_animation_active
+        || starting_document.has_active_animations()) return 191;
+    starting_node.class_name="entry";
+    starting_document.signal_animation_frame(1300);
+    webscene_native::css::apply_native_document_cascade(
+        starting_document,starting_sheets,starting_query,
+        [](const auto&,auto&,auto&,auto&) {return false;},
+        [](const auto&,const auto&) {});
+    if(std::abs(starting_node.painted_opacity_value())>0.0001F
+        || !starting_node.css_was_rendered) return 190;
     std::cout<<"V8-free shared CSS declaration service passed\n";
 }

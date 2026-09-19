@@ -429,11 +429,56 @@
         // full cascade, configure it once after every winning declaration has
         // landed instead of reparsing its four lists after each longhand.
         css::configure_style_transitions(node.style);
+        document.update_discrete_display_transition(
+            node, previous_style.display);
         // Inline relative line-height is authored at a higher origin, but its
         // computed pixel value depends on the winning font-size. Re-resolve it
         // only after stylesheet declarations have completed their cascade.
         css::recompute_cascaded_line_height(node, cascade_order, css_variables);
         recompute_inline_font_relative_metrics(node);
+        std::optional<node_style> starting_style;
+        const auto rendered_after_change = node.style.display != display_mode::none;
+        const auto entering_rendered_state = rendered_after_change
+            && (!node.css_cascade_initialized || !node.css_was_rendered);
+        if (entering_rendered_state) {
+            std::vector<const css_rule*> starting_rules;
+            for (const auto index : candidates) {
+                if (index >= css_rules.size()) continue;
+                const auto& rule = css_rules[index];
+                if (!starting_style_rule_media_matches(rule)
+                    || rule.payload->pseudo_kind != 0U
+                    || !css_rule_matches(node, rule)) continue;
+                starting_rules.push_back(&rule);
+            }
+            if (!starting_rules.empty()) {
+                auto after_change_style = node.style;
+                css::reset_cascaded_style(
+                    node, css_variables, &registered_custom_properties);
+                auto initial_rules = matched_rules;
+                initial_rules.insert(
+                    initial_rules.end(), starting_rules.begin(), starting_rules.end());
+                std::sort(
+                    initial_rules.begin(), initial_rules.end(),
+                    [](const css_rule* left, const css_rule* right) {
+                        return css::cascade_rule_precedes(left, right, false);
+                    });
+                const css::cascaded_rule_order initial_order(initial_rules);
+                css::apply_matched_declarations(
+                    node, initial_order,
+                    [&](const css_declaration& declaration, bool inline_origin) {
+                        apply_css_declaration(
+                            node, declaration, inline_origin, true);
+                    });
+                css::configure_style_transitions(node.style);
+                css::recompute_cascaded_line_height(
+                    node, initial_order, css_variables);
+                recompute_inline_font_relative_metrics(node);
+                starting_style = node.style;
+                node.style = std::move(after_change_style);
+            }
+        }
+        node.css_cascade_initialized = true;
+        node.css_was_rendered = rendered_after_change;
         // Pseudo-elements inherit the originating element's completed
         // computed style. Apply them only after its custom and ordinary
         // declarations so `::before { background:var(--active-bg) }` resolves
@@ -488,6 +533,9 @@
             : std::chrono::steady_clock::time_point{};
 #endif
         configure_style_keyframe_animation(node);
+        if (starting_style.has_value()) {
+            document.prime_starting_style(node, *starting_style);
+        }
         document.update_style_animations(node);
         detect_css_compositions(node);
 #if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)

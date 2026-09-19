@@ -204,6 +204,7 @@ inline uint64_t property_mask(std::string_view name)
         if (name == "transition-duration") return inline_transition_duration;
         if (name == "transition-delay") return inline_transition_delay;
         if (name == "transition-timing-function") return inline_transition_timing;
+        if (name == "transition-behavior") return inline_transition_property;
         if (name == "background") return inline_background | inline_background_image;
         if (name == "background-color" || name == "backgroundColor") {
             return inline_background;

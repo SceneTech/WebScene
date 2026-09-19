@@ -17,6 +17,13 @@ class stylesheet_owner {
         return std::all_of(rule.media_queries().begin(),rule.media_queries().end(),
             [&](const auto& query) { return css::media_matches(query,environment_); });
     }
+    bool starting_rule_media_matches_internal(const css_rule& rule) const {
+        return std::all_of(rule.media_queries().begin(),rule.media_queries().end(),
+            [&](const auto& query) {
+                return query == starting_style_media_marker
+                    || css::media_matches(query,environment_);
+            });
+    }
     void rebuild() {
         state_=css_cascade_state{};
         for(const auto& entry:sheets_) {
@@ -58,6 +65,10 @@ class stylesheet_owner {
         }
     }
 public:
+    bool starting_rule_media_matches(const css_rule& rule) const {
+        return rule.is_starting_style()
+            && starting_rule_media_matches_internal(rule);
+    }
     // Replacing preserves sheet source order; newly attached sheets append.
     void replace(uint32_t id,prepared_stylesheet sheet) {
         for(auto& entry:sheets_) if(entry.id==id) {

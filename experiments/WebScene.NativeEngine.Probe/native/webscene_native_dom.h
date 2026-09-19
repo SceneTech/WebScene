@@ -241,6 +241,7 @@ struct node_style final {
         std::string transition_duration_value{"0s"};
         std::string transition_delay_value{"0s"};
         std::string transition_timing_function_value{"ease"};
+        std::string transition_behavior_value{"normal"};
         transition_timing transform_transition{};
         transition_timing left_transition{};
         transition_timing top_transition{};
@@ -248,6 +249,8 @@ struct node_style final {
         transition_timing color_transition{};
         transition_timing background_color_transition{};
         transition_timing filter_transition{};
+        transition_timing display_transition{};
+        bool display_transition_allow_discrete{false};
         std::string animation_name_value{"none"};
         std::string animation_duration_value{"0s"};
         std::string animation_delay_value{"0s"};
@@ -1720,6 +1723,12 @@ struct dom_node final {
         bool filter_animation_active{false};
         bool filter_animation_start_event_sent{false};
         bool filter_animation_target_is_none{true};
+        display_mode display_animation_target{display_mode::none};
+        float display_animation_duration_ms{0};
+        float display_animation_delay_ms{0};
+        double display_animation_started_ms{0};
+        bool display_animation_active{false};
+        bool display_animation_start_event_sent{false};
     };
 
     uint32_t id{0};
@@ -1741,6 +1750,11 @@ struct dom_node final {
     // XML documents preserve qualified/tag and attribute name case. HTML nodes
     // continue to apply the ASCII case-insensitive name rules at the binding.
     bool xml_mode : 1 {false};
+    // Entry-transition state is two bits on the node instead of an allocation
+    // on every static style. `css_was_rendered` changes only when the used
+    // display state reaches or leaves `none`.
+    bool css_cascade_initialized : 1 {false};
+    bool css_was_rendered : 1 {false};
     std::string tag;
     std::string id_attribute;
     std::string class_name;
@@ -2000,6 +2014,14 @@ struct dom_node final {
                 && animation_runtime_state->opacity_animation_initialized
             ? animation_runtime_state->painted_opacity
             : style.opacity;
+    }
+
+    display_mode computed_display_value() const noexcept
+    {
+        return animation_runtime_state != nullptr
+                && animation_runtime_state->display_animation_active
+            ? animation_runtime_state->display_animation_target
+            : style.display;
     }
 
     uint32_t painted_foreground_value() const noexcept
@@ -2326,6 +2348,10 @@ public:
     void mark_out_of_flow_geometry_dirty(dom_node& node) noexcept;
     bool can_reuse_client_geometry(const dom_node& node) const noexcept;
     void signal_animation_frame(double timestamp_ms) noexcept;
+    void reset_detached_style_state(dom_node& root);
+    void update_discrete_display_transition(
+        dom_node& node, display_mode previous_display);
+    void prime_starting_style(dom_node& node, const node_style& starting_style);
     void update_style_animations(dom_node& node);
     bool advance_animations() noexcept;
     bool has_active_animations() const noexcept;

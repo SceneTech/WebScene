@@ -152,6 +152,10 @@ bool apply_decoration_value(dom_node& node,const std::string& name,const std::st
             node.style.mutable_animations().transition_timing_function_value = value;
             if (!defer_transition_configuration) configure_style_transitions(node.style);
             return true;
+        } else if (name == "transition-behavior") {
+            node.style.mutable_animations().transition_behavior_value = value;
+            if (!defer_transition_configuration) configure_style_transitions(node.style);
+            return true;
         } else if (name == "animation") {
             apply_animation_shorthand(node.style, value);
             decision.classification = "partially-supported";

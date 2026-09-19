@@ -254,13 +254,15 @@ inline void apply_all_unset(
         reset.outline_rgba = previous.outline_rgba;
     }
     if (has_inline({"transition", "transition-property", "transition-duration",
-            "transition-delay", "transition-timing-function"})) {
+            "transition-delay", "transition-timing-function", "transition-behavior"})) {
         auto& reset_animations = reset.mutable_animations();
         reset_animations.transition_property_value = previous.animations().transition_property_value;
         reset_animations.transition_duration_value = previous.animations().transition_duration_value;
         reset_animations.transition_delay_value = previous.animations().transition_delay_value;
         reset_animations.transition_timing_function_value =
             previous.animations().transition_timing_function_value;
+        reset_animations.transition_behavior_value =
+            previous.animations().transition_behavior_value;
         configure_style_transitions(reset);
     }
     if (has_inline({"z-index"})) {

@@ -1655,6 +1655,7 @@ int main()
     test_inline_transition_longhands_survive_dynamic_parse_and_recascade(engine);
     test_opacity_keyframes_use_host_clock_with_staggered_infinite_delays(engine);
     test_registered_custom_property_keyframes_update_dependent_paint();
+    test_starting_style_entry_and_discrete_display_transitions();
     test_rotation_keyframes_use_host_clock_and_wrap_continuously(engine);
     test_filter_keyframes_use_host_clock_and_retained_paint(engine);
     test_clipped_offscreen_keyframes_do_not_keep_host_frame_clock_alive(engine);

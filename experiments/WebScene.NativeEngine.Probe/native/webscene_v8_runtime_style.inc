@@ -272,12 +272,14 @@
             || name == "transition-property" || name == "transitionDuration"
             || name == "transition-duration" || name == "transitionDelay"
             || name == "transition-delay" || name == "transitionTimingFunction"
-            || name == "transition-timing-function") {
+            || name == "transition-timing-function" || name == "transitionBehavior"
+            || name == "transition-behavior") {
             auto& animations = node.style.mutable_animations();
             animations.transition_property_value = "all";
             animations.transition_duration_value = "0s";
             animations.transition_delay_value = "0s";
             animations.transition_timing_function_value = "ease";
+            animations.transition_behavior_value = "normal";
             configure_style_transitions(node.style);
             const auto has_authored_transition = std::any_of(
                 node.authored_style().declarations.begin(),
@@ -970,6 +972,10 @@
             node->style.mutable_animations().transition_timing_function_value = value;
             configure_style_transitions(node->style);
             node->style.inline_property_mask |= inline_transition_timing;
+        } else if (name == "transition-behavior") {
+            node->style.mutable_animations().transition_behavior_value = value;
+            configure_style_transitions(node->style);
+            node->style.inline_property_mask |= inline_transition_property;
         } else if (name == "opacity") {
             node->style.opacity = std::clamp(std::strtof(value.c_str(), nullptr), 0.0F, 1.0F);
             node->style.inline_property_mask |= inline_opacity;
@@ -1446,6 +1452,8 @@
                     : node->style.animations().transition_delay_value;
             } else if (name == "transition-timing-function") {
                 value = node->style.animations().transition_timing_function_value;
+            } else if (name == "transition-behavior") {
+                value = node->style.animations().transition_behavior_value;
             } else if (name == "animation-fill-mode") {
                 value = node->style.animations().animation_fill_mode_value;
             } else if (name == "animation-play-state") {
@@ -1796,9 +1804,9 @@
                 ? "none"
                 : format_computed_length(node->style.max_height, node->layout.height);
         } else if (name == "display") {
-            value = display_mode_name(computed
-                ? blockified_display(*node)
-                : node->style.display);
+            const auto display = node->computed_display_value();
+            value = display_mode_name(computed && display != display_mode::none
+                ? blockified_display(*node) : display);
         } else if (name == "direction") {
             value = "ltr";
         } else if (name == "position") {
@@ -2038,7 +2046,8 @@
             value = node->style.animations().transition_property_value + " "
                 + node->style.animations().transition_duration_value + " "
                 + node->style.animations().transition_timing_function_value + " "
-                + node->style.animations().transition_delay_value;
+                + node->style.animations().transition_delay_value + " "
+                + node->style.animations().transition_behavior_value;
         } else if (name == "transitionProperty" || name == "transition-property") {
             value = node->style.animations().transition_property_value;
         } else if (name == "transitionDuration" || name == "transition-duration") {
@@ -2052,6 +2061,9 @@
         } else if (name == "transitionTimingFunction"
             || name == "transition-timing-function") {
             value = node->style.animations().transition_timing_function_value;
+        } else if (name == "transitionBehavior"
+            || name == "transition-behavior") {
+            value = node->style.animations().transition_behavior_value;
         } else if (name == "animation") {
             value = css::serialize_animation_shorthand(node->style.animations());
         } else if (name == "animationName" || name == "animation-name") {
@@ -2569,6 +2581,10 @@
             node->style.mutable_animations().transition_timing_function_value = value;
             configure_style_transitions(node->style);
             node->style.inline_property_mask |= inline_transition_timing;
+        } else if (name == "transitionBehavior") {
+            node->style.mutable_animations().transition_behavior_value = value;
+            configure_style_transitions(node->style);
+            node->style.inline_property_mask |= inline_transition_property;
         } else if (name == "animation") {
             apply_animation_shorthand(node->style, value);
         } else if (name == "animationName") {

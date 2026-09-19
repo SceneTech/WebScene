@@ -1,0 +1,45 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Starting style drives entry and discrete display transitions</title>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<style id="entry-sheet">
+  #entry {
+    width: 40px;
+    height: 20px;
+    opacity: 1;
+    transform: translateX(0);
+    transition: opacity 100s linear -50s, transform 100s linear -50s,
+      display 100s allow-discrete;
+  }
+  #entry.hidden { display: none; transform: translateX(-6px); }
+  @starting-style {
+    #entry { opacity: 0; transform: translateX(-6px); }
+  }
+</style>
+<div id="entry"></div>
+<script>
+  test(() => {
+    const rule = document.getElementById('entry-sheet').sheet.cssRules[2];
+    assert_true(rule instanceof CSSStartingStyleRule);
+    assert_equals(rule.constructor.name, 'CSSStartingStyleRule');
+    assert_equals(rule.cssRules.length, 1);
+
+    const dynamic = new CSSStyleSheet();
+    dynamic.replaceSync('@starting-style { .first { opacity: 0; } }');
+    dynamic.cssRules[0].deleteRule(0);
+    dynamic.cssRules[0].insertRule('.replacement { opacity: .5; }');
+    assert_equals(dynamic.cssRules[0].cssRules[0].selectorText, '.replacement');
+  }, '@starting-style exposes grouping-rule identity and bounded mutation');
+
+  test(() => {
+    const entry = document.getElementById('entry');
+    const style = getComputedStyle(entry);
+    assert_approx_equals(Number(style.opacity), .5, .02);
+    assert_true(style.transform.includes('-3'));
+    entry.classList.add('hidden');
+    assert_equals(getComputedStyle(entry).display, 'none');
+    assert_greater_than(entry.offsetWidth, 0,
+      'allow-discrete keeps the used box until the transition boundary');
+  }, 'entry values start at the authored state and display removal is deferred');
+</script>

@@ -977,6 +977,7 @@ mod css_syntax {
                 || prelude.name.eq_ignore_ascii_case("supports")
                 || prelude.name.eq_ignore_ascii_case("layer")
                 || prelude.name.eq_ignore_ascii_case("container")
+                || prelude.name.eq_ignore_ascii_case("starting-style")
                 || prelude.name.eq_ignore_ascii_case("keyframes")
                 || prelude.name.eq_ignore_ascii_case("-webkit-keyframes")
             {

@@ -1311,6 +1311,13 @@
   ],
   "candidate": [
     {
+      "path": "contracts/css-selection-pseudo-code-oss.html",
+      "type": "testharness",
+      "capabilities": ["selection-pseudo-global", "selection-pseudo-scoped", "selection-pseudo-color-background", "selection-pseudo-cascade", "selection-cross-text-range", "selection-retained-paint"],
+      "evidence": ["css-pseudo-elements-selection", "vscode-oss-645f29c-selection-style-ledger", "native-window-find-select-all-scene-contract"],
+      "reason": "Implementation-first WebScene #750. Native companion coverage checks selector-qualified and global theme colors, same-node find selection, cross-node select-all publication, retained background/foreground commands, and clear cleanup without DOM/visual-tree nodes or idle frame demand."
+    },
+    {
       "path": "contracts/css-custom-highlight-paint-code-oss.html",
       "type": "testharness",
       "capabilities": ["css-highlight-pseudo-global-rule", "css-highlight-color-background", "css-highlight-custom-properties", "css-highlight-cross-text-range", "css-highlight-priority-order", "css-highlight-retained-paint"],

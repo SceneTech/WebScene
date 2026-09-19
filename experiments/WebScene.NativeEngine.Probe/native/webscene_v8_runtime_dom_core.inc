@@ -6450,9 +6450,10 @@
                 selection.has_range = false;
                 selection.anchor_node_id = 0U;
                 selection.focus_node_id = 0U;
-                selection.anchor_offset = 0U;
-                selection.focus_offset = 0U;
-                info.GetReturnValue().Set(false);
+            selection.anchor_offset = 0U;
+            selection.focus_offset = 0U;
+            self->selection_paint_changed();
+            info.GetReturnValue().Set(false);
                 return;
             }
             auto* first = selection.text_nodes.front();
@@ -6463,6 +6464,7 @@
             selection.anchor_offset = 0U;
             selection.focus_offset = decode_wtf8_to_utf16(
                 last->text_content).size();
+            self->selection_paint_changed();
             self->record_feature(
                 "web-api", "Document.execCommand", "supported",
                 "selectAll publishes a realm-local Selection over visible document text",
@@ -7388,6 +7390,7 @@
     }
 
     void clear_selections_containing(const dom_node &subtree) {
+      auto selection_changed = false;
       if (active_outbound_drag.has_value()) {
         auto* source = document.find_by_native_id(
             active_outbound_drag->source_node_id);
@@ -7410,6 +7413,7 @@
         auto *focus = document.find_by_native_id(selection.focus_node_id);
         if ((anchor != nullptr && subtree_contains(subtree, anchor)) ||
             (focus != nullptr && subtree_contains(subtree, focus))) {
+          selection_changed = true;
           selection.has_range = false;
           selection.anchor_node_id = 0U;
           selection.focus_node_id = 0U;
@@ -7417,6 +7421,7 @@
           selection.focus_offset = 0U;
         }
       }
+      if (selection_changed) selection_paint_changed();
     }
 
     static window_selection_state *
@@ -7522,6 +7527,7 @@
 
     static void selection_remove_all_ranges(
         const v8::FunctionCallbackInfo<v8::Value> &info) {
+      auto *self = current(info.GetIsolate());
       auto *selection =
           selection_callback_state(info.GetIsolate(), info.This());
       if (selection == nullptr)
@@ -7531,6 +7537,7 @@
       selection->focus_node_id = 0U;
       selection->anchor_offset = 0U;
       selection->focus_offset = 0U;
+      if (self != nullptr) self->selection_paint_changed();
     }
 
     static void
@@ -7574,6 +7581,7 @@
       selection->focus_node_id = node->id;
       selection->anchor_offset = static_cast<size_t>(requested);
       selection->focus_offset = static_cast<size_t>(requested);
+      self->selection_paint_changed();
     }
 
     static void
@@ -8008,6 +8016,7 @@
       selection.focus_node_id = node->id;
       selection.anchor_offset = match->offset;
       selection.focus_offset = match->offset + query.size();
+      self->selection_paint_changed();
       info.GetReturnValue().Set(v8::True(info.GetIsolate()));
     }
 

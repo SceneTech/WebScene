@@ -1397,6 +1397,7 @@ int main()
     test_live_range_boundary_contract(engine);
     test_custom_highlight_registry_contract(engine);
     test_custom_highlight_retained_paint_contract(engine);
+    test_selection_pseudo_retained_paint_contract(engine);
     test_custom_element_mutation_reactions_are_pay_for_use(engine);
     test_autonomous_custom_element_lifecycle(engine);
     test_shadow_dom_composed_runtime_geometry(engine);

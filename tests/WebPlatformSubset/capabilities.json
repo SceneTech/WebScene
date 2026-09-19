@@ -265,6 +265,14 @@
       "gap": "Implementation-first WebScene #746 top stack layer for #740. Registered ranges publish bounded retained background and foreground commands with no DOM/visual-tree nodes or idle frame work. Selector-qualified highlight rules, complete Highlight pseudo cascade and property coverage, and arbitrary DOM mutation adjustment remain outside this claim."
     },
     {
+      "family": "css-selection-pseudo-paint",
+      "required": [],
+      "candidate": ["global ::selection rules", "selector-qualified ::selection rules", "color and background-color", "custom-property resolution", "author layer/specificity/importance/source order", "forward and backward Window Selection normalization", "retained range paint"],
+      "productEvidence": ["unchanged Code OSS text selection styles", "bundled xterm selection styles", "Window.find selection publication"],
+      "coverage": ["contracts/css-selection-pseudo-code-oss.html", "test_selection_pseudo_retained_paint_contract"],
+      "gap": "Implementation-first WebScene #750. Existing Window Selection mutations publish bounded retained text backgrounds and foreground spans with no pseudo DOM/visual-tree nodes or idle work. Native Selection.addRange, pointer/keyboard range extension, input/textarea control selection paint, complete highlight inheritance, and non-color pseudo properties remain separate slices."
+    },
+    {
       "family": "list-formatting",
       "required": ["list-item marker paint", "ordered counters", "outside marker geometry", "inside marker first-line participation", "marker-before-block-child anonymous line"],
       "candidate": ["list-style shorthand on generic list-item boxes", "filled square marker rasterization", "inside marker with forced continuation-line reset"],

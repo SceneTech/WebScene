@@ -45,6 +45,8 @@
             node->attributes["id"] = node->id_attribute;
             self->recascade_attribute_selector_transition(*node, "id", old_value, node->id_attribute);
             self->recascade_radio_group_selector_state_changes(radio_group_state);
+            self->recascade_form_attribute_dependencies(
+                *node,"id",old_value,node->id_attribute);
             self->notify_custom_element_attribute(
                 *node, "id", old_value, node->id_attribute);
         }
@@ -2740,6 +2742,8 @@
                 *node,name,old_value,text);
         else self->document.mark_dirty();
         self->recascade_radio_group_selector_state_changes(radio_group_state);
+        self->recascade_form_attribute_dependencies(
+            *node,name,old_value,text);
         if(node->tag=="option" && (name=="selected" || name=="value"))
             self->recascade_containing_select_validity(*node);
         if(validation_constraint_attribute(name))
@@ -3473,8 +3477,9 @@
         if(self->document.validation_message_target_id()==node->id)
             self->dismiss_validation_message();
         if(selector_state_before==selector_state_after) return;
-        if(self->is_connected(*node))
-            self->recascade_dynamic_state_subject(*node,"setCustomValidity");
+        if(self->is_connected(*node) && node->parent!=nullptr)
+            self->recascade_form_structural_dependencies(
+                *node->parent,node);
         else self->document.mark_dirty();
     }
 
@@ -3500,9 +3505,9 @@
         const auto selector_state_after=forms::validity_state(
             self->document,*node);
         if(selector_state_before==selector_state_after) return;
-        if(self->is_connected(*node))
-            self->recascade_connected_subtree(
-                *node,"ElementInternals.formAssociated");
+        if(self->is_connected(*node) && node->parent!=nullptr)
+            self->recascade_form_structural_dependencies(
+                *node->parent,node);
         else self->document.mark_dirty();
     }
 
@@ -3534,9 +3539,9 @@
         if(self->document.validation_message_target_id()==node->id)
             self->dismiss_validation_message();
         if(selector_state_before==selector_state_after) return;
-        if(self->is_connected(*node))
-            self->recascade_connected_subtree(
-                *node,"ElementInternals.setValidity");
+        if(self->is_connected(*node) && node->parent!=nullptr)
+            self->recascade_form_structural_dependencies(
+                *node->parent,node);
         else self->document.mark_dirty();
     }
 
@@ -4286,10 +4291,18 @@
             self->radio_group_attribute_may_change_membership(*node,name)
             ? self->capture_radio_group_selector_state()
             : std::vector<radio_group_selector_state>{};
+        const auto old_value=node->attributes.contains(name)
+            ? std::optional<std::string>{node->attributes.at(name)}
+            : std::optional<std::string>{};
         if (value->BooleanValue(info.GetIsolate())) node->attributes[name] = std::string{};
         else node->attributes.erase(name);
         self->recascade_connected_subtree(*node);
         self->recascade_radio_group_selector_state_changes(radio_group_state);
+        const auto new_value=node->attributes.contains(name)
+            ? std::optional<std::string>{node->attributes.at(name)}
+            : std::optional<std::string>{};
+        self->recascade_form_attribute_dependencies(
+            *node,name,old_value,new_value);
         if(validation_constraint_attribute(name))
             self->dismiss_validation_message_after_constraint_mutation(*node);
         else self->reconcile_validation_message_eligibility(*node);

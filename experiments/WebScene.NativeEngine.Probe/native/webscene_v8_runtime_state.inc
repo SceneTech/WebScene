@@ -738,6 +738,15 @@
         pending_attribute_selector_transitions;
     std::unordered_map<dom_node*, std::unordered_map<std::string, size_t>>
         pending_attribute_selector_transition_index;
+    // Explicit form ownership is the only validity dependency whose owner is
+    // outside both the control subtree and its ancestor chain. Build this
+    // reverse lookup once, then maintain it from the existing attribute and
+    // insertion hooks so form-id mutations never scan the whole document.
+    std::unordered_map<std::string, std::unordered_set<dom_node*>>
+        explicit_form_validity_dependents;
+    std::unordered_map<std::string, std::unordered_set<dom_node*>>
+        form_validity_owners_by_id;
+    bool explicit_form_validity_dependents_initialized{false};
     bool flushing_attribute_selector_transitions{false};
     mutable css::selector_match_context* active_selector_match_context{nullptr};
     class selector_match_batch_scope final {

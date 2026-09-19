@@ -126,6 +126,10 @@ inline std::vector<css_compound_dependencies> compile_invalidation_plan(
                     add(output.attributes["$live-form-checkedness"], route);
                     add(output.attributes["$live-form-radio-group-checkedness"], route);
                     add(output.attributes["$live-form-select-selectedness"], route);
+                    // Ownership and inherited disabledness can change without
+                    // changing an attribute on the selector subject (for
+                    // example, a reparent or a first-legend mutation).
+                    add(output.attributes["$live-form-ownership"], route);
                     add(output.attributes["multiple"], route);
                     add(output.attributes["size"], route);
                     add(output.attributes["pattern"], route);

@@ -1,0 +1,69 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Nested pointer coordinate projection contract</title>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<script src="/resources/testdriver.js"></script>
+<script src="/resources/testdriver-actions.js"></script>
+<script src="/resources/testdriver-vendor.js"></script>
+<style>
+  html, body { margin: 0; width: 800px; height: 600px; }
+  #outer {
+    position: absolute;
+    left: 80px;
+    top: 60px;
+    width: 200px;
+    height: 120px;
+    border: 4px solid black;
+  }
+</style>
+<iframe id="outer"></iframe>
+<script>
+  const outer = document.querySelector("#outer");
+  const outerDocument = outer.contentDocument;
+  outerDocument.body.style.margin = "0";
+  const inner = outerDocument.createElement("iframe");
+  inner.style.cssText = [
+    "position:absolute", "left:30px", "top:25px", "width:100px",
+    "height:70px", "border:3px solid black"
+  ].join(";");
+  outerDocument.body.appendChild(inner);
+  const innerDocument = inner.contentDocument;
+  innerDocument.body.style.margin = "0";
+  const target = innerDocument.createElement("button");
+  target.textContent = "target";
+  target.style.cssText = [
+    "position:absolute", "left:10px", "top:8px", "width:40px",
+    "height:30px", "padding:0", "border:0"
+  ].join(";");
+  innerDocument.body.appendChild(target);
+
+  const observed = [];
+  for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup", "click"]) {
+    target.addEventListener(type, event => observed.push({
+      type,
+      clientX:event.clientX,
+      clientY:event.clientY,
+      pageX:event.pageX,
+      pageY:event.pageY,
+      offsetX:event.offsetX,
+      offsetY:event.offsetY
+    }));
+  }
+
+  promise_test(async () => {
+    await test_driver.click(target);
+    assert_array_equals(
+      observed.map(event => event.type),
+      ["pointerdown", "mousedown", "pointerup", "mouseup", "click"],
+      "primary activation remains in the innermost document");
+    for (const event of observed) {
+      assert_approx_equals(event.clientX, 30, 0.01, `${event.type}.clientX`);
+      assert_approx_equals(event.clientY, 23, 0.01, `${event.type}.clientY`);
+      assert_approx_equals(event.pageX, 30, 0.01, `${event.type}.pageX`);
+      assert_approx_equals(event.pageY, 23, 0.01, `${event.type}.pageY`);
+      assert_approx_equals(event.offsetX, 20, 0.01, `${event.type}.offsetX`);
+      assert_approx_equals(event.offsetY, 15, 0.01, `${event.type}.offsetY`);
+    }
+  }, "host pointer coordinates are projected into the nearest nested viewport");
+</script>

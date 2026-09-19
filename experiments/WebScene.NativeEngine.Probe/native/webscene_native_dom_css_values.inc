@@ -648,3 +648,14 @@ void native_document::collect_matches(
         collect_matches(*child, selector, result);
     }
 }
+
+void native_document::collect_matches(
+    const dom_node& node,
+    const std::string& selector,
+    std::vector<const dom_node*>& result)
+{
+    if (matches_selector(node, selector)) result.push_back(&node);
+    for (const auto* child : node.children) {
+        collect_matches(*child, selector, result);
+    }
+}

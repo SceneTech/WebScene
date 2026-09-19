@@ -3347,7 +3347,236 @@
         return result;
     }
 
-    void recascade_changed_child_list(dom_node& parent, dom_node* inserted = nullptr)
+    void index_explicit_form_validity_subtree(dom_node& root)
+    {
+        if (root.tag == "form" && !root.id_attribute.empty())
+            form_validity_owners_by_id[root.id_attribute].insert(&root);
+        if (const auto form = root.attributes.find("form");
+            form != root.attributes.end() && !form->second.empty()) {
+            explicit_form_validity_dependents[form->second].insert(&root);
+        }
+        for (auto* child : root.children)
+            if (child != nullptr) index_explicit_form_validity_subtree(*child);
+    }
+
+    void ensure_explicit_form_validity_dependents()
+    {
+        if (explicit_form_validity_dependents_initialized) return;
+        explicit_form_validity_dependents_initialized = true;
+        index_explicit_form_validity_subtree(document.body());
+    }
+
+    void update_explicit_form_validity_dependency(
+        dom_node& node,
+        const std::optional<std::string>& previous,
+        const std::optional<std::string>& current)
+    {
+        ensure_explicit_form_validity_dependents();
+        if (previous.has_value() && !previous->empty()) {
+            const auto known = explicit_form_validity_dependents.find(*previous);
+            if (known != explicit_form_validity_dependents.end()) {
+                known->second.erase(&node);
+                if (known->second.empty())
+                    explicit_form_validity_dependents.erase(known);
+            }
+        }
+        if (current.has_value() && !current->empty())
+            explicit_form_validity_dependents[*current].insert(&node);
+    }
+
+    void recascade_form_validity_dependency(dom_node& subject)
+    {
+        if (!is_connected(subject)) return;
+        const auto indexed = css_invalidation_rules_by_attribute.find(
+            "$live-form-ownership");
+        const std::span<const size_t> rules = indexed ==
+                css_invalidation_rules_by_attribute.end()
+            ? std::span<const size_t>{}
+            : std::span<const size_t>{indexed->second};
+        recascade_selector_transition(
+            subject,
+            rules,
+            [](const css::css_compound_dependencies& dependencies) {
+                css::css_invalidation_targets result;
+                const auto found = dependencies.attributes.find(
+                    "$live-form-ownership");
+                if (found != dependencies.attributes.end())
+                    result.include(found->second);
+                return result;
+            },
+            [] {},
+            [] {},
+            false,
+            true);
+    }
+
+    void recascade_form_structural_dependencies(
+        dom_node& parent,
+        dom_node* inserted = nullptr,
+        dom_node* removed = nullptr)
+    {
+        ensure_explicit_form_validity_dependents();
+        if (inserted != nullptr)
+            index_explicit_form_validity_subtree(*inserted);
+
+        std::vector<dom_node*> subjects;
+        std::unordered_set<dom_node*> seen;
+        const auto add = [&](dom_node* node) {
+            if (node != nullptr && seen.insert(node).second)
+                subjects.push_back(node);
+        };
+        const auto add_aggregate_ancestors = [&](dom_node* node) {
+            for (auto* current = node; current != nullptr;
+                current = document.dom_parent(*current)) {
+                if (current->tag == "form" || current->tag == "fieldset")
+                    add(current);
+            }
+        };
+        const auto add_control = [&](dom_node& control) {
+            if (!forms::is_constraint_validation_control(control)) return;
+            add(&control);
+            const auto explicit_owner = control.attributes.find("form");
+            if (explicit_owner != control.attributes.end()) {
+                const auto owners = form_validity_owners_by_id.find(
+                    explicit_owner->second);
+                if (owners != form_validity_owners_by_id.end())
+                    for (auto* owner : owners->second)
+                        if (owner != nullptr && is_connected(*owner)
+                            && forms::tree_root(document, control)
+                                == forms::tree_root(document, *owner)) add(owner);
+            } else {
+                for (auto* ancestor = document.dom_parent(control);
+                    ancestor != nullptr;
+                    ancestor = document.dom_parent(*ancestor)) {
+                    if (ancestor->tag != "form") continue;
+                    add(ancestor);
+                    break;
+                }
+            }
+            add_aggregate_ancestors(document.dom_parent(control));
+        };
+        const auto visit = [&](const auto& recurse, dom_node& root) -> void {
+            add_control(root);
+            if (root.tag == "form" && !root.id_attribute.empty()) {
+                const auto dependents = explicit_form_validity_dependents.find(
+                    root.id_attribute);
+                if (dependents != explicit_form_validity_dependents.end())
+                    for (auto* dependent : dependents->second)
+                        if (dependent != nullptr && is_connected(*dependent))
+                            add_control(*dependent);
+            }
+            for (auto* child : root.children)
+                if (child != nullptr) recurse(recurse, *child);
+        };
+
+        add_aggregate_ancestors(&parent);
+        if (inserted != nullptr) visit(visit, *inserted);
+        if (removed != nullptr) visit(visit, *removed);
+        // Inserting, removing, or reordering a direct legend can change the
+        // inherited disabledness of every control in this one fieldset.
+        if (parent.tag == "fieldset") visit(visit, parent);
+
+        style_recascade_batch_scope style_batch(*this);
+        for (auto* subject : subjects)
+            if (subject != nullptr) recascade_form_validity_dependency(*subject);
+    }
+
+    void recascade_form_attribute_dependencies(
+        dom_node& node,
+        std::string_view name,
+        const std::optional<std::string>& previous,
+        const std::optional<std::string>& current)
+    {
+        if (previous == current) return;
+        const auto relevant_form_id = node.tag == "form" && name == "id";
+        const auto relevant_owner = name == "form";
+        const auto relevant_fieldset = node.tag == "fieldset" && name == "disabled";
+        if (!relevant_form_id && !relevant_owner && !relevant_fieldset) return;
+
+        ensure_explicit_form_validity_dependents();
+        if (relevant_owner)
+            update_explicit_form_validity_dependency(node, previous, current);
+        if (relevant_form_id) {
+            if (previous.has_value() && !previous->empty()) {
+                const auto known = form_validity_owners_by_id.find(*previous);
+                if (known != form_validity_owners_by_id.end()) {
+                    known->second.erase(&node);
+                    if (known->second.empty()) form_validity_owners_by_id.erase(known);
+                }
+            }
+            if (current.has_value() && !current->empty())
+                form_validity_owners_by_id[*current].insert(&node);
+        }
+
+        std::vector<dom_node*> subjects;
+        std::unordered_set<dom_node*> seen;
+        const auto add = [&](dom_node* subject) {
+            if (subject != nullptr && seen.insert(subject).second)
+                subjects.push_back(subject);
+        };
+        const auto add_control = [&](dom_node& control) {
+            if (!forms::is_constraint_validation_control(control)) return;
+            add(&control);
+            const auto explicit_owner = control.attributes.find("form");
+            if (explicit_owner != control.attributes.end()) {
+                const auto owners = form_validity_owners_by_id.find(
+                    explicit_owner->second);
+                if (owners != form_validity_owners_by_id.end())
+                    for (auto* owner : owners->second)
+                        if (owner != nullptr && is_connected(*owner)
+                            && forms::tree_root(document, control)
+                                == forms::tree_root(document, *owner)) add(owner);
+            } else {
+                for (auto* ancestor = document.dom_parent(control);
+                    ancestor != nullptr;
+                    ancestor = document.dom_parent(*ancestor)) {
+                    if (ancestor->tag != "form") continue;
+                    add(ancestor);
+                    break;
+                }
+            }
+            for (auto* ancestor = document.dom_parent(control);
+                ancestor != nullptr;
+                ancestor = document.dom_parent(*ancestor))
+                if (ancestor->tag == "fieldset") add(ancestor);
+        };
+        if (relevant_form_id) {
+            add(&node);
+            for (const auto& token : {previous, current}) {
+                if (!token.has_value() || token->empty()) continue;
+                const auto dependents = explicit_form_validity_dependents.find(*token);
+                if (dependents == explicit_form_validity_dependents.end()) continue;
+                for (auto* dependent : dependents->second)
+                    if (dependent != nullptr && is_connected(*dependent))
+                        add_control(*dependent);
+            }
+        } else if (relevant_owner) {
+            add_control(node);
+            for (const auto& token : {previous, current}) {
+                if (!token.has_value() || token->empty()) continue;
+                const auto owners = form_validity_owners_by_id.find(*token);
+                if (owners == form_validity_owners_by_id.end()) continue;
+                for (auto* owner : owners->second)
+                    if (owner != nullptr && is_connected(*owner)) add(owner);
+            }
+        } else {
+            const auto visit = [&](const auto& recurse, dom_node& root) -> void {
+                add_control(root);
+                for (auto* child : root.children)
+                    if (child != nullptr) recurse(recurse, *child);
+            };
+            add(&node);
+            visit(visit, node);
+        }
+        style_recascade_batch_scope style_batch(*this);
+        for (auto* subject : subjects)
+            if (subject != nullptr) recascade_form_validity_dependency(*subject);
+    }
+
+    void recascade_changed_child_list(
+        dom_node& parent,
+        dom_node* inserted = nullptr,
+        dom_node* removed = nullptr)
     {
         if (!is_connected(parent)) return;
         auto* previous_root = const_cast<dom_node*>(active_css_cascade_root);
@@ -3367,6 +3596,7 @@
         // The transition collector already includes its subject.
         if (rules.empty()) recascade_connected_node(parent);
         recascade_containing_select_validity(parent);
+        recascade_form_structural_dependencies(parent, inserted, removed);
     }
 
     void recascade_completed_child_list(dom_node& parent,

@@ -21,14 +21,11 @@ announcement. Built-in messages now have stable reason identifiers and pass
 through a formatter seam before the default English text is selected; custom
 validity text remains authored verbatim within the same byte cap.
 
-A public host catalog ABI remains follow-up work. The current engine options
-and managed bindings do not own a localization provider, so exposing the seam
-would require a new cross-package callback contract. Optional timed dismissal
-is also omitted: the existing deadline queue owns JavaScript callbacks and
-there is no host opt-in policy, so manufacturing a native deadline would either
-change behavior unconditionally or add a second scheduler. Focus, mutation,
-navigation, and teardown dismissal continue to provide deterministic lifetime
-without idle frame demand.
+WebScene #719 later added the public host catalog ABI. WebScene #720 adds an
+explicit disabled-by-default timeout using one generation-stamped native
+deadline record rather than the JavaScript timer queue. Focus, mutation,
+navigation, teardown, and optional timeout dismissal preserve deterministic
+lifetime without idle frame demand.
 
 Per task direction, no build, test, browser run, pixel check, package gate, or
 CI job was run. Only `git diff --check` is used for this commit; the source

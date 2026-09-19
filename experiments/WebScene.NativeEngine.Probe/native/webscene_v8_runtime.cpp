@@ -7307,7 +7307,8 @@ v8_dom_runtime::v8_dom_runtime(
     file_grant_create_directory_request_sink_v2
         file_grant_create_directory_request_sink,
     file_grant_remove_request_sink_v2 file_grant_remove_request_sink,
-    validation_message_formatter validation_message_formatter)
+    validation_message_formatter validation_message_formatter,
+    uint32_t validation_message_timeout_milliseconds)
     : impl_(std::make_unique<implementation>(
         document,
         std::move(viewport_provider),
@@ -7331,7 +7332,8 @@ v8_dom_runtime::v8_dom_runtime(
         std::move(file_grant_create_file_request_sink),
         std::move(file_grant_create_directory_request_sink),
         std::move(file_grant_remove_request_sink),
-        std::move(validation_message_formatter)))
+        std::move(validation_message_formatter),
+        validation_message_timeout_milliseconds))
 {
 }
 
@@ -7955,6 +7957,7 @@ bool v8_dom_runtime::pump_task()
     v8::HandleScope handle_scope(impl_->isolate);
     auto local_context = impl_->context.Get(impl_->isolate);
     v8::Context::Scope context_scope(local_context);
+    impl_->service_validation_message_deadline();
     const bool result = impl_->drain_tasks() && impl_->promote_pending_promise_error();
 #if defined(WEBSCENE_NATIVE_ENGINE_ENABLE_GRAPHICS) && (defined(__APPLE__) || defined(_WIN32))
     impl_->finish_gpu_rendering_opportunity(result);
@@ -8017,6 +8020,9 @@ bool v8_dom_runtime::has_pending_tasks() const noexcept
         || !impl_->pending_frame_hydrations.empty()
         || impl_->has_ready_connected_resource_task()
         || impl_->resize_observers_pending
+        || (impl_->validation_message_deadline
+            && impl_->validation_message_deadline->deadline
+                <= std::chrono::steady_clock::now())
         || impl_->has_due_timer();
 }
 
@@ -8028,6 +8034,13 @@ std::chrono::milliseconds v8_dom_runtime::recommended_idle_wait(
 #if defined(WEBSCENE_NATIVE_ENGINE_ENABLE_GRAPHICS)
     if (impl_->graphics) wait = impl_->graphics->recommended_idle_wait(wait);
 #endif
+    if (impl_->validation_message_deadline) {
+        if (impl_->validation_message_deadline->deadline <= now)
+            return std::chrono::milliseconds::zero();
+        wait = std::min(wait,
+            std::chrono::ceil<std::chrono::milliseconds>(
+                impl_->validation_message_deadline->deadline-now));
+    }
     for (const auto& timer : impl_->timers) {
         // An unreleased requestAnimationFrame is woken by the host frame input,
         // not by wall-clock polling.

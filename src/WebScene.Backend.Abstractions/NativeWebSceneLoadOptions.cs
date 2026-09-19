@@ -48,4 +48,10 @@ public sealed record NativeWebSceneLoadOptions
     /// Custom validity messages are returned verbatim and bypass this callback.
     /// </summary>
     public WebSceneValidationMessageFormatter? ValidationMessageFormatter { get; init; }
+
+    /// <summary>
+    /// Gets the optional lifetime of an interactive validation message.
+    /// Null disables timed dismissal; enabled values must be 1–60 seconds.
+    /// </summary>
+    public TimeSpan? ValidationMessageTimeout { get; init; }
 }

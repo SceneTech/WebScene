@@ -87,6 +87,7 @@
 
     void retire_document_realm(v8::Local<v8::Context> previous_context)
     {
+        dismiss_validation_message();
         active_drag_session.reset();
         active_outbound_drag.reset();
         outbound_drag_threshold_crossed = false;
@@ -307,6 +308,11 @@
         frame_last_error_value.clear();
 
         pending_style_recascades.clear();
+        pending_attribute_selector_transitions.clear();
+        pending_attribute_selector_transition_index.clear();
+        explicit_form_validity_dependents.clear();
+        form_validity_owners_by_id.clear();
+        explicit_form_validity_dependents_initialized = false;
         style_recascade_batch_depth = 0U;
         active_stylesheet_owner_id = 0U;
         active_stylesheet_shadow_scope_root_id = 0U;

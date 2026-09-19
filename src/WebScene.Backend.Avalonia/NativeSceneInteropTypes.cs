@@ -679,6 +679,7 @@ internal struct EngineOptions
     public IntPtr ResourceLoadV5UserData;
     public IntPtr ValidationMessageFormatCallbackV1;
     public IntPtr ValidationMessageFormatUserDataV1;
+    public uint ValidationMessageTimeoutMillisecondsV1;
 }
 
 [StructLayout(LayoutKind.Sequential)]

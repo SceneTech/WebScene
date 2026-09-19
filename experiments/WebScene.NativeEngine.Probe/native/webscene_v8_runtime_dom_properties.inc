@@ -45,6 +45,8 @@
             node->attributes["id"] = node->id_attribute;
             self->recascade_attribute_selector_transition(*node, "id", old_value, node->id_attribute);
             self->recascade_radio_group_selector_state_changes(radio_group_state);
+            self->recascade_form_attribute_dependencies(
+                *node,"id",old_value,node->id_attribute);
             self->notify_custom_element_attribute(
                 *node, "id", old_value, node->id_attribute);
         }
@@ -2740,6 +2742,8 @@
                 *node,name,old_value,text);
         else self->document.mark_dirty();
         self->recascade_radio_group_selector_state_changes(radio_group_state);
+        self->recascade_form_attribute_dependencies(
+            *node,name,old_value,text);
         if(node->tag=="option" && (name=="selected" || name=="value"))
             self->recascade_containing_select_validity(*node);
         if(validation_constraint_attribute(name))
@@ -3473,8 +3477,9 @@
         if(self->document.validation_message_target_id()==node->id)
             self->dismiss_validation_message();
         if(selector_state_before==selector_state_after) return;
-        if(self->is_connected(*node))
-            self->recascade_dynamic_state_subject(*node,"setCustomValidity");
+        if(self->is_connected(*node) && node->parent!=nullptr)
+            self->recascade_form_structural_dependencies(
+                *node->parent,node);
         else self->document.mark_dirty();
     }
 
@@ -3500,9 +3505,9 @@
         const auto selector_state_after=forms::validity_state(
             self->document,*node);
         if(selector_state_before==selector_state_after) return;
-        if(self->is_connected(*node))
-            self->recascade_connected_subtree(
-                *node,"ElementInternals.formAssociated");
+        if(self->is_connected(*node) && node->parent!=nullptr)
+            self->recascade_form_structural_dependencies(
+                *node->parent,node);
         else self->document.mark_dirty();
     }
 
@@ -3534,9 +3539,9 @@
         if(self->document.validation_message_target_id()==node->id)
             self->dismiss_validation_message();
         if(selector_state_before==selector_state_after) return;
-        if(self->is_connected(*node))
-            self->recascade_connected_subtree(
-                *node,"ElementInternals.setValidity");
+        if(self->is_connected(*node) && node->parent!=nullptr)
+            self->recascade_form_structural_dependencies(
+                *node->parent,node);
         else self->document.mark_dirty();
     }
 
@@ -3631,7 +3636,27 @@
 
     void dismiss_validation_message()
     {
+        validation_message_deadline.reset();
+        ++validation_message_generation;
         if(document.clear_validation_message()) pending_validation_announcement.reset();
+    }
+
+    bool service_validation_message_deadline()
+    {
+        if(!validation_message_deadline
+            || validation_message_deadline->deadline
+                > std::chrono::steady_clock::now()) return false;
+        const auto expired=*validation_message_deadline;
+        validation_message_deadline.reset();
+        if(expired.document_generation
+                != document_generation.load(std::memory_order_acquire)
+            || expired.message_generation!=validation_message_generation
+            || expired.target_id!=document.validation_message_target_id())
+            return false;
+        ++validation_message_generation;
+        // Timed dismissal is visual policy. The exactly-once semantic alert
+        // remains pending until the ordinary semantic capture consumes it.
+        return document.clear_validation_message();
     }
 
     bool validation_mutation_affects_active_message(const dom_node& subject)
@@ -3698,6 +3723,15 @@
         webscene_input_event synthetic{};
         if(!set_active_element(&anchor,synthetic)) return false;
         document.show_validation_message(target,anchor,message);
+        const auto message_generation=++validation_message_generation;
+        if(validation_message_timeout.count()!=0) {
+            validation_message_deadline=validation_message_deadline_record{
+                std::chrono::steady_clock::now()+validation_message_timeout,
+                document_generation.load(std::memory_order_acquire),
+                message_generation,target.id};
+        } else {
+            validation_message_deadline.reset();
+        }
         semantic_live_event_data_v1 event;
         event.top_document_generation=document_generation.load(
             std::memory_order_acquire);
@@ -4257,10 +4291,18 @@
             self->radio_group_attribute_may_change_membership(*node,name)
             ? self->capture_radio_group_selector_state()
             : std::vector<radio_group_selector_state>{};
+        const auto old_value=node->attributes.contains(name)
+            ? std::optional<std::string>{node->attributes.at(name)}
+            : std::optional<std::string>{};
         if (value->BooleanValue(info.GetIsolate())) node->attributes[name] = std::string{};
         else node->attributes.erase(name);
         self->recascade_connected_subtree(*node);
         self->recascade_radio_group_selector_state_changes(radio_group_state);
+        const auto new_value=node->attributes.contains(name)
+            ? std::optional<std::string>{node->attributes.at(name)}
+            : std::optional<std::string>{};
+        self->recascade_form_attribute_dependencies(
+            *node,name,old_value,new_value);
         if(validation_constraint_attribute(name))
             self->dismiss_validation_message_after_constraint_mutation(*node);
         else self->reconcile_validation_message_eligibility(*node);

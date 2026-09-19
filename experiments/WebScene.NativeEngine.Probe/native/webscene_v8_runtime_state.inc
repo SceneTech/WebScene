@@ -6,6 +6,7 @@
     resource_loader load_resource_callback;
     validation_message_formatter validation_message_formatter_callback;
     bool formatting_validation_message{false};
+    const std::chrono::milliseconds validation_message_timeout{0};
     static constexpr size_t maximum_pending_fetches = 64U;
     std::vector<pending_fetch_task> pending_fetches;
     uint64_t next_fetch_cancellation_id{1U};
@@ -50,6 +51,15 @@
         semantic_live_regions;
     bool semantic_live_suppress_initial_alerts{false};
     std::optional<semantic_live_event_data_v1> pending_validation_announcement;
+    struct validation_message_deadline_record final {
+        std::chrono::steady_clock::time_point deadline;
+        uint64_t document_generation{};
+        uint64_t message_generation{};
+        uint32_t target_id{};
+    };
+    std::optional<validation_message_deadline_record>
+        validation_message_deadline;
+    uint64_t validation_message_generation{};
     std::shared_ptr<shared_isolate_state> shared_isolate;
     std::shared_ptr<v8::ArrayBuffer::Allocator> allocator;
     v8::Isolate* isolate{nullptr};
@@ -728,6 +738,15 @@
         pending_attribute_selector_transitions;
     std::unordered_map<dom_node*, std::unordered_map<std::string, size_t>>
         pending_attribute_selector_transition_index;
+    // Explicit form ownership is the only validity dependency whose owner is
+    // outside both the control subtree and its ancestor chain. Build this
+    // reverse lookup once, then maintain it from the existing attribute and
+    // insertion hooks so form-id mutations never scan the whole document.
+    std::unordered_map<std::string, std::unordered_set<dom_node*>>
+        explicit_form_validity_dependents;
+    std::unordered_map<std::string, std::unordered_set<dom_node*>>
+        form_validity_owners_by_id;
+    bool explicit_form_validity_dependents_initialized{false};
     bool flushing_attribute_selector_transitions{false};
     mutable css::selector_match_context* active_selector_match_context{nullptr};
     class selector_match_batch_scope final {

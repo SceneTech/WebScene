@@ -4470,6 +4470,9 @@
                 *state->owner,state->name,old_value,text);
         else self->document.mark_dirty();
         self->recascade_radio_group_selector_state_changes(radio_group_state);
+        if(state->namespace_uri.empty())
+            self->recascade_form_attribute_dependencies(
+                *state->owner,state->name,old_value,text);
         if(state->namespace_uri.empty() && state->owner->tag=="option"
             && (state->name=="selected" || state->name=="value"))
             self->recascade_containing_select_validity(*state->owner);
@@ -4564,6 +4567,9 @@
                 *owner,state->name,old_value,value);
         else self->document.mark_dirty();
         self->recascade_radio_group_selector_state_changes(radio_group_state);
+        if(state->namespace_uri.empty())
+            self->recascade_form_attribute_dependencies(
+                *owner,state->name,old_value,value);
         if(state->namespace_uri.empty() && owner->tag=="option"
             && (state->name=="selected" || state->name=="value"))
             self->recascade_containing_select_validity(*owner);
@@ -4618,6 +4624,9 @@
                 *owner,state->name,old_value,std::nullopt);
         else self->document.mark_dirty();
         self->recascade_radio_group_selector_state_changes(radio_group_state);
+        if(state->namespace_uri.empty())
+            self->recascade_form_attribute_dependencies(
+                *owner,state->name,old_value,std::nullopt);
         if(state->namespace_uri.empty() && owner->tag=="option"
             && (state->name=="selected" || state->name=="value"))
             self->recascade_containing_select_validity(*owner);
@@ -7352,7 +7361,7 @@
         // functional selectors containing combinators. Reparenting also
         // invalidates the source list, not only the inserted node.
         if (previous_parent != nullptr && previous_parent != parent)
-            self->recascade_changed_child_list(*previous_parent);
+            self->recascade_changed_child_list(*previous_parent, nullptr, child);
         self->recascade_changed_child_list(*parent, child);
         self->recascade_radio_group_selector_state_changes(radio_group_state);
         self->activate_connected_stylesheet(*child);
@@ -7415,7 +7424,7 @@
         const auto changes_base = self->subtree_contains_base(*child);
         std::erase(parent->children, child);
         child->parent = nullptr;
-        self->recascade_changed_child_list(*parent);
+        self->recascade_changed_child_list(*parent, nullptr, child);
         self->recascade_radio_group_selector_state_changes(radio_group_state);
         self->weaken_detached_subtree_wrappers(*child);
         if (changes_base) self->invalidate_document_base(*parent);
@@ -7502,6 +7511,7 @@
                 candidate);
         }
         self->recascade_completed_child_list(*parent, replacements, previous_parents);
+        self->recascade_form_structural_dependencies(*parent, nullptr, previous);
         self->recascade_radio_group_selector_state_changes(radio_group_state);
         for (auto* candidate : replacements) {
             if (candidate == nullptr || candidate->parent != parent) continue;
@@ -7540,7 +7550,7 @@
         const auto changes_base = self->subtree_contains_base(*node);
         std::erase(node->parent->children, node);
         node->parent = nullptr;
-        self->recascade_changed_child_list(*parent);
+        self->recascade_changed_child_list(*parent, nullptr, node);
         self->recascade_radio_group_selector_state_changes(radio_group_state);
         node->visible = false;
         self->weaken_detached_subtree_wrappers(*node);
@@ -7672,7 +7682,7 @@
         parent->children.insert(parent->children.begin() + static_cast<std::ptrdiff_t>(index), child);
         self->document.mark_dirty();
         if (previous_parent != nullptr && previous_parent != parent)
-            self->recascade_changed_child_list(*previous_parent);
+            self->recascade_changed_child_list(*previous_parent, nullptr, child);
         self->recascade_changed_child_list(*parent, child);
         self->recascade_radio_group_selector_state_changes(radio_group_state);
         self->activate_connected_stylesheet(*child);
@@ -7818,7 +7828,8 @@
         if (before == nullptr) {
             if (self->document.append_child(*parent, *child)) {
                 if (previous_parent != nullptr && previous_parent != parent)
-                    self->recascade_changed_child_list(*previous_parent);
+                    self->recascade_changed_child_list(
+                        *previous_parent, nullptr, child);
                 self->recascade_changed_child_list(*parent, child);
                 self->recascade_radio_group_selector_state_changes(radio_group_state);
                 self->activate_connected_stylesheet(*child);
@@ -7841,7 +7852,7 @@
         parent->children.insert(position, child);
         self->document.mark_dirty();
         if (previous_parent != nullptr && previous_parent != parent)
-            self->recascade_changed_child_list(*previous_parent);
+            self->recascade_changed_child_list(*previous_parent, nullptr, child);
         self->recascade_changed_child_list(*parent, child);
         self->recascade_radio_group_selector_state_changes(radio_group_state);
         self->activate_connected_stylesheet(*child);

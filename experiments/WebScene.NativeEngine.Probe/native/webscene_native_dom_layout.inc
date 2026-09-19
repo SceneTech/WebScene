@@ -152,6 +152,9 @@ void native_document::layout(float viewport_width, float viewport_height)
             if (node.style.after_pseudo().generated) {
                 node.style.mutable_after_pseudo().layout = {};
             }
+            if (node.style.details_content_pseudo().present) {
+                node.style.mutable_details_content_pseudo().layout = {};
+            }
             node.list_marker_layout = {};
             if (const auto* state = shadow_dom(node);
                 state != nullptr && state->root != nullptr) {
@@ -202,6 +205,11 @@ void native_document::layout(float viewport_width, float viewport_height)
         if (node.style.has_pseudo_elements()) {
             for (auto* pseudo : {&node.style.mutable_before_pseudo(), &node.style.mutable_after_pseudo()}) {
                 if (pseudo->generated) { pseudo->layout.x += dx; pseudo->layout.y += dy; }
+            }
+            auto& details_content = node.style.mutable_details_content_pseudo();
+            if (details_content.present) {
+                details_content.layout.x += dx;
+                details_content.layout.y += dy;
             }
         }
         node.list_marker_layout.x += dx;
@@ -354,6 +362,7 @@ void native_document::layout_children(dom_node& parent)
     if (parent.style.has_pseudo_elements()) {
         parent.style.mutable_before_pseudo().layout = {};
         parent.style.mutable_after_pseudo().layout = {};
+        parent.style.mutable_details_content_pseudo().layout = {};
     }
     parent.list_marker_layout = {};
     if (parent.style.content_visibility_hidden) {
@@ -2764,6 +2773,23 @@ void native_document::layout_children(dom_node& parent)
         layout_items.push_back(&*before_item);
     }
     const auto append_layout_item = [&](const auto& self, dom_node* child) -> void {
+        if (child != nullptr && is_details_content_child(parent, *child)
+            && details_content_is_suppressed(parent)) {
+            const auto clear_suppressed_details_content =
+                [&](const auto& clear, dom_node& suppressed) -> void {
+                    suppressed.visible = false;
+                    suppressed.layout = {};
+                    suppressed.text_layout_fragments.clear();
+                    suppressed.scroll_content_width = 0;
+                    suppressed.scroll_content_height = 0;
+                    for (auto* descendant : composed_children(suppressed)) {
+                        clear(clear, *descendant);
+                    }
+                };
+            clear_suppressed_details_content(
+                clear_suppressed_details_content, *child);
+            return;
+        }
         if (flex_container
             && child != nullptr
             && child->style.display == display_mode::contents
@@ -3721,6 +3747,33 @@ void native_document::layout_children(dom_node& parent)
                 }
             }
         }
+        if (is_details_content_child(parent, *child)) {
+            const auto& details_content = parent.style.details_content_pseudo();
+            if (details_content.present) {
+                const auto margin = resolve_length(
+                    parent,
+                    details_content.margin_inline_start,
+                    content.width,
+                    0);
+                const auto border = resolve_length(
+                    parent,
+                    details_content.border_inline_start_width,
+                    content.width,
+                    0);
+                const auto padding = resolve_length(
+                    parent,
+                    details_content.padding_inline_start,
+                    content.width,
+                    0);
+                const auto inset = std::max(0.0F, margin + border + padding);
+                if (!resolved_right_to_left(parent)) {
+                    assigned.x += inset;
+                    positioned.x += inset;
+                }
+                assigned.width = std::max(0.0F, assigned.width - inset);
+                positioned.width = std::max(0.0F, positioned.width - inset);
+            }
+        }
         positioned.x -= parent.scroll_left;
         positioned.y -= parent.scroll_top;
         layout_child(
@@ -3817,6 +3870,30 @@ void native_document::layout_children(dom_node& parent)
         }
         ++placed_flow_count;
     }
+    if (parent.tag == "details" && parent.style.details_content_pseudo().present) {
+        auto& details_content = parent.style.mutable_details_content_pseudo();
+        if (!details_content_is_suppressed(parent)) {
+            auto content_top = std::numeric_limits<float>::infinity();
+            auto content_bottom = -std::numeric_limits<float>::infinity();
+            for (const auto* child : composed_children(parent)) {
+                if (child == nullptr || !child->visible
+                    || !is_details_content_child(parent, *child)) continue;
+                content_top = std::min(content_top, child->layout.y);
+                content_bottom = std::max(
+                    content_bottom, child->layout.y + child->layout.height);
+            }
+            if (std::isfinite(content_top) && std::isfinite(content_bottom)) {
+                const auto margin = resolve_length(
+                    parent, details_content.margin_inline_start, content.width, 0);
+                const auto rtl = resolved_right_to_left(parent);
+                details_content.layout = {
+                    content.x + (rtl ? 0.0F : margin),
+                    content_top,
+                    std::max(0.0F, content.width - margin),
+                    std::max(0.0F, content_bottom - content_top)};
+            }
+        }
+    }
     // Cross-axis alignment moves an already laid-out subtree. Generated boxes
     // are stored on their originating element rather than in composed_children,
     // so they must follow the same translation explicitly. Leaving them behind
@@ -3831,6 +3908,8 @@ void native_document::layout_children(dom_node& parent)
             auto& after = node.style.mutable_after_pseudo();
             if (before.generated) before.layout.y += offset;
             if (after.generated) after.layout.y += offset;
+            auto& details_content = node.style.mutable_details_content_pseudo();
+            if (details_content.present) details_content.layout.y += offset;
         }
         if (node.list_marker_layout.width > 0 || node.list_marker_layout.height > 0) {
             node.list_marker_layout.y += offset;
@@ -4870,7 +4949,7 @@ float native_document::compute_intrinsic_size(
     };
 
 #if !defined(WEBSCENE_NATIVE_ENGINE_INTRINSIC_ITEM_COPY_CONTROL)
-    if (!has_inside_marker && !has_before && !has_after) {
+    if (!has_inside_marker && !has_before && !has_after && node.tag != "details") {
 #if defined(WEBSCENE_NATIVE_ENGINE_INTRINSIC_SIZE_BRANCH_BENCHMARK)
         ++intrinsic_size_branch_counts_for_benchmark[15];
         intrinsic_size_branch_counts_for_benchmark[16] += composed_children(node).size();
@@ -4896,10 +4975,12 @@ float native_document::compute_intrinsic_size(
         before_item.emplace(make_pseudo_layout_node(node, node.style.before_pseudo()));
         intrinsic_items.push_back(&*before_item);
     }
-    intrinsic_items.insert(
-        intrinsic_items.end(),
-        composed_children(node).begin(),
-        composed_children(node).end());
+    for (const auto* child : composed_children(node)) {
+        if (child == nullptr) continue;
+        if (is_details_content_child(node, *child)
+            && details_content_is_suppressed(node)) continue;
+        intrinsic_items.push_back(child);
+    }
     if (has_after) {
         after_item.emplace(make_pseudo_layout_node(node, node.style.after_pseudo()));
         intrinsic_items.push_back(&*after_item);

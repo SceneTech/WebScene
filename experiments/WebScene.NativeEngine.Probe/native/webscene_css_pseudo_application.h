@@ -29,6 +29,7 @@ inline int split_pseudo_element_selector(const std::string& selector, std::strin
         if (const auto kind = split_suffix("::before", 1); kind != 0) return kind;
         if (const auto kind = split_suffix("::after", 2); kind != 0) return kind;
         if (const auto kind = split_suffix("::placeholder", 8); kind != 0) return kind;
+        if (const auto kind = split_suffix("::details-content", 9); kind != 0) return kind;
         if (const auto kind = split_suffix("::backdrop", 7); kind != 0) return kind;
         if (const auto kind = split_suffix("::-webkit-scrollbar-thumb", 4); kind != 0) return kind;
         if (const auto kind = split_suffix("::-webkit-scrollbar-track", 5); kind != 0) return kind;
@@ -37,6 +38,84 @@ inline int split_pseudo_element_selector(const std::string& selector, std::strin
         if (const auto kind = split_suffix(":before", 1); kind != 0) return kind;
         return split_suffix(":after", 2);
     }
+
+template<typename Decision,typename Resolved>
+void apply_details_content_declaration(
+    dom_node& node,
+    node_style::pseudo_element_pair::details_content_element& details_content,
+    const css_declaration& declaration,
+    const std::unordered_map<std::string,std::string>& variables,
+    Decision& decision,
+    Resolved&& on_resolved)
+{
+    decision.classification = "unsupported";
+    const auto contains_variable = declaration.value.find("var(") != std::string::npos;
+    auto resolved_value = std::string{};
+    const auto& value = contains_variable
+        ? (resolved_value = resolve_value(node,declaration.value,variables))
+        : declaration.value;
+    if (value.empty() && contains_variable) {
+        decision.classification = "invalid-authoring";
+        decision.semantic_slice = "unresolved custom property at computed-value time";
+        return;
+    }
+    on_resolved(contains_variable);
+    const auto lower = ascii_lower(trim_value(value));
+    details_content.present = true;
+    if (declaration.name == "block-size") {
+        if (lower == "auto") {
+            details_content.block_size_zero = false;
+            decision.classification = "supported";
+        } else if (lower == "0") {
+            details_content.block_size_zero = true;
+            decision.classification = "supported";
+        } else {
+            decision.classification = "unsupported";
+            decision.semantic_slice = "authored zero or auto block-size";
+        }
+    } else if (declaration.name == "overflow") {
+        if (lower == "hidden") {
+            details_content.overflow_hidden = true;
+            decision.classification = "supported";
+        }
+    } else if (declaration.name == "opacity") {
+        char* end = nullptr;
+        const auto parsed = std::strtof(lower.c_str(), &end);
+        if (end != lower.c_str() && end == lower.c_str() + lower.size()
+            && std::isfinite(parsed)) {
+            details_content.opacity = std::clamp(parsed, 0.0F, 1.0F);
+            decision.classification = "supported";
+        } else {
+            decision.classification = "invalid-authoring";
+        }
+    } else if (declaration.name == "margin-inline-start") {
+        details_content.margin_inline_start = native_document::parse_length(value);
+        decision.classification = "supported";
+    } else if (declaration.name == "padding-inline-start") {
+        details_content.padding_inline_start = native_document::parse_length(value);
+        decision.classification = "supported";
+    } else if (declaration.name == "box-sizing") {
+        decision.classification = lower == "border-box" || lower == "content-box"
+            ? "supported" : "invalid-authoring";
+        decision.semantic_slice = "recognized compatibility value; collapsed static size is unchanged";
+    } else if (declaration.name == "border-inline-start") {
+        node_style border_style{};
+        border_style.foreground_rgba = node.style.foreground_rgba;
+        if (apply_border_declaration(border_style, "border-left", value)) {
+            details_content.border_inline_start_width = border_style.border_left_width;
+            details_content.border_inline_start_rgba = border_style.border_left_rgba;
+            details_content.border_inline_start_current_color =
+                border_style.border_left_current_color;
+            decision.classification = "supported";
+        } else {
+            decision.classification = "invalid-authoring";
+        }
+    } else if (declaration.name == "transition"
+        || declaration.name == "content-visibility"
+        || declaration.name == "border-image") {
+        decision.semantic_slice = "static details-content paint and layout";
+    }
+}
 
 template<typename Decision,typename Resolved>
 void apply_placeholder_declaration(

@@ -55,6 +55,24 @@
             });
     }
 
+    void apply_details_content_css_declaration(
+        dom_node& node,
+        node_style::pseudo_element_pair::details_content_element& details_content,
+        const css_declaration& declaration)
+    {
+        feature_decision decision(
+            *this,
+            "css",
+            "details-content-property:" + declaration.name,
+            "pseudo-style-application");
+        css::apply_details_content_declaration(
+            node,details_content,declaration,css_variables,decision,
+            [&](bool contains_variable) {
+                if(contains_variable && is_paint_property(declaration.name))
+                    record_composition("css-custom-property-to-paint",node.id);
+            });
+    }
+
     static std::optional<std::string> first_css_url(const std::string& value)
     { return css::first_css_url(value); }
 
@@ -411,6 +429,11 @@
                     node,node.style.mutable_placeholder_pseudo(),declaration);
                 return;
             }
+            if (pseudo_kind == 9) {
+                apply_details_content_css_declaration(
+                    node,node.style.mutable_details_content_pseudo(),declaration);
+                return;
+            }
             if (pseudo_kind >= 3 && pseudo_kind <= 6) {
                 apply_scrollbar_css_declaration(node, pseudo_kind, declaration);
                 return;
@@ -629,6 +652,11 @@
             if (pseudo_kind == 8) {
                 apply_placeholder_css_declaration(
                     node,node.style.mutable_placeholder_pseudo(),declaration);
+                return;
+            }
+            if (pseudo_kind == 9) {
+                apply_details_content_css_declaration(
+                    node,node.style.mutable_details_content_pseudo(),declaration);
                 return;
             }
             if (pseudo_kind >= 3 && pseudo_kind <= 6) {

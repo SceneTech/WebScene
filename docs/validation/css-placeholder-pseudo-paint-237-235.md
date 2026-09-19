@@ -41,8 +41,9 @@ The unchanged Code OSS core pseudo-class forms in its authored CSS are already
 covered by the compiled matcher; `:visited` remains deliberately privacy-closed.
 The remaining core pseudo-element inventory is:
 
-- ten `::details-content` rules, which require a disclosure-content pseudo box,
-  open-state layout and discrete/auto-size transition behavior;
+- ten `::details-content` rules. The bounded static disclosure layout is now
+  implemented by the follow-up details-content candidate; keyword-size and
+  discrete transition behavior remain open;
 - two functional `::highlight()` rules, which require named Highlight ranges,
   functional pseudo parsing, range paint, mutation, and teardown;
 - two `::-webkit-details-marker` rules and six internal form-control part
@@ -60,7 +61,7 @@ performance evidence remain outside this slice. No Code OSS source changes.
 The remaining parser-recognized but runtime-unmaterialized pseudo-elements are
 `::first-letter`, `::first-line`, `::marker`, `::file-selector-button`, `::cue`,
 `::cue-region`, `::grammar-error`, `::spelling-error`, and `::target-text`.
-Functional `::highlight()`, `::details-content`, `::part()`, and `::slotted()`
-also still require parser and ownership work. The inventory diagnostics now
+Functional `::highlight()`, `::part()`, and `::slotted()` also still require
+parser and ownership work. The inventory diagnostics now
 report the already implemented selection, backdrop, and WebKit scrollbar kinds
 as supported instead of grouping them with those remaining gaps.

@@ -91,6 +91,92 @@ void test_placeholder_pseudo_color_and_opacity_reach_scene(webscene_engine* engi
     execute(engine,"document.body.innerHTML='';","placeholder-pseudo-cleanup.js");
 }
 
+void test_details_content_pseudo_static_open_close_layout(webscene_engine* engine)
+{
+    resize(engine,420,220,1);
+    execute(engine,R"JS(
+      document.body.innerHTML=`
+        <style>
+          :root { --details-space:12px; --details-border:#2468ac; }
+          #details-probe { width:300px; }
+          #details-probe::details-content {
+            block-size:0;
+            box-sizing:border-box;
+            overflow:hidden;
+            opacity:0;
+            margin-inline-start:6px;
+            padding-inline-start:var(--details-space);
+            border-inline-start:1px solid var(--details-border);
+          }
+          #details-probe[open]::details-content {
+            block-size:auto;
+            opacity:1;
+          }
+        </style>
+        <div id="details-direction">
+          <details id="details-probe">
+            <summary id="details-summary">
+              <span id="details-summary-label">Completed response</span>
+              <button id="details-summary-action" type="button">Action</button>
+            </summary>
+            <div id="details-body" style="height:30px">Retained details content</div>
+          </details>
+        </div>`;
+      globalThis.detailsDirection=document.getElementById('details-direction');
+      globalThis.detailsProbe=document.getElementById('details-probe');
+      globalThis.detailsSummary=document.getElementById('details-summary');
+      globalThis.detailsSummaryLabel=document.getElementById('details-summary-label');
+      globalThis.detailsSummaryAction=document.getElementById('details-summary-action');
+      globalThis.detailsBody=document.getElementById('details-body');
+      if (!(detailsProbe instanceof HTMLDetailsElement))
+        throw new Error('details wrapper type missing');
+      if (detailsProbe.open || detailsBody.getBoundingClientRect().height !== 0)
+        throw new Error('closed details content remained laid out');
+      detailsProbe.open=true;
+      const host=detailsProbe.getBoundingClientRect();
+      const body=detailsBody.getBoundingClientRect();
+      if (!detailsProbe.hasAttribute('open') || body.height !== 30
+          || Math.abs(body.x-host.x-19)>0.01)
+        throw new Error('open details content did not use retained pseudo inset');
+      globalThis.detailsToggleCount=0;
+      detailsProbe.addEventListener('toggle',()=>++detailsToggleCount);
+      detailsSummaryAction.click();
+      if (!detailsProbe.open || detailsToggleCount !== 0)
+        throw new Error('interactive summary descendant did not retain activation');
+      detailsDirection.setAttribute('dir','rtl');
+      const rtlHost=detailsProbe.getBoundingClientRect();
+      const rtlBody=detailsBody.getBoundingClientRect();
+      if (Math.abs((rtlHost.x+rtlHost.width)
+          -(rtlBody.x+rtlBody.width)-19)>0.01)
+        throw new Error('rtl details content did not use logical inline-start inset');
+      detailsSummaryLabel.click();
+      if (detailsProbe.open || detailsToggleCount !== 1
+          || detailsBody.getBoundingClientRect().height !== 0)
+        throw new Error('inert summary descendant did not close details exactly once');
+      detailsProbe.open=true;
+    )JS","details-content-static.js");
+    webscene_engine_request_scene_checkpoint(engine);
+    bool found_border=false;
+    for(int attempt=0;attempt<100 && !found_border;++attempt) {
+        const auto* scene=webscene_engine_acquire_latest_scene(engine);
+        if(scene) {
+            for(uint32_t i=0;i<scene->header.command_count;++i) {
+                const auto& command=scene->commands[i];
+                if(command.kind==2U && command.rgba==0x2468ACFFU
+                    && std::abs(command.width-1.0F)<0.01F
+                    && command.x>200.0F) {
+                    found_border=true;
+                    break;
+                }
+            }
+            webscene_scene_acknowledge(scene);webscene_scene_release(scene);
+        }
+        if(!found_border)std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    if(!found_border)fail("details-content retained border paint missing");
+    execute(engine,"document.body.innerHTML='';","details-content-cleanup.js");
+}
+
 void test_responsive_positioned_sizing(webscene_engine* engine)
 {
     resize(engine, 1280, 720, 1);

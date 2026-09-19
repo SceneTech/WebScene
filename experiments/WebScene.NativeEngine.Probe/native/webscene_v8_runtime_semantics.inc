@@ -55,6 +55,8 @@
         if (node.kind == dom_node_kind::text) return "staticText";
         if (document_root) return "document";
         if (node.tag == "button") return "button";
+        if (node.tag == "summary" && node.parent != nullptr
+            && first_details_summary(*node.parent) == &node) return "button";
         if (node.tag == "textarea") return "textbox";
         if (node.tag == "select") return semantic_attribute(node, "multiple").empty()
             ? "combobox" : "listbox";
@@ -900,6 +902,12 @@
             const auto expanded = state("aria-expanded");
             if (expanded == "true") view.states |= WEBSCENE_SEMANTIC_NODE_EXPANDED_V1;
             if (expanded == "false") view.states |= WEBSCENE_SEMANTIC_NODE_COLLAPSED_V1;
+            if (expanded.empty() && node.tag == "summary" && node.parent != nullptr
+                && first_details_summary(*node.parent) == &node) {
+                view.states |= node.parent->attributes.contains("open")
+                    ? WEBSCENE_SEMANTIC_NODE_EXPANDED_V1
+                    : WEBSCENE_SEMANTIC_NODE_COLLAPSED_V1;
+            }
             if (&node == active_element && document_focused) {
                 view.states |= WEBSCENE_SEMANTIC_NODE_FOCUSED_V1;
                 result->focused_node_index = index;
@@ -1011,6 +1019,7 @@
             if(auto* form=form_owner(node);form!=nullptr
                 && !dispatch_form_submit(synthetic,*form,&node)) return false;
         } else if (!default_prevented) {
+            if (!apply_details_summary_click_default(node, synthetic)) return false;
             queue_external_navigation(node);
         }
         if (form_control_changed && is_connected(node)) {

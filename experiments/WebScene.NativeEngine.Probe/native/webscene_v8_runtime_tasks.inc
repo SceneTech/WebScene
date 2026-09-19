@@ -1812,6 +1812,7 @@
             event->Set(local_context, js_string(isolate, name), v8::Number::New(isolate, value)).Check();
         };
         const auto bubbles = type_view != "beforetoggle"
+            && type_view != "toggle"
             && type_view != "close"
             && type_view != "cancel"
             && type_view != "blur"
@@ -1822,6 +1823,7 @@
             && type_view != "pointerleave"
             && type_view != "scroll";
         const auto cancelable = type_view != "close"
+            && type_view != "toggle"
             && type_view != "blur"
             && type_view != "focus"
             && type_view != "focusin"
@@ -2443,6 +2445,8 @@
         if (node->tag == "button" || node->tag == "select" || node->tag == "textarea") {
             return true;
         }
+        if (node->tag == "summary" && node->parent != nullptr
+            && first_details_summary(*node->parent) == node) return true;
         if (node->tag == "a") return node->attributes.contains("href");
         if (node->tag != "input") return false;
         const auto type = node->attributes.find("type");
@@ -3501,6 +3505,45 @@
         return false;
     }
 
+    bool apply_details_summary_click_default(
+        dom_node& target,
+        const webscene_input_event& input)
+    {
+        auto* summary = &target;
+        while (summary != nullptr && summary->tag != "summary") {
+            const auto owns_activation = summary->tag == "button"
+                || summary->tag == "input"
+                || summary->tag == "select"
+                || summary->tag == "textarea"
+                || summary->tag == "label"
+                || summary->tag == "option"
+                || ((summary->tag == "a" || summary->tag == "area")
+                    && summary->attributes.contains("href"))
+                || ((summary->tag == "audio" || summary->tag == "video")
+                    && summary->attributes.contains("controls"));
+            if (owns_activation) return true;
+            summary = summary->parent;
+        }
+        if (summary == nullptr || summary->parent == nullptr
+            || summary->parent->tag != "details"
+            || first_details_summary(*summary->parent) != summary) return true;
+        auto& details = *summary->parent;
+        if (!is_connected(details)) return true;
+        const auto old_value = details.attributes.contains("open")
+            ? std::optional<std::string>{details.attributes.at("open")}
+            : std::optional<std::string>{};
+        if (old_value.has_value()) details.attributes.erase("open");
+        else details.attributes["open"] = {};
+        const auto new_value = details.attributes.contains("open")
+            ? std::optional<std::string>{details.attributes.at("open")}
+            : std::optional<std::string>{};
+        recascade_attribute_selector_transition(
+            details, "open", old_value, new_value);
+        document.mark_dirty();
+        return dispatch_input_event_type(
+            input, "toggle", details, nullptr, nullptr, false);
+    }
+
     dom_node* label_control_for_click(dom_node& target)
     {
         if (is_labelable_control(target)) return &target;
@@ -4232,6 +4275,11 @@
                     last_error="Native form submission dispatch failed";
                     return false;
                 }
+            }
+            if (!click_default_prevented
+                && !apply_details_summary_click_default(*click_target, input)) {
+                last_error = "Native details summary activation failed";
+                return false;
             }
             auto activation_flags = uint32_t{0U};
             const auto new_context_modifier =

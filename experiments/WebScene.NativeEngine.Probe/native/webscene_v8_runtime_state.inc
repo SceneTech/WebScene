@@ -97,6 +97,7 @@
     v8::Global<v8::FunctionTemplate> html_iframe_element_template;
     v8::Global<v8::FunctionTemplate> html_table_cell_element_template;
     v8::Global<v8::FunctionTemplate> html_dialog_element_template;
+    v8::Global<v8::FunctionTemplate> html_details_element_template;
     v8::Global<v8::FunctionTemplate> html_button_element_template;
     v8::Global<v8::FunctionTemplate> html_input_element_template;
     v8::Global<v8::FunctionTemplate> html_text_area_element_template;

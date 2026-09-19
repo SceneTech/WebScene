@@ -233,6 +233,14 @@
       "gap": "Implementation-first candidate for WebScene #237. The standard pseudo stores only the color and opacity used by the twelve unchanged Code OSS core rules in lazy copy-on-write pseudo state, resolves custom properties during cascade, and changes retained placeholder text paint without generating a box, changing layout, scanning, polling, or requesting frames. Direct browser/native profile execution, additional placeholder properties, legacy vendor aliases, internal form-control parts, and broader pseudo-element qualification remain open."
     },
     {
+      "family": "details-content-static-layout",
+      "required": [],
+      "candidate": ["::details-content classification", "closed-content suppression", "HTMLDetailsElement.open reflection", "first-summary activation with interactive-descendant isolation", "static zero/auto block-size", "opacity", "inherited-direction inline-start inset and border"],
+      "productEvidence": ["unchanged Code OSS completed-response disclosure", "unchanged Code OSS checkpoint file-changes disclosure"],
+      "coverage": ["contracts/css-details-content-static.html", "test_details_content_pseudo_static_open_close_layout", "V8-free shared CSS pseudo classification/application contract"],
+      "gap": "Implementation-first candidate for WebScene #237. The ten unchanged Code OSS selectors reduce to static closed/open layout and paint plus reduced-motion transition overrides. The candidate retains only the observed static components and details activation lifecycle without anonymous DOM nodes, scans, polling, or idle frames. Keyword-size interpolation, transition timing, discrete content-visibility transitions, the border-image gradient, implicit summaries, name-group exclusivity, and programmatic-open toggle task coalescing remain open."
+    },
+    {
       "family": "list-formatting",
       "required": ["list-item marker paint", "ordered counters", "outside marker geometry", "inside marker first-line participation", "marker-before-block-child anonymous line"],
       "candidate": ["list-style shorthand on generic list-item boxes", "filled square marker rasterization", "inside marker with forced continuation-line reset"],

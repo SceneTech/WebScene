@@ -425,6 +425,7 @@
         html_iframe_element_template.Reset();
         html_table_cell_element_template.Reset();
         html_dialog_element_template.Reset();
+        html_details_element_template.Reset();
         html_button_element_template.Reset();
         html_input_element_template.Reset();
         html_text_area_element_template.Reset();

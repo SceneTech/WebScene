@@ -1,0 +1,86 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>CSS animation direction maps bounded host-clock iterations</title>
+<style>
+  @keyframes sweep { from { opacity: 0; } to { opacity: 1; } }
+  .sample { animation: sweep 200ms linear infinite normal; }
+  #reverse { animation-direction: reverse; }
+  #alternate { animation: sweep 200ms linear infinite alternate; }
+  #alternate-reverse { animation: sweep 200ms linear infinite alternate-reverse; }
+  #fractional { animation: sweep 200ms linear -250ms 2.25 alternate-reverse forwards; }
+</style>
+<div id="normal" class="sample"></div><div id="reverse" class="sample"></div>
+<div id="alternate" class="sample"></div>
+<div id="alternate-reverse" class="sample"></div><div id="fractional"></div>
+<script>
+  const state = window.__webSceneWptState = {
+    complete: false, harness: null, results: [], errors: [], diagnostics: []
+  };
+  let settled = false;
+  const finish = (error, diagnostics = []) => {
+    if (settled) return;
+    settled = true;
+    state.diagnostics = diagnostics;
+    state.results.push({
+      name: "normal, reverse, alternate, and alternate-reverse map iteration progress",
+      status: error ? "FAIL" : "PASS",
+      message: error ? String(error && error.message || error) : null,
+      stack: error && error.stack ? String(error.stack) : null
+    });
+    state.harness = error
+      ? { status: 1, message: state.results[0].message, stack: state.results[0].stack }
+      : { status: 0, message: null, stack: null };
+    state.complete = true;
+  };
+  const nodes = ["normal", "reverse", "alternate", "alternate-reverse"]
+    .map(id => document.getElementById(id));
+  const samples = [];
+  const timeout = setTimeout(() => finish(new Error("animation direction deadline exceeded"),
+    [JSON.stringify(samples)]), 1000);
+
+  try {
+    const directions = nodes.map(node => getComputedStyle(node).animationDirection);
+    if (directions.join(",") !== "normal,reverse,alternate,alternate-reverse") {
+      throw new Error("computed directions differ: " + directions.join(","));
+    }
+    requestAnimationFrame(start => {
+      const sample = timestamp => {
+        try {
+          const elapsed = timestamp - start;
+          samples.push({ elapsed, values: nodes.map(node =>
+            Number(getComputedStyle(node).opacity)) });
+          if (elapsed < 300 && samples.length < 60) {
+            requestAnimationFrame(sample);
+            return;
+          }
+          const first = samples.find(entry => entry.elapsed >= 35 && entry.elapsed <= 100);
+          const second = samples.find(entry => entry.elapsed >= 225 && entry.elapsed <= 300);
+          if (!first || !second) throw new Error("bounded cycle samples were unavailable");
+          if (!(first.values[0] < first.values[1]
+              && first.values[2] < first.values[3])) {
+            throw new Error("first iteration did not reverse the reverse directions");
+          }
+          if (!(second.values[2] > second.values[3])) {
+            throw new Error("alternate directions did not swap on the odd iteration");
+          }
+          const terminal = Number(getComputedStyle(
+            document.getElementById("fractional")).opacity);
+          if (Math.abs(terminal - .75) > .02) {
+            throw new Error("fractional terminal progress differs: " + terminal);
+          }
+          nodes.forEach(node => node.style.animation = "none");
+          clearTimeout(timeout);
+          finish(null, [JSON.stringify({ directions, first, second, terminal,
+            sampleCount: samples.length })]);
+        } catch (error) {
+          clearTimeout(timeout);
+          finish(error, [JSON.stringify(samples)]);
+        }
+      };
+      requestAnimationFrame(sample);
+    });
+  } catch (error) {
+    clearTimeout(timeout);
+    finish(error);
+  }
+</script>

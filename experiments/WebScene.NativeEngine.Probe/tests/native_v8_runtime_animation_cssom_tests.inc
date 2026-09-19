@@ -615,6 +615,92 @@ void test_rotation_keyframes_use_host_clock_and_wrap_continuously(
             + wrapped_quarter_turn);
 }
 
+void test_animation_direction_maps_cycles_and_terminal_boundaries(
+    webscene_engine* engine)
+{
+    animation_frame_and_wait(engine, 4000.0, 7090U);
+    execute_and_wait(engine, R"JS(
+        (() => {
+          document.body.innerHTML = `
+            <style>
+              @keyframes sweep { from { opacity: 0; } to { opacity: 1; } }
+              @keyframes turn { from { transform: rotate(0); }
+                to { transform: rotate(1turn); } }
+              @keyframes glow { from { filter: brightness(.5); }
+                to { filter: brightness(1.5); } }
+              .sample { width: 12px; height: 12px; animation-duration: 1000ms;
+                animation-timing-function: linear; animation-iteration-count: infinite;
+                animation-name: sweep; }
+              #normal { animation: sweep 1000ms linear infinite normal; }
+              #reverse { animation-direction: reverse; }
+              #alternate { animation: sweep 1000ms linear infinite alternate; }
+              #alternate-reverse {
+                animation: sweep 1000ms linear infinite alternate-reverse; }
+              #rotation { animation: turn 1000ms linear infinite reverse; }
+              #filter { animation: glow 1000ms linear infinite alternate-reverse; }
+              #fractional {
+                animation: sweep 1000ms linear -1250ms 2.25 alternate-reverse forwards;
+              }
+              #integer { animation: sweep 1000ms linear -1500ms 2 reverse forwards; }
+            </style>
+            <div id="normal" class="sample"></div><div id="reverse" class="sample"></div>
+            <div id="alternate" class="sample"></div>
+            <div id="alternate-reverse" class="sample"></div>
+            <div id="rotation"></div><div id="filter"></div><div id="fractional"></div>
+            <div id="integer"></div>`;
+          void document.body.offsetHeight;
+        })()
+    )JS", "animation-direction-setup.js");
+
+    animation_frame_and_wait(engine, 4250.0, 7091U);
+    const auto first_cycle = evaluate(engine, R"JS(
+        (() => {
+          const opacity = id => Number(getComputedStyle(
+            document.getElementById(id)).opacity);
+          const close = (left, right) => Math.abs(left - right) < .001;
+          const transform = getComputedStyle(document.getElementById('rotation')).transform;
+          const matrix = transform.slice(7, -1).split(',').map(Number);
+          let angle = Math.atan2(matrix[1], matrix[0]) * 180 / Math.PI;
+          if (angle < 0) angle += 360;
+          const brightness = Number((getComputedStyle(document.getElementById('filter'))
+            .filter.match(/brightness\(([-.\d]+)/) || [0, NaN])[1]);
+          const directions = ['normal', 'reverse', 'alternate', 'alternate-reverse']
+            .map(id => getComputedStyle(document.getElementById(id)).animationDirection);
+          return directions.join(',') === 'normal,reverse,alternate,alternate-reverse'
+            && close(opacity('normal'), .25) && close(opacity('reverse'), .75)
+            && close(opacity('alternate'), .25)
+            && close(opacity('alternate-reverse'), .75)
+            && close(angle, 270) && close(brightness, 1.25);
+        })()
+    )JS", "animation-direction-first-cycle.js");
+    require(first_cycle == "true",
+        "animation directions did not map first-cycle opacity/rotation/filter progress");
+
+    animation_frame_and_wait(engine, 5250.0, 7092U);
+    const auto second_cycle = evaluate(engine, R"JS(
+        (() => {
+          const opacity = id => Number(getComputedStyle(
+            document.getElementById(id)).opacity);
+          const close = (left, right) => Math.abs(left - right) < .001;
+          const brightness = Number((getComputedStyle(document.getElementById('filter'))
+            .filter.match(/brightness\(([-.\d]+)/) || [0, NaN])[1]);
+          return close(opacity('normal'), .25) && close(opacity('reverse'), .75)
+            && close(opacity('alternate'), .75)
+            && close(opacity('alternate-reverse'), .25)
+            && close(brightness, .75) && close(opacity('fractional'), .75)
+            && close(opacity('integer'), 0);
+        })()
+    )JS", "animation-direction-second-cycle.js");
+    require(second_cycle == "true",
+        "alternate parity or fractional terminal direction was not preserved");
+
+    execute_and_wait(engine,
+        "document.body.innerHTML = '<div>direction animations detached</div>'",
+        "animation-direction-detach.js");
+    wait_for_animation_frame_demand(
+        engine, false, "detached direction animations retained host-frame demand");
+}
+
 void test_filter_keyframes_use_host_clock_and_retained_paint(
     webscene_engine* engine)
 {

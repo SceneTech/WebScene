@@ -1,0 +1,28 @@
+{
+  "profile": "webscene-css-animation-direction-1",
+  "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+  "runtime": "v8",
+  "viewport": {
+    "width": 800,
+    "height": 600,
+    "deviceScaleFactor": 1
+  },
+  "required": [
+    {
+      "path": "contracts/css-animation-direction.html",
+      "type": "contract",
+      "capabilities": [
+        "animation-direction-longhand",
+        "animation-direction-shorthand",
+        "normal-reverse-alternate",
+        "negative-animation-delay",
+        "fractional-iteration-terminal-progress",
+        "bounded-host-frame-sampling"
+      ],
+      "evidence": ["css-animation-direction-659-242"],
+      "reason": "WPT-aligned CSS Animations reduction for direction metadata, even/odd iteration mapping, a negative delay, and direction-aware fractional forwards fill within the existing single-animation host-clock runtime."
+    }
+  ],
+  "harnessBlocked": [],
+  "excluded": []
+}

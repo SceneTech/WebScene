@@ -1,3 +1,44 @@
+namespace {
+float directed_keyframe_progress(
+    float progress,
+    double iteration_index,
+    node_style::animation_data::direction_kind direction) noexcept
+{
+    const auto odd_iteration = std::fmod(iteration_index, 2.0) >= 1.0;
+    const auto reversed = direction == node_style::animation_data::direction_kind::reverse
+        || (direction == node_style::animation_data::direction_kind::alternate
+            && odd_iteration)
+        || (direction == node_style::animation_data::direction_kind::alternate_reverse
+            && !odd_iteration);
+    return reversed ? 1.0F - progress : progress;
+}
+
+float active_keyframe_progress(
+    float elapsed_ms,
+    float duration_ms,
+    node_style::animation_data::direction_kind direction) noexcept
+{
+    const auto iteration = std::floor(
+        static_cast<double>(elapsed_ms) / static_cast<double>(duration_ms));
+    auto progress = std::fmod(elapsed_ms, duration_ms) / duration_ms;
+    if (progress < 0) progress += 1.0F;
+    return directed_keyframe_progress(progress, iteration, direction);
+}
+
+float terminal_keyframe_progress(
+    float iterations,
+    node_style::animation_data::direction_kind direction) noexcept
+{
+    const auto count = std::max(0.0, static_cast<double>(iterations));
+    const auto whole = std::floor(count);
+    const auto fractional = count - whole;
+    const auto progress = fractional > 0.0
+        ? static_cast<float>(fractional) : 1.0F;
+    const auto iteration = fractional > 0.0 ? whole : std::max(0.0, whole - 1.0);
+    return directed_keyframe_progress(progress, iteration, direction);
+}
+} // namespace
+
 void native_document::signal_animation_frame(double timestamp_ms) noexcept
 {
     if (std::isfinite(timestamp_ms) && timestamp_ms >= animation_frame_timestamp_ms_) {
@@ -987,18 +1028,7 @@ bool native_document::advance_animations() noexcept
                 const auto total_duration = finite
                     ? duration * std::max(0.0F, iterations)
                     : 0.0F;
-                if (finite && elapsed_ms >= total_duration) {
-                    animation.painted_opacity =
-                        node.style.animations().opacity_keyframe_fill_forwards
-                        && !node.style.animations().opacity_keyframes.empty()
-                        ? node.style.animations().opacity_keyframes.back().opacity
-                        : node.style.opacity;
-                    animation.opacity_keyframe_animation_active = false;
-                    keyframe_animation_completed = true;
-                    advanced = advanced || keyframe_paint_visible;
-                } else {
-                    auto cycle_progress = std::fmod(elapsed_ms, duration) / duration;
-                    if (cycle_progress < 0) cycle_progress += 1.0F;
+                const auto sample_opacity = [&](float cycle_progress) {
                     const auto& stops = node.style.animations().opacity_keyframes;
                     auto right = std::lower_bound(
                         stops.begin(), stops.end(), cycle_progress,
@@ -1027,6 +1057,21 @@ bool native_document::advance_animations() noexcept
                         animation.painted_opacity = from.opacity
                             + (right->opacity - from.opacity) * eased;
                     }
+                };
+                if (finite && elapsed_ms >= total_duration) {
+                    if (node.style.animations().opacity_keyframe_fill_forwards) {
+                        sample_opacity(terminal_keyframe_progress(
+                            iterations, node.style.animations().keyframe_direction));
+                    } else {
+                        animation.painted_opacity = node.style.opacity;
+                    }
+                    animation.opacity_keyframe_animation_active = false;
+                    keyframe_animation_completed = true;
+                    advanced = advanced || keyframe_paint_visible;
+                } else {
+                    sample_opacity(active_keyframe_progress(
+                        elapsed_ms, duration,
+                        node.style.animations().keyframe_direction));
                     advanced = advanced || keyframe_paint_visible;
                 }
             }
@@ -1056,8 +1101,9 @@ bool native_document::advance_animations() noexcept
                     keyframe_animation_completed = true;
                     advanced = advanced || keyframe_paint_visible;
                 } else {
-                    auto cycle_progress = std::fmod(elapsed_ms, duration) / duration;
-                    if (cycle_progress < 0) cycle_progress += 1.0F;
+                    const auto cycle_progress = active_keyframe_progress(
+                        elapsed_ms, duration,
+                        node.style.animations().keyframe_direction);
                     const auto& stops = node.style.animations().rotation_keyframes;
                     auto right = std::lower_bound(
                         stops.begin(), stops.end(), cycle_progress,
@@ -1108,35 +1154,26 @@ bool native_document::advance_animations() noexcept
                 const auto total_duration = finite
                     ? duration * std::max(0.0F, iterations)
                     : 0.0F;
-                if (finite && elapsed_ms >= total_duration) {
-                    const auto& final = animation.filter_keyframes.back();
-                    if (node.style.animations().opacity_keyframe_fill_forwards) {
-                        if (final.authored_none) {
+                const auto sample_filter = [&](float cycle_progress) {
+                    const auto& stops = animation.filter_keyframes;
+                    const auto assign_stop = [&](const auto& stop) {
+                        if (stop.authored_none) {
                             animation.painted_filter_functions.clear();
                         } else {
-                            animation.painted_filter_functions = final.functions;
+                            animation.painted_filter_functions = stop.functions;
                         }
-                        animation.filter_keyframe_animation_filled = true;
-                    } else {
-                        animation.painted_filter_functions =
-                            animation.filter_keyframe_underlying;
-                    }
-                    animation.filter_keyframe_animation_active = false;
-                    keyframe_animation_completed = true;
-                    advanced = advanced || keyframe_paint_visible;
-                } else {
-                    auto cycle_progress = std::fmod(elapsed_ms, duration) / duration;
-                    if (cycle_progress < 0) cycle_progress += 1.0F;
-                    const auto& stops = animation.filter_keyframes;
+                    };
                     auto right = std::lower_bound(
                         stops.begin(), stops.end(), cycle_progress,
                         [](const auto& stop, float progress) {
                             return stop.offset < progress;
                         });
                     if (right == stops.begin()) {
-                        animation.painted_filter_functions = right->functions;
+                        assign_stop(*right);
                     } else if (right == stops.end()) {
-                        animation.painted_filter_functions = stops.back().functions;
+                        assign_stop(stops.back());
+                    } else if (std::abs(cycle_progress - right->offset) < 0.000001F) {
+                        assign_stop(*right);
                     } else {
                         const auto& from = *(right - 1);
                         const auto span = std::max(
@@ -1160,6 +1197,23 @@ bool native_document::advance_animations() noexcept
                                 + (right->functions[index].amount - start) * eased;
                         }
                     }
+                };
+                if (finite && elapsed_ms >= total_duration) {
+                    if (node.style.animations().opacity_keyframe_fill_forwards) {
+                        sample_filter(terminal_keyframe_progress(
+                            iterations, node.style.animations().keyframe_direction));
+                        animation.filter_keyframe_animation_filled = true;
+                    } else {
+                        animation.painted_filter_functions =
+                            animation.filter_keyframe_underlying;
+                    }
+                    animation.filter_keyframe_animation_active = false;
+                    keyframe_animation_completed = true;
+                    advanced = advanced || keyframe_paint_visible;
+                } else {
+                    sample_filter(active_keyframe_progress(
+                        elapsed_ms, duration,
+                        node.style.animations().keyframe_direction));
                     advanced = advanced || keyframe_paint_visible;
                 }
             }

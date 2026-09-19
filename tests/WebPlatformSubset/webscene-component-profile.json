@@ -2138,6 +2138,13 @@
       "reason": "Candidate contract for href-presence matching and targeted invalidation through subject, functional, sibling, and relational selector routes. WebScene retains no browsing-history database, so :visited remains privacy-closed."
     },
     {
+      "path": "contracts/css-local-link-invalidation.html",
+      "type": "contract",
+      "capabilities": ["local-link-pseudo-class", "local-link-url-resolution", "local-link-document-invalidation", "local-link-privacy-closure"],
+      "evidence": ["selectors-level-5-local-link-pseudo-class", "native-selector-source-contract"],
+      "reason": "WPT-aligned candidate contract for fragment-insensitive current-document URL matching plus routed href, effective-base, and same-document URL invalidation without retained browsing history."
+    },
+    {
       "path": "contracts/focus-within-dynamic-border.html",
       "type": "contract",
       "capabilities": ["focus-within-matching", "focus-ancestor-invalidation", "blur-ancestor-invalidation", "grid-absolute-positioned-child", "logical-inset-stretch"],

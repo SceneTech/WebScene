@@ -328,6 +328,21 @@
       "reason": "Required product-neutral temporal gate for automatically discoverable paint transitions; it samples bounded forward and reversed opacity, foreground-color, and background-color intermediate frames and requires run/start/cancel/end event evidence without naming a product control."
     },
     {
+      "path": "contracts/css-filter-transition-temporal.html",
+      "type": "contract",
+      "capabilities": ["filter-transition", "compound-filter-order", "filter-identity-interpolation", "filter-transition-events", "filter-transition-reversal", "bounded-filter-cadence", "filter-lifecycle-cleanup"],
+      "evidence": ["code-oss-chat-filter-motion", "code-oss-session-desaturation-motion"],
+      "reason": "Product-neutral temporal and performance reduction of Code OSS Chat/session filter transitions. It drives 128 ordered compound lists, reverses one list to none, requires intermediate used values plus run/start/cancel/end events, caps frame samples and elapsed time, and removes the transitioned subtree after completion."
+    },
+    {
+      "path": "contracts/css-filter-transition-midpoint.html",
+      "type": "reftest",
+      "reference": "contracts/css-filter-transition-midpoint-ref.html",
+      "capabilities": ["filter-transition-paint", "compound-filter-order", "filter-midpoint-pixels"],
+      "evidence": ["code-oss-chat-filter-motion"],
+      "reason": "Browser-reduced pixel oracle for a stable host-clock midpoint across grayscale, blur, saturate, contrast, and brightness. The static reference preserves authored order so a reordered retained filter stack does not match."
+    },
+    {
       "path": "contracts/logical-inset-transition-cadence.html",
       "type": "contract",
       "capabilities": ["logical-inset-transition", "left-transition", "top-transition", "percentage-inset-interpolation", "dense-intermediate-geometry", "host-frame-clock"],

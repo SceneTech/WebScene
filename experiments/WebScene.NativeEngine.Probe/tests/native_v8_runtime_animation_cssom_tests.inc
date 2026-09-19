@@ -128,6 +128,140 @@ void test_opacity_and_color_transitions_use_host_clock_and_dispatch_events(
         engine,
         false,
         "completed paint transitions retained host-frame demand");
+
+    execute_and_wait(engine, R"JS(
+        (() => {
+          document.body.innerHTML = `
+            <style>
+              #temporal-filter {
+                position: fixed; left: 12px; top: 12px; width: 48px; height: 24px;
+                background: rgb(80, 120, 160);
+                filter: grayscale(1) blur(2px) saturate(1.2) contrast(.8)
+                  brightness(.8);
+                transition: filter 200ms linear;
+              }
+              #temporal-filter.active {
+                filter: grayscale(0) blur(6px) saturate(2) contrast(1.2)
+                  brightness(1.2);
+              }
+            </style>
+            <div id="temporal-filter"></div>`;
+          const target = document.getElementById('temporal-filter');
+          globalThis.__filterTransitionEvents = [];
+          for (const type of ['transitionrun', 'transitionstart',
+              'transitionend', 'transitioncancel']) {
+            target.addEventListener(type, event =>
+              __filterTransitionEvents.push(`${type}:${event.propertyName}`));
+          }
+        })()
+    )JS", "filter-transition-host-clock-setup.js");
+    animation_frame_and_wait(engine, 400.0, 7015U);
+    execute_and_wait(engine,
+        "document.getElementById('temporal-filter').classList.add('active')",
+        "filter-transition-activate.js");
+    wait_for_animation_frame_demand(
+        engine,
+        true,
+        "active filter transition did not request host frames");
+    webscene_engine_metrics layout_before_filter{};
+    webscene_engine_get_metrics(engine, &layout_before_filter);
+
+    animation_frame_and_wait(engine, 500.0, 7016U);
+    const auto filter_midpoint = evaluate(engine, R"JS(
+        (() => ({
+          filter: getComputedStyle(document.getElementById('temporal-filter')).filter,
+          events: __filterTransitionEvents
+        }))()
+    )JS", "filter-transition-midpoint.js");
+    require(
+        filter_midpoint.find(
+            "grayscale(0.5) blur(4px) saturate(1.6) contrast(1) brightness(1)")
+                != std::string::npos
+            && filter_midpoint.find("transitionrun:filter") != std::string::npos
+            && filter_midpoint.find("transitionstart:filter") != std::string::npos,
+        "compound filter order or host-clock midpoint was incorrect: "
+            + filter_midpoint);
+
+    webscene_engine_request_scene_checkpoint(engine);
+    auto grayscale_amount = -1.0F;
+    auto blur_amount = -1.0F;
+    auto saturate_amount = -1.0F;
+    auto contrast_amount = -1.0F;
+    auto brightness_amount = -1.0F;
+    for (auto attempt = 0; attempt < 100 && grayscale_amount < 0.0F; ++attempt) {
+        const auto* scene = webscene_engine_acquire_latest_scene(engine);
+        if (scene != nullptr) {
+            if (scene->header.consumed_input_sequence >= 7016U) {
+                for (uint32_t index = 0U; index < scene->header.command_count; ++index) {
+                    const auto& command = scene->commands[index];
+                    if (command.kind != 30U) continue;
+                    if (command.flags == (1U << 30U)) {
+                        grayscale_amount = command.stroke_width;
+                    } else if (command.flags == (1U << 28U)) {
+                        blur_amount = command.stroke_width;
+                    } else if (command.flags == (1U << 27U)) {
+                        saturate_amount = command.stroke_width;
+                    } else if (command.flags == (1U << 29U)) {
+                        contrast_amount = command.stroke_width;
+                    } else if (command.flags == (1U << 31U)) {
+                        brightness_amount = command.stroke_width;
+                    }
+                }
+            }
+            webscene_scene_acknowledge(scene);
+            webscene_scene_release(scene);
+        }
+        if (grayscale_amount < 0.0F) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+    }
+    require(
+        std::abs(grayscale_amount - 0.5F) < 0.001F
+            && std::abs(blur_amount - 4.0F) < 0.001F
+            && std::abs(saturate_amount - 1.6F) < 0.001F
+            && std::abs(contrast_amount - 1.0F) < 0.001F
+            && std::abs(brightness_amount - 1.0F) < 0.001F,
+        "interpolated filter amounts did not reach retained paint commands");
+    webscene_engine_metrics layout_after_filter{};
+    webscene_engine_get_metrics(engine, &layout_after_filter);
+    require(
+        layout_after_filter.layout_passes == layout_before_filter.layout_passes,
+        "paint-only filter transition repeated full document layout");
+
+    execute_and_wait(engine,
+        "document.getElementById('temporal-filter').style.filter = 'none'",
+        "filter-transition-reverse-to-none.js");
+    animation_frame_and_wait(engine, 600.0, 7017U);
+    const auto filter_reversed = evaluate(engine, R"JS(
+        (() => ({
+          filter: getComputedStyle(document.getElementById('temporal-filter')).filter,
+          events: __filterTransitionEvents
+        }))()
+    )JS", "filter-transition-reversed.js");
+    require(
+        filter_reversed.find(
+            "grayscale(0.25) blur(2px) saturate(1.3) contrast(1) brightness(1)")
+                != std::string::npos
+            && filter_reversed.find("transitioncancel:filter") != std::string::npos,
+        "filter reversal to per-function identities lost its painted origin: "
+            + filter_reversed);
+
+    animation_frame_and_wait(engine, 800.0, 7018U);
+    const auto filter_completed = evaluate(engine, R"JS(
+        (() => ({
+          filter: getComputedStyle(document.getElementById('temporal-filter')).filter,
+          events: __filterTransitionEvents
+        }))()
+    )JS", "filter-transition-complete.js");
+    require(
+        filter_completed.find("\"filter\":\"none\"") != std::string::npos
+            && filter_completed.find("transitionend:filter") != std::string::npos,
+        "filter transition did not publish its final identity state: "
+            + filter_completed);
+    wait_for_animation_frame_demand(
+        engine,
+        false,
+        "completed filter transition retained host-frame demand");
 }
 
 void test_inline_transition_longhands_survive_dynamic_parse_and_recascade(

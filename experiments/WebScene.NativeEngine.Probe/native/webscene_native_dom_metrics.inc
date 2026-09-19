@@ -142,6 +142,13 @@ native_document::allocation_metrics native_document::read_allocation_metrics() c
             ++result.animation_runtime_count;
             result.animation_runtime_storage_bytes +=
                 sizeof(dom_node::animation_runtime_data) + 2U * sizeof(void*)
+                + animation->filter_animation_target_value.capacity() + 1U
+                + animation->painted_filter_functions.capacity()
+                    * sizeof(retained_filter_function)
+                + animation->filter_animation_from.capacity()
+                    * sizeof(retained_filter_function)
+                + animation->filter_animation_target.capacity()
+                    * sizeof(retained_filter_function)
                 + animation->opacity_keyframe_animation_signature.capacity() + 1U
                 + animation->rotation_keyframe_animation_signature.capacity() + 1U;
         }

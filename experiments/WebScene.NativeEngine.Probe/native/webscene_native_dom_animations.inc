@@ -403,6 +403,120 @@ void native_document::update_style_animations(dom_node& node)
             }
         }
     }
+
+    const auto& filter_timing = node.style.animations().filter_transition;
+    const auto& effects = node.style.textual().effect_values;
+    const auto filter_entry = effects.find("filter");
+    const auto filter_value = filter_entry == effects.end()
+        ? std::string{"none"}
+        : filter_entry->second;
+    std::vector<retained_filter_function> filter_target;
+    const auto filter_target_valid = parse_foreground_filters(
+        node, filter_value, filter_target);
+    if (animation.filter_animation_active && filter_timing.duration_ms <= 0) {
+        transition_events_.push_back({
+            node.id,
+            "transitioncancel",
+            "filter",
+            std::clamp(
+                static_cast<float>(animation_frame_timestamp_ms_
+                    - animation.filter_animation_started_ms
+                    - animation.filter_animation_delay_ms),
+                0.0F,
+                animation.filter_animation_duration_ms) / 1000.0F});
+        animation.painted_filter_functions = filter_target_valid
+            ? filter_target : std::vector<retained_filter_function>{};
+        animation.filter_animation_active = false;
+    }
+    if (!animation.filter_animation_initialized) {
+        animation.filter_animation_initialized = true;
+        animation.filter_animation_target_value = filter_value;
+        animation.painted_filter_functions = filter_target_valid
+            ? filter_target : std::vector<retained_filter_function>{};
+    } else {
+        std::vector<retained_filter_function> previous_target;
+        const auto previous_target_valid = parse_foreground_filters(
+            node, animation.filter_animation_target_value, previous_target);
+        const auto target_changed = filter_target_valid != previous_target_valid
+            || (filter_target_valid && filter_target != previous_target);
+        animation.filter_animation_target_value = filter_value;
+        if (target_changed) {
+            if (animation.filter_animation_active) {
+                transition_events_.push_back({
+                    node.id,
+                    "transitioncancel",
+                    "filter",
+                    std::clamp(
+                        static_cast<float>(animation_frame_timestamp_ms_
+                            - animation.filter_animation_started_ms
+                            - animation.filter_animation_delay_ms),
+                        0.0F,
+                        animation.filter_animation_duration_ms) / 1000.0F});
+            }
+            auto from = animation.filter_animation_active
+                ? animation.painted_filter_functions
+                : previous_target;
+            auto target = filter_target;
+            const auto identity_amount = [](uint32_t flags) {
+                return flags == (1U << 31U) || flags == (1U << 29U)
+                    || flags == (1U << 27U) ? 1.0F : 0.0F;
+            };
+            const auto make_compatible = [&](auto& left, auto& right) {
+                if (left.size() > right.size()) {
+                    for (size_t index = 0U; index < right.size(); ++index) {
+                        if (left[index].flags != right[index].flags) return false;
+                    }
+                    for (size_t index = right.size(); index < left.size(); ++index) {
+                        right.push_back({
+                            left[index].flags, identity_amount(left[index].flags)});
+                    }
+                } else if (right.size() > left.size()) {
+                    for (size_t index = 0U; index < left.size(); ++index) {
+                        if (left[index].flags != right[index].flags) return false;
+                    }
+                    for (size_t index = left.size(); index < right.size(); ++index) {
+                        left.push_back({
+                            right[index].flags, identity_amount(right[index].flags)});
+                    }
+                }
+                for (size_t index = 0U; index < left.size(); ++index) {
+                    if (left[index].flags != right[index].flags) return false;
+                }
+                return true;
+            };
+            const auto interpolable = previous_target_valid && filter_target_valid
+                && make_compatible(from, target);
+            if (filter_timing.duration_ms <= 0 || !interpolable) {
+                animation.painted_filter_functions = filter_target_valid
+                    ? filter_target : std::vector<retained_filter_function>{};
+                animation.filter_animation_active = false;
+            } else {
+                animation.filter_animation_from = std::move(from);
+                animation.filter_animation_target = std::move(target);
+                animation.filter_animation_target_is_none = filter_target.empty();
+                animation.painted_filter_functions = animation.filter_animation_from;
+                animation.filter_animation_duration_ms = filter_timing.duration_ms;
+                animation.filter_animation_delay_ms = filter_timing.delay_ms;
+                animation.filter_animation_x1 = filter_timing.x1;
+                animation.filter_animation_y1 = filter_timing.y1;
+                animation.filter_animation_x2 = filter_timing.x2;
+                animation.filter_animation_y2 = filter_timing.y2;
+                animation.filter_animation_started_ms = animation_frame_timestamp_ms_;
+                animation.filter_animation_active = true;
+                animation.filter_animation_start_event_sent =
+                    filter_timing.delay_ms <= 0;
+                transition_events_.push_back({node.id, "transitionrun", "filter", 0});
+                if (animation.filter_animation_start_event_sent) {
+                    transition_events_.push_back({
+                        node.id,
+                        "transitionstart",
+                        "filter",
+                        std::min(-filter_timing.delay_ms,
+                            filter_timing.duration_ms) / 1000.0F});
+                }
+            }
+        }
+    }
 }
 
 bool native_document::advance_animations() noexcept
@@ -759,6 +873,48 @@ bool native_document::advance_animations() noexcept
             }
         }
 
+        if (animation.filter_animation_active) {
+            const auto elapsed_ms = static_cast<float>(
+                animation_frame_timestamp_ms_ - animation.filter_animation_started_ms
+                - animation.filter_animation_delay_ms);
+            if (elapsed_ms >= 0 && !animation.filter_animation_start_event_sent) {
+                animation.filter_animation_start_event_sent = true;
+                transition_events_.push_back({node.id, "transitionstart", "filter", 0});
+            }
+            const auto progress = std::clamp(
+                elapsed_ms / std::max(0.001F, animation.filter_animation_duration_ms),
+                0.0F,
+                1.0F);
+            const auto eased = timing_value(
+                progress,
+                animation.filter_animation_x1,
+                animation.filter_animation_y1,
+                animation.filter_animation_x2,
+                animation.filter_animation_y2);
+            for (size_t index = 0U;
+                 index < animation.painted_filter_functions.size(); ++index) {
+                const auto from = animation.filter_animation_from[index].amount;
+                const auto target = animation.filter_animation_target[index].amount;
+                animation.painted_filter_functions[index].amount =
+                    from + (target - from) * eased;
+            }
+            advanced = true;
+            if (progress >= 1.0F) {
+                if (animation.filter_animation_target_is_none) {
+                    animation.painted_filter_functions.clear();
+                } else {
+                    animation.painted_filter_functions =
+                        animation.filter_animation_target;
+                }
+                animation.filter_animation_active = false;
+                transition_events_.push_back({
+                    node.id,
+                    "transitionend",
+                    "filter",
+                    animation.filter_animation_duration_ms / 1000.0F});
+            }
+        }
+
         auto keyframe_animation_completed = false;
         if (animation.opacity_keyframe_animation_active) {
             const auto elapsed_ms = static_cast<float>(
@@ -900,7 +1056,7 @@ bool native_document::advance_animations() noexcept
             animation.keyframe_animation_end_event_sent = true;
         }
     }
-    // Opacity, foreground/background color, scale, and rotation are paint-only.
+    // Opacity, colors, filters, scale, and rotation are paint-only.
     // Their interpolated values are consumed directly by build_scene(), so they
     // must not repeat the
     // entire document's intrinsic sizing, shaping, and layout. Translation is
@@ -927,7 +1083,8 @@ bool native_document::has_active_animations() const noexcept
             || animation->top_animation_active
             || animation->opacity_animation_active
             || animation->color_animation_active
-            || animation->background_color_animation_active;
+            || animation->background_color_animation_active
+            || animation->filter_animation_active;
         const auto keyframe_active = animation->opacity_keyframe_animation_active
             || animation->rotation_keyframe_animation_active;
         return transition_active

@@ -305,6 +305,150 @@ bool native_document::release_canvas_export(uint32_t node_id) noexcept
     return true;
 }
 
+bool native_document::parse_foreground_filters(
+    const dom_node& node,
+    std::string_view value,
+    std::vector<retained_filter_function>& result) const
+{
+    result.clear();
+    const auto trim = [](std::string_view input) {
+        while (!input.empty()
+            && std::isspace(static_cast<unsigned char>(input.front()))) {
+            input.remove_prefix(1U);
+        }
+        while (!input.empty()
+            && std::isspace(static_cast<unsigned char>(input.back()))) {
+            input.remove_suffix(1U);
+        }
+        return input;
+    };
+    const auto equals_ascii_case_insensitive = [](std::string_view left,
+        std::string_view right) {
+        if (left.size() != right.size()) return false;
+        for (size_t index = 0; index < left.size(); ++index) {
+            const auto character = static_cast<unsigned char>(left[index]);
+            const auto lower = character >= 'A' && character <= 'Z'
+                ? static_cast<char>(character - 'A' + 'a')
+                : static_cast<char>(character);
+            if (lower != right[index]) return false;
+        }
+        return true;
+    };
+    auto remaining = trim(value);
+    if (equals_ascii_case_insensitive(remaining, "none")) return true;
+    constexpr size_t maximum_filter_functions = 16U;
+    while (!remaining.empty()) {
+        if (result.size() >= maximum_filter_functions) {
+            result.clear();
+            return false;
+        }
+        const auto opening = remaining.find('(');
+        auto closing = std::string_view::npos;
+        if (opening != std::string_view::npos) {
+            auto depth = 1U;
+            for (auto index = opening + 1U; index < remaining.size(); ++index) {
+                if (remaining[index] == '(') {
+                    ++depth;
+                } else if (remaining[index] == ')' && --depth == 0U) {
+                    closing = index;
+                    break;
+                }
+            }
+        }
+        if (opening == 0U || opening == std::string_view::npos
+            || closing == std::string_view::npos) {
+            result.clear();
+            return false;
+        }
+        const auto name = trim(remaining.substr(0U, opening));
+        const auto argument = trim(
+            remaining.substr(opening + 1U, closing - opening - 1U));
+        uint32_t flags = 0U;
+        float amount = -1.0F;
+        float maximum = 0.0F;
+        if (equals_ascii_case_insensitive(name, "blur")) {
+            flags = 1U << 28U;
+            maximum = 256.0F;
+            const auto length = parse_length(std::string{argument});
+            switch (length.unit) {
+            case length_unit::pixels:
+            case length_unit::em:
+            case length_unit::rem:
+            case length_unit::viewport_width:
+            case length_unit::viewport_height:
+            case length_unit::viewport_width_capped:
+            case length_unit::viewport_height_capped:
+            case length_unit::viewport_width_floored:
+            case length_unit::viewport_height_floored:
+            case length_unit::container_inline:
+            case length_unit::container_block:
+            case length_unit::container_min:
+            case length_unit::container_max:
+                amount = resolve_length(node, length, 0.0F, -1.0F);
+                break;
+            default:
+                break;
+            }
+        } else {
+            const auto parsed = css::parse_ascii_number_prefix(argument);
+            if (!parsed.has_value() || parsed->value < 0.0F) {
+                result.clear();
+                return false;
+            }
+            const auto suffix = argument.substr(parsed->consumed);
+            if (equals_ascii_case_insensitive(name, "brightness")) {
+                flags = 1U << 31U;
+                maximum = 10.0F;
+            } else if (equals_ascii_case_insensitive(name, "grayscale")) {
+                flags = 1U << 30U;
+                maximum = 1.0F;
+            } else if (equals_ascii_case_insensitive(name, "contrast")) {
+                flags = 1U << 29U;
+                maximum = 10.0F;
+            } else if (equals_ascii_case_insensitive(name, "saturate")) {
+                flags = 1U << 27U;
+                maximum = 10.0F;
+            } else {
+                result.clear();
+                return false;
+            }
+            amount = suffix.empty()
+                ? parsed->value
+                : suffix == "%" ? parsed->value / 100.0F : -1.0F;
+        }
+        if (!std::isfinite(amount) || amount < 0.0F || amount > maximum) {
+            result.clear();
+            return false;
+        }
+        result.push_back(retained_filter_function{flags, amount});
+        remaining.remove_prefix(closing + 1U);
+        if (!remaining.empty()
+            && !std::isspace(static_cast<unsigned char>(remaining.front()))) {
+            result.clear();
+            return false;
+        }
+        remaining = trim(remaining);
+    }
+    return true;
+}
+
+std::string native_document::serialize_filter_functions(
+    std::span<const retained_filter_function> functions)
+{
+    if (functions.empty()) return "none";
+    std::ostringstream value;
+    for (size_t index = 0U; index < functions.size(); ++index) {
+        if (index != 0U) value << ' ';
+        const auto& function = functions[index];
+        if (function.flags == (1U << 28U)) value << "blur(" << function.amount << "px)";
+        else if (function.flags == (1U << 31U)) value << "brightness(" << function.amount << ')';
+        else if (function.flags == (1U << 30U)) value << "grayscale(" << function.amount << ')';
+        else if (function.flags == (1U << 29U)) value << "contrast(" << function.amount << ')';
+        else if (function.flags == (1U << 27U)) value << "saturate(" << function.amount << ')';
+    }
+    return value.str();
+}
+
 void native_document::append_scene(
     const dom_node& node,
     std::vector<webscene_scene_command>& commands,
@@ -339,134 +483,18 @@ void native_document::append_scene(
         || opacity <= 0.001F) {
         return;
     }
-    struct retained_foreground_filter final {
-        uint32_t flags{};
-        float amount{};
-    };
-    const auto foreground_filters = [&]() {
-        std::vector<retained_foreground_filter> result;
+    std::vector<retained_filter_function> parsed_foreground_filters;
+    auto foreground_filters = node.painted_filter_functions_value();
+    if (foreground_filters.empty()) {
         const auto& effects = node.style.textual().effect_values;
         const auto known = effects.find("filter");
-        if (known == effects.end()) return result;
-        auto remaining = std::string_view{known->second};
-        const auto trim = [](std::string_view value) {
-            while (!value.empty()
-                && std::isspace(static_cast<unsigned char>(value.front())))
-                value.remove_prefix(1U);
-            while (!value.empty()
-                && std::isspace(static_cast<unsigned char>(value.back())))
-                value.remove_suffix(1U);
-            return value;
-        };
-        const auto equals_ascii_case_insensitive = [](std::string_view left,
-            std::string_view right) {
-            if (left.size() != right.size()) return false;
-            for (size_t index = 0; index < left.size(); ++index) {
-                const auto character = static_cast<unsigned char>(left[index]);
-                const auto lower = character >= 'A' && character <= 'Z'
-                    ? static_cast<char>(character - 'A' + 'a')
-                    : static_cast<char>(character);
-                if (lower != right[index]) return false;
-            }
-            return true;
-        };
-        remaining = trim(remaining);
-        if (equals_ascii_case_insensitive(remaining, "none")) return result;
-        constexpr size_t maximum_filter_functions = 16U;
-        while (!remaining.empty()) {
-            if (result.size() >= maximum_filter_functions) {
-                result.clear();
-                return result;
-            }
-            const auto opening = remaining.find('(');
-            auto closing = std::string_view::npos;
-            if (opening != std::string_view::npos) {
-                auto depth = 1U;
-                for (auto index = opening + 1U; index < remaining.size(); ++index) {
-                    if (remaining[index] == '(') {
-                        ++depth;
-                    } else if (remaining[index] == ')' && --depth == 0U) {
-                        closing = index;
-                        break;
-                    }
-                }
-            }
-            if (opening == 0U || opening == std::string_view::npos
-                || closing == std::string_view::npos) {
-                result.clear();
-                return result;
-            }
-            const auto name = trim(remaining.substr(0U, opening));
-            const auto argument = trim(
-                remaining.substr(opening + 1U, closing - opening - 1U));
-            uint32_t flags = 0U;
-            float amount = -1.0F;
-            float maximum = 0.0F;
-            if (equals_ascii_case_insensitive(name, "blur")) {
-                flags = 1U << 28U;
-                maximum = 256.0F;
-                const auto length = parse_length(std::string{argument});
-                switch (length.unit) {
-                case length_unit::pixels:
-                case length_unit::em:
-                case length_unit::rem:
-                case length_unit::viewport_width:
-                case length_unit::viewport_height:
-                case length_unit::viewport_width_capped:
-                case length_unit::viewport_height_capped:
-                case length_unit::viewport_width_floored:
-                case length_unit::viewport_height_floored:
-                case length_unit::container_inline:
-                case length_unit::container_block:
-                case length_unit::container_min:
-                case length_unit::container_max:
-                    amount = resolve_length(node, length, 0.0F, -1.0F);
-                    break;
-                default:
-                    break;
-                }
-            } else {
-                const auto parsed = css::parse_ascii_number_prefix(argument);
-                if (!parsed.has_value() || parsed->value < 0.0F) {
-                    result.clear();
-                    return result;
-                }
-                const auto suffix = argument.substr(parsed->consumed);
-                if (equals_ascii_case_insensitive(name, "brightness")) {
-                    flags = 1U << 31U;
-                    maximum = 10.0F;
-                } else if (equals_ascii_case_insensitive(name, "grayscale")) {
-                    flags = 1U << 30U;
-                    maximum = 1.0F;
-                } else if (equals_ascii_case_insensitive(name, "contrast")) {
-                    flags = 1U << 29U;
-                    maximum = 10.0F;
-                } else if (equals_ascii_case_insensitive(name, "saturate")) {
-                    flags = 1U << 27U;
-                    maximum = 10.0F;
-                } else {
-                    result.clear();
-                    return result;
-                }
-                amount = suffix.empty()
-                    ? parsed->value
-                    : suffix == "%" ? parsed->value / 100.0F : -1.0F;
-            }
-            if (amount < 0.0F || amount > maximum) {
-                result.clear();
-                return result;
-            }
-            result.push_back(retained_foreground_filter{flags, amount});
-            remaining.remove_prefix(closing + 1U);
-            if (!remaining.empty()
-                && !std::isspace(static_cast<unsigned char>(remaining.front()))) {
-                result.clear();
-                return result;
-            }
-            remaining = trim(remaining);
+        if (known != effects.end()
+            && parse_foreground_filters(
+                node, known->second, parsed_foreground_filters)) {
+            foreground_filters = std::span<const retained_filter_function>{
+                parsed_foreground_filters};
         }
-        return result;
-    }();
+    }
     struct retained_backdrop_effect final {
         bool present{};
         std::string resource;
@@ -758,11 +786,12 @@ void native_document::append_scene(
     }
     // SaveLayer effects apply when their groups restore. Open in reverse CSS
     // order so restoration applies the authored function list left-to-right.
-    for (auto filter = foreground_filters.rbegin();
-         filter != foreground_filters.rend(); ++filter) {
+    for (size_t filter_index = foreground_filters.size(); filter_index > 0U;
+         --filter_index) {
+        const auto& filter = foreground_filters[filter_index - 1U];
         commands.push_back(webscene_scene_command{
             30U,
-            filter->flags,
+            filter.flags,
             node.layout.x,
             node.layout.y,
             node.layout.width,
@@ -773,7 +802,7 @@ void native_document::append_scene(
             0,
             0,
             0,
-            filter->amount});
+            filter.amount});
     }
     const auto resolve_transform_origin = [](css_length value, float available, float fallback) {
         if (value.unit == length_unit::pixels) return value.value;

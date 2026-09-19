@@ -250,7 +250,10 @@ struct node_style final {
         transition_timing background_color_transition{};
         transition_timing filter_transition{};
         transition_timing display_transition{};
+        transition_timing block_size_transition{};
+        transition_timing content_visibility_transition{};
         bool display_transition_allow_discrete{false};
+        bool content_visibility_transition_allow_discrete{false};
         std::string animation_name_value{"none"};
         std::string animation_duration_value{"0s"};
         std::string animation_delay_value{"0s"};
@@ -601,6 +604,7 @@ struct node_style final {
             css_length border_inline_start_width{};
             layout_rect layout{};
             float opacity{1};
+            animation_data transitions{};
             uint32_t border_inline_start_rgba{0};
             bool present{false};
             bool block_size_zero{false};
@@ -999,6 +1003,7 @@ struct node_style final {
     // layout/paint containment establishes an atomic stacking context.
     bool contain_stacking_context : 1 {false};
     bool content_visibility_hidden : 1 {false};
+    bool interpolate_size_allow_keywords : 1 {false};
     // Margin parsing passes these four flags by reference, so unlike the other
     // hot boolean style state they remain addressable scalar values.
     bool margin_left_auto{false};
@@ -1729,6 +1734,31 @@ struct dom_node final {
         double display_animation_started_ms{0};
         bool display_animation_active{false};
         bool display_animation_start_event_sent{false};
+        float details_content_painted_block_fraction{1};
+        float details_content_block_from{1};
+        float details_content_block_target{1};
+        float details_content_block_duration_ms{0};
+        float details_content_block_delay_ms{0};
+        float details_content_block_x1{0.25F};
+        float details_content_block_y1{0.1F};
+        float details_content_block_x2{0.25F};
+        float details_content_block_y2{1.0F};
+        double details_content_block_started_ms{0};
+        float details_content_painted_opacity{1};
+        float details_content_opacity_from{1};
+        float details_content_opacity_target{1};
+        float details_content_opacity_duration_ms{0};
+        float details_content_opacity_delay_ms{0};
+        float details_content_opacity_x1{0.25F};
+        float details_content_opacity_y1{0.1F};
+        float details_content_opacity_x2{0.25F};
+        float details_content_opacity_y2{1.0F};
+        double details_content_opacity_started_ms{0};
+        bool details_content_initialized{false};
+        bool details_content_block_active{false};
+        bool details_content_opacity_active{false};
+        bool details_content_block_start_event_sent{false};
+        bool details_content_opacity_start_event_sent{false};
     };
 
     uint32_t id{0};
@@ -2110,9 +2140,35 @@ inline bool is_details_content_child(
 inline bool details_content_is_suppressed(const dom_node& details) noexcept
 {
     if (details.tag != "details") return false;
+    if (const auto* animation = details.animation_runtime();
+        animation != nullptr && animation->details_content_initialized
+            && (animation->details_content_block_active
+                || animation->details_content_opacity_active
+                || animation->details_content_painted_block_fraction > 0.001F)) {
+        return false;
+    }
     if (!details.attributes.contains("open")) return true;
     const auto& content = details.style.details_content_pseudo();
     return content.present && content.block_size_zero && content.overflow_hidden;
+}
+
+inline float details_content_used_block_fraction(const dom_node& details) noexcept
+{
+    if (const auto* animation = details.animation_runtime();
+        animation != nullptr && animation->details_content_initialized) {
+        return std::clamp(
+            animation->details_content_painted_block_fraction, 0.0F, 1.0F);
+    }
+    return details.style.details_content_pseudo().block_size_zero ? 0.0F : 1.0F;
+}
+
+inline float details_content_used_opacity(const dom_node& details) noexcept
+{
+    if (const auto* animation = details.animation_runtime();
+        animation != nullptr && animation->details_content_initialized) {
+        return std::clamp(animation->details_content_painted_opacity, 0.0F, 1.0F);
+    }
+    return details.style.details_content_pseudo().opacity;
 }
 
 inline bool resolved_right_to_left(const dom_node& node) noexcept
@@ -2351,6 +2407,9 @@ public:
     void reset_detached_style_state(dom_node& root);
     void update_discrete_display_transition(
         dom_node& node, display_mode previous_display);
+    void update_details_content_transition(
+        dom_node& node,
+        const node_style::pseudo_element_pair::details_content_element& previous);
     void prime_starting_style(dom_node& node, const node_style& starting_style);
     void update_style_animations(dom_node& node);
     bool advance_animations() noexcept;

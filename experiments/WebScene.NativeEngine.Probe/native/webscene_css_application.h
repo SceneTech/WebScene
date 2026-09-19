@@ -19,6 +19,16 @@ void apply_resolved_declaration(native_document& document,dom_node& node,
     bool defer_transition_configuration = false)
 {
     const auto& name=declaration.name;
+    if (name == "interpolate-size") {
+        const auto lower = ascii_lower(trim_value(value));
+        if (lower == "allow-keywords" || lower == "numeric-only") {
+            node.style.interpolate_size_allow_keywords = lower == "allow-keywords";
+            decision.classification = "supported";
+        } else {
+            decision.classification = "invalid-authoring";
+        }
+        return;
+    }
     if (name == "mask") {
         const auto parsed = parse_mask_shorthand(value);
         if (!parsed.has_value()) {

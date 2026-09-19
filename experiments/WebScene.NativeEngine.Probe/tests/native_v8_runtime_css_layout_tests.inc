@@ -177,6 +177,69 @@ void test_details_content_pseudo_static_open_close_layout(webscene_engine* engin
     execute(engine,"document.body.innerHTML='';","details-content-cleanup.js");
 }
 
+void test_details_content_keyword_size_transition(webscene_engine* engine)
+{
+    resize(engine,420,240,1);
+    execute(engine,R"JS(
+      document.body.innerHTML=`
+        <style>
+          #animated-details { width:300px; interpolate-size:allow-keywords; }
+          #animated-details::details-content {
+            block-size:0;
+            overflow:hidden;
+            opacity:0;
+            transition:block-size 180ms linear,
+              opacity 140ms linear,
+              content-visibility 180ms allow-discrete;
+          }
+          #animated-details[open]::details-content {
+            block-size:auto;
+            opacity:1;
+          }
+        </style>
+        <details id="animated-details">
+          <summary>Completed response</summary>
+          <div style="height:60px">Animated retained content</div>
+        </details>`;
+      globalThis.animatedDetails=document.getElementById('animated-details');
+      globalThis.animatedClosedHeight=animatedDetails.getBoundingClientRect().height;
+    )JS","details-content-transition-setup.js");
+    animation_frame_and_wait(engine,0.0,7540U);
+    execute(engine,"animatedDetails.open=true;","details-content-transition-open.js");
+    require(webscene_engine_requires_animation_frame(engine)!=0U,
+        "details-content transition did not request a host frame");
+    animation_frame_and_wait(engine,90.0,7541U);
+    const auto midpoint=execute(engine,R"JS(
+      (()=>{
+        const height=animatedDetails.getBoundingClientRect().height;
+        return `${animatedClosedHeight},${height}`;
+      })()
+    )JS","details-content-transition-midpoint.js");
+    float closed=0,mid=0;
+    if(std::sscanf(midpoint.c_str(),"%f,%f",&closed,&mid)!=2
+        || !(mid>closed+1 && mid<closed+59)) {
+        fail("details-content keyword-size midpoint was not interpolated: "+midpoint);
+    }
+    animation_frame_and_wait(engine,200.0,7542U);
+    const auto opened=execute(engine,
+        "animatedDetails.getBoundingClientRect().height-animatedClosedHeight",
+        "details-content-transition-opened.js");
+    if(std::abs(std::strtof(opened.c_str(),nullptr)-60.0F)>0.1F)
+        fail("details-content keyword-size transition did not reach auto size: "+opened);
+    execute(engine,"animatedDetails.open=false;","details-content-transition-close.js");
+    animation_frame_and_wait(engine,290.0,7543U);
+    const auto closing=execute(engine,
+        "animatedDetails.getBoundingClientRect().height-animatedClosedHeight",
+        "details-content-transition-closing.js");
+    const auto closing_height=std::strtof(closing.c_str(),nullptr);
+    if(!(closing_height>1 && closing_height<59))
+        fail("details-content close transition was not retained: "+closing);
+    animation_frame_and_wait(engine,400.0,7544U);
+    require(webscene_engine_requires_animation_frame(engine)==0U,
+        "completed details-content transition retained host-frame demand");
+    execute(engine,"document.body.innerHTML='';","details-content-transition-cleanup.js");
+}
+
 void test_responsive_positioned_sizing(webscene_engine* engine)
 {
     resize(engine, 1280, 720, 1);

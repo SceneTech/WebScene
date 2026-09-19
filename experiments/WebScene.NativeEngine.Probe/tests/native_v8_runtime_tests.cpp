@@ -194,6 +194,10 @@ int main()
           test_nested_pointer_coordinate_projection();
           return 0;
         }
+        if (selected == "nested-context-menu") {
+          test_nested_context_menu_handoff();
+          return 0;
+        }
         if (selected == "nested-keyboard-handoff") {
           test_nested_keyboard_handoff_and_focus_traversal();
           return 0;

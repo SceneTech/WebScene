@@ -1132,6 +1132,140 @@ void test_nested_pointer_coordinate_projection() {
   webscene_engine_destroy(engine);
 }
 
+void test_nested_context_menu_handoff() {
+  constexpr std::string_view address{
+      "https://iframe-context-menu.test/index.html"};
+  resource_server server{
+      .content = {{std::string{address},
+                   "<!doctype html><title>frame context menu</title><body></body>"},
+                  {"https://iframe-context-menu.test/frame.html", R"HTML(
+<!doctype html><style>html,body{margin:0}#ancestor{position:absolute;left:10px;top:8px;width:40px;height:30px}#target{display:block;width:40px;height:30px}</style>
+<body data-vscode-context='{"scope":"body","shared":"body","bodyOnly":true}'>
+  <div id="ancestor" data-vscode-context='{"scope":"ancestor","shared":"ancestor","ancestorOnly":true}'>
+    <span id="target" data-vscode-context='{"shared":"target","targetOnly":true}'>target</span>
+  </div>
+  <script>
+    const state = parent.__nestedContextMenu;
+    const target = document.querySelector('#target');
+    target.addEventListener('contextmenu', event => event.preventDefault(), {once:true});
+    addEventListener('contextmenu', event => {
+      if (event.defaultPrevented) {
+        ++state.cancelled;
+        return;
+      }
+      event.preventDefault();
+      let context = {};
+      let element = event.target;
+      while (true) {
+        if (!element) break;
+        element = element.closest('[data-vscode-context]');
+        if (!element) break;
+        context = {...JSON.parse(element.dataset.vscodeContext), ...context};
+        element = element.parentElement;
+      }
+      state.pathCrossedDocument = event.composedPath().includes(frameElement);
+      parent.__receiveContextMenu({
+        clientX:event.clientX,
+        clientY:event.clientY,
+        context,
+        defaultPrevented:event.defaultPrevented
+      });
+    });
+    state.ready = true;
+  </script>
+</body>)HTML"}};
+  webscene_engine_options options{};
+  options.struct_size = sizeof(options);
+  options.resource_load_callback = load_test_resource;
+  options.resource_load_user_data = &server;
+  auto* engine = webscene_engine_create_with_options(&options);
+  require(engine != nullptr, "nested context menu engine creation failed");
+  require(webscene_engine_load_url(engine, address.data(), address.size()) != 0U,
+          "nested context menu outer document failed");
+  require(evaluate_until_equals(
+              engine, "location.href", "nested-context-menu-ready.js",
+              R"("https://iframe-context-menu.test/index.html")", 2'500)
+              == R"("https://iframe-context-menu.test/index.html")",
+          "nested context menu outer document did not become ready");
+
+  execute(engine, R"JS(
+      globalThis.__nestedContextMenu = {
+        ready:false, cancelled:0, requests:[], visibleDuringHandoff:false,
+        pathCrossedDocument:null
+      };
+      globalThis.__receiveContextMenu = data => {
+        __nestedContextMenu.requests.push(data);
+        const body = document.querySelector('#webview').contentDocument.body;
+        body.classList.toggle('vscode-context-menu-visible', true);
+        __nestedContextMenu.visibleDuringHandoff =
+          body.classList.contains('vscode-context-menu-visible');
+      };
+      document.body.style.margin = '0';
+      const frame = document.createElement('iframe');
+      frame.id = 'webview';
+      frame.dataset.vscodeContext = JSON.stringify({
+        scope:'outer', outerOnly:true
+      });
+      frame.setAttribute('sandbox', 'allow-same-origin allow-scripts');
+      frame.style.cssText =
+        'position:absolute;left:80px;top:60px;width:200px;height:120px;border:4px solid black';
+      frame.src = './frame.html';
+      document.body.appendChild(frame);
+    )JS", "nested-context-menu-setup.js");
+  require(evaluate_until_equals(
+              engine, "__nestedContextMenu.ready",
+              "nested-context-menu-frame-ready.js", "true", 3'000) == "true",
+          "nested context menu frame did not become ready: "
+              + evaluate(engine, "JSON.stringify(__nestedContextMenu)",
+                         "nested-context-menu-timeout.js"));
+
+  const auto secondary_click = [&](uint64_t sequence) {
+    const webscene_input_event down{
+        WEBSCENE_INPUT_POINTER_DOWN, 2U | (3U << 8U), sequence,
+        99, 77, 0, 0};
+    const webscene_input_event up{
+        WEBSCENE_INPUT_POINTER_UP, (3U << 8U), sequence + 1U,
+        99, 77, 0, 0};
+    const auto consumed_before = consumed_input_count(engine);
+    require(webscene_engine_enqueue(engine, &down) != 0,
+            "nested context menu pointer down was rejected");
+    require(webscene_engine_enqueue(engine, &up) != 0,
+            "nested context menu pointer up was rejected");
+    wait_for_consumed_inputs(
+        engine, consumed_before + 2U,
+        "nested context menu pointer inputs were not consumed");
+  };
+
+  secondary_click(9501U);
+  require(
+      evaluate(engine, R"JS(JSON.stringify({
+        cancelled:__nestedContextMenu.cancelled,
+        requestCount:__nestedContextMenu.requests.length,
+        visible:document.querySelector('#webview').contentDocument.body.classList
+          .contains('vscode-context-menu-visible')
+      }))JS", "nested-context-menu-cancelled.js")
+          == R"({"cancelled":1,"requestCount":0,"visible":false})",
+      "a child-cancelled context menu escaped to the Code-shaped handler");
+
+  secondary_click(9503U);
+  const auto result = evaluate(engine, R"JS(JSON.stringify({
+      request:__nestedContextMenu.requests[0],
+      visibleDuringHandoff:__nestedContextMenu.visibleDuringHandoff,
+      pathCrossedDocument:__nestedContextMenu.pathCrossedDocument
+    }))JS", "nested-context-menu-result.js");
+  require(
+      result == R"JSON({"request":{"clientX":15,"clientY":13,"context":{"scope":"ancestor","shared":"target","bodyOnly":true,"ancestorOnly":true,"targetOnly":true},"defaultPrevented":true},"visibleDuringHandoff":true,"pathCrossedDocument":false})JSON",
+      "nested Code-shaped context menu handoff diverged: " + result);
+
+  require(evaluate(engine, R"JS((() => {
+      const body=document.querySelector('#webview').contentDocument.body;
+      body.classList.toggle('vscode-context-menu-visible', false);
+      return !body.classList.contains('vscode-context-menu-visible');
+    })())JS", "nested-context-menu-hidden.js") == "true",
+          "context menu visibility did not clear in the child document");
+  webscene_engine_destroy(engine);
+}
+
 void test_nested_keyboard_handoff_and_focus_traversal() {
   constexpr std::string_view address{
       "https://iframe-keyboard.test/index.html"};

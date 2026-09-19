@@ -4821,6 +4821,7 @@
             return;
         }
         const auto compiled = self->cached_css_selector_list(selector);
+        auto* document_root = self->css_cascade_root_for_node(*node);
         for (auto* candidate = node; candidate != nullptr;
             candidate = self->document.dom_parent(*candidate)) {
             if (self->compiled_css_selector_list_matches(
@@ -4829,6 +4830,11 @@
                 info.GetReturnValue().Set(self->wrap_node(*candidate));
                 return;
             }
+            // Retained layout nests a child document below its iframe owner,
+            // but DOM ancestry APIs remain scoped to the node's Document.
+            // In particular, Code OSS repeatedly calls closest() while
+            // collecting data-vscode-context values for a webview menu.
+            if (candidate == document_root) break;
         }
         info.GetReturnValue().Set(v8::Null(info.GetIsolate()));
     }

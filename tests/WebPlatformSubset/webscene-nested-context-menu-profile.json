@@ -1,0 +1,29 @@
+{
+  "profile": "webscene-nested-context-menu-1",
+  "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+  "runtime": "v8",
+  "viewport": {
+    "width": 800,
+    "height": 600,
+    "deviceScaleFactor": 1
+  },
+  "required": [
+    {
+      "path": "contracts/nested-context-menu-handoff.html",
+      "type": "contract",
+      "capabilities": [
+        "nested-context-menu-cancellation",
+        "document-bounded-context-ancestry",
+        "data-context-ancestor-merge",
+        "nested-context-menu-visibility",
+        "nested-context-menu-coordinate-handoff"
+      ],
+      "evidence": [
+        "code-oss-webview-context-menu"
+      ],
+      "reason": "Chrome/native oracle for the unchanged Code OSS webview context-menu listener: prior cancellation, target-to-body data context merging, child-document event paths, visibility class propagation, and child-local menu coordinates."
+    }
+  ],
+  "harnessBlocked": [],
+  "excluded": []
+}

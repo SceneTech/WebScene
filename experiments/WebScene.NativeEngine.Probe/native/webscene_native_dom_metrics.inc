@@ -149,16 +149,21 @@ native_document::allocation_metrics native_document::read_allocation_metrics() c
                     * sizeof(retained_filter_function)
                 + animation->filter_animation_target.capacity()
                     * sizeof(retained_filter_function)
-                + animation->opacity_keyframe_animation_signature.capacity() + 1U
-                + animation->rotation_keyframe_animation_signature.capacity() + 1U
-                + animation->filter_keyframe_animation_signature.capacity() + 1U
-                + animation->filter_keyframes.capacity()
-                    * sizeof(dom_node::animation_runtime_data::retained_filter_keyframe)
-                + animation->filter_keyframe_underlying.capacity()
-                    * sizeof(retained_filter_function);
-            for (const auto& stop : animation->filter_keyframes) {
-                result.animation_runtime_storage_bytes += stop.functions.capacity()
-                    * sizeof(retained_filter_function);
+                + animation->keyframe_animations.capacity()
+                    * sizeof(dom_node::animation_runtime_data::keyframe_animation_runtime);
+            for (const auto& track : animation->keyframe_animations) {
+                result.animation_runtime_storage_bytes +=
+                    track.name.capacity() + track.signature.capacity() + 2U
+                    + track.filter_keyframes.capacity()
+                        * sizeof(dom_node::animation_runtime_data::retained_filter_keyframe)
+                    + track.filter_underlying.capacity()
+                        * sizeof(retained_filter_function)
+                    + track.painted_filter_functions.capacity()
+                        * sizeof(retained_filter_function);
+                for (const auto& stop : track.filter_keyframes) {
+                    result.animation_runtime_storage_bytes += stop.functions.capacity()
+                        * sizeof(retained_filter_function);
+                }
             }
         }
         if (node == nullptr || !node->has_canvas_data()) continue;
@@ -208,17 +213,23 @@ native_document::allocation_metrics native_document::read_allocation_metrics() c
             + string_bytes(animations->animation_delay_value)
             + string_bytes(animations->animation_timing_function_value)
             + string_bytes(animations->animation_iteration_count_value)
-            + string_bytes(animations->opacity_keyframe_animation_signature)
-            + string_bytes(animations->rotation_keyframe_animation_signature)
-            + string_bytes(animations->filter_keyframe_animation_signature)
-            + animations->opacity_keyframes.capacity()
-                * sizeof(node_style::opacity_keyframe)
-            + animations->rotation_keyframes.capacity()
-                * sizeof(node_style::rotation_keyframe)
-            + animations->filter_keyframes.capacity()
-                * sizeof(node_style::filter_keyframe);
-        for (const auto& stop : animations->filter_keyframes) {
-            result.animation_storage_bytes += string_bytes(stop.value);
+            + string_bytes(animations->animation_direction_value)
+            + string_bytes(animations->animation_fill_mode_value)
+            + string_bytes(animations->animation_play_state_value)
+            + animations->keyframe_animations.capacity()
+                * sizeof(node_style::animation_data::keyframe_animation);
+        for (const auto& track : animations->keyframe_animations) {
+            result.animation_storage_bytes +=
+                string_bytes(track.name) + string_bytes(track.signature)
+                + track.opacity_keyframes.capacity()
+                    * sizeof(node_style::opacity_keyframe)
+                + track.rotation_keyframes.capacity()
+                    * sizeof(node_style::rotation_keyframe)
+                + track.filter_keyframes.capacity()
+                    * sizeof(node_style::filter_keyframe);
+            for (const auto& stop : track.filter_keyframes) {
+                result.animation_storage_bytes += string_bytes(stop.value);
+            }
         }
     }
     result.background_image_data_count = background_allocations.size();

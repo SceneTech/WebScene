@@ -2045,14 +2045,7 @@
             || name == "transition-timing-function") {
             value = node->style.animations().transition_timing_function_value;
         } else if (name == "animation") {
-            value = node->style.animations().animation_name_value + " "
-                + node->style.animations().animation_duration_value + " "
-                + node->style.animations().animation_timing_function_value + " "
-                + node->style.animations().animation_delay_value + " "
-                + node->style.animations().animation_iteration_count_value + " "
-                + node->style.animations().animation_direction_value + " "
-                + node->style.animations().animation_fill_mode_value + " "
-                + node->style.animations().animation_play_state_value;
+            value = css::serialize_animation_shorthand(node->style.animations());
         } else if (name == "animationName" || name == "animation-name") {
             value = node->style.animations().animation_name_value;
         } else if (name == "animationDuration" || name == "animation-duration") {

@@ -1896,6 +1896,13 @@
       "reason": "WPT-aligned single-animation reduction for running/paused metadata, positive- and negative-delay holds, mid-active pause and resume continuity, direction-aware supported-property paint, exactly-once completion, cleanup, and settled scheduling."
     },
     {
+      "path": "contracts/css-animation-multiple-lists.html",
+      "type": "contract",
+      "capabilities": ["animation-list-coordination", "longhand-list-repetition-and-truncation", "multi-item-shorthand-serialization", "independent-track-state", "last-contributing-replace-composition", "ordered-exactly-once-animation-end", "track-removal-cleanup", "bounded-frame-demand"],
+      "evidence": ["css-animation-multiple-lists-672-242"],
+      "reason": "WPT-aligned bounded reduction for coordinated animation lists, per-track clocks and state, supported-property replace composition, ordered completion, serialization, and cleanup."
+    },
+    {
       "path": "contracts/css-filter-keyframes-temporal.html",
       "type": "contract",
       "capabilities": ["keyframes-filter", "filter-identity-interpolation", "compound-filter-order", "host-frame-clock", "bounded-frame-samples", "finite-filter-fill", "animationend-event", "filter-lifecycle-cleanup"],

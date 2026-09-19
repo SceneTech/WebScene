@@ -1,0 +1,78 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Bounded comma-separated CSS animations coordinate independent tracks</title>
+<style>
+  @keyframes list-low { from { opacity: 0; } to { opacity: .4; } }
+  @keyframes list-high { from { opacity: .6; transform: rotate(0); }
+    to { opacity: 1; transform: rotate(180deg); } }
+  #sample {
+    animation-name: list-low, list-high;
+    animation-duration: 200ms;
+    animation-timing-function: linear;
+    animation-delay: 0ms, 100ms;
+    animation-iteration-count: 1;
+    animation-direction: normal, reverse;
+    animation-fill-mode: both;
+    animation-play-state: running, paused;
+  }
+  #ordered { animation: list-low 50ms linear both, list-high 50ms linear both; }
+</style>
+<div id="sample"></div><div id="ordered"></div>
+<script>
+  const state = window.__webSceneWptState = {
+    complete: false, harness: null, results: [], errors: [], diagnostics: []
+  };
+  const sample = document.getElementById("sample");
+  const ordered = document.getElementById("ordered");
+  const ends = [];
+  ordered.addEventListener("animationend", event => ends.push(event.animationName));
+  let settled = false;
+  const finish = (error, diagnostics = []) => {
+    if (settled) return;
+    settled = true;
+    state.diagnostics = diagnostics;
+    state.results.push({
+      name: "multiple animation lists coordinate bounded retained tracks",
+      status: error ? "FAIL" : "PASS",
+      message: error ? String(error && error.message || error) : null,
+      stack: error && error.stack ? String(error.stack) : null
+    });
+    state.harness = error
+      ? { status: 1, message: state.results[0].message, stack: state.results[0].stack }
+      : { status: 0, message: null, stack: null };
+    state.complete = true;
+  };
+  const timeout = setTimeout(
+    () => finish(new Error("multiple animation list deadline exceeded")), 1000);
+  requestAnimationFrame(() => {
+    try {
+      const style = getComputedStyle(sample);
+      if (style.animationName !== "list-low, list-high"
+          || style.animationDuration !== "200ms"
+          || style.animationDelay !== "0ms, 100ms"
+          || style.animationPlayState !== "running, paused"
+          || style.animation.split(",").length !== 2
+          || Math.abs(Number(style.opacity) - 1) > .035) {
+        throw new Error("list metadata, repetition, serialization, or composition differs");
+      }
+      setTimeout(() => requestAnimationFrame(() => {
+        try {
+          if (JSON.stringify(ends) !== '["list-low","list-high"]') {
+            throw new Error("same-frame animationend order differs");
+          }
+          sample.style.animationName = "list-low";
+          requestAnimationFrame(() => {
+            try {
+              if (getComputedStyle(sample).animationName !== "list-low"
+                  || Number(getComputedStyle(sample).opacity) > .41) {
+                throw new Error("removed later track retained paint");
+              }
+              clearTimeout(timeout);
+              finish(null, [JSON.stringify({ ends, animation: style.animation })]);
+            } catch (error) { clearTimeout(timeout); finish(error); }
+          });
+        } catch (error) { clearTimeout(timeout); finish(error); }
+      }), 100);
+    } catch (error) { clearTimeout(timeout); finish(error); }
+  });
+</script>

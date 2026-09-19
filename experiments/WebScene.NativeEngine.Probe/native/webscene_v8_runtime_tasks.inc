@@ -4244,7 +4244,7 @@
             }
             if (changed_button == 1 && !mouse_up_default_prevented
                 && !auxiliary_click_default_prevented) {
-                auto activation_flags =
+                uint32_t activation_flags =
                     WEBSCENE_HOST_REQUEST_EXTERNAL_NEW_CONTEXT_V1;
                 if ((input.flags & WEBSCENE_INPUT_POINTER_MODIFIER_SHIFT) == 0U) {
                     activation_flags |=

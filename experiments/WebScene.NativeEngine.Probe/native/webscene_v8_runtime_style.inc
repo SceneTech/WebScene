@@ -912,7 +912,7 @@
             node->style.mutable_table().border_collapsed = value == "collapse";
             node->style.inline_property_mask |= inline_table_border_model;
         } else if (name == "aspect-ratio") {
-            if (parse_preferred_aspect_ratio(
+            if (css::parse_preferred_aspect_ratio(
                     value,
                     node->style.aspect_ratio_width,
                     node->style.aspect_ratio_height)) {
@@ -2503,7 +2503,7 @@
             node->style.mutable_table().border_collapsed = value == "collapse";
             node->style.inline_property_mask |= inline_table_border_model;
         } else if (name == "aspectRatio") {
-            if (parse_preferred_aspect_ratio(
+            if (css::parse_preferred_aspect_ratio(
                     value,
                     node->style.aspect_ratio_width,
                     node->style.aspect_ratio_height)) {

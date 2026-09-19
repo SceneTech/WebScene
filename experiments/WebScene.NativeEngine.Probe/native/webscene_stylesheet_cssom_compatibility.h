@@ -1,5 +1,5 @@
 #pragma once
-#include <string_view>
+#include "webscene_embedded_source.h"
 
 namespace webscene_native {
 // The pinned WebScene exposes a stable native HTMLStyleElement.sheet object,
@@ -10,7 +10,7 @@ namespace webscene_native {
 // Imported sheets use the host stylesheet loader and keep their authored CSSOM
 // tree separate from the flattened native publication payload.
 // Semantics: https://www.w3.org/TR/cssom-1/
-inline constexpr std::string_view cssCompatibilityScript = R"JS(
+inline constexpr std::array<std::string_view, 7> cssCompatibilityScriptParts{R"JS(
 // SCENETECH_CSS_COMPATIBILITY_V1
 (() => {
   'use strict';
@@ -255,7 +255,8 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
         cursor = index + 1;
         continue;
       }
-      if (!atEnd && character === '{') {
+)JS",
+R"JS(      if (!atEnd && character === '{') {
         const prelude = source.slice(cursor, index).trim();
         if (!prelude) exception('A nested rule requires a prelude', 'SyntaxError');
         flushDeclarations();
@@ -527,7 +528,8 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
             else if (character === quote) quote = '';
             continue;
           }
-          if (character === '"' || character === "'") { quote = character; continue; }
+)JS",
+R"JS(          if (character === '"' || character === "'") { quote = character; continue; }
           if (character === '(') parentheses++;
           else if (character === ')' && parentheses) parentheses--;
           else if (character === '[') brackets++;
@@ -821,7 +823,8 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
     const identifier = /^(-?[_a-zA-Z][_a-zA-Z0-9-]*)\s+/.exec(source);
     if (identifier) {
       prefix = identifier[1];
-      source = source.slice(identifier[0].length).trim();
+)JS",
+R"JS(      source = source.slice(identifier[0].length).trim();
     }
     let namespaceURI = '';
     if (source[0] === '"' || source[0] === "'") {
@@ -1098,7 +1101,8 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
         }
       }
       if (loaded?.url) resolvedHref = String(loaded.url);
-      ancestors.add(resolvedHref);
+)JS",
+R"JS(      ancestors.add(resolvedHref);
       childState = {
         sheet: childSheet,
         owner: null,
@@ -1382,7 +1386,8 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
           if (attached()) publish(state);
           return index;
         } },
-        deleteRule: { writable: true, value(index) {
+)JS",
+R"JS(        deleteRule: { writable: true, value(index) {
           if (arguments.length === 0) throw new TypeError('A rule index is required');
           synchronize(state);
           index = Number(index) >>> 0;
@@ -1677,7 +1682,8 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
           }
         }
       },
-      insertRule: { configurable: true, writable: true, value(rule, index = 0) {
+)JS",
+R"JS(      insertRule: { configurable: true, writable: true, value(rule, index = 0) {
         if (arguments.length === 0) throw new TypeError('A CSS rule is required');
         const current = stateFor(this);
         index = Number(index) >>> 0;
@@ -1950,5 +1956,6 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
     value: augment, configurable: true
   });
 })();
-)JS";
+)JS"};
+static_assert(embedded_source_parts_are_portable(cssCompatibilityScriptParts));
 }

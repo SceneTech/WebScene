@@ -135,10 +135,10 @@ int main() {
     const auto resident_before = resident_bytes();
     const auto started = std::chrono::steady_clock::now();
     for (std::uint64_t index = 0; index < cycles; ++index) {
-        const auto action = index % 3 == 0
+        const auto action = static_cast<std::uint32_t>(index % 3 == 0
             ? WEBSCENE_FILE_GRANT_DURABLE_EXPORT_V2
             : index % 3 == 1 ? WEBSCENE_FILE_GRANT_DURABLE_RESTORE_V2
-                             : WEBSCENE_FILE_GRANT_DURABLE_REVOKE_V2;
+                             : WEBSCENE_FILE_GRANT_DURABLE_REVOKE_V2);
         request_fixture current{100 + index, action};
         require(broker.queue(current.request,
             [&](file_grant_durable_completion_data_v2&&) { ++callbacks; }),

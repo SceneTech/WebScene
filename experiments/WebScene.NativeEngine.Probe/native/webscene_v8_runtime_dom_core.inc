@@ -361,7 +361,7 @@
         } else if (owner->tag == "style") {
             append_node_text(*owner, source);
         }
-        info.GetReturnValue().Set(js_string(info.GetIsolate(), source));
+        info.GetReturnValue().Set(js_string(info.GetIsolate(), source.c_str()));
     }
 
     static void load_style_sheet_import(
@@ -390,9 +390,9 @@
         }
         auto result = v8::Object::New(info.GetIsolate());
         result->Set(local_context, js_string(info.GetIsolate(), "source"),
-            js_string(info.GetIsolate(), source)).Check();
+            js_string(info.GetIsolate(), source.c_str())).Check();
         result->Set(local_context, js_string(info.GetIsolate(), "url"),
-            js_string(info.GetIsolate(), resolved)).Check();
+            js_string(info.GetIsolate(), resolved.c_str())).Check();
         info.GetReturnValue().Set(result);
     }
 
@@ -425,16 +425,16 @@
             }
         }
         result->Set(local_context, js_string(isolate, "href"),
-            node.tag == "link" ? js_string(isolate, base_address).As<v8::Value>()
+            node.tag == "link" ? js_string(isolate, base_address.c_str()).As<v8::Value>()
                                : v8::Null(isolate).As<v8::Value>()).Check();
         result->Set(local_context, js_string(isolate, "title"),
             node.attributes.contains("title")
-                ? js_string(isolate, node.attributes.at("title")).As<v8::Value>()
+                ? js_string(isolate, node.attributes.at("title").c_str()).As<v8::Value>()
                 : v8::Null(isolate).As<v8::Value>()).Check();
         result->DefineOwnProperty(
             local_context,
             js_string(isolate, "__webSceneBaseURL"),
-            js_string(isolate, base_address),
+            js_string(isolate, base_address.c_str()),
             static_cast<v8::PropertyAttribute>(
                 v8::DontEnum | v8::DontDelete | v8::ReadOnly)).Check();
         result->DefineOwnProperty(
@@ -1114,7 +1114,7 @@
         });
     }
 
-    const std::string& effective_document_base(dom_node* root)
+    const std::string& effective_document_base(const dom_node* root)
     {
         if (root == nullptr) root = &document.body();
         auto [found, inserted] = document_base_caches.try_emplace(root);

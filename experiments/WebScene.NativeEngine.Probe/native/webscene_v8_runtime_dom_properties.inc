@@ -3683,7 +3683,9 @@
         if(self==nullptr || form==nullptr || form->tag!="form") return;
         dom_node* submitter=nullptr;
         if(info.Length()>0 && !info[0]->IsNullOrUndefined()) {
-            submitter=unwrap_node(info[0]);
+            submitter=info[0]->IsObject()
+                ? unwrap_node(info[0].As<v8::Object>())
+                : nullptr;
             if(!is_form_submitter(submitter)) {
                 info.GetIsolate()->ThrowException(v8::Exception::TypeError(
                     js_string(info.GetIsolate(),

@@ -1358,6 +1358,22 @@ state.ready=true;
               "true", 3'000) == "true",
           "nested anchor frame did not become ready");
 
+  execute_and_wait(engine, R"JS((() => {
+      const frame=document.querySelector('#webview');
+      frame.sandbox.add('allow-downloads');
+      const view=frame.contentWindow;
+      const anchor=view.document.createElement('a');
+      anchor.href=view.URL.createObjectURL(new view.Blob(
+        [new Uint8Array([0,1,2,255])],{type:'application/octet-stream'}));
+      anchor.download='../nested.bin';
+      view.document.body.appendChild(anchor);
+      anchor.click();
+      view.__downloadAnchor=anchor;
+      frame.sandbox.remove('allow-downloads');
+    })())JS", "nested-download-activation-blocked.js");
+  require(!take_download_request(engine),
+      "script-only nested download escaped without native activation");
+
   auto sequence = uint64_t{9601U};
   const auto activate = [&](double child_y, int button, uint32_t modifiers = 0U) {
     const auto encoded_button = static_cast<uint32_t>(button + 1) << 8U;
@@ -1445,6 +1461,38 @@ state.ready=true;
           && evaluate(engine, "__nestedAnchor.unsafe", "nested-anchor-unsafe.js")
               == "false",
       "cancelled, document-crossing, or non-HTTP activation widened navigation authority");
+
+  activate(15, 0);
+  execute_and_wait(engine, R"JS((() => {
+      const view=document.querySelector('#webview').contentWindow;
+      view.__downloadAnchor.click();
+    })())JS", "nested-download-sandbox-blocked.js");
+  require(!take_download_request(engine),
+      "sandboxed child download escaped without allow-downloads");
+
+  execute_and_wait(engine, R"JS((() => {
+      document.querySelector('#webview').sandbox.add('allow-downloads');
+      document.querySelector('#webview').contentWindow.__downloadAnchor.click();
+    })())JS", "nested-download-sandbox-allowed.js");
+  const auto nested_download = take_download_request(engine);
+  require(nested_download.source_kind == WEBSCENE_DOWNLOAD_SOURCE_BYTES_V1
+          && nested_download.suggested_name == "nested.bin"
+          && nested_download.mime_type == "application/octet-stream"
+          && nested_download.bytes == std::vector<uint8_t>({0U,1U,2U,255U})
+          && nested_download.total_size == 4U
+          && nested_download.source_origin == "https://iframe-anchor.test"
+          && nested_download.document_generation != 0U
+          && nested_download.frame_generation != 0U
+          && nested_download.frame_owner_node_id != 0U
+          && nested_download.target_node_id != 0U,
+      "allowed nested download lost origin, generation, name, MIME, size, or bytes");
+  execute_and_wait(engine, R"JS((() => {
+      const frame=document.querySelector('#webview');
+      frame.contentWindow.__downloadAnchor.click();
+      frame.src='about:blank';
+    })())JS", "nested-download-navigation-cancellation.js");
+  require(!take_download_request(engine),
+      "child navigation did not cancel its queued download transfer");
   webscene_engine_destroy(engine);
 }
 

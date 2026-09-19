@@ -2777,16 +2777,16 @@ void test_pointer_cursor_and_external_anchor_host_handoff(webscene_engine* engin
             == R"({"connected":false,"downloadProperty":"AAPL_2026-08-25_14-30-00.png","hasOwnDownload":false,"hrefAttribute":"data:image/png;base64,iVBORw==","downloadAttribute":"AAPL_2026-08-25_14-30-00.png"})",
         "TradingView-style anchor properties did not reflect before detached activation: "
             + tradingview_download_state);
-    const auto download_request = take_host_request(engine);
+    const auto download_request = take_download_request(engine);
     require(
-        download_request.find(R"("kind":"download")") != std::string::npos
-            && download_request.find(
-                R"("suggestedFileName":"AAPL_2026-08-25_14-30-00.png")")
-                != std::string::npos
-            && download_request.find(R"("url":"data:image/png;base64,iVBORw==")")
-                != std::string::npos,
-        "TradingView-style detached data-URL download did not reach the host save request: "
-            + download_request);
+        download_request.source_kind == WEBSCENE_DOWNLOAD_SOURCE_URL_V1
+            && download_request.suggested_name
+                == "AAPL_2026-08-25_14-30-00.png"
+            && download_request.mime_type == "image/png"
+            && download_request.source_url == "data:image/png;base64,iVBORw=="
+            && download_request.document_generation != 0U
+            && download_request.source_origin == "http://127.0.0.1",
+        "TradingView-style detached data-URL download did not reach the typed transfer");
 
     execute(engine, R"JS(
         (() => {
@@ -2825,16 +2825,17 @@ void test_pointer_cursor_and_external_anchor_host_handoff(webscene_engine* engin
     require(
         evaluate(engine, "true", "native-shared-blob-download-barrier.js") == "true",
         "shared Blob download activation did not drain");
-    const auto shared_blob_download = take_host_request(engine);
+    const auto shared_blob_download = take_download_request(engine);
     require(
-        shared_blob_download.find(R"("kind":"download")") != std::string::npos
-            && shared_blob_download.find(R"("suggestedFileName":"frame.html")")
-                != std::string::npos
-            && shared_blob_download.find(
-                R"("url":"data:text/html;base64,PHNjcmlwdD5wYXJlbnQuX19ibG9iRnJhbWVMb2FkZWQ9J29rJzwvc2NyaXB0Pg==")")
-                != std::string::npos,
-        "one Blob object URL did not preserve its distinct navigation and download representations: "
-            + shared_blob_download);
+        shared_blob_download.source_kind == WEBSCENE_DOWNLOAD_SOURCE_BYTES_V1
+            && shared_blob_download.suggested_name == "frame.html"
+            && shared_blob_download.mime_type == "text/html"
+            && std::string(shared_blob_download.bytes.begin(),
+                    shared_blob_download.bytes.end())
+                == "<script>parent.__blobFrameLoaded='ok'</script>"
+            && shared_blob_download.total_size
+                == shared_blob_download.bytes.size(),
+        "one Blob object URL did not preserve exact download bytes and metadata");
 
     const auto screenshot_download_state = evaluate(engine, R"JS(
         (() => {
@@ -2865,18 +2866,16 @@ void test_pointer_cursor_and_external_anchor_host_handoff(webscene_engine* engin
                 != std::string::npos,
         "canvas toBlob object URL did not expose the host snapshot token: "
             + screenshot_download_state);
-    const auto screenshot_download_request = take_host_request(engine);
+    const auto screenshot_download_request = take_download_request(engine);
     require(
-        screenshot_download_request.find(R"("kind":"download")") != std::string::npos
-            && screenshot_download_request.find(
-                R"("suggestedFileName":"AAPL_2026-08-25_14-30-01.png")")
-                != std::string::npos
-            && screenshot_download_request.find(R"("canvasNodeId":)")
-                != std::string::npos
-            && screenshot_download_request.find(R"("url":)")
-                == std::string::npos,
-        "TradingView canvas Blob URL download did not preserve its retained canvas identity: "
-            + screenshot_download_request);
+        screenshot_download_request.source_kind
+                == WEBSCENE_DOWNLOAD_SOURCE_CANVAS_V1
+            && screenshot_download_request.suggested_name
+                == "AAPL_2026-08-25_14-30-01.png"
+            && screenshot_download_request.mime_type == "image/png"
+            && screenshot_download_request.canvas_node_id != 0U
+            && screenshot_download_request.source_url.empty(),
+        "TradingView canvas Blob URL download did not preserve its retained canvas identity");
 
     auto detached_canvas_retained = false;
     webscene_engine_request_scene_checkpoint(engine);

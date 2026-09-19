@@ -237,6 +237,7 @@
     std::mutex host_request_mutex;
     std::deque<std::string> host_requests;
     std::deque<std::unique_ptr<native_host_request>> typed_host_requests;
+    std::deque<std::unique_ptr<native_download_request>> download_requests;
     struct host_promise_target {
         std::string operation;
         uint32_t target_node_id{};

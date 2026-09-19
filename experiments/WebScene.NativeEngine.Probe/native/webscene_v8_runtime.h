@@ -66,6 +66,24 @@ struct native_host_request {
         view.url = url.empty() ? nullptr : url.c_str();
     }
 };
+struct native_download_request {
+    webscene_download_request_v1 view{};
+    std::string source_origin;
+    std::string suggested_name;
+    std::string mime_type;
+    std::vector<uint8_t> bytes;
+    std::string source_url;
+    void bind() {
+        view.struct_size = sizeof(view);
+        view.version = 1;
+        view.source_origin = source_origin.c_str();
+        view.suggested_name = suggested_name.c_str();
+        view.mime_type = mime_type.empty() ? nullptr : mime_type.c_str();
+        view.bytes = bytes.empty() ? nullptr : bytes.data();
+        view.byte_count = bytes.size();
+        view.source_url = source_url.empty() ? nullptr : source_url.c_str();
+    }
+};
 
 class native_document;
 struct dom_node;
@@ -377,6 +395,7 @@ public:
     void enable_file_service(bool enabled);
     void set_native_media_policy(uint32_t flags);
     std::unique_ptr<native_file_request> take_file_request();
+    std::unique_ptr<native_download_request> take_download_request();
     void complete_file_request(native_file_completion& completion);
     void complete_file_panel_request(file_panel_completion_data_v2& completion);
     void complete_file_grant_same_entry_request(

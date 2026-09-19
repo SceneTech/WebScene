@@ -5829,6 +5829,15 @@ struct v8_dom_runtime::implementation final {
         return request;
     }
 
+    std::unique_ptr<native_download_request> take_download_request()
+    {
+        std::lock_guard lock(host_request_mutex);
+        if (download_requests.empty()) return {};
+        auto request = std::move(download_requests.front());
+        download_requests.pop_front();
+        return request;
+    }
+
     uint32_t current_cursor_kind() const noexcept
     {
         return current_cursor_kind_value;
@@ -5863,6 +5872,123 @@ struct v8_dom_runtime::implementation final {
     }
 
 #include "webscene_v8_runtime_files.inc"
+
+    bool queue_download_request(dom_node& anchor, const std::string& authored_url)
+    {
+        constexpr auto activation_lifetime = std::chrono::seconds(5);
+        constexpr size_t maximum_name_bytes = 4096U;
+        constexpr size_t maximum_mime_bytes = 256U;
+        constexpr size_t maximum_origin_bytes = 4096U;
+        constexpr size_t maximum_url_bytes = 8192U;
+        constexpr size_t maximum_payload_bytes = 64U * 1024U * 1024U;
+        constexpr size_t maximum_pending = 16U;
+
+        if (last_user_activation.time_since_epoch().count() == 0
+            || std::chrono::steady_clock::now() - last_user_activation
+                > activation_lifetime) return true;
+
+        dom_node* frame_owner = nullptr;
+        for (auto* ancestor = anchor.parent; ancestor != nullptr;
+             ancestor = ancestor->parent) {
+            if (ancestor->tag != "iframe") continue;
+            if (!iframe_sandbox_allows(*ancestor, "allow-downloads")) return true;
+            if (frame_owner == nullptr) frame_owner = ancestor;
+        }
+
+        auto request = std::make_unique<native_download_request>();
+        request->view.request_id = ++next_host_request_id;
+        request->view.document_generation =
+            document_generation.load(std::memory_order_acquire);
+        request->view.target_node_id = anchor.id;
+        request->source_origin = security_origin_for_realm(
+            isolate->GetCurrentContext());
+        if (request->source_origin.size() > maximum_origin_bytes) return false;
+        if (frame_owner != nullptr) {
+            request->view.frame_owner_node_id = frame_owner->id;
+            request->view.frame_generation =
+                current_iframe_navigation_generation(frame_owner->id);
+        }
+
+        request->suggested_name = anchor.attributes.at("download");
+        const auto slash = request->suggested_name.find_last_of("/\\");
+        if (slash != std::string::npos)
+            request->suggested_name.erase(0U, slash + 1U);
+        std::erase_if(request->suggested_name,
+            [](unsigned char value) { return value < 32U || value == 127U; });
+        if (request->suggested_name.empty() || request->suggested_name == "."
+            || request->suggested_name == "..") request->suggested_name = "download";
+        if (request->suggested_name.size() > maximum_name_bytes) return false;
+
+        constexpr std::string_view canvas_snapshot_prefix =
+            "webscene-canvas-snapshot:";
+        if (authored_url.starts_with(canvas_snapshot_prefix)) {
+            const auto suffix = std::string_view(authored_url).substr(
+                canvas_snapshot_prefix.size());
+            uint32_t canvas_node_id = 0U;
+            const auto parsed = std::from_chars(
+                suffix.data(), suffix.data() + suffix.size(), canvas_node_id);
+            if (parsed.ec != std::errc{}
+                || parsed.ptr != suffix.data() + suffix.size()
+                || canvas_node_id == 0U) return false;
+            request->view.source_kind = WEBSCENE_DOWNLOAD_SOURCE_CANVAS_V1;
+            request->view.canvas_node_id = canvas_node_id;
+            request->mime_type = "image/png";
+            request->view.total_size = std::numeric_limits<uint64_t>::max();
+        } else if (const auto canvas = object_url_canvas_node_ids.find(authored_url);
+                   canvas != object_url_canvas_node_ids.end()) {
+            request->view.source_kind = WEBSCENE_DOWNLOAD_SOURCE_CANVAS_V1;
+            request->view.canvas_node_id = canvas->second;
+            request->mime_type = "image/png";
+            request->view.total_size = std::numeric_limits<uint64_t>::max();
+        } else if (const auto file = object_url_file_data.find(authored_url);
+                   file != object_url_file_data.end()) {
+            if (file->second.bytes.size() > maximum_payload_bytes
+                || file->second.mime.size() > maximum_mime_bytes) return false;
+            request->view.source_kind = WEBSCENE_DOWNLOAD_SOURCE_BYTES_V1;
+            request->mime_type = file->second.mime.empty()
+                ? "application/octet-stream" : file->second.mime;
+            request->bytes = file->second.bytes;
+            request->view.total_size = request->bytes.size();
+        } else {
+            const auto payload = object_url_download_payloads.find(authored_url);
+            const auto object_url = object_urls.find(authored_url);
+            request->source_url = payload != object_url_download_payloads.end()
+                ? payload->second
+                : object_url == object_urls.end() ? authored_url : object_url->second;
+            if (request->source_url.size() > maximum_url_bytes) return false;
+            request->view.source_kind = WEBSCENE_DOWNLOAD_SOURCE_URL_V1;
+            request->view.total_size = std::numeric_limits<uint64_t>::max();
+            if (request->source_url.starts_with("data:")) {
+                const auto separator = request->source_url.find_first_of(";,");
+                if (separator != std::string::npos && separator > 5U) {
+                    request->mime_type = request->source_url.substr(5U, separator - 5U);
+                    if (request->mime_type.size() > maximum_mime_bytes) return false;
+                }
+            }
+        }
+
+        request->bind();
+        {
+            std::lock_guard lock(host_request_mutex);
+            if (download_requests.size() >= maximum_pending) return false;
+            size_t queued_payload_bytes = 0U;
+            for (const auto& pending : download_requests) {
+                if (pending == nullptr) continue;
+                if (pending->bytes.size()
+                    > maximum_payload_bytes - queued_payload_bytes) return false;
+                queued_payload_bytes += pending->bytes.size();
+            }
+            if (request->bytes.size()
+                > maximum_payload_bytes - queued_payload_bytes) return false;
+            download_requests.push_back(std::move(request));
+        }
+        if (host_request_available) host_request_available();
+        record_feature(
+            "html", "anchor-download", "supported",
+            "sandboxed download activation emits a bounded typed transfer lease",
+            "default-action");
+        return true;
+    }
 
     bool queue_external_navigation(dom_node& target, uint32_t activation_flags = 0U)
     {
@@ -5965,81 +6091,7 @@ struct v8_dom_runtime::implementation final {
             return true;
         }
         if (anchor->attributes.contains("download")) {
-            if (file_service_enabled.load()) return queue_file_request(*anchor, true);
-            auto local_context = frame_context.IsEmpty()
-                ? context.Get(isolate)
-                : frame_context.Get(isolate);
-            auto request = v8::Object::New(isolate);
-            request->Set(
-                local_context,
-                js_string(isolate, "kind"),
-                js_string(isolate, "download")).Check();
-            const auto file_name = anchor->attributes.at("download").empty()
-                ? std::string{"download"}
-                : anchor->attributes.at("download");
-            request->Set(
-                local_context,
-                js_string(isolate, "suggestedFileName"),
-                js_string(isolate, file_name.c_str())).Check();
-            constexpr std::string_view canvas_snapshot_prefix =
-                "webscene-canvas-snapshot:";
-            if (authored->second.starts_with(canvas_snapshot_prefix)) {
-                uint32_t canvas_node_id = 0;
-                const auto suffix = std::string_view(authored->second).substr(
-                    canvas_snapshot_prefix.size());
-                const auto parsed = std::from_chars(
-                    suffix.data(), suffix.data() + suffix.size(), canvas_node_id);
-                if (parsed.ec != std::errc{} || parsed.ptr != suffix.data() + suffix.size()) {
-                    return false;
-                }
-                request->Set(
-                    local_context,
-                    js_string(isolate, "canvasNodeId"),
-                    v8::Integer::NewFromUnsigned(isolate, canvas_node_id)).Check();
-                record_feature(
-                    "canvas",
-                    "HTMLCanvasElement.toDataURL",
-                    "partially-supported",
-                    "opaque canvas snapshot handoff to the desktop host",
-                    "native-binding");
-                return enqueue_host_request(local_context, request);
-            }
-            const auto object_url_canvas =
-                object_url_canvas_node_ids.find(authored->second);
-            if (object_url_canvas != object_url_canvas_node_ids.end()) {
-                request->Set(
-                    local_context,
-                    js_string(isolate, "canvasNodeId"),
-                    v8::Integer::NewFromUnsigned(
-                        isolate, object_url_canvas->second)).Check();
-                record_feature(
-                    "canvas",
-                    "HTMLCanvasElement.toBlob",
-                    "partially-supported",
-                    "canvas-backed object URL handoff to the desktop host",
-                    "default-action");
-                return enqueue_host_request(local_context, request);
-            }
-            const auto download_payload =
-                object_url_download_payloads.find(authored->second);
-            const auto object_url = object_urls.find(authored->second);
-            const auto& download_url =
-                download_payload != object_url_download_payloads.end()
-                    ? download_payload->second
-                    : object_url == object_urls.end()
-                        ? authored->second
-                        : object_url->second;
-            request->Set(
-                local_context,
-                js_string(isolate, "url"),
-                js_string(isolate, download_url.c_str())).Check();
-            record_feature(
-                "html",
-                "anchor-download",
-                "supported",
-                "download activation emits a typed host save request",
-                "default-action");
-            return enqueue_host_request(local_context, request);
+            return queue_download_request(*anchor, authored->second);
         }
         return queue_external_url(authored->second, activation_flags, anchor->id);
     }
@@ -8455,5 +8507,9 @@ bool v8_dom_runtime::discard_host_request() {
 }
 std::unique_ptr<native_host_request> v8_dom_runtime::take_typed_host_request() {
     return impl_->take_typed_host_request();
+}
+
+std::unique_ptr<native_download_request> v8_dom_runtime::take_download_request() {
+    return impl_->take_download_request();
 }
 }

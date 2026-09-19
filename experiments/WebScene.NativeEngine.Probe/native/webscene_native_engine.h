@@ -165,6 +165,34 @@ typedef enum webscene_semantic_action_admission_v1 {
     WEBSCENE_SEMANTIC_ACTION_PAYLOAD_TOO_LARGE_V1 = 5
 } webscene_semantic_action_admission_v1;
 
+typedef enum webscene_semantic_delta_operation_kind_v1 {
+    WEBSCENE_SEMANTIC_DELTA_REMOVE_V1 = 1,
+    WEBSCENE_SEMANTIC_DELTA_INSERT_V1 = 2,
+    WEBSCENE_SEMANTIC_DELTA_REPARENT_V1 = 3,
+    WEBSCENE_SEMANTIC_DELTA_UPDATE_V1 = 4,
+    WEBSCENE_SEMANTIC_DELTA_RELATIONSHIP_REMOVE_V1 = 5,
+    WEBSCENE_SEMANTIC_DELTA_RELATIONSHIP_ADD_V1 = 6,
+    WEBSCENE_SEMANTIC_DELTA_FOCUS_V1 = 7
+} webscene_semantic_delta_operation_kind_v1;
+
+typedef enum webscene_semantic_delta_admission_v1 {
+    WEBSCENE_SEMANTIC_DELTA_INVALID_V1 = 0,
+    WEBSCENE_SEMANTIC_DELTA_QUEUED_V1 = 1,
+    WEBSCENE_SEMANTIC_DELTA_STALE_BASE_V1 = 2,
+    WEBSCENE_SEMANTIC_DELTA_QUEUE_FULL_V1 = 3
+} webscene_semantic_delta_admission_v1;
+
+enum {
+    WEBSCENE_SEMANTIC_DELTA_FULL_SNAPSHOT_REQUIRED_V1 = 1U << 0U,
+    WEBSCENE_SEMANTIC_DELTA_OVERFLOW_V1 = 1U << 1U,
+    WEBSCENE_SEMANTIC_DELTA_TRUNCATED_SNAPSHOT_V1 = 1U << 2U,
+    WEBSCENE_SEMANTIC_DELTA_MAXIMUM_PENDING_REQUESTS_V1 = 1U,
+    WEBSCENE_SEMANTIC_DELTA_MAXIMUM_COMPLETED_LEASES_V1 = 1U,
+    WEBSCENE_SEMANTIC_DELTA_MAXIMUM_RETAINED_BASE_SNAPSHOTS_V1 = 2U,
+    WEBSCENE_SEMANTIC_DELTA_MAXIMUM_OPERATIONS_V1 = 8U * 1024U,
+    WEBSCENE_SEMANTIC_DELTA_MAXIMUM_STRING_BYTES_V1 = 2U * 1024U * 1024U
+};
+
 typedef enum webscene_semantic_live_region_role_v1 {
     WEBSCENE_SEMANTIC_LIVE_REGION_GENERIC_V1 = 0,
     WEBSCENE_SEMANTIC_LIVE_REGION_STATUS_V1 = 1,
@@ -254,6 +282,68 @@ typedef struct webscene_semantic_snapshot_view_v1 {
     uint32_t string_byte_count;
     const void* lease_token;
 } webscene_semantic_snapshot_view_v1;
+
+/* Request one worker-owned comparison from the current publication. */
+typedef struct webscene_semantic_delta_request_v1 {
+    uint32_t struct_size;
+    uint32_t version;
+    uint64_t base_snapshot_generation;
+    uint32_t flags;
+} webscene_semantic_delta_request_v1;
+
+/*
+ * Identity-based operation. INSERT and UPDATE carry a complete node value.
+ * REPARENT carries parent_semantic_id and next_sibling_semantic_id. REMOVE
+ * carries semantic_id. Relationship operations carry semantic_id as source,
+ * related_semantic_id as target and relationship_kind. FOCUS carries the new
+ * focused identity in related_semantic_id, or zero when focus cleared.
+ */
+typedef struct webscene_semantic_delta_operation_v1 {
+    uint32_t struct_size;
+    uint32_t version;
+    uint32_t kind;
+    uint32_t relationship_kind;
+    uint64_t semantic_id;
+    uint64_t parent_semantic_id;
+    uint64_t next_sibling_semantic_id;
+    uint64_t related_semantic_id;
+    uint64_t document_generation;
+    uint64_t frame_generation;
+    uint64_t states;
+    uint32_t frame_owner_dom_node_id;
+    uint32_t dom_node_id;
+    uint32_t supported_actions;
+    uint32_t reserved;
+    float x;
+    float y;
+    float width;
+    float height;
+    webscene_semantic_string_v1 role;
+    webscene_semantic_string_v1 name;
+    webscene_semantic_string_v1 value;
+    webscene_semantic_string_v1 description;
+} webscene_semantic_delta_operation_v1;
+
+/*
+ * Immutable take lease. Any flag requires discarding all operations and
+ * acquiring a full snapshot. A lease may outlive its engine.
+ */
+typedef struct webscene_semantic_delta_view_v1 {
+    uint32_t struct_size;
+    uint32_t version;
+    uint64_t base_snapshot_generation;
+    uint64_t new_snapshot_generation;
+    uint64_t base_top_document_generation;
+    uint64_t new_top_document_generation;
+    uint64_t base_layout_generation;
+    uint64_t new_layout_generation;
+    uint32_t flags;
+    const webscene_semantic_delta_operation_v1* operations;
+    uint32_t operation_count;
+    const char* string_bytes;
+    uint32_t string_byte_count;
+    const void* lease_token;
+} webscene_semantic_delta_view_v1;
 
 /*
  * One platform-neutral live-region change. text is a UTF-8 slice into its
@@ -1674,6 +1764,14 @@ WEBSCENE_API const webscene_semantic_snapshot_view_v1*
 webscene_engine_acquire_semantic_snapshot_v1(webscene_engine* engine);
 WEBSCENE_API void webscene_semantic_snapshot_release_v1(
     const webscene_semantic_snapshot_view_v1* snapshot);
+/* Admission pins an exact retained base until the worker finishes. */
+WEBSCENE_API uint32_t webscene_engine_request_semantic_delta_v1(
+    webscene_engine* engine,
+    const webscene_semantic_delta_request_v1* request);
+WEBSCENE_API const webscene_semantic_delta_view_v1*
+webscene_engine_take_semantic_delta_v1(webscene_engine* engine);
+WEBSCENE_API void webscene_semantic_delta_release_v1(
+    const webscene_semantic_delta_view_v1* delta);
 /* Queues bounded worker-thread routing; QUEUED reports admission, not DOM
  * completion. A later snapshot is the observable action result. */
 WEBSCENE_API uint32_t webscene_engine_request_semantic_action_v1(

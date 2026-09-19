@@ -1525,6 +1525,7 @@ int main()
     test_runtime_work_is_attributed();
     test_scene_flow_is_attributed();
     test_read_only_evaluation_does_not_publish_scene();
+    test_identical_custom_property_writes_do_not_schedule_visual_work();
     test_async_save_acknowledgement_publishes_without_pointer_input();
     test_ordered_scene_consumer_preserves_two_diff_chain();
     test_keyboard_and_pointer_focus_modality();

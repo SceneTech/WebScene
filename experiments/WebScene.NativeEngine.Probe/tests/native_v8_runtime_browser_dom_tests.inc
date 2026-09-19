@@ -4311,6 +4311,159 @@ void test_async_save_acknowledgement_publishes_without_pointer_input()
     webscene_engine_destroy(engine);
 }
 
+void test_identical_custom_property_writes_do_not_schedule_visual_work()
+{
+    auto* engine = webscene_engine_create(0);
+    require(engine != nullptr, "custom-property no-op engine creation failed");
+
+    const webscene_scene_view* initial = nullptr;
+    for (auto attempt = 0; attempt < 100 && initial == nullptr; ++attempt) {
+        initial = webscene_engine_acquire_latest_scene(engine);
+        if (initial == nullptr) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+    }
+    require(initial != nullptr, "custom-property no-op fixture had no initial scene");
+    require(
+        webscene_scene_acknowledge(initial) != 0,
+        "custom-property no-op fixture could not acknowledge its initial scene");
+    webscene_scene_release(initial);
+
+    execute_and_wait(
+        engine,
+        R"JS(
+          const style = document.createElement('style');
+          style.textContent = '#custom-property-noop { width: var(--editor-width); height: 24px; }';
+          document.head.appendChild(style);
+          const target = document.createElement('div');
+          target.id = 'custom-property-noop';
+          target.style.setProperty('--editor-width', '120px');
+          document.body.appendChild(target);
+        )JS",
+        "custom-property-noop-setup.js");
+    require(
+        evaluate(
+            engine,
+            "document.getElementById('custom-property-noop').offsetWidth",
+            "custom-property-noop-ready.js") == "120",
+        "custom-property no-op fixture did not complete initial layout");
+
+    auto setup_scene_acknowledged = false;
+    for (auto attempt = 0; attempt < 100; ++attempt) {
+        const auto* scene = webscene_engine_acquire_latest_scene(engine);
+        if (scene != nullptr) {
+            require(
+                webscene_scene_acknowledge(scene) != 0,
+                "custom-property no-op setup scene could not be acknowledged");
+            webscene_scene_release(scene);
+            setup_scene_acknowledged = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    require(
+        setup_scene_acknowledged,
+        "custom-property no-op setup scene was not published");
+    std::this_thread::sleep_for(std::chrono::milliseconds(25));
+
+    webscene_engine_metrics connected_before{};
+    webscene_engine_get_metrics(engine, &connected_before);
+    execute_and_wait(
+        engine,
+        R"JS(
+          const target = document.getElementById('custom-property-noop');
+          for (let index = 0; index < 4096; ++index) {
+            target.style.setProperty('--editor-width', '120px');
+          }
+        )JS",
+        "custom-property-noop-connected.js");
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    webscene_engine_metrics connected_after{};
+    webscene_engine_get_metrics(engine, &connected_after);
+    require(
+        connected_after.layout_passes == connected_before.layout_passes
+            && connected_after.published_scenes == connected_before.published_scenes,
+        "identical connected custom-property writes scheduled layout or publication");
+
+    execute_and_wait(
+        engine,
+        R"JS(
+          globalThis.__customPropertyNoopTarget =
+            document.getElementById('custom-property-noop');
+          globalThis.__customPropertyNoopTarget.remove();
+        )JS",
+        "custom-property-noop-detach.js");
+    auto detach_scene_acknowledged = false;
+    for (auto attempt = 0; attempt < 100; ++attempt) {
+        const auto* scene = webscene_engine_acquire_latest_scene(engine);
+        if (scene != nullptr) {
+            require(
+                webscene_scene_acknowledge(scene) != 0,
+                "custom-property no-op detach scene could not be acknowledged");
+            webscene_scene_release(scene);
+            detach_scene_acknowledged = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    require(
+        detach_scene_acknowledged,
+        "custom-property no-op detach scene was not published");
+    std::this_thread::sleep_for(std::chrono::milliseconds(25));
+
+    webscene_engine_metrics detached_before{};
+    webscene_engine_get_metrics(engine, &detached_before);
+    execute_and_wait(
+        engine,
+        R"JS(
+          for (let index = 0; index < 4096; ++index) {
+            __customPropertyNoopTarget.style.setProperty('--editor-width', '120px');
+          }
+        )JS",
+        "custom-property-noop-detached.js");
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    webscene_engine_metrics detached_after{};
+    webscene_engine_get_metrics(engine, &detached_after);
+    require(
+        detached_after.layout_passes == detached_before.layout_passes
+            && detached_after.published_scenes == detached_before.published_scenes,
+        "identical detached custom-property writes scheduled visual work");
+
+    execute_and_wait(
+        engine,
+        R"JS(
+          document.body.appendChild(__customPropertyNoopTarget);
+          delete globalThis.__customPropertyNoopTarget;
+        )JS",
+        "custom-property-noop-reattach.js");
+    webscene_engine_metrics reattached{};
+    for (auto attempt = 0; attempt < 100; ++attempt) {
+        webscene_engine_get_metrics(engine, &reattached);
+        if (reattached.published_scenes > detached_after.published_scenes) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    require(
+        evaluate(
+            engine,
+            R"JS((() => {
+              const target = document.getElementById('custom-property-noop');
+              return {
+                specified: target.style.getPropertyValue('--editor-width'),
+                width: target.offsetWidth,
+                connected: target.isConnected
+              };
+            })())JS",
+            "custom-property-noop-reattach-result.js")
+            == R"({"specified":"120px","width":120,"connected":true})",
+        "custom-property no-op state did not survive detach and reconnect");
+    webscene_engine_get_metrics(engine, &reattached);
+    require(
+        reattached.layout_passes == detached_after.layout_passes + 1U
+            && reattached.published_scenes == detached_after.published_scenes + 1U,
+        "custom-property no-op reconnect escaped one layout/publication");
+    webscene_engine_destroy(engine);
+}
+
 void test_ordered_scene_consumer_preserves_two_diff_chain()
 {
     auto* engine = webscene_engine_create(64);

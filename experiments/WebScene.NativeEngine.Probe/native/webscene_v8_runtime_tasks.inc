@@ -3417,6 +3417,7 @@
         target.mutable_form_control().checkedness_initialized = true;
         target.mutable_form_control().checkedness = checked;
         if (previous != checked) {
+            dismiss_validation_message_after_constraint_mutation(target);
             if (is_connected(target)) {
                 recascade_form_checkedness_selector_transition(
                     target,previous,checked);

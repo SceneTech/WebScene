@@ -2432,6 +2432,8 @@
         std::optional<bool> user_validity_interacted = std::nullopt,
         std::optional<bool> value_changed_by_user = std::nullopt)
     {
+        if(previous_value!=current_value)
+            dismiss_validation_message_after_constraint_mutation(subject);
         if (previous_value != current_value)
             mark_primary_selection_publication_dirty(&subject);
         document.mark_dirty();
@@ -2681,6 +2683,7 @@
     void recascade_select_validity_selector_change(
         dom_node& select,std::optional<bool> previous_value_missing=std::nullopt)
     {
+        dismiss_validation_message_after_constraint_mutation(select);
         document.mark_dirty();
         if(select.tag!="select" || !is_connected(select)) return;
         const auto current_value_missing=forms::select_value_missing(select);
@@ -2904,6 +2907,7 @@
             && previous_cascade_root != node_cascade_root) {
             activate_css_cascade(previous_cascade_root);
         }
+        reconcile_validation_message_eligibility(node);
     }
 
     void schedule_style_recascade(

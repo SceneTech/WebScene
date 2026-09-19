@@ -1102,6 +1102,7 @@
             self->detect_css_compositions(*node);
             self->mark_cssom_layout_dirty(*node, canonical_name);
         }
+        self->reconcile_validation_message_eligibility(*node);
     }
 
     static void style_get_property(const v8::FunctionCallbackInfo<v8::Value>& info)
@@ -2718,6 +2719,7 @@
             self->detect_css_compositions(*node);
             self->mark_cssom_layout_dirty(*node, canonical_name);
         }
+        self->reconcile_validation_message_eligibility(*node);
     }
 
     static void get_computed_style(const v8::FunctionCallbackInfo<v8::Value>& info)

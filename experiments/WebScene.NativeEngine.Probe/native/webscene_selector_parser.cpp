@@ -355,11 +355,34 @@ uint64_t selector_syntax_persistent_cache_hits() noexcept
 uint64_t selector_syntax_compilation_count() noexcept
 { return selector_compilations.load(std::memory_order_relaxed); }
 
-selector_syntax_output parse_selector_syntax(std::string_view input)
+std::string selector_namespace_context::cache_key() const
 {
-    if (auto cached = find_selector_process_cache(input)) return std::move(*cached);
-    if (auto cached = read_selector_persistent_cache(input)) {
-        remember_selector(std::string(input), *cached);
+    std::vector<std::pair<std::string, std::string>> ordered(
+        prefixes.begin(), prefixes.end());
+    std::sort(ordered.begin(), ordered.end());
+    std::string result = has_default_namespace
+        ? "d:" + default_namespace : "d-";
+    for (const auto& [prefix, uri] : ordered) {
+        result += '\x1f';
+        result += prefix;
+        result += '=';
+        result += uri;
+    }
+    return result;
+}
+
+namespace {
+selector_syntax_output parse_selector_syntax_impl(
+    std::string_view input,
+    const selector_namespace_context* namespaces)
+{
+    auto cache_input = std::string(input);
+    if (namespaces != nullptr) {
+        cache_input.insert(0, namespaces->cache_key() + '\x1e');
+    }
+    if (auto cached = find_selector_process_cache(cache_input)) return std::move(*cached);
+    if (auto cached = read_selector_persistent_cache(cache_input)) {
+        remember_selector(cache_input, *cached);
         return std::move(*cached);
     }
 
@@ -373,7 +396,22 @@ selector_syntax_output parse_selector_syntax(std::string_view input)
     const auto normalized = encode_wtf8_surrogates(input, transformed_wtf8);
     const auto parser_input = transformed_wtf8 ? std::string_view(normalized) : input;
     const auto started = std::chrono::steady_clock::now();
-    auto parsed = webscene_selector_parse(borrow(parser_input));
+    webscene_selector_parse_result parsed{};
+    if (namespaces == nullptr) {
+        parsed = webscene_selector_parse(borrow(parser_input));
+    } else {
+        std::vector<webscene_selector_namespace> mappings;
+        mappings.reserve(namespaces->prefixes.size());
+        for (const auto& [prefix, uri] : namespaces->prefixes) {
+            mappings.push_back({borrow(prefix), borrow(uri)});
+        }
+        parsed = webscene_selector_parse_with_namespaces(
+            borrow(parser_input),
+            borrow(namespaces->default_namespace),
+            namespaces->has_default_namespace ? 1U : 0U,
+            mappings.data(),
+            mappings.size());
+    }
     const auto finished = std::chrono::steady_clock::now();
     output.metrics.duration_ns = static_cast<uint64_t>(
         std::chrono::duration_cast<std::chrono::nanoseconds>(finished - started).count());
@@ -451,9 +489,22 @@ selector_syntax_output parse_selector_syntax(std::string_view input)
         }
         output.selectors.push_back(std::move(selector));
     }
-    remember_selector(std::string(input), output);
-    write_selector_persistent_cache(input, output);
+    remember_selector(cache_input, output);
+    write_selector_persistent_cache(cache_input, output);
     return output;
+}
+} // namespace
+
+selector_syntax_output parse_selector_syntax(std::string_view input)
+{
+    return parse_selector_syntax_impl(input, nullptr);
+}
+
+selector_syntax_output parse_selector_syntax(
+    std::string_view input,
+    const selector_namespace_context& namespaces)
+{
+    return parse_selector_syntax_impl(input, &namespaces);
 }
 
 } // namespace webscene_native

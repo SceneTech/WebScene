@@ -9,7 +9,8 @@ template<typename Observe, typename Append>
 void prepare_style_rule(std::string_view prelude,
     std::vector<css_declaration> declarations,
     const std::vector<std::string>& media, const std::string& address,
-    Observe&& observe, Append&& append)
+    Observe&& observe, Append&& append,
+    const selector_namespace_context* namespaces = nullptr)
 {
     for(auto& declaration:declarations) {
         declaration.value=resolve_resource_urls(std::move(declaration.value),address);
@@ -22,7 +23,9 @@ void prepare_style_rule(std::string_view prelude,
         append(std::string(":host"),declarations,media);
         return;
     }
-    const auto selectors=parse_selector_syntax(prelude);
+    const auto selectors = namespaces == nullptr
+        ? parse_selector_syntax(prelude)
+        : parse_selector_syntax(prelude, *namespaces);
     if(!selectors) return;
     for(const auto& selector:selectors.selectors)
         append(selector.serialized,declarations,media);

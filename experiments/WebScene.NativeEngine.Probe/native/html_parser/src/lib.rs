@@ -1299,6 +1299,7 @@ mod selector_syntax {
     };
     use selectors::{Parser as SelectorParser, SelectorImpl, SelectorList};
     use std::borrow::Borrow;
+    use std::collections::HashMap;
     use std::fmt::{self, Write};
 
     #[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
@@ -1433,7 +1434,10 @@ mod selector_syntax {
     }
 
     #[derive(Default)]
-    struct WebSceneSelectorParser;
+    struct WebSceneSelectorParser {
+        default_namespace: Option<Atom>,
+        namespaces: HashMap<Atom, Atom>,
+    }
 
     fn is_supported_pseudo_class(name: &str) -> bool {
         matches!(
@@ -1512,6 +1516,14 @@ mod selector_syntax {
 
         fn parse_has(&self) -> bool {
             true
+        }
+
+        fn default_namespace(&self) -> Option<Atom> {
+            self.default_namespace.clone()
+        }
+
+        fn namespace_for_prefix(&self, prefix: &Atom) -> Option<Atom> {
+            self.namespaces.get(prefix).cloned()
         }
 
         fn parse_non_ts_pseudo_class(
@@ -1692,6 +1704,13 @@ mod selector_syntax {
         pub combinator_count: usize,
     }
 
+    #[repr(C)]
+    #[derive(Clone, Copy, Default)]
+    pub struct SelectorNamespace {
+        pub prefix: ByteSlice,
+        pub namespace_url: ByteSlice,
+    }
+
     fn selector_error(status: u32) -> SelectorParseResult {
         SelectorParseResult {
             status,
@@ -1704,17 +1723,48 @@ mod selector_syntax {
         ABI_VERSION
     }
 
-    #[no_mangle]
-    pub extern "C" fn webscene_selector_parse(input: ByteSlice) -> SelectorParseResult {
+    fn parse_selector(
+        input: ByteSlice,
+        default_namespace: Option<ByteSlice>,
+        namespaces: *const SelectorNamespace,
+        namespace_count: usize,
+    ) -> SelectorParseResult {
         let Some(input) = read_slice(input).and_then(|bytes| std::str::from_utf8(bytes).ok())
         else {
             return selector_error(STATUS_INVALID_ARGUMENT);
         };
+        if namespace_count > 256 || (namespace_count != 0 && namespaces.is_null()) {
+            return selector_error(STATUS_INVALID_ARGUMENT);
+        }
+        let default_namespace = match default_namespace {
+            Some(value) => match read_slice(value).and_then(|bytes| std::str::from_utf8(bytes).ok()) {
+                Some(value) => Some(Atom::from(value)),
+                None => return selector_error(STATUS_INVALID_ARGUMENT),
+            },
+            None => None,
+        };
+        let mut namespace_map = HashMap::with_capacity(namespace_count);
+        if namespace_count != 0 {
+            let entries = unsafe { std::slice::from_raw_parts(namespaces, namespace_count) };
+            for entry in entries {
+                let Some(prefix) = read_slice(entry.prefix)
+                    .and_then(|bytes| std::str::from_utf8(bytes).ok())
+                else { return selector_error(STATUS_INVALID_ARGUMENT); };
+                let Some(url) = read_slice(entry.namespace_url)
+                    .and_then(|bytes| std::str::from_utf8(bytes).ok())
+                else { return selector_error(STATUS_INVALID_ARGUMENT); };
+                namespace_map.insert(Atom::from(prefix), Atom::from(url));
+            }
+        }
         reset_allocation_metrics();
         let parsed = catch_unwind(AssertUnwindSafe(|| {
             let mut parser_input = ParserInput::new(input);
             let mut parser = CssParser::new(&mut parser_input);
-            let list = SelectorList::parse(&WebSceneSelectorParser, &mut parser, ParseRelative::No)
+            let selector_parser = WebSceneSelectorParser {
+                default_namespace,
+                namespaces: namespace_map,
+            };
+            let list = SelectorList::parse(&selector_parser, &mut parser, ParseRelative::No)
                 .map_err(|_| ())?;
             parser.expect_exhausted().map_err(|_| ())?;
             Ok::<_, ()>(SelectorOutput {
@@ -1736,6 +1786,27 @@ mod selector_syntax {
             rust_retained_bytes: ALLOCATION_CURRENT.with(Cell::get),
             handle,
         }
+    }
+
+    #[no_mangle]
+    pub extern "C" fn webscene_selector_parse(input: ByteSlice) -> SelectorParseResult {
+        parse_selector(input, None, std::ptr::null(), 0)
+    }
+
+    #[no_mangle]
+    pub extern "C" fn webscene_selector_parse_with_namespaces(
+        input: ByteSlice,
+        default_namespace: ByteSlice,
+        has_default_namespace: u8,
+        namespaces: *const SelectorNamespace,
+        namespace_count: usize,
+    ) -> SelectorParseResult {
+        parse_selector(
+            input,
+            (has_default_namespace != 0).then_some(default_namespace),
+            namespaces,
+            namespace_count,
+        )
     }
 
     #[no_mangle]

@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 namespace webscene_native {
@@ -30,6 +31,14 @@ struct selector_syntax_output final {
     explicit operator bool() const noexcept { return error.empty(); }
 };
 
+struct selector_namespace_context final {
+    std::string default_namespace;
+    std::unordered_map<std::string, std::string> prefixes;
+    bool has_default_namespace{false};
+
+    std::string cache_key() const;
+};
+
 void set_selector_syntax_compilation_cache_directory(std::string directory);
 void clear_selector_syntax_process_cache();
 uint64_t selector_syntax_process_cache_hits() noexcept;
@@ -37,5 +46,8 @@ uint64_t selector_syntax_persistent_cache_hits() noexcept;
 uint64_t selector_syntax_compilation_count() noexcept;
 
 selector_syntax_output parse_selector_syntax(std::string_view input);
+selector_syntax_output parse_selector_syntax(
+    std::string_view input,
+    const selector_namespace_context& namespaces);
 
 } // namespace webscene_native

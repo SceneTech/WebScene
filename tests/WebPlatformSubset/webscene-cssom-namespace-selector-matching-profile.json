@@ -1,0 +1,22 @@
+{
+  "profile": "webscene-cssom-namespace-selector-matching-1",
+  "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+  "runtime": "v8",
+  "viewport": { "width": 800, "height": 600, "deviceScaleFactor": 1 },
+  "required": [
+    {
+      "path": "contracts/cssom-namespace-selector-matching.html",
+      "type": "contract",
+      "capabilities": [
+        "cssom-namespace-prefixed-type-selector",
+        "cssom-namespace-universal-type-selector",
+        "cssom-namespace-default-type-selector",
+        "cssom-namespace-dynamic-recascade"
+      ],
+      "evidence": ["cssom-namespace-selector-matching-239"],
+      "reason": "CSS Namespaces and CSSOM regression for dynamic prefixed, any, empty, and default namespace type-selector matching across owner-backed and adopted stylesheets."
+    }
+  ],
+  "harnessBlocked": [],
+  "excluded": []
+}

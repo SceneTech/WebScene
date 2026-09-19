@@ -1,0 +1,92 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Accessibility semantic delta DOM source</title>
+<body>
+<main id="tree" role="tree" aria-label="Explorer"></main>
+<section id="terminal" role="log" aria-label="Terminal"></section>
+<label for="editor">Editor</label><input id="editor" value="seed">
+<button id="toggle" aria-controls="panel">Toggle panel</button>
+<section id="panel" role="region" aria-label="Panel"></section>
+<iframe id="preview" src="about:blank"></iframe>
+<script>
+  const state = window.__webSceneWptState = {
+    complete: false, harness: null, results: [], errors: [], diagnostics: []
+  };
+  function assert(condition, message) { if (!condition) throw new Error(message); }
+  function test(name, body) {
+    try {
+      body();
+      state.results.push({ name, status: "PASS", message: null, stack: null });
+    } catch (error) {
+      state.results.push({
+        name, status: "FAIL", message: String(error.message || error), stack: error.stack || null
+      });
+    }
+  }
+
+  const tree = document.getElementById("tree");
+  const fragment = document.createDocumentFragment();
+  for (let index = 0; index < 2048; ++index) {
+    const row = document.createElement("div");
+    row.id = `row-${index}`;
+    row.setAttribute("role", "treeitem");
+    row.setAttribute("aria-label", `Row ${index}`);
+    fragment.append(row);
+  }
+  tree.append(fragment);
+
+  test("large virtualized tree retains stable authored identities", () => {
+    assert(tree.children.length === 2048, "virtualized tree size changed");
+    assert(document.getElementById("row-1024").getAttribute("aria-label") === "Row 1024",
+      "virtualized row identity changed");
+  });
+
+  test("terminal editor and panel churn preserves final DOM order", () => {
+    const terminal = document.getElementById("terminal");
+    const editor = document.getElementById("editor");
+    const panel = document.getElementById("panel");
+    terminal.setAttribute("aria-label", "Terminal active");
+    editor.value = "updated";
+    editor.setAttribute("aria-label", "Editor updated");
+    panel.append(document.getElementById("row-2"));
+    document.getElementById("row-1").remove();
+    const inserted = document.createElement("div");
+    inserted.id = "row-new";
+    inserted.setAttribute("role", "treeitem");
+    inserted.setAttribute("aria-label", "New row");
+    tree.prepend(inserted);
+    editor.focus();
+    assert(tree.firstElementChild === inserted, "insert order changed");
+    assert(panel.firstElementChild.id === "row-2", "reparent result changed");
+    assert(editor.value === "updated" && document.activeElement === editor,
+      "editor update or focus changed");
+  });
+
+  test("relationship replacement remains document scoped", () => {
+    const toggle = document.getElementById("toggle");
+    toggle.setAttribute("aria-controls", "terminal");
+    assert(document.getElementById(toggle.getAttribute("aria-controls")).id === "terminal",
+      "relationship target changed");
+  });
+
+  test("nested replacement creates a new document source boundary", () => {
+    const frame = document.getElementById("preview");
+    const first = frame.contentDocument;
+    first.open();
+    first.write('<article aria-label="Old preview"><h2>Old nested view</h2></article>');
+    first.close();
+    const oldHeading = first.querySelector("h2");
+    first.open();
+    first.write('<article aria-label="New preview"><h2>New nested view</h2></article>');
+    first.close();
+    assert(!oldHeading.isConnected, "old nested node survived replacement");
+    assert(frame.contentDocument.querySelector("h2").textContent === "New nested view",
+      "new nested document was absent");
+  });
+
+  const failure = state.results.find(result => result.status !== "PASS");
+  state.harness = failure
+    ? { status: 1, message: failure.message, stack: failure.stack }
+    : { status: 0, message: null, stack: null };
+  state.complete = true;
+</script>

@@ -15,6 +15,25 @@ inline constexpr uint32_t maximum_semantic_relationships_v1 = 64U * 1024U;
 inline constexpr uint32_t maximum_semantic_string_bytes_v1 = 4U * 1024U * 1024U;
 inline constexpr size_t maximum_semantic_text_bytes_v1 = 64U * 1024U;
 
+struct semantic_delta_data_v1 final {
+    uint64_t base_snapshot_generation{};
+    uint64_t new_snapshot_generation{};
+    uint64_t base_top_document_generation{};
+    uint64_t new_top_document_generation{};
+    uint64_t base_layout_generation{};
+    uint64_t new_layout_generation{};
+    uint32_t flags{};
+    std::vector<webscene_semantic_delta_operation_v1> operations;
+    std::string strings;
+
+    void require_full_snapshot(uint32_t reason)
+    {
+        flags |= WEBSCENE_SEMANTIC_DELTA_FULL_SNAPSHOT_REQUIRED_V1 | reason;
+        std::vector<webscene_semantic_delta_operation_v1>().swap(operations);
+        std::string().swap(strings);
+    }
+};
+
 struct semantic_live_event_data_v1 final {
     uint64_t sequence{};
     uint64_t top_document_generation{};

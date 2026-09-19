@@ -396,6 +396,7 @@
         {
             std::lock_guard semantic_lock(semantic_snapshot_mutex_);
             semantic_document_epoch_.fetch_add(1U, std::memory_order_acq_rel);
+            previous_semantic_snapshot_.reset();
             std::atomic_store_explicit(
                 &latest_semantic_snapshot_,
                 std::shared_ptr<const webscene_native::semantic_snapshot_data_v1>{},
@@ -403,6 +404,7 @@
         }
         retire_semantic_actions_v1();
         retire_semantic_live_events_v1();
+        retire_semantic_deltas_v1();
         low_memory_requested_.store(true, std::memory_order_release);
         signal_worker();
         return true;
@@ -886,6 +888,7 @@
         {
             std::lock_guard semantic_lock(semantic_snapshot_mutex_);
             semantic_document_epoch_.fetch_add(1U, std::memory_order_acq_rel);
+            previous_semantic_snapshot_.reset();
             std::atomic_store_explicit(
                 &latest_semantic_snapshot_,
                 std::shared_ptr<const webscene_native::semantic_snapshot_data_v1>{},
@@ -893,6 +896,7 @@
         }
         retire_semantic_actions_v1();
         retire_semantic_live_events_v1();
+        retire_semantic_deltas_v1();
         semantic_snapshot_requested_.store(true, std::memory_order_release);
         script_work_.emplace_back(url_request{
             std::string(value, length),

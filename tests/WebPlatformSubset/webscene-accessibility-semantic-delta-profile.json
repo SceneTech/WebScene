@@ -1,0 +1,30 @@
+{
+  "profile": "webscene-accessibility-semantic-delta-1",
+  "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+  "runtime": "v8",
+  "viewport": {
+    "width": 800,
+    "height": 600,
+    "deviceScaleFactor": 1
+  },
+  "required": [
+    {
+      "path": "contracts/accessibility-semantic-delta-source.html",
+      "type": "contract",
+      "capabilities": [
+        "semantic-delta-large-virtualized-tree-source",
+        "semantic-delta-terminal-editor-panel-churn-source",
+        "semantic-delta-insert-update-remove-reparent-focus-source",
+        "semantic-delta-relationship-source",
+        "semantic-delta-nested-document-replacement-source"
+      ],
+      "evidence": [
+        "webscene-bounded-generation-aware-semantic-delta-abi",
+        "appscene-full-snapshot-recovery-boundary"
+      ],
+      "reason": "Browser/native source contract for request-driven semantic deltas. Native peer application and recovery policy remain in AppScene #30."
+    }
+  ],
+  "harnessBlocked": [],
+  "excluded": []
+}

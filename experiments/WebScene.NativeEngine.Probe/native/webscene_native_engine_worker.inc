@@ -584,6 +584,11 @@
                 runtime_->notify_low_memory();
                 runtime_->retire_semantic_live_regions_v1();
                 retire_semantic_live_events_v1();
+                retire_semantic_deltas_v1();
+                {
+                    std::lock_guard semantic_lock(semantic_snapshot_mutex_);
+                    previous_semantic_snapshot_.reset();
+                }
                 trim_scene_storage();
                 low_memory_notifications_.fetch_add(1, std::memory_order_relaxed);
                 hidden_low_memory_notifications_.fetch_add(
@@ -1607,6 +1612,40 @@
             }
 #endif
             if (!semantic_actions_pending_.load(std::memory_order_acquire)
+                && semantic_delta_pending_.load(std::memory_order_acquire)) {
+                auto semantic_delta = take_semantic_delta_work_v1();
+                if (semantic_delta.has_value()) {
+                    semantic_snapshot_requested_.exchange(
+                        false, std::memory_order_acq_rel);
+#if defined(WEBSCENE_NATIVE_ENGINE_WITH_V8)
+                    if (runtime_ != nullptr) {
+                        auto snapshot = runtime_->build_semantic_snapshot_v1(
+                            next_semantic_snapshot_generation_++);
+                        auto delta = build_semantic_delta_v1(
+                            *semantic_delta->base, *snapshot);
+                        auto published = false;
+                        {
+                            std::lock_guard semantic_lock(semantic_snapshot_mutex_);
+                            if (semantic_delta->document_epoch
+                                    == semantic_document_epoch_.load(
+                                        std::memory_order_acquire)) {
+                                previous_semantic_snapshot_.reset();
+                                std::atomic_store_explicit(
+                                    &latest_semantic_snapshot_, snapshot,
+                                    std::memory_order_release);
+                                published = true;
+                            }
+                        }
+                        if (published && complete_semantic_delta_v1(
+                                semantic_delta->document_epoch,
+                                std::move(delta))) {
+                            notify_host_work();
+                        }
+                    }
+#endif
+                }
+            }
+            if (!semantic_actions_pending_.load(std::memory_order_acquire)
                 && semantic_snapshot_requested_.exchange(
                     false,
                     std::memory_order_acq_rel)) {
@@ -1620,6 +1659,10 @@
                         std::lock_guard semantic_lock(semantic_snapshot_mutex_);
                         if (document_epoch == semantic_document_epoch_.load(
                                 std::memory_order_acquire)) {
+                            previous_semantic_snapshot_ =
+                                std::atomic_load_explicit(
+                                    &latest_semantic_snapshot_,
+                                    std::memory_order_acquire);
                             std::atomic_store_explicit(
                                 &latest_semantic_snapshot_,
                                 std::move(snapshot),
@@ -1753,6 +1796,8 @@
                         std::memory_order_acquire)
                     || semantic_actions_pending_.load(
                         std::memory_order_acquire)
+                    || semantic_delta_pending_.load(
+                        std::memory_order_acquire)
                     || semantic_snapshot_requested_.load(
                         std::memory_order_acquire);
                 });
@@ -1784,9 +1829,11 @@
 #endif
         retire_semantic_actions_v1();
         retire_semantic_live_events_v1();
+        retire_semantic_deltas_v1();
         {
             std::lock_guard semantic_lock(semantic_snapshot_mutex_);
             semantic_document_epoch_.fetch_add(1U, std::memory_order_acq_rel);
+            previous_semantic_snapshot_.reset();
             std::atomic_store_explicit(
                 &latest_semantic_snapshot_,
                 std::shared_ptr<const webscene_native::semantic_snapshot_data_v1>{},

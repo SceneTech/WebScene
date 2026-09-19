@@ -297,6 +297,332 @@ struct semantic_action_work_v1 final {
     webscene_native::semantic_action_request_data_v1 request;
 };
 
+struct semantic_delta_work_v1 final {
+    std::shared_ptr<const webscene_native::semantic_snapshot_data_v1> base;
+    uint64_t document_epoch{};
+};
+
+std::string_view semantic_snapshot_string_v1(
+    const webscene_native::semantic_snapshot_data_v1& snapshot,
+    webscene_semantic_string_v1 value)
+{
+    if (value.offset > snapshot.strings.size()
+        || value.length > snapshot.strings.size() - value.offset) return {};
+    return {snapshot.strings.data() + value.offset, value.length};
+}
+
+uint64_t semantic_snapshot_node_id_v1(
+    const webscene_native::semantic_snapshot_data_v1& snapshot,
+    uint32_t index)
+{
+    return index == WEBSCENE_SEMANTIC_NONE_INDEX_V1
+            || index >= snapshot.nodes.size()
+        ? 0U : snapshot.nodes[index].semantic_id;
+}
+
+bool append_semantic_delta_string_v1(
+    webscene_native::semantic_delta_data_v1& delta,
+    std::string_view value,
+    webscene_semantic_string_v1& destination)
+{
+    if (value.empty()) {
+        destination = {};
+        return true;
+    }
+    if (value.size() > WEBSCENE_SEMANTIC_DELTA_MAXIMUM_STRING_BYTES_V1
+        || delta.strings.size()
+            > WEBSCENE_SEMANTIC_DELTA_MAXIMUM_STRING_BYTES_V1 - value.size()) {
+        return false;
+    }
+    destination.offset = static_cast<uint32_t>(delta.strings.size());
+    destination.length = static_cast<uint32_t>(value.size());
+    delta.strings.append(value);
+    return true;
+}
+
+bool append_semantic_delta_operation_v1(
+    webscene_native::semantic_delta_data_v1& delta,
+    webscene_semantic_delta_operation_v1 operation)
+{
+    if (delta.operations.size()
+        == WEBSCENE_SEMANTIC_DELTA_MAXIMUM_OPERATIONS_V1) return false;
+    delta.operations.push_back(operation);
+    return true;
+}
+
+bool populate_semantic_delta_node_v1(
+    webscene_native::semantic_delta_data_v1& delta,
+    const webscene_native::semantic_snapshot_data_v1& snapshot,
+    uint32_t node_index,
+    uint32_t kind)
+{
+    if (node_index >= snapshot.nodes.size()) return false;
+    const auto& node = snapshot.nodes[node_index];
+    if (node.document_index >= snapshot.documents.size()) return false;
+    const auto& document = snapshot.documents[node.document_index];
+    webscene_semantic_delta_operation_v1 operation{};
+    operation.struct_size = sizeof(operation);
+    operation.version = 1U;
+    operation.kind = kind;
+    operation.semantic_id = node.semantic_id;
+    operation.parent_semantic_id = semantic_snapshot_node_id_v1(
+        snapshot, node.parent_index);
+    operation.next_sibling_semantic_id = semantic_snapshot_node_id_v1(
+        snapshot, node.next_sibling_index);
+    operation.document_generation = document.document_generation;
+    operation.frame_generation = document.frame_generation;
+    operation.states = node.states;
+    operation.frame_owner_dom_node_id = document.frame_owner_dom_node_id;
+    operation.dom_node_id = node.dom_node_id;
+    operation.supported_actions = node.supported_actions;
+    operation.x = node.x;
+    operation.y = node.y;
+    operation.width = node.width;
+    operation.height = node.height;
+    if (!append_semantic_delta_string_v1(
+            delta, semantic_snapshot_string_v1(snapshot, node.role), operation.role)
+        || !append_semantic_delta_string_v1(
+            delta, semantic_snapshot_string_v1(snapshot, node.name), operation.name)
+        || !append_semantic_delta_string_v1(
+            delta, semantic_snapshot_string_v1(snapshot, node.value), operation.value)
+        || !append_semantic_delta_string_v1(
+            delta, semantic_snapshot_string_v1(snapshot, node.description),
+            operation.description)) return false;
+    return append_semantic_delta_operation_v1(delta, operation);
+}
+
+bool semantic_delta_document_equal_v1(
+    const webscene_native::semantic_snapshot_data_v1& left_snapshot,
+    const webscene_semantic_node_v1& left,
+    const webscene_native::semantic_snapshot_data_v1& right_snapshot,
+    const webscene_semantic_node_v1& right)
+{
+    if (left.document_index >= left_snapshot.documents.size()
+        || right.document_index >= right_snapshot.documents.size()) return false;
+    const auto& left_document = left_snapshot.documents[left.document_index];
+    const auto& right_document = right_snapshot.documents[right.document_index];
+    return left_document.document_generation == right_document.document_generation
+        && left_document.frame_generation == right_document.frame_generation
+        && left_document.frame_owner_dom_node_id
+            == right_document.frame_owner_dom_node_id;
+}
+
+bool semantic_delta_node_equal_v1(
+    const webscene_native::semantic_snapshot_data_v1& left_snapshot,
+    const webscene_semantic_node_v1& left,
+    const webscene_native::semantic_snapshot_data_v1& right_snapshot,
+    const webscene_semantic_node_v1& right)
+{
+    return left.semantic_id == right.semantic_id
+        && left.states == right.states
+        && left.dom_node_id == right.dom_node_id
+        && left.x == right.x && left.y == right.y
+        && left.width == right.width && left.height == right.height
+        && left.supported_actions == right.supported_actions
+        && semantic_delta_document_equal_v1(
+            left_snapshot, left, right_snapshot, right)
+        && semantic_snapshot_string_v1(left_snapshot, left.role)
+            == semantic_snapshot_string_v1(right_snapshot, right.role)
+        && semantic_snapshot_string_v1(left_snapshot, left.name)
+            == semantic_snapshot_string_v1(right_snapshot, right.name)
+        && semantic_snapshot_string_v1(left_snapshot, left.value)
+            == semantic_snapshot_string_v1(right_snapshot, right.value)
+        && semantic_snapshot_string_v1(left_snapshot, left.description)
+            == semantic_snapshot_string_v1(right_snapshot, right.description);
+}
+
+struct semantic_relationship_key_v1 final {
+    uint32_t kind{};
+    uint64_t source{};
+    uint64_t target{};
+
+    bool operator==(const semantic_relationship_key_v1&) const = default;
+};
+
+struct semantic_relationship_key_hash_v1 final {
+    size_t operator()(const semantic_relationship_key_v1& value) const noexcept
+    {
+        auto result = static_cast<size_t>(value.source);
+        result ^= static_cast<size_t>(value.target) + 0x9e3779b9U
+            + (result << 6U) + (result >> 2U);
+        result ^= static_cast<size_t>(value.kind) + 0x9e3779b9U
+            + (result << 6U) + (result >> 2U);
+        return result;
+    }
+};
+
+semantic_relationship_key_v1 semantic_relationship_key(
+    const webscene_native::semantic_snapshot_data_v1& snapshot,
+    const webscene_semantic_relationship_v1& relationship)
+{
+    return {
+        relationship.kind,
+        semantic_snapshot_node_id_v1(snapshot, relationship.source_node_index),
+        semantic_snapshot_node_id_v1(snapshot, relationship.target_node_index)};
+}
+
+bool append_semantic_relationship_delta_v1(
+    webscene_native::semantic_delta_data_v1& delta,
+    const webscene_native::semantic_snapshot_data_v1& snapshot,
+    const webscene_semantic_relationship_v1& relationship,
+    uint32_t kind)
+{
+    const auto key = semantic_relationship_key(snapshot, relationship);
+    webscene_semantic_delta_operation_v1 operation{};
+    operation.struct_size = sizeof(operation);
+    operation.version = 1U;
+    operation.kind = kind;
+    operation.relationship_kind = key.kind;
+    operation.semantic_id = key.source;
+    operation.related_semantic_id = key.target;
+    if (relationship.source_node_index < snapshot.nodes.size()) {
+        const auto& source = snapshot.nodes[relationship.source_node_index];
+        if (source.document_index < snapshot.documents.size()) {
+            const auto& document = snapshot.documents[source.document_index];
+            operation.document_generation = document.document_generation;
+            operation.frame_generation = document.frame_generation;
+            operation.frame_owner_dom_node_id = document.frame_owner_dom_node_id;
+            operation.dom_node_id = source.dom_node_id;
+        }
+    }
+    return key.source != 0U && key.target != 0U
+        && append_semantic_delta_operation_v1(delta, operation);
+}
+
+std::shared_ptr<webscene_native::semantic_delta_data_v1>
+build_semantic_delta_v1(
+    const webscene_native::semantic_snapshot_data_v1& base,
+    const webscene_native::semantic_snapshot_data_v1& next)
+{
+    auto delta = std::make_shared<webscene_native::semantic_delta_data_v1>();
+    delta->base_snapshot_generation = base.snapshot_generation;
+    delta->new_snapshot_generation = next.snapshot_generation;
+    delta->base_top_document_generation = base.top_document_generation;
+    delta->new_top_document_generation = next.top_document_generation;
+    delta->base_layout_generation = base.layout_generation;
+    delta->new_layout_generation = next.layout_generation;
+    if (base.top_document_generation != next.top_document_generation) {
+        delta->require_full_snapshot(0U);
+        return delta;
+    }
+    if (base.flags != 0U || next.flags != 0U) {
+        delta->require_full_snapshot(
+            WEBSCENE_SEMANTIC_DELTA_TRUNCATED_SNAPSHOT_V1);
+        return delta;
+    }
+
+    std::unordered_map<uint64_t, uint32_t> base_nodes;
+    std::unordered_map<uint64_t, uint32_t> next_nodes;
+    base_nodes.reserve(base.nodes.size());
+    next_nodes.reserve(next.nodes.size());
+    for (uint32_t index = 0U; index < base.nodes.size(); ++index)
+        base_nodes.emplace(base.nodes[index].semantic_id, index);
+    for (uint32_t index = 0U; index < next.nodes.size(); ++index)
+        next_nodes.emplace(next.nodes[index].semantic_id, index);
+
+    std::unordered_set<semantic_relationship_key_v1,
+        semantic_relationship_key_hash_v1> base_relationships;
+    std::unordered_set<semantic_relationship_key_v1,
+        semantic_relationship_key_hash_v1> next_relationships;
+    base_relationships.reserve(base.relationships.size());
+    next_relationships.reserve(next.relationships.size());
+    for (const auto& relationship : base.relationships)
+        base_relationships.insert(semantic_relationship_key(base, relationship));
+    for (const auto& relationship : next.relationships)
+        next_relationships.insert(semantic_relationship_key(next, relationship));
+
+    const auto overflow = [&] {
+        delta->require_full_snapshot(WEBSCENE_SEMANTIC_DELTA_OVERFLOW_V1);
+        return delta;
+    };
+    for (const auto& relationship : base.relationships) {
+        if (!next_relationships.contains(
+                semantic_relationship_key(base, relationship))
+            && !append_semantic_relationship_delta_v1(
+                *delta, base, relationship,
+                WEBSCENE_SEMANTIC_DELTA_RELATIONSHIP_REMOVE_V1)) return overflow();
+    }
+    for (auto index = base.nodes.size(); index > 0U; --index) {
+        const auto& node = base.nodes[index - 1U];
+        if (next_nodes.contains(node.semantic_id)) continue;
+        webscene_semantic_delta_operation_v1 operation{};
+        operation.struct_size = sizeof(operation);
+        operation.version = 1U;
+        operation.kind = WEBSCENE_SEMANTIC_DELTA_REMOVE_V1;
+        operation.semantic_id = node.semantic_id;
+        operation.dom_node_id = node.dom_node_id;
+        if (node.document_index < base.documents.size()) {
+            const auto& document = base.documents[node.document_index];
+            operation.document_generation = document.document_generation;
+            operation.frame_generation = document.frame_generation;
+            operation.frame_owner_dom_node_id = document.frame_owner_dom_node_id;
+        }
+        if (!append_semantic_delta_operation_v1(*delta, operation)) return overflow();
+    }
+    for (uint32_t index = 0U; index < next.nodes.size(); ++index) {
+        const auto& node = next.nodes[index];
+        if (!base_nodes.contains(node.semantic_id)
+            && !populate_semantic_delta_node_v1(
+                *delta, next, index, WEBSCENE_SEMANTIC_DELTA_INSERT_V1)) {
+            return overflow();
+        }
+    }
+    for (uint32_t index = 0U; index < next.nodes.size(); ++index) {
+        const auto& node = next.nodes[index];
+        const auto old = base_nodes.find(node.semantic_id);
+        if (old == base_nodes.end()) continue;
+        const auto& old_node = base.nodes[old->second];
+        if (semantic_snapshot_node_id_v1(base, old_node.parent_index)
+                != semantic_snapshot_node_id_v1(next, node.parent_index)
+            || semantic_snapshot_node_id_v1(base, old_node.next_sibling_index)
+                != semantic_snapshot_node_id_v1(next, node.next_sibling_index)) {
+            webscene_semantic_delta_operation_v1 operation{};
+            operation.struct_size = sizeof(operation);
+            operation.version = 1U;
+            operation.kind = WEBSCENE_SEMANTIC_DELTA_REPARENT_V1;
+            operation.semantic_id = node.semantic_id;
+            operation.parent_semantic_id = semantic_snapshot_node_id_v1(
+                next, node.parent_index);
+            operation.next_sibling_semantic_id = semantic_snapshot_node_id_v1(
+                next, node.next_sibling_index);
+            if (node.document_index < next.documents.size()) {
+                const auto& document = next.documents[node.document_index];
+                operation.document_generation = document.document_generation;
+                operation.frame_generation = document.frame_generation;
+                operation.frame_owner_dom_node_id =
+                    document.frame_owner_dom_node_id;
+            }
+            if (!append_semantic_delta_operation_v1(*delta, operation))
+                return overflow();
+        }
+        if (!semantic_delta_node_equal_v1(base, old_node, next, node)
+            && !populate_semantic_delta_node_v1(
+                *delta, next, index, WEBSCENE_SEMANTIC_DELTA_UPDATE_V1)) {
+            return overflow();
+        }
+    }
+    for (const auto& relationship : next.relationships) {
+        if (!base_relationships.contains(
+                semantic_relationship_key(next, relationship))
+            && !append_semantic_relationship_delta_v1(
+                *delta, next, relationship,
+                WEBSCENE_SEMANTIC_DELTA_RELATIONSHIP_ADD_V1)) return overflow();
+    }
+    const auto base_focus = semantic_snapshot_node_id_v1(
+        base, base.focused_node_index);
+    const auto next_focus = semantic_snapshot_node_id_v1(
+        next, next.focused_node_index);
+    if (base_focus != next_focus) {
+        webscene_semantic_delta_operation_v1 operation{};
+        operation.struct_size = sizeof(operation);
+        operation.version = 1U;
+        operation.kind = WEBSCENE_SEMANTIC_DELTA_FOCUS_V1;
+        operation.related_semantic_id = next_focus;
+        if (!append_semantic_delta_operation_v1(*delta, operation)) return overflow();
+    }
+    return delta;
+}
+
 struct canvas_checkpoint_request {
     uint32_t node_id, command_count;
     uint64_t generation;
@@ -394,6 +720,79 @@ struct webscene_engine final {
         signal_worker();
         return std::atomic_load_explicit(
             &latest_semantic_snapshot_, std::memory_order_acquire);
+    }
+    uint32_t request_semantic_delta_v1(
+        const webscene_semantic_delta_request_v1& request) {
+        if (request.struct_size < sizeof(request) || request.version != 1U
+            || request.base_snapshot_generation == 0U || request.flags != 0U) {
+            return WEBSCENE_SEMANTIC_DELTA_INVALID_V1;
+        }
+        std::lock_guard semantic_lock(semantic_snapshot_mutex_);
+        const auto document_epoch = semantic_document_epoch_.load(
+            std::memory_order_acquire);
+        auto base = std::atomic_load_explicit(
+            &latest_semantic_snapshot_, std::memory_order_acquire);
+        if (!base || base->snapshot_generation
+                != request.base_snapshot_generation) {
+            if (previous_semantic_snapshot_
+                && previous_semantic_snapshot_->snapshot_generation
+                    == request.base_snapshot_generation) {
+                base = previous_semantic_snapshot_;
+            } else {
+                return WEBSCENE_SEMANTIC_DELTA_STALE_BASE_V1;
+            }
+        }
+        {
+            std::lock_guard delta_lock(semantic_delta_mutex_);
+            if (document_epoch != semantic_document_epoch_.load(
+                    std::memory_order_acquire)) {
+                return WEBSCENE_SEMANTIC_DELTA_STALE_BASE_V1;
+            }
+            if (semantic_delta_busy_) {
+                return WEBSCENE_SEMANTIC_DELTA_QUEUE_FULL_V1;
+            }
+            semantic_delta_work_ = semantic_delta_work_v1{
+                std::move(base), document_epoch};
+            semantic_delta_busy_ = true;
+            semantic_delta_pending_.store(true, std::memory_order_release);
+            previous_semantic_snapshot_.reset();
+        }
+        signal_worker();
+        return WEBSCENE_SEMANTIC_DELTA_QUEUED_V1;
+    }
+    std::shared_ptr<const webscene_native::semantic_delta_data_v1>
+    take_semantic_delta_v1() {
+        std::lock_guard lock(semantic_delta_mutex_);
+        auto result = std::move(completed_semantic_delta_);
+        if (result) semantic_delta_busy_ = false;
+        return result;
+    }
+    std::optional<semantic_delta_work_v1> take_semantic_delta_work_v1() {
+        std::lock_guard lock(semantic_delta_mutex_);
+        if (!semantic_delta_work_.has_value()) {
+            semantic_delta_pending_.store(false, std::memory_order_release);
+            return {};
+        }
+        auto result = std::move(semantic_delta_work_);
+        semantic_delta_work_.reset();
+        semantic_delta_pending_.store(false, std::memory_order_release);
+        return result;
+    }
+    bool complete_semantic_delta_v1(
+        uint64_t document_epoch,
+        std::shared_ptr<const webscene_native::semantic_delta_data_v1> delta) {
+        std::lock_guard lock(semantic_delta_mutex_);
+        if (document_epoch != semantic_document_epoch_.load(
+                std::memory_order_acquire)) return false;
+        completed_semantic_delta_ = std::move(delta);
+        return true;
+    }
+    void retire_semantic_deltas_v1() {
+        std::lock_guard lock(semantic_delta_mutex_);
+        semantic_delta_work_.reset();
+        completed_semantic_delta_.reset();
+        semantic_delta_busy_ = false;
+        semantic_delta_pending_.store(false, std::memory_order_release);
     }
     uint32_t request_semantic_action_v1(
         const webscene_semantic_action_request_v1& request) {
@@ -911,10 +1310,18 @@ private:
     std::shared_ptr<const scene> latest_{};
     std::shared_ptr<const webscene_native::semantic_snapshot_data_v1>
         latest_semantic_snapshot_{};
+    std::shared_ptr<const webscene_native::semantic_snapshot_data_v1>
+        previous_semantic_snapshot_{};
     std::mutex semantic_snapshot_mutex_;
     std::atomic<bool> semantic_snapshot_requested_{false};
     std::atomic<uint64_t> semantic_document_epoch_{1U};
     uint64_t next_semantic_snapshot_generation_{1U};
+    std::optional<semantic_delta_work_v1> semantic_delta_work_;
+    std::shared_ptr<const webscene_native::semantic_delta_data_v1>
+        completed_semantic_delta_;
+    std::mutex semantic_delta_mutex_;
+    bool semantic_delta_busy_{false};
+    std::atomic<bool> semantic_delta_pending_{false};
     std::deque<semantic_action_work_v1> semantic_action_work_;
     std::mutex semantic_action_mutex_;
     size_t semantic_action_payload_bytes_{0U};
@@ -2117,6 +2524,34 @@ struct semantic_snapshot_lease_v1 final {
     }
 };
 
+struct semantic_delta_lease_v1 final {
+    std::shared_ptr<const webscene_native::semantic_delta_data_v1> value;
+    webscene_semantic_delta_view_v1 view{};
+
+    explicit semantic_delta_lease_v1(
+        std::shared_ptr<const webscene_native::semantic_delta_data_v1> delta)
+        : value(std::move(delta))
+    {
+        view.struct_size = sizeof(view);
+        view.version = 1U;
+        view.base_snapshot_generation = value->base_snapshot_generation;
+        view.new_snapshot_generation = value->new_snapshot_generation;
+        view.base_top_document_generation =
+            value->base_top_document_generation;
+        view.new_top_document_generation = value->new_top_document_generation;
+        view.base_layout_generation = value->base_layout_generation;
+        view.new_layout_generation = value->new_layout_generation;
+        view.flags = value->flags;
+        view.operations = value->operations.empty()
+            ? nullptr : value->operations.data();
+        view.operation_count = static_cast<uint32_t>(value->operations.size());
+        view.string_bytes = value->strings.empty()
+            ? nullptr : value->strings.data();
+        view.string_byte_count = static_cast<uint32_t>(value->strings.size());
+        view.lease_token = this;
+    }
+};
+
 struct semantic_live_batch_lease_v1 final {
     std::shared_ptr<webscene_native::semantic_live_batch_data_v1> value;
     webscene_semantic_live_batch_view_v1 view{};
@@ -2160,6 +2595,43 @@ void webscene_semantic_snapshot_release_v1(
         || snapshot->struct_size < sizeof(*snapshot)
         || snapshot->lease_token == nullptr) return;
     delete static_cast<const semantic_snapshot_lease_v1*>(snapshot->lease_token);
+}
+
+uint32_t webscene_engine_request_semantic_delta_v1(
+    webscene_engine* engine,
+    const webscene_semantic_delta_request_v1* request)
+{
+    if (engine == nullptr || request == nullptr) {
+        return WEBSCENE_SEMANTIC_DELTA_INVALID_V1;
+    }
+    try {
+        return engine->request_semantic_delta_v1(*request);
+    } catch (...) {
+        return WEBSCENE_SEMANTIC_DELTA_INVALID_V1;
+    }
+}
+
+const webscene_semantic_delta_view_v1*
+webscene_engine_take_semantic_delta_v1(webscene_engine* engine)
+{
+    if (engine == nullptr) return nullptr;
+    try {
+        auto value = engine->take_semantic_delta_v1();
+        if (!value) return nullptr;
+        auto* lease = new semantic_delta_lease_v1(std::move(value));
+        return &lease->view;
+    } catch (...) {
+        return nullptr;
+    }
+}
+
+void webscene_semantic_delta_release_v1(
+    const webscene_semantic_delta_view_v1* delta)
+{
+    if (delta == nullptr || delta->version != 1U
+        || delta->struct_size < sizeof(*delta)
+        || delta->lease_token == nullptr) return;
+    delete static_cast<const semantic_delta_lease_v1*>(delta->lease_token);
 }
 
 uint32_t webscene_engine_request_semantic_action_v1(

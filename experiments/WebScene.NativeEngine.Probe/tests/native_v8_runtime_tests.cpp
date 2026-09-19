@@ -87,6 +87,7 @@ uint8_t measure_baseline_fixture_text(
 #include "native_v8_runtime_document_tests.inc"
 #include "native_v8_runtime_test_support.inc"
 #include "native_v8_runtime_semantic_snapshot_tests.inc"
+#include "native_v8_runtime_semantic_delta_tests.inc"
 #include "native_v8_runtime_semantic_action_tests.inc"
 #include "native_v8_runtime_semantic_live_region_tests.inc"
 #include "native_v8_runtime_lifecycle_tests.inc"
@@ -1583,6 +1584,7 @@ int main()
     test_reconnected_panel_subtree_reclamation();
     test_dom_listener_callback_retirement();
     test_semantic_snapshot_nested_state_lifecycle_and_bounds();
+    test_semantic_delta_workbench_and_nested_generation_contract();
     test_semantic_action_dom_contract_and_retirement();
     test_semantic_live_regions_dom_order_busy_and_lifecycle();
     test_low_memory_reclaims_small_detached_dom_batches();
@@ -1626,6 +1628,8 @@ int main()
     webscene_engine_destroy(engine);
     test_binary_interop_result_outlives_engine();
     test_semantic_snapshot_caps_performance_and_engine_retirement();
+    test_semantic_delta_overflow_full_snapshot_recovery();
+    test_semantic_delta_virtualized_tree_100_cycle_memory_and_p95();
     test_semantic_action_queue_caps_and_worker_budget();
     test_semantic_live_region_caps_and_worker_budget();
     return 0;

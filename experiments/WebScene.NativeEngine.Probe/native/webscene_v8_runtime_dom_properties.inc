@@ -2097,6 +2097,7 @@
         }
         binding->start_node_id = node->id;
         binding->start_offset = offset;
+        self->registered_range_changed(*binding);
     }
 
     static void range_set_end(const v8::FunctionCallbackInfo<v8::Value>& info)
@@ -2115,6 +2116,7 @@
         }
         binding->end_node_id = node->id;
         binding->end_offset = offset;
+        self->registered_range_changed(*binding);
     }
 
     static bool range_parent_boundary(
@@ -2183,6 +2185,7 @@
                 binding->start_offset = offset;
             }
         }
+        self->registered_range_changed(*binding);
     }
 
     static void range_set_start_after(const v8::FunctionCallbackInfo<v8::Value>& info)
@@ -2211,6 +2214,7 @@
         binding->start_offset = 0U;
         binding->end_node_id = node->id;
         binding->end_offset = range_maximum_offset(*node);
+        self->registered_range_changed(*binding);
     }
 
     static dom_node* range_common_ancestor(

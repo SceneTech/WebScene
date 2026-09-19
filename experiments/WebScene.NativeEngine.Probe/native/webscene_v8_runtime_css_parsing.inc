@@ -434,7 +434,11 @@
 #endif
         const auto& rule = css_rules[index];
         const auto& selector = rule.selector();
-        if (selector.find("::selection") != std::string::npos) {
+        std::string highlight_origin;
+        std::string highlight_name;
+        if (selector.find("::selection") != std::string::npos
+            || css::split_custom_highlight_selector(
+                selector, highlight_origin, highlight_name)) {
             return;
         }
         if (rule.payload->declaration_variable_references.size()
@@ -848,6 +852,7 @@
                 if (pseudo_element) {
                     const auto supported = name == "before" || name == "after"
                         || name == "selection" || name == "placeholder"
+                        || name == "highlight"
                         || name == "details-content"
                         || name == "backdrop" || name == "-webkit-scrollbar"
                         || name == "-webkit-scrollbar-thumb"

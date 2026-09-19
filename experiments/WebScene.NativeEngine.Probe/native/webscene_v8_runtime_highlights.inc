@@ -54,9 +54,99 @@
         return highlight_bindings.size() < maximum_live_highlights;
     }
 
+    void refresh_custom_highlight_paint()
+    {
+        struct resolved_highlight_style final {
+            uint32_t foreground_rgba{};
+            uint32_t background_rgba{};
+            bool foreground_specified{false};
+            bool background_specified{false};
+            bool foreground_important{false};
+            bool background_important{false};
+        };
+        std::vector<native_document::custom_highlight_range> published;
+        for (const auto& [root_id, registry] : highlight_registries) {
+            auto* root = document.find_by_native_id(root_id);
+            if (root == nullptr) continue;
+            std::unordered_map<std::string, resolved_highlight_style> styles;
+            for (const auto& rule : css_rules) {
+                if (!rule.media_matches) continue;
+                std::string origin;
+                std::string name;
+                if (!css::split_custom_highlight_selector(
+                        rule.selector(), origin, name)
+                    || (!origin.empty() && origin != "*")) continue;
+                auto& style = styles[name];
+                for (const auto& declaration : rule.declarations()) {
+                    const auto foreground = declaration.name == "color";
+                    const auto background = declaration.name == "background-color";
+                    if (!foreground && !background) continue;
+                    auto resolved = declaration.value.find("var(") != std::string::npos
+                        ? resolve_value(*root, declaration.value, css_variables)
+                        : declaration.value;
+                    const auto color = native_document::parse_color(resolved);
+                    if (!css::is_explicit_color_token(resolved, color)) continue;
+                    auto& specified = foreground
+                        ? style.foreground_specified : style.background_specified;
+                    auto& important = foreground
+                        ? style.foreground_important : style.background_important;
+                    auto& rgba = foreground
+                        ? style.foreground_rgba : style.background_rgba;
+                    if (specified && important && !declaration.important) continue;
+                    specified = true;
+                    important = declaration.important;
+                    rgba = color;
+                }
+            }
+            for (uint32_t order = 0U; order < registry.order.size(); ++order) {
+                const auto entry = registry.entries.find(registry.order[order]);
+                const auto style = styles.find(registry.order[order]);
+                if (entry == registry.entries.end() || style == styles.end()
+                    || entry->second.highlight == nullptr) continue;
+                const auto& highlight = *entry->second.highlight;
+                if (!highlight_binding_is_live(highlight)) continue;
+                for (const auto* range : highlight.ranges) {
+                    if (range == nullptr || !range_binding_is_live(*range)
+                        || range->root_id != root_id) continue;
+                    auto* start = document.find_by_native_id(range->start_node_id);
+                    auto* end = document.find_by_native_id(range->end_node_id);
+                    if (start == nullptr || end == nullptr
+                        || !range_node_is_in_root(*root, *start)
+                        || !range_node_is_in_root(*root, *end)
+                        || (start == end && range->start_offset == range->end_offset)) continue;
+                    published.push_back(native_document::custom_highlight_range{
+                        root_id,
+                        range->start_node_id,
+                        range->end_node_id,
+                        range->start_offset,
+                        range->end_offset,
+                        style->second.foreground_rgba,
+                        style->second.background_rgba,
+                        highlight.priority,
+                        order,
+                        style->second.foreground_specified,
+                        style->second.background_specified});
+                }
+            }
+        }
+        document.set_custom_highlight_ranges(std::move(published));
+    }
+
     void registered_highlight_changed(const highlight_binding& binding)
     {
-        if (binding.registration_count != 0U) document.mark_dirty();
+        if (binding.registration_count != 0U) refresh_custom_highlight_paint();
+    }
+
+    void registered_range_changed(const range_binding& range)
+    {
+        for (const auto& highlight : highlight_bindings) {
+            if (highlight == nullptr || highlight->registration_count == 0U) continue;
+            if (std::find(
+                    highlight->ranges.begin(), highlight->ranges.end(), &range)
+                == highlight->ranges.end()) continue;
+            refresh_custom_highlight_paint();
+            return;
+        }
     }
 
     static bool read_highlight_range(
@@ -360,7 +450,7 @@
                 known->second.highlight = highlight;
                 known->second.wrapper.Reset(info.GetIsolate(), info[1].As<v8::Object>());
                 ++highlight->registration_count;
-                self->document.mark_dirty();
+                self->refresh_custom_highlight_paint();
             }
             info.GetReturnValue().Set(info.This());
             return;
@@ -375,7 +465,7 @@
         registry->order.push_back(name);
         registry->entries.emplace(name, std::move(entry));
         ++highlight->registration_count;
-        self->document.mark_dirty();
+        self->refresh_custom_highlight_paint();
         info.GetReturnValue().Set(info.This());
     }
 
@@ -425,7 +515,7 @@
         found->second.wrapper.Reset();
         registry->entries.erase(found);
         std::erase(registry->order, name);
-        self->document.mark_dirty();
+        self->refresh_custom_highlight_paint();
         info.GetReturnValue().Set(v8::True(info.GetIsolate()));
     }
 
@@ -442,7 +532,7 @@
         }
         registry->entries.clear();
         registry->order.clear();
-        self->document.mark_dirty();
+        self->refresh_custom_highlight_paint();
     }
 
     static void highlight_registry_size_get(

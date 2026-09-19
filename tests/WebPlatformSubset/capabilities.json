@@ -257,6 +257,14 @@
       "gap": "Implementation-first WebScene #743 middle stack layer for #740. The registry retains registered Highlight/Range wrappers with bounded document-local ownership and dirties only registered mutations. Functional ::highlight() cascade and retained pixels remain the top stack layer."
     },
     {
+      "family": "css-custom-highlight-paint",
+      "required": [],
+      "candidate": ["global ::highlight(name) rules", "color and background-color paint", "root custom-property resolution", "UTF-16 Range/text-fragment intersection", "cross-text-node ranges", "priority and registry-order overlap", "retained scene publication"],
+      "productEvidence": ["unchanged Code OSS chat find current/other match paint", "unchanged Markdown inner-diff added/removed paint"],
+      "coverage": ["contracts/css-custom-highlight-paint-code-oss.html", "test_custom_highlight_retained_paint_contract"],
+      "gap": "Implementation-first WebScene #746 top stack layer for #740. Registered ranges publish bounded retained background and foreground commands with no DOM/visual-tree nodes or idle frame work. Selector-qualified highlight rules, complete Highlight pseudo cascade and property coverage, and arbitrary DOM mutation adjustment remain outside this claim."
+    },
+    {
       "family": "list-formatting",
       "required": ["list-item marker paint", "ordered counters", "outside marker geometry", "inside marker first-line participation", "marker-before-block-child anonymous line"],
       "candidate": ["list-style shorthand on generic list-item boxes", "filled square marker rasterization", "inside marker with forced continuation-line reset"],

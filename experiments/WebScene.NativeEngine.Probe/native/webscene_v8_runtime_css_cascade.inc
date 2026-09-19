@@ -4244,10 +4244,12 @@
                 active_root(),
                 true,
                 "stylesheet-change");
+            refresh_custom_highlight_paint();
             document.mark_dirty();
             return;
         }
         apply_css_rules_subtree(active_root());
+        refresh_custom_highlight_paint();
         document.mark_dirty();
     }
 

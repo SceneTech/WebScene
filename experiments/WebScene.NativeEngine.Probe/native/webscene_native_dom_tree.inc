@@ -1000,6 +1000,26 @@ void native_document::clear()
     mark_dirty();
 }
 
+void native_document::set_custom_highlight_ranges(
+    std::vector<custom_highlight_range> ranges)
+{
+    const auto current = auxiliary_nodes_ == nullptr
+        ? std::span<const custom_highlight_range>{}
+        : std::span<const custom_highlight_range>{
+            auxiliary_nodes_->custom_highlights};
+    if (current.size() == ranges.size()
+        && std::equal(current.begin(), current.end(), ranges.begin())) return;
+    if (ranges.empty()) {
+        if (auxiliary_nodes_ != nullptr)
+            auxiliary_nodes_->custom_highlights.clear();
+    } else {
+        if (auxiliary_nodes_ == nullptr)
+            auxiliary_nodes_ = std::make_unique<auxiliary_nodes>();
+        auxiliary_nodes_->custom_highlights = std::move(ranges);
+    }
+    mark_dirty();
+}
+
 void native_document::show_validation_message(
     const dom_node& target, const dom_node& anchor, std::string message)
 {

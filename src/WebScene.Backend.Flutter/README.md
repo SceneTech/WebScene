@@ -34,9 +34,14 @@ Then provide the native runtime and bridge to `WebSceneView`:
 ```dart
 WebSceneView(
   documentUrl: 'https://example.test/application.html',
-  runtime: const WebSceneRuntimeConfiguration(
+  runtime: WebSceneRuntimeConfiguration(
     runtimeLibraryPath: '/absolute/path/libwebscene_native_engine.dylib',
     bridgeLibraryPath: '/absolute/path/libwebscene_flutter_bridge.dylib',
+    validationMessages: WebSceneValidationMessageCatalog({
+      WebSceneValidationMessageReason.valueMissing: 'Complete this field.',
+      WebSceneValidationMessageReason.patternMismatch:
+          'Use the requested format.',
+    }),
   ),
   onHostRequest: (controller, request) {
     // Implement application-specific host services here.
@@ -44,6 +49,11 @@ WebSceneView(
   onError: (error) => debugPrint('$error'),
 )
 ```
+
+The validation catalog is copied into the native bridge when an engine is
+created. Omitted reasons and formatter failures use WebScene's bounded English
+fallback. Each configured message must contain 1 to 1,024 UTF-8 bytes; custom
+validity text bypasses the catalog.
 
 Use `WebSceneController.executeScript` for imperative calls into the document.
 `WebSceneView` handles resize, frame, pointer, keyboard, cursor, visibility,

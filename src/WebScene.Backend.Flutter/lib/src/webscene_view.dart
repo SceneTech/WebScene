@@ -111,6 +111,8 @@ class _WebSceneViewState extends State<WebSceneView>
             widget.runtime.bridgeLibraryPath ||
         oldWidget.runtime.compilationCacheDirectory !=
             widget.runtime.compilationCacheDirectory ||
+        oldWidget.runtime.validationMessages !=
+            widget.runtime.validationMessages ||
         oldWidget.initializationScripts != widget.initializationScripts) {
       unawaited(_restart());
     } else if (_engine case final engine?) {
@@ -138,6 +140,7 @@ class _WebSceneViewState extends State<WebSceneView>
         runtimeLibrary: widget.runtime.runtimeLibraryPath,
         bridgeLibrary: widget.runtime.bridgeLibraryPath,
         cacheDirectory: widget.runtime.compilationCacheDirectory,
+        validationMessages: widget.runtime.validationMessages,
       );
       if (!mounted || generation != _generation) {
         engine.dispose();

@@ -18,6 +18,29 @@ void main() {
       '/runtime/libwebscene_flutter_bridge.dylib',
     );
     expect(configuration.compilationCacheDirectory, '/cache/webscene');
+    expect(configuration.validationMessages.messages, isEmpty);
+  });
+
+  test('validation catalog uses stable reason ids and UTF-8 byte bounds', () {
+    expect(WebSceneValidationMessageReason.valueMissing.id, 1);
+    expect(WebSceneValidationMessageReason.badInput.id, 9);
+
+    const accepted = WebSceneValidationMessageCatalog({
+      WebSceneValidationMessageReason.valueMissing: 'Complete this field.',
+    });
+    expect(accepted.validate, returnsNormally);
+
+    final boundary = WebSceneValidationMessageCatalog({
+      WebSceneValidationMessageReason.typeMismatch:
+          List.filled(256, '\u{1f642}').join(),
+    });
+    expect(boundary.validate, returnsNormally);
+
+    final oversized = WebSceneValidationMessageCatalog({
+      WebSceneValidationMessageReason.patternMismatch:
+          List.filled(257, '\u{1f642}').join(),
+    });
+    expect(oversized.validate, throwsStateError);
   });
 
   test('initialization script keeps source identity', () {

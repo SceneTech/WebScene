@@ -1903,6 +1903,13 @@
       "reason": "WPT-aligned bounded reduction for coordinated animation lists, per-track clocks and state, supported-property replace composition, ordered completion, serialization, and cleanup."
     },
     {
+      "path": "contracts/css-animation-zero-time.html",
+      "type": "contract",
+      "capabilities": ["zero-duration-animation", "zero-iteration-count", "zero-active-duration", "direction-aware-zero-time-fill", "positive-and-negative-delay-phases", "paused-delay-resume", "ordered-exactly-once-animation-end", "same-update-settlement", "zero-sustained-frame-demand"],
+      "evidence": ["css-animation-zero-time-674-242"],
+      "reason": "WPT-aligned bounded reduction for zero active duration, directed opacity/rotation/filter fill, delayed and paused phases, ordered completion, CSSOM mutation, cleanup, and settled scheduling."
+    },
+    {
       "path": "contracts/css-filter-keyframes-temporal.html",
       "type": "contract",
       "capabilities": ["keyframes-filter", "filter-identity-interpolation", "compound-filter-order", "host-frame-clock", "bounded-frame-samples", "finite-filter-fill", "animationend-event", "filter-lifecycle-cleanup"],

@@ -1062,6 +1062,140 @@ void test_multiple_animation_lists_coordinate_bounded_tracks(
         engine, false, "detached animation lists retained host-frame demand");
 }
 
+void test_zero_time_animation_tracks_settle_without_frame_demand(
+    webscene_engine* engine)
+{
+    animation_frame_and_wait(engine, 11000.0, 7130U);
+    execute_and_wait(engine, R"JS(
+        (() => {
+          document.body.innerHTML = `
+            <style>
+              @keyframes zero-fade { from { opacity: 0; transform: rotate(0);
+                  filter: brightness(.5); }
+                to { opacity: 1; transform: rotate(180deg);
+                  filter: brightness(1.5); } }
+              #delayed { animation: zero-fade 0s linear 500ms 2 reverse both; }
+              #zero-count { animation: zero-fade 1s linear 0s 0 reverse both; }
+              #fraction { animation: zero-fade 0s linear 0s 1.5 alternate both; }
+              #unfilled { opacity: .3; animation: zero-fade 0s linear; }
+              #negative { opacity: .3;
+                animation: zero-fade 0s linear -500ms 1 reverse both; }
+              #ordered { animation: zero-fade 0s linear both,
+                zero-fade 0s linear reverse both; }
+              #paused-now { animation: zero-fade 0s linear both paused; }
+              #paused-delay {
+                animation: zero-fade 0s linear 500ms 1 normal both paused; }
+            </style>
+            <div id="delayed"></div><div id="zero-count"></div>
+            <div id="fraction"></div><div id="unfilled"></div>
+            <div id="negative"></div>
+            <div id="ordered"></div><div id="paused-now"></div>
+            <div id="paused-delay"></div>`;
+          globalThis.__zeroEnds = [];
+          for (const node of document.querySelectorAll('div')) {
+            node.addEventListener('animationend', event => __zeroEnds.push({
+              id: node.id, name: event.animationName, elapsed: event.elapsedTime
+            }));
+          }
+          void document.body.offsetHeight;
+        })()
+    )JS", "animation-zero-setup.js");
+
+    animation_frame_and_wait(engine, 11250.0, 7131U);
+    const auto before = evaluate(engine, R"JS(
+        (() => {
+          const opacity = id => Number(getComputedStyle(
+            document.getElementById(id)).opacity);
+          const zeroCountStyle = getComputedStyle(
+            document.getElementById('zero-count'));
+          const matrix = zeroCountStyle.transform.slice(7, -1).split(',').map(Number);
+          const angle = Math.abs(Math.atan2(matrix[1], matrix[0]) * 180 / Math.PI);
+          const ordered = __zeroEnds.filter(event => event.id === 'ordered');
+          return Math.abs(opacity('delayed') - 1) < .001
+            && Math.abs(opacity('zero-count') - 1) < .001
+            && Math.abs(opacity('fraction') - .5) < .001
+            && Math.abs(opacity('unfilled') - .3) < .001
+            && Math.abs(opacity('negative')) < .001
+            && Math.abs(opacity('paused-now') - 1) < .001
+            && Math.abs(opacity('paused-delay') - 0) < .001
+            && Math.abs(angle - 180) < .001
+            && zeroCountStyle.filter === 'brightness(1.5)'
+            && ordered.length === 2
+            && ordered[0].name === 'zero-fade'
+            && ordered[1].name === 'zero-fade'
+            && __zeroEnds.every(event => event.elapsed === 0)
+            && getComputedStyle(document.getElementById('zero-count'))
+              .animationIterationCount === '0'
+            && getComputedStyle(document.getElementById('fraction'))
+              .animation.includes('0s');
+        })()
+    )JS", "animation-zero-before.js");
+    require(before == "true",
+        "zero duration/count did not settle directed fill and ordered completion");
+    wait_for_animation_frame_demand(
+        engine, true, "running zero-duration delay lost host-frame demand");
+
+    animation_frame_and_wait(engine, 11500.0, 7132U);
+    const auto delayed_complete = evaluate(engine, R"JS(
+        (() => {
+          const delayed = document.getElementById('delayed');
+          return Math.abs(Number(getComputedStyle(delayed).opacity)) < .001
+            && __zeroEnds.filter(event => event.id === 'delayed').length === 1
+            && __zeroEnds.filter(event => event.id === 'paused-delay').length === 0;
+        })()
+    )JS", "animation-zero-delay-complete.js");
+    require(delayed_complete == "true",
+        "zero-duration positive delay missed its instantaneous terminal phase");
+    wait_for_animation_frame_demand(
+        engine, false, "settled or paused zero-time tracks retained frame demand");
+
+    execute_and_wait(engine, R"JS(
+        (() => {
+          const paused = document.getElementById('paused-delay');
+          paused.style.animationPlayState = 'running';
+          return paused.style.animationPlayState;
+        })()
+    )JS", "animation-zero-resume-delay.js");
+    animation_frame_and_wait(engine, 11750.0, 7133U);
+    wait_for_animation_frame_demand(
+        engine, true, "resumed positive delay did not request its bounded frame");
+    animation_frame_and_wait(engine, 12000.0, 7134U);
+    const auto resumed = evaluate(engine, R"JS(
+        (() => {
+          const paused = document.getElementById('paused-delay');
+          return Math.abs(Number(getComputedStyle(paused).opacity) - 1) < .001
+            && __zeroEnds.filter(event => event.id === 'paused-delay').length === 1;
+        })()
+    )JS", "animation-zero-resumed-result.js");
+    require(resumed == "true",
+        "resumed zero-duration delay did not settle exactly once");
+    wait_for_animation_frame_demand(
+        engine, false, "completed resumed zero-time track retained frame demand");
+
+    execute_and_wait(engine, R"JS(
+        (() => {
+          const node = document.getElementById('fraction');
+          node.style.animationIterationCount = '0';
+          document.getElementById('ordered').style.animation = 'none';
+          document.getElementById('zero-count').remove();
+        })()
+    )JS", "animation-zero-mutate-remove.js");
+    animation_frame_and_wait(engine, 12000.0, 7135U);
+    const auto mutation = evaluate(engine, R"JS(
+        (() => Math.abs(Number(getComputedStyle(
+          document.getElementById('fraction')).opacity)) < .001
+          && getComputedStyle(document.getElementById('ordered')).opacity === '1')()
+    )JS", "animation-zero-mutate-result.js");
+    require(mutation == "true",
+        "same-timestamp zero-count mutation or removal left stale retained paint");
+
+    execute_and_wait(engine,
+        "document.body.innerHTML = '<div>zero-time animations detached</div>'",
+        "animation-zero-detach.js");
+    wait_for_animation_frame_demand(
+        engine, false, "detached zero-time animations retained frame demand");
+}
+
 void test_filter_keyframes_use_host_clock_and_retained_paint(
     webscene_engine* engine)
 {

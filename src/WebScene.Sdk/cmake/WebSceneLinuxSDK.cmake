@@ -40,6 +40,8 @@ if(WEBSCENE_SDK_WEBGPU)
   include("${WEBSCENE_ROOT}/eng/graphics/GraphicsDependencies.cmake")
   add_library(webscene_sdk_webgpu INTERFACE)
   target_include_directories(webscene_sdk_webgpu INTERFACE "${WEBSCENE_ROOT}/experiments/WebScene.NativeEngine.Probe/native/graphics")
+  target_compile_definitions(webscene_sdk_webgpu INTERFACE
+    WEBSCENE_DAWN_LINUX_EXTERNAL_FACTORY_VERSION=1)
   target_link_libraries(webscene_sdk_webgpu INTERFACE webscene_core dawn::webgpu_dawn Threads::Threads)
   add_library(WebScene::WebGPU ALIAS webscene_sdk_webgpu)
   install(DIRECTORY "${WEBSCENE_GRAPHICS_SDK_ROOT}/dawn/include/" DESTINATION include)

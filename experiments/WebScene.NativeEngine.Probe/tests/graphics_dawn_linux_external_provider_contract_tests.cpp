@@ -6,12 +6,41 @@ namespace {
 void require(bool value){if(!value)throw std::runtime_error("Dawn Linux external provider contract failed");}
 }
 int main(){
+    static_assert(WEBSCENE_DAWN_LINUX_EXTERNAL_FACTORY_VERSION==1);
     auto* first=reinterpret_cast<WGPUDevice>(uintptr_t{1});
     auto* second=reinterpret_cast<WGPUDevice>(uintptr_t{2});
     require(valid_dawn_linux_external_binding(first,first,first));
     require(!valid_dawn_linux_external_binding(nullptr,first,first));
     require(!valid_dawn_linux_external_binding(first,second,first));
     require(!valid_dawn_linux_external_binding(first,first,second));
+
+    auto native_owner=std::make_shared<int>(42);
+    auto device=std::make_shared<dawn_linux_external_device_lifetime>();
+    device->dawn_adapter_token=reinterpret_cast<WGPUAdapter>(uintptr_t{6});
+    device->dawn_device_token=first;
+    device->vk_physical_device=reinterpret_cast<void*>(uintptr_t{3});
+    device->vk_device=reinterpret_cast<void*>(uintptr_t{4});
+    device->vk_queue=reinterpret_cast<void*>(uintptr_t{5});
+    device->device_uuid[0]=1;
+    device->driver_uuid[0]=2;device->dawn_queue_family=4;
+    device->native_owner=native_owner;
+    require(same_dawn_linux_external_identity(device,device));
+    auto copied=std::make_shared<dawn_linux_external_device_lifetime>(*device);
+    require(!same_dawn_linux_external_identity(device,copied));
+
+    linux_external_image_snapshot exact;
+    exact.device_uuid=device->device_uuid;exact.driver_uuid=device->driver_uuid;
+    exact.queue_sharing=linux_queue_sharing::exclusive;
+    exact.consumer_queue_family=device->dawn_queue_family;
+    require(dawn_linux_snapshot_matches_device(exact,*device));
+    exact.consumer_queue_family=5;
+    require(!dawn_linux_snapshot_matches_device(exact,*device));
+    exact.queue_sharing=linux_queue_sharing::concurrent;
+    exact.vk_queue_family_index_count=2;
+    exact.vk_queue_family_indices={3,4,0,0};
+    require(dawn_linux_snapshot_matches_device(exact,*device));
+    exact.vk_queue_family_indices={3,5,0,0};
+    require(!dawn_linux_snapshot_matches_device(exact,*device));
 
     require(valid_dawn_linux_fence_handoff(linux_sync_handle::sync_fd,false,1,7));
     require(!valid_dawn_linux_fence_handoff(linux_sync_handle::sync_fd,true,1,7));

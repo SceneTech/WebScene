@@ -40,7 +40,8 @@ if(NOT TARGET WebScene::Core)
     add_library(WebScene::WebGPU INTERFACE IMPORTED GLOBAL)
     set_target_properties(WebScene::WebGPU PROPERTIES
       INTERFACE_LINK_LIBRARIES "WebScene::Core;WebScene::_Dawn;Threads::Threads;${CMAKE_DL_LIBS}"
-      INTERFACE_INCLUDE_DIRECTORIES "${WebScene_SDK_ROOT}/include/graphics")
+      INTERFACE_INCLUDE_DIRECTORIES "${WebScene_SDK_ROOT}/include/graphics"
+      INTERFACE_COMPILE_DEFINITIONS "WEBSCENE_DAWN_LINUX_EXTERNAL_FACTORY_VERSION=1")
   endif()
   add_executable(WebScene::Compiler IMPORTED GLOBAL)
   set_property(TARGET WebScene::Compiler PROPERTY IMPORTED_LOCATION "${WebScene_SDK_ROOT}/bin/webscene-uic")

@@ -201,6 +201,10 @@
     std::unordered_map<uint64_t, v8::Global<v8::Object>> canvas_contexts;
     std::unordered_map<uint64_t, std::unique_ptr<canvas_state>> canvas_states;
     std::unordered_map<uint32_t, v8::Global<v8::Object>> frame_documents;
+    static constexpr size_t maximum_custom_states_per_element = 64U;
+    static constexpr size_t maximum_custom_state_token_bytes = 128U;
+    static constexpr size_t maximum_custom_state_bytes_per_element = 8U * 1024U;
+    std::unordered_map<uint32_t, std::vector<std::string>> custom_states;
     std::unordered_map<uint32_t, dom_node*> provisional_frame_bodies;
     std::unordered_map<uint32_t, v8::Global<v8::Object>> frame_windows;
     std::unordered_map<uint32_t, v8::Global<v8::Object>>

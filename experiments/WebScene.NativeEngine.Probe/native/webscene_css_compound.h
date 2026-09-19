@@ -351,6 +351,12 @@ inline bool compound_matches(const Host& host,const dom_node& node,
                 || name == "focus-visible" || name == "focus-within") {
                 if (!css::interaction_matches(document,node,name,
                     host.selector_interaction_state(),host.is_text_control(&node))) return false;
+            } else if (name == "state") {
+                if constexpr (requires { host.custom_state_matches(node, argument); }) {
+                    if (!host.custom_state_matches(node, argument)) return false;
+                } else {
+                    return false;
+                }
             } else if (name == "not") {
                 if (pseudo.compiled_argument != nullptr) {
                     if (!pseudo.compiled_argument_valid

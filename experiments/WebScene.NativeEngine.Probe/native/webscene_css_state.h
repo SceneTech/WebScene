@@ -12,6 +12,8 @@
 #include <vector>
 
 namespace webscene_native::css {
+    inline constexpr std::string_view starting_style_media_marker =
+        "-webscene-starting-style";
 struct compiled_css_selector_list;
 // Native stylesheet/cascade storage shared by runtime adapters and build tools.
 // No JavaScript handles, V8 headers or parser ownership belong in this model.
@@ -243,6 +245,12 @@ struct compiled_css_selector final {
         const std::vector<css_declaration>& declarations() const noexcept
         {
             return payload->declarations;
+        }
+        bool is_starting_style() const noexcept
+        {
+            return std::find(
+                payload->media_queries.begin(), payload->media_queries.end(),
+                starting_style_media_marker) != payload->media_queries.end();
         }
         const std::vector<std::string>& media_queries() const noexcept
         {

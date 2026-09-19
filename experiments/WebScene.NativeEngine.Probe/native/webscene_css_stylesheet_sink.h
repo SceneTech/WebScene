@@ -89,6 +89,17 @@ public:
             current.prelude = trim_value(prelude);
             current.declarations.reserve(3U);
             current.children_active = false;
+        } else if (name == "starting-style" && has_block
+            && trim_value(prelude).empty()
+            && nearest_style_frame() == nullptr
+            && std::none_of(stack_.begin(), stack_.end(), [](const frame& ancestor) {
+                return ancestor.starting_style;
+            })) {
+            current.starting_style = true;
+            owner_.record_feature(
+                "css", "at-rule:@starting-style", "supported",
+                "bounded entry-transition grouping rules",
+                "stylesheet-parser");
         } else if (name == "font-face") {
             current.children_active = false;
             owner_.record_feature(
@@ -222,6 +233,9 @@ public:
                 if (!ancestor.media_query.empty()) {
                     inherited_media.push_back(ancestor.media_query);
                 }
+                if (ancestor.starting_style) {
+                    inherited_media.emplace_back(starting_style_media_marker);
+                }
             }
             std::vector<completed_style_rule> completed;
             completed.reserve(1U + current.nested_rules.size());
@@ -342,6 +356,7 @@ private:
         bool children_active{false};
         bool keyframes{false};
         bool property_rule{false};
+        bool starting_style{false};
     };
 
     static std::optional<float> parse_typed_number(

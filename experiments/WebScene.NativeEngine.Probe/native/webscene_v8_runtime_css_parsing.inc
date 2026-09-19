@@ -542,6 +542,17 @@
             [this](const std::string& query) { return media_query_matches(query); });
     }
 
+    bool starting_style_rule_media_matches(const css_rule& rule) const
+    {
+        return rule.is_starting_style()
+            && std::all_of(
+                rule.media_queries().begin(), rule.media_queries().end(),
+                [this](const std::string& query) {
+                    return query == css::starting_style_media_marker
+                        || media_query_matches(query);
+                });
+    }
+
     static std::shared_ptr<const css_rule_payload> intern_css_rule_payload(
         std::string selector,
         const std::vector<css_declaration>& declarations,

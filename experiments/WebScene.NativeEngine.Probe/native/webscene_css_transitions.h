@@ -301,8 +301,10 @@ inline void configure_style_transitions(node_style& style)
         const auto delays = split_css_component_list(animations.transition_delay_value, ',');
         const auto timings = split_css_component_list(
             animations.transition_timing_function_value, ',');
+        const auto behaviors = split_css_component_list(
+            animations.transition_behavior_value, ',');
         const auto resolve = [&](std::string_view property) {
-            node_style::transition_timing result;
+            std::pair<node_style::transition_timing, bool> result;
             for (size_t index = 0; index < properties.size(); ++index) {
                 auto candidate = ascii_lower(trim_value(properties[index]));
                 // Transition matching uses the canonical physical property.
@@ -313,26 +315,33 @@ inline void configure_style_transitions(node_style& style)
                 else if (candidate == "background") candidate = "background-color";
                 if (candidate != property && candidate != "all") continue;
                 if (!durations.empty()) {
-                    result.duration_ms = std::max(
+                    result.first.duration_ms = std::max(
                         0.0F, parse_css_time_ms(durations[index % durations.size()]));
                 }
                 if (!delays.empty()) {
-                    result.delay_ms = parse_css_time_ms(delays[index % delays.size()]);
+                    result.first.delay_ms = parse_css_time_ms(delays[index % delays.size()]);
                 }
                 if (!timings.empty()) {
-                    parse_transition_timing(timings[index % timings.size()], result);
+                    parse_transition_timing(timings[index % timings.size()], result.first);
+                }
+                if (!behaviors.empty()) {
+                    result.second = ascii_lower(trim_value(
+                        behaviors[index % behaviors.size()])) == "allow-discrete";
                 }
                 return result;
             }
             return result;
         };
-        animations.transform_transition = resolve("transform");
-        animations.left_transition = resolve("left");
-        animations.top_transition = resolve("top");
-        animations.opacity_transition = resolve("opacity");
-        animations.color_transition = resolve("color");
-        animations.background_color_transition = resolve("background-color");
-        animations.filter_transition = resolve("filter");
+        animations.transform_transition = resolve("transform").first;
+        animations.left_transition = resolve("left").first;
+        animations.top_transition = resolve("top").first;
+        animations.opacity_transition = resolve("opacity").first;
+        animations.color_transition = resolve("color").first;
+        animations.background_color_transition = resolve("background-color").first;
+        animations.filter_transition = resolve("filter").first;
+        const auto display = resolve("display");
+        animations.display_transition = display.first;
+        animations.display_transition_allow_discrete = display.second;
     }
 
 inline void apply_transition_shorthand(
@@ -344,11 +353,13 @@ inline void apply_transition_shorthand(
         std::vector<std::string> durations;
         std::vector<std::string> delays;
         std::vector<std::string> timings;
+        std::vector<std::string> behaviors;
         for (const auto& item : split_css_component_list(value, ',')) {
             auto property = std::string("all");
             auto duration = std::string("0s");
             auto delay = std::string("0s");
             auto timing = std::string("ease");
+            auto behavior = std::string("normal");
             auto saw_time = false;
             for (const auto& token : split_value_tokens(item)) {
                 const auto lower = ascii_lower(token);
@@ -360,7 +371,9 @@ inline void apply_transition_shorthand(
                     || lower == "ease-out" || lower == "ease-in-out"
                     || lower.starts_with("cubic-bezier(")) {
                     timing = lower;
-                } else if (lower != "normal") {
+                } else if (lower == "normal" || lower == "allow-discrete") {
+                    behavior = lower;
+                } else {
                     property = lower;
                 }
             }
@@ -368,6 +381,7 @@ inline void apply_transition_shorthand(
             durations.push_back(std::move(duration));
             delays.push_back(std::move(delay));
             timings.push_back(std::move(timing));
+            behaviors.push_back(std::move(behavior));
         }
         const auto join = [](const std::vector<std::string>& values) {
             std::string result;
@@ -382,6 +396,7 @@ inline void apply_transition_shorthand(
         animations.transition_duration_value = join(durations);
         animations.transition_delay_value = join(delays);
         animations.transition_timing_function_value = join(timings);
+        animations.transition_behavior_value = join(behaviors);
         if (configure) configure_style_transitions(style);
     }
 
@@ -396,6 +411,7 @@ inline bool apply_compiled_single_transition_shorthand(
         auto duration = std::string("0s");
         auto delay = std::string("0s");
         auto timing = std::string("ease");
+        auto behavior = std::string("normal");
         auto saw_time = false;
         for (const auto& component : specified.components) {
             const auto lower = ascii_lower(component.name);
@@ -407,7 +423,9 @@ inline bool apply_compiled_single_transition_shorthand(
                 || lower == "ease-out" || lower == "ease-in-out"
                 || lower.starts_with("cubic-bezier(")) {
                 timing = lower;
-            } else if (lower != "normal") {
+            } else if (lower == "normal" || lower == "allow-discrete") {
+                behavior = lower;
+            } else {
                 property = lower;
             }
         }
@@ -416,6 +434,7 @@ inline bool apply_compiled_single_transition_shorthand(
         animations.transition_duration_value = std::move(duration);
         animations.transition_delay_value = std::move(delay);
         animations.transition_timing_function_value = std::move(timing);
+        animations.transition_behavior_value = std::move(behavior);
         if (configure) configure_style_transitions(style);
         return true;
     }

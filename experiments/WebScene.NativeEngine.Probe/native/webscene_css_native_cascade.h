@@ -87,6 +87,57 @@ bool apply_native_cascade(native_document& document,dom_node& node,
         }
         recompute_cascaded_line_height(node,cascade_order,variables);
         recompute_inline_font_relative_metrics(node);
+        configure_style_transitions(node.style);
+        document.update_discrete_display_transition(node,previous.display);
+        std::optional<node_style> starting_style;
+        const auto rendered_after_change=node.style.display!=display_mode::none;
+        const auto entering_rendered_state=rendered_after_change
+            && (!node.css_cascade_initialized || !node.css_was_rendered);
+        if(entering_rendered_state) {
+            std::vector<const css_rule*> starting_rules;
+            for(const auto index:indices) {
+                if(index>=sheets.state().rules.size()) continue;
+                const auto& rule=sheets.state().rules[index];
+                if(!sheets.starting_rule_media_matches(rule)
+                    || rule.payload->pseudo_kind!=0U
+                    || !query.matches_prepared(node,rule.compiled_selector())) continue;
+                starting_rules.push_back(&rule);
+            }
+            if(!starting_rules.empty()) {
+                auto after_change_style=node.style;
+                reset_cascaded_style(
+                    node,variables,&sheets.state().registered_custom_properties);
+                auto initial_rules=matched.ordinary;
+                initial_rules.insert(
+                    initial_rules.end(),starting_rules.begin(),starting_rules.end());
+                std::sort(
+                    initial_rules.begin(),initial_rules.end(),
+                    [](const css_rule* left,const css_rule* right) {
+                        return cascade_rule_precedes(left,right,false);
+                    });
+                const cascaded_rule_order initial_order(initial_rules);
+                apply_matched_declarations(
+                    node,initial_order,[&](const css_declaration& declaration,bool inline_origin) {
+                        property_result result;
+                        if(declaration.name.starts_with("--")) {
+                            apply_custom_property(
+                                node,declaration,
+                                &sheets.state().registered_custom_properties);
+                        } else {
+                            apply_declaration(
+                                document,node,declaration,variables,inline_origin,
+                                result,load_svg,[](bool) {},true);
+                        }
+                    });
+                configure_style_transitions(node.style);
+                recompute_cascaded_line_height(node,initial_order,variables);
+                recompute_inline_font_relative_metrics(node);
+                starting_style=node.style;
+                node.style=std::move(after_change_style);
+            }
+        }
+        node.css_cascade_initialized=true;
+        node.css_was_rendered=rendered_after_change;
         bool backdrop_important=false;
         for_each_cascaded_pseudo_declaration(
             matched.pseudo,
@@ -139,6 +190,8 @@ bool apply_native_cascade(native_document& document,dom_node& node,
                     sheets.state().opacity_keyframes,
                     sheets.state().registered_custom_properties);
         }
+        if(starting_style.has_value())
+            document.prime_starting_style(node,*starting_style);
         document.update_style_animations(node);
     }
     const bool layout_changed=!computed_layout_style_equal(previous,node.style);

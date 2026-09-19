@@ -122,6 +122,23 @@ void property_descriptors_stream_as_declarations()
         "@property descriptor names preserve source order");
 }
 
+void starting_style_streams_nested_rules()
+{
+    const auto parsed = parse_css_syntax_stylesheet(R"CSS(
+        @starting-style {
+            .entry { opacity: 0; transform: translateX(-6px); }
+        }
+    )CSS");
+    require(static_cast<bool>(parsed), parsed.error);
+    require(parsed.rules.size() == 2U
+        && parsed.rules[0].name == "starting-style"
+        && parsed.rules[1].kind == css_syntax_style_rule
+        && parsed.rules[1].parent_index == 0U,
+        "@starting-style streams its qualified-rule children");
+    require(parsed.declarations.size() == 2U,
+        "@starting-style child declarations reach the stylesheet sink");
+}
+
 class direct_sink final : public css_syntax_sink {
 public:
     bool begin_rule(
@@ -212,6 +229,7 @@ int main()
     stylesheet_structure();
     invalid_utf8_is_rejected();
     property_descriptors_stream_as_declarations();
+    starting_style_streams_nested_rules();
     direct_streaming_sink();
     nested_style_rule_stream();
     std::cout << "CSS parser tests passed\n";

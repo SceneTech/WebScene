@@ -295,6 +295,164 @@ void native_document::cancel_web_animations(
     mark_dirty();
 }
 
+void native_document::reset_detached_style_state(dom_node& root)
+{
+    // A true removal ends CSS transitions/animations and removes the element's
+    // before-change style. Atomic moves do not call this path, so reparenting a
+    // connected node preserves its transition generation and does not create a
+    // false @starting-style entry.
+    cancel_web_animations(root, true);
+    auto released_runtime = false;
+    const auto visit = [&](const auto& self, dom_node& node) -> void {
+        if (auto* animation = node.animation_runtime(); animation != nullptr) {
+            if (animation->display_animation_active) {
+                node.style.display = animation->display_animation_target;
+            }
+            node.animation_runtime_state.reset();
+            released_runtime = true;
+        }
+        node.css_cascade_initialized = false;
+        node.css_was_rendered = false;
+        for (auto* child : node.children) {
+            if (child != nullptr) self(self, *child);
+        }
+    };
+    visit(visit, root);
+    if (!released_runtime) return;
+    active_animation_demand_cache_valid_ = false;
+    last_animation_advance_timestamp_ms_ =
+        std::numeric_limits<double>::quiet_NaN();
+    mark_dirty();
+}
+
+void native_document::update_discrete_display_transition(
+    dom_node& node,
+    display_mode previous_display)
+{
+    const auto target = node.style.display;
+    auto* existing = node.animation_runtime();
+    if (existing != nullptr && existing->display_animation_active) {
+        const auto retain_existing = target == display_mode::none
+            && node.style.has_animation_data()
+            && node.style.animations().display_transition_allow_discrete
+            && std::abs(node.style.animations().display_transition.duration_ms
+                - existing->display_animation_duration_ms) < 0.001F
+            && std::abs(node.style.animations().display_transition.delay_ms
+                - existing->display_animation_delay_ms) < 0.001F;
+        if (retain_existing) {
+            node.style.display = previous_display;
+            return;
+        }
+        transition_events_.push_back({
+            node.id, "transitioncancel", "display",
+            std::clamp(
+                static_cast<float>(animation_frame_timestamp_ms_
+                    - existing->display_animation_started_ms
+                    - existing->display_animation_delay_ms),
+                0.0F, existing->display_animation_duration_ms) / 1000.0F});
+        existing->display_animation_active = false;
+        active_animation_demand_cache_valid_ = false;
+    }
+    if (!node.css_cascade_initialized
+        || previous_display == display_mode::none
+        || target != display_mode::none
+        || !node.style.has_animation_data()) return;
+    const auto& animations = node.style.animations();
+    if (!animations.display_transition_allow_discrete
+        || animations.display_transition.duration_ms <= 0) return;
+    auto& runtime = node.mutable_animation_runtime();
+    runtime.display_animation_target = target;
+    runtime.display_animation_duration_ms =
+        animations.display_transition.duration_ms;
+    runtime.display_animation_delay_ms = animations.display_transition.delay_ms;
+    runtime.display_animation_started_ms = animation_frame_timestamp_ms_;
+    runtime.display_animation_active = true;
+    runtime.display_animation_start_event_sent =
+        runtime.display_animation_delay_ms <= 0;
+    node.style.display = previous_display;
+    active_animation_demand_cache_valid_ = false;
+    transition_events_.push_back({node.id, "transitionrun", "display", 0});
+    if (runtime.display_animation_start_event_sent) {
+        transition_events_.push_back({
+            node.id, "transitionstart", "display",
+            std::min(-runtime.display_animation_delay_ms,
+                runtime.display_animation_duration_ms) / 1000.0F});
+    }
+}
+
+void native_document::prime_starting_style(
+    dom_node& node,
+    const node_style& starting_style)
+{
+    if (!node.style.has_animation_data()) return;
+    const auto length_equal = [](css_length left, css_length right) {
+        return left.unit == right.unit
+            && std::abs(left.value - right.value) < 0.001F
+            && std::abs(left.pixel_offset - right.pixel_offset) < 0.001F;
+    };
+    const auto transform_differs =
+        !length_equal(starting_style.transform_translate_x,
+            node.style.transform_translate_x)
+        || !length_equal(starting_style.transform_translate_y,
+            node.style.transform_translate_y)
+        || std::abs(starting_style.transform_scale_x
+            - node.style.transform_scale_x) >= 0.001F
+        || std::abs(starting_style.transform_scale_y
+            - node.style.transform_scale_y) >= 0.001F
+        || std::abs(starting_style.transform_rotate_degrees
+            - node.style.transform_rotate_degrees) >= 0.001F;
+    const auto opacity_differs = std::abs(
+        starting_style.opacity - node.style.opacity) >= 0.0001F;
+    const auto starting_background = starting_style.background_current_color
+        ? starting_style.foreground_rgba : starting_style.background_rgba;
+    const auto target_background = node.style.background_current_color
+        ? node.style.foreground_rgba : node.style.background_rgba;
+    const auto background_differs = starting_background != target_background;
+    const auto& timings = node.style.animations();
+    if ((!transform_differs || timings.transform_transition.duration_ms <= 0)
+        && (!opacity_differs || timings.opacity_transition.duration_ms <= 0)
+        && (!background_differs
+            || timings.background_color_transition.duration_ms <= 0)) return;
+
+    active_animation_demand_cache_valid_ = false;
+    auto& animation = node.mutable_animation_runtime();
+    if (transform_differs && timings.transform_transition.duration_ms > 0) {
+        animation.transform_animation_initialized = true;
+        animation.transform_animation_active = false;
+        animation.painted_transform_translate_x =
+            starting_style.transform_translate_x;
+        animation.painted_transform_translate_y =
+            starting_style.transform_translate_y;
+        animation.painted_transform_scale_x = starting_style.transform_scale_x;
+        animation.painted_transform_scale_y = starting_style.transform_scale_y;
+        animation.painted_transform_rotate_degrees =
+            starting_style.transform_rotate_degrees;
+        animation.transform_animation_target_translate_x =
+            starting_style.transform_translate_x;
+        animation.transform_animation_target_translate_y =
+            starting_style.transform_translate_y;
+        animation.transform_animation_target_scale_x =
+            starting_style.transform_scale_x;
+        animation.transform_animation_target_scale_y =
+            starting_style.transform_scale_y;
+        animation.transform_animation_target_degrees =
+            starting_style.transform_rotate_degrees;
+    }
+    if (opacity_differs && timings.opacity_transition.duration_ms > 0) {
+        animation.opacity_animation_initialized = true;
+        animation.opacity_animation_active = false;
+        animation.painted_opacity = starting_style.opacity;
+        animation.opacity_animation_target = starting_style.opacity;
+    }
+    if (background_differs
+        && timings.background_color_transition.duration_ms > 0) {
+        animation.background_color_animation_initialized = true;
+        animation.background_color_animation_active = false;
+        animation.painted_background_rgba = starting_background;
+        animation.background_color_animation_target_rgba = starting_background;
+    }
+}
+
 void native_document::update_style_animations(dom_node& node)
 {
     const auto has_pseudo_animation = node.style.has_pseudo_elements()
@@ -1247,6 +1405,30 @@ bool native_document::advance_animations() noexcept
             continue;
         }
         auto& animation = *animation_pointer;
+        if (animation.display_animation_active) {
+            const auto elapsed_ms = static_cast<float>(
+                animation_frame_timestamp_ms_
+                - animation.display_animation_started_ms
+                - animation.display_animation_delay_ms);
+            if (elapsed_ms >= 0
+                && !animation.display_animation_start_event_sent) {
+                animation.display_animation_start_event_sent = true;
+                transition_events_.push_back({
+                    node.id, "transitionstart", "display", 0});
+            }
+            if (elapsed_ms >= animation.display_animation_duration_ms) {
+                node.style.display = animation.display_animation_target;
+                node.css_was_rendered = node.style.display != display_mode::none;
+                animation.display_animation_active = false;
+                transition_events_.push_back({
+                    node.id, "transitionend", "display",
+                    animation.display_animation_duration_ms / 1000.0F});
+                layout_changed = true;
+                advanced = true;
+            } else if (elapsed_ms >= 0) {
+                advanced = true;
+            }
+        }
         const auto keyframe_paint_visible = intersects_visible_paint_area(node);
         const auto advance_inset_transition = [&] (
             const char* property_name,
@@ -2313,7 +2495,8 @@ bool native_document::has_active_animations() const noexcept
             || animation->opacity_animation_active
             || animation->color_animation_active
             || animation->background_color_animation_active
-            || animation->filter_animation_active;
+            || animation->filter_animation_active
+            || animation->display_animation_active;
         const auto keyframe_active = std::any_of(
             animation->keyframe_animations.begin(),
             animation->keyframe_animations.end(), [](const auto& track) {

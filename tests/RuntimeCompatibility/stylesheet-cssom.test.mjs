@@ -105,6 +105,22 @@ test('CSS token boundaries retain quoted braces, comments, escapes and grouped r
   assert.equal(style.sheet.cssRules[0].selectorText, '.retained');
 });
 
+test('starting-style rules expose grouping identity and publish child mutations', () => {
+  const { createStyle, realm } = setup();
+  const style = createStyle();
+  style.textContent = '@starting-style { .entry { opacity: 0; transform: translateX(-6px); } }';
+  const rule = style.sheet.cssRules[0];
+  assert.equal(rule instanceof realm.CSSStartingStyleRule, true);
+  assert.equal(rule.constructor.name, 'CSSStartingStyleRule');
+  assert.equal(rule.cssRules.length, 1);
+  assert.equal(rule.cssRules[0].selectorText, '.entry');
+  rule.deleteRule(0);
+  assert.equal(style.textContent, '@starting-style {}');
+  rule.insertRule('.replacement { opacity: .5; }');
+  assert.equal(rule.cssRules[0].selectorText, '.replacement');
+  assert.equal(style.textContent, '@starting-style {.replacement { opacity: .5; }}');
+});
+
 test('invalid indices and malformed rules fail before native mutation', () => {
   const { createStyle } = setup();
   const style = createStyle();

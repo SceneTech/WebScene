@@ -559,6 +559,129 @@ void test_registered_custom_property_keyframes_update_dependent_paint()
     webscene_engine_destroy(engine);
 }
 
+void test_starting_style_entry_and_discrete_display_transitions()
+{
+    auto* engine = webscene_engine_create(0);
+    require(engine != nullptr, "starting-style engine creation failed");
+    execute_and_wait(engine, R"JS(
+        (() => {
+          document.body.innerHTML = `
+            <style id="entry-sheet">
+              #entry {
+                width: 40px; height: 20px; opacity: 1;
+                transform: translateX(0px);
+                transition: opacity 250ms linear, transform 250ms linear,
+                  display 260ms allow-discrete;
+              }
+              #entry.hidden { display: none; transform: translateX(-6px); }
+              @starting-style {
+                #entry { opacity: 0; transform: translateX(-6px); }
+              }
+            </style>
+            <div id="entry"></div>`;
+        })()
+    )JS", "starting-style-setup.js");
+    const auto reflected = evaluate(engine, R"JS(
+        (() => {
+          const rule = document.getElementById('entry-sheet').sheet.cssRules[2];
+          const dynamic = new CSSStyleSheet();
+          dynamic.replaceSync('@starting-style { .first { opacity: 0; } }');
+          dynamic.cssRules[0].deleteRule(0);
+          dynamic.cssRules[0].insertRule('.replacement { opacity: .5; }');
+          return [rule.constructor.name, rule instanceof CSSStartingStyleRule,
+            rule.cssRules.length, dynamic.cssRules[0].cssRules[0].selectorText];
+        })()
+    )JS", "starting-style-cssom.js");
+    require(
+        reflected == R"(["CSSStartingStyleRule",true,1,".replacement"])",
+        "CSSStartingStyleRule identity/mutation diverged: " + reflected);
+
+    const auto initial = evaluate(engine, R"JS(
+        (() => {
+          const style = getComputedStyle(document.getElementById('entry'));
+          return [style.opacity, style.transform];
+        })()
+    )JS", "starting-style-initial.js");
+    require(initial.find(R"("0")") != std::string::npos
+            && initial.find("-6") != std::string::npos,
+        "entry transition did not begin at @starting-style: " + initial);
+    animation_frame_and_wait(engine, 125.0, 7491U);
+    const auto midpoint = evaluate(engine, R"JS(
+        (() => {
+          const style = getComputedStyle(document.getElementById('entry'));
+          return [style.opacity, style.transform];
+        })()
+    )JS", "starting-style-midpoint.js");
+    require(midpoint.find("0.5") != std::string::npos
+            && midpoint.find("-3") != std::string::npos,
+        "entry transition midpoint diverged: " + midpoint);
+    animation_frame_and_wait(engine, 250.0, 7492U);
+    execute_and_wait(engine, R"JS(
+        document.getElementById('entry').classList.add('hidden')
+    )JS", "starting-style-hide.js");
+    const auto deferred = evaluate(engine, R"JS(
+        (() => {
+          const entry = document.getElementById('entry');
+          return [getComputedStyle(entry).display, entry.offsetWidth > 0];
+        })()
+    )JS", "starting-style-deferred-display.js");
+    require(deferred == R"(["none",true])",
+        "allow-discrete did not defer used display: " + deferred);
+    animation_frame_and_wait(engine, 510.0, 7493U);
+    require(evaluate(engine, R"JS(
+        document.getElementById('entry').offsetWidth
+    )JS", "starting-style-display-end.js") == "0",
+        "display did not become none at the discrete transition boundary");
+    execute_and_wait(engine, R"JS(
+        document.getElementById('entry').classList.remove('hidden')
+    )JS", "starting-style-restore.js");
+    const auto restored = evaluate(engine, R"JS(
+        (() => {
+          const style = getComputedStyle(document.getElementById('entry'));
+          return [style.opacity, style.transform];
+        })()
+    )JS", "starting-style-restored-entry.js");
+    require(restored.find(R"("0")") != std::string::npos
+            && restored.find("-6") != std::string::npos,
+        "display:none restoration did not re-enter @starting-style: " + restored);
+    execute_and_wait(engine, R"JS(
+        globalThis.__startingStyleDetachedEntry = document.getElementById('entry');
+        __startingStyleDetachedEntry.remove()
+    )JS", "starting-style-remove.js");
+    require(webscene_engine_requires_animation_frame(engine) == 0U,
+        "removed entry transition retained host-frame demand");
+    execute_and_wait(engine, R"JS(
+        document.body.appendChild(globalThis.__startingStyleDetachedEntry)
+    )JS", "starting-style-reinsert.js");
+    const auto reinserted = evaluate(engine, R"JS(
+        (() => {
+          const style = getComputedStyle(globalThis.__startingStyleDetachedEntry);
+          return [style.opacity, style.transform];
+        })()
+    )JS", "starting-style-reinserted-entry.js");
+    require(reinserted.find(R"("0")") != std::string::npos
+            && reinserted.find("-6") != std::string::npos,
+        "removed entry did not restart from @starting-style: " + reinserted);
+    execute_and_wait(engine, R"JS(
+        document.getElementById('entry-sheet').remove()
+    )JS", "starting-style-sheet-remove.js");
+    require(webscene_engine_requires_animation_frame(engine) == 0U,
+        "starting-style stylesheet teardown retained host-frame demand");
+    const auto after_teardown = evaluate(engine, R"JS(
+        (() => {
+          const entry = globalThis.__startingStyleDetachedEntry;
+          entry.remove();
+          document.body.appendChild(entry);
+          const style = getComputedStyle(entry);
+          return [style.opacity, style.transform];
+        })()
+    )JS", "starting-style-after-teardown.js");
+    require(after_teardown.find(R"("1")") != std::string::npos
+            && after_teardown.find("none") != std::string::npos,
+        "removed @starting-style stylesheet remained active: " + after_teardown);
+    webscene_engine_destroy(engine);
+}
+
 void test_rotation_keyframes_use_host_clock_and_wrap_continuously(
     webscene_engine* engine)
 {

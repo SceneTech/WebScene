@@ -1367,6 +1367,13 @@
       "reason": "Implementation-first candidate for WebScene #257. Form controls expose a same-object live ValidityState over the merged required, text, numeric, date/time, radio, and select model. Custom errors participate in validity and selector matching; checkValidity() and reportValidity() dispatch a cancelable, non-bubbling invalid event for an invalid candidate. Form-level aggregation and validation UI remain outside this slice. Per task direction this authored contract is unexecuted."
     },
     {
+      "path": "contracts/form-submission-constraint-validation.html",
+      "type": "testharness",
+      "capabilities": ["form-fieldset-validity-aggregation", "form-constraint-validation", "submission-validation", "submit-attempt-user-validity"],
+      "evidence": ["wpt-constraint-validation-derived", "wpt-css-ui-user-validity-derived", "native-source-companion-contract"],
+      "reason": "Implementation-first candidate for WebScene #257. Form and fieldset :valid/:invalid state aggregates current owned or descendant validation candidates; HTMLFormElement checkValidity()/reportValidity() dispatch invalid for each failing owned candidate; submit activation marks owned input/select/textarea user validity before validation, blocks submit when invalid, and honors novalidate/formnovalidate without suppressing that interaction transition. Aggregate selector matching reads live state without adding a competing structural invalidation route, so descendant-driven ancestor computed-style recascade remains outside this slice. Interactive validation UI and the remaining control-type gaps are deferred. Per task direction this authored contract is unexecuted."
+    },
+    {
       "path": "contracts/css-grid-auto-fill-minmax-custom-property.html",
       "type": "testharness",
       "capabilities": ["css-grid", "auto-fill-tracks", "minmax", "custom-property-track-minimum", "responsive-track-count"],

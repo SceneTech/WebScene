@@ -961,6 +961,11 @@ inline bool will_validate(
     return true;
 }
 
+inline bool is_constraint_validation_control(const dom_node& node) {
+    return node.tag=="button" || node.tag=="input"
+        || node.tag=="select" || node.tag=="textarea";
+}
+
 inline numeric_constraint_validity numeric_validity_state(
     const native_document& document,
     const dom_node& node,
@@ -1215,8 +1220,56 @@ inline std::string validation_message(
     return {};
 }
 
+inline std::vector<const dom_node*> form_validation_controls(
+    const native_document& document,const dom_node& form) {
+    std::vector<const dom_node*> result;
+    if(form.tag!="form") return result;
+    const auto* root=tree_root(document,form);
+    const auto collect=[&](const auto& recurse,const dom_node& current)->void {
+        if(is_constraint_validation_control(current)
+            && form_owner(document,current)==&form) result.push_back(&current);
+        for(const auto* child:current.children) {
+            if(child==nullptr || child->tag=="iframe"
+                || document.is_shadow_root(*child)) continue;
+            recurse(recurse,*child);
+        }
+    };
+    collect(collect,*root);
+    return result;
+}
+
+inline bool form_has_invalid_control(
+    const native_document& document,const dom_node& form) {
+    const auto controls=form_validation_controls(document,form);
+    return std::any_of(controls.begin(),controls.end(),[&](const auto* control) {
+        return control!=nullptr && will_validate(document,*control)
+            && !constraint_validity_state(document,*control).valid();
+    });
+}
+
+inline bool fieldset_has_invalid_descendant(
+    const native_document& document,const dom_node& fieldset) {
+    if(fieldset.tag!="fieldset") return false;
+    const auto find_invalid=[&](const auto& recurse,const dom_node& current)->bool {
+        for(const auto* child:current.children) {
+            if(child==nullptr || child->tag=="iframe"
+                || document.is_shadow_root(*child)) continue;
+            if(is_constraint_validation_control(*child)
+                && will_validate(document,*child)
+                && !constraint_validity_state(document,*child).valid()) return true;
+            if(recurse(recurse,*child)) return true;
+        }
+        return false;
+    };
+    return find_invalid(find_invalid,fieldset);
+}
+
 inline simple_validity_state validity_state(
     const native_document& document,const dom_node& node) {
+    if(node.tag=="form") return form_has_invalid_control(document,node)
+        ? simple_validity_state::invalid:simple_validity_state::valid;
+    if(node.tag=="fieldset") return fieldset_has_invalid_descendant(document,node)
+        ? simple_validity_state::invalid:simple_validity_state::valid;
     const auto form_control = node.tag == "button" || node.tag == "input"
         || node.tag == "select" || node.tag == "textarea";
     if(!form_control || !will_validate(document,node))

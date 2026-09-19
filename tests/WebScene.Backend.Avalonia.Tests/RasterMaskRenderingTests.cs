@@ -76,7 +76,7 @@ public sealed class RasterMaskRenderingTests
         Assert.True(renderer.DrawDomRasterMaskForTest(
             canvas, markup, "no-repeat", "0% 0%", "2px 2px", "0 0 1 1",
             command, SKBlendMode.Xor));
-        Assert.Equal(SKColors.Transparent, bitmap.GetPixel(1, 1));
+        Assert.Equal(0, bitmap.GetPixel(1, 1).Alpha);
     }
 
     [Fact]
@@ -125,8 +125,8 @@ public sealed class RasterMaskRenderingTests
         canvas.RestoreToCount(restore);
         canvas.Flush();
         Assert.Equal(foreground, bitmap.GetPixel(0, 0));
-        Assert.Equal(SKColors.Transparent, bitmap.GetPixel(1, 0));
-        Assert.Equal(SKColors.Transparent, bitmap.GetPixel(2, 1));
+        Assert.Equal(0, bitmap.GetPixel(1, 0).Alpha);
+        Assert.Equal(0, bitmap.GetPixel(2, 1).Alpha);
         Assert.Equal(foreground, bitmap.GetPixel(3, 1));
     }
 

@@ -205,6 +205,12 @@ struct node_style final {
             alternate,
             alternate_reverse
         };
+        enum class fill_kind : uint8_t {
+            none,
+            forwards,
+            backwards,
+            both
+        };
         std::string transition_property_value{"all"};
         std::string transition_duration_value{"0s"};
         std::string transition_delay_value{"0s"};
@@ -233,7 +239,7 @@ struct node_style final {
         float opacity_keyframe_delay_ms{0};
         float opacity_keyframe_iterations{1};
         direction_kind keyframe_direction{direction_kind::normal};
-        bool opacity_keyframe_fill_forwards{false};
+        fill_kind keyframe_fill_mode{fill_kind::none};
         float opacity_keyframe_x1{0.25F};
         float opacity_keyframe_y1{0.1F};
         float opacity_keyframe_x2{0.25F};
@@ -1514,12 +1520,16 @@ struct dom_node final {
         std::string rotation_keyframe_animation_signature;
         double rotation_keyframe_animation_started_ms{0};
         bool rotation_keyframe_animation_active{false};
+        bool rotation_keyframe_animation_filled{false};
         std::string filter_keyframe_animation_signature;
         std::vector<retained_filter_keyframe> filter_keyframes;
         std::vector<retained_filter_function> filter_keyframe_underlying;
         double filter_keyframe_animation_started_ms{0};
         bool filter_keyframe_animation_active{false};
+        bool filter_keyframe_animation_valid{false};
         bool filter_keyframe_animation_filled{false};
+        node_style::animation_data::fill_kind keyframe_fill_mode{
+            node_style::animation_data::fill_kind::none};
         bool keyframe_animation_end_event_sent{false};
         uint32_t painted_foreground_rgba{0};
         uint32_t color_animation_from_rgba{0};
@@ -1865,10 +1875,11 @@ struct dom_node final {
             : style.background_rgba;
     }
 
-    bool rotation_keyframe_animation_active_value() const noexcept
+    bool has_painted_rotation_keyframe_override_value() const noexcept
     {
         return animation_runtime_state != nullptr
-            && animation_runtime_state->rotation_keyframe_animation_active;
+            && (animation_runtime_state->rotation_keyframe_animation_active
+                || animation_runtime_state->rotation_keyframe_animation_filled);
     }
 
     bool has_painted_filter_override_value() const noexcept

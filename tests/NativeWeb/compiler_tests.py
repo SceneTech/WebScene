@@ -88,6 +88,21 @@ class CompilerTests(unittest.TestCase):
             self.assertEqual(generated.count('r->host_selector=1;'),1)
             self.assertEqual(generated.count('r->host_selector=0;'),len(selectors)-1)
 
+    def test_prepared_selector_structures_are_emitted(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=pathlib.Path(folder);source=root/'selectors.css';output=root/'selectors.cppm'
+            source.write_text('@namespace p url("urn:webscene:test"); p|node[p|mode^="ready" i]:is(.active) {color:red}')
+            result=subprocess.run([UIC,'--prepare-css',source,output,'--module','test.selectors'],capture_output=True,text=True)
+            self.assertEqual(result.returncode,0,result.stderr)
+            generated=output.read_text()
+            self.assertIn('c.namespace_uri="urn:webscene:test";',generated)
+            self.assertIn('a.local_name="mode";',generated)
+            self.assertIn('a.namespace_uri="urn:webscene:test";',generated)
+            self.assertIn('a.operator_kind=4u;',generated)
+            self.assertIn('a.value="ready";',generated)
+            self.assertIn('a.case_sensitivity=1u;',generated)
+            self.assertIn('c.pseudos.push_back({"is",".active",{},1});',generated)
+
     def test_opacity_transition_shorthand(self):
         for value in ['opacity 100ms linear 20ms', 'opacity .2s ease-in', 'none']:
             result, out = self.compile('<div></div>', 'div {transition:'+value+'}')

@@ -701,6 +701,128 @@ void test_animation_direction_maps_cycles_and_terminal_boundaries(
         engine, false, "detached direction animations retained host-frame demand");
 }
 
+void test_animation_fill_maps_before_after_and_preserves_timeline(
+    webscene_engine* engine)
+{
+    animation_frame_and_wait(engine, 6000.0, 7100U);
+    execute_and_wait(engine, R"JS(
+        (() => {
+          document.body.innerHTML = `
+            <style>
+              @keyframes fill-fade { from { opacity: 0; } to { opacity: 1; } }
+              @keyframes fill-turn { from { transform: rotate(0); }
+                to { transform: rotate(180deg); } }
+              @keyframes fill-glow { from { filter: brightness(.5); }
+                to { filter: brightness(1.5); } }
+              .sample { opacity: .8; }
+              #none { animation: fill-fade 1000ms linear 500ms 1 normal none; }
+              #backwards { animation: fill-fade 1000ms linear 500ms 1 backwards;
+                animation-fill-mode: backwards, forwards; }
+              #reverse-both {
+                animation: fill-fade 1000ms linear 500ms 1 reverse both; }
+              #stepped {
+                animation: fill-fade 1000ms steps(4, start) 500ms 1 backwards; }
+              #rotation { animation: fill-turn 1000ms linear 500ms 1 both; }
+              #filter { filter: brightness(2);
+                animation: fill-glow 1000ms linear 500ms 1 both; }
+            </style>
+            <div id="none" class="sample"></div><div id="backwards" class="sample"></div>
+            <div id="reverse-both" class="sample"></div><div id="stepped" class="sample"></div>
+            <div id="rotation"></div><div id="filter"></div>`;
+          globalThis.__fillEndCount = 0;
+          document.getElementById('backwards').addEventListener(
+            'animationend', () => ++globalThis.__fillEndCount);
+          void document.body.offsetHeight;
+        })()
+    )JS", "animation-fill-setup.js");
+
+    animation_frame_and_wait(engine, 6250.0, 7101U);
+    const auto before = evaluate(engine, R"JS(
+        (() => {
+          const opacity = id => Number(getComputedStyle(
+            document.getElementById(id)).opacity);
+          const close = (left, right) => Math.abs(left - right) < .001;
+          const rotation = getComputedStyle(document.getElementById('rotation')).transform;
+          const filter = getComputedStyle(document.getElementById('filter')).filter;
+          const metadata = ['none', 'backwards', 'reverse-both', 'stepped']
+            .map(id => getComputedStyle(document.getElementById(id)).animationFillMode);
+          return JSON.stringify(metadata)
+              === '["none","backwards, forwards","both","backwards"]'
+            && close(opacity('none'), .8) && close(opacity('backwards'), 0)
+            && close(opacity('reverse-both'), 1) && close(opacity('stepped'), 0)
+            && rotation.startsWith('matrix(') && filter === 'brightness(0.5)';
+        })()
+    )JS", "animation-fill-before.js");
+    require(before == "true",
+        "backwards/both fill did not map direction and timing in the before phase");
+
+    animation_frame_and_wait(engine, 7500.0, 7102U);
+    const auto after = evaluate(engine, R"JS(
+        (() => {
+          const opacity = id => Number(getComputedStyle(
+            document.getElementById(id)).opacity);
+          const close = (left, right) => Math.abs(left - right) < .001;
+          const transform = getComputedStyle(document.getElementById('rotation')).transform;
+          const matrix = transform.slice(7, -1).split(',').map(Number);
+          let angle = Math.atan2(matrix[1], matrix[0]) * 180 / Math.PI;
+          if (angle < 0) angle += 360;
+          return close(opacity('none'), .8) && close(opacity('backwards'), .8)
+            && close(opacity('reverse-both'), 0) && close(angle, 180)
+            && getComputedStyle(document.getElementById('filter')).filter
+              === 'brightness(1.5)'
+            && __fillEndCount === 1;
+        })()
+    )JS", "animation-fill-after.js");
+    require(after == "true",
+        "after fill did not retain rotation/filter or restore backwards-only opacity");
+    wait_for_animation_frame_demand(
+        engine, false, "filled animations retained host-frame demand");
+
+    execute_and_wait(engine, R"JS(
+        (() => {
+          document.getElementById('backwards').style.animationFillMode = 'forwards';
+          return getComputedStyle(document.getElementById('backwards')).animationFillMode;
+        })()
+    )JS", "animation-fill-live-update.js");
+    animation_frame_and_wait(engine, 7510.0, 7103U);
+    const auto live_update = evaluate(engine, R"JS(
+        Number(getComputedStyle(document.getElementById('backwards')).opacity) === 1
+          && __fillEndCount === 1
+    )JS", "animation-fill-live-update-result.js");
+    require(live_update == "true",
+        "fill-only CSSOM update restarted the timeline or duplicated animationend");
+    wait_for_animation_frame_demand(
+        engine, false, "fill-only update retained host-frame demand");
+
+    execute_and_wait(engine, R"JS(
+        (() => {
+          const backwards = document.getElementById('backwards');
+          backwards.style.animationFillMode = '';
+          document.getElementById('rotation').style.animation = 'none';
+          document.getElementById('filter').style.animation = 'none';
+          return getComputedStyle(backwards).animationFillMode;
+        })()
+    )JS", "animation-fill-clear.js");
+    animation_frame_and_wait(engine, 7520.0, 7104U);
+    const auto cleared = evaluate(engine, R"JS(
+        (() => {
+          const backwards = document.getElementById('backwards');
+          return getComputedStyle(backwards).animationFillMode === 'backwards, forwards'
+            && Math.abs(Number(getComputedStyle(backwards).opacity) - .8) < .001
+            && getComputedStyle(document.getElementById('rotation')).transform === 'none'
+            && getComputedStyle(document.getElementById('filter')).filter
+              === 'brightness(2)';
+        })()
+    )JS", "animation-fill-clear-result.js");
+    require(cleared == "true", "fill removal left a stale retained override");
+
+    execute_and_wait(engine,
+        "document.body.innerHTML = '<div>fill animations detached</div>'",
+        "animation-fill-detach.js");
+    wait_for_animation_frame_demand(
+        engine, false, "detached fill animations retained host-frame demand");
+}
+
 void test_filter_keyframes_use_host_clock_and_retained_paint(
     webscene_engine* engine)
 {

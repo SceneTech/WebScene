@@ -1875,6 +1875,13 @@
       "reason": "Product-neutral reduction of lazy-loaded artwork that fades from opacity zero and relies on animation-fill-mode: forwards. The final keyframe must remain painted after a finite animation completes instead of reverting to the authored hidden opacity."
     },
     {
+      "path": "contracts/css-animation-fill-mode-boundaries.html",
+      "type": "contract",
+      "capabilities": ["animation-fill-mode-longhand", "animation-fill-mode-shorthand", "backwards-both-fill", "direction-aware-fill-boundaries", "opacity-rotation-filter-fill", "fill-only-timeline-preservation", "settled-frame-demand"],
+      "evidence": ["css-animation-fill-mode-661-242", "unchanged-code-oss-delayed-entry-animations"],
+      "reason": "WPT-aligned single-animation reduction for first-list fill metadata, direction-aware before fill with timing functions excluded during positive delay, retained opacity/rotation/filter terminal values, live fill changes that preserve time, and removal cleanup."
+    },
+    {
       "path": "contracts/css-animation-direction.html",
       "type": "contract",
       "capabilities": ["animation-direction-longhand", "animation-direction-shorthand", "normal-reverse-alternate", "negative-animation-delay", "fractional-iteration-terminal-progress", "bounded-host-frame-sampling"],

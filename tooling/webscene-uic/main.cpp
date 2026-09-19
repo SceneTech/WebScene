@@ -1861,12 +1861,23 @@ static void emit_prepared_selector(std::ostream& out, std::string_view target,
   for(const auto& compound:selector.compiled_compounds) {
     out << "{webscene_native::css::compiled_css_compound c;\nc.tag=" << quote(compound.tag)
         << ";c.valid=" << compound.valid << ";c.pseudo_element=" << compound.pseudo_element << ";\n";
+    if(compound.namespace_uri.has_value())
+      out << "c.namespace_uri=" << quote(*compound.namespace_uri) << ";\n";
     for(const auto& [kind,name]:compound.identities)
       out << "c.identities.emplace_back(static_cast<char>(" << unsigned(static_cast<unsigned char>(kind)) << ")," << quote(name) << ");\n";
-    for(const auto& attr:compound.attributes)
-      out << "c.attributes.push_back(" << quote(attr) << ");\n";
+    for(const auto& attr:compound.attributes) {
+      out << "{webscene_native::css::compiled_css_attribute a;\na.local_name="
+          << quote(attr.local_name) << ";a.operator_kind="
+          << unsigned(attr.operator_kind) << "u;a.value=" << quote(attr.value)
+          << ";a.case_sensitivity=" << unsigned(attr.case_sensitivity) << "u;\n";
+      if(attr.namespace_uri.has_value())
+        out << "a.namespace_uri=" << quote(*attr.namespace_uri) << ";\n";
+      out << "c.attributes.push_back(std::move(a));}\n";
+    }
     for(const auto& pseudo:compound.pseudos)
-      out << "c.pseudos.push_back({" << quote(pseudo.name) << ',' << quote(pseudo.argument) << "});\n";
+      out << "c.pseudos.push_back({" << quote(pseudo.name) << ','
+          << quote(pseudo.argument) << ",{}," << pseudo.compiled_argument_valid
+          << "});\n";
     out << target << ".compiled_compounds.push_back(std::move(c));}\n";
   }
 }

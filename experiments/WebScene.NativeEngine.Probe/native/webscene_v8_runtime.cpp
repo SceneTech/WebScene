@@ -2710,6 +2710,8 @@ struct v8_dom_runtime::implementation final {
         // These are general browser primitives used by Monaco and other
         // component runtimes. Keep them inside WebScene's native realm so
         // applications do not have to patch third-party bundles.
+        // The extractor concatenates these in order. Keep every raw literal
+        // below its 15,000-byte portability ceiling without adding separators.
         constexpr std::string_view source_parts[] = {R"JS(
           (() => {
             const enqueueMicrotask = callback => {
@@ -3332,7 +3334,8 @@ struct v8_dom_runtime::implementation final {
               for (const element of root?.querySelectorAll?.('*') || []) {
                 syncFormLifecycle(element);
               }
-            };
+            };)JS",
+            R"JS(
 
             const validityFlagNames = [
               'valueMissing', 'typeMismatch', 'patternMismatch', 'tooLong',
@@ -3499,7 +3502,8 @@ struct v8_dom_runtime::implementation final {
               [Symbol.toStringTag]: {
                 value: 'ElementInternals', configurable: true
               }
-            });
+            });)JS",
+            R"JS(
 
             function WebSceneHTMLElement() {
               if (!new.target) {

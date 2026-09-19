@@ -31,6 +31,7 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
   const conditionRuleInstances = new WeakSet();
   const mediaRuleInstances = new WeakSet();
   const supportsRuleInstances = new WeakSet();
+  const containerRuleInstances = new WeakSet();
   const layerBlockRuleInstances = new WeakSet();
   const layerStatementRuleInstances = new WeakSet();
   const nestedDeclarationsInstances = new WeakSet();
@@ -106,6 +107,8 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
     'CSSMediaRule', mediaRuleInstances, CSSConditionRuleInterface);
   const CSSSupportsRuleInterface = interfaceConstructor(
     'CSSSupportsRule', supportsRuleInstances, CSSConditionRuleInterface);
+  const CSSContainerRuleInterface = interfaceConstructor(
+    'CSSContainerRule', containerRuleInstances, CSSConditionRuleInterface);
   const CSSLayerBlockRuleInterface = interfaceConstructor(
     'CSSLayerBlockRule', layerBlockRuleInstances, CSSGroupingRuleInterface);
   const CSSLayerStatementRuleInterface = interfaceConstructor(
@@ -125,6 +128,7 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
       ['CSSConditionRule', CSSConditionRuleInterface],
       ['CSSMediaRule', CSSMediaRuleInterface],
       ['CSSSupportsRule', CSSSupportsRuleInterface],
+      ['CSSContainerRule', CSSContainerRuleInterface],
       ['CSSLayerBlockRule', CSSLayerBlockRuleInterface],
       ['CSSLayerStatementRule', CSSLayerStatementRuleInterface],
       ['CSSNestedDeclarations', CSSNestedDeclarationsInterface],
@@ -328,6 +332,22 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
     return query.replace(/\b(and|or|not)\b/gi, keyword => keyword.toLowerCase());
   };
   const parseMediaList = value => splitMediaQueries(value).map(normalizeMediaQuery);
+  // CSSContainerRule reflects each top-level container condition separately.
+  // Reuse the bounded comma splitter so functions, strings and comments stay
+  // inside their condition while preserving author-visible query spelling.
+  const parseContainerConditions = value => splitMediaQueries(value).map(part => {
+    const condition = part.replace(/\/\*[\s\S]*?\*\//g, ' ')
+      .replace(/\s+/g, ' ').trim();
+    const open = condition.indexOf('(');
+    if (open < 0) return Object.freeze({ name: condition, query: '' });
+    const before = condition.slice(0, open).trim();
+    const queryOnly = open === 0 || /\s/.test(before)
+      || /^(?:not|style|scroll-state)$/i.test(before);
+    return Object.freeze({
+      name: queryOnly ? '' : before,
+      query: queryOnly ? condition : condition.slice(open).trim()
+    });
+  });
   // Cascade layer statement names use <ident> components separated by dots,
   // and a statement may declare a comma-separated list. Keep escaped dots and
   // commas inside the identifier token, then use CSS.escape() to serialize the
@@ -873,10 +893,11 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
     const namespaceSpec = parseNamespaceRule(parsed.cssText);
     const mediaMatch = /^@media(?:\s+([^\{]*?))?\s*\{/i.exec(parsed.cssText);
     const supportsMatch = /^@supports(?:\s+([^\{]*?))?\s*\{/i.exec(parsed.cssText);
+    const containerMatch = /^@container(?:\s+([^\{]*?))?\s*\{/i.exec(parsed.cssText);
     const layerBlockMatch = /^@layer(?:\s+([^\{]*?))?\s*\{/i.exec(parsed.cssText);
     const layerStatementNames = parsed.body === undefined
       ? parseLayerStatementNames(parsed.cssText) : undefined;
-    const groupingMatch = mediaMatch || supportsMatch || layerBlockMatch;
+    const groupingMatch = mediaMatch || supportsMatch || containerMatch || layerBlockMatch;
     const rule = {};
     ruleInstances.add(rule);
     if (importSpec) {
@@ -895,6 +916,11 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
       conditionRuleInstances.add(rule);
       supportsRuleInstances.add(rule);
       Object.setPrototypeOf(rule, CSSSupportsRuleInterface.prototype);
+    } else if (containerMatch) {
+      groupingRuleInstances.add(rule);
+      conditionRuleInstances.add(rule);
+      containerRuleInstances.add(rule);
+      Object.setPrototypeOf(rule, CSSContainerRuleInterface.prototype);
     } else if (layerBlockMatch) {
       groupingRuleInstances.add(rule);
       layerBlockRuleInstances.add(rule);
@@ -1029,16 +1055,20 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
         makeRule(state, child, rule, nestedStyleContext));
       const isMedia = Boolean(mediaMatch);
       const isSupports = Boolean(supportsMatch);
+      const isContainer = Boolean(containerMatch);
       let preludeText = isMedia
         ? parseMediaList(mediaMatch[1] || '').join(', ')
         : isSupports
           ? (supportsMatch[1] || '').trim()
-          : (layerBlockMatch[1] || '').trim();
+          : isContainer
+            ? (containerMatch[1] || '').trim()
+            : (layerBlockMatch[1] || '').trim();
       const attached = () => parent && (containingRule
         ? containingRule.cssRules && Array.from(containingRule.cssRules).includes(rule)
         : state.rules.includes(rule));
       const serialize = () => {
-        const keyword = isMedia ? 'media' : isSupports ? 'supports' : 'layer';
+        const keyword = isMedia ? 'media'
+          : isSupports ? 'supports' : isContainer ? 'container' : 'layer';
         cssText = `@${keyword}${preludeText ? ' ' + preludeText : ''} {${children.map(child => child.cssText).join('')}}`;
       };
       const commitCondition = value => {
@@ -1110,6 +1140,22 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
       } else if (isSupports) {
         descriptors.conditionText = {
           enumerable: true, get: () => preludeText
+        };
+      } else if (isContainer) {
+        const conditions = Object.freeze(parseContainerConditions(preludeText));
+        descriptors.conditionText = {
+          enumerable: true, get: () => preludeText
+        };
+        descriptors.containerName = {
+          enumerable: true,
+          get: () => conditions.length === 1 ? conditions[0].name : ''
+        };
+        descriptors.containerQuery = {
+          enumerable: true,
+          get: () => conditions.length === 1 ? conditions[0].query : ''
+        };
+        descriptors.conditions = {
+          enumerable: true, get: () => conditions
         };
       } else {
         descriptors.name = { enumerable: true, get: () => preludeText };

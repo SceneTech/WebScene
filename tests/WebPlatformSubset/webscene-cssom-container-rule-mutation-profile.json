@@ -1,0 +1,27 @@
+{
+  "profile": "webscene-cssom-container-rule-mutation-1",
+  "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+  "runtime": "v8",
+  "viewport": {
+    "width": 800,
+    "height": 600,
+    "deviceScaleFactor": 1
+  },
+  "required": [
+    {
+      "path": "contracts/cssom-container-rule-mutation.html",
+      "type": "contract",
+      "capabilities": [
+        "cssom-container-rule-identity",
+        "cssom-container-condition-reflection",
+        "cssom-container-grouping-rule-list",
+        "cssom-container-nested-rule-mutation",
+        "cssom-container-cross-document-ownership"
+      ],
+      "evidence": ["cssom-container-rule-mutation-239"],
+      "reason": "Pinned-WPT-derived CSS Conditional regression for live CSSContainerRule identity, frozen condition reflection, nested mutation, invalidation, serialization, iframe realms, and detached ownership."
+    }
+  ],
+  "harnessBlocked": [],
+  "excluded": []
+}

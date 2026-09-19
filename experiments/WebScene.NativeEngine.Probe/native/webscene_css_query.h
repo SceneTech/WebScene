@@ -8,6 +8,7 @@ class query_host final {
     uint32_t hover_id_{},focus_id_{};
     bool focus_visible_{};
     std::string hash_;
+    uint32_t target_id_{};
     size_t cache_limit_;
     mutable std::unordered_map<std::string,std::shared_ptr<const compiled_css_selector_list>> selectors_;
     std::shared_ptr<const compiled_css_selector_list> prepare(std::string_view text) const {
@@ -37,11 +38,40 @@ public:
     void set_interaction(const dom_node* hover,const dom_node* focus,bool visible) {
         hover_id_=hover?hover->id:0;focus_id_=focus?focus->id:0;focus_visible_=visible;
     }
-    void set_target_hash(std::string hash) { hash_=std::move(hash); }
+    void refresh_target() {
+        target_id_=0U;
+        auto raw=std::string_view(hash_);
+        if(raw.starts_with('#'))raw.remove_prefix(1U);
+        if(raw.empty())return;
+        const auto decoded=decoded_target_identifier(raw);
+        const auto visit=[&](const auto& recurse,const dom_node& node)->const dom_node* {
+            if(node.id_attribute==raw||node.id_attribute==decoded)return &node;
+            for(const auto* child:node.children)
+                if(child!=nullptr)
+                    if(const auto* result=recurse(recurse,*child);result!=nullptr)
+                        return result;
+            return nullptr;
+        };
+        if(const auto* target=visit(visit,document.body());target!=nullptr)
+            target_id_=target->id;
+    }
+    void set_target_hash(std::string hash) {
+        hash_=std::move(hash);
+        refresh_target();
+    }
     interaction_state selector_interaction_state() const {
         return {document.find_by_native_id(hover_id_),document.find_by_native_id(focus_id_),focus_visible_};
     }
     std::optional<std::string> selector_target_hash() const { return hash_; }
+    bool selector_target_matches(const dom_node& node) const {
+        return document.find_by_native_id(target_id_)==&node;
+    }
+    bool selector_target_within_matches(const dom_node& node) const {
+        for(auto* current=document.find_by_native_id(target_id_);
+            current!=nullptr;current=current->parent)
+            if(current==&node)return true;
+        return false;
+    }
     bool is_text_control(const dom_node* node) const { return forms::is_text_control(node); }
     bool has_class(const dom_node& node,std::string_view wanted) const {
         const std::string_view text(node.class_name);

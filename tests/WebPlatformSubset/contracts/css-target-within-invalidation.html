@@ -1,0 +1,100 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Target-within follows fragment, identity, and tree transitions</title>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<style>
+  .outer { padding-left:1px; }
+  .outer:is(:target-within) { padding-left:5px; }
+  .branch { height:10px; }
+  .branch:target-within { height:40px; }
+  .target { width:11px; }
+  .target:target { width:31px; }
+  .marker { width:13px; }
+  .branch:target-within + .marker { width:37px; }
+</style>
+<div class="outer" id="outer">
+  <div class="branch" id="branch-a"><span class="target" id="target"></span></div>
+  <span class="marker" id="marker-a"></span>
+  <div class="branch" id="branch-b"><span class="target" id="second"></span></div>
+  <span class="marker" id="marker-b"></span>
+</div>
+<script>
+  const originalURL = location.href;
+  const cleanURL = originalURL.split('#')[0];
+  const outer = document.getElementById('outer');
+  const branchA = document.getElementById('branch-a');
+  const branchB = document.getElementById('branch-b');
+  const markerA = document.getElementById('marker-a');
+  const markerB = document.getElementById('marker-b');
+  const first = document.getElementById('target');
+  const second = document.getElementById('second');
+  const snapshot = () => ({
+    firstTarget:first.matches(':target'),
+    secondTarget:second.matches(':target'),
+    outer:outer.matches(':target-within'),
+    branchA:branchA.matches(':target-within'),
+    branchB:branchB.matches(':target-within'),
+    firstWidth:getComputedStyle(first).width,
+    secondWidth:getComputedStyle(second).width,
+    branchAHeight:getComputedStyle(branchA).height,
+    branchBHeight:getComputedStyle(branchB).height,
+    markerAWidth:getComputedStyle(markerA).width,
+    markerBWidth:getComputedStyle(markerB).width,
+  });
+
+  test(() => {
+    location.hash = 'target';
+    assert_object_equals(snapshot(), {
+      firstTarget:true, secondTarget:false, outer:true, branchA:true, branchB:false,
+      firstWidth:'31px', secondWidth:'11px', branchAHeight:'40px',
+      branchBHeight:'10px', markerAWidth:'37px', markerBWidth:'13px',
+    });
+    history.replaceState(null, '', `${cleanURL}#second`);
+    assert_object_equals(snapshot(), {
+      firstTarget:false, secondTarget:true, outer:true, branchA:false, branchB:true,
+      firstWidth:'11px', secondWidth:'31px', branchAHeight:'10px',
+      branchBHeight:'40px', markerAWidth:'13px', markerBWidth:'37px',
+    });
+  }, 'fragment and History changes invalidate only old and new target chains');
+
+  test(() => {
+    second.id = 'inactive';
+    assert_false(second.matches(':target'));
+    assert_false(branchB.matches(':target-within'));
+    first.id = 'second';
+    assert_true(first.matches(':target'));
+    assert_true(branchA.matches(':target-within'));
+    assert_equals(getComputedStyle(markerA).width, '37px');
+  }, 'id mutations move target state through inclusive ancestors');
+
+  test(() => {
+    branchB.appendChild(first);
+    assert_false(branchA.matches(':target-within'));
+    assert_true(branchB.matches(':target-within'));
+    assert_equals(getComputedStyle(markerA).width, '13px');
+    assert_equals(getComputedStyle(markerB).width, '37px');
+  }, 'reparenting a target updates the old and new ancestor chains');
+
+  test(() => {
+    first.id = 'duplicate';
+    history.replaceState(null, '', `${cleanURL}#duplicate`);
+    branchA.appendChild(second);
+    second.id = 'duplicate';
+    assert_true(second.matches(':target'));
+    assert_false(first.matches(':target'));
+    assert_true(branchA.matches(':target-within'));
+    assert_false(branchB.matches(':target-within'));
+    assert_equals(getComputedStyle(markerA).width, '37px');
+    assert_equals(getComputedStyle(markerB).width, '13px');
+
+    branchB.appendChild(second);
+    assert_true(first.matches(':target'));
+    assert_false(second.matches(':target'));
+    assert_false(branchA.matches(':target-within'));
+    assert_true(branchB.matches(':target-within'));
+    assert_equals(getComputedStyle(markerA).width, '13px');
+    assert_equals(getComputedStyle(markerB).width, '37px');
+    history.replaceState(null, '', cleanURL);
+  }, 'duplicate-ID winner changes replay both old and new target chains');
+</script>

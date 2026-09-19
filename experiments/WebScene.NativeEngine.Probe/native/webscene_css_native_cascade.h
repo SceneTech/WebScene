@@ -103,6 +103,9 @@ template<class LoadSvg,class Observe>
 bool apply_native_document_cascade(native_document& document,
     const stylesheet_owner& sheets,query_host& query,LoadSvg&& load_svg,Observe&& observe,bool inline_attributes=false)
 {
+    // A retained native_style_session can outlive ID and tree mutations. Resolve
+    // the one fragment target once per explicit cascade, never once per node.
+    query.refresh_target();
     std::unordered_map<std::string,std::string> variables;
     std::unordered_set<std::string> important;
     rebuild_root_variables(sheets.state().rules,variables,important);

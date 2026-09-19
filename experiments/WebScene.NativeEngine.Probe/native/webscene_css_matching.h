@@ -426,9 +426,35 @@ inline bool indeterminate_matches(
         return member!=nullptr && checked_matches(*member);
     });
 }
-inline bool target_matches(const dom_node& node,std::string_view hash) {
+inline std::string decoded_target_identifier(std::string_view hash) {
     if(hash.starts_with('#')) hash.remove_prefix(1);
-    return !hash.empty() && node.id_attribute==hash;
+    std::string result;
+    result.reserve(hash.size());
+    const auto hex=[](char value)->int {
+        if(value>='0'&&value<='9')return value-'0';
+        if(value>='a'&&value<='f')return value-'a'+10;
+        if(value>='A'&&value<='F')return value-'A'+10;
+        return -1;
+    };
+    for(size_t index=0;index<hash.size();++index) {
+        if(hash[index]=='%'&&index+2U<hash.size()) {
+            const auto high=hex(hash[index+1U]);
+            const auto low=hex(hash[index+2U]);
+            if(high>=0&&low>=0) {
+                result.push_back(static_cast<char>((high<<4)|low));
+                index+=2U;
+                continue;
+            }
+        }
+        result.push_back(hash[index]);
+    }
+    return result;
+}
+inline bool target_matches(const dom_node& node,std::string_view hash) {
+    if(hash.starts_with('#'))hash.remove_prefix(1);
+    if(hash.empty())return false;
+    return node.id_attribute==hash
+        || node.id_attribute==decoded_target_identifier(hash);
 }
 inline const dom_node* previous_element_sibling(const dom_node& node)
     {

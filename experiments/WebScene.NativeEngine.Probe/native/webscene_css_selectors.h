@@ -3,6 +3,9 @@
 #include "webscene_selector_parser.h"
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
+#include <limits>
+#include <optional>
 
 namespace webscene_native::css {
 inline std::string_view trim_css_view(std::string_view value) {
@@ -10,6 +13,22 @@ inline std::string_view trim_css_view(std::string_view value) {
     const auto start=value.find_first_not_of(whitespace);
     if(start==std::string_view::npos) return {};
     return value.substr(start,value.find_last_not_of(whitespace)-start+1);
+}
+inline std::optional<uint32_t> parse_local_link_path_depth(
+    std::string_view value)
+{
+    value=trim_css_view(value);
+    if(value.starts_with('+'))value.remove_prefix(1U);
+    if(value.empty())return std::nullopt;
+    uint32_t result=0U;
+    constexpr auto maximum=static_cast<uint32_t>(std::numeric_limits<int32_t>::max());
+    for(const auto character:value) {
+        if(character<'0'||character>'9')return std::nullopt;
+        const auto digit=static_cast<uint32_t>(character-'0');
+        if(result>(maximum-digit)/10U)return std::nullopt;
+        result=result*10U+digit;
+    }
+    return result;
 }
 inline size_t skip_css_escape_sequence(std::string_view text, size_t slash);
 
@@ -430,6 +449,8 @@ inline compiled_css_compound compile_css_compound_selector(
                     if (decoded.empty() || argument_cursor != argument.size()) return result;
                     argument = std::move(decoded);
                 }
+                if(name=="local-link"&&!argument.empty()
+                    &&!parse_local_link_path_depth(argument).has_value())return result;
                 result.pseudos.push_back(
                     compiled_css_pseudo{std::move(name), std::move(argument)});
             } else {

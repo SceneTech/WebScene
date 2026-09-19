@@ -26,7 +26,8 @@ inline bool is_hyperlink_source(const dom_node& node)
 inline bool local_link_matches(
     const dom_node& node,
     std::string_view effective_base,
-    std::string_view document_url)
+    std::string_view document_url,
+    std::optional<uint32_t> path_depth=std::nullopt)
 {
     constexpr size_t maximum_url_bytes = 8192U;
     if (!is_hyperlink_source(node)
@@ -53,7 +54,117 @@ inline bool local_link_matches(
         const auto fragment = value.find('#');
         return value.substr(0U, fragment);
     };
-    return without_fragment(target) == without_fragment(document_url);
+    if(!path_depth.has_value())
+        return without_fragment(target) == without_fragment(document_url);
+
+    struct hierarchical_url final {
+        std::string origin;
+        std::string_view path;
+        bool valid{false};
+    };
+    const auto decompose=[](std::string_view value) {
+        hierarchical_url result;
+        const auto scheme_end=value.find("://");
+        if(scheme_end==std::string_view::npos||scheme_end==0U)return result;
+        auto scheme=std::string(value.substr(0U,scheme_end));
+        if(!std::isalpha(static_cast<unsigned char>(scheme.front()))
+            ||!std::all_of(scheme.begin(),scheme.end(),[](unsigned char character) {
+                return std::isalnum(character)||character=='+'
+                    ||character=='-'||character=='.';
+            }))return result;
+        std::transform(scheme.begin(),scheme.end(),scheme.begin(),[](unsigned char character) {
+            return static_cast<char>(std::tolower(character));
+        });
+        const auto authority_start=scheme_end+3U;
+        const auto authority_end=value.find_first_of("/?#",authority_start);
+        auto authority=value.substr(
+            authority_start,authority_end==std::string_view::npos
+                ?std::string_view::npos:authority_end-authority_start);
+        if(const auto credentials=authority.rfind('@');
+            credentials!=std::string_view::npos)authority.remove_prefix(credentials+1U);
+        if(authority.empty())return result;
+
+        std::string_view host;
+        std::string_view port;
+        auto has_port=false;
+        if(authority.starts_with('[')) {
+            const auto close=authority.find(']');
+            if(close==std::string_view::npos)return result;
+            host=authority.substr(0U,close+1U);
+            if(close+1U<authority.size()) {
+                if(authority[close+1U]!=':')return result;
+                port=authority.substr(close+2U);
+                has_port=true;
+            }
+        } else {
+            const auto colon=authority.rfind(':');
+            if(colon!=std::string_view::npos) {
+                if(authority.find(':')!=colon)return result;
+                host=authority.substr(0U,colon);
+                port=authority.substr(colon+1U);
+                has_port=true;
+            } else host=authority;
+        }
+        if(host.empty()||(has_port&&port.empty())
+            ||(!port.empty()&&!std::all_of(
+                port.begin(),port.end(),[](unsigned char character) {
+                    return std::isdigit(character)!=0;
+                })))return result;
+        uint32_t port_number=0U;
+        if(!port.empty()) {
+            for(const auto character:port) {
+                const auto digit=static_cast<uint32_t>(character-'0');
+                if(port_number>(65535U-digit)/10U)return result;
+                port_number=port_number*10U+digit;
+            }
+        }
+        auto normalized_host=std::string(host);
+        std::transform(
+            normalized_host.begin(),normalized_host.end(),normalized_host.begin(),
+            [](unsigned char character) {
+                return static_cast<char>(std::tolower(character));
+            });
+        const auto default_port=(scheme=="http"||scheme=="ws")?80U
+            :(scheme=="https"||scheme=="wss")?443U
+            :scheme=="ftp"?21U:0U;
+        result.origin=scheme+"://"+normalized_host;
+        if(!port.empty()&&(default_port==0U||port_number!=default_port))
+            result.origin+=':'+std::to_string(port_number);
+        if(authority_end==std::string_view::npos
+            ||value[authority_end]!='/' )result.path="/";
+        else {
+            const auto path_end=value.find_first_of("?#",authority_end);
+            result.path=value.substr(
+                authority_end,path_end==std::string_view::npos
+                    ?std::string_view::npos:path_end-authority_end);
+        }
+        result.valid=true;
+        return result;
+    };
+    const auto candidate=decompose(target);
+    const auto document=decompose(document_url);
+    if(!candidate.valid||!document.valid||candidate.origin!=document.origin)
+        return false;
+    auto candidate_cursor=size_t{1U};
+    auto document_cursor=size_t{1U};
+    for(uint32_t level=0U;level<*path_depth;++level) {
+        if(candidate_cursor>candidate.path.size()
+            ||document_cursor>document.path.size())return false;
+        const auto candidate_end=candidate.path.find('/',candidate_cursor);
+        const auto document_end=document.path.find('/',document_cursor);
+        const auto candidate_segment=candidate.path.substr(
+            candidate_cursor,candidate_end==std::string_view::npos
+                ?std::string_view::npos:candidate_end-candidate_cursor);
+        const auto document_segment=document.path.substr(
+            document_cursor,document_end==std::string_view::npos
+                ?std::string_view::npos:document_end-document_cursor);
+        if(candidate_segment!=document_segment)return false;
+        candidate_cursor=candidate_end==std::string_view::npos
+            ?candidate.path.size()+1U:candidate_end+1U;
+        document_cursor=document_end==std::string_view::npos
+            ?document.path.size()+1U:document_end+1U;
+    }
+    return true;
 }
 
 // The host supplies document state, recursive queries, class-token caching and
@@ -397,10 +508,14 @@ inline bool compound_matches(const Host& host,const dom_node& node,
             } else if (name == "link" || name == "any-link") {
                 if (!css::is_hyperlink_source(node)) return false;
             } else if (name == "local-link") {
-                // The path-depth functional form remains outside this slice.
-                if (!argument.empty()) return false;
-                if constexpr (requires { host.selector_local_link_matches(node); }) {
-                    if (!host.selector_local_link_matches(node)) return false;
+                const auto depth=argument.empty()
+                    ?std::optional<uint32_t>{}
+                    :parse_local_link_path_depth(argument);
+                if(!argument.empty()&&!depth.has_value())return false;
+                if constexpr (requires { host.selector_local_link_matches(node,depth); }) {
+                    if (!host.selector_local_link_matches(node,depth)) return false;
+                } else if constexpr (requires { host.selector_local_link_matches(node); }) {
+                    if(depth.has_value()||!host.selector_local_link_matches(node))return false;
                 } else {
                     return false;
                 }

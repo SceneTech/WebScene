@@ -526,6 +526,46 @@
                         complete_file_grant_remove_request_v2(
                             std::move(completion));
                     });
+            },
+            [this](uint32_t reason,std::span<const
+                    webscene_native::v8_dom_runtime::validation_message_argument>
+                    arguments) -> std::string {
+                if(validation_message_format_callback_v1_==nullptr
+                    || arguments.size()
+                        > WEBSCENE_VALIDATION_MESSAGE_MAX_ARGUMENTS_V1)
+                    return {};
+                std::array<webscene_validation_message_argument_v1,
+                    WEBSCENE_VALIDATION_MESSAGE_MAX_ARGUMENTS_V1> native_arguments{};
+                size_t argument_bytes=0U;
+                for(size_t index=0U;index<arguments.size();++index) {
+                    const auto& argument=arguments[index];
+                    argument_bytes+=argument.value.size();
+                    if(argument.value.size()
+                            > WEBSCENE_VALIDATION_MESSAGE_MAX_ARGUMENT_BYTES_V1
+                        || argument_bytes
+                            > WEBSCENE_VALIDATION_MESSAGE_MAX_ARGUMENT_BYTES_V1)
+                        return {};
+                    native_arguments[index]={
+                        sizeof(webscene_validation_message_argument_v1),
+                        argument.kind,
+                        argument.value.data(),
+                        argument.value.size()};
+                }
+                std::array<char,
+                    WEBSCENE_VALIDATION_MESSAGE_MAX_OUTPUT_BYTES_V1> output{};
+                size_t written=0U;
+                try {
+                    written=validation_message_format_callback_v1_(
+                        validation_message_format_user_data_v1_,reason,
+                        native_arguments.data(),arguments.size(),
+                        output.data(),output.size());
+                } catch(...) {
+                    return {};
+                }
+                if(written==0U || written>output.size()) return {};
+                std::string result(output.data(),written);
+                return webscene_native::file_panel_valid_utf8_v2(result)
+                    ? std::move(result):std::string{};
             });
         runtime_->set_work_metrics_enabled(
             runtime_work_metrics_enabled_.load(std::memory_order_acquire));

@@ -1223,23 +1223,80 @@ inline constraint_validity constraint_validity_state(
     return result;
 }
 
+enum class validation_message_key : uint8_t {
+    none=0,
+    value_missing=1,
+    type_mismatch=2,
+    pattern_mismatch=3,
+    too_long=4,
+    too_short=5,
+    range_underflow=6,
+    range_overflow=7,
+    step_mismatch=8,
+    bad_input=9
+};
+
+inline std::string_view default_validation_message(validation_message_key key)
+{
+    switch(key) {
+    case validation_message_key::value_missing:
+        return "Please fill out this field.";
+    case validation_message_key::type_mismatch:
+    case validation_message_key::step_mismatch:
+    case validation_message_key::bad_input:
+        return "Please enter a valid value.";
+    case validation_message_key::pattern_mismatch:
+        return "Please match the requested format.";
+    case validation_message_key::too_long:
+        return "Please shorten this text.";
+    case validation_message_key::too_short:
+        return "Please lengthen this text.";
+    case validation_message_key::range_underflow:
+        return "The value is below the allowed minimum.";
+    case validation_message_key::range_overflow:
+        return "The value is above the allowed maximum.";
+    case validation_message_key::none:
+        return {};
+    }
+    return {};
+}
+
+inline validation_message_key validation_message_identifier(
+    const constraint_validity& state) noexcept
+{
+    if(state.value_missing) return validation_message_key::value_missing;
+    if(state.type_mismatch) return validation_message_key::type_mismatch;
+    if(state.pattern_mismatch) return validation_message_key::pattern_mismatch;
+    if(state.too_long) return validation_message_key::too_long;
+    if(state.too_short) return validation_message_key::too_short;
+    if(state.range_underflow) return validation_message_key::range_underflow;
+    if(state.range_overflow) return validation_message_key::range_overflow;
+    if(state.step_mismatch) return validation_message_key::step_mismatch;
+    if(state.bad_input) return validation_message_key::bad_input;
+    return validation_message_key::none;
+}
+
+template<class DefaultFormatter>
 inline std::string validation_message(
-    const native_document& document,const dom_node& node) {
+    const native_document& document,const dom_node& node,
+    DefaultFormatter&& format_default) {
     if(!will_validate(document,node)) return {};
     const auto state=constraint_validity_state(document,node);
     if(node.form_control().form_associated_custom_element)
         return state.valid()?std::string{}:node.form_control().custom_validation_message;
     if(state.custom_error) return node.form_control().custom_validation_message;
-    if(state.value_missing) return "Please fill out this field.";
-    if(state.type_mismatch) return "Please enter a valid value.";
-    if(state.pattern_mismatch) return "Please match the requested format.";
-    if(state.too_long) return "Please shorten this text.";
-    if(state.too_short) return "Please lengthen this text.";
-    if(state.range_underflow) return "The value is below the allowed minimum.";
-    if(state.range_overflow) return "The value is above the allowed maximum.";
-    if(state.step_mismatch) return "Please enter a valid value.";
-    if(state.bad_input) return "Please enter a valid value.";
-    return {};
+    const auto key=validation_message_identifier(state);
+    if(key==validation_message_key::none) return {};
+    auto formatted=std::string(format_default(key));
+    return formatted.empty()
+        ? std::string(default_validation_message(key)):std::move(formatted);
+}
+
+inline std::string validation_message(
+    const native_document& document,const dom_node& node) {
+    return validation_message(document,node,[](validation_message_key key) {
+        return std::string(default_validation_message(key));
+    });
 }
 
 inline std::vector<const dom_node*> form_validation_controls(

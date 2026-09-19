@@ -48,6 +48,8 @@ contracts. Per task direction, no build, native test, browser/WPT run, pixel
 check, package gate, or CI job was run. Only `git diff --check` is used for this
 commit, so the authored contract remains unexecuted source evidence.
 
-Rich multi-line bubble layout, host localization beyond the existing validation
-messages, optional timed dismissal, and structural selector
-invalidation remain outside #708.
+WebScene #710 subsequently bounds the bubble to four wrapped lines and exposes
+stable default-message identifiers to a formatter seam. A public host catalog
+ABI and optional timed dismissal policy remain separate because neither has an
+existing ownership/configuration route. Structural selector invalidation also
+remains outside #708.

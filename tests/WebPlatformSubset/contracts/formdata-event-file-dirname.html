@@ -1,0 +1,76 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>FormDataEvent and ordered file and dirname entries</title>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<script>
+test(()=>{
+  assert_equals(FormDataEvent.length,2);
+  assert_equals(Object.getPrototypeOf(FormDataEvent.prototype),Event.prototype);
+  assert_own_property(FormDataEvent.prototype,'formData');
+  const descriptor=Object.getOwnPropertyDescriptor(FormDataEvent.prototype,'formData');
+  assert_equals(typeof descriptor.get,'function');
+  assert_equals(descriptor.set,undefined);
+
+  const data=new FormData();
+  const event=new FormDataEvent('formdata',{formData:data});
+  assert_true(event instanceof FormDataEvent);
+  assert_true(event instanceof Event);
+  assert_equals(event.formData,data);
+  assert_equals(event.type,'formdata');
+  assert_false(event.bubbles);
+  assert_false(event.cancelable);
+  assert_equals(Object.prototype.toString.call(event),'[object FormDataEvent]');
+  assert_throws_js(TypeError,()=>new FormDataEvent('formdata'));
+  assert_throws_js(TypeError,()=>new FormDataEvent('formdata',{}));
+  assert_throws_js(TypeError,()=>new FormDataEvent('formdata',{formData:{}}));
+},'FormDataEvent is a dedicated Event interface with a required readonly FormData member');
+
+test(()=>{
+  const form=document.createElement('form');
+  form.innerHTML=`
+    <input name="before" value="first">
+    <input name="empty" type="file">
+    <input name="title" value="hello" dirname="title.dir" dir="rtl">
+    <input name="selected" type="file" multiple>
+    <textarea name="comment" dirname="comment.dir" dir="auto">مرحبا</textarea>
+    <input name="after" value="last">`;
+  document.body.appendChild(form);
+
+  const selected=form.elements[3];
+  const first=new File(['a'],'a.txt',{type:'text/plain',lastModified:10});
+  const second=new File(['b'],'b.txt',{type:'text/plain',lastModified:20});
+  Object.defineProperty(selected,'files',{value:[first,second],configurable:true});
+
+  const events=[];
+  let bubbled=null;
+  form.addEventListener('formdata',event=>{
+    events.push(event);
+    event.formData.append('listener-added','yes');
+  },{once:true});
+  document.body.addEventListener('formdata',event=>{bubbled=event;},{once:true});
+
+  const data=new FormData(form);
+  assert_equals(events.length,1);
+  assert_true(events[0] instanceof FormDataEvent);
+  assert_equals(events[0].formData,data);
+  assert_equals(bubbled,events[0]);
+  assert_true(events[0].bubbles);
+  assert_false(events[0].cancelable);
+
+  assert_array_equals([...data.keys()],[
+    'before','empty','title','title.dir','selected','selected',
+    'comment','comment.dir','after','listener-added'
+  ]);
+  const empty=data.get('empty');
+  assert_true(empty instanceof File);
+  assert_equals(empty.name,'');
+  assert_equals(empty.type,'application/octet-stream');
+  assert_equals(empty.size,0);
+  assert_array_equals(data.getAll('selected'),[first,second]);
+  assert_equals(data.get('title.dir'),'rtl');
+  assert_equals(data.get('comment.dir'),'rtl');
+  assert_equals(data.get('listener-added'),'yes');
+  form.remove();
+},'file and dirname entries retain tree order and the dispatched FormData remains mutable');
+</script>

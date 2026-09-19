@@ -17,7 +17,7 @@ submitter, or `null` when no submitter was supplied.
 
 After an uncanceled `submit`, WebScene constructs the supported form entry list
 with `FormData(form, submitter)`. Construction synchronously dispatches a
-non-bubbling, non-cancelable `formdata` event carrying that same `FormData`
+bubbling, non-cancelable `formdata` event carrying that same `FormData`
 object. Canceling `submit` prevents entry-list construction. The legacy
 `submit()` method goes directly to entry-list construction, bypassing
 constraint validation, submit-attempt user validity, and the `submit` event.
@@ -36,6 +36,8 @@ construction reuses the existing supported `FormData` control filtering and
 submitter projection. Navigation, encoding transport, interactive validation
 UI, form-associated custom elements, file controls, dirname entries, and a
 dedicated `FormDataEvent` constructor remain outside this bounded source slice.
+The later `formdata-event-file-dirname-20260919.md` source contract extends the
+last three items without changing this submission route.
 
 No structural ancestor invalidation route is added. Fieldset aggregate selector
 matching continues to read live descendant state directly, leaving descendant

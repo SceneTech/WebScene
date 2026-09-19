@@ -676,6 +676,15 @@ std::vector<dom_node*> native_document::query_selector_all(
     return result;
 }
 
+std::vector<const dom_node*> native_document::query_selector_all(
+    const dom_node& root,
+    const std::string& selector) const
+{
+    std::vector<const dom_node*> result;
+    collect_matches(root, selector, result);
+    return result;
+}
+
 bool native_document::register_modal_dialog(dom_node& scope, dom_node& dialog)
 {
     if (&scope == &dialog || find_by_native_id(scope.id) != &scope || find_by_native_id(dialog.id) != &dialog

@@ -2108,6 +2108,9 @@ public:
     dom_node* find_by_native_id(uint32_t id) noexcept;
     dom_node* find_by_id(const std::string& id) noexcept;
     std::vector<dom_node*> query_selector_all(dom_node& root, const std::string& selector);
+    std::vector<const dom_node*> query_selector_all(
+        const dom_node& root,
+        const std::string& selector) const;
     bool register_modal_dialog(dom_node& scope, dom_node& dialog);
     void unregister_modal_dialog(const dom_node& dialog);
     void unregister_modal_subtree(const dom_node& root);
@@ -2508,6 +2511,10 @@ private:
         dom_node& node,
         const std::string& selector,
         std::vector<dom_node*>& result);
+    static void collect_matches(
+        const dom_node& node,
+        const std::string& selector,
+        std::vector<const dom_node*>& result);
     dom_node* hit_test_node(
         dom_node& node,
         float x,

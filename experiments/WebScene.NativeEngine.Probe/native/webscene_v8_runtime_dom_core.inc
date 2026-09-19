@@ -1259,8 +1259,7 @@
                 current_context->GetAlignedPointerFromEmbedderData(
                     1,
                     v8::kEmbedderDataTypeTagDefault));
-            if (root != nullptr) return effective_document_base(
-                const_cast<dom_node*>(root));
+            if (root != nullptr) return effective_document_base(root);
         }
         return effective_document_base(&document.body());
     }

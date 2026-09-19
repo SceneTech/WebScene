@@ -2036,9 +2036,18 @@
             return read_event_boolean("__websceneImmediatePropagationStopped");
         };
 
+        auto* event_root = static_cast<dom_node*>(
+            local_context->GetAlignedPointerFromEmbedderData(
+                1,
+                v8::kEmbedderDataTypeTagDefault));
+        if (event_root == nullptr) event_root = &document.body();
         std::vector<dom_node*> ancestry;
         for (auto* node = &target; node != nullptr; node = document.event_parent(*node)) {
             ancestry.push_back(node);
+            // Iframe documents share the retained native layout tree with
+            // their owner, while DOM event paths terminate at the child
+            // Document/Window boundary.
+            if (node == event_root) break;
         }
 #if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
         if (std::string_view(type) == "mousemove") {

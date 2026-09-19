@@ -3460,7 +3460,8 @@
             return;
         }
         forms::ensure_text_value(*node);
-        const auto number=forms::finite_number(node->form_control().value);
+        const auto kind=forms::numeric_kind(*node);
+        const auto number=forms::numeric_value(kind,node->form_control().value);
         info.GetReturnValue().Set(v8::Number::New(
             info.GetIsolate(),number.value_or(
                 std::numeric_limits<double>::quiet_NaN())));
@@ -3486,9 +3487,9 @@
         }
         forms::ensure_text_value(*node);
         const auto previous_value=node->form_control().value;
-        auto next_value=std::isnan(number)
-            ? std::string{}
-            : forms::format_finite_number(number).value_or(std::string{});
+        auto next_value=std::isnan(number)?std::string{}
+            : forms::format_numeric_value(
+                forms::numeric_kind(*node),number).value_or(std::string{});
         next_value=forms::sanitize_programmatic_numeric_value(
             *node,std::move(next_value));
         auto& control=node->mutable_form_control();

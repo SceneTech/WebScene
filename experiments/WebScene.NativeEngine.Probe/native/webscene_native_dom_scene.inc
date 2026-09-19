@@ -2831,6 +2831,18 @@ void native_document::append_scene(
         if (!node.form_control().value.empty() || show_placeholder) {
             const auto painted_value = resolved_text_transform(
                 node, show_placeholder ? placeholder->second : node.form_control().value);
+            auto text_color = resolved_foreground(node);
+            if (show_placeholder) {
+                const auto& placeholder_style = node.style.placeholder_pseudo();
+                if (placeholder_style.foreground_specified)
+                    text_color = placeholder_style.foreground_rgba;
+                const auto alpha = static_cast<uint32_t>(std::clamp(
+                    std::lround(static_cast<float>(text_color & 0xFFU)
+                        * placeholder_style.opacity),
+                    0L,
+                    255L));
+                text_color = (text_color & 0xFFFFFF00U) | alpha;
+            }
             std::ostringstream resource;
             resource << font_size << '\t' << line_height << '\t'
                 << resolved_font_weight(node) << '\t' << "start" << '\t'
@@ -2843,7 +2855,7 @@ void native_document::append_scene(
                 text_y,
                 text_width,
                 line_height,
-                with_opacity(resolved_foreground(node)),
+                with_opacity(text_color),
                 node.id,
                 resolved_letter_spacing(node),
                 resolved_word_spacing(node),

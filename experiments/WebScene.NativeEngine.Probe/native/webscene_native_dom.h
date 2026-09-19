@@ -572,8 +572,15 @@ struct node_style final {
     };
 
     struct pseudo_element_pair final {
+        struct placeholder_element final {
+            uint32_t foreground_rgba{0};
+            float opacity{1};
+            bool foreground_specified{false};
+        };
+
         pseudo_element before;
         pseudo_element after;
+        placeholder_element placeholder;
     };
 
     const pseudo_element& before_pseudo() const noexcept
@@ -598,6 +605,18 @@ struct node_style final {
     {
         ensure_unique_pseudo_elements();
         return pseudo_elements->after;
+    }
+
+    const pseudo_element_pair::placeholder_element& placeholder_pseudo() const noexcept
+    {
+        static const pseudo_element_pair::placeholder_element empty;
+        return pseudo_elements == nullptr ? empty : pseudo_elements->placeholder;
+    }
+
+    pseudo_element_pair::placeholder_element& mutable_placeholder_pseudo()
+    {
+        ensure_unique_pseudo_elements();
+        return pseudo_elements->placeholder;
     }
 
     void clear_pseudo_elements() noexcept
@@ -959,10 +978,10 @@ private:
         }
     }
 
-    // Generated pseudo-elements are absent from most DOM nodes. Keeping two
-    // complete pseudo boxes inline cost 496 bytes on every element. Copy-on-
-    // write preserves cheap style cloning while paying for this cold state
-    // only when ::before or ::after participates in the cascade.
+    // Generated pseudo-elements and authored placeholder paint are absent from
+    // most DOM nodes. Keeping complete pseudo boxes inline cost 496 bytes on
+    // every element. Copy-on-write preserves cheap style cloning while paying
+    // for this cold state only when a supported pseudo participates in cascade.
     std::shared_ptr<pseudo_element_pair> pseudo_elements;
     // Transition/keyframe state is similarly cold. A complete animation_data
     // block is retained only for styles that author transition/animation

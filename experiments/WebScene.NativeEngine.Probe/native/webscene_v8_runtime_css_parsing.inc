@@ -846,9 +846,15 @@
                     || name == "before" || name == "after"
                     || name == "first-letter" || name == "first-line";
                 if (pseudo_element) {
+                    const auto supported = name == "before" || name == "after"
+                        || name == "selection" || name == "placeholder"
+                        || name == "backdrop" || name == "-webkit-scrollbar"
+                        || name == "-webkit-scrollbar-thumb"
+                        || name == "-webkit-scrollbar-track"
+                        || name == "-webkit-scrollbar-corner";
                     record_selector_feature(
                         "selector:pseudo-element:" + name,
-                        name == "before" || name == "after" ? "supported" : "unsupported");
+                        supported ? "supported" : "unsupported");
                 } else {
                     static const std::unordered_set<std::string> supported_pseudo_classes{
                         "root", "first-child", "last-child", "only-child",

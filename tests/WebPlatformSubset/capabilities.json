@@ -225,6 +225,14 @@
       "gap": "Native now passes the unchanged exact in-flow, flex, and positioned generated-content reftests plus the required exact-pixel positioned/rounded/stacked pseudo primitive in the native runner. WPT visibility-layout-001.xht remains a self-verifying visual test that does not compose visibility with generated content; the inherited-hidden generated-content composition remains covered by the focused native/portable spike. Evidence: artifacts/web-platform-pseudo-positioned-v3/{native,managed}/results.json, artifacts/wpt-generated-regression-v2/results.json, and artifacts/wpt-flex-pseudo-regression-v2/results.json."
     },
     {
+      "family": "text-control-placeholder-paint",
+      "required": [],
+      "candidate": ["::placeholder color", "::placeholder opacity", "custom-property resolution", "class mutation recascade", "live-value paint suppression"],
+      "productEvidence": ["unchanged Code OSS workbench inputs", "chat and feedback textareas", "issue reporter and mobile picker inputs"],
+      "coverage": ["contracts/css-placeholder-pseudo-paint.html", "test_placeholder_pseudo_color_and_opacity_reach_scene", "V8-free shared CSS pseudo classification/application contract"],
+      "gap": "Implementation-first candidate for WebScene #237. The standard pseudo stores only the color and opacity used by the twelve unchanged Code OSS core rules in lazy copy-on-write pseudo state, resolves custom properties during cascade, and changes retained placeholder text paint without generating a box, changing layout, scanning, polling, or requesting frames. Direct browser/native profile execution, additional placeholder properties, legacy vendor aliases, internal form-control parts, and broader pseudo-element qualification remain open."
+    },
+    {
       "family": "list-formatting",
       "required": ["list-item marker paint", "ordered counters", "outside marker geometry", "inside marker first-line participation", "marker-before-block-child anonymous line"],
       "candidate": ["list-style shorthand on generic list-item boxes", "filled square marker rasterization", "inside marker with forced continuation-line reset"],

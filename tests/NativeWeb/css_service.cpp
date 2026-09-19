@@ -714,7 +714,8 @@ int main(int argc,char** argv) {
         {".base::after",2},{".base:after",2},
         {".base::-webkit-scrollbar",3},{".base::-webkit-scrollbar-thumb",4},
         {".base::-webkit-scrollbar-track",5},{".base::-webkit-scrollbar-corner",6},
-        {".base::backdrop",7},{".base[data-label='::before']",0}
+        {".base::backdrop",7},{".base::placeholder",8},
+        {".base[data-label='::before']",0}
     };
     for(const auto& [selector,kind]:classified_selectors) {
         const auto payload=payload_for(selector,"red");
@@ -1072,6 +1073,16 @@ int main(int argc,char** argv) {
     webscene_native::css::apply_pseudo_declaration(ordered_node,before,{"color","var(--tone)",false},
         variable_root,pseudo_result,[](bool) {});
     if(!before.generated || before.content!="label" || before.foreground_rgba!=0xFF0000FF) return 130;
+    auto& placeholder=ordered_node.style.mutable_placeholder_pseudo();
+    webscene_native::css::apply_placeholder_declaration(
+        ordered_node,placeholder,{"color","var(--tone)",false},
+        variable_root,pseudo_result,[](bool) {});
+    webscene_native::css::apply_placeholder_declaration(
+        ordered_node,placeholder,{"opacity",".5",false},
+        variable_root,pseudo_result,[](bool) {});
+    if(!placeholder.foreground_specified
+        || placeholder.foreground_rgba!=0xFF0000FF
+        || placeholder.opacity!=.5F) return 179;
     webscene_native::css::apply_scrollbar_declaration(ordered_node,3,{"display","none",true},variable_root);
     webscene_native::css::apply_scrollbar_declaration(ordered_node,3,{"display","block",false},variable_root);
     if(!ordered_node.style.scrollbar_hidden || ordered_node.style.display==webscene_native::display_mode::none) return 131;

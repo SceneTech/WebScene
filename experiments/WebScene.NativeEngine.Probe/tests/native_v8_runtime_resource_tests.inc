@@ -1132,6 +1132,149 @@ void test_nested_pointer_coordinate_projection() {
   webscene_engine_destroy(engine);
 }
 
+void test_nested_keyboard_handoff_and_focus_traversal() {
+  constexpr std::string_view address{
+      "https://iframe-keyboard.test/index.html"};
+  resource_server server{
+      .content = {{std::string{address},
+                   "<!doctype html><title>frame keyboard</title><body></body>"},
+                  {"https://iframe-keyboard.test/fake.html?id=markdown-preview",
+                   R"HTML(<!doctype html><body><button id="inner-first">first</button><button id="inner-last">last</button><script>
+addEventListener('keydown',event=>{
+  if(event.ctrlKey&&event.keyCode===70)event.preventDefault();
+  if(parent.__nestedKeyboard.blockTab&&event.keyCode===9)event.preventDefault();
+  parent.__nestedKeyboard.events.push({type:event.type,key:event.key,code:event.code,keyCode:event.keyCode,shiftKey:event.shiftKey,ctrlKey:event.ctrlKey,metaKey:event.metaKey,repeat:event.repeat,isTrusted:event.isTrusted,target:event.target.tagName,prevented:event.defaultPrevented});
+});
+addEventListener('keyup',event=>parent.__nestedKeyboard.events.push({type:event.type,key:event.key,code:event.code,keyCode:event.keyCode,shiftKey:event.shiftKey,ctrlKey:event.ctrlKey,metaKey:event.metaKey,repeat:event.repeat,isTrusted:event.isTrusted,target:event.target.tagName,prevented:event.defaultPrevented}));
+parent.__nestedKeyboard.ready=true;
+</script></body>)HTML"}};
+  webscene_engine_options options{};
+  options.struct_size = sizeof(options);
+  options.resource_load_callback = load_test_resource;
+  options.resource_load_user_data = &server;
+  auto* engine = webscene_engine_create_with_options(&options);
+  require(engine != nullptr, "nested keyboard engine creation failed");
+  require(webscene_engine_load_url(engine, address.data(), address.size()) != 0U,
+          "nested keyboard outer document failed");
+  require(evaluate_until_equals(
+              engine, "location.href", "nested-keyboard-ready.js",
+              R"("https://iframe-keyboard.test/index.html")", 2'500)
+              == R"("https://iframe-keyboard.test/index.html")",
+          "nested keyboard outer document did not become ready");
+
+  execute(engine, R"JS(
+      globalThis.__nestedKeyboard = {
+        ready:false, blockTab:false, events:[], outerEvents:0
+      };
+      addEventListener('keydown', () => ++__nestedKeyboard.outerEvents);
+      addEventListener('keyup', () => ++__nestedKeyboard.outerEvents);
+      document.body.innerHTML = '<button id="outer-before">before</button><iframe id="webview"></iframe><button id="outer-after">after</button>';
+      const frame = document.querySelector('#webview');
+      frame.setAttribute('sandbox', 'allow-same-origin allow-scripts');
+      frame.src = './fake.html?id=markdown-preview';
+    )JS", "nested-keyboard-setup.js");
+  require(evaluate_until_equals(
+              engine, "__nestedKeyboard.ready", "nested-keyboard-frame-ready.js",
+              "true", 3'000) == "true",
+          "nested keyboard frame did not become ready");
+  require(evaluate(engine, R"JS((() => {
+      const frame=document.querySelector('#webview');
+      frame.contentWindow.focus();
+      return document.activeElement===frame
+        && frame.contentDocument.activeElement===frame.contentDocument.body
+        && frame.contentDocument.hasFocus();
+    })())JS", "nested-keyboard-focus-frame.js") == "true",
+          "nested keyboard frame did not start with its BODY focused");
+
+  constexpr auto control = WEBSCENE_INPUT_MODIFIER_CONTROL;
+  constexpr auto repeat = WEBSCENE_INPUT_KEY_REPEAT;
+  auto sequence = uint64_t{9401U};
+  const auto shortcut_consumed = consumed_input_count(engine);
+  keyboard_input(
+      engine, WEBSCENE_INPUT_KEY_DOWN, 'F', sequence++, control | repeat);
+  keyboard_input(engine, WEBSCENE_INPUT_KEY_UP, 'F', sequence++, control);
+  wait_for_consumed_inputs(
+      engine, shortcut_consumed + 2U,
+      "nested Code-shaped shortcut was not consumed");
+  const auto shortcut = evaluate(engine, R"JS((() => {
+      const events=__nestedKeyboard.events;
+      return {
+        active:document.querySelector('#webview').contentDocument.activeElement.tagName,
+        outerEvents:__nestedKeyboard.outerEvents,
+        events
+      };
+    })())JS", "nested-keyboard-shortcut-result.js");
+  require(
+      shortcut == R"JSON({"active":"BODY","outerEvents":0,"events":[{"type":"keydown","key":"F","code":"KeyF","keyCode":70,"shiftKey":false,"ctrlKey":true,"metaKey":false,"repeat":true,"isTrusted":true,"target":"BODY","prevented":true},{"type":"keyup","key":"F","code":"KeyF","keyCode":70,"shiftKey":false,"ctrlKey":true,"metaKey":false,"repeat":false,"isTrusted":true,"target":"BODY","prevented":false}]})JSON",
+      "nested Code-shaped keyboard handoff diverged: " + shortcut);
+
+  const auto traversal_consumed = consumed_input_count(engine);
+  keyboard_input(engine, WEBSCENE_INPUT_KEY_DOWN, 9U, sequence++);
+  keyboard_input(engine, WEBSCENE_INPUT_KEY_UP, 9U, sequence++);
+  keyboard_input(engine, WEBSCENE_INPUT_KEY_DOWN, 9U, sequence++);
+  keyboard_input(engine, WEBSCENE_INPUT_KEY_UP, 9U, sequence++);
+  wait_for_consumed_inputs(
+      engine, traversal_consumed + 4U,
+      "nested forward Tab traversal was not consumed");
+  require(evaluate(engine, R"JS((() => {
+      const frame=document.querySelector('#webview');
+      return document.activeElement===frame
+        && frame.contentDocument.activeElement.id==='inner-last';
+    })())JS", "nested-keyboard-inner-traversal.js") == "true",
+          "Tab did not enter the focused child BODY and advance inside it");
+
+  execute_and_wait(
+      engine, "__nestedKeyboard.blockTab=true",
+      "nested-keyboard-block-tab.js");
+  const auto canceled_consumed = consumed_input_count(engine);
+  keyboard_input(engine, WEBSCENE_INPUT_KEY_DOWN, 9U, sequence++);
+  keyboard_input(engine, WEBSCENE_INPUT_KEY_UP, 9U, sequence++);
+  wait_for_consumed_inputs(
+      engine, canceled_consumed + 2U,
+      "canceled nested Tab was not consumed");
+  require(evaluate(engine, R"JS((() => {
+      const frame=document.querySelector('#webview');
+      return document.activeElement===frame
+        && frame.contentDocument.activeElement.id==='inner-last'
+        && __nestedKeyboard.events.at(-2).prevented;
+    })())JS", "nested-keyboard-canceled-tab.js") == "true",
+          "preventDefault did not retain nested keyboard focus");
+
+  execute_and_wait(
+      engine, "__nestedKeyboard.blockTab=false",
+      "nested-keyboard-release-tab.js");
+  const auto exit_consumed = consumed_input_count(engine);
+  keyboard_input(engine, WEBSCENE_INPUT_KEY_DOWN, 9U, sequence++);
+  keyboard_input(engine, WEBSCENE_INPUT_KEY_UP, 9U, sequence++);
+  wait_for_consumed_inputs(
+      engine, exit_consumed + 2U,
+      "nested Tab exit was not consumed");
+  require(evaluate(engine, R"JS((() => {
+      const frame=document.querySelector('#webview');
+      return document.activeElement.id==='outer-after'
+        && frame.contentDocument.activeElement===frame.contentDocument.body;
+    })())JS", "nested-keyboard-exit.js") == "true",
+          "Tab did not exit the child document to the following outer control");
+
+  const auto return_consumed = consumed_input_count(engine);
+  keyboard_input(
+      engine, WEBSCENE_INPUT_KEY_DOWN, 9U, sequence++,
+      WEBSCENE_INPUT_MODIFIER_SHIFT);
+  keyboard_input(
+      engine, WEBSCENE_INPUT_KEY_UP, 9U, sequence++,
+      WEBSCENE_INPUT_MODIFIER_SHIFT);
+  wait_for_consumed_inputs(
+      engine, return_consumed + 2U,
+      "reverse nested Tab traversal was not consumed");
+  require(evaluate(engine, R"JS((() => {
+      const frame=document.querySelector('#webview');
+      return document.activeElement===frame
+        && frame.contentDocument.activeElement.id==='inner-last';
+    })())JS", "nested-keyboard-return.js") == "true",
+          "Shift+Tab did not return from the outer document to the child tail");
+  webscene_engine_destroy(engine);
+}
+
 size_t load_contextual_test_resource(
     void* user_data,
     uint32_t kind,

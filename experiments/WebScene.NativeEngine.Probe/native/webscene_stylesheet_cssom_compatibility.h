@@ -27,6 +27,7 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
   const styleRuleInstances = new WeakSet();
   const importRuleInstances = new WeakSet();
   const namespaceRuleInstances = new WeakSet();
+  const fontFaceRuleInstances = new WeakSet();
   const groupingRuleInstances = new WeakSet();
   const conditionRuleInstances = new WeakSet();
   const mediaRuleInstances = new WeakSet();
@@ -101,6 +102,8 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
     'CSSImportRule', importRuleInstances, CSSRuleInterface);
   const CSSNamespaceRuleInterface = interfaceConstructor(
     'CSSNamespaceRule', namespaceRuleInstances, CSSRuleInterface);
+  const CSSFontFaceRuleInterface = interfaceConstructor(
+    'CSSFontFaceRule', fontFaceRuleInstances, CSSRuleInterface);
   const CSSGroupingRuleInterface = interfaceConstructor(
     'CSSGroupingRule', groupingRuleInstances, CSSRuleInterface);
   const CSSConditionRuleInterface = interfaceConstructor(
@@ -130,6 +133,7 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
       ['CSSStyleRule', CSSStyleRuleInterface],
       ['CSSImportRule', CSSImportRuleInterface],
       ['CSSNamespaceRule', CSSNamespaceRuleInterface],
+      ['CSSFontFaceRule', CSSFontFaceRuleInterface],
       ['CSSGroupingRule', CSSGroupingRuleInterface],
       ['CSSConditionRule', CSSConditionRuleInterface],
       ['CSSMediaRule', CSSMediaRuleInterface],
@@ -151,6 +155,8 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
         target, 'IMPORT_RULE', { value: 3, enumerable: true });
       if (target && !('NAMESPACE_RULE' in target)) Object.defineProperty(
         target, 'NAMESPACE_RULE', { value: 10, enumerable: true });
+      if (target && !('FONT_FACE_RULE' in target)) Object.defineProperty(
+        target, 'FONT_FACE_RULE', { value: 5, enumerable: true });
       if (target && !('SUPPORTS_RULE' in target)) Object.defineProperty(
         target, 'SUPPORTS_RULE', { value: 12, enumerable: true });
       if (target && !('KEYFRAMES_RULE' in target)) Object.defineProperty(
@@ -841,6 +847,13 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
   };
   const escapeCssString = value => String(value)
     .replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  const isFontFaceRule = parsed => {
+    if (parsed.body === undefined) return false;
+    const open = parsed.cssText.length - parsed.body.length - 2;
+    const prelude = parsed.cssText.slice(0, open)
+      .replace(/\/\*[\s\S]*?\*\//g, ' ').trim();
+    return /^@font-face$/i.test(prelude);
+  };
   const parseKeyframeSelector = value => {
     const source = value.replace(/\/\*[\s\S]*?\*\//g, ' ').trim();
     if (!source) return null;
@@ -955,6 +968,7 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
     let serializeGroup;
     const importSpec = parseImportRule(parsed.cssText);
     const namespaceSpec = parseNamespaceRule(parsed.cssText);
+    const fontFaceRule = isFontFaceRule(parsed);
     const mediaMatch = /^@media(?:\s+([^\{]*?))?\s*\{/i.exec(parsed.cssText);
     const supportsMatch = /^@supports(?:\s+([^\{]*?))?\s*\{/i.exec(parsed.cssText);
     const containerMatch = /^@container(?:\s+([^\{]*?))?\s*\{/i.exec(parsed.cssText);
@@ -993,6 +1007,9 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
     } else if (namespaceSpec) {
       namespaceRuleInstances.add(rule);
       Object.setPrototypeOf(rule, CSSNamespaceRuleInterface.prototype);
+    } else if (fontFaceRule) {
+      fontFaceRuleInstances.add(rule);
+      Object.setPrototypeOf(rule, CSSFontFaceRuleInterface.prototype);
     } else if (mediaMatch) {
       groupingRuleInstances.add(rule);
       conditionRuleInstances.add(rule);
@@ -1140,6 +1157,36 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
         namespaceURI: { enumerable: true, value: namespaceSpec.namespaceURI },
         detach: { value: () => { parent = null; } }
       });
+    } else if (fontFaceRule) {
+      let declaration;
+      const attached = () => parent && (containingRule
+        ? Array.from(containingRule.cssRules || []).includes(rule)
+        : state.rules.includes(rule));
+      const serialize = () => {
+        const descriptors = declaration.cssText.trim();
+        cssText = `@font-face {${descriptors ? ' ' + descriptors + ' ' : ''}}`;
+      };
+      const commit = () => {
+        synchronize(state);
+        serialize();
+        if (parent && containingRule?.__webSceneSerialize)
+          containingRule.__webSceneSerialize();
+        if (attached()) publish(state);
+      };
+      declaration = makeConstructedDeclaration(parsed.body || '', commit);
+      Object.defineProperty(declaration, 'parentRule', {
+        enumerable: true, get: () => rule
+      });
+      Object.defineProperties(rule, {
+        type: { enumerable: true, value: 5 },
+        style: {
+          enumerable: true,
+          get: () => declaration,
+          set(value) { declaration.cssText = text(value); }
+        },
+        detach: { value: () => { parent = null; } }
+      });
+      serialize();
     } else if (keyframesSpec) {
       let name = keyframesSpec.name;
       const prefix = keyframesSpec.prefixed ? '@-webkit-keyframes' : '@keyframes';

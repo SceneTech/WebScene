@@ -1,0 +1,314 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>CSS font-face rule reflection and mutation stay live</title>
+<body>
+<script>
+  const state = window.__webSceneWptState = {
+    complete: false, harness: null, results: [], errors: [], diagnostics: []
+  };
+  const check = (value, message) => { if (!value) throw new Error(message); };
+  const record = (name, error) => state.results.push({
+    name,
+    status: error ? "FAIL" : "PASS",
+    message: error ? String(error.message || error) : null,
+    stack: error?.stack ? String(error.stack) : null
+  });
+  const errorName = callback => {
+    try { callback(); return "none"; } catch (error) { return error.name; }
+  };
+
+  async function exercise(document, view, prefix) {
+    const family = `${prefix}-live`;
+    const referenceFamily = `${prefix}-reference`;
+    const source400 = "../../Fonts/Roboto/Roboto-400.ttf";
+    const source700 = "../../Fonts/Roboto/Roboto-700.ttf";
+    const style = document.createElement("style");
+    const target = document.createElement("span");
+    const reference = document.createElement("span");
+    style.textContent = `
+      @font-face {
+        font-family: "${prefix}-initial";
+        src: url("${source400}") format("truetype");
+        font-style: normal;
+        font-weight: 400;
+      }
+      @media (min-width: 1px) {
+        @font-face {
+          font-family: "${prefix}-nested";
+          src: url("${source400}");
+          font-weight: 400;
+        }
+      }
+      @font-face {
+        font-family: "${referenceFamily}";
+        src: url("${source700}") format("truetype");
+        font-weight: 700;
+      }
+      .${prefix}-target, .${prefix}-reference {
+        display: inline-block;
+        font-size: 28px;
+        font-weight: 700;
+        white-space: nowrap;
+      }
+      .${prefix}-target { font-family: "${family}"; }
+      .${prefix}-reference { font-family: "${referenceFamily}"; }
+    `;
+    target.className = `${prefix}-target`;
+    reference.className = `${prefix}-reference`;
+    target.textContent = reference.textContent = "Release Notes: Version 2.2.2";
+    document.head.appendChild(style);
+    document.body.append(target, reference);
+    if (document.fonts) await document.fonts.ready;
+
+    const sheet = style.sheet;
+    const rule = sheet.cssRules[0];
+    const declaration = rule.style;
+    const authoredText = style.textContent;
+    const initial = {
+      constructor: rule.constructor.name,
+      fontFaceRule: rule instanceof view.CSSFontFaceRule,
+      rule: rule instanceof view.CSSRule,
+      type: rule.type,
+      constant: view.CSSRule.FONT_FACE_RULE,
+      prototypeConstant: view.CSSRule.prototype.FONT_FACE_RULE,
+      parentRule: rule.parentRule,
+      parentSheet: rule.parentStyleSheet === sheet,
+      styleIdentity: rule.style === declaration,
+      declarationParent: declaration.parentRule === rule,
+      family: declaration.fontFamily,
+      source: declaration.src,
+      weight: declaration.fontWeight,
+      indexed: Array.from({ length: declaration.length }, (_, index) =>
+        declaration[index]).join("|"),
+      singleLine: !rule.cssText.includes("\n")
+    };
+
+    const errors = {
+      forwardedSymbol: errorName(() => { rule.style = Symbol("descriptors"); }),
+      cssTextSymbol: errorName(() => { declaration.cssText = Symbol("descriptors"); })
+    };
+    declaration.cssText = `font-family: "${family}";
+      src: url("${source400}") format("truetype");
+      font-style: normal; font-weight: 400;`;
+    if (document.fonts) await document.fonts.ready;
+    const width400 = target.getBoundingClientRect().width;
+    const afterCssText = {
+      identity: rule.style === declaration,
+      family: declaration.fontFamily,
+      source: declaration.getPropertyValue("src"),
+      weight: declaration.fontWeight,
+      serialized: rule.cssText.includes(`font-family: "${family}";`)
+        && !rule.cssText.includes("\n"),
+      textStable: style.textContent === authoredText,
+      width: width400
+    };
+
+    rule.style = `font-family: "${family}";
+      src: url("${source700}") format("truetype");
+      font-style: normal; font-weight: 700;`;
+    const immediateWidth700 = target.getBoundingClientRect().width;
+    if (document.fonts) await document.fonts.ready;
+    const referenceWidth = reference.getBoundingClientRect().width;
+    const width700 = target.getBoundingClientRect().width;
+    const afterForward = {
+      identity: rule.style === declaration,
+      family: declaration.fontFamily,
+      source: declaration.src,
+      weight: declaration.fontWeight,
+      cssText: rule.cssText,
+      textStable: style.textContent === authoredText,
+      width400,
+      immediateWidth700,
+      width700,
+      referenceWidth
+    };
+
+    const group = sheet.cssRules[1];
+    const nested = group.cssRules[0];
+    const nestedDeclaration = nested.style;
+    nested.style.fontWeight = "700";
+    const nestedState = {
+      brand: nested instanceof view.CSSFontFaceRule,
+      parentRule: nested.parentRule === group,
+      parentSheet: nested.parentStyleSheet === sheet,
+      styleIdentity: nested.style === nestedDeclaration,
+      serialized: group.cssText.includes("font-weight: 700;"),
+      textStable: style.textContent === authoredText
+    };
+    sheet.deleteRule(1);
+    const groupSnapshot = group.cssText;
+    nested.style.fontFamily = `"${prefix}-detached-nested"`;
+    const nestedDetached = {
+      groupParent: group.parentStyleSheet,
+      ruleParent: nested.parentRule,
+      sheetParent: nested.parentStyleSheet,
+      localMutation: nested.cssText.includes(`${prefix}-detached-nested`),
+      containingSnapshot: group.cssText === groupSnapshot,
+      sheetIsolation: !Array.from(sheet.cssRules, item => item.cssText)
+        .join("\n").includes(`${prefix}-detached-nested`)
+    };
+
+    const constructed = new view.CSSStyleSheet();
+    constructed.replaceSync(`@font-face { font-family: "${prefix}-constructed";
+      src: url("${source400}"); font-weight: 400; }`);
+    const constructedRule = constructed.cssRules[0];
+    document.adoptedStyleSheets.push(constructed);
+    constructedRule.style.fontWeight = "700";
+    const constructedState = {
+      brand: constructedRule instanceof view.CSSFontFaceRule,
+      ownerNode: constructed.ownerNode,
+      parentSheet: constructedRule.parentStyleSheet === constructed,
+      adopted: document.adoptedStyleSheets.includes(constructed),
+      serialized: constructedRule.cssText.includes("font-weight: 700;")
+    };
+    document.adoptedStyleSheets.pop();
+
+    const link = document.createElement("link");
+    link.rel = "stylesheet";
+    link.href = "resources/cssom-import-root.css";
+    const loaded = new Promise((resolve, reject) => {
+      link.onload = resolve;
+      link.onerror = () => reject(new Error("import owner failed to load"));
+    });
+    document.head.appendChild(link);
+    await loaded;
+    const imported = link.sheet.cssRules[0].styleSheet;
+    const importedIndex = imported.insertRule(`@font-face {
+      font-family: "${prefix}-imported";
+      src: url("../../../Fonts/Roboto/Roboto-400.ttf"); font-weight: 400; }`,
+      imported.cssRules.length);
+    const importedRule = imported.cssRules[importedIndex];
+    importedRule.style.fontWeight = "700";
+    const importedState = {
+      brand: importedRule instanceof view.CSSFontFaceRule,
+      ownerRule: imported.ownerRule?.type === view.CSSRule.IMPORT_RULE,
+      parentSheet: importedRule.parentStyleSheet === imported,
+      parentRule: importedRule.parentRule,
+      serialized: importedRule.cssText.includes("font-weight: 700;")
+    };
+    imported.deleteRule(importedIndex);
+    importedRule.style.fontFamily = `"${prefix}-detached-imported"`;
+    importedState.detached = importedRule.parentStyleSheet === null
+      && importedRule.parentRule === null
+      && importedRule.cssText.includes(`${prefix}-detached-imported`)
+      && !Array.from(imported.cssRules, item => item.cssText).join("\n")
+        .includes(`${prefix}-detached-imported`);
+
+    const currentIndex = Array.from(sheet.cssRules).indexOf(rule);
+    sheet.deleteRule(currentIndex);
+    const sheetSnapshot = Array.from(sheet.cssRules, item => item.cssText).join("\n");
+    declaration.fontFamily = `"${prefix}-detached"`;
+    const detached = {
+      parentRule: rule.parentRule,
+      parentSheet: rule.parentStyleSheet,
+      styleIdentity: rule.style === declaration,
+      localMutation: rule.cssText.includes(`${prefix}-detached`),
+      sheetSnapshot: Array.from(sheet.cssRules, item => item.cssText).join("\n")
+        === sheetSnapshot,
+      textStable: style.textContent === authoredText
+    };
+
+    document.adoptedStyleSheets = document.adoptedStyleSheets
+      .filter(candidate => candidate !== constructed);
+    link.remove();
+    style.remove();
+    target.remove();
+    reference.remove();
+    return { initial, errors, afterCssText, afterForward, nestedState,
+      nestedDetached, constructedState, importedState, detached };
+  }
+
+  (async () => {
+    try {
+      const frame = document.createElement("iframe");
+      document.body.appendChild(frame);
+      const main = await exercise(document, window, "font-face-main");
+      const child = await exercise(
+        frame.contentDocument, frame.contentWindow, "font-face-frame");
+      const both = predicate => predicate(main) && predicate(child);
+
+      record("CSSFontFaceRule exposes realm-local brand, type, parents, and SameObject style",
+        both(value => value.initial.constructor === "CSSFontFaceRule"
+            && value.initial.fontFaceRule && value.initial.rule
+            && value.initial.type === 5 && value.initial.constant === 5
+            && value.initial.prototypeConstant === 5
+            && value.initial.parentRule === null && value.initial.parentSheet
+            && value.initial.styleIdentity && value.initial.declarationParent
+            && value.initial.family.endsWith("-initial\"")
+            && value.initial.source.includes("Roboto-400.ttf")
+            && value.initial.weight === "400"
+            && value.initial.indexed
+              === "font-family|src|font-style|font-weight"
+            && value.initial.singleLine)
+          ? null : new Error(JSON.stringify({ main: main.initial, child: child.initial })));
+      record("descriptor cssText and PutForwards assignment serialize and publish in place",
+        both(value => value.errors.forwardedSymbol === "TypeError"
+            && value.errors.cssTextSymbol === "TypeError"
+            && value.afterCssText.identity
+            && value.afterCssText.family.endsWith("-live\"")
+            && value.afterCssText.source.includes("Roboto-400.ttf")
+            && value.afterCssText.weight === "400"
+            && value.afterCssText.serialized && value.afterCssText.textStable
+            && value.afterForward.identity
+            && value.afterForward.family.endsWith("-live\"")
+            && value.afterForward.source.includes("Roboto-700.ttf")
+            && value.afterForward.weight === "700"
+            && !value.afterForward.cssText.includes("\n")
+            && value.afterForward.textStable)
+          ? null : new Error(JSON.stringify({ main, child })));
+      record("attached descriptor mutation refreshes font registration and layout metrics",
+        both(value => Math.abs(value.afterForward.width400
+              - value.afterForward.referenceWidth) > .5
+            && Math.abs(value.afterForward.immediateWidth700
+              - value.afterForward.referenceWidth) <= .5
+            && Math.abs(value.afterForward.width700
+              - value.afterForward.referenceWidth) <= .5)
+          ? null : new Error(JSON.stringify({
+              main: main.afterForward, child: child.afterForward
+            })));
+      record("nested font-face ownership serializes and detaches recursively",
+        both(value => Object.values(value.nestedState).every(Boolean)
+            && value.nestedDetached.groupParent === null
+            && value.nestedDetached.ruleParent === null
+            && value.nestedDetached.sheetParent === null
+            && value.nestedDetached.localMutation
+            && value.nestedDetached.containingSnapshot
+            && value.nestedDetached.sheetIsolation)
+          ? null : new Error(JSON.stringify({ main, child })));
+      record("constructed adopted and imported sheets retain font-face ownership",
+        both(value => value.constructedState.brand
+            && value.constructedState.ownerNode === null
+            && value.constructedState.parentSheet
+            && value.constructedState.adopted
+            && value.constructedState.serialized
+            && value.importedState.brand && value.importedState.ownerRule
+            && value.importedState.parentSheet
+            && value.importedState.parentRule === null
+            && value.importedState.serialized && value.importedState.detached)
+          ? null : new Error(JSON.stringify({ main, child })));
+      record("detached font-face mutation remains an isolated live snapshot",
+        both(value => value.detached.parentRule === null
+            && value.detached.parentSheet === null
+            && value.detached.styleIdentity && value.detached.localMutation
+            && value.detached.sheetSnapshot && value.detached.textStable)
+          ? null : new Error(JSON.stringify({ main: main.detached, child: child.detached })));
+      frame.remove();
+      state.diagnostics.push(JSON.stringify({
+        mainWidths: main.afterForward,
+        frameWidths: child.afterForward
+      }));
+    } catch (error) {
+      record("CSSFontFaceRule setup", error);
+    }
+    const failure = state.results.find(result => result.status !== "PASS");
+    state.harness = failure
+      ? { status: 1, message: failure.message, stack: failure.stack }
+      : { status: 0, message: null, stack: null };
+    state.complete = true;
+    const evidence = document.createElement("pre");
+    evidence.id = "cssom-font-face-rule-mutation-evidence";
+    evidence.hidden = true;
+    evidence.textContent = JSON.stringify(state);
+    document.body.appendChild(evidence);
+  })();
+</script>

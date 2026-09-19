@@ -2069,6 +2069,145 @@ void test_native_mutable_stylesheet_cssom(webscene_engine* engine)
         "CSS keyframes rule mutation diverged from the WPT-derived contract: "
             + keyframes_result);
 
+    const auto font_face_result = evaluate(engine, R"JS((() => {
+      const check = (condition, message) => {
+        if (!condition) throw new Error(message);
+      };
+      const exercise = (document, view, prefix) => {
+        const style = document.createElement('style');
+        const target = document.createElement('div');
+        target.className = `${prefix}-target`;
+        style.textContent = `@font-face {
+          font-family: "${prefix}-initial";
+          src: url("${prefix}-400.ttf") format("truetype");
+          font-style: normal;
+          font-weight: 400;
+        }
+        @media (min-width: 1px) {
+          @font-face {
+            font-family: "${prefix}-nested";
+            src: url("${prefix}-nested.ttf");
+            font-weight: 400;
+          }
+        }
+        .${prefix}-target { width: 10px; }`;
+        document.head.appendChild(style);
+        document.body.appendChild(target);
+        const sheet = style.sheet;
+        const rule = sheet.cssRules[0];
+        const declaration = rule.style;
+        const authoredText = style.textContent;
+        check(rule.constructor.name === 'CSSFontFaceRule'
+            && rule instanceof view.CSSFontFaceRule
+            && rule instanceof view.CSSRule
+            && rule.type === 5 && view.CSSRule.FONT_FACE_RULE === 5
+            && view.CSSRule.prototype.FONT_FACE_RULE === 5
+            && rule.parentRule === null && rule.parentStyleSheet === sheet
+            && rule.style === declaration && declaration.parentRule === rule,
+          `${prefix}: interface, type, parent, or SameObject identity`);
+        check(declaration.fontFamily === `"${prefix}-initial"`
+            && declaration.src.includes(`${prefix}-400.ttf`)
+            && declaration.fontWeight === '400'
+            && Array.from({ length: declaration.length }, (_, index) =>
+              declaration[index]).join('|')
+                === 'font-family|src|font-style|font-weight'
+            && !rule.cssText.includes('\n'),
+          `${prefix}: descriptor reflection or serialization`);
+        const errors = [];
+        for (const invoke of [
+          () => { rule.style = Symbol('descriptors'); },
+          () => { declaration.cssText = Symbol('descriptors'); }
+        ]) {
+          try { invoke(); errors.push('none'); }
+          catch (error) { errors.push(error.name); }
+        }
+        check(errors.join('|') === 'TypeError|TypeError',
+          `${prefix}: descriptor conversion errors`);
+        declaration.cssText = `font-family: "${prefix}-live";
+          src: url("${prefix}-400.ttf"); font-style: normal;
+          font-weight: 400;`;
+        check(rule.style === declaration
+            && declaration.fontFamily === `"${prefix}-live"`
+            && declaration.getPropertyValue('src').includes(`${prefix}-400.ttf`)
+            && declaration.fontWeight === '400'
+            && rule.cssText.includes(`font-family: "${prefix}-live";`)
+            && !rule.cssText.includes('\n')
+            && view.getComputedStyle(target).width === '10px'
+            && style.textContent === authoredText,
+          `${prefix}: cssText mutation or attached publication`);
+        rule.style = `font-family: "${prefix}-live";
+          src: url("${prefix}-700.ttf"); font-style: normal;
+          font-weight: 700;`;
+        check(rule.style === declaration
+            && declaration.src.includes(`${prefix}-700.ttf`)
+            && declaration.fontWeight === '700'
+            && rule.cssText.includes('font-weight: 700;')
+            && view.getComputedStyle(target).width === '10px'
+            && style.textContent === authoredText,
+          `${prefix}: PutForwards mutation or synchronous layout`);
+        const group = sheet.cssRules[1];
+        const nested = group.cssRules[0];
+        const nestedDeclaration = nested.style;
+        nested.style.fontWeight = '700';
+        check(nested instanceof view.CSSFontFaceRule
+            && nested.parentRule === group && nested.parentStyleSheet === sheet
+            && nested.style === nestedDeclaration
+            && group.cssText.includes('font-weight: 700;'),
+          `${prefix}: nested ownership or containing serialization`);
+        sheet.deleteRule(1);
+        const groupSnapshot = group.cssText;
+        nested.style.fontFamily = `"${prefix}-detached-nested"`;
+        check(group.parentStyleSheet === null
+            && nested.parentRule === null && nested.parentStyleSheet === null
+            && nested.cssText.includes(`${prefix}-detached-nested`)
+            && group.cssText === groupSnapshot
+            && !Array.from(sheet.cssRules, item => item.cssText).join('\n')
+              .includes(`${prefix}-detached-nested`),
+          `${prefix}: recursive detach or nested isolation`);
+        const constructed = new view.CSSStyleSheet();
+        constructed.replaceSync(`@font-face {
+          font-family: "${prefix}-constructed";
+          src: url("${prefix}-constructed.ttf"); font-weight: 400; }
+          .${prefix}-target { width: 21px; }`);
+        const constructedRule = constructed.cssRules[0];
+        document.adoptedStyleSheets.push(constructed);
+        constructedRule.style.fontWeight = '700';
+        check(constructedRule instanceof view.CSSFontFaceRule
+            && constructed.ownerNode === null
+            && constructedRule.parentStyleSheet === constructed
+            && document.adoptedStyleSheets.includes(constructed)
+            && constructedRule.cssText.includes('font-weight: 700;')
+            && view.getComputedStyle(target).width === '21px',
+          `${prefix}: constructed/adopted ownership or publication`);
+        document.adoptedStyleSheets.pop();
+        const index = Array.from(sheet.cssRules).indexOf(rule);
+        sheet.deleteRule(index);
+        const sheetSnapshot = Array.from(
+          sheet.cssRules, item => item.cssText).join('\n');
+        declaration.fontFamily = `"${prefix}-detached"`;
+        check(rule.parentRule === null && rule.parentStyleSheet === null
+            && rule.style === declaration
+            && rule.cssText.includes(`${prefix}-detached`)
+            && Array.from(sheet.cssRules, item => item.cssText).join('\n')
+              === sheetSnapshot
+            && view.getComputedStyle(target).width === '10px'
+            && style.textContent === authoredText,
+          `${prefix}: detached local mutation leaked publication`);
+        style.remove();
+        target.remove();
+      };
+      const frame = document.createElement('iframe');
+      document.body.appendChild(frame);
+      exercise(document, window, 'font-face-main');
+      exercise(frame.contentDocument, frame.contentWindow, 'font-face-frame');
+      frame.remove();
+      return 'ok';
+    })())JS", "native-css-font-face-rule-mutation.js");
+    require(
+        font_face_result == "\"ok\"",
+        "CSS font-face rule mutation diverged from the WPT-derived contract: "
+            + font_face_result);
+
     const auto layer_result = evaluate(engine, R"JS((() => {
       const exercise = (document, view, className) => {
         const style = document.createElement('style');

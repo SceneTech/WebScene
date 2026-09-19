@@ -1917,6 +1917,158 @@ void test_native_mutable_stylesheet_cssom(webscene_engine* engine)
         "CSSContainerRule mutation diverged from the WPT-derived contract: "
             + container_result);
 
+    const auto keyframes_result = evaluate(engine, R"JS((() => {
+      const check = (condition, message) => {
+        if (!condition) throw new Error(message);
+      };
+      const exercise = (document, view, prefix) => {
+        const name = `${prefix}-pulse`;
+        const style = document.createElement('style');
+        const target = document.createElement('div');
+        style.textContent = `@keyframes ${name} {
+          from { opacity: 0; }
+          25%, 75% { opacity: .25; }
+          to { opacity: 1; }
+        }
+        @-webkit-keyframes ${prefix}-webkit {
+          from { opacity: 0; }
+          to { opacity: 1; }
+        }`;
+        target.style.cssText = `opacity: .2; animation: ${name}
+          1000000s -500000s linear infinite;`;
+        document.head.appendChild(style);
+        document.body.appendChild(target);
+        const sheet = style.sheet;
+        const group = sheet.cssRules[0];
+        const rules = group.cssRules;
+        const from = rules[0];
+        const middle = rules[1];
+        const to = rules[2];
+        const authoredText = style.textContent;
+        check(group.constructor.name === 'CSSKeyframesRule'
+            && group instanceof view.CSSKeyframesRule
+            && group instanceof view.CSSRule && group.type === 7
+            && view.CSSRule.KEYFRAMES_RULE === 7,
+          `${prefix}: keyframes interface or type`);
+        check(from.constructor.name === 'CSSKeyframeRule'
+            && from instanceof view.CSSKeyframeRule
+            && from instanceof view.CSSRule && from.type === 8
+            && view.CSSRule.KEYFRAME_RULE === 8,
+          `${prefix}: keyframe interface or type`);
+        check(group.cssRules === rules && group.length === 3
+            && group[0] === from && group[2] === to && group[3] === undefined
+            && rules.item(1) === middle
+            && from.parentRule === group && from.parentStyleSheet === sheet,
+          `${prefix}: list, indexed getter, or parent identity`);
+        check(Array.from(rules, rule => rule.keyText).join('|')
+              === '0%|25%, 75%|100%'
+            && group.findRule('from') === from
+            && group.findRule('0%') === from
+            && group.findRule('25%,75%') === middle
+            && group.findRule('75%') === null
+            && group.findRule('invalid') === null,
+          `${prefix}: selector reflection or lookup`);
+        check(sheet.cssRules[1] instanceof view.CSSKeyframesRule
+            && sheet.cssRules[1].cssText.startsWith('@-webkit-keyframes'),
+          `${prefix}: native-supported prefixed keyframes reflection`);
+        const errorNames = [];
+        for (const invoke of [
+          () => group.appendRule(),
+          () => group.deleteRule(),
+          () => group.findRule(),
+          () => group.appendRule(Symbol()),
+          () => { from.keyText = '101%'; }
+        ]) {
+          try { invoke(); errorNames.push('none'); }
+          catch (error) { errorNames.push(error.name); }
+        }
+        check(errorNames.join('|')
+              === 'TypeError|TypeError|TypeError|TypeError|SyntaxError'
+            && from.keyText === '0%', `${prefix}: exact mutation errors`);
+        for (const invalid of [
+          'from { opacity: 0 } garbage',
+          'from { opacity: 0 } to { opacity: 1 }',
+          'invalid { opacity: 1 }',
+          '@media all {}'
+        ]) group.appendRule(invalid);
+        check(group.length === 3, `${prefix}: invalid append was not silent`);
+        group.appendRule('to { opacity: .4; }');
+        const appended = rules[3];
+        check(group.length === 4 && group[3] === appended
+            && group.findRule('100%') === appended
+            && appended.parentRule === group
+            && appended.parentStyleSheet === sheet
+            && group.cssText.includes('opacity: 0.4')
+            && style.textContent === authoredText,
+          `${prefix}: append identity or serialization`);
+        group.deleteRule('to');
+        check(group.length === 3 && group.findRule('to') === to
+            && appended.parentRule === null
+            && appended.parentStyleSheet === null,
+          `${prefix}: last-match deletion or detachment`);
+        const declaration = middle.style;
+        middle.keyText = '.5%, 1e1%, TO';
+        middle.style = 'opacity: .8; transform: rotate(90deg);';
+        check(middle.keyText === '0.5%, 10%, 100%'
+            && middle.style === declaration && middle.style.opacity === '0.8'
+            && middle.style.transform === 'rotate(90deg)'
+            && middle.cssText.includes('rotate(90deg)')
+            && group.cssText.includes('0.5%, 10%, 100%')
+            && style.textContent === authoredText,
+          `${prefix}: keyText, style identity, or containing serialization`);
+        group.name = `${name}-renamed`;
+        check(group.name === `${name}-renamed`
+            && group.cssText.startsWith(`@keyframes ${name}-renamed`)
+            && Math.abs(Number(view.getComputedStyle(target).opacity) - .2) < .001,
+          `${prefix}: rename did not invalidate animation synchronously`);
+        group.name = 'initial';
+        check(group.name === 'initial'
+            && group.cssText.startsWith('@keyframes "initial"'),
+          `${prefix}: reserved name serialization`);
+        const mediaIndex = sheet.insertRule(`@media (min-width: 1px) {
+          @keyframes ${prefix}-nested { from { opacity: 0; } }
+        }`, sheet.cssRules.length);
+        const media = sheet.cssRules[mediaIndex];
+        const nested = media.cssRules[0];
+        nested.appendRule('to { opacity: 1; }');
+        check(nested instanceof view.CSSKeyframesRule
+            && nested.parentRule === media && nested.parentStyleSheet === sheet
+            && nested[1].parentRule === nested
+            && nested[1].parentStyleSheet === sheet
+            && media.cssText.includes('to { opacity: 1')
+            && style.textContent === authoredText,
+          `${prefix}: containing group identity or serialization`);
+        const retained = group.cssRules[0];
+        sheet.deleteRule(0);
+        group.appendRule('50% { opacity: .6; }');
+        check(group.parentStyleSheet === null
+            && retained.parentRule === null && retained.parentStyleSheet === null
+            && group.length === 4 && group.cssText.includes('opacity: 0.6')
+            && Math.abs(Number(view.getComputedStyle(target).opacity) - .2) < .001
+            && style.textContent === authoredText,
+          `${prefix}: detached mutation leaked publication or parents`);
+        const constructed = new view.CSSStyleSheet();
+        constructed.replaceSync('@keyframes made { from { opacity: 0 } }');
+        const made = constructed.cssRules[0];
+        made.appendRule('to { opacity: 1 }');
+        check(made instanceof view.CSSKeyframesRule && made.length === 2
+            && made[1] === made.cssRules[1] && made.findRule('to') === made[1],
+          `${prefix}: constructed keyframes identity`);
+        style.remove();
+        target.remove();
+      };
+      const frame = document.createElement('iframe');
+      document.body.appendChild(frame);
+      exercise(document, window, 'keyframes-main');
+      exercise(frame.contentDocument, frame.contentWindow, 'keyframes-frame');
+      frame.remove();
+      return 'ok';
+    })())JS", "native-css-keyframes-rule-mutation.js");
+    require(
+        keyframes_result == "\"ok\"",
+        "CSS keyframes rule mutation diverged from the WPT-derived contract: "
+            + keyframes_result);
+
     const auto layer_result = evaluate(engine, R"JS((() => {
       const exercise = (document, view, className) => {
         const style = document.createElement('style');

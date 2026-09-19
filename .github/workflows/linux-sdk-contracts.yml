@@ -15,6 +15,7 @@ jobs:
       - name: Header scanner regressions and public dependency closure
         run: |
           python3 eng/sdk/test-header-closure.py
+          python3 eng/sdk/test-verify-parser-components.py
           python3 eng/sdk/test-qualify-macos-profile.py
           python3 - <<'PY'
           import importlib.util

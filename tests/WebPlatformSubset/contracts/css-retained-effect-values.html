@@ -78,6 +78,18 @@
   }, 'single-layer mask shorthand expands into effective retained longhands');
 
   test(() => {
+    effect.style.setProperty('mask',
+      'radial-gradient(circle at center, black, transparent) no-repeat center / 40px 30px, ' +
+      'linear-gradient(to right, transparent, black) no-repeat 0% 0% / 100% 100%');
+    const style = getComputedStyle(effect);
+    assert_true(style.getPropertyValue('mask-image').includes('radial-gradient('));
+    assert_true(style.getPropertyValue('mask-image').includes('linear-gradient('));
+    assert_equals(style.getPropertyValue('mask-repeat'), 'no-repeat, no-repeat');
+    assert_equals(style.getPropertyValue('mask-composite'), 'add, add');
+    effect.style.removeProperty('mask');
+  }, 'radial and multiple mask shorthand layers expand in authored order');
+
+  test(() => {
     assert_equals(getComputedStyle(effect).getPropertyValue('clip-path'),
       'inset(1px 2px 3px 4px)');
   }, 'clip-path exposes the supported inset syntax');

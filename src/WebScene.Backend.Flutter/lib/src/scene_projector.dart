@@ -1086,6 +1086,10 @@ final class WebSceneSceneProjector extends ChangeNotifier {
       _drawDomSvgMask(canvas, command, resource);
       return;
     }
+    if (resource.startsWith('webscene-mask-v2\t')) {
+      _drawDomMaskV2(canvas, scene, command, resource);
+      return;
+    }
     if (!resource.startsWith('webscene-bg-v2\t')) {
       _clearDomMaskBounds(canvas, command);
       return;
@@ -1093,13 +1097,130 @@ final class WebSceneSceneProjector extends ChangeNotifier {
     _drawDomLinearMask(canvas, scene, command);
   }
 
+  void _drawDomMaskV2(
+    ui.Canvas canvas,
+    WebSceneSceneView scene,
+    WebSceneSceneCommand command,
+    String resource,
+  ) {
+    final layers = _decodeDomMaskV2(resource);
+    if (layers == null) {
+      _clearDomMaskBounds(canvas, command);
+      return;
+    }
+    if (!command.width.isFinite || !command.height.isFinite
+        || command.width <= 0 || command.height <= 0
+        || command.width * command.height > 67108864) {
+      _clearDomMaskBounds(canvas, command);
+      return;
+    }
+    final bounds = ui.Rect.fromLTWH(
+      command.x,
+      command.y,
+      command.width,
+      command.height,
+    );
+    canvas.save();
+    try {
+      canvas.clipRect(bounds, doAntiAlias: false);
+      canvas.saveLayer(bounds, ui.Paint()..blendMode = ui.BlendMode.dstIn);
+      try {
+        for (final layer in layers) {
+          if (layer.image.trimLeft().toLowerCase().startsWith('url(')) {
+            _drawDomSvgMask(
+              canvas,
+              command,
+              'webscene-mask-svg-v1\t${layer.viewBox}\t${layer.repeat}'
+              '\t${layer.position}\t${layer.size}\t${layer.markup}',
+              blendMode: ui.BlendMode.srcOver,
+            );
+          } else {
+            _drawDomLinearMask(
+              canvas,
+              scene,
+              command,
+              resourceOverride: 'webscene-bg-v2\t${layer.image}'
+                  '\t${layer.repeat}\t${layer.position}\t${layer.size}',
+              blendMode: ui.BlendMode.srcOver,
+            );
+          }
+        }
+      } finally {
+        canvas.restore();
+      }
+    } finally {
+      canvas.restore();
+    }
+  }
+
+  static List<_DomMaskLayer>? _decodeDomMaskV2(String resource) {
+    const prefix = 'webscene-mask-v2\t';
+    if (!resource.startsWith(prefix)) return null;
+    final bytes = utf8.encode(resource);
+    var cursor = utf8.encode(prefix).length;
+    final countEnd = bytes.indexOf(9, cursor);
+    if (countEnd < 0) return null;
+    final count = int.tryParse(ascii.decode(bytes.sublist(cursor, countEnd)));
+    if (count == null || count < 1 || count > 16) return null;
+    cursor = countEnd + 1;
+    String? readField() {
+      final colon = bytes.indexOf(58, cursor);
+      if (colon < cursor || colon - cursor > 9) return null;
+      final length = int.tryParse(ascii.decode(bytes.sublist(cursor, colon)));
+      if (length == null || length < 0 || length > 4 * 1024 * 1024
+          || colon + 1 + length > bytes.length) return null;
+      cursor = colon + 1;
+      final value = utf8.decode(bytes.sublist(cursor, cursor + length));
+      cursor += length;
+      return value;
+    }
+    final result = <_DomMaskLayer>[];
+    for (var index = 0; index < count; index++) {
+      final image = readField();
+      final repeat = readField();
+      final position = readField();
+      final size = readField();
+      final mode = readField();
+      final viewBox = readField();
+      final markup = readField();
+      if (image == null || repeat == null || position == null || size == null
+          || mode == null || viewBox == null || markup == null) return null;
+      final normalizedImage = image.trimLeft().toLowerCase();
+      final gradient = normalizedImage.startsWith('linear-gradient(')
+          || normalizedImage.startsWith('radial-gradient(');
+      final url = normalizedImage.startsWith('url(');
+      final normalizedRepeat = repeat.trim().toLowerCase();
+      final normalizedMode = mode.trim().toLowerCase();
+      if ((!gradient && !url)
+          || !const {'repeat', 'no-repeat', 'repeat-x', 'repeat-y'}
+              .contains(normalizedRepeat)
+          || !const {'alpha', 'match-source'}.contains(normalizedMode)
+          || (url && (viewBox.isEmpty || markup.isEmpty))
+          || (!url && (viewBox.isNotEmpty || markup.isNotEmpty))) return null;
+      result.add(_DomMaskLayer(
+        image,
+        normalizedRepeat,
+        position,
+        size,
+        normalizedMode,
+        viewBox,
+        markup,
+      ));
+    }
+    return cursor == bytes.length ? result : null;
+  }
+
   static void _drawDomLinearMask(
     ui.Canvas canvas,
     WebSceneSceneView scene,
     WebSceneSceneCommand command,
+    {
+    String? resourceOverride,
+    ui.BlendMode blendMode = ui.BlendMode.dstIn,
+    }
   ) {
     const prefix = 'webscene-bg-v2\t';
-    final resource = _domString(scene, command.flags);
+    final resource = resourceOverride ?? _domString(scene, command.flags);
     if (!resource.startsWith(prefix)) return;
     final fields = resource.substring(prefix.length).split('\t');
     if (fields.isEmpty) {
@@ -1107,15 +1228,23 @@ final class WebSceneSceneProjector extends ChangeNotifier {
       return;
     }
     final image = fields[0].trim();
-    final match = RegExp(
+    final linearMatch = RegExp(
       r'^linear-gradient\(([\s\S]*)\)$',
       caseSensitive: false,
     ).firstMatch(image);
-    if (match == null) {
+    final radialMatch = RegExp(
+      r'^radial-gradient\(([\s\S]*)\)$',
+      caseSensitive: false,
+    ).firstMatch(image);
+    if (linearMatch == null && radialMatch == null) {
       _clearDomMaskBounds(canvas, command);
       return;
     }
-    final components = _splitCssTopLevel(match.group(1)!, ',');
+    final radial = radialMatch != null;
+    final components = _splitCssTopLevel(
+      (linearMatch ?? radialMatch)!.group(1)!,
+      ',',
+    );
     if (components.length < 2) {
       _clearDomMaskBounds(canvas, command);
       return;
@@ -1125,7 +1254,15 @@ final class WebSceneSceneProjector extends ChangeNotifier {
     var directionY = 1.0;
     var stopStart = 0;
     final direction = components.first.trim().toLowerCase();
-    if (direction.startsWith('to ')) {
+    var radialPrelude = '';
+    final radialPreludePattern = RegExp(
+      r'^(?:circle|ellipse|at\s|closest-|farthest-|[-+]?(?:\d|\.))',
+      caseSensitive: false,
+    );
+    if (radial && radialPreludePattern.hasMatch(direction)) {
+      radialPrelude = components.first.trim();
+      stopStart = 1;
+    } else if (!radial && direction.startsWith('to ')) {
       directionX = direction.contains('right')
           ? 1
           : direction.contains('left') ? -1 : 0;
@@ -1142,7 +1279,7 @@ final class WebSceneSceneProjector extends ChangeNotifier {
       directionX /= length;
       directionY /= length;
       stopStart = 1;
-    } else {
+    } else if (!radial) {
       final angle = RegExp(
         r'^([-+]?(?:\d+(?:\.\d*)?|\.\d+))(deg|turn)$',
       ).firstMatch(direction);
@@ -1187,10 +1324,19 @@ final class WebSceneSceneProjector extends ChangeNotifier {
     }
     final endX = repeatX ? command.x + command.width : firstX + tileWidth;
     final endY = repeatY ? command.y + command.height : firstY + tileHeight;
-    final axisLength = math.max(
-      1.0,
-      directionX.abs() * tileWidth + directionY.abs() * tileHeight,
-    );
+    final radialGeometry = radial
+        ? _resolveRadialMaskGeometry(radialPrelude, tileWidth, tileHeight)
+        : null;
+    if (radial && radialGeometry == null) {
+      _clearDomMaskBounds(canvas, command);
+      return;
+    }
+    final axisLength = radial
+        ? math.max(1.0, math.max(radialGeometry!.$3, radialGeometry!.$4))
+        : math.max(
+            1.0,
+            directionX.abs() * tileWidth + directionY.abs() * tileHeight,
+          );
     final colors = <ui.Color>[];
     final stops = <double>[];
     for (var index = stopStart; index < components.length; index++) {
@@ -1206,8 +1352,8 @@ final class WebSceneSceneProjector extends ChangeNotifier {
       return;
     }
     _fillMissingGradientStops(stops);
-    final centerX = tileWidth / 2;
-    final centerY = tileHeight / 2;
+    final centerX = radial ? radialGeometry!.$1 : tileWidth / 2;
+    final centerY = radial ? radialGeometry!.$2 : tileHeight / 2;
     final halfProjection = (
       directionX.abs() * tileWidth + directionY.abs() * tileHeight
     ) / 2;
@@ -1220,33 +1366,65 @@ final class WebSceneSceneProjector extends ChangeNotifier {
         command.height,
       );
       canvas.clipRect(bounds, doAntiAlias: false);
-      _clearDomMaskOutsideCoverage(
-        canvas,
-        bounds,
-        repeatX,
-        repeatY,
-        firstX,
-        firstY,
-        tileWidth,
-        tileHeight,
-      );
+      if (blendMode == ui.BlendMode.dstIn) {
+        _clearDomMaskOutsideCoverage(
+          canvas,
+          bounds,
+          repeatX,
+          repeatY,
+          firstX,
+          firstY,
+          tileWidth,
+          tileHeight,
+        );
+      }
       for (var y = firstY; y < endY; y += tileHeight) {
         for (var x = firstX; x < endX; x += tileWidth) {
-          final start = ui.Offset(
-            x + centerX - directionX * halfProjection,
-            y + centerY - directionY * halfProjection,
-          );
-          final end = ui.Offset(
-            x + centerX + directionX * halfProjection,
-            y + centerY + directionY * halfProjection,
-          );
-          canvas.drawRect(
-            ui.Rect.fromLTWH(x, y, tileWidth, tileHeight),
-            ui.Paint()
-              ..isAntiAlias = false
-              ..blendMode = ui.BlendMode.dstIn
-              ..shader = ui.Gradient.linear(start, end, colors, stops),
-          );
+          if (radial) {
+            final radiusX = radialGeometry!.$3;
+            final radiusY = radialGeometry!.$4;
+            canvas.save();
+            try {
+              canvas
+                ..translate(x + centerX, y + centerY)
+                ..scale(radiusX, radiusY);
+              canvas.drawRect(
+                ui.Rect.fromLTWH(
+                  -centerX / radiusX,
+                  -centerY / radiusY,
+                  tileWidth / radiusX,
+                  tileHeight / radiusY,
+                ),
+                ui.Paint()
+                  ..isAntiAlias = false
+                  ..blendMode = blendMode
+                  ..shader = ui.Gradient.radial(
+                    ui.Offset.zero,
+                    1,
+                    colors,
+                    stops,
+                  ),
+              );
+            } finally {
+              canvas.restore();
+            }
+          } else {
+            final start = ui.Offset(
+              x + centerX - directionX * halfProjection,
+              y + centerY - directionY * halfProjection,
+            );
+            final end = ui.Offset(
+              x + centerX + directionX * halfProjection,
+              y + centerY + directionY * halfProjection,
+            );
+            canvas.drawRect(
+              ui.Rect.fromLTWH(x, y, tileWidth, tileHeight),
+              ui.Paint()
+                ..isAntiAlias = false
+                ..blendMode = blendMode
+                ..shader = ui.Gradient.linear(start, end, colors, stops),
+            );
+          }
           if (!repeatX) break;
         }
         if (!repeatY) break;
@@ -1260,6 +1438,9 @@ final class WebSceneSceneProjector extends ChangeNotifier {
     ui.Canvas canvas,
     WebSceneSceneCommand command,
     String resource,
+    {
+    ui.BlendMode blendMode = ui.BlendMode.dstIn,
+    }
   ) {
     const prefix = 'webscene-mask-svg-v1\t';
     final fields = resource.substring(prefix.length).split('\t');
@@ -1335,19 +1516,21 @@ final class WebSceneSceneProjector extends ChangeNotifier {
     canvas.save();
     try {
       canvas.clipRect(bounds, doAntiAlias: false);
-      _clearDomMaskOutsideCoverage(
-        canvas,
-        bounds,
-        repeatX,
-        repeatY,
-        firstX,
-        firstY,
-        tileWidth,
-        tileHeight,
-      );
+      if (blendMode == ui.BlendMode.dstIn) {
+        _clearDomMaskOutsideCoverage(
+          canvas,
+          bounds,
+          repeatX,
+          repeatY,
+          firstX,
+          firstY,
+          tileWidth,
+          tileHeight,
+        );
+      }
       final endX = repeatX ? bounds.right : firstX + tileWidth;
       final endY = repeatY ? bounds.bottom : firstY + tileHeight;
-      canvas.saveLayer(bounds, ui.Paint()..blendMode = ui.BlendMode.dstIn);
+      canvas.saveLayer(bounds, ui.Paint()..blendMode = blendMode);
       try {
         for (var y = firstY; y < endY; y += tileHeight) {
           for (var x = firstX; x < endX; x += tileWidth) {
@@ -1755,6 +1938,96 @@ final class WebSceneSceneProjector extends ChangeNotifier {
     }
   }
 
+  static (double, double, double, double)? _resolveRadialMaskGeometry(
+    String prelude,
+    double width,
+    double height,
+  ) {
+    var geometry = prelude.trim().toLowerCase();
+    var position = 'center center';
+    if (geometry.startsWith('at ')) {
+      position = geometry.substring(3).trim();
+      geometry = '';
+    } else {
+      final at = geometry.indexOf(' at ');
+      if (at >= 0) {
+        position = geometry.substring(at + 4).trim();
+        geometry = geometry.substring(0, at).trim();
+      }
+    }
+    final positionTokens = position.split(RegExp(r'\s+'));
+    if (positionTokens.length == 1 && positionTokens.first == 'center') {
+      position = 'center center';
+    }
+    final center = _resolveMaskPosition(position, width, height, 0, 0);
+    final left = center.$1;
+    final right = width - center.$1;
+    final top = center.$2;
+    final bottom = height - center.$2;
+    if (left < 0 || right < 0 || top < 0 || bottom < 0) return null;
+
+    var shape = 'ellipse';
+    final tokens = geometry.isEmpty
+        ? <String>[]
+        : geometry.split(RegExp(r'\s+'));
+    if (tokens.isNotEmpty && (tokens.first == 'circle' || tokens.first == 'ellipse')) {
+      shape = tokens.removeAt(0);
+    }
+    final size = tokens.isEmpty ? 'farthest-corner' : tokens.join(' ');
+    var radiusX = math.max(left, right);
+    var radiusY = math.max(top, bottom);
+    if (size == 'closest-side' || size == 'farthest-side') {
+      final closest = size == 'closest-side';
+      radiusX = closest ? math.min(left, right) : math.max(left, right);
+      radiusY = closest ? math.min(top, bottom) : math.max(top, bottom);
+      if (shape == 'circle') {
+        radiusX = radiusY = closest
+            ? math.min(radiusX, radiusY)
+            : math.max(radiusX, radiusY);
+      }
+    } else if (size == 'closest-corner' || size == 'farthest-corner') {
+      final distances = <double>[
+        math.sqrt(left * left + top * top),
+        math.sqrt(left * left + bottom * bottom),
+        math.sqrt(right * right + top * top),
+        math.sqrt(right * right + bottom * bottom),
+      ];
+      if (shape == 'circle') {
+        radiusX = radiusY = size == 'closest-corner'
+            ? distances.reduce(math.min)
+            : distances.reduce(math.max);
+      }
+    } else {
+      double? resolve(String token, double basis) {
+        if (token.endsWith('%')) {
+          final value = double.tryParse(token.substring(0, token.length - 1));
+          return value == null ? null : basis * value / 100;
+        }
+        final source = token.endsWith('px')
+            ? token.substring(0, token.length - 2)
+            : token;
+        return double.tryParse(source);
+      }
+      if (shape == 'circle') {
+        if (tokens.length != 1) return null;
+        final radius = resolve(tokens.first, math.min(width, height));
+        if (radius == null) return null;
+        radiusX = radiusY = radius;
+      } else {
+        if (tokens.length != 2) return null;
+        final x = resolve(tokens[0], width);
+        final y = resolve(tokens[1], height);
+        if (x == null || y == null) return null;
+        radiusX = x;
+        radiusY = y;
+      }
+    }
+    if (!radiusX.isFinite || !radiusY.isFinite || radiusX <= 0 || radiusY <= 0) {
+      return null;
+    }
+    return (center.$1, center.$2, radiusX, radiusY);
+  }
+
   static (double, double) _resolveMaskSize(
     String value,
     double width,
@@ -2035,6 +2308,26 @@ final class _DomBackdropOperation {
 
   final double? blurSigma;
   final double? saturation;
+}
+
+final class _DomMaskLayer {
+  const _DomMaskLayer(
+    this.image,
+    this.repeat,
+    this.position,
+    this.size,
+    this.mode,
+    this.viewBox,
+    this.markup,
+  );
+
+  final String image;
+  final String repeat;
+  final String position;
+  final String size;
+  final String mode;
+  final String viewBox;
+  final String markup;
 }
 
 final class _SvgMaskGeometry {

@@ -1199,6 +1199,22 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
         SKColor[] Colors,
         float[] Positions);
 
+    internal readonly record struct DomRadialGradient(
+        SKPoint Center,
+        float RadiusX,
+        float RadiusY,
+        SKColor[] Colors,
+        float[] Positions);
+
+    private readonly record struct DomMaskLayer(
+        string Image,
+        string Repeat,
+        string Position,
+        string Size,
+        string Mode,
+        string ViewBox,
+        string Markup);
+
     private readonly record struct DomBackgroundResource(
         string Image,
         string Repeat,
@@ -1330,6 +1346,162 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
         return true;
     }
 
+    internal static bool TryParseDomRadialGradient(
+        string value,
+        in SceneCommand command,
+        out DomRadialGradient gradient)
+    {
+        gradient = default;
+        var functionStart = value.IndexOf("radial-gradient(",
+            StringComparison.OrdinalIgnoreCase);
+        if (functionStart < 0) return false;
+        var contentStart = functionStart + "radial-gradient(".Length;
+        var depth = 1;
+        var close = contentStart;
+        for (; close < value.Length && depth > 0; close++)
+        {
+            if (value[close] == '(') depth++;
+            else if (value[close] == ')') depth--;
+        }
+        if (depth != 0 || close != value.Length) return false;
+        var components = SplitTopLevel(value[contentStart..(close - 1)], ',');
+        if (components.Count < 2) return false;
+
+        var stopStart = 0;
+        var prelude = components[0].Trim();
+        var firstTokens = SplitTopLevelWhitespace(prelude);
+        var firstIsColor = firstTokens.Count > 0
+            && CssColorParser.TryParseColor(firstTokens[0], out _);
+        var shape = "ellipse";
+        var size = "farthest-corner";
+        var position = "center center";
+        if (!firstIsColor)
+        {
+            stopStart = 1;
+            var lowerPrelude = prelude.ToLowerInvariant();
+            var at = lowerPrelude.IndexOf(" at ", StringComparison.Ordinal);
+            if (lowerPrelude.StartsWith("at ", StringComparison.Ordinal))
+            {
+                position = prelude[3..].Trim();
+                prelude = string.Empty;
+            }
+            else if (at >= 0)
+            {
+                position = prelude[(at + 4)..].Trim();
+                prelude = prelude[..at].Trim();
+            }
+            var geometry = SplitTopLevelWhitespace(prelude.ToLowerInvariant());
+            if (geometry.Count > 0 && geometry[0] is "circle" or "ellipse")
+            {
+                shape = geometry[0];
+                geometry.RemoveAt(0);
+            }
+            if (geometry.Count > 0) size = string.Join(' ', geometry);
+        }
+        if (stopStart >= components.Count - 1) return false;
+
+        var positionTokens = SplitTopLevelWhitespace(position);
+        if (positionTokens.Count == 1 && positionTokens[0] == "center")
+            position = "center center";
+        ResolveDomBackgroundPosition(position, command.Width, command.Height,
+            0, 0, out var centerX, out var centerY);
+        centerX += command.X;
+        centerY += command.Y;
+        var left = centerX - command.X;
+        var right = command.X + command.Width - centerX;
+        var top = centerY - command.Y;
+        var bottom = command.Y + command.Height - centerY;
+        if (left < 0 || right < 0 || top < 0 || bottom < 0) return false;
+
+        var radiusX = Math.Max(left, right);
+        var radiusY = Math.Max(top, bottom);
+        var normalizedSize = size.Trim().ToLowerInvariant();
+        if (normalizedSize is "closest-side" or "farthest-side")
+        {
+            var closest = normalizedSize == "closest-side";
+            radiusX = closest ? Math.Min(left, right) : Math.Max(left, right);
+            radiusY = closest ? Math.Min(top, bottom) : Math.Max(top, bottom);
+        }
+        else if (normalizedSize is "closest-corner" or "farthest-corner")
+        {
+            var xs = new[] { left, right };
+            var ys = new[] { top, bottom };
+            var distances = from x in xs from y in ys select MathF.Sqrt(x * x + y * y);
+            var radius = normalizedSize == "closest-corner"
+                ? distances.Min() : distances.Max();
+            if (shape == "circle") radiusX = radiusY = radius;
+        }
+        else if (normalizedSize.Length > 0)
+        {
+            var sizes = SplitTopLevelWhitespace(normalizedSize);
+            if (shape == "circle")
+            {
+                if (sizes.Count != 1) return false;
+                radiusX = radiusY = ResolveDomBackgroundLength(
+                    sizes[0], Math.Min(command.Width, command.Height), -1);
+            }
+            else
+            {
+                if (sizes.Count != 2) return false;
+                radiusX = ResolveDomBackgroundLength(sizes[0], command.Width, -1);
+                radiusY = ResolveDomBackgroundLength(sizes[1], command.Height, -1);
+            }
+        }
+        if (shape == "circle"
+            && (normalizedSize == "closest-side" || normalizedSize == "farthest-side"))
+        {
+            radiusX = radiusY = normalizedSize == "closest-side"
+                ? Math.Min(radiusX, radiusY) : Math.Max(radiusX, radiusY);
+        }
+        if (!float.IsFinite(radiusX) || !float.IsFinite(radiusY)
+            || radiusX <= 0 || radiusY <= 0) return false;
+
+        var colors = new List<SKColor>();
+        var positions = new List<float>();
+        for (var index = stopStart; index < components.Count && colors.Count <= 32; index++)
+        {
+            var tokens = SplitTopLevelWhitespace(components[index]);
+            if (tokens.Count == 0
+                || !CssColorParser.TryParseColor(tokens[0], out var color)) return false;
+            var skColor = new SKColor(color.R, color.G, color.B, color.A);
+            var positionCount = 0;
+            for (var tokenIndex = 1; tokenIndex < tokens.Count; tokenIndex++)
+            {
+                if (!TryParseGradientPosition(tokens[tokenIndex], out var offset)) return false;
+                colors.Add(skColor);
+                positions.Add(offset);
+                positionCount++;
+            }
+            if (positionCount == 0)
+            {
+                colors.Add(skColor);
+                positions.Add(float.NaN);
+            }
+        }
+        if (colors.Count is < 2 or > 32) return false;
+        if (float.IsNaN(positions[0])) positions[0] = 0;
+        if (float.IsNaN(positions[^1])) positions[^1] = 1;
+        for (var index = 1; index < positions.Count - 1;)
+        {
+            if (!float.IsNaN(positions[index])) { index++; continue; }
+            var runStart = index - 1;
+            var runEnd = index + 1;
+            while (runEnd < positions.Count && float.IsNaN(positions[runEnd])) runEnd++;
+            for (var missing = index; missing < runEnd; missing++)
+                positions[missing] = positions[runStart]
+                    + (positions[runEnd] - positions[runStart])
+                    * (missing - runStart) / (runEnd - runStart);
+            index = runEnd;
+        }
+        for (var index = 0; index < positions.Count; index++)
+            positions[index] = Math.Clamp(positions[index],
+                index == 0 ? 0 : positions[index - 1], 1);
+        gradient = new DomRadialGradient(
+            new SKPoint(centerX, centerY), radiusX, radiusY,
+            colors.ToArray(), positions.ToArray());
+        return true;
+    }
+
     private static void DrawDomLinearGradient(
         SKCanvas canvas,
         NativeSceneView* view,
@@ -1356,6 +1528,53 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
                 canvas, svg, command, default, SKBlendMode.DstIn);
             return;
         }
+        if (TryDecodeDomMaskV2(resource, out var maskLayers))
+        {
+            if (!float.IsFinite(command.Width) || !float.IsFinite(command.Height)
+                || command.Width <= 0 || command.Height <= 0
+                || command.Width * command.Height > 67_108_864f)
+            {
+                ClearDomMaskRect(canvas, command.X, command.Y,
+                    command.Width, command.Height);
+                return;
+            }
+            var bounds = new SKRect(command.X, command.Y,
+                command.X + command.Width, command.Y + command.Height);
+            using var destinationIn = new SKPaint
+            {
+                BlendMode = SKBlendMode.DstIn,
+                IsAntialias = false
+            };
+            var restore = canvas.Save();
+            try
+            {
+                canvas.ClipRect(bounds, antialias: false);
+                canvas.SaveLayer(bounds, destinationIn);
+                foreach (var layer in maskLayers)
+                {
+                    if (layer.Image.TrimStart().StartsWith("url(",
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        DrawDomSvgBackground(canvas,
+                            new DomSvgBackgroundResource(layer.ViewBox, layer.Repeat,
+                                layer.Position, layer.Size, layer.Markup),
+                            command, default, SKBlendMode.SrcOver);
+                    }
+                    else
+                    {
+                        DrawDomGradientTiles(canvas, layer.Image, command,
+                            layer.Repeat, layer.Position, layer.Size,
+                            SKBlendMode.SrcOver);
+                    }
+                }
+                canvas.Restore();
+            }
+            finally
+            {
+                canvas.RestoreToCount(restore);
+            }
+            return;
+        }
         if (!resource.StartsWith("webscene-bg-v2\t", StringComparison.Ordinal))
         {
             ClearDomMaskRect(canvas, command.X, command.Y,
@@ -1368,6 +1587,61 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
             command,
             default,
             SKBlendMode.DstIn);
+    }
+
+    private static bool TryDecodeDomMaskV2(
+        string resource,
+        out List<DomMaskLayer> layers)
+    {
+        const string prefix = "webscene-mask-v2\t";
+        layers = [];
+        if (!resource.StartsWith(prefix, StringComparison.Ordinal)) return false;
+        var bytes = Encoding.UTF8.GetBytes(resource);
+        var cursor = Encoding.UTF8.GetByteCount(prefix);
+        var countEnd = Array.IndexOf(bytes, (byte)'\t', cursor);
+        if (countEnd < 0
+            || !int.TryParse(Encoding.ASCII.GetString(bytes, cursor, countEnd - cursor),
+                NumberStyles.None, CultureInfo.InvariantCulture, out var count)
+            || count is < 1 or > 16) return false;
+        cursor = countEnd + 1;
+        bool ReadField(out string value)
+        {
+            value = string.Empty;
+            var colon = Array.IndexOf(bytes, (byte)':', cursor);
+            if (colon < cursor || colon - cursor > 9
+                || !int.TryParse(Encoding.ASCII.GetString(bytes, cursor, colon - cursor),
+                    NumberStyles.None, CultureInfo.InvariantCulture, out var length)
+                || length < 0 || length > 4 * 1024 * 1024
+                || colon + 1 > bytes.Length - length) return false;
+            cursor = colon + 1;
+            value = Encoding.UTF8.GetString(bytes, cursor, length);
+            cursor += length;
+            return true;
+        }
+        for (var index = 0; index < count; index++)
+        {
+            if (!ReadField(out var image) || !ReadField(out var repeat)
+                || !ReadField(out var position) || !ReadField(out var size)
+                || !ReadField(out var mode) || !ReadField(out var viewBox)
+                || !ReadField(out var markup)) return false;
+            var normalizedImage = image.TrimStart();
+            var gradient = normalizedImage.StartsWith("linear-gradient(",
+                    StringComparison.OrdinalIgnoreCase)
+                || normalizedImage.StartsWith("radial-gradient(",
+                    StringComparison.OrdinalIgnoreCase);
+            var url = normalizedImage.StartsWith("url(",
+                StringComparison.OrdinalIgnoreCase);
+            var normalizedRepeat = repeat.Trim().ToLowerInvariant();
+            var normalizedMode = mode.Trim().ToLowerInvariant();
+            if ((!gradient && !url)
+                || normalizedRepeat is not ("repeat" or "no-repeat" or "repeat-x" or "repeat-y")
+                || normalizedMode is not ("alpha" or "match-source")
+                || (url && (viewBox.Length == 0 || markup.Length == 0))
+                || (!url && (viewBox.Length != 0 || markup.Length != 0))) return false;
+            layers.Add(new DomMaskLayer(image, normalizedRepeat, position, size,
+                normalizedMode, viewBox, markup));
+        }
+        return cursor == bytes.Length;
     }
 
     internal static void DrawDomBackgroundForTest(
@@ -1401,8 +1675,10 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
             for (var layerIndex = layers.Count - 1; layerIndex >= 0; layerIndex--)
             {
                 var layer = layers[layerIndex];
-                if (!layer.TrimStart().StartsWith(
-                        "linear-gradient(",
+                var normalizedLayer = layer.TrimStart();
+                if (!normalizedLayer.StartsWith("linear-gradient(",
+                        StringComparison.OrdinalIgnoreCase)
+                    && !normalizedLayer.StartsWith("radial-gradient(",
                         StringComparison.OrdinalIgnoreCase))
                 {
                     continue;
@@ -1524,26 +1800,53 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
                 tile.Y = y;
                 tile.Width = tileWidth;
                 tile.Height = tileHeight;
-                if (!TryParseDomLinearGradient(layer, tile, out var gradient)) continue;
-                ExpandPremultipliedGradientStops(
-                    gradient.Colors,
-                    gradient.Positions,
-                    out var colors,
-                    out var positions);
-                using var shader = SKShader.CreateLinearGradient(
-                    gradient.Start,
-                    gradient.End,
-                    colors,
-                    positions,
-                    SKShaderTileMode.Clamp);
-                using var paint = new SKPaint
+                if (TryParseDomLinearGradient(layer, tile, out var linear))
                 {
-                    IsAntialias = false,
-                    Style = SKPaintStyle.Fill,
-                    Shader = shader,
-                    BlendMode = blendMode
-                };
-                canvas.DrawRect(x, y, tileWidth, tileHeight, paint);
+                    ExpandPremultipliedGradientStops(
+                        linear.Colors, linear.Positions,
+                        out var colors, out var positions);
+                    using var shader = SKShader.CreateLinearGradient(
+                        linear.Start, linear.End, colors, positions,
+                        SKShaderTileMode.Clamp);
+                    using var paint = new SKPaint
+                    {
+                        IsAntialias = false,
+                        Style = SKPaintStyle.Fill,
+                        Shader = shader,
+                        BlendMode = blendMode
+                    };
+                    canvas.DrawRect(x, y, tileWidth, tileHeight, paint);
+                }
+                else if (TryParseDomRadialGradient(layer, tile, out var radial))
+                {
+                    ExpandPremultipliedGradientStops(
+                        radial.Colors, radial.Positions,
+                        out var colors, out var positions);
+                    using var shader = SKShader.CreateRadialGradient(
+                        new SKPoint(0, 0), 1, colors, positions,
+                        SKShaderTileMode.Clamp);
+                    using var paint = new SKPaint
+                    {
+                        IsAntialias = false,
+                        Style = SKPaintStyle.Fill,
+                        Shader = shader,
+                        BlendMode = blendMode
+                    };
+                    var radialRestore = canvas.Save();
+                    canvas.Translate(radial.Center.X, radial.Center.Y);
+                    canvas.Scale(radial.RadiusX, radial.RadiusY);
+                    canvas.DrawRect(
+                        (x - radial.Center.X) / radial.RadiusX,
+                        (y - radial.Center.Y) / radial.RadiusY,
+                        tileWidth / radial.RadiusX,
+                        tileHeight / radial.RadiusY,
+                        paint);
+                    canvas.RestoreToCount(radialRestore);
+                }
+                else
+                {
+                    continue;
+                }
                 drewTile = true;
                 if (!repeatX) break;
             }

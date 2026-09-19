@@ -45,7 +45,7 @@ inline void append_declaration(
             result.push_back(std::move(declaration));
         };
         if (name == "mask" && !value.empty()) {
-            const auto parsed = parse_single_mask_shorthand(value);
+            const auto parsed = parse_mask_shorthand(value);
             if (!parsed.has_value()) {
                 append_one(std::move(name), std::move(value));
                 return;

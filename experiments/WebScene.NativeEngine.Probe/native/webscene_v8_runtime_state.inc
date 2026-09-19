@@ -210,6 +210,17 @@
         std::unordered_map<uint32_t, v8::Global<v8::Object>> transfers;
     };
     std::optional<drag_session_state> active_drag_session;
+    struct outbound_drag_state final {
+        uint64_t request_id{};
+        uint64_t document_generation{};
+        uint64_t node_generation{};
+        uint64_t frame_generation{};
+        uint32_t source_node_id{};
+        uint32_t frame_owner_id{};
+        uint32_t allowed_operations{};
+        v8::Global<v8::Object> transfer;
+    };
+    std::optional<outbound_drag_state> active_outbound_drag;
 #if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
     std::unordered_map<std::string, uint64_t> event_dispatch_counts;
     std::unordered_map<std::string, std::unordered_map<uint32_t, uint64_t>>
@@ -253,6 +264,8 @@
     std::deque<std::string> host_requests;
     std::deque<std::unique_ptr<native_host_request>> typed_host_requests;
     std::deque<std::unique_ptr<native_download_request>> download_requests;
+    std::deque<std::unique_ptr<native_outbound_drag_request>>
+        outbound_drag_requests;
     struct host_promise_target {
         std::string operation;
         uint32_t target_node_id{};
@@ -626,6 +639,7 @@
     uint64_t input_callback_invocation_count{0};
     dom_node* pointer_capture_target{nullptr};
     dom_node* pointer_down_target{nullptr};
+    bool outbound_drag_threshold_crossed{false};
     dom_node* active_pointer_target{nullptr};
     dom_node* scrollbar_drag_target{nullptr};
     bool scrollbar_drag_vertical{false};

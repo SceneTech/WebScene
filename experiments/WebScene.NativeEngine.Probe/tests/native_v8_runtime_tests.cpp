@@ -101,6 +101,7 @@ uint8_t measure_baseline_fixture_text(
 #include "native_table_cell_copy_tests.inc"
 #include "native_v8_runtime_resource_tests.inc"
 #include "native_v8_runtime_drag_drop_tests.inc"
+#include "native_v8_runtime_outbound_drag_tests.inc"
 #include "native_v8_runtime_service_worker_tests.inc"
 #include "native_v8_runtime_stream_fetch_tests.inc"
 #include "native_v8_runtime_css_mask_resource_tests.inc"
@@ -208,6 +209,13 @@ int main()
         }
         if (selected == "nested-drag-drop") {
           test_nested_drag_drop_routing_and_retirement();
+          return 0;
+        }
+        if (selected == "outbound-drag") {
+          auto* engine = webscene_engine_create(0);
+          require(engine != nullptr, "outbound drag engine creation failed");
+          test_outbound_drag_browser_contract_and_retirement(engine);
+          webscene_engine_destroy(engine);
           return 0;
         }
         if (selected == "nested-keyboard-handoff") {
@@ -1400,6 +1408,7 @@ int main()
     test_pointer_hit_targets_and_related_targets_are_elements(engine);
     test_pointer_cursor_and_external_anchor_host_handoff(engine);
     test_nested_drag_drop_routing_and_retirement();
+    test_outbound_drag_browser_contract_and_retirement(engine);
     test_typed_window_host_request_performance(engine);
     {
         auto* close_engine = webscene_engine_create(0);

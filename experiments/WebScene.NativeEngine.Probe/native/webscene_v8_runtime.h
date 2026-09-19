@@ -101,6 +101,43 @@ struct native_drag_event {
     double y{};
     std::vector<native_drag_item> items;
 };
+struct native_outbound_drag_item {
+    webscene_outbound_drag_item_v1 view{};
+    std::string mime_type;
+    std::string value;
+    std::string name;
+    std::string grant_reference;
+    void bind() {
+        view.struct_size = sizeof(view); view.version = 1;
+        view.mime_type = mime_type.empty() ? nullptr : mime_type.data();
+        view.mime_type_length = mime_type.size();
+        view.value = value.empty() ? nullptr : value.data();
+        view.value_length = value.size();
+        view.name = name.empty() ? nullptr : name.data();
+        view.name_length = name.size();
+        view.grant_reference = grant_reference.empty()
+            ? nullptr : grant_reference.data();
+        view.grant_reference_length = grant_reference.size();
+    }
+};
+struct native_outbound_drag_request {
+    webscene_outbound_drag_request_v1 view{};
+    std::string source_origin;
+    std::vector<native_outbound_drag_item> owned_items;
+    std::vector<webscene_outbound_drag_item_v1> item_views;
+    void bind() {
+        item_views.clear(); item_views.reserve(owned_items.size());
+        for (auto& item : owned_items) { item.bind(); item_views.push_back(item.view); }
+        view.struct_size = sizeof(view); view.version = 1;
+        view.item_count = static_cast<uint32_t>(item_views.size());
+        view.items = item_views.empty() ? nullptr : item_views.data();
+        view.source_origin = source_origin.empty() ? nullptr : source_origin.data();
+        view.source_origin_length = source_origin.size();
+    }
+};
+struct native_outbound_drag_completion {
+    webscene_outbound_drag_completion_v1 value{};
+};
 
 class native_document;
 struct dom_node;
@@ -413,6 +450,8 @@ public:
     void set_native_media_policy(uint32_t flags);
     std::unique_ptr<native_file_request> take_file_request();
     std::unique_ptr<native_download_request> take_download_request();
+    std::unique_ptr<native_outbound_drag_request> take_outbound_drag_request();
+    void complete_outbound_drag(native_outbound_drag_completion& completion);
     void complete_file_request(native_file_completion& completion);
     void complete_file_panel_request(file_panel_completion_data_v2& completion);
     void complete_file_grant_same_entry_request(

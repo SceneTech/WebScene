@@ -1870,6 +1870,73 @@ webscene_engine_take_download_request_v1(webscene_engine* engine);
 WEBSCENE_API void webscene_download_request_release_v1(
     const webscene_download_request_v1* request);
 
+/* Immutable desktop-drag handoff. WebScene publishes only browser-admitted
+ * metadata; native objects, paths, destination policy, and grant resolution
+ * remain host-owned. A lease remains valid until release, including after
+ * engine teardown. Completion is copied and delivered on the script worker.
+ * Limits: 8 pending requests, 32 items, 1 MiB aggregate UTF-8 metadata,
+ * 8 KiB per URI, 256-byte MIME types, and 1 KiB opaque grant references. */
+enum {
+    WEBSCENE_OUTBOUND_DRAG_OPERATION_COPY_V1 = 1U << 0U,
+    WEBSCENE_OUTBOUND_DRAG_OPERATION_LINK_V1 = 1U << 1U,
+    WEBSCENE_OUTBOUND_DRAG_OPERATION_MOVE_V1 = 1U << 2U,
+    WEBSCENE_OUTBOUND_DRAG_ITEM_TEXT_V1 = 1,
+    WEBSCENE_OUTBOUND_DRAG_ITEM_URI_V1 = 2,
+    WEBSCENE_OUTBOUND_DRAG_ITEM_IMAGE_V1 = 3,
+    WEBSCENE_OUTBOUND_DRAG_ITEM_FILE_GRANT_V1 = 4,
+    WEBSCENE_OUTBOUND_DRAG_COMPLETED_V1 = 1,
+    WEBSCENE_OUTBOUND_DRAG_CANCELLED_V1 = 2,
+    WEBSCENE_OUTBOUND_DRAG_FAILED_V1 = 3
+};
+typedef struct webscene_outbound_drag_item_v1 {
+    uint32_t struct_size, version;
+    uint32_t kind, reserved;
+    const char* mime_type;
+    size_t mime_type_length;
+    const char* value;
+    size_t value_length;
+    const char* name;
+    size_t name_length;
+    const char* grant_reference;
+    size_t grant_reference_length;
+    uint64_t byte_size;
+} webscene_outbound_drag_item_v1;
+typedef struct webscene_outbound_drag_request_v1 {
+    uint32_t struct_size, version;
+    uint64_t request_id;
+    uint64_t document_generation;
+    uint64_t node_generation;
+    uint64_t frame_generation;
+    uint64_t source_node_id;
+    uint64_t frame_owner_node_id;
+    uint32_t allowed_operations;
+    uint32_t item_count;
+    const webscene_outbound_drag_item_v1* items;
+    float pointer_x, pointer_y;
+    uint64_t drag_image_node_id;
+    float drag_image_hotspot_x, drag_image_hotspot_y;
+    float drag_image_width, drag_image_height;
+    const char* source_origin;
+    size_t source_origin_length;
+} webscene_outbound_drag_request_v1;
+typedef struct webscene_outbound_drag_completion_v1 {
+    uint32_t struct_size, version;
+    uint64_t request_id;
+    uint64_t document_generation;
+    uint32_t status;
+    uint32_t selected_operation;
+    double x, y;
+    uint32_t modifiers;
+    uint32_t reserved;
+} webscene_outbound_drag_completion_v1;
+WEBSCENE_API const webscene_outbound_drag_request_v1*
+webscene_engine_take_outbound_drag_request_v1(webscene_engine* engine);
+WEBSCENE_API void webscene_outbound_drag_request_release_v1(
+    const webscene_outbound_drag_request_v1* request);
+WEBSCENE_API uint8_t webscene_engine_complete_outbound_drag_v1(
+    webscene_engine* engine,
+    const webscene_outbound_drag_completion_v1* completion);
+
 /* Native file panel transport v2. This queue is independent of the v1
  * byte-copy service. Requests contain presentation metadata and an optional
  * opaque initial-location token. Successful results contain only bounded

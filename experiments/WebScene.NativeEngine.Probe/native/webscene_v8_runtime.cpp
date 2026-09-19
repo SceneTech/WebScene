@@ -5800,7 +5800,7 @@ struct v8_dom_runtime::implementation final {
               return Object.freeze(list);
             };
             class WebSceneDataTransfer {
-              constructor(records = []) {
+              constructor(records = [], writable = false) {
                 const strings = Object.create(null);
                 const files = [];
                 const items = [];
@@ -5879,6 +5879,10 @@ struct v8_dom_runtime::implementation final {
                 this._items = indexedList(items);
                 this.effectAllowed = 'all';
                 this._dropEffect = 'none';
+                this._writable = writable;
+                this._dragImageElement = null;
+                this._dragImageX = 0;
+                this._dragImageY = 0;
               }
               get types() {
                 const types = Object.keys(this._strings);
@@ -5896,9 +5900,22 @@ struct v8_dom_runtime::implementation final {
                   this._dropEffect = value;
               }
               getData(type) { return this._strings[String(type).toLowerCase()] || ''; }
-              setData() {}
-              clearData() {}
-              setDragImage() {}
+              setData(type, value) {
+                if (!this._writable) return;
+                type = String(type).toLowerCase();
+                if (type) this._strings[type] = String(value);
+              }
+              clearData(type) {
+                if (!this._writable) return;
+                if (arguments.length === 0) this._strings = Object.create(null);
+                else delete this._strings[String(type).toLowerCase()];
+              }
+              setDragImage(element, x, y) {
+                if (!this._writable || !element || element.nodeType !== 1) return;
+                this._dragImageElement = element;
+                this._dragImageX = Number.isFinite(Number(x)) ? Number(x) : 0;
+                this._dragImageY = Number.isFinite(Number(y)) ? Number(y) : 0;
+              }
             }
             Object.defineProperties(globalThis, {
               DataTransfer: { value: WebSceneDataTransfer, configurable: true },
@@ -5907,7 +5924,9 @@ struct v8_dom_runtime::implementation final {
               },
               __webSceneCreateDragDataTransfer: {
                 configurable: true,
-                value(records) { return new WebSceneDataTransfer(records); }
+                value(records, writable = false) {
+                  return new WebSceneDataTransfer(records, writable);
+                }
               }
             });
           })();
@@ -6492,6 +6511,7 @@ struct v8_dom_runtime::implementation final {
     // Keep these fragments in one translation unit: their order and direct
     // visibility preserve the runtime's existing release code generation.
 #include "webscene_v8_runtime_interop.inc"
+#include "webscene_v8_runtime_outbound_drag.inc"
 #include "webscene_v8_runtime_tasks.inc"
 #include "webscene_v8_runtime_resources.inc"
 #include "webscene_v8_runtime_dom_core.inc"
@@ -8719,5 +8739,17 @@ std::unique_ptr<native_host_request> v8_dom_runtime::take_typed_host_request() {
 
 std::unique_ptr<native_download_request> v8_dom_runtime::take_download_request() {
     return impl_->take_download_request();
+}
+std::unique_ptr<native_outbound_drag_request>
+v8_dom_runtime::take_outbound_drag_request() {
+    return impl_->take_outbound_drag_request();
+}
+void v8_dom_runtime::complete_outbound_drag(
+    native_outbound_drag_completion& completion) {
+    if (impl_ == nullptr) return;
+    v8::Locker locker(impl_->isolate);
+    v8::Isolate::Scope isolate_scope(impl_->isolate);
+    v8::HandleScope handles(impl_->isolate);
+    impl_->complete_outbound_drag(completion);
 }
 }

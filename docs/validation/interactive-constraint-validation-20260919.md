@@ -33,6 +33,13 @@ message. Navigation also retires any unconsumed semantic announcement. Stale
 native IDs fail closed during scene construction, and a candidate removed by
 an earlier `invalid` handler is skipped when focus is selected.
 
+WebScene #710 also retires the message after related programmatic value and
+constraint mutations. Existing recascade checkpoints recheck a connected
+target and anchor after style/class/hidden/inert/disabled changes, dismissing
+when the target becomes valid or barred or either element loses focus
+eligibility. The retained-state clear is idempotent, so repeated synchronous
+mutations request at most one additional scene publication and never poll.
+
 ## Validation status and deferred boundary
 
 The behavior follows the HTML interactive constraint-validation ordering and
@@ -41,6 +48,6 @@ contracts. Per task direction, no build, native test, browser/WPT run, pixel
 check, package gate, or CI job was run. Only `git diff --check` is used for this
 commit, so the authored contract remains unexecuted source evidence.
 
-Rich multi-line bubble layout, user-agent localization beyond the existing
-validation messages, timed auto-dismissal, and structural selector
+Rich multi-line bubble layout, host localization beyond the existing validation
+messages, optional timed dismissal, and structural selector
 invalidation remain outside #708.

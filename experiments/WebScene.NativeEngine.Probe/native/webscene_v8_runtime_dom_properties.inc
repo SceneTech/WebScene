@@ -2696,6 +2696,7 @@
             }
         }
         self->recascade_radio_group_selector_state_changes(radio_group_state);
+        self->dismiss_validation_message_after_constraint_mutation(*node);
     }
 
     static void get_reflected_string_attribute(
@@ -2741,6 +2742,9 @@
         self->recascade_radio_group_selector_state_changes(radio_group_state);
         if(node->tag=="option" && (name=="selected" || name=="value"))
             self->recascade_containing_select_validity(*node);
+        if(validation_constraint_attribute(name))
+            self->dismiss_validation_message_after_constraint_mutation(*node);
+        else self->reconcile_validation_message_eligibility(*node);
         self->notify_custom_element_attribute(*node, name, old_value, text);
     }
 
@@ -2827,6 +2831,7 @@
         node->attributes["maxlength"] = std::to_string(
             value->Int32Value(info.GetIsolate()->GetCurrentContext()).FromMaybe(-1));
         self->document.mark_dirty();
+        self->dismiss_validation_message_after_constraint_mutation(*node);
     }
 
     static void get_read_only(
@@ -3629,6 +3634,61 @@
         if(document.clear_validation_message()) pending_validation_announcement.reset();
     }
 
+    bool validation_mutation_affects_active_message(const dom_node& subject)
+    {
+        auto* target=document.find_by_native_id(
+            document.validation_message_target_id());
+        auto* anchor=document.find_by_native_id(
+            document.validation_message_anchor_id());
+        if(target==nullptr || anchor==nullptr) {
+            dismiss_validation_message();
+            return false;
+        }
+        return subtree_contains(subject,target)
+            || subtree_contains(subject,anchor)
+            || subtree_contains(*target,&subject)
+            || subtree_contains(*anchor,&subject)
+            || forms::same_radio_group(document,*target,subject);
+    }
+
+    void dismiss_validation_message_after_constraint_mutation(
+        const dom_node& subject)
+    {
+        if(document.validation_message_target_id()!=0U
+            && validation_mutation_affects_active_message(subject))
+            dismiss_validation_message();
+    }
+
+    void reconcile_validation_message_eligibility(const dom_node& changed_root)
+    {
+        if(document.validation_message_target_id()==0U) return;
+        auto* target=document.find_by_native_id(
+            document.validation_message_target_id());
+        auto* anchor=document.find_by_native_id(
+            document.validation_message_anchor_id());
+        if(target==nullptr || anchor==nullptr) {
+            dismiss_validation_message();
+            return;
+        }
+        if(!subtree_contains(changed_root,target)
+            && !subtree_contains(changed_root,anchor)) return;
+        if(!is_connected(*target) || !is_connected(*anchor)
+            || !forms::will_validate(document,*target)
+            || forms::constraint_validity_state(document,*target).valid()
+            || !is_programmatically_focusable(anchor))
+            dismiss_validation_message();
+    }
+
+    static bool validation_constraint_attribute(std::string_view name)
+    {
+        return name=="value" || name=="required" || name=="pattern"
+            || name=="minlength" || name=="maxlength" || name=="min"
+            || name=="max" || name=="step" || name=="type"
+            || name=="multiple" || name=="checked" || name=="selected"
+            || name=="name" || name=="form" || name=="disabled"
+            || name=="readonly";
+    }
+
     bool present_validation_message(dom_node& target, dom_node& anchor)
     {
         if(!is_connected(target) || !is_connected(anchor)
@@ -4137,6 +4197,9 @@
         else node->attributes.erase(name);
         self->recascade_connected_subtree(*node);
         self->recascade_radio_group_selector_state_changes(radio_group_state);
+        if(validation_constraint_attribute(name))
+            self->dismiss_validation_message_after_constraint_mutation(*node);
+        else self->reconcile_validation_message_eligibility(*node);
     }
 
     static void get_checked(v8::Local<v8::Name>, const v8::PropertyCallbackInfo<v8::Value>& info)
@@ -4347,6 +4410,7 @@
             old_value,
             next?std::optional<std::string>{std::string{}}
                 :std::optional<std::string>{});
+        self->dismiss_validation_message_after_constraint_mutation(*node);
     }
 
     static void get_disabled(v8::Local<v8::Name>, const v8::PropertyCallbackInfo<v8::Value>& info)

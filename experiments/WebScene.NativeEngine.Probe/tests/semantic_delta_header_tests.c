@@ -19,9 +19,14 @@ _Static_assert(WEBSCENE_SEMANTIC_DELTA_MAXIMUM_OPERATIONS_V1 == 8192U,
     "semantic delta operation cap changed");
 _Static_assert(WEBSCENE_SEMANTIC_DELTA_MAXIMUM_STRING_BYTES_V1 == 2097152U,
     "semantic delta string cap changed");
+_Static_assert(sizeof(webscene_semantic_delta_operation_v1) == 136,
+    "semantic v1 delta operation stride changed");
 _Static_assert(offsetof(webscene_semantic_delta_operation_v1, semantic_id)
         > offsetof(webscene_semantic_delta_operation_v1, kind),
     "semantic delta operation identity moved");
+_Static_assert(offsetof(webscene_semantic_delta_view_v2, typed_values)
+        >= sizeof(webscene_semantic_delta_view_v1),
+    "v2 semantic delta changed the v1 prefix");
 _Static_assert(offsetof(webscene_semantic_delta_view_v1, new_snapshot_generation)
         > offsetof(webscene_semantic_delta_view_v1, base_snapshot_generation),
     "semantic delta generation order changed");

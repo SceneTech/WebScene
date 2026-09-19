@@ -342,11 +342,15 @@ bool append_semantic_delta_string_v1(
 
 bool append_semantic_delta_operation_v1(
     webscene_native::semantic_delta_data_v1& delta,
-    webscene_semantic_delta_operation_v1 operation)
+    webscene_semantic_delta_operation_v1 operation,
+    webscene_semantic_typed_value_v2 typed = {})
 {
     if (delta.operations.size()
         == WEBSCENE_SEMANTIC_DELTA_MAXIMUM_OPERATIONS_V1) return false;
+    typed.struct_size = sizeof(typed);
+    typed.version = 2U;
     delta.operations.push_back(operation);
+    delta.typed_values.push_back(typed);
     return true;
 }
 
@@ -356,7 +360,8 @@ bool populate_semantic_delta_node_v1(
     uint32_t node_index,
     uint32_t kind)
 {
-    if (node_index >= snapshot.nodes.size()) return false;
+    if (node_index >= snapshot.nodes.size()
+        || node_index >= snapshot.typed_values.size()) return false;
     const auto& node = snapshot.nodes[node_index];
     if (node.document_index >= snapshot.documents.size()) return false;
     const auto& document = snapshot.documents[node.document_index];
@@ -388,7 +393,8 @@ bool populate_semantic_delta_node_v1(
         || !append_semantic_delta_string_v1(
             delta, semantic_snapshot_string_v1(snapshot, node.description),
             operation.description)) return false;
-    return append_semantic_delta_operation_v1(delta, operation);
+    return append_semantic_delta_operation_v1(
+        delta, operation, snapshot.typed_values[node_index]);
 }
 
 bool semantic_delta_document_equal_v1(
@@ -410,8 +416,10 @@ bool semantic_delta_document_equal_v1(
 bool semantic_delta_node_equal_v1(
     const webscene_native::semantic_snapshot_data_v1& left_snapshot,
     const webscene_semantic_node_v1& left,
+    const webscene_semantic_typed_value_v2& left_typed,
     const webscene_native::semantic_snapshot_data_v1& right_snapshot,
-    const webscene_semantic_node_v1& right)
+    const webscene_semantic_node_v1& right,
+    const webscene_semantic_typed_value_v2& right_typed)
 {
     return left.semantic_id == right.semantic_id
         && left.states == right.states
@@ -419,6 +427,17 @@ bool semantic_delta_node_equal_v1(
         && left.x == right.x && left.y == right.y
         && left.width == right.width && left.height == right.height
         && left.supported_actions == right.supported_actions
+        && left_typed.flags == right_typed.flags
+        && left_typed.text_caret_offset_utf16
+            == right_typed.text_caret_offset_utf16
+        && left_typed.text_selection_start_utf16
+            == right_typed.text_selection_start_utf16
+        && left_typed.text_selection_end_utf16
+            == right_typed.text_selection_end_utf16
+        && left_typed.numeric_value == right_typed.numeric_value
+        && left_typed.numeric_minimum == right_typed.numeric_minimum
+        && left_typed.numeric_maximum == right_typed.numeric_maximum
+        && left_typed.numeric_increment == right_typed.numeric_increment
         && semantic_delta_document_equal_v1(
             left_snapshot, left, right_snapshot, right)
         && semantic_snapshot_string_v1(left_snapshot, left.role)
@@ -595,7 +614,11 @@ build_semantic_delta_v1(
             if (!append_semantic_delta_operation_v1(*delta, operation))
                 return overflow();
         }
-        if (!semantic_delta_node_equal_v1(base, old_node, next, node)
+        if ((old->second >= base.typed_values.size()
+                || index >= next.typed_values.size()
+                || !semantic_delta_node_equal_v1(
+                    base, old_node, base.typed_values[old->second],
+                    next, node, next.typed_values[index]))
             && !populate_semantic_delta_node_v1(
                 *delta, next, index, WEBSCENE_SEMANTIC_DELTA_UPDATE_V1)) {
             return overflow();
@@ -2566,6 +2589,38 @@ struct semantic_snapshot_lease_v1 final {
     }
 };
 
+struct semantic_snapshot_lease_v2 final {
+    std::shared_ptr<const webscene_native::semantic_snapshot_data_v1> value;
+    webscene_semantic_snapshot_view_v2 view{};
+
+    explicit semantic_snapshot_lease_v2(
+        std::shared_ptr<const webscene_native::semantic_snapshot_data_v1> snapshot)
+        : value(std::move(snapshot))
+    {
+        auto& base = view.base;
+        base.struct_size = sizeof(view);
+        base.version = 2U;
+        base.snapshot_generation = value->snapshot_generation;
+        base.top_document_generation = value->top_document_generation;
+        base.layout_generation = value->layout_generation;
+        base.flags = value->flags;
+        base.focused_node_index = value->focused_node_index;
+        base.documents = value->documents.empty() ? nullptr : value->documents.data();
+        base.document_count = static_cast<uint32_t>(value->documents.size());
+        base.nodes = value->nodes.empty() ? nullptr : value->nodes.data();
+        base.node_count = static_cast<uint32_t>(value->nodes.size());
+        base.relationships = value->relationships.empty()
+            ? nullptr : value->relationships.data();
+        base.relationship_count = static_cast<uint32_t>(value->relationships.size());
+        base.string_bytes = value->strings.empty() ? nullptr : value->strings.data();
+        base.string_byte_count = static_cast<uint32_t>(value->strings.size());
+        base.lease_token = this;
+        view.typed_values = value->typed_values.empty()
+            ? nullptr : value->typed_values.data();
+        view.typed_value_count = static_cast<uint32_t>(value->typed_values.size());
+    }
+};
+
 struct semantic_delta_lease_v1 final {
     std::shared_ptr<const webscene_native::semantic_delta_data_v1> value;
     webscene_semantic_delta_view_v1 view{};
@@ -2591,6 +2646,36 @@ struct semantic_delta_lease_v1 final {
             ? nullptr : value->strings.data();
         view.string_byte_count = static_cast<uint32_t>(value->strings.size());
         view.lease_token = this;
+    }
+};
+
+struct semantic_delta_lease_v2 final {
+    std::shared_ptr<const webscene_native::semantic_delta_data_v1> value;
+    webscene_semantic_delta_view_v2 view{};
+
+    explicit semantic_delta_lease_v2(
+        std::shared_ptr<const webscene_native::semantic_delta_data_v1> delta)
+        : value(std::move(delta))
+    {
+        auto& base = view.base;
+        base.struct_size = sizeof(view);
+        base.version = 2U;
+        base.base_snapshot_generation = value->base_snapshot_generation;
+        base.new_snapshot_generation = value->new_snapshot_generation;
+        base.base_top_document_generation = value->base_top_document_generation;
+        base.new_top_document_generation = value->new_top_document_generation;
+        base.base_layout_generation = value->base_layout_generation;
+        base.new_layout_generation = value->new_layout_generation;
+        base.flags = value->flags;
+        base.operations = value->operations.empty()
+            ? nullptr : value->operations.data();
+        base.operation_count = static_cast<uint32_t>(value->operations.size());
+        base.string_bytes = value->strings.empty() ? nullptr : value->strings.data();
+        base.string_byte_count = static_cast<uint32_t>(value->strings.size());
+        base.lease_token = this;
+        view.typed_values = value->typed_values.empty()
+            ? nullptr : value->typed_values.data();
+        view.typed_value_count = static_cast<uint32_t>(value->typed_values.size());
     }
 };
 
@@ -2639,6 +2724,30 @@ void webscene_semantic_snapshot_release_v1(
     delete static_cast<const semantic_snapshot_lease_v1*>(snapshot->lease_token);
 }
 
+const webscene_semantic_snapshot_view_v2*
+webscene_engine_acquire_semantic_snapshot_v2(webscene_engine* engine)
+{
+    if (engine == nullptr) return nullptr;
+    try {
+        auto value = engine->acquire_semantic_snapshot_v1();
+        if (!value || value->typed_values.size() != value->nodes.size()) return nullptr;
+        auto* lease = new semantic_snapshot_lease_v2(std::move(value));
+        return &lease->view;
+    } catch (...) {
+        return nullptr;
+    }
+}
+
+void webscene_semantic_snapshot_release_v2(
+    const webscene_semantic_snapshot_view_v2* snapshot)
+{
+    if (snapshot == nullptr || snapshot->base.version != 2U
+        || snapshot->base.struct_size < sizeof(*snapshot)
+        || snapshot->base.lease_token == nullptr) return;
+    delete static_cast<const semantic_snapshot_lease_v2*>(
+        snapshot->base.lease_token);
+}
+
 uint32_t webscene_engine_request_semantic_delta_v1(
     webscene_engine* engine,
     const webscene_semantic_delta_request_v1* request)
@@ -2674,6 +2783,31 @@ void webscene_semantic_delta_release_v1(
         || delta->struct_size < sizeof(*delta)
         || delta->lease_token == nullptr) return;
     delete static_cast<const semantic_delta_lease_v1*>(delta->lease_token);
+}
+
+const webscene_semantic_delta_view_v2*
+webscene_engine_take_semantic_delta_v2(webscene_engine* engine)
+{
+    if (engine == nullptr) return nullptr;
+    try {
+        auto value = engine->take_semantic_delta_v1();
+        if (!value || value->typed_values.size() != value->operations.size()) {
+            return nullptr;
+        }
+        auto* lease = new semantic_delta_lease_v2(std::move(value));
+        return &lease->view;
+    } catch (...) {
+        return nullptr;
+    }
+}
+
+void webscene_semantic_delta_release_v2(
+    const webscene_semantic_delta_view_v2* delta)
+{
+    if (delta == nullptr || delta->base.version != 2U
+        || delta->base.struct_size < sizeof(*delta)
+        || delta->base.lease_token == nullptr) return;
+    delete static_cast<const semantic_delta_lease_v2*>(delta->base.lease_token);
 }
 
 uint32_t webscene_engine_request_semantic_action_v1(

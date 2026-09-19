@@ -79,6 +79,7 @@ void test_semantic_delta_workbench_and_nested_generation_contract()
       document.getElementById('panel').append(document.getElementById('row-2'));
       const editor = document.getElementById('editor');
       editor.value = 'updated'; editor.setAttribute('aria-label', 'Editor updated');
+      editor.setSelectionRange(2, 6);
       editor.focus();
       document.getElementById('terminal').setAttribute('aria-label', 'Terminal active');
       document.getElementById('toggle').setAttribute('aria-controls', 'terminal');
@@ -181,6 +182,51 @@ void test_semantic_delta_workbench_and_nested_generation_contract()
             && webscene_engine_take_semantic_delta_v1(engine) == nullptr,
         "navigation retained a semantic delta");
     webscene_semantic_snapshot_release_v1(after_low_memory);
+    webscene_engine_destroy(engine);
+}
+
+void test_semantic_typed_delta_companion_contract()
+{
+    auto* engine = webscene_engine_create(0U);
+    require(engine != nullptr, "typed semantic delta engine creation failed");
+    evaluate(engine, R"JS(
+      document.body.innerHTML = '<input id="editor" value="a😀bc" aria-label="Editor">';
+      true;
+    )JS", "semantic-typed-delta-base.js");
+    const auto* base = wait_for_semantic_snapshot(engine);
+    const auto generation = base->snapshot_generation;
+    evaluate(engine, R"JS(
+      const editor = document.getElementById('editor');
+      editor.setSelectionRange(1, 3);
+      true;
+    )JS", "semantic-typed-delta-update.js");
+    require(request_semantic_delta(engine, generation)
+            == WEBSCENE_SEMANTIC_DELTA_QUEUED_V1,
+        "typed semantic delta request was not admitted");
+    const webscene_semantic_delta_view_v2* delta = nullptr;
+    for (auto attempt = 0; attempt < 1000 && delta == nullptr; ++attempt) {
+        delta = webscene_engine_take_semantic_delta_v2(engine);
+        if (delta == nullptr)
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    require(delta != nullptr && delta->base.version == 2U
+            && delta->typed_value_count == delta->base.operation_count,
+        "typed semantic delta companion table was incomplete");
+    auto found = false;
+    for (uint32_t index = 0U; index < delta->base.operation_count; ++index) {
+        const auto& operation = delta->base.operations[index];
+        const auto& typed = delta->typed_values[index];
+        if (operation.kind != WEBSCENE_SEMANTIC_DELTA_UPDATE_V1
+            || semantic_delta_string(delta->base, operation.name) != "Editor")
+            continue;
+        found = (typed.flags & WEBSCENE_SEMANTIC_TYPED_TEXT_SELECTION_V2) != 0U
+            && typed.text_selection_start_utf16 == 1U
+            && typed.text_selection_end_utf16 == 3U;
+        break;
+    }
+    require(found, "typed semantic selection was absent from its update delta");
+    webscene_semantic_delta_release_v2(delta);
+    webscene_semantic_snapshot_release_v1(base);
     webscene_engine_destroy(engine);
 }
 

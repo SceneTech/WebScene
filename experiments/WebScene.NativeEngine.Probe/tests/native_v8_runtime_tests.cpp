@@ -1631,6 +1631,7 @@ int main()
     test_dom_listener_callback_retirement();
     test_semantic_snapshot_nested_state_lifecycle_and_bounds();
     test_semantic_delta_workbench_and_nested_generation_contract();
+    test_semantic_typed_delta_companion_contract();
     test_semantic_action_dom_contract_and_retirement();
     test_semantic_live_regions_dom_order_busy_and_lifecycle();
     test_low_memory_reclaims_small_detached_dom_batches();

@@ -42,6 +42,19 @@ const webscene_semantic_node_v1* find_semantic_node(
     return nullptr;
 }
 
+const webscene_semantic_typed_value_v2* find_semantic_typed_value(
+    const webscene_semantic_snapshot_view_v2& snapshot,
+    std::string_view role,
+    std::string_view name)
+{
+    const auto* node = find_semantic_node(snapshot.base, role, name);
+    if (node == nullptr || snapshot.typed_value_count != snapshot.base.node_count)
+        return nullptr;
+    const auto index = static_cast<uint32_t>(node - snapshot.base.nodes);
+    return index < snapshot.typed_value_count
+        ? &snapshot.typed_values[index] : nullptr;
+}
+
 void test_semantic_snapshot_nested_state_lifecycle_and_bounds()
 {
     auto* engine = webscene_engine_create(0U);
@@ -51,6 +64,10 @@ void test_semantic_snapshot_nested_state_lifecycle_and_bounds()
         <main role="main" aria-label="Workbench">
           <label id="query-label" for="query">Search files</label>
           <input id="query" value="needle" aria-describedby="query-help">
+          <input id="zoom" type="range" min="25" max="200" step="5" value="125" aria-label="Zoom">
+          <div role="spinbutton" aria-label="Columns" aria-valuemin="1" aria-valuemax="12" aria-valuenow="3"></div>
+          <div role="slider" aria-label="Broken range" aria-valuemin="10" aria-valuemax="2" aria-valuenow="nan"></div>
+          <input id="unicode" value="a😀bc" aria-label="Unicode editor">
           <span id="query-help">Filters the file tree</span>
           <button id="toggle" aria-expanded="false" aria-controls="panel">Open panel</button>
           <section id="panel" role="region" aria-label="Results"></section>
@@ -58,6 +75,8 @@ void test_semantic_snapshot_nested_state_lifecycle_and_bounds()
         </main>`;
       const query = document.getElementById('query');
       query.focus();
+      query.setSelectionRange(1, 4, 'backward');
+      document.getElementById('unicode').setSelectionRange(1, 3);
       const nested = document.getElementById('preview').contentDocument;
       nested.open();
       nested.write(`<article aria-label="Preview"><h2>Nested heading</h2><a href="#target">Jump</a></article>`);
@@ -72,6 +91,13 @@ void test_semantic_snapshot_nested_state_lifecycle_and_bounds()
         "semantic snapshot lacked publication/layout generations");
     require(first->flags == 0U,
         "small semantic snapshot was unexpectedly truncated");
+    const auto* typed_snapshot =
+        webscene_engine_acquire_semantic_snapshot_v2(engine);
+    require(typed_snapshot != nullptr
+            && typed_snapshot->base.version == 2U
+            && typed_snapshot->typed_value_count
+                == typed_snapshot->base.node_count,
+        "v2 semantic companion table did not match the v1 publication");
     require(first->documents[0].frame_owner_dom_node_id == 0U
             && first->documents[1].frame_owner_dom_node_id != 0U
             && first->documents[1].frame_generation != 0U,
@@ -83,6 +109,55 @@ void test_semantic_snapshot_nested_state_lifecycle_and_bounds()
         "semantic focused node state was not published");
     require(query->width > 0.0F && query->height > 0.0F,
         "semantic text control lacked layout bounds");
+    const auto* query_typed = find_semantic_typed_value(
+        *typed_snapshot, "textbox", "Search files");
+    require(query_typed != nullptr
+            && (query_typed->flags
+                & (WEBSCENE_SEMANTIC_TYPED_TEXT_CARET_V2
+                    | WEBSCENE_SEMANTIC_TYPED_TEXT_SELECTION_V2))
+            == (WEBSCENE_SEMANTIC_TYPED_TEXT_CARET_V2
+                | WEBSCENE_SEMANTIC_TYPED_TEXT_SELECTION_V2)
+            && query_typed->text_selection_start_utf16 == 1U
+            && query_typed->text_selection_end_utf16 == 4U
+            && query_typed->text_caret_offset_utf16 == 1U,
+        "semantic text control lost its UTF-16 selection or caret direction");
+    const auto* zoom = find_semantic_typed_value(
+        *typed_snapshot, "slider", "Zoom");
+    require(zoom != nullptr
+            && (zoom->flags
+                & (WEBSCENE_SEMANTIC_TYPED_NUMERIC_VALUE_V2
+                    | WEBSCENE_SEMANTIC_TYPED_NUMERIC_MINIMUM_V2
+                    | WEBSCENE_SEMANTIC_TYPED_NUMERIC_MAXIMUM_V2
+                    | WEBSCENE_SEMANTIC_TYPED_NUMERIC_INCREMENT_V2))
+                == (WEBSCENE_SEMANTIC_TYPED_NUMERIC_VALUE_V2
+                    | WEBSCENE_SEMANTIC_TYPED_NUMERIC_MINIMUM_V2
+                    | WEBSCENE_SEMANTIC_TYPED_NUMERIC_MAXIMUM_V2
+                    | WEBSCENE_SEMANTIC_TYPED_NUMERIC_INCREMENT_V2)
+            && zoom->numeric_value == 125.0
+            && zoom->numeric_minimum == 25.0
+            && zoom->numeric_maximum == 200.0
+            && zoom->numeric_increment == 5.0,
+        "native range typed semantics were incomplete");
+    const auto* columns = find_semantic_typed_value(
+        *typed_snapshot, "spinbutton", "Columns");
+    require(columns != nullptr && columns->numeric_value == 3.0
+            && columns->numeric_minimum == 1.0
+            && columns->numeric_maximum == 12.0,
+        "ARIA numeric typed semantics were incomplete");
+    const auto* broken = find_semantic_typed_value(
+        *typed_snapshot, "slider", "Broken range");
+    require(broken != nullptr
+            && (broken->flags
+                & (WEBSCENE_SEMANTIC_TYPED_NUMERIC_VALUE_V2
+                    | WEBSCENE_SEMANTIC_TYPED_NUMERIC_MINIMUM_V2
+                    | WEBSCENE_SEMANTIC_TYPED_NUMERIC_MAXIMUM_V2)) == 0U,
+        "malformed or inverted numeric semantics were published");
+    const auto* unicode = find_semantic_typed_value(
+        *typed_snapshot, "textbox", "Unicode editor");
+    require(unicode != nullptr
+            && unicode->text_selection_start_utf16 == 1U
+            && unicode->text_selection_end_utf16 == 3U,
+        "semantic selection offsets were not published in DOM UTF-16 units");
     const auto* toggle = find_semantic_node(*first, "button", "Open panel");
     require(toggle != nullptr
             && (toggle->states & WEBSCENE_SEMANTIC_NODE_COLLAPSED_V1) != 0U,
@@ -113,6 +188,7 @@ void test_semantic_snapshot_nested_state_lifecycle_and_bounds()
     require(first_value == "needle" && semantic_string(*first, query->value) == "needle",
         "an acquired semantic lease mutated after a later publication");
     webscene_semantic_snapshot_release_v1(second);
+    webscene_semantic_snapshot_release_v2(typed_snapshot);
     webscene_semantic_snapshot_release_v1(first);
     webscene_engine_destroy(engine);
 }

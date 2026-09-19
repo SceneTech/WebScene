@@ -125,6 +125,21 @@ enum {
     WEBSCENE_SEMANTIC_NODE_MULTISELECTABLE_V1 = UINT64_C(1) << 14U
 };
 
+/*
+ * Optional typed semantic data carried by v2 companion tables. Presence bits,
+ * rather than sentinel numbers, preserve valid zero and negative values. Text
+ * offsets use DOM UTF-16 code units so hosts can pass them back through
+ * SET_SELECTION without conversion or loss around surrogate pairs.
+ */
+enum {
+    WEBSCENE_SEMANTIC_TYPED_NUMERIC_VALUE_V2 = 1U << 0U,
+    WEBSCENE_SEMANTIC_TYPED_NUMERIC_MINIMUM_V2 = 1U << 1U,
+    WEBSCENE_SEMANTIC_TYPED_NUMERIC_MAXIMUM_V2 = 1U << 2U,
+    WEBSCENE_SEMANTIC_TYPED_NUMERIC_INCREMENT_V2 = 1U << 3U,
+    WEBSCENE_SEMANTIC_TYPED_TEXT_CARET_V2 = 1U << 4U,
+    WEBSCENE_SEMANTIC_TYPED_TEXT_SELECTION_V2 = 1U << 5U
+};
+
 typedef enum webscene_semantic_relationship_kind_v1 {
     WEBSCENE_SEMANTIC_RELATION_LABELLED_BY_V1 = 1,
     WEBSCENE_SEMANTIC_RELATION_DESCRIBED_BY_V1 = 2,
@@ -284,6 +299,33 @@ typedef struct webscene_semantic_snapshot_view_v1 {
     const void* lease_token;
 } webscene_semantic_snapshot_view_v1;
 
+/* One fixed-size companion record per v1 node or delta operation. */
+typedef struct webscene_semantic_typed_value_v2 {
+    uint32_t struct_size;
+    uint32_t version;
+    uint32_t flags;
+    uint32_t text_caret_offset_utf16;
+    uint32_t text_selection_start_utf16;
+    uint32_t text_selection_end_utf16;
+    uint32_t reserved0;
+    uint32_t reserved1;
+    double numeric_value;
+    double numeric_minimum;
+    double numeric_maximum;
+    double numeric_increment;
+} webscene_semantic_typed_value_v2;
+
+/*
+ * The v1 base remains byte-for-byte compatible. Its version is 2 and its
+ * struct_size is the outer v2 size. typed_value_count always equals node_count.
+ */
+typedef struct webscene_semantic_snapshot_view_v2 {
+    webscene_semantic_snapshot_view_v1 base;
+    const webscene_semantic_typed_value_v2* typed_values;
+    uint32_t typed_value_count;
+    uint32_t reserved;
+} webscene_semantic_snapshot_view_v2;
+
 /* Request one worker-owned comparison from the current publication. */
 typedef struct webscene_semantic_delta_request_v1 {
     uint32_t struct_size;
@@ -345,6 +387,14 @@ typedef struct webscene_semantic_delta_view_v1 {
     uint32_t string_byte_count;
     const void* lease_token;
 } webscene_semantic_delta_view_v1;
+
+/* typed_value_count always equals base.operation_count. */
+typedef struct webscene_semantic_delta_view_v2 {
+    webscene_semantic_delta_view_v1 base;
+    const webscene_semantic_typed_value_v2* typed_values;
+    uint32_t typed_value_count;
+    uint32_t reserved;
+} webscene_semantic_delta_view_v2;
 
 /*
  * One platform-neutral live-region change. text is a UTF-8 slice into its
@@ -2048,6 +2098,11 @@ WEBSCENE_API const webscene_semantic_snapshot_view_v1*
 webscene_engine_acquire_semantic_snapshot_v1(webscene_engine* engine);
 WEBSCENE_API void webscene_semantic_snapshot_release_v1(
     const webscene_semantic_snapshot_view_v1* snapshot);
+/* v2 adds a fixed-size typed companion table without changing v1 array stride. */
+WEBSCENE_API const webscene_semantic_snapshot_view_v2*
+webscene_engine_acquire_semantic_snapshot_v2(webscene_engine* engine);
+WEBSCENE_API void webscene_semantic_snapshot_release_v2(
+    const webscene_semantic_snapshot_view_v2* snapshot);
 /* Admission pins an exact retained base until the worker finishes. */
 WEBSCENE_API uint32_t webscene_engine_request_semantic_delta_v1(
     webscene_engine* engine,
@@ -2056,6 +2111,10 @@ WEBSCENE_API const webscene_semantic_delta_view_v1*
 webscene_engine_take_semantic_delta_v1(webscene_engine* engine);
 WEBSCENE_API void webscene_semantic_delta_release_v1(
     const webscene_semantic_delta_view_v1* delta);
+WEBSCENE_API const webscene_semantic_delta_view_v2*
+webscene_engine_take_semantic_delta_v2(webscene_engine* engine);
+WEBSCENE_API void webscene_semantic_delta_release_v2(
+    const webscene_semantic_delta_view_v2* delta);
 /* Queues bounded worker-thread routing; QUEUED reports admission, not DOM
  * completion. A later snapshot is the observable action result. */
 WEBSCENE_API uint32_t webscene_engine_request_semantic_action_v1(

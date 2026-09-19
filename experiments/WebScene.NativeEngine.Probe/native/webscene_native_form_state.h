@@ -104,6 +104,10 @@ enum class numeric_input_kind : uint8_t {
     none,
     number,
     range,
+    date,
+    month,
+    week,
+    time,
 };
 
 struct numeric_type_parameters final {
@@ -113,7 +117,157 @@ struct numeric_type_parameters final {
     double step{1.0};
     double step_base{0.0};
     bool step_any{false};
+    bool periodic{false};
 };
+
+inline bool leap_year(uint64_t year) {
+    return year%4U==0U && (year%100U!=0U || year%400U==0U);
+}
+
+inline unsigned days_in_month(uint64_t year,unsigned month) {
+    constexpr std::array<unsigned,12U> days{
+        31U,28U,31U,30U,31U,30U,31U,31U,30U,31U,30U,31U};
+    return days[month-1U]+(month==2U && leap_year(year)?1U:0U);
+}
+
+inline std::optional<uint64_t> decimal_component(std::string_view text) {
+    if(text.empty()) return std::nullopt;
+    uint64_t result{};
+    const auto parsed=std::from_chars(text.data(),text.data()+text.size(),result);
+    if(parsed.ec!=std::errc{} || parsed.ptr!=text.data()+text.size())
+        return std::nullopt;
+    return result;
+}
+
+inline int64_t days_from_civil(uint64_t year,unsigned month,unsigned day) {
+    auto adjusted=static_cast<int64_t>(year)-(month<=2U?1:0);
+    const auto era=adjusted/400;
+    const auto year_of_era=static_cast<unsigned>(adjusted-era*400);
+    const auto adjusted_month=static_cast<unsigned>(
+        static_cast<int>(month)+(month>2U?-3:9));
+    const auto day_of_year=(153U*adjusted_month+2U)/5U+day-1U;
+    const auto day_of_era=year_of_era*365U+year_of_era/4U-year_of_era/100U
+        +day_of_year;
+    return era*146097+static_cast<int64_t>(day_of_era)-719468;
+}
+
+struct civil_date final {
+    int64_t year{};
+    unsigned month{};
+    unsigned day{};
+};
+
+inline civil_date civil_from_days(int64_t days) {
+    days+=719468;
+    const auto era=(days>=0?days:days-146096)/146097;
+    const auto day_of_era=static_cast<unsigned>(days-era*146097);
+    const auto year_of_era=(day_of_era-day_of_era/1460U+day_of_era/36524U
+        -day_of_era/146096U)/365U;
+    auto year=static_cast<int64_t>(year_of_era)+era*400;
+    const auto day_of_year=day_of_era-(365U*year_of_era+year_of_era/4U
+        -year_of_era/100U);
+    const auto month_prime=(5U*day_of_year+2U)/153U;
+    const auto day=day_of_year-(153U*month_prime+2U)/5U+1U;
+    const auto month=static_cast<unsigned>(
+        static_cast<int>(month_prime)+(month_prime<10U?3:-9));
+    year+=month<=2U;
+    return {year,month,day};
+}
+
+inline unsigned iso_weekday(int64_t days) {
+    auto weekday=(days+3)%7;
+    if(weekday<0) weekday+=7;
+    return static_cast<unsigned>(weekday)+1U;
+}
+
+inline unsigned iso_weeks_in_year(uint64_t year) {
+    const auto january_first=iso_weekday(days_from_civil(year,1U,1U));
+    return january_first==4U || (january_first==3U && leap_year(year))?53U:52U;
+}
+
+inline std::optional<std::pair<uint64_t,unsigned>> parse_year_suffix(
+    std::string_view text,std::string_view marker) {
+    const auto separator=text.find(marker);
+    if(separator<4U || separator==std::string_view::npos
+        || separator+marker.size()+2U!=text.size()) return std::nullopt;
+    const auto year=decimal_component(text.substr(0U,separator));
+    const auto suffix=decimal_component(text.substr(separator+marker.size()));
+    if(!year || *year==0U || *year>std::numeric_limits<uint32_t>::max()
+        || !suffix) return std::nullopt;
+    return std::pair<uint64_t,unsigned>{*year,static_cast<unsigned>(*suffix)};
+}
+
+inline std::optional<double> date_number(std::string_view text) {
+    const auto month_separator=text.rfind('-');
+    if(month_separator==std::string_view::npos || month_separator+3U!=text.size())
+        return std::nullopt;
+    const auto year_month=parse_year_suffix(
+        text.substr(0U,month_separator),"-");
+    const auto day=decimal_component(text.substr(month_separator+1U));
+    if(!year_month || !day || year_month->second<1U || year_month->second>12U
+        || *day<1U || *day>days_in_month(year_month->first,year_month->second))
+        return std::nullopt;
+    return static_cast<double>(days_from_civil(
+        year_month->first,year_month->second,static_cast<unsigned>(*day)))
+        *86400000.0;
+}
+
+inline std::optional<double> month_number(std::string_view text) {
+    const auto parsed=parse_year_suffix(text,"-");
+    if(!parsed || parsed->second<1U || parsed->second>12U)
+        return std::nullopt;
+    return (static_cast<double>(parsed->first)-1970.0)*12.0
+        +static_cast<double>(parsed->second)-1.0;
+}
+
+inline std::optional<double> week_number(std::string_view text) {
+    const auto parsed=parse_year_suffix(text,"-W");
+    if(!parsed || parsed->second<1U
+        || parsed->second>iso_weeks_in_year(parsed->first)) return std::nullopt;
+    const auto january_fourth=days_from_civil(parsed->first,1U,4U);
+    const auto week_one_monday=january_fourth
+        -static_cast<int64_t>(iso_weekday(january_fourth)-1U);
+    return static_cast<double>(week_one_monday
+        +static_cast<int64_t>(parsed->second-1U)*7)*86400000.0;
+}
+
+inline std::optional<double> time_number(std::string_view text) {
+    if(text.size()<5U || text[2]!=':') return std::nullopt;
+    const auto hour=decimal_component(text.substr(0U,2U));
+    const auto minute=decimal_component(text.substr(3U,2U));
+    if(!hour || !minute || *hour>23U || *minute>59U) return std::nullopt;
+    double seconds=0.0;
+    if(text.size()>5U) {
+        if(text.size()<8U || text[5]!=':') return std::nullopt;
+        const auto whole_seconds=decimal_component(text.substr(6U,2U));
+        if(!whole_seconds || *whole_seconds>59U) return std::nullopt;
+        seconds=static_cast<double>(*whole_seconds);
+        if(text.size()>8U) {
+            if(text[8]!='.' || text.size()==9U) return std::nullopt;
+            auto scale=0.1;
+            for(size_t index=9U;index<text.size();++index) {
+                if(text[index]<'0' || text[index]>'9') return std::nullopt;
+                seconds+=static_cast<double>(text[index]-'0')*scale;
+                scale*=0.1;
+            }
+        }
+    }
+    return (static_cast<double>(*hour)*3600.0
+        +static_cast<double>(*minute)*60.0+seconds)*1000.0;
+}
+
+inline std::optional<double> numeric_value(
+    numeric_input_kind kind,std::string_view text) {
+    switch(kind) {
+    case numeric_input_kind::number:
+    case numeric_input_kind::range: return finite_number(text);
+    case numeric_input_kind::date: return date_number(text);
+    case numeric_input_kind::month: return month_number(text);
+    case numeric_input_kind::week: return week_number(text);
+    case numeric_input_kind::time: return time_number(text);
+    default: return std::nullopt;
+    }
+}
 
 inline numeric_input_kind numeric_kind(const dom_node& node) {
     if(node.tag!="input") return numeric_input_kind::none;
@@ -122,36 +276,51 @@ inline numeric_input_kind numeric_kind(const dom_node& node) {
         ? std::string_view{"text"}:std::string_view{authored->second};
     if(form_keyword_equals(type,"number")) return numeric_input_kind::number;
     if(form_keyword_equals(type,"range")) return numeric_input_kind::range;
+    if(form_keyword_equals(type,"date")) return numeric_input_kind::date;
+    if(form_keyword_equals(type,"month")) return numeric_input_kind::month;
+    if(form_keyword_equals(type,"week")) return numeric_input_kind::week;
+    if(form_keyword_equals(type,"time")) return numeric_input_kind::time;
     return numeric_input_kind::none;
 }
 
 inline std::optional<double> numeric_attribute(
-    const dom_node& node,std::string_view name) {
+    const dom_node& node,std::string_view name,numeric_input_kind kind) {
     const auto authored=node.attributes.find(std::string(name));
     return authored==node.attributes.end()
-        ? std::nullopt:finite_number(authored->second);
+        ? std::nullopt:numeric_value(kind,authored->second);
 }
 
 inline numeric_type_parameters numeric_parameters(const dom_node& node) {
     numeric_type_parameters result;
     result.kind=numeric_kind(node);
     if(result.kind==numeric_input_kind::none) return result;
-    result.minimum=numeric_attribute(node,"min");
-    result.maximum=numeric_attribute(node,"max");
+    result.minimum=numeric_attribute(node,"min",result.kind);
+    result.maximum=numeric_attribute(node,"max",result.kind);
     if(result.kind==numeric_input_kind::range) {
         if(!result.minimum) result.minimum=0.0;
         if(!result.maximum) result.maximum=100.0;
         if(*result.maximum<*result.minimum) result.maximum=result.minimum;
     }
+    auto step_scale=1.0;
+    if(result.kind==numeric_input_kind::date) step_scale=86400000.0;
+    else if(result.kind==numeric_input_kind::week) {
+        step_scale=604800000.0;
+        result.step_base=-259200000.0;
+    } else if(result.kind==numeric_input_kind::time) {
+        step_scale=1000.0;
+        result.step=60.0;
+        result.periodic=true;
+    }
+    result.step*=step_scale;
     const auto authored_step=node.attributes.find("step");
     result.step_any=authored_step!=node.attributes.end()
         && form_keyword_equals(authored_step->second,"any");
     if(!result.step_any && authored_step!=node.attributes.end()) {
         const auto parsed=finite_number(authored_step->second);
-        if(parsed && *parsed>0.0) result.step=*parsed;
+        if(parsed && *parsed>0.0) result.step=*parsed*step_scale;
     }
     if(result.minimum) result.step_base=*result.minimum;
-    else if(const auto authored_value=numeric_attribute(node,"value"))
+    else if(const auto authored_value=numeric_attribute(node,"value",result.kind))
         result.step_base=*authored_value;
     return result;
 }
@@ -170,6 +339,95 @@ inline std::optional<std::string> format_finite_number(double value) {
         buffer.data(),buffer.data()+buffer.size(),value,std::chars_format::general);
     if(formatted.ec!=std::errc{}) return std::nullopt;
     return std::string(buffer.data(),formatted.ptr);
+}
+
+inline std::string padded_decimal(uint64_t value,size_t width) {
+    auto result=std::to_string(value);
+    if(result.size()<width) result.insert(0U,width-result.size(),'0');
+    return result;
+}
+
+inline std::optional<std::string> format_date_number(double value) {
+    if(!std::isfinite(value)) return std::nullopt;
+    const auto day_value=std::floor(value/86400000.0);
+    if(day_value<static_cast<double>(days_from_civil(1U,1U,1U))
+        || day_value>static_cast<double>(days_from_civil(
+            std::numeric_limits<uint32_t>::max(),12U,31U)))
+        return std::nullopt;
+    const auto date=civil_from_days(static_cast<int64_t>(day_value));
+    if(date.year<=0 || date.year>std::numeric_limits<uint32_t>::max())
+        return std::nullopt;
+    return padded_decimal(static_cast<uint64_t>(date.year),4U)+"-"
+        +padded_decimal(date.month,2U)+"-"+padded_decimal(date.day,2U);
+}
+
+inline std::optional<std::string> format_month_number(double value) {
+    if(!std::isfinite(value) || value!=std::trunc(value)) return std::nullopt;
+    const auto absolute=value+1970.0*12.0;
+    if(absolute<0.0
+        || absolute>static_cast<double>(std::numeric_limits<uint32_t>::max())*12.0)
+        return std::nullopt;
+    const auto months=static_cast<uint64_t>(absolute);
+    const auto year=months/12U;
+    const auto month=months%12U+1U;
+    if(year==0U) return std::nullopt;
+    return padded_decimal(year,4U)+"-"+padded_decimal(month,2U);
+}
+
+inline std::optional<std::string> format_week_number(double value) {
+    if(!std::isfinite(value)) return std::nullopt;
+    const auto day_value=std::floor(value/86400000.0);
+    if(day_value<static_cast<double>(days_from_civil(1U,1U,1U))
+        || day_value>static_cast<double>(days_from_civil(
+            std::numeric_limits<uint32_t>::max(),12U,31U)))
+        return std::nullopt;
+    const auto day=static_cast<int64_t>(day_value);
+    const auto thursday=day+4-static_cast<int64_t>(iso_weekday(day));
+    const auto date=civil_from_days(thursday);
+    if(date.year<=0 || date.year>std::numeric_limits<uint32_t>::max())
+        return std::nullopt;
+    const auto january_fourth=days_from_civil(
+        static_cast<uint64_t>(date.year),1U,4U);
+    const auto week_one_monday=january_fourth
+        -static_cast<int64_t>(iso_weekday(january_fourth)-1U);
+    const auto week=static_cast<uint64_t>((day-week_one_monday)/7+1);
+    return padded_decimal(static_cast<uint64_t>(date.year),4U)+"-W"
+        +padded_decimal(week,2U);
+}
+
+inline std::optional<std::string> format_time_number(double value) {
+    if(!std::isfinite(value)) return std::nullopt;
+    value=std::fmod(value,86400000.0);
+    if(value<0.0) value+=86400000.0;
+    const auto hour=static_cast<unsigned>(value/3600000.0);
+    value-=static_cast<double>(hour)*3600000.0;
+    const auto minute=static_cast<unsigned>(value/60000.0);
+    value-=static_cast<double>(minute)*60000.0;
+    auto result=padded_decimal(hour,2U)+":"+padded_decimal(minute,2U);
+    if(value==0.0) return result;
+    const auto seconds=value/1000.0;
+    std::array<char,64U> buffer{};
+    const auto formatted=std::to_chars(buffer.data(),buffer.data()+buffer.size(),
+        seconds,std::chars_format::fixed,15);
+    if(formatted.ec!=std::errc{}) return std::nullopt;
+    std::string seconds_text(buffer.data(),formatted.ptr);
+    while(seconds_text.ends_with('0')) seconds_text.pop_back();
+    if(seconds_text.ends_with('.')) seconds_text.pop_back();
+    if(seconds<10.0) seconds_text.insert(0U,1U,'0');
+    return result+":"+seconds_text;
+}
+
+inline std::optional<std::string> format_numeric_value(
+    numeric_input_kind kind,double value) {
+    switch(kind) {
+    case numeric_input_kind::number:
+    case numeric_input_kind::range: return format_finite_number(value);
+    case numeric_input_kind::date: return format_date_number(value);
+    case numeric_input_kind::month: return format_month_number(value);
+    case numeric_input_kind::week: return format_week_number(value);
+    case numeric_input_kind::time: return format_time_number(value);
+    default: return std::nullopt;
+    }
 }
 
 inline double range_default_value(const numeric_type_parameters& parameters) {
@@ -197,9 +455,9 @@ inline std::string sanitize_programmatic_numeric_value(
     const dom_node& node,std::string value) {
     const auto parameters=numeric_parameters(node);
     if(parameters.kind==numeric_input_kind::none) return value;
-    if(parameters.kind==numeric_input_kind::number && value.empty()) return value;
-    const auto parsed=finite_number(value);
-    if(parameters.kind==numeric_input_kind::number)
+    if(parameters.kind!=numeric_input_kind::range && value.empty()) return value;
+    const auto parsed=numeric_value(parameters.kind,value);
+    if(parameters.kind!=numeric_input_kind::range)
         return parsed?std::move(value):std::string{};
     const auto number=sanitize_range_number(
         parsed.value_or(range_default_value(parameters)),parameters);
@@ -213,6 +471,8 @@ inline numeric_range_state range_state(
         const auto parameters=numeric_parameters(node);
         if(parameters.kind==numeric_input_kind::none)
             return numeric_range_state::not_applicable;
+        if(!parameters.minimum && !parameters.maximum)
+            return numeric_range_state::not_applicable;
         std::string owned_value;
         std::string_view value;
         if(live_value) value=*live_value;
@@ -223,12 +483,16 @@ inline numeric_range_state range_state(
                 node,authored==node.attributes.end()?std::string{}:authored->second);
             value=owned_value;
         }
-        auto number=finite_number(value);
+        auto number=numeric_value(parameters.kind,value);
         if(!number && parameters.kind==numeric_input_kind::range)
             number=range_default_value(parameters);
         if(!number) return numeric_range_state::not_applicable;
-        return (parameters.minimum && *number<*parameters.minimum)
-                || (parameters.maximum && *number>*parameters.maximum)
+        const auto reversed=parameters.periodic && parameters.minimum
+            && parameters.maximum && *parameters.minimum>*parameters.maximum;
+        return (reversed
+                ? *number>*parameters.maximum && *number<*parameters.minimum
+                : (parameters.minimum && *number<*parameters.minimum)
+                    || (parameters.maximum && *number>*parameters.maximum))
             ? numeric_range_state::out_of_range:numeric_range_state::in_range;
     }
 
@@ -696,13 +960,21 @@ inline numeric_constraint_validity numeric_validity_state(
     }
     const auto value=live_value.value_or(owned_value);
     if(value.empty()) return result;
-    auto number=finite_number(value);
+    auto number=numeric_value(parameters.kind,value);
     if(!number) {
-        if(parameters.kind==numeric_input_kind::number) result.bad_input=true;
+        if(parameters.kind!=numeric_input_kind::range) result.bad_input=true;
         return result;
     }
-    result.range_underflow=parameters.minimum && *number<*parameters.minimum;
-    result.range_overflow=parameters.maximum && *number>*parameters.maximum;
+    const auto reversed=parameters.periodic && parameters.minimum
+        && parameters.maximum && *parameters.minimum>*parameters.maximum;
+    if(reversed) {
+        result.range_underflow=*number>*parameters.maximum
+            && *number<*parameters.minimum;
+        result.range_overflow=result.range_underflow;
+    } else {
+        result.range_underflow=parameters.minimum && *number<*parameters.minimum;
+        result.range_overflow=parameters.maximum && *number>*parameters.maximum;
+    }
     result.step_mismatch=numeric_step_mismatch(*number,parameters);
     return result;
 }

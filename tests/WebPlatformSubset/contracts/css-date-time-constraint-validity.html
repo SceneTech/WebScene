@@ -1,0 +1,98 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Date and time constraint validity follows live typed values</title>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<style>
+.probe {padding-left:11px}
+.probe:invalid {padding-left:47px}
+</style>
+<script>
+const state=control=>[control.value,control.valueAsNumber,
+  control.matches(':valid'),control.matches(':invalid'),
+  control.matches(':in-range'),control.matches(':out-of-range'),
+  getComputedStyle(control).paddingLeft];
+
+test(()=>{
+  const input=document.createElement('input');input.className='probe';
+  input.type='date';input.min='2019-12-10';input.max='2019-12-20';input.step='2';
+  input.value='2019-12-12';document.body.appendChild(input);
+  assert_array_equals(state(input),
+    ['2019-12-12',1576108800000,true,false,true,false,'11px']);
+  input.value='2019-12-11';
+  assert_array_equals(state(input),
+    ['2019-12-11',1576022400000,false,true,true,false,'47px'],
+    'date step is expressed in days');
+  input.min='2019-12-11';
+  assert_true(input.matches(':valid'),'a valid minimum supplies the step base');
+  input.max='2019-12-10';
+  assert_true(input.matches(':out-of-range'),'a live max mutation changes range state');
+  input.removeAttribute('min');input.removeAttribute('max');input.removeAttribute('step');
+  input.valueAsNumber=1456704000000;
+  assert_array_equals(state(input),
+    ['2016-02-29',1456704000000,true,false,false,false,'11px']);
+},'date uses strict Gregorian parsing, UTC milliseconds, day steps, and live bounds');
+
+test(()=>{
+  const input=document.createElement('input');input.className='probe';
+  input.type='month';input.min='1970-01';input.step='2';input.value='1970-03';
+  document.body.appendChild(input);
+  assert_array_equals(state(input),['1970-03',2,true,false,true,false,'11px']);
+  input.value='1970-04';
+  assert_array_equals(state(input),['1970-04',3,false,true,true,false,'47px'],
+    'month valueAsNumber and step use month units');
+  input.value='1970-03';input.max='1970-02';
+  assert_true(input.matches(':out-of-range'));
+  input.removeAttribute('min');input.removeAttribute('max');input.removeAttribute('step');
+  input.valueAsNumber=-1;
+  assert_array_equals(state(input),['1969-12',-1,true,false,false,false,'11px']);
+},'month uses months from January 1970 for conversion and constraints');
+
+test(()=>{
+  const input=document.createElement('input');input.className='probe';
+  input.type='week';input.min='1970-W01';input.step='2';input.value='1970-W03';
+  document.body.appendChild(input);
+  assert_array_equals(state(input),
+    ['1970-W03',950400000,true,false,true,false,'11px']);
+  input.value='1970-W04';
+  assert_array_equals(state(input),
+    ['1970-W04',1555200000,false,true,true,false,'47px']);
+  input.removeAttribute('min');input.removeAttribute('step');
+  input.valueAsNumber=0;
+  assert_array_equals(state(input),
+    ['1970-W01',-259200000,true,false,false,false,'11px'],
+    'week zero falls in the week whose Monday is the default negative base');
+},'week uses ISO week syntax, Monday epoch conversion, and week steps');
+
+test(()=>{
+  const input=document.createElement('input');input.className='probe';
+  input.type='time';input.min='21:00';input.max='06:00';input.step='any';
+  input.value='00:00';document.body.appendChild(input);
+  assert_array_equals(state(input),['00:00',0,true,false,true,false,'11px']);
+  input.value='13:00';
+  assert_array_equals(state(input),
+    ['13:00',46800000,false,true,false,true,'47px'],
+    'time accepts the wrapped side of a reversed periodic range');
+  input.removeAttribute('min');input.removeAttribute('max');input.removeAttribute('step');
+  input.value='12:00:30';
+  assert_true(input.matches(':invalid'),'time default step is sixty seconds');
+  input.step='.5';
+  assert_true(input.matches(':valid'),'authored time steps are scaled from seconds');
+  input.valueAsNumber=-3600000;
+  assert_array_equals(state(input),
+    ['23:00',82800000,true,false,false,false,'11px']);
+},'time uses millisecond values, a minute default step, and a periodic domain');
+
+test(()=>{
+  const cases=[
+    ['date','2019-02-29'],['date','2019-2-01'],['month','2019-13'],
+    ['week','2014-W53'],['week','2017-w52'],['time','24:00'],
+    ['time','12:60'],['time','12:00:60']
+  ];
+  for(const [type,value] of cases) {
+    const input=document.createElement('input');input.type=type;input.value=value;
+    assert_equals(input.value,'',`${type} rejects ${value}`);
+    assert_true(Number.isNaN(input.valueAsNumber));
+  }
+},'date and time programmatic values use strict type-specific syntax');
+</script>

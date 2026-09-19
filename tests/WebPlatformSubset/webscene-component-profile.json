@@ -1346,6 +1346,13 @@
       "reason": "Implementation-first candidate for WebScene #257. Number and range :valid/:invalid state now consumes the live numeric value, range underflow/overflow, default or authored step, and bad native-edit input. valueAsNumber shares the strict HTML-number parser, while range programmatic values use their default bounds, stepped midpoint, clamping, and positive-direction tie behavior. Dynamic min/max/step and live-value transitions use compiled subject routes; the native companion supplies the UI-only bad-input transition. Direct browser/native execution remains validation debt; ValidityState IDL and date/time parsing, epochs, and step scales remain outside this focused slice."
     },
     {
+      "path": "contracts/css-date-time-constraint-validity.html",
+      "type": "testharness",
+      "capabilities": ["date-time-constraint-validity", "date-time-value-as-number", "date-time-bad-input", "date-time-step-scales", "periodic-time-range", "bounded-date-time-validity-invalidation"],
+      "evidence": ["wpt-date-time-input-derived", "wpt-constraint-validation-derived", "native-source-companion-contract"],
+      "reason": "Implementation-first candidate for WebScene #257. Date, month, week, and time :valid/:invalid state consumes strict live typed values through the shared numeric validity result. valueAsNumber uses UTC epoch milliseconds for dates and ISO-week Mondays, months from January 1970 for month, and milliseconds from midnight for time. Bounds, per-type step scales and defaults, the negative 1970-W01 base, and time's periodic reversed range feed :in-range/:out-of-range and validity. Dynamic value/min/max/step transitions retain the compiled subject routes, and the native companion supplies the UI-only bad-input transition. Direct browser/native execution remains validation debt; datetime-local, valueAsDate, ValidityState IDL, and stepUp/stepDown remain outside this focused slice."
+    },
+    {
       "path": "contracts/css-user-validity-state.html",
       "type": "testharness",
       "capabilities": ["user-valid-selector", "user-invalid-selector", "live-user-validity-invalidation"],

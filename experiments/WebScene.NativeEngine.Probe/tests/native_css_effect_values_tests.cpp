@@ -67,6 +67,7 @@ struct clip_scene_counts final {
     bool url_clip_metadata{};
     bool compound_backdrop_ordered{};
     bool multilayer_mask_metadata{};
+    bool exclude_mask_metadata{};
 };
 
 clip_scene_counts wait_for_inset_clip_scene(
@@ -197,6 +198,10 @@ clip_scene_counts wait_for_inset_clip_scene(
                                     || data.starts_with("webscene-mask-v2\t2\t")
                                         && data.find("radial-gradient(") != std::string_view::npos
                                         && data.find("linear-gradient(") != std::string_view::npos;
+                                latest.exclude_mask_metadata =
+                                    latest.exclude_mask_metadata
+                                    || data.starts_with("webscene-mask-v3\t2\t")
+                                        && data.find("exclude") != std::string_view::npos;
                             }
                         }
                     } else if (command.kind == 48U) {
@@ -344,6 +349,7 @@ int main()
           #radial-multi-mask {
             mask: radial-gradient(circle at center, black 0%, transparent 75%) no-repeat center / 8px 2px,
               linear-gradient(to right, transparent, black) no-repeat 0px 0px / 8px 2px;
+            mask-composite: exclude, add;
           }
           #effects > span:last-child { filter: blur(2px); }
         `;
@@ -501,6 +507,8 @@ int main()
         "retained scene did not emit all linear-gradient mask commands");
     require(initial_clip_scene.multilayer_mask_metadata,
         "retained scene did not publish bounded radial/multiple mask metadata");
+    require(initial_clip_scene.exclude_mask_metadata,
+        "retained scene did not publish normalized exclude mask composition");
     require(initial_clip_scene.backdrop_filter_commands == 4096U
             && initial_clip_scene.compound_backdrop_ordered,
         "retained scene did not emit bounded authored-order backdrop filters");

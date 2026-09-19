@@ -91,7 +91,7 @@ public static class CssPropertyCatalog
             "mask-repeat" => HasOnlyKeywords(normalizedValue,
                 "no-repeat", "repeat", "repeat-x", "repeat-y", "round", "space"),
             "mask-composite" => HasOnlyKeywords(normalizedValue,
-                "add", "exclude", "intersect", "subtract"),
+                "add", "exclude", "intersect", "subtract", "xor"),
             "mask-mode" => HasOnlyKeywords(normalizedValue,
                 "alpha", "luminance", "match-source"),
             "mask-size" => normalizedValue.IndexOfAny(['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']) >= 0

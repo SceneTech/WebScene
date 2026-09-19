@@ -416,7 +416,8 @@ inline std::optional<std::string> normalize_effect_value(
             ? std::optional<std::string>(value) : std::nullopt;
     }
     if (name == "mask-composite") {
-        return valid_effect_keyword_list(normalized, {"add", "exclude", "intersect", "subtract"})
+        return valid_effect_keyword_list(normalized,
+            {"add", "exclude", "intersect", "subtract", "xor"})
             ? std::optional<std::string>(normalized) : std::nullopt;
     }
     if (name == "mask-mode") {

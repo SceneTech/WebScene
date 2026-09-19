@@ -86,8 +86,19 @@
     assert_true(style.getPropertyValue('mask-image').includes('linear-gradient('));
     assert_equals(style.getPropertyValue('mask-repeat'), 'no-repeat, no-repeat');
     assert_equals(style.getPropertyValue('mask-composite'), 'add, add');
+    effect.style.setProperty('mask-composite', 'exclude, add');
+    assert_equals(getComputedStyle(effect).getPropertyValue('mask-composite'),
+      'exclude, add');
     effect.style.removeProperty('mask');
   }, 'radial and multiple mask shorthand layers expand in authored order');
+
+  test(() => {
+    effect.style.setProperty('-webkit-mask-composite', 'xor, xor');
+    assert_equals(effect.style.getPropertyValue('mask-composite'), 'xor, xor');
+    assert_equals(getComputedStyle(effect).getPropertyValue('mask-composite'),
+      'xor, xor');
+    effect.style.removeProperty('-webkit-mask-composite');
+  }, 'WebKit xor alias preserves CSSOM text and maps to retained exclude');
 
   test(() => {
     assert_equals(getComputedStyle(effect).getPropertyValue('clip-path'),

@@ -630,7 +630,8 @@ void native_document::append_scene(
             if ((repeat != "repeat" && repeat != "no-repeat"
                     && repeat != "repeat-x" && repeat != "repeat-y")
                 || (mode != "match-source" && mode != "alpha")
-                || composite != "add") return invalid();
+                || (composite != "add" && composite != "exclude"
+                    && composite != "xor")) return invalid();
         }
 
         const auto first_lower = css::ascii_lower(images.front());
@@ -665,7 +666,15 @@ void native_document::append_scene(
             return append_scene_string(resource, strings, string_bytes);
         }
 
-        auto resource = std::string{"webscene-mask-v2\t"};
+        const auto has_exclude = [&]() {
+            for (size_t index = 0U; index < images.size(); ++index) {
+                const auto composite = css::ascii_lower(layer_value(composites, index));
+                if (composite == "exclude" || composite == "xor") return true;
+            }
+            return false;
+        }();
+        auto resource = std::string{
+            has_exclude ? "webscene-mask-v3\t" : "webscene-mask-v2\t"};
         resource += std::to_string(images.size());
         resource += '\t';
         const auto append_field = [&](std::string_view field) {
@@ -709,6 +718,10 @@ void native_document::append_scene(
             append_field(layer_value(positions, index));
             append_field(layer_value(sizes, index));
             append_field(layer_value(modes, index));
+            if (has_exclude) {
+                const auto composite = css::ascii_lower(layer_value(composites, index));
+                append_field(composite == "xor" ? "exclude" : composite);
+            }
             append_field(view_box);
             append_field(markup);
             if (resource.size() > 4U * 1024U * 1024U) return invalid();

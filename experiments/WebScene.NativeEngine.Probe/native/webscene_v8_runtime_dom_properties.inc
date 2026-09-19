@@ -3492,11 +3492,29 @@
             && !result->IsFalse();
     }
 
+    bool validate_form_constraints(dom_node& form)
+    {
+        std::vector<dom_node*> invalid_controls;
+        for(const auto* candidate:forms::form_validation_controls(document,form)) {
+            if(candidate!=nullptr && forms::will_validate(document,*candidate)
+                && !forms::constraint_validity_state(document,*candidate).valid())
+                invalid_controls.push_back(const_cast<dom_node*>(candidate));
+        }
+        for(auto* control:invalid_controls)
+            static_cast<void>(dispatch_invalid_event(*control));
+        return invalid_controls.empty();
+    }
+
     static void validate_control(
         const v8::FunctionCallbackInfo<v8::Value>& info)
     {
         auto* self=current(info.GetIsolate());
         auto* node=unwrap_node(info.This());
+        if(self!=nullptr && node!=nullptr && node->tag=="form") {
+            info.GetReturnValue().Set(v8::Boolean::New(
+                info.GetIsolate(),self->validate_form_constraints(*node)));
+            return;
+        }
         if(self==nullptr || !is_constraint_validation_control(node)) {
             info.GetReturnValue().Set(v8::True(info.GetIsolate()));
             return;

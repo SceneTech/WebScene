@@ -1,0 +1,97 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Form submission aggregates constraints and establishes user validity</title>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<script>
+test(()=>{
+  assert_own_property(HTMLFormElement.prototype,'checkValidity');
+  assert_own_property(HTMLFormElement.prototype,'reportValidity');
+
+  const form=document.createElement('form');form.id='aggregate-owner';
+  const fieldset=document.createElement('fieldset');
+  const inside=document.createElement('input');inside.required=true;
+  const barred=document.createElement('input');barred.required=true;barred.disabled=true;
+  fieldset.append(inside,barred);form.appendChild(fieldset);
+  const outside=document.createElement('input');outside.required=true;
+  outside.setAttribute('form',form.id);
+  document.body.append(form,outside);
+
+  assert_true(form.matches(':invalid'),'an invalid owned control invalidates the form');
+  assert_true(fieldset.matches(':invalid'),'an invalid descendant invalidates the fieldset');
+  assert_false(form.matches(':user-invalid'),'aggregate elements never match :user-invalid');
+  assert_false(fieldset.matches(':user-invalid'),'aggregate elements never match :user-invalid');
+
+  inside.value='inside-ready';
+  assert_true(fieldset.matches(':valid'),'barred descendants do not invalidate a fieldset');
+  assert_true(form.matches(':invalid'),'an external form= control remains aggregated');
+  outside.value='outside-ready';
+  assert_true(form.matches(':valid'));
+},'form and fieldset validity aggregate current candidate controls');
+
+test(()=>{
+  const form=document.createElement('form');
+  const first=document.createElement('input');first.required=true;
+  const second=document.createElement('input');second.required=true;
+  const disabled=document.createElement('input');disabled.required=true;disabled.disabled=true;
+  form.append(first,second,disabled);document.body.appendChild(form);
+  const events=[];
+  for(const control of [first,second,disabled]) {
+    control.addEventListener('invalid',event=>{
+      events.push(control);event.preventDefault();
+    });
+  }
+
+  assert_false(form.checkValidity());
+  assert_array_equals(events,[first,second]);
+  assert_false(first.matches(':user-invalid'),
+    'static form validation does not establish submission interaction');
+  events.length=0;
+  assert_false(form.reportValidity());
+  assert_array_equals(events,[first,second]);
+  first.value='ready';second.value='ready';
+  assert_true(form.checkValidity());
+},'form checkValidity and reportValidity dispatch invalid for every invalid candidate');
+
+test(()=>{
+  const form=document.createElement('form');
+  const required=document.createElement('input');required.required=true;
+  const optional=document.createElement('input');
+  const submit=document.createElement('button');submit.textContent='submit';
+  const noValidate=document.createElement('button');
+  noValidate.setAttribute('formnovalidate','');noValidate.textContent='skip validation';
+  form.append(required,optional,submit,noValidate);document.body.appendChild(form);
+  let invalidEvents=0,submitEvents=0;
+  required.addEventListener('invalid',()=>invalidEvents++);
+  form.addEventListener('submit',event=>{submitEvents++;event.preventDefault();});
+
+  submit.click();
+  assert_equals(invalidEvents,1);
+  assert_equals(submitEvents,0,'invalid submission is stopped before submit');
+  assert_true(required.matches(':user-invalid'));
+  assert_true(optional.matches(':user-valid'),
+    'a submit attempt marks every supported owned control');
+
+  required.value='ready';
+  assert_true(required.matches(':user-valid'),
+    'later programmatic value changes preserve submit-attempt interaction');
+  submit.click();
+  assert_equals(submitEvents,1);
+
+  form.reset();
+  assert_false(required.matches(':user-invalid'),'reset clears submission interaction');
+  form.setAttribute('novalidate','');
+  submit.click();
+  assert_equals(invalidEvents,1,'novalidate skips constraint validation');
+  assert_equals(submitEvents,2);
+  assert_true(required.matches(':user-invalid'),
+    'a no-validate form submit still establishes user validity');
+
+  form.reset();form.removeAttribute('novalidate');
+  noValidate.click();
+  assert_equals(invalidEvents,1,'formnovalidate skips constraint validation');
+  assert_equals(submitEvents,3);
+  assert_true(required.matches(':user-invalid'),
+    'a no-validate submit attempt still establishes user validity');
+},'submit activation validates before submit and updates user validity');
+</script>

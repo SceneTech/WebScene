@@ -1,0 +1,29 @@
+{
+  "profile": "webscene-css-animation-play-state-1",
+  "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+  "runtime": "v8",
+  "viewport": {
+    "width": 800,
+    "height": 600,
+    "deviceScaleFactor": 1
+  },
+  "required": [
+    {
+      "path": "contracts/css-animation-play-state.html",
+      "type": "contract",
+      "capabilities": [
+        "animation-play-state-longhand",
+        "animation-play-state-shorthand",
+        "paused-delay-and-active-time",
+        "resume-timeline-continuity",
+        "opacity-rotation-filter-pause",
+        "exactly-once-animation-end",
+        "paused-zero-frame-demand"
+      ],
+      "evidence": ["css-animation-play-state-665-242"],
+      "reason": "WPT-aligned single-animation reduction for retained play-state metadata, initial and mid-active holds, host-clock resume continuity, supported-property terminal fill, exactly-once completion, removal, and settled scheduling."
+    }
+  ],
+  "harnessBlocked": [],
+  "excluded": []
+}

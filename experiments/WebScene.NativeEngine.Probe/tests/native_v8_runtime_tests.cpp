@@ -1139,6 +1139,7 @@ int main()
             test_clipped_offscreen_keyframes_do_not_keep_host_frame_clock_alive(focused_engine);
             test_animation_direction_maps_cycles_and_terminal_boundaries(focused_engine);
             test_animation_fill_maps_before_after_and_preserves_timeline(focused_engine);
+            test_animation_play_state_holds_and_resumes_host_time(focused_engine);
             webscene_engine_destroy(focused_engine);
             return 0;
         }
@@ -1635,6 +1636,7 @@ int main()
     test_finite_rotation_keyframe_dispatches_animation_end(engine);
     test_animation_direction_maps_cycles_and_terminal_boundaries(engine);
     test_animation_fill_maps_before_after_and_preserves_timeline(engine);
+    test_animation_play_state_holds_and_resumes_host_time(engine);
     // This regression uses fixed host timestamps beginning at 2700 ms. Give it
     // a fresh timeline so earlier animation tests cannot make those frames stale.
     webscene_engine_destroy(engine);

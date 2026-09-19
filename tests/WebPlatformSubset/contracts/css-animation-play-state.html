@@ -1,0 +1,114 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>CSS animation play state holds and resumes the supported timeline</title>
+<style>
+  @keyframes play-fade { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes play-all {
+    from { opacity: 0; transform: rotate(0); filter: brightness(.5); }
+    to { opacity: 1; transform: rotate(180deg); filter: brightness(1.5); }
+  }
+  #delayed { animation: play-fade 200ms linear 100ms 1 normal both paused; }
+  #negative { animation: play-fade 200ms linear -50ms 1 normal both;
+    animation-play-state: paused, running; }
+  #active { opacity: .8; filter: brightness(2);
+    animation: play-all 200ms linear 0ms 1 reverse both;
+    animation-play-state: running, paused; }
+</style>
+<div id="delayed"></div><div id="negative"></div><div id="active"></div>
+<script>
+  const state = window.__webSceneWptState = {
+    complete: false, harness: null, results: [], errors: [], diagnostics: []
+  };
+  const active = document.getElementById("active");
+  const negative = document.getElementById("negative");
+  let endCount = 0;
+  let settled = false;
+  active.addEventListener("animationend", () => ++endCount);
+  const finish = (error, diagnostics = []) => {
+    if (settled) return;
+    settled = true;
+    state.diagnostics = diagnostics;
+    state.results.push({
+      name: "animation-play-state holds host time and resumes without restart",
+      status: error ? "FAIL" : "PASS",
+      message: error ? String(error && error.message || error) : null,
+      stack: error && error.stack ? String(error.stack) : null
+    });
+    state.harness = error
+      ? { status: 1, message: state.results[0].message, stack: state.results[0].stack }
+      : { status: 0, message: null, stack: null };
+    state.complete = true;
+  };
+  const close = (left, right, tolerance = .035) =>
+    Math.abs(left - right) <= tolerance;
+  const opacity = element => Number(getComputedStyle(element).opacity);
+  const timeout = setTimeout(
+    () => finish(new Error("animation play-state deadline exceeded")), 1200);
+
+  requestAnimationFrame(() => {
+    try {
+      const delayed = document.getElementById("delayed");
+      const states = [delayed, negative, active]
+        .map(element => getComputedStyle(element).animationPlayState);
+      if (JSON.stringify(states)
+            !== '["paused","paused, running","running, paused"]'
+          || !getComputedStyle(delayed).animation.includes("paused")
+          || getComputedStyle(negative).getPropertyValue("animation-play-state")
+            !== "paused, running"
+          || !close(opacity(delayed), 0) || !close(opacity(negative), .25)) {
+        throw new Error("initial play-state metadata or held delay differs");
+      }
+      const heldOpacity = opacity(active);
+      const heldTransform = getComputedStyle(active).transform;
+      const heldFilter = getComputedStyle(active).filter;
+      active.style.animationPlayState = "paused";
+      setTimeout(() => requestAnimationFrame(() => {
+        try {
+          if (getComputedStyle(active).animationPlayState !== "paused"
+              || !close(opacity(active), heldOpacity, .01)
+              || getComputedStyle(active).transform !== heldTransform
+              || getComputedStyle(active).filter !== heldFilter || endCount !== 0) {
+            throw new Error("paused animation advanced or completed");
+          }
+          active.style.animationPlayState = "";
+          negative.style.animationPlayState = "running";
+          requestAnimationFrame(() => setTimeout(() => requestAnimationFrame(() => {
+            try {
+              if (getComputedStyle(active).animationPlayState !== "running, paused"
+                  || !(opacity(active) < heldOpacity) || !(opacity(negative) > .25)
+                  || endCount !== 0) {
+                throw new Error("resumed animation restarted or included held time");
+              }
+              setTimeout(() => requestAnimationFrame(() => {
+                try {
+                  const transform = getComputedStyle(active).transform;
+                  const matrix = transform.slice(7, -1).split(",").map(Number);
+                  const angle = Math.abs(Math.atan2(matrix[1], matrix[0]) * 180 / Math.PI);
+                  if (!close(opacity(active), 0) || !close(opacity(negative), 1)
+                      || !close(angle, 0)
+                      || getComputedStyle(active).filter !== "brightness(0.5)"
+                      || endCount !== 1) {
+                    throw new Error("resumed animation terminal boundary differs");
+                  }
+                  active.style.animation = "none";
+                  negative.remove();
+                  delayed.remove();
+                  requestAnimationFrame(() => {
+                    try {
+                      if (getComputedStyle(active).transform !== "none"
+                          || getComputedStyle(active).filter !== "brightness(2)") {
+                        throw new Error("play-state removal left a retained override");
+                      }
+                      clearTimeout(timeout);
+                      finish(null, [JSON.stringify({ states, heldOpacity, endCount })]);
+                    } catch (error) { clearTimeout(timeout); finish(error); }
+                  });
+                } catch (error) { clearTimeout(timeout); finish(error); }
+              }), 150);
+            } catch (error) { clearTimeout(timeout); finish(error); }
+          }), 75));
+        } catch (error) { clearTimeout(timeout); finish(error); }
+      }), 150);
+    } catch (error) { clearTimeout(timeout); finish(error); }
+  });
+</script>

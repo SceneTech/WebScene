@@ -715,6 +715,7 @@ int main(int argc,char** argv) {
         {".base::-webkit-scrollbar",3},{".base::-webkit-scrollbar-thumb",4},
         {".base::-webkit-scrollbar-track",5},{".base::-webkit-scrollbar-corner",6},
         {".base::backdrop",7},{".base::placeholder",8},
+        {".base::details-content",9},
         {".base[data-label='::before']",0}
     };
     for(const auto& [selector,kind]:classified_selectors) {
@@ -1083,6 +1084,20 @@ int main(int argc,char** argv) {
     if(!placeholder.foreground_specified
         || placeholder.foreground_rgba!=0xFF0000FF
         || placeholder.opacity!=.5F) return 179;
+    auto& details_content=ordered_node.style.mutable_details_content_pseudo();
+    webscene_native::css::apply_details_content_declaration(
+        ordered_node,details_content,{"block-size","0",false},
+        variable_root,pseudo_result,[](bool) {});
+    webscene_native::css::apply_details_content_declaration(
+        ordered_node,details_content,{"opacity",".4",false},
+        variable_root,pseudo_result,[](bool) {});
+    webscene_native::css::apply_details_content_declaration(
+        ordered_node,details_content,{"padding-inline-start","var(--space)",false},
+        std::unordered_map<std::string,std::string>{{"--space","12px"}},
+        pseudo_result,[](bool) {});
+    if(!details_content.present || !details_content.block_size_zero
+        || details_content.opacity!=.4F
+        || details_content.padding_inline_start.value!=12.0F) return 180;
     webscene_native::css::apply_scrollbar_declaration(ordered_node,3,{"display","none",true},variable_root);
     webscene_native::css::apply_scrollbar_declaration(ordered_node,3,{"display","block",false},variable_root);
     if(!ordered_node.style.scrollbar_hidden || ordered_node.style.display==webscene_native::display_mode::none) return 131;

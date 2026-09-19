@@ -2254,6 +2254,8 @@
                         ? html_iframe_element_template.Get(isolate)
                     : node.tag == "dialog"
                         ? html_dialog_element_template.Get(isolate)
+                    : node.tag == "details"
+                        ? html_details_element_template.Get(isolate)
                     : node.tag == "button"
                         ? html_button_element_template.Get(isolate)
                     : node.tag == "input"
@@ -6015,6 +6017,8 @@
                     static_cast<void>(self->dispatch_form_submit(
                         synthetic,*form,node));
             } else if (!default_prevented) {
+                static_cast<void>(self->apply_details_summary_click_default(
+                    *node, synthetic));
                 self->queue_external_navigation(*node);
             }
             if (form_control_changed && self->is_connected(*node)) {

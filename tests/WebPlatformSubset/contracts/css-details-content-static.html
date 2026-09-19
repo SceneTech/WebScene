@@ -1,0 +1,75 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Details content pseudo-element retains bounded static disclosure layout</title>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<style>
+  :root { --details-space: 12px; }
+  #probe { width: 300px; }
+  #probe::details-content {
+    block-size: 0;
+    box-sizing: border-box;
+    overflow: hidden;
+    opacity: 0;
+    margin-inline-start: 6px;
+    padding-inline-start: var(--details-space);
+    border-inline-start: 1px solid rgb(36, 104, 172);
+  }
+  #probe[open]::details-content {
+    block-size: auto;
+    opacity: 1;
+  }
+</style>
+<div id="direction">
+  <details id="probe">
+    <summary id="summary">
+      <span id="summary-label">Completed response</span>
+      <button id="summary-action" type="button">Action</button>
+    </summary>
+    <div id="content" style="height: 30px">Retained details content</div>
+  </details>
+</div>
+<script>
+  const directionHost = document.getElementById('direction');
+  const probe = document.getElementById('probe');
+  const summaryLabel = document.getElementById('summary-label');
+  const summaryAction = document.getElementById('summary-action');
+  const content = document.getElementById('content');
+
+  test(() => {
+    assert_true(probe instanceof HTMLDetailsElement);
+    assert_false(probe.open);
+    assert_equals(content.getBoundingClientRect().height, 0);
+  }, 'closed details suppresses all content outside the first summary');
+
+  test(() => {
+    probe.open = true;
+    const host = probe.getBoundingClientRect();
+    const body = content.getBoundingClientRect();
+    assert_equals(body.height, 30);
+    assert_approx_equals(body.x - host.x, 19, 0.01);
+  }, 'open reflection exposes statically styled details content');
+
+  test(() => {
+    summaryAction.click();
+    assert_true(probe.open);
+  }, 'interactive summary descendant retains its own activation behavior');
+
+  test(() => {
+    directionHost.setAttribute('dir', 'rtl');
+    const host = probe.getBoundingClientRect();
+    const body = content.getBoundingClientRect();
+    assert_approx_equals(
+      host.right - body.right,
+      19,
+      0.01);
+  }, 'inherited rtl direction places details content inset at inline-start');
+
+  async_test(t => {
+    probe.addEventListener('toggle', t.step_func_done(() => {
+      assert_false(probe.open);
+      assert_equals(content.getBoundingClientRect().height, 0);
+    }), { once: true });
+    summaryLabel.click();
+  }, 'inert first-summary descendant activation toggles disclosure state');
+</script>

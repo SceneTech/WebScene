@@ -403,6 +403,17 @@
       "constants": []
     },
     {
+      "name": "HTMLDetailsElement",
+      "template": "html_details_element_template",
+      "constructor": "illegal_dom_constructor",
+      "parent": "HTMLElement",
+      "attributes": [
+        { "name": "open", "getter": "get_dialog_open", "setter": "set_dialog_open" }
+      ],
+      "methods": [],
+      "constants": []
+    },
+    {
       "name": "HTMLButtonElement",
       "template": "html_button_element_template",
       "constructor": "illegal_dom_constructor",

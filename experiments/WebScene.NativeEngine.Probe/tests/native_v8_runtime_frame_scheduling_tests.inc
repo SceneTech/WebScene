@@ -1437,6 +1437,331 @@ void test_empty_panel_replace_children_skips_visual_work()
     webscene_engine_destroy(engine);
 }
 
+void test_empty_fragment_append_skips_panel_visual_work()
+{
+    auto* engine = webscene_engine_create(0);
+    require(engine != nullptr, "empty fragment churn engine creation failed");
+
+    const auto acknowledge_latest_scene = [engine](const char* failure) {
+        for (auto attempt = 0; attempt < 100; ++attempt) {
+            const auto* scene = webscene_engine_acquire_latest_scene(engine);
+            if (scene != nullptr) {
+                require(webscene_scene_acknowledge(scene) != 0, failure);
+                webscene_scene_release(scene);
+                return;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        fail(failure);
+    };
+    const auto wait_for_publication = [engine](
+        uint64_t previous, const char* failure) {
+        webscene_engine_metrics result{};
+        for (auto attempt = 0; attempt < 100; ++attempt) {
+            webscene_engine_get_metrics(engine, &result);
+            if (result.published_scenes > previous) return result;
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        fail(failure);
+        return result;
+    };
+    acknowledge_latest_scene("empty fragment initial scene could not be acknowledged");
+
+    execute_and_wait(engine, R"JS(
+      (() => {
+        globalThis.__emptyFragmentConnected = 0;
+        globalThis.__emptyFragmentDisconnected = 0;
+        class EmptyFragmentRow extends HTMLElement {
+          connectedCallback() { ++globalThis.__emptyFragmentConnected; }
+          disconnectedCallback() { ++globalThis.__emptyFragmentDisconnected; }
+        }
+        customElements.define('empty-fragment-row', EmptyFragmentRow);
+        const style = document.createElement('style');
+        style.textContent = `
+          #empty-fragment-panel { display:block; width:240px; }
+          #empty-fragment-panel > empty-fragment-row { display:block; height:20px; }
+          #empty-fragment-panel > empty-fragment-row:last-child { width:120px; }
+        `;
+        document.head.appendChild(style);
+        const surface = document.createElement('main');
+        const panel = document.createElement('section');
+        panel.id = 'empty-fragment-panel';
+        surface.appendChild(panel);
+        document.body.appendChild(surface);
+        const rows = [];
+        const batch = document.createDocumentFragment();
+        for (let index = 0; index < 128; ++index) {
+          const row = document.createElement('empty-fragment-row');
+          row.dataset.index = String(index);
+          rows.push(row);
+          batch.appendChild(row);
+        }
+        const input = document.createElement('input');
+        input.value = 'abcdef';
+        rows[0].appendChild(input);
+        panel.appendChild(batch);
+        input.focus();
+        input.setSelectionRange(1, 4);
+        globalThis.__emptyFragmentStyle = style;
+        globalThis.__emptyFragmentSurface = surface;
+        globalThis.__emptyFragmentPanel = panel;
+        globalThis.__emptyFragmentRows = rows;
+        globalThis.__emptyFragmentInput = input;
+        globalThis.__emptyAppendFragment = document.createDocumentFragment();
+      })()
+    )JS", "empty-fragment-panel-setup.js");
+    require(
+        evaluate(engine, R"JS((() => [
+          __emptyFragmentConnected,
+          __emptyFragmentDisconnected,
+          __emptyFragmentPanel.children.length,
+          document.activeElement === __emptyFragmentInput,
+          __emptyFragmentInput.selectionStart,
+          __emptyFragmentInput.selectionEnd,
+          getComputedStyle(__emptyFragmentPanel.lastElementChild).width
+        ]))())JS", "empty-fragment-panel-ready.js")
+            == R"([128,0,128,true,1,4,"120px"])",
+        "empty fragment panel fixture did not complete lifecycle or layout");
+    acknowledge_latest_scene("empty fragment setup scene could not be acknowledged");
+
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+    std::this_thread::sleep_for(std::chrono::milliseconds(275));
+    execute_and_wait_for_wrapper_retention_scene(engine,
+        "document.body.setAttribute('data-empty-fragment-diagnostic', 'before')",
+        "empty-fragment-diagnostic-before.js");
+    acknowledge_latest_scene("empty fragment baseline diagnostic scene could not be acknowledged");
+    const auto recascades_before = runtime_counter_diagnostic(
+        engine, "style-recascade-schedule-requests");
+#endif
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    webscene_engine_metrics connected_before{};
+    webscene_engine_get_metrics(engine, &connected_before);
+    webscene_engine_memory_metrics memory_before{sizeof(memory_before)};
+    require(webscene_engine_get_memory_metrics(engine, &memory_before) != 0,
+        "empty fragment memory baseline was unavailable");
+    const auto connected = evaluate(engine, R"JS((() => {
+      let returnedIdentity = true;
+      for (let index = 0; index < 4096; ++index) {
+        returnedIdentity = __emptyFragmentPanel.appendChild(__emptyAppendFragment)
+          === __emptyAppendFragment && returnedIdentity;
+      }
+      return [
+        returnedIdentity,
+        __emptyAppendFragment.childNodes.length,
+        __emptyAppendFragment.parentNode === null,
+        __emptyFragmentPanel.children.length,
+        __emptyFragmentRows.every((row, index) =>
+          row === __emptyFragmentPanel.children[index]),
+        __emptyFragmentConnected,
+        __emptyFragmentDisconnected,
+        document.activeElement === __emptyFragmentInput,
+        __emptyFragmentInput.selectionStart,
+        __emptyFragmentInput.selectionEnd,
+        getComputedStyle(__emptyFragmentPanel.lastElementChild).width
+      ];
+    })())JS", "empty-fragment-connected-churn.js");
+    require(
+        connected == R"([true,0,true,128,true,128,0,true,1,4,"120px"])",
+        "connected empty fragment appends changed DOM, focus, selection, lifecycle, or style: "
+            + connected);
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    webscene_engine_metrics connected_after{};
+    webscene_engine_get_metrics(engine, &connected_after);
+    require(
+        connected_after.layout_passes == connected_before.layout_passes
+            && connected_after.published_scenes == connected_before.published_scenes,
+        "connected empty fragment appends scheduled layout or publication");
+    webscene_engine_memory_metrics connected_memory{sizeof(connected_memory)};
+    require(webscene_engine_get_memory_metrics(engine, &connected_memory) != 0
+            && connected_memory.native_dom_node_count
+                == memory_before.native_dom_node_count,
+        "connected empty fragment appends allocated native DOM nodes");
+
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+    std::this_thread::sleep_for(std::chrono::milliseconds(275));
+    execute_and_wait_for_wrapper_retention_scene(engine,
+        "document.body.setAttribute('data-empty-fragment-diagnostic', 'after')",
+        "empty-fragment-diagnostic-after.js");
+    acknowledge_latest_scene("empty fragment result diagnostic scene could not be acknowledged");
+    require(
+        runtime_counter_diagnostic(
+            engine, "style-recascade-schedule-requests")
+                == recascades_before,
+        "connected empty fragment appends scheduled style recascades");
+#endif
+
+    webscene_engine_metrics detach_before{};
+    webscene_engine_get_metrics(engine, &detach_before);
+    execute_and_wait(engine,
+        "__emptyFragmentPanel.remove()",
+        "empty-fragment-panel-detach.js");
+    const auto detached_scene = wait_for_publication(
+        detach_before.published_scenes,
+        "populated fragment panel detach did not publish a scene");
+    require(
+        detached_scene.layout_passes == detach_before.layout_passes + 1U
+            && detached_scene.published_scenes == detach_before.published_scenes + 1U,
+        "populated fragment panel detach escaped one layout/publication");
+    acknowledge_latest_scene("populated fragment panel detach scene could not be acknowledged");
+    std::this_thread::sleep_for(std::chrono::milliseconds(25));
+
+    webscene_engine_metrics detached_before{};
+    webscene_engine_get_metrics(engine, &detached_before);
+    const auto detached = evaluate(engine, R"JS((() => {
+      let returnedIdentity = true;
+      for (let index = 0; index < 4096; ++index) {
+        returnedIdentity = __emptyFragmentPanel.appendChild(__emptyAppendFragment)
+          === __emptyAppendFragment && returnedIdentity;
+      }
+      return [
+        returnedIdentity,
+        __emptyAppendFragment.childNodes.length,
+        __emptyAppendFragment.parentNode === null,
+        __emptyFragmentPanel.children.length,
+        __emptyFragmentRows.every((row, index) =>
+          row === __emptyFragmentPanel.children[index]),
+        __emptyFragmentConnected,
+        __emptyFragmentDisconnected,
+        __emptyFragmentPanel.isConnected
+      ];
+    })())JS", "empty-fragment-detached-churn.js");
+    require(
+        detached == "[true,0,true,128,true,128,128,false]",
+        "detached empty fragment appends changed DOM or lifecycle state: " + detached);
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    webscene_engine_metrics detached_after{};
+    webscene_engine_get_metrics(engine, &detached_after);
+    require(
+        detached_after.layout_passes == detached_before.layout_passes
+            && detached_after.published_scenes == detached_before.published_scenes,
+        "detached empty fragment appends scheduled visual work");
+
+    webscene_engine_metrics reattach_before{};
+    webscene_engine_get_metrics(engine, &reattach_before);
+    execute_and_wait(engine,
+        "__emptyFragmentSurface.appendChild(__emptyFragmentPanel)",
+        "empty-fragment-panel-reattach.js");
+    const auto reattached = wait_for_publication(
+        reattach_before.published_scenes,
+        "populated fragment panel reattach did not publish a scene");
+    require(
+        evaluate(engine, R"JS((() => [
+          __emptyFragmentConnected,
+          __emptyFragmentDisconnected,
+          __emptyFragmentPanel.children.length,
+          __emptyFragmentPanel.isConnected,
+          __emptyFragmentRows.every((row, index) =>
+            row === __emptyFragmentPanel.children[index]),
+          __emptyFragmentInput.selectionStart,
+          __emptyFragmentInput.selectionEnd,
+          getComputedStyle(__emptyFragmentPanel.lastElementChild).width
+        ]))())JS", "empty-fragment-panel-reattach-result.js")
+            == R"([256,128,128,true,true,1,4,"120px"])",
+        "populated fragment panel reattach changed lifecycle, identity, selection, or style");
+    require(
+        reattached.layout_passes == reattach_before.layout_passes + 1U
+            && reattached.published_scenes == reattach_before.published_scenes + 1U,
+        "populated fragment panel reattach escaped one layout/publication");
+    acknowledge_latest_scene("populated fragment panel reattach scene could not be acknowledged");
+
+    require(
+        evaluate(engine, R"JS((() => {
+          const fragment = document.createDocumentFragment();
+          const rows = [];
+          for (let index = 0; index < 256; ++index) {
+            const row = document.createElement('empty-fragment-row');
+            row.dataset.batchIndex = String(index);
+            rows.push(row);
+          }
+          fragment.append(...rows);
+          globalThis.__nonemptyAppendFragment = fragment;
+          globalThis.__nonemptyAppendRows = rows;
+          return [
+            fragment.children.length,
+            rows.every((row, index) => row === fragment.children[index]),
+            rows.every(row => !row.isConnected),
+            __emptyFragmentConnected,
+            __emptyFragmentDisconnected
+          ];
+        })())JS", "nonempty-fragment-build.js")
+            == "[256,true,true,256,128]",
+        "nonempty fragment construction changed detached row lifecycle or identity");
+    acknowledge_latest_scene("nonempty fragment construction scene could not be acknowledged");
+
+    webscene_engine_metrics append_before{};
+    webscene_engine_get_metrics(engine, &append_before);
+    execute_and_wait(engine,
+        "__emptyFragmentPanel.appendChild(__nonemptyAppendFragment)",
+        "nonempty-fragment-append.js");
+    const auto appended = wait_for_publication(
+        append_before.published_scenes,
+        "nonempty fragment append did not publish a scene");
+    require(
+        evaluate(engine, R"JS((() => [
+          __nonemptyAppendFragment.childNodes.length,
+          __nonemptyAppendFragment.parentNode === null,
+          __emptyFragmentPanel.children.length,
+          __nonemptyAppendRows.every((row, index) =>
+            row === __emptyFragmentPanel.children[index + 128]),
+          __emptyFragmentConnected,
+          __emptyFragmentDisconnected,
+          getComputedStyle(__emptyFragmentPanel.lastElementChild).width
+        ]))())JS", "nonempty-fragment-append-result.js")
+            == R"([0,true,384,true,512,128,"120px"])",
+        "nonempty fragment append changed row lifecycle, identity, or style");
+    require(
+        appended.layout_passes == append_before.layout_passes + 1U
+            && appended.published_scenes == append_before.published_scenes + 1U,
+        "nonempty fragment append escaped one layout/publication");
+    acknowledge_latest_scene("nonempty fragment append scene could not be acknowledged");
+
+    execute_and_wait(engine, R"JS(
+      __emptyFragmentSurface.remove();
+      __emptyFragmentStyle.remove();
+      delete globalThis.__nonemptyAppendRows;
+      delete globalThis.__nonemptyAppendFragment;
+      delete globalThis.__emptyAppendFragment;
+      delete globalThis.__emptyFragmentInput;
+      delete globalThis.__emptyFragmentRows;
+      delete globalThis.__emptyFragmentPanel;
+      delete globalThis.__emptyFragmentSurface;
+      delete globalThis.__emptyFragmentStyle;
+      delete globalThis.__emptyFragmentConnected;
+      delete globalThis.__emptyFragmentDisconnected;
+    )JS", "empty-fragment-panel-cleanup.js");
+    acknowledge_latest_scene("empty fragment cleanup scene could not be acknowledged");
+    webscene_engine_metrics cleanup_metrics{};
+    webscene_engine_get_metrics(engine, &cleanup_metrics);
+    require(webscene_engine_request_low_memory(engine) != 0,
+        "empty fragment low-memory request was rejected");
+    webscene_engine_memory_metrics memory_after{sizeof(memory_after)};
+    for (auto attempt = 0; attempt < 250; ++attempt) {
+        require(webscene_engine_get_memory_metrics(engine, &memory_after) != 0,
+            "empty fragment final memory metrics were unavailable");
+        if (memory_after.low_memory_notifications
+                > memory_before.low_memory_notifications
+            && memory_after.native_dom_node_count
+                <= memory_before.native_dom_node_count + 8U) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    webscene_engine_metrics collected_metrics{};
+    webscene_engine_get_metrics(engine, &collected_metrics);
+    require(
+        memory_after.low_memory_notifications
+                > memory_before.low_memory_notifications
+            && memory_after.native_dom_node_count
+                <= memory_before.native_dom_node_count + 8U,
+        "empty fragment churn retained detached native DOM nodes");
+    require(
+        collected_metrics.layout_passes == cleanup_metrics.layout_passes
+            && collected_metrics.published_scenes == cleanup_metrics.published_scenes,
+        "empty fragment low-memory collection scheduled visual work");
+    webscene_engine_destroy(engine);
+}
+
 void test_identical_selector_attribute_writes_do_not_schedule_transitions()
 {
     auto* engine = webscene_engine_create(0);
@@ -2116,6 +2441,7 @@ void test_resize_event_coalesces_attribute_selector_recascades(
         delete globalThis.__resizeAttributeBatchResult;
     )JS", "native-resize-attribute-batching-cleanup.js");
     test_empty_panel_replace_children_skips_visual_work();
+    test_empty_fragment_append_skips_panel_visual_work();
     test_identical_selector_attribute_writes_do_not_schedule_transitions();
 }
 

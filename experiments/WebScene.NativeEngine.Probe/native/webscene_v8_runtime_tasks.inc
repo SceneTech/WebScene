@@ -2372,7 +2372,8 @@
         const auto controls=forms::form_validation_controls(document,form);
         for(const auto* candidate:controls) {
             if(candidate==nullptr || (candidate->tag!="input"
-                && candidate->tag!="select" && candidate->tag!="textarea"))
+                && candidate->tag!="select" && candidate->tag!="textarea"
+                && !candidate->form_control().form_associated_custom_element))
                 continue;
             auto& control=*const_cast<dom_node*>(candidate);
             if(control.form_control().user_validity_interacted) continue;

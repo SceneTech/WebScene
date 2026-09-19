@@ -7,8 +7,19 @@ void require(bool value){if(!value)throw std::runtime_error("Dawn Linux external
 }
 int main(){
     static_assert(WEBSCENE_DAWN_LINUX_EXTERNAL_FACTORY_VERSION==1);
+    static_assert(WEBSCENE_DAWN_NATIVE_DEVICE_ABI_VERSION==1);
+    webscene_dawn_native_device_v1 query{};
+    query.struct_size=sizeof(query);
+    query.version=WEBSCENE_DAWN_NATIVE_DEVICE_ABI_VERSION;
+    require(websceneDawnQueryVulkanDeviceV1(nullptr,&query)==
+        WEBSCENE_DAWN_NATIVE_DEVICE_INVALID_ARGUMENT_V1);
     auto* first=reinterpret_cast<WGPUDevice>(uintptr_t{1});
     auto* second=reinterpret_cast<WGPUDevice>(uintptr_t{2});
+    require(websceneDawnQueryVulkanDeviceV1(first,&query)==
+        WEBSCENE_DAWN_NATIVE_DEVICE_FOREIGN_DEVICE_V1);
+    query.version=WEBSCENE_DAWN_NATIVE_DEVICE_ABI_VERSION+1;
+    require(websceneDawnQueryVulkanDeviceV1(first,&query)==
+        WEBSCENE_DAWN_NATIVE_DEVICE_INCOMPATIBLE_ABI_V1);
     require(valid_dawn_linux_external_binding(first,first,first));
     require(!valid_dawn_linux_external_binding(nullptr,first,first));
     require(!valid_dawn_linux_external_binding(first,second,first));
@@ -23,10 +34,15 @@ int main(){
     device->vk_queue=reinterpret_cast<void*>(uintptr_t{5});
     device->device_uuid[0]=1;
     device->driver_uuid[0]=2;device->dawn_queue_family=4;
+    device->device_lost=std::make_shared<std::atomic<bool>>(false);
     device->native_owner=native_owner;
     require(same_dawn_linux_external_identity(device,device));
     auto copied=std::make_shared<dawn_linux_external_device_lifetime>(*device);
     require(!same_dawn_linux_external_identity(device,copied));
+    device->device_lost->store(true,std::memory_order_release);
+    require(!same_dawn_linux_external_identity(device,device));
+    require(dawn_linux_external_device_is_lost(device));
+    device->device_lost->store(false,std::memory_order_release);
 
     linux_external_image_snapshot exact;
     exact.device_uuid=device->device_uuid;exact.driver_uuid=device->driver_uuid;

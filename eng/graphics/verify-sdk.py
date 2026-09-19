@@ -7,6 +7,7 @@ from pathlib import Path, PurePosixPath
 import sys
 
 LOCK_PATH = Path(__file__).with_name("dependencies.lock.json")
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def sha(path):
@@ -75,6 +76,24 @@ def verify(sdk, component, rid):
                 raise ValueError("dawn: pinned Windows shader compiler or license mismatch")
         if sha(sdk / "build-info/DawnSymbolBoundary.cmake") != sha(LOCK_PATH.with_name("DawnSymbolBoundary.cmake")):
             raise ValueError("dawn: symbol isolation policy mismatch; rebuild the SDK")
+        if rid.startswith("linux-"):
+            bridge_files = {
+                "include/webscene/dawn_native_device.h":
+                    ROOT / "experiments/WebScene.NativeEngine.Probe/native/graphics/"
+                    "webscene/dawn_native_device.h",
+                "build-info/webscene-dawn-native-device/dawn_native_device.h":
+                    ROOT / "experiments/WebScene.NativeEngine.Probe/native/graphics/"
+                    "webscene/dawn_native_device.h",
+                "build-info/webscene-dawn-native-device/dawn_native_device.cpp":
+                    LOCK_PATH.with_name("dawn_native_device.cpp"),
+                "build-info/webscene-dawn-native-device/dawn_native_device_internal.h":
+                    LOCK_PATH.with_name("dawn_native_device_internal.h"),
+            }
+            required |= set(bridge_files)
+            for installed, canonical in bridge_files.items():
+                if files.get(installed) != sha(canonical):
+                    raise ValueError(
+                        f"dawn: exact native-device bridge mismatch: {installed}")
     if not required <= set(files):
         raise ValueError(f"{component}: required headers/libraries missing: {sorted(required - set(files))}")
     print(f"Verified {component} {manifest['revision']} for {rid}: {len(files)} files")

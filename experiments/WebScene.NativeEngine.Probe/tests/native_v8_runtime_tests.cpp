@@ -194,6 +194,10 @@ int main()
           test_nested_pointer_coordinate_projection();
           return 0;
         }
+        if (selected == "nested-keyboard-handoff") {
+          test_nested_keyboard_handoff_and_focus_traversal();
+          return 0;
+        }
         if (selected == "idle-v8-platform") {
             test_idle_v8_foreground_completion();
             return 0;

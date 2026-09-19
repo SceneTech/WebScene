@@ -1,0 +1,62 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Nested keyboard focus traversal contract</title>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<script src="/resources/testdriver.js"></script>
+<script src="/resources/testdriver-actions.js"></script>
+<script src="/resources/testdriver-vendor.js"></script>
+<button id="outer-before">before</button>
+<iframe id="frame"></iframe>
+<button id="outer-after">after</button>
+<script>
+  const frame = document.querySelector("#frame");
+  const childDocument = frame.contentDocument;
+  childDocument.body.innerHTML =
+    '<button id="inner-first">first</button><button id="inner-last">last</button>';
+  const first = childDocument.querySelector("#inner-first");
+  const last = childDocument.querySelector("#inner-last");
+  const after = document.querySelector("#outer-after");
+  const events = [];
+  for (const type of ["keydown", "keyup"]) {
+    frame.contentWindow.addEventListener(type, event => events.push({
+      type,
+      key:event.key,
+      code:event.code,
+      keyCode:event.keyCode,
+      repeat:event.repeat,
+      isTrusted:event.isTrusted,
+      target:event.target.tagName
+    }));
+  }
+
+  promise_test(async () => {
+    frame.contentWindow.focus();
+    await test_driver.send_keys(childDocument.body, "F");
+    assert_array_equals(events.map(event => event.type), ["keydown", "keyup"]);
+    assert_true(events.every(event => event.key === "F" && event.code === "KeyF"
+      && event.keyCode === 70 && event.isTrusted && event.target === "BODY"),
+      "a child Window focused on BODY receives browser-shaped keyboard data");
+
+    await test_driver.send_keys(childDocument.body, "\uE004");
+    assert_equals(document.activeElement, frame, "outer document owns child focus");
+    assert_equals(childDocument.activeElement, first, "Tab enters the first child control");
+    await test_driver.send_keys(first, "\uE004");
+    assert_equals(childDocument.activeElement, last, "Tab advances inside the child document");
+
+    const cancelTab = event => {
+      if (event.key === "Tab") event.preventDefault();
+    };
+    last.addEventListener("keydown", cancelTab);
+    await test_driver.send_keys(last, "\uE004");
+    assert_equals(childDocument.activeElement, last,
+      "preventDefault keeps focus on the child control");
+    last.removeEventListener("keydown", cancelTab);
+
+    await test_driver.send_keys(last, "\uE004");
+    assert_equals(document.activeElement, after,
+      "Tab exits the child document to the following outer control");
+    assert_equals(childDocument.activeElement, childDocument.body,
+      "leaving the child resets its active element");
+  }, "keyboard dispatch and Tab default action cross an iframe boundary");
+</script>

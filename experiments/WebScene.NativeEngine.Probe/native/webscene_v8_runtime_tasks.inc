@@ -2458,7 +2458,11 @@
             }
             for (auto* child : document.composed_children(node)) visit(*child);
         };
-        visit(active_root());
+        // Sequential navigation spans browsing-context boundaries. The native
+        // DOM stores child document roots below their iframe owners, so the
+        // top-level tree provides the browser order for entering and leaving
+        // a frame without a second focus stop on the owner element.
+        visit(document.body());
         std::stable_sort(candidates.begin(), candidates.end(), [](const auto& left, const auto& right) {
             const auto left_positive = left.tab_index > 0;
             const auto right_positive = right.tab_index > 0;
@@ -2867,7 +2871,31 @@
                 const auto backwards = (input.flags & WEBSCENE_INPUT_MODIFIER_SHIFT) != 0U;
                 dom_node* next = nullptr;
                 if (current == focus_order.end()) {
-                    next = backwards ? focus_order.back() : focus_order.front();
+                    // Window.focus() enters a child document with BODY active,
+                    // represented by a null native active_element. Forward Tab
+                    // begins at that document's first focusable descendant;
+                    // reverse Tab exits to the preceding outer control.
+                    auto* focused_owner = focused_document_owner_id == 0U
+                        ? nullptr
+                        : find_node_by_native_id(
+                            document.body(), focused_document_owner_id);
+                    const auto first_in_focused_frame = focused_owner == nullptr
+                        ? focus_order.end()
+                        : std::find_if(
+                            focus_order.begin(),
+                            focus_order.end(),
+                            [&](const dom_node* candidate) {
+                                return subtree_contains(*focused_owner, candidate);
+                            });
+                    if (first_in_focused_frame == focus_order.end()) {
+                        next = backwards ? focus_order.back() : focus_order.front();
+                    } else if (!backwards) {
+                        next = *first_in_focused_frame;
+                    } else {
+                        next = first_in_focused_frame == focus_order.begin()
+                            ? focus_order.back()
+                            : *(first_in_focused_frame - 1);
+                    }
                 } else if (backwards) {
                     next = current == focus_order.begin() ? focus_order.back() : *(current - 1);
                 } else {
@@ -3372,7 +3400,20 @@
             document.body(), static_cast<float>(input.x), static_cast<float>(input.y));
         auto* input_owner = keyboard ? active_element
             : pointer_capture_target != nullptr ? pointer_capture_target : initial_hit_target;
-        if (input_owner != nullptr) local_context = context_for_node(*input_owner);
+        if (input_owner != nullptr) {
+            local_context = context_for_node(*input_owner);
+        } else if (keyboard && focused_document_owner_id != 0U) {
+            // Child Window.focus() deliberately leaves BODY as the document's
+            // activeElement. Route keyboard input by the separately tracked
+            // focused browsing context so its Window listeners receive the
+            // first key event before any inner control has taken focus.
+            const auto focused_context =
+                actual_frame_contexts.find(focused_document_owner_id);
+            if (focused_context != actual_frame_contexts.end()
+                && !focused_context->second.IsEmpty()) {
+                local_context = focused_context->second.Get(isolate);
+            }
+        }
         activate_css_cascade(local_context);
         v8::Context::Scope context_scope(local_context);
         v8::TryCatch try_catch(isolate);

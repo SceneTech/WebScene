@@ -256,6 +256,7 @@ inline void apply_animation_shorthand(node_style& style, const std::string& valu
         auto iterations = std::string("1");
         auto direction = std::string("normal");
         auto fill_mode = std::string("none");
+        auto play_state = std::string("running");
         auto saw_time = false;
         const auto first = split_css_component_list(value, ',');
         for (const auto& token : split_value_tokens(
@@ -278,9 +279,10 @@ inline void apply_animation_shorthand(node_style& style, const std::string& valu
             } else if (lower == "normal" || lower == "reverse"
                 || lower == "alternate" || lower == "alternate-reverse") {
                 direction = lower;
+            } else if (lower == "running" || lower == "paused") {
+                play_state = lower;
             } else if (lower != "none"
-                && lower != "backwards"
-                && lower != "running" && lower != "paused") {
+                && lower != "backwards") {
                 name = token;
             }
         }
@@ -292,6 +294,7 @@ inline void apply_animation_shorthand(node_style& style, const std::string& valu
         animations.animation_iteration_count_value = iterations;
         animations.animation_direction_value = direction;
         animations.animation_fill_mode_value = fill_mode;
+        animations.animation_play_state_value = play_state;
     }
 
 inline void configure_keyframes(node_style& style,
@@ -305,6 +308,13 @@ inline void configure_keyframes(node_style& style,
         animations.rotation_keyframe_animation_signature.clear();
         animations.filter_keyframes.clear();
         animations.filter_keyframe_animation_signature.clear();
+        const auto play_states = split_css_component_list(
+            animations.animation_play_state_value, ',');
+        const auto play_state = play_states.empty()
+            ? std::string("running") : ascii_lower(trim_value(play_states.front()));
+        animations.keyframe_play_state = play_state == "paused"
+            ? node_style::animation_data::play_kind::paused
+            : node_style::animation_data::play_kind::running;
         if (animations.animation_name_value == "none") return;
         const auto names = split_css_component_list(animations.animation_name_value, ',');
         if (names.empty()) return;

@@ -290,6 +290,8 @@
             node.style.mutable_animations().animation_direction_value = "normal";
         } else if (name == "animationFillMode" || name == "animation-fill-mode") {
             node.style.mutable_animations().animation_fill_mode_value = "none";
+        } else if (name == "animationPlayState" || name == "animation-play-state") {
+            node.style.mutable_animations().animation_play_state_value = "running";
         } else if (name == "animation" || name == "animationName"
             || name == "animation-name" || name == "animationDuration"
             || name == "animation-duration" || name == "animationDelay"
@@ -304,6 +306,7 @@
             animations.animation_iteration_count_value = "1";
             animations.animation_direction_value = "normal";
             animations.animation_fill_mode_value = "none";
+            animations.animation_play_state_value = "running";
         } else if (name == "opacity") {
             node.style.opacity = 1;
             node.style.inline_property_mask &= ~inline_opacity;
@@ -1437,6 +1440,8 @@
                 value = node->style.animations().transition_timing_function_value;
             } else if (name == "animation-fill-mode") {
                 value = node->style.animations().animation_fill_mode_value;
+            } else if (name == "animation-play-state") {
+                value = node->style.animations().animation_play_state_value;
             } else if (name == "opacity") {
                 value = serialize_css_number(node->painted_opacity_value());
             } else if (name == "color") {
@@ -2046,7 +2051,8 @@
                 + node->style.animations().animation_delay_value + " "
                 + node->style.animations().animation_iteration_count_value + " "
                 + node->style.animations().animation_direction_value + " "
-                + node->style.animations().animation_fill_mode_value;
+                + node->style.animations().animation_fill_mode_value + " "
+                + node->style.animations().animation_play_state_value;
         } else if (name == "animationName" || name == "animation-name") {
             value = node->style.animations().animation_name_value;
         } else if (name == "animationDuration" || name == "animation-duration") {
@@ -2063,6 +2069,8 @@
             value = node->style.animations().animation_direction_value;
         } else if (name == "animationFillMode" || name == "animation-fill-mode") {
             value = node->style.animations().animation_fill_mode_value;
+        } else if (name == "animationPlayState" || name == "animation-play-state") {
+            value = node->style.animations().animation_play_state_value;
         } else if (name == "zIndex") {
             value = node->style.z_index_auto
                 ? "auto" : std::to_string(node->style.z_index);
@@ -2576,6 +2584,8 @@
             node->style.mutable_animations().animation_direction_value = value;
         } else if (name == "animationFillMode") {
             node->style.mutable_animations().animation_fill_mode_value = value;
+        } else if (name == "animationPlayState") {
+            node->style.mutable_animations().animation_play_state_value = value;
         } else if (name == "opacity") {
             node->style.opacity = raw_value->IsNullOrUndefined()
                 ? 1.0F

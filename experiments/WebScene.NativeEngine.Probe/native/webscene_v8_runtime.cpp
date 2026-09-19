@@ -8188,7 +8188,12 @@ v8_dom_runtime::memory_metrics v8_dom_runtime::read_memory_metrics() const noexc
             + keyframes.opacity_stops.capacity()
                 * sizeof(node_style::opacity_keyframe)
             + keyframes.rotation_stops.capacity()
-                * sizeof(node_style::rotation_keyframe);
+                * sizeof(node_style::rotation_keyframe)
+            + keyframes.filter_stops.capacity()
+                * sizeof(node_style::filter_keyframe);
+        for (const auto& stop : keyframes.filter_stops) {
+            result.native_css_rule_storage_bytes += string_bytes(stop.value);
+        }
     }
     for (const auto& [root, cascade] : impl_->inactive_css_cascades) {
         static_cast<void>(root);
@@ -8198,7 +8203,12 @@ v8_dom_runtime::memory_metrics v8_dom_runtime::read_memory_metrics() const noexc
                 + keyframes.opacity_stops.capacity()
                     * sizeof(node_style::opacity_keyframe)
                 + keyframes.rotation_stops.capacity()
-                    * sizeof(node_style::rotation_keyframe);
+                    * sizeof(node_style::rotation_keyframe)
+                + keyframes.filter_stops.capacity()
+                    * sizeof(node_style::filter_keyframe);
+            for (const auto& stop : keyframes.filter_stops) {
+                result.native_css_rule_storage_bytes += string_bytes(stop.value);
+            }
         }
     }
     {

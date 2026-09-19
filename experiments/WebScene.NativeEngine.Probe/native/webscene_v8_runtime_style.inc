@@ -14,9 +14,9 @@
     {
         const auto name = canonical_css_property_name(raw_name);
         if (name == "filter") {
-            const auto painted = node.painted_filter_functions_value();
-            if (!painted.empty()) {
-                return native_document::serialize_filter_functions(painted);
+            if (node.has_painted_filter_override_value()) {
+                return native_document::serialize_filter_functions(
+                    node.painted_filter_functions_value());
             }
         }
         const auto authored = node.authored_style().declarations.find(name);

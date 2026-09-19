@@ -1821,7 +1821,10 @@
         }
         for (const auto& animation : animation_events) {
             auto* node = document.find_by_native_id(animation.node_id);
-            if (node == nullptr) continue;
+            if (node == nullptr
+                || (!animation.pseudo_element.empty() && !is_connected(*node))) {
+                continue;
+            }
             auto target = wrap_node(*node);
             auto event = v8::Object::New(isolate);
             event->Set(local_context, js_string(isolate, "type"),
@@ -1835,7 +1838,7 @@
             event->Set(local_context, js_string(isolate, "elapsedTime"),
                 v8::Number::New(isolate, animation.elapsed_time_seconds)).Check();
             event->Set(local_context, js_string(isolate, "pseudoElement"),
-                js_string(isolate, "")).Check();
+                js_string(isolate, animation.pseudo_element.c_str())).Check();
             v8::Local<v8::Value> dispatcher;
             if (!target->Get(local_context, js_string(isolate, "dispatchEvent"))
                     .ToLocal(&dispatcher)

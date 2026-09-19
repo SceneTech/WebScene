@@ -1,0 +1,27 @@
+{
+  "profile": "webscene-css-animation-pseudo-elements-1",
+  "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+  "runtime": "v8",
+  "viewport": {
+    "width": 800,
+    "height": 600,
+    "deviceScaleFactor": 1
+  },
+  "required": [
+    {
+      "path": "contracts/css-animation-pseudo-elements.html",
+      "type": "contract",
+      "capabilities": [
+        "generated-before-after-animation",
+        "pseudo-animation-retained-paint",
+        "pseudo-animation-owner-event",
+        "pseudo-animation-identity-cleanup",
+        "pseudo-animation-settled-frame-demand"
+      ],
+      "evidence": ["css-animation-pseudo-elements-676-242"],
+      "reason": "WPT-aligned bounded reduction for generated ::before/::after keyframes, originating-element event ownership, retained paint, identity mutation, detach cleanup, and demand-free paused or filled state."
+    }
+  ],
+  "harnessBlocked": [],
+  "excluded": []
+}

@@ -1305,6 +1305,81 @@ void test_transform_keyframes_compose_retained_geometry_and_paint(
         engine, false, "detached transform keyframes retained frame demand");
 }
 
+void test_generated_pseudo_animations_share_owner_lifecycle(webscene_engine* engine)
+{
+    animation_frame_and_wait(engine, 16000.0, 7160U);
+    execute_and_wait(engine, R"JS(
+        (() => {
+          document.body.innerHTML = `
+            <style>
+              @keyframes pseudo-life {
+                from { opacity: .2; transform: translateX(0) scale(1); }
+                to { opacity: .8; transform: translateX(20px) scale(2); }
+              }
+              #pseudo-owner { position: fixed; left: 80px; top: 80px;
+                width: 40px; height: 30px; }
+              #pseudo-owner::before, #pseudo-owner::after { content: "";
+                position: absolute; left: 0; top: 0; width: 40px; height: 30px;
+                background: rgb(20, 104, 212); }
+              #pseudo-owner::before { animation: pseudo-life 1000ms linear both; }
+              #pseudo-owner::after {
+                animation: pseudo-life 1000ms linear -500ms both paused; }
+              #pseudo-owner.suppressed::before { content: none; animation: none; }
+            </style><div id="pseudo-owner"></div>`;
+          globalThis.__pseudoEnds = [];
+          const owner = document.getElementById('pseudo-owner');
+          owner.addEventListener('animationend', event => __pseudoEnds.push([
+            event.animationName, event.pseudoElement, event.target === owner]));
+          void document.body.offsetHeight;
+        })()
+    )JS", "pseudo-animation-setup.js");
+
+    animation_frame_and_wait(engine, 16500.0, 7161U);
+    webscene_engine_request_scene_checkpoint(engine);
+    auto retained_midpoint = false;
+    for (auto attempt = 0; attempt < 100 && !retained_midpoint; ++attempt) {
+        const auto* scene = webscene_engine_acquire_latest_scene(engine);
+        if (scene != nullptr) {
+            if (scene->header.consumed_input_sequence >= 7161U) {
+                for (uint32_t index = 0U; index < scene->header.command_count; ++index) {
+                    const auto& command = scene->commands[index];
+                    retained_midpoint = retained_midpoint || (command.kind == 15U
+                        && std::abs(command.width - 1.5F) < 0.001F
+                        && std::abs(command.height - 1.5F) < 0.001F);
+                }
+            }
+            webscene_scene_acknowledge(scene);
+            webscene_scene_release(scene);
+        }
+        if (!retained_midpoint) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+    }
+    require(retained_midpoint,
+        "generated pseudo animation did not reach retained scene paint");
+
+    animation_frame_and_wait(engine, 17000.0, 7162U);
+    const auto completion = evaluate(engine, R"JS(
+        JSON.stringify(globalThis.__pseudoEnds)
+    )JS", "pseudo-animation-completion.js");
+    require(completion == R"JSON([["pseudo-life","::before",true]])JSON",
+        "generated pseudo animationend did not belong to its originating element: "
+            + completion);
+    wait_for_animation_frame_demand(
+        engine, false, "filled and paused pseudo animations retained frame demand");
+
+    execute_and_wait(engine, R"JS(
+        (() => {
+          const owner = document.getElementById('pseudo-owner');
+          owner.classList.add('suppressed');
+          owner.remove();
+        })()
+    )JS", "pseudo-animation-detach.js");
+    animation_frame_and_wait(engine, 17100.0, 7163U);
+    wait_for_animation_frame_demand(
+        engine, false, "detached pseudo animations retained frame demand");
+}
+
 void test_filter_keyframes_use_host_clock_and_retained_paint(
     webscene_engine* engine)
 {

@@ -76,6 +76,14 @@ native_document::allocation_metrics native_document::read_allocation_metrics() c
         }
         if (node != nullptr && node->style.has_pseudo_elements()) {
             ++result.pseudo_element_pair_count;
+            if (node->style.before_pseudo().has_animation_data()) {
+                animation_allocations.insert(
+                    node->style.before_pseudo().animation_data_identity());
+            }
+            if (node->style.after_pseudo().has_animation_data()) {
+                animation_allocations.insert(
+                    node->style.after_pseudo().animation_data_identity());
+            }
         }
         if (node != nullptr && node->style.has_animation_data()) {
             animation_allocations.insert(node->style.animation_data_identity());
@@ -165,6 +173,29 @@ native_document::allocation_metrics native_document::read_allocation_metrics() c
                         * sizeof(retained_filter_function);
                 }
             }
+            const auto count_pseudo_runtime = [&](const auto& pseudo) {
+                result.animation_runtime_storage_bytes +=
+                    pseudo.keyframe_animations.capacity()
+                        * sizeof(dom_node::animation_runtime_data::keyframe_animation_runtime)
+                    + pseudo.painted_filter_functions.capacity()
+                        * sizeof(retained_filter_function);
+                for (const auto& track : pseudo.keyframe_animations) {
+                    result.animation_runtime_storage_bytes +=
+                        track.name.capacity() + track.signature.capacity() + 2U
+                        + track.filter_keyframes.capacity()
+                            * sizeof(dom_node::animation_runtime_data::retained_filter_keyframe)
+                        + track.filter_underlying.capacity()
+                            * sizeof(retained_filter_function)
+                        + track.painted_filter_functions.capacity()
+                            * sizeof(retained_filter_function);
+                    for (const auto& stop : track.filter_keyframes) {
+                        result.animation_runtime_storage_bytes += stop.functions.capacity()
+                            * sizeof(retained_filter_function);
+                    }
+                }
+            };
+            count_pseudo_runtime(animation->before_pseudo);
+            count_pseudo_runtime(animation->after_pseudo);
         }
         if (node == nullptr || !node->has_canvas_data()) continue;
         ++result.canvas_node_count;

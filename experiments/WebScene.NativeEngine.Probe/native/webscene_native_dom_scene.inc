@@ -1568,7 +1568,20 @@ void native_document::append_scene(
         const auto pseudo_paints_in_foreground = paint_box_in_foreground
             || after_retained_canvas
             || (pseudo.z_index > 0 && pseudo.position != position_mode::normal);
-        const auto pseudo_opacity = std::clamp(pseudo.opacity, 0.0F, 1.0F);
+        const dom_node::animation_runtime_data::pseudo_animation_runtime*
+            pseudo_animation = nullptr;
+        if (animation != nullptr) {
+            if (&pseudo == &node.style.before_pseudo()) {
+                pseudo_animation = &animation->before_pseudo;
+            } else if (&pseudo == &node.style.after_pseudo()) {
+                pseudo_animation = &animation->after_pseudo;
+            }
+        }
+        const auto pseudo_opacity = std::clamp(
+            pseudo_animation != nullptr && pseudo_animation->opacity_override
+                ? pseudo_animation->painted_opacity : pseudo.opacity,
+            0.0F,
+            1.0F);
         if (pseudo_opacity <= 0.001F) return;
         const auto with_pseudo_opacity = [&](uint32_t rgba) {
             const auto alpha = static_cast<uint32_t>(std::clamp(
@@ -1586,10 +1599,75 @@ void native_document::append_scene(
                 : pseudo.line_height >= 0
                     ? pseudo.line_height
                     : resolved_line_height(node, font_size);
-        const auto x = pseudo.layout.x;
-        const auto y = pseudo.layout.y;
+        auto x = pseudo.layout.x;
+        auto y = pseudo.layout.y;
         const auto width = pseudo.layout.width;
         const auto height = pseudo.layout.height;
+        if (pseudo_animation != nullptr && pseudo_animation->transform_override) {
+            x += resolve_length(
+                node, pseudo_animation->painted_translation_x, width, 0.0F);
+            y += resolve_length(
+                node, pseudo_animation->painted_translation_y, height, 0.0F);
+        }
+        const auto animated_filters = pseudo_animation != nullptr
+                && pseudo_animation->filter_override
+            ? std::span<const retained_filter_function>{
+                pseudo_animation->painted_filter_functions}
+            : std::span<const retained_filter_function>{};
+        for (size_t filter_index = animated_filters.size(); filter_index > 0U;
+             --filter_index) {
+            const auto& filter = animated_filters[filter_index - 1U];
+            commands.push_back(webscene_scene_command{
+                30U,
+                filter.flags,
+                x,
+                y,
+                width,
+                height,
+                255U,
+                node.id,
+                0,
+                0,
+                0,
+                0,
+                filter.amount});
+        }
+        const auto animated_scale = pseudo_animation != nullptr
+            && pseudo_animation->transform_override
+            && (std::abs(pseudo_animation->painted_scale_x - 1.0F) > 0.0001F
+                || std::abs(pseudo_animation->painted_scale_y - 1.0F) > 0.0001F);
+        const auto animated_rotation = pseudo_animation != nullptr
+            && pseudo_animation->transform_override
+            && std::abs(pseudo_animation->painted_rotation_degrees) > 0.0001F;
+        const auto transform_origin_x = x + width * 0.5F;
+        const auto transform_origin_y = y + height * 0.5F;
+        if (animated_scale) {
+            commands.push_back(webscene_scene_command{
+                15U,
+                0U,
+                transform_origin_x,
+                transform_origin_y,
+                pseudo_animation->painted_scale_x,
+                pseudo_animation->painted_scale_y,
+                0U,
+                node.id});
+        }
+        if (animated_rotation) {
+            commands.push_back(webscene_scene_command{
+                19U,
+                0U,
+                transform_origin_x,
+                transform_origin_y,
+                0,
+                0,
+                0U,
+                node.id,
+                0,
+                0,
+                0,
+                0,
+                pseudo_animation->painted_rotation_degrees});
+        }
         const auto pseudo_background = pseudo.background_current_color
             ? (pseudo.foreground_rgba & 0xFFU) != 0U
                 ? pseudo.foreground_rgba
@@ -1881,6 +1959,19 @@ void native_document::append_scene(
                 0,
                 0,
                 0});
+        }
+        if (animated_rotation) {
+            commands.push_back(webscene_scene_command{
+                20U, 0U, 0, 0, 0, 0, 0U, node.id});
+        }
+        if (animated_scale) {
+            commands.push_back(webscene_scene_command{
+                16U, 0U, 0, 0, 0, 0, 0U, node.id});
+        }
+        for (size_t filter_index = 0U; filter_index < animated_filters.size();
+             ++filter_index) {
+            commands.push_back(webscene_scene_command{
+                31U, 0U, x, y, width, height, 0U, node.id});
         }
     };
     const auto radii = resolve_radii(

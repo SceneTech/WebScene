@@ -733,6 +733,9 @@
             } else if (name == "cubic-bezier") {
                 classification = "partially-supported";
                 semantic_slice = "transition timing functions with four numeric arguments";
+            } else if (name == "steps") {
+                classification = "supported";
+                semantic_slice = "keyframe animation timing with positive integer count and jump positions";
             } else if (name == "url") {
                 classification = "partially-supported";
                 semantic_slice = "first URL-backed SVG CSS background layer";

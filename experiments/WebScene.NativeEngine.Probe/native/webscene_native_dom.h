@@ -181,12 +181,23 @@ struct node_style final {
     };
 
     struct transition_timing final {
+        enum class function_kind : uint8_t { cubic_bezier, steps };
+        enum class step_position : uint8_t {
+            jump_end,
+            jump_start,
+            jump_none,
+            jump_both
+        };
+
         float duration_ms{0};
         float delay_ms{0};
         float x1{0.25F};
         float y1{0.1F};
         float x2{0.25F};
         float y2{1.0F};
+        uint32_t step_count{1U};
+        function_kind kind{function_kind::cubic_bezier};
+        step_position steps_position{step_position::jump_end};
     };
 
     struct animation_data final {
@@ -221,6 +232,11 @@ struct node_style final {
         float opacity_keyframe_y1{0.1F};
         float opacity_keyframe_x2{0.25F};
         float opacity_keyframe_y2{1.0F};
+        uint32_t opacity_keyframe_step_count{1U};
+        transition_timing::function_kind opacity_keyframe_timing_kind{
+            transition_timing::function_kind::cubic_bezier};
+        transition_timing::step_position opacity_keyframe_step_position{
+            transition_timing::step_position::jump_end};
     };
 
     const animation_data& animations() const noexcept

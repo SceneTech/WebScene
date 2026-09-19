@@ -1,0 +1,73 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>CSS animation steps timing retains its keyframe name and discrete cadence</title>
+<style>
+  @keyframes codicon-spin { to { transform: rotate(1turn); } }
+  #spinner {
+    width: 20px;
+    height: 20px;
+    animation: codicon-spin 1000ms steps(4, end) infinite;
+  }
+</style>
+<body><div id="spinner"></div>
+<script>
+  const state = window.__webSceneWptState = {
+    complete: false, harness: null, results: [], errors: [], diagnostics: []
+  };
+  const finish = (error, diagnostics = []) => {
+    state.diagnostics = diagnostics;
+    state.results.push({
+      name: "steps() keyframe timing publishes discrete rotation boundaries",
+      status: error ? "FAIL" : "PASS",
+      message: error ? String(error && error.message || error) : null,
+      stack: error && error.stack ? String(error.stack) : null
+    });
+    state.harness = error
+      ? { status: 1, message: state.results[0].message, stack: state.results[0].stack }
+      : { status: 0, message: null, stack: null };
+    state.complete = true;
+  };
+  const angle = node => {
+    const value = getComputedStyle(node).transform;
+    if (value === "none") return 0;
+    const numbers = (value.match(/-?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?/gi) || [])
+      .map(Number);
+    const degrees = Math.atan2(numbers[1], numbers[0]) * 180 / Math.PI;
+    return Math.round(((degrees + 360) % 360) * 1000) / 1000;
+  };
+
+  try {
+    const spinner = document.getElementById("spinner");
+    const style = getComputedStyle(spinner);
+    const metadata = [style.animationName, style.animationDuration,
+      style.animationTimingFunction, style.animationIterationCount];
+    const expected = ["codicon-spin", "1000ms", "steps(4, end)", "infinite"];
+    if (JSON.stringify(metadata) !== JSON.stringify(expected)) {
+      throw new Error("computed animation metadata differs: " + JSON.stringify(metadata));
+    }
+    requestAnimationFrame(start => {
+      const samples = [];
+      const sample = timestamp => {
+        try {
+          samples.push({ elapsed: timestamp - start, angle: angle(spinner) });
+          if (timestamp - start < 900) {
+            requestAnimationFrame(sample);
+            return;
+          }
+          const buckets = new Set(samples.map(entry => entry.angle.toFixed(1)));
+          if (buckets.size !== 4) {
+            throw new Error("expected four discrete positions, received " + buckets.size);
+          }
+          for (const entry of samples) {
+            if (![0, 90, 180, 270].some(expectedAngle =>
+                Math.abs(entry.angle - expectedAngle) < .1)) {
+              throw new Error("non-step angle published: " + entry.angle);
+            }
+          }
+          finish(null, [JSON.stringify({ metadata, buckets: [...buckets], samples })]);
+        } catch (error) { finish(error, [JSON.stringify(samples)]); }
+      };
+      requestAnimationFrame(sample);
+    });
+  } catch (error) { finish(error); }
+</script>

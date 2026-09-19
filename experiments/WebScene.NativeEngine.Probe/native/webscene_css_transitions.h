@@ -30,26 +30,93 @@ inline void parse_transition_timing(
         node_style::transition_timing& timing)
     {
         const auto lower = ascii_lower(value);
-        if (lower == "linear") {
+        if (lower == "ease") {
+            timing.kind = node_style::transition_timing::function_kind::cubic_bezier;
+            timing.x1 = 0.25F; timing.y1 = 0.1F; timing.x2 = 0.25F; timing.y2 = 1;
+        } else if (lower == "linear") {
+            timing.kind = node_style::transition_timing::function_kind::cubic_bezier;
             timing.x1 = 0; timing.y1 = 0; timing.x2 = 1; timing.y2 = 1;
         } else if (lower == "ease-in") {
+            timing.kind = node_style::transition_timing::function_kind::cubic_bezier;
             timing.x1 = 0.42F; timing.y1 = 0; timing.x2 = 1; timing.y2 = 1;
         } else if (lower == "ease-out") {
+            timing.kind = node_style::transition_timing::function_kind::cubic_bezier;
             timing.x1 = 0; timing.y1 = 0; timing.x2 = 0.58F; timing.y2 = 1;
         } else if (lower == "ease-in-out") {
+            timing.kind = node_style::transition_timing::function_kind::cubic_bezier;
             timing.x1 = 0.42F; timing.y1 = 0; timing.x2 = 0.58F; timing.y2 = 1;
         } else if (lower.starts_with("cubic-bezier(") && lower.ends_with(')')) {
             auto points = lower.substr(13U, lower.size() - 14U);
             std::replace(points.begin(), points.end(), ',', ' ');
             std::istringstream stream(points);
             float x1 = 0.25F, y1 = 0.1F, x2 = 0.25F, y2 = 1;
-            if (stream >> x1 >> y1 >> x2 >> y2) {
+            std::string trailing;
+            if (stream >> x1 >> y1 >> x2 >> y2 && !(stream >> trailing)) {
+                timing.kind = node_style::transition_timing::function_kind::cubic_bezier;
                 timing.x1 = std::clamp(x1, 0.0F, 1.0F);
                 timing.y1 = y1;
                 timing.x2 = std::clamp(x2, 0.0F, 1.0F);
                 timing.y2 = y2;
             }
         }
+    }
+
+inline bool parse_animation_timing(
+        const std::string& value,
+        node_style::transition_timing& timing)
+    {
+        const auto lower = ascii_lower(value);
+        if (lower == "step-start" || lower == "step-end") {
+            timing.kind = node_style::transition_timing::function_kind::steps;
+            timing.step_count = 1U;
+            timing.steps_position = lower == "step-start"
+                ? node_style::transition_timing::step_position::jump_start
+                : node_style::transition_timing::step_position::jump_end;
+        } else if (lower.starts_with("steps(") && lower.ends_with(')')) {
+            const auto components = split_css_component_list(
+                std::string_view(lower).substr(6U, lower.size() - 7U), ',');
+            if (components.empty() || components.size() > 2U) return false;
+            const auto count_text = trim_css_view(components.front());
+            uint32_t count = 0U;
+            const auto parsed = std::from_chars(
+                count_text.data(), count_text.data() + count_text.size(), count);
+            if (parsed.ec != std::errc{}
+                || parsed.ptr != count_text.data() + count_text.size()
+                || count == 0U) return false;
+            auto position = node_style::transition_timing::step_position::jump_end;
+            if (components.size() == 2U) {
+                const auto position_text = trim_css_view(components[1]);
+                if (position_text == "start" || position_text == "jump-start") {
+                    position = node_style::transition_timing::step_position::jump_start;
+                } else if (position_text == "end" || position_text == "jump-end") {
+                    position = node_style::transition_timing::step_position::jump_end;
+                } else if (position_text == "jump-none") {
+                    if (count == 1U) return false;
+                    position = node_style::transition_timing::step_position::jump_none;
+                } else if (position_text == "jump-both") {
+                    position = node_style::transition_timing::step_position::jump_both;
+                } else {
+                    return false;
+                }
+            }
+            timing.kind = node_style::transition_timing::function_kind::steps;
+            timing.step_count = count;
+            timing.steps_position = position;
+        } else {
+            const auto cubic = lower == "linear" || lower == "ease"
+                || lower == "ease-in" || lower == "ease-out"
+                || lower == "ease-in-out"
+                || (lower.starts_with("cubic-bezier(") && lower.ends_with(')'));
+            if (!cubic) return false;
+            parse_transition_timing(lower, timing);
+        }
+        return true;
+    }
+
+inline bool is_animation_timing_function(const std::string& value)
+    {
+        node_style::transition_timing timing;
+        return parse_animation_timing(value, timing);
     }
 
 inline void configure_style_transitions(node_style& style)
@@ -197,9 +264,7 @@ inline void apply_animation_shorthand(node_style& style, const std::string& valu
                 if (!saw_time) duration = lower;
                 else delay = lower;
                 saw_time = true;
-            } else if (lower == "linear" || lower == "ease" || lower == "ease-in"
-                || lower == "ease-out" || lower == "ease-in-out"
-                || lower.starts_with("cubic-bezier(")) {
+            } else if (is_animation_timing_function(lower)) {
                 timing = lower;
             } else if (lower == "infinite"
                 || std::all_of(lower.begin(), lower.end(), [](unsigned char character) {
@@ -261,11 +326,14 @@ inline void configure_keyframes(node_style& style,
         animations.opacity_keyframe_fill_forwards =
             fill_mode == "forwards" || fill_mode == "both";
         node_style::transition_timing animation_timing;
-        if (!timings.empty()) parse_transition_timing(timings.front(), animation_timing);
+        if (!timings.empty()) parse_animation_timing(timings.front(), animation_timing);
         animations.opacity_keyframe_x1 = animation_timing.x1;
         animations.opacity_keyframe_y1 = animation_timing.y1;
         animations.opacity_keyframe_x2 = animation_timing.x2;
         animations.opacity_keyframe_y2 = animation_timing.y2;
+        animations.opacity_keyframe_step_count = animation_timing.step_count;
+        animations.opacity_keyframe_timing_kind = animation_timing.kind;
+        animations.opacity_keyframe_step_position = animation_timing.steps_position;
         animations.opacity_keyframes = definition->second.opacity_stops;
         animations.rotation_keyframes = definition->second.rotation_stops;
         animations.filter_keyframes = definition->second.filter_stops;
@@ -279,6 +347,9 @@ inline void configure_keyframes(node_style& style,
             << animations.opacity_keyframe_delay_ms << '|'
             << animations.opacity_keyframe_iterations << '|'
             << animations.opacity_keyframe_fill_forwards << '|'
+            << static_cast<unsigned>(animations.opacity_keyframe_timing_kind) << ','
+            << animations.opacity_keyframe_step_count << ','
+            << static_cast<unsigned>(animations.opacity_keyframe_step_position) << '|'
             << animations.opacity_keyframe_x1 << ',' << animations.opacity_keyframe_y1 << ','
             << animations.opacity_keyframe_x2 << ',' << animations.opacity_keyframe_y2;
         const auto base_signature = signature.str();

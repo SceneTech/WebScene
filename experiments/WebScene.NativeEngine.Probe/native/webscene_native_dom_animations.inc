@@ -570,7 +570,34 @@ bool native_document::advance_animations() noexcept
             + 6.0F * inverse * t * (second - first)
             + 3.0F * t * t * (1.0F - second);
     };
-    const auto timing_value = [&](float progress, float x1, float y1, float x2, float y2) {
+    const auto timing_value = [&] (
+        float progress,
+        float x1,
+        float y1,
+        float x2,
+        float y2,
+        node_style::transition_timing::function_kind kind =
+            node_style::transition_timing::function_kind::cubic_bezier,
+        uint32_t step_count = 1U,
+        node_style::transition_timing::step_position step_position =
+            node_style::transition_timing::step_position::jump_end) {
+        if (kind == node_style::transition_timing::function_kind::steps) {
+            const auto count = static_cast<float>(std::max(1U, step_count));
+            auto current_step = std::floor(progress * count);
+            auto jumps = count;
+            if (step_position
+                == node_style::transition_timing::step_position::jump_start) {
+                current_step += 1.0F;
+            } else if (step_position
+                == node_style::transition_timing::step_position::jump_none) {
+                jumps -= 1.0F;
+            } else if (step_position
+                == node_style::transition_timing::step_position::jump_both) {
+                current_step += 1.0F;
+                jumps += 1.0F;
+            }
+            return std::clamp(current_step / std::max(1.0F, jumps), 0.0F, 1.0F);
+        }
         // CSS cubic-bezier timing is parameterized by x, so solve x(t) for the
         // elapsed-time progress before sampling y(t). Newton converges quickly
         // for ordinary curves; bisection keeps unusual but valid curves stable.
@@ -993,7 +1020,10 @@ bool native_document::advance_animations() noexcept
                             node.style.animations().opacity_keyframe_x1,
                             node.style.animations().opacity_keyframe_y1,
                             node.style.animations().opacity_keyframe_x2,
-                            node.style.animations().opacity_keyframe_y2);
+                            node.style.animations().opacity_keyframe_y2,
+                            node.style.animations().opacity_keyframe_timing_kind,
+                            node.style.animations().opacity_keyframe_step_count,
+                            node.style.animations().opacity_keyframe_step_position);
                         animation.painted_opacity = from.opacity
                             + (right->opacity - from.opacity) * eased;
                     }
@@ -1049,7 +1079,10 @@ bool native_document::advance_animations() noexcept
                             node.style.animations().opacity_keyframe_x1,
                             node.style.animations().opacity_keyframe_y1,
                             node.style.animations().opacity_keyframe_x2,
-                            node.style.animations().opacity_keyframe_y2);
+                            node.style.animations().opacity_keyframe_y2,
+                            node.style.animations().opacity_keyframe_timing_kind,
+                            node.style.animations().opacity_keyframe_step_count,
+                            node.style.animations().opacity_keyframe_step_position);
                         animation.painted_transform_rotate_degrees = from.degrees
                             + (right->degrees - from.degrees) * eased;
                     }
@@ -1115,7 +1148,10 @@ bool native_document::advance_animations() noexcept
                             node.style.animations().opacity_keyframe_x1,
                             node.style.animations().opacity_keyframe_y1,
                             node.style.animations().opacity_keyframe_x2,
-                            node.style.animations().opacity_keyframe_y2);
+                            node.style.animations().opacity_keyframe_y2,
+                            node.style.animations().opacity_keyframe_timing_kind,
+                            node.style.animations().opacity_keyframe_step_count,
+                            node.style.animations().opacity_keyframe_step_position);
                         animation.painted_filter_functions = from.functions;
                         for (size_t index = 0U;
                              index < animation.painted_filter_functions.size(); ++index) {

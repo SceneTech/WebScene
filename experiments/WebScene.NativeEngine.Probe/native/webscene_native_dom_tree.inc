@@ -620,6 +620,14 @@ size_t native_document::erase_detached_subtrees(
         }
 #endif
     }
+    if (animation_events_) {
+        std::erase_if(*animation_events_, [&](const auto& event) {
+            return event.node_id == 0U
+                || event.node_id > native_id_index_.size()
+                || native_id_index_[event.node_id - 1U] == nullptr;
+        });
+        if (animation_events_->empty()) animation_events_.reset();
+    }
     if (shadow_dom_storage_ != nullptr) {
         for (const auto* node : removed) {
             shadow_dom_storage_->node_data.erase(node->id);

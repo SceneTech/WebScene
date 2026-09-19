@@ -199,6 +199,7 @@ struct node_style final {
     };
 
     struct animation_data final {
+        static constexpr size_t max_keyframe_animation_tracks = 8U;
         enum class direction_kind : uint8_t {
             normal,
             reverse,
@@ -234,27 +235,29 @@ struct node_style final {
         std::string animation_direction_value{"normal"};
         std::string animation_fill_mode_value{"none"};
         std::string animation_play_state_value{"running"};
-        std::string opacity_keyframe_animation_signature;
-        std::vector<opacity_keyframe> opacity_keyframes;
-        std::string rotation_keyframe_animation_signature;
-        std::vector<rotation_keyframe> rotation_keyframes;
-        std::string filter_keyframe_animation_signature;
-        std::vector<filter_keyframe> filter_keyframes;
-        float opacity_keyframe_duration_ms{0};
-        float opacity_keyframe_delay_ms{0};
-        float opacity_keyframe_iterations{1};
-        direction_kind keyframe_direction{direction_kind::normal};
-        fill_kind keyframe_fill_mode{fill_kind::none};
-        play_kind keyframe_play_state{play_kind::running};
-        float opacity_keyframe_x1{0.25F};
-        float opacity_keyframe_y1{0.1F};
-        float opacity_keyframe_x2{0.25F};
-        float opacity_keyframe_y2{1.0F};
-        uint32_t opacity_keyframe_step_count{1U};
-        transition_timing::function_kind opacity_keyframe_timing_kind{
-            transition_timing::function_kind::cubic_bezier};
-        transition_timing::step_position opacity_keyframe_step_position{
-            transition_timing::step_position::jump_end};
+        struct keyframe_animation final {
+            std::string name;
+            std::string signature;
+            std::vector<opacity_keyframe> opacity_keyframes;
+            std::vector<rotation_keyframe> rotation_keyframes;
+            std::vector<filter_keyframe> filter_keyframes;
+            float duration_ms{0};
+            float delay_ms{0};
+            float iterations{1};
+            direction_kind direction{direction_kind::normal};
+            fill_kind fill_mode{fill_kind::none};
+            play_kind play_state{play_kind::running};
+            float x1{0.25F};
+            float y1{0.1F};
+            float x2{0.25F};
+            float y2{1.0F};
+            uint32_t step_count{1U};
+            transition_timing::function_kind timing_kind{
+                transition_timing::function_kind::cubic_bezier};
+            transition_timing::step_position step_position{
+                transition_timing::step_position::jump_end};
+        };
+        std::vector<keyframe_animation> keyframe_animations;
     };
 
     const animation_data& animations() const noexcept
@@ -1456,6 +1459,24 @@ struct dom_node final {
             std::vector<retained_filter_function> functions;
             bool authored_none{false};
         };
+        struct keyframe_animation_runtime final {
+            std::string name;
+            std::string signature;
+            std::vector<retained_filter_keyframe> filter_keyframes;
+            std::vector<retained_filter_function> filter_underlying;
+            std::vector<retained_filter_function> painted_filter_functions;
+            double started_ms{0};
+            double paused_at_ms{0};
+            float painted_opacity{1};
+            float painted_rotation_degrees{0};
+            node_style::animation_data::fill_kind fill_mode{
+                node_style::animation_data::fill_kind::none};
+            bool active{false};
+            bool filled{false};
+            bool paused{false};
+            bool filter_valid{false};
+            bool end_event_sent{false};
+        };
         css_length painted_transform_translate_x{};
         css_length painted_transform_translate_y{};
         css_length transform_animation_from_translate_x{};
@@ -1520,25 +1541,10 @@ struct dom_node final {
         bool opacity_animation_initialized{false};
         bool opacity_animation_active{false};
         bool opacity_animation_start_event_sent{false};
-        std::string opacity_keyframe_animation_signature;
-        double opacity_keyframe_animation_started_ms{0};
-        bool opacity_keyframe_animation_active{false};
-        std::string rotation_keyframe_animation_signature;
-        double rotation_keyframe_animation_started_ms{0};
-        bool rotation_keyframe_animation_active{false};
-        bool rotation_keyframe_animation_filled{false};
-        std::string filter_keyframe_animation_signature;
-        std::vector<retained_filter_keyframe> filter_keyframes;
-        std::vector<retained_filter_function> filter_keyframe_underlying;
-        double filter_keyframe_animation_started_ms{0};
-        bool filter_keyframe_animation_active{false};
-        bool filter_keyframe_animation_valid{false};
-        bool filter_keyframe_animation_filled{false};
-        node_style::animation_data::fill_kind keyframe_fill_mode{
-            node_style::animation_data::fill_kind::none};
-        bool keyframe_animation_paused{false};
-        double keyframe_animation_paused_at_ms{0};
-        bool keyframe_animation_end_event_sent{false};
+        std::vector<keyframe_animation_runtime> keyframe_animations;
+        bool keyframe_opacity_override{false};
+        bool keyframe_rotation_override{false};
+        bool keyframe_filter_override{false};
         uint32_t painted_foreground_rgba{0};
         uint32_t color_animation_from_rgba{0};
         uint32_t color_animation_target_rgba{0};
@@ -1886,16 +1892,14 @@ struct dom_node final {
     bool has_painted_rotation_keyframe_override_value() const noexcept
     {
         return animation_runtime_state != nullptr
-            && (animation_runtime_state->rotation_keyframe_animation_active
-                || animation_runtime_state->rotation_keyframe_animation_filled);
+            && animation_runtime_state->keyframe_rotation_override;
     }
 
     bool has_painted_filter_override_value() const noexcept
     {
         return animation_runtime_state != nullptr
             && (animation_runtime_state->filter_animation_active
-                || animation_runtime_state->filter_keyframe_animation_active
-                || animation_runtime_state->filter_keyframe_animation_filled);
+                || animation_runtime_state->keyframe_filter_override);
     }
 
     bool transform_animation_active_value() const noexcept

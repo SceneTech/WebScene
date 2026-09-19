@@ -1,0 +1,30 @@
+{
+  "profile": "webscene-css-animation-multiple-lists-1",
+  "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+  "runtime": "v8",
+  "viewport": {
+    "width": 800,
+    "height": 600,
+    "deviceScaleFactor": 1
+  },
+  "required": [
+    {
+      "path": "contracts/css-animation-multiple-lists.html",
+      "type": "contract",
+      "capabilities": [
+        "animation-list-coordination",
+        "longhand-list-repetition-and-truncation",
+        "multi-item-shorthand-serialization",
+        "independent-track-state",
+        "last-contributing-replace-composition",
+        "ordered-exactly-once-animation-end",
+        "track-removal-cleanup",
+        "bounded-frame-demand"
+      ],
+      "evidence": ["css-animation-multiple-lists-672-242"],
+      "reason": "WPT-aligned bounded reduction for coordinated CSS animation lists, per-track clocks and state, replace composition, ordered completion, CSSOM serialization, and removal cleanup."
+    }
+  ],
+  "harnessBlocked": [],
+  "excluded": []
+}

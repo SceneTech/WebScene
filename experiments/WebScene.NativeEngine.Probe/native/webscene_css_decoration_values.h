@@ -156,13 +156,13 @@ bool apply_decoration_value(dom_node& node,const std::string& name,const std::st
             apply_animation_shorthand(node.style, value);
             decision.classification = "partially-supported";
             decision.semantic_slice =
-                "first animation; opacity, rotate(), and bounded filter @keyframes";
+                "first animation; four directions; opacity, rotate(), and bounded filter @keyframes";
             return true;
         } else if (name == "animation-name") {
             node.style.mutable_animations().animation_name_value = value;
             decision.classification = "partially-supported";
             decision.semantic_slice =
-                "first animation; opacity, rotate(), and bounded filter @keyframes";
+                "first animation; four directions; opacity, rotate(), and bounded filter @keyframes";
             return true;
         } else if (name == "animation-duration") {
             node.style.mutable_animations().animation_duration_value = value;
@@ -175,6 +175,11 @@ bool apply_decoration_value(dom_node& node,const std::string& name,const std::st
             return true;
         } else if (name == "animation-iteration-count") {
             node.style.mutable_animations().animation_iteration_count_value = value;
+            return true;
+        } else if (name == "animation-direction") {
+            node.style.mutable_animations().animation_direction_value = value;
+            decision.classification = "partially-supported";
+            decision.semantic_slice = "first animation; normal, reverse, alternate, alternate-reverse";
             return true;
         } else if (name == "animation-fill-mode") {
             node.style.mutable_animations().animation_fill_mode_value = value;

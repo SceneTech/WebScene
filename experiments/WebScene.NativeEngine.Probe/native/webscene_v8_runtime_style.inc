@@ -286,6 +286,8 @@
                     return (inline_style_mask(entry.first) & inline_transition) != 0U;
                 });
             if (!has_authored_transition) node.style.inline_property_mask &= ~inline_transition;
+        } else if (name == "animationDirection" || name == "animation-direction") {
+            node.style.mutable_animations().animation_direction_value = "normal";
         } else if (name == "animation" || name == "animationName"
             || name == "animation-name" || name == "animationDuration"
             || name == "animation-duration" || name == "animationDelay"
@@ -298,6 +300,7 @@
             animations.animation_delay_value = "0s";
             animations.animation_timing_function_value = "ease";
             animations.animation_iteration_count_value = "1";
+            animations.animation_direction_value = "normal";
         } else if (name == "opacity") {
             node.style.opacity = 1;
             node.style.inline_property_mask &= ~inline_opacity;
@@ -2036,7 +2039,8 @@
                 + node->style.animations().animation_duration_value + " "
                 + node->style.animations().animation_timing_function_value + " "
                 + node->style.animations().animation_delay_value + " "
-                + node->style.animations().animation_iteration_count_value;
+                + node->style.animations().animation_iteration_count_value + " "
+                + node->style.animations().animation_direction_value;
         } else if (name == "animationName" || name == "animation-name") {
             value = node->style.animations().animation_name_value;
         } else if (name == "animationDuration" || name == "animation-duration") {
@@ -2049,6 +2053,8 @@
         } else if (name == "animationIterationCount"
             || name == "animation-iteration-count") {
             value = node->style.animations().animation_iteration_count_value;
+        } else if (name == "animationDirection" || name == "animation-direction") {
+            value = node->style.animations().animation_direction_value;
         } else if (name == "zIndex") {
             value = node->style.z_index_auto
                 ? "auto" : std::to_string(node->style.z_index);
@@ -2558,6 +2564,8 @@
             node->style.mutable_animations().animation_timing_function_value = value;
         } else if (name == "animationIterationCount") {
             node->style.mutable_animations().animation_iteration_count_value = value;
+        } else if (name == "animationDirection") {
+            node->style.mutable_animations().animation_direction_value = value;
         } else if (name == "opacity") {
             node->style.opacity = raw_value->IsNullOrUndefined()
                 ? 1.0F

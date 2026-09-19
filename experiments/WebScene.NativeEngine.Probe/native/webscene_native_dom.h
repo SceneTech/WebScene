@@ -199,6 +199,12 @@ struct node_style final {
     };
 
     struct animation_data final {
+        enum class direction_kind : uint8_t {
+            normal,
+            reverse,
+            alternate,
+            alternate_reverse
+        };
         std::string transition_property_value{"all"};
         std::string transition_duration_value{"0s"};
         std::string transition_delay_value{"0s"};
@@ -215,6 +221,7 @@ struct node_style final {
         std::string animation_delay_value{"0s"};
         std::string animation_timing_function_value{"ease"};
         std::string animation_iteration_count_value{"1"};
+        std::string animation_direction_value{"normal"};
         std::string animation_fill_mode_value{"none"};
         std::string opacity_keyframe_animation_signature;
         std::vector<opacity_keyframe> opacity_keyframes;
@@ -225,6 +232,7 @@ struct node_style final {
         float opacity_keyframe_duration_ms{0};
         float opacity_keyframe_delay_ms{0};
         float opacity_keyframe_iterations{1};
+        direction_kind keyframe_direction{direction_kind::normal};
         bool opacity_keyframe_fill_forwards{false};
         float opacity_keyframe_x1{0.25F};
         float opacity_keyframe_y1{0.1F};

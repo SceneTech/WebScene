@@ -1266,6 +1266,188 @@ void test_nested_context_menu_handoff() {
   webscene_engine_destroy(engine);
 }
 
+void test_nested_anchor_activation_handoff() {
+  constexpr std::string_view address{
+      "https://iframe-anchor.test/index.html"};
+  resource_server server{
+      .content = {{std::string{address},
+                   "<!doctype html><title>frame anchors</title><body></body>"},
+                  {"https://iframe-anchor.test/frame.html", R"HTML(
+<!doctype html><style>
+html,body{margin:0}body{height:900px}nav{position:fixed;left:0;top:0;width:200px}
+a,#plain{display:block;width:200px;height:30px;margin-bottom:6px}
+#target{position:absolute;left:0;top:650px;width:20px;height:20px}
+</style><body><nav>
+<a id="fragment" href="#target"><span>fragment</span></a>
+<a id="external" href="https://example.com/primary"><span>external</span></a>
+<a id="blank" href="https://example.com/blank" target="_blank"><span>blank</span></a>
+<a id="top" href="#"><span>top</span></a>
+<a id="unsafe" href="javascript:parent.__nestedAnchor.unsafe=true"><span>unsafe</span></a>
+<div id="plain">plain</div>
+</nav><div id="target">target</div><script>
+const state=parent.__nestedAnchor;
+globalThis.__codeClick=event=>{
+  if(!event.isTrusted||!event?.view?.document)return;
+  const baseElement=event.view.document.querySelector('base');
+  for(const pathElement of event.composedPath()){
+    const node=pathElement;
+    if(node.tagName&&node.tagName.toLowerCase()==='a'&&node.href){
+      if(node.getAttribute('href')==='#')event.view.scrollTo(0,0);
+      else if(node.hash&&(node.getAttribute('href')===node.hash
+        ||(baseElement&&node.href===baseElement.href+node.hash))){
+        const fragment=node.hash.slice(1);
+        const decodedFragment=decodeURIComponent(fragment);
+        const scrollTarget=event.view.document.getElementById(fragment)
+          ??event.view.document.getElementById(decodedFragment);
+        if(scrollTarget)scrollTarget.scrollIntoView();
+        else if(decodedFragment.toLowerCase()==='top')event.view.scrollTo(0,0);
+      }else state.messages.push({uri:node.href.baseVal||node.href,
+        ctrlKey:event.ctrlKey,metaKey:event.metaKey,shiftKey:event.shiftKey});
+      event.preventDefault();
+      return;
+    }
+  }
+};
+globalThis.__codeAux=event=>{
+  if(!event?.view?.document)return;
+  if(event.button===1){
+    for(const pathElement of event.composedPath()){
+      const node=pathElement;
+      if(node.tagName&&node.tagName.toLowerCase()==='a'&&node.href){
+        event.preventDefault();
+        ++state.auxPrevented;
+        return;
+      }
+    }
+  }
+};
+addEventListener('click',__codeClick);
+addEventListener('auxclick',__codeAux);
+state.ready=true;
+</script></body>)HTML"}};
+  webscene_engine_options options{};
+  options.struct_size = sizeof(options);
+  options.resource_load_callback = load_test_resource;
+  options.resource_load_user_data = &server;
+  auto* engine = webscene_engine_create_with_options(&options);
+  require(engine != nullptr, "nested anchor engine creation failed");
+  require(webscene_engine_load_url(engine, address.data(), address.size()) != 0U,
+          "nested anchor outer document failed");
+  require(evaluate_until_equals(
+              engine, "location.href", "nested-anchor-ready.js",
+              R"("https://iframe-anchor.test/index.html")", 2'500)
+              == R"("https://iframe-anchor.test/index.html")",
+          "nested anchor outer document did not become ready");
+
+  execute(engine, R"JS(
+      globalThis.__nestedAnchor={ready:false,messages:[],auxPrevented:0,unsafe:false};
+      document.body.style.margin='0';
+      const outerLink=document.createElement('a');
+      outerLink.href='https://outer.invalid/retained-tree-leak';
+      const frame=document.createElement('iframe');
+      frame.id='webview';
+      frame.setAttribute('sandbox','allow-same-origin allow-scripts');
+      frame.style.cssText=
+        'position:absolute;left:50px;top:40px;width:220px;height:200px;border:2px solid black';
+      frame.src='./frame.html';
+      outerLink.appendChild(frame);
+      document.body.appendChild(outerLink);
+    )JS", "nested-anchor-setup.js");
+  require(evaluate_until_equals(
+              engine, "__nestedAnchor.ready", "nested-anchor-frame-ready.js",
+              "true", 3'000) == "true",
+          "nested anchor frame did not become ready");
+
+  auto sequence = uint64_t{9601U};
+  const auto activate = [&](double child_y, int button, uint32_t modifiers = 0U) {
+    const auto encoded_button = static_cast<uint32_t>(button + 1) << 8U;
+    const auto buttons = button == 0 ? 1U : button == 1 ? 4U : 2U;
+    const webscene_input_event down{
+        WEBSCENE_INPUT_POINTER_DOWN,
+        buttons | encoded_button | modifiers,
+        sequence++, 152, 42 + child_y, 0, 0};
+    const webscene_input_event up{
+        WEBSCENE_INPUT_POINTER_UP,
+        encoded_button | modifiers,
+        sequence++, 152, 42 + child_y, 0, 0};
+    const auto consumed_before = consumed_input_count(engine);
+    require(webscene_engine_enqueue(engine, &down) != 0,
+            "nested anchor pointer down was rejected");
+    require(webscene_engine_enqueue(engine, &up) != 0,
+            "nested anchor pointer up was rejected");
+    wait_for_consumed_inputs(
+        engine, consumed_before + 2U,
+        "nested anchor pointer inputs were not consumed");
+  };
+
+  activate(51, 0, WEBSCENE_INPUT_POINTER_MODIFIER_CONTROL);
+  activate(87, 0, WEBSCENE_INPUT_POINTER_MODIFIER_SHIFT);
+  activate(51, 1);
+  activate(15, 0);
+  require(
+      evaluate(engine, R"JS(JSON.stringify({
+        messages:__nestedAnchor.messages,
+        auxPrevented:__nestedAnchor.auxPrevented,
+        childScroll:document.querySelector('#webview').contentWindow.scrollY
+      }))JS", "nested-anchor-code-handler.js")
+          == R"JSON({"messages":[{"uri":"https://example.com/primary","ctrlKey":true,"metaKey":false,"shiftKey":false},{"uri":"https://example.com/blank","ctrlKey":false,"metaKey":false,"shiftKey":true}],"auxPrevented":1,"childScroll":650})JSON",
+      "unchanged Code-shaped link handlers diverged");
+  require(!take_typed_host_request(engine),
+          "Code-cancelled nested links escaped to the native host queue");
+
+  execute_and_wait(engine, R"JS((() => {
+      const view=document.querySelector('#webview').contentWindow;
+      view.removeEventListener('click',view.__codeClick);
+      view.removeEventListener('auxclick',view.__codeAux);
+    })())JS", "nested-anchor-use-defaults.js");
+
+  activate(123, 0);
+  require(evaluate(engine,
+              "document.querySelector('#webview').contentWindow.scrollY",
+              "nested-anchor-fragment-top.js") == "0"
+          && !take_typed_host_request(engine),
+      "same-document fragment default escaped its child browsing context");
+
+  activate(87, 0);
+  const auto blank = take_typed_host_request(engine);
+  require(blank.kind == WEBSCENE_HOST_REQUEST_OPEN_EXTERNAL_URL_V1
+          && blank.flags == WEBSCENE_HOST_REQUEST_EXTERNAL_NEW_CONTEXT_V1
+          && blank.target_node_id != 0U
+          && blank.url == "https://example.com/blank",
+      "target=_blank did not retain its bounded external-link disposition");
+
+  activate(51, 0, WEBSCENE_INPUT_POINTER_MODIFIER_META);
+  const auto modified = take_typed_host_request(engine);
+  require(modified.kind == WEBSCENE_HOST_REQUEST_OPEN_EXTERNAL_URL_V1
+          && modified.flags
+              == (WEBSCENE_HOST_REQUEST_EXTERNAL_NEW_CONTEXT_V1
+                  | WEBSCENE_HOST_REQUEST_EXTERNAL_BACKGROUND_V1)
+          && modified.url == "https://example.com/primary",
+      "modified primary activation did not retain its external-link disposition");
+
+  activate(51, 1);
+  const auto auxiliary = take_typed_host_request(engine);
+  require(auxiliary.kind == WEBSCENE_HOST_REQUEST_OPEN_EXTERNAL_URL_V1
+          && auxiliary.flags
+              == (WEBSCENE_HOST_REQUEST_EXTERNAL_NEW_CONTEXT_V1
+                  | WEBSCENE_HOST_REQUEST_EXTERNAL_BACKGROUND_V1)
+          && auxiliary.url == "https://example.com/primary",
+      "uncancelled middle activation did not reach the bounded host handoff");
+
+  execute_and_wait(engine, R"JS(
+      document.querySelector('#webview').contentDocument.querySelector('#external')
+        .addEventListener('auxclick',event=>event.preventDefault(),{once:true});
+    )JS", "nested-anchor-cancel-aux.js");
+  activate(51, 1);
+  activate(195, 0);
+  activate(159, 0);
+  require(!take_typed_host_request(engine)
+          && evaluate(engine, "__nestedAnchor.unsafe", "nested-anchor-unsafe.js")
+              == "false",
+      "cancelled, document-crossing, or non-HTTP activation widened navigation authority");
+  webscene_engine_destroy(engine);
+}
+
 void test_nested_keyboard_handoff_and_focus_traversal() {
   constexpr std::string_view address{
       "https://iframe-keyboard.test/index.html"};

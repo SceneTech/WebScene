@@ -198,6 +198,10 @@ int main()
           test_nested_context_menu_handoff();
           return 0;
         }
+        if (selected == "nested-anchor-activation") {
+          test_nested_anchor_activation_handoff();
+          return 0;
+        }
         if (selected == "nested-keyboard-handoff") {
           test_nested_keyboard_handoff_and_focus_traversal();
           return 0;

@@ -1,0 +1,124 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Nested anchor activation and handoff contract</title>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<script src="/resources/testdriver.js"></script>
+<script src="/resources/testdriver-actions.js"></script>
+<script src="/resources/testdriver-vendor.js"></script>
+<style>
+  html, body { margin: 0; width: 800px; height: 600px; }
+  #webview {
+    position: absolute;
+    left: 50px;
+    top: 40px;
+    width: 220px;
+    height: 200px;
+    border: 2px solid black;
+  }
+</style>
+<iframe id="webview"></iframe>
+<script>
+  const frame = document.querySelector("#webview");
+  const childWindow = frame.contentWindow;
+  const childDocument = frame.contentDocument;
+  childDocument.body.style.cssText = "margin:0;height:900px";
+  const navigation = childDocument.createElement("nav");
+  navigation.style.cssText = "position:fixed;left:0;top:0;width:200px";
+  navigation.innerHTML = `
+    <a id="fragment" href="#target"><span>fragment</span></a>
+    <a id="external" href="https://example.com/primary"><span>external</span></a>
+    <a id="blank" href="https://example.com/blank" target="_blank"><span>blank</span></a>`;
+  for (const anchor of navigation.querySelectorAll("a")) {
+    anchor.style.cssText = "display:block;width:200px;height:30px;margin-bottom:6px";
+  }
+  const target = childDocument.createElement("div");
+  target.id = "target";
+  target.style.cssText = "position:absolute;left:0;top:650px;width:20px;height:20px";
+  childDocument.body.append(navigation, target);
+
+  const state = {messages: [], auxPrevented: 0};
+  const handleInnerClick = event => {
+    if (!event.isTrusted || !event?.view?.document) return;
+    const baseElement = event.view.document.querySelector("base");
+    for (const pathElement of event.composedPath()) {
+      const node = pathElement;
+      if (node.tagName && node.tagName.toLowerCase() === "a" && node.href) {
+        if (node.getAttribute("href") === "#") {
+          event.view.scrollTo(0, 0);
+        } else if (node.hash && (node.getAttribute("href") === node.hash
+            || (baseElement && node.href === baseElement.href + node.hash))) {
+          const fragment = node.hash.slice(1);
+          const decodedFragment = decodeURIComponent(fragment);
+          const scrollTarget = event.view.document.getElementById(fragment)
+            ?? event.view.document.getElementById(decodedFragment);
+          if (scrollTarget) scrollTarget.scrollIntoView();
+          else if (decodedFragment.toLowerCase() === "top") event.view.scrollTo(0, 0);
+        } else {
+          state.messages.push({
+            uri: node.href.baseVal || node.href,
+            ctrlKey: event.ctrlKey,
+            metaKey: event.metaKey,
+            shiftKey: event.shiftKey,
+            target: node.target
+          });
+        }
+        event.preventDefault();
+        return;
+      }
+    }
+  };
+  const handleAuxClick = event => {
+    if (!event?.view?.document || event.button !== 1) return;
+    for (const pathElement of event.composedPath()) {
+      const node = pathElement;
+      if (node.tagName && node.tagName.toLowerCase() === "a" && node.href) {
+        event.preventDefault();
+        ++state.auxPrevented;
+        return;
+      }
+    }
+  };
+  childWindow.addEventListener("click", handleInnerClick);
+  childWindow.addEventListener("auxclick", handleAuxClick);
+
+  const primaryClick = (element, modifier) => {
+    const actions = new test_driver.Actions();
+    if (modifier) actions.keyDown(modifier);
+    actions.pointerMove(0, 0, {origin: element})
+      .pointerDown({button: 0})
+      .pointerUp({button: 0});
+    if (modifier) actions.keyUp(modifier);
+    return actions.send();
+  };
+  const middleClick = element => new test_driver.Actions()
+    .pointerMove(0, 0, {origin: element})
+    .pointerDown({button: 1})
+    .pointerUp({button: 1})
+    .send();
+
+  promise_test(async () => {
+    const fragment = childDocument.querySelector("#fragment span");
+    const external = childDocument.querySelector("#external span");
+    const blank = childDocument.querySelector("#blank span");
+
+    await primaryClick(fragment);
+    assert_greater_than(childWindow.scrollY, 600,
+      "the Code-shaped fragment default scrolls the child document");
+    assert_equals(state.messages.length, 0, "a fragment is not forwarded to the host");
+
+    await primaryClick(external, "\uE009");
+    await primaryClick(blank, "\uE008");
+    assert_array_equals(
+      state.messages.map(message => message.uri),
+      ["https://example.com/primary", "https://example.com/blank"],
+      "primary external links are forwarded once");
+    assert_true(state.messages[0].ctrlKey, "the primary modifier reaches the handoff");
+    assert_true(state.messages[1].shiftKey, "the shifted target activation reaches the handoff");
+    assert_equals(state.messages[1].target, "_blank", "the authored target remains observable");
+
+    await middleClick(external);
+    assert_equals(state.auxPrevented, 1, "the middle-click browser default is suppressed");
+    assert_equals(state.messages.length, 2, "middle click is not forwarded as a primary link");
+  }, "unchanged Code webview handlers preserve fragment, primary, target, modifier, and auxiliary semantics");
+</script>

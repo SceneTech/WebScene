@@ -780,17 +780,10 @@
             return semantic_normalize_text(text);
         };
 
-        std::vector<std::unordered_map<std::string, std::string>> label_texts(
-            result->documents.size());
-        for (const auto& capture : captured) {
-            if (capture.node->tag != "label") continue;
-            const auto target = semantic_attribute(*capture.node, "for");
-            if (!target.empty()) {
-                label_texts[capture.document_index].try_emplace(
-                    std::string{target},
-                    subtree_text(*capture.node));
-            }
-        }
+        std::unordered_map<const dom_node*, uint32_t> semantic_indices;
+        semantic_indices.reserve(captured.size());
+        for (uint32_t index = 0U; index < captured.size(); ++index)
+            semantic_indices.emplace(captured[index].node, index);
 
         for (uint32_t index = 0U; index < captured.size(); ++index) {
             const auto& capture = captured[index];
@@ -815,18 +808,14 @@
             if (name.empty()) {
                 name = semantic_normalize_text(semantic_attribute(node, "title"));
             }
-            if (name.empty() && (node.tag == "input" || node.tag == "textarea"
-                || node.tag == "select")) {
-                const auto label = label_texts[capture.document_index].find(
-                    node.id_attribute);
-                if (label != label_texts[capture.document_index].end()) {
-                    name = label->second;
-                }
-                for (auto* ancestor = node.parent;
-                    name.empty() && ancestor != nullptr;
-                    ancestor = ancestor->parent) {
-                    if (ancestor->tag == "label") name = subtree_text(*ancestor);
-                    if (ancestor->tag == "iframe") break;
+            if (name.empty() && is_labelable_control(node)) {
+                for (auto* label : control_label_nodes(
+                        *const_cast<dom_node*>(&node))) {
+                    const auto label_text = subtree_text(*label);
+                    if (label_text.empty()) continue;
+                    if (!name.empty()) name.push_back(' ');
+                    name.append(label_text);
+                    if (name.size() >= maximum_semantic_text_bytes_v1) break;
                 }
                 if (name.empty()) name = semantic_normalize_text(
                     semantic_attribute(node, "placeholder"));
@@ -838,6 +827,30 @@
             if (description.empty()) {
                 description = resolved_id_text(
                     semantic_attribute(node, "aria-describedby"), capture.document_index);
+            }
+            const auto aria_invalid = lower_html_name(std::string(
+                semantic_attribute(node, "aria-invalid")));
+            const auto native_invalid = forms::will_validate(document,node)
+                && !forms::constraint_validity_state(document,node).valid();
+            if (aria_invalid != "" && aria_invalid != "false") {
+                const auto error = resolved_id_text(
+                    semantic_attribute(node, "aria-errormessage"),
+                    capture.document_index);
+                if (!error.empty()) {
+                    if (!description.empty()) description.push_back(' ');
+                    description.append(error);
+                }
+            }
+            if (native_invalid
+                && (&node == active_element
+                    || document.validation_message_target_id() == node.id)) {
+                const auto validation = semantic_normalize_text(
+                    validation_message_for(node));
+                if (!validation.empty()
+                    && description.find(validation) == std::string::npos) {
+                    if (!description.empty()) description.push_back(' ');
+                    description.append(validation);
+                }
             }
             view.description = result->append_string(description);
 
@@ -864,7 +877,8 @@
                 view.states |= WEBSCENE_SEMANTIC_NODE_READONLY_V1;
             if (has("required") || state("aria-required") == "true")
                 view.states |= WEBSCENE_SEMANTIC_NODE_REQUIRED_V1;
-            if (state("aria-invalid") != "" && state("aria-invalid") != "false")
+            if ((state("aria-invalid") != "" && state("aria-invalid") != "false")
+                || native_invalid)
                 view.states |= WEBSCENE_SEMANTIC_NODE_INVALID_V1;
             if (state("aria-busy") == "true") view.states |= WEBSCENE_SEMANTIC_NODE_BUSY_V1;
             if (state("aria-modal") == "true") view.states |= WEBSCENE_SEMANTIC_NODE_MODAL_V1;
@@ -910,6 +924,7 @@
             std::pair{"aria-describedby", WEBSCENE_SEMANTIC_RELATION_DESCRIBED_BY_V1},
             std::pair{"aria-controls", WEBSCENE_SEMANTIC_RELATION_CONTROLS_V1},
             std::pair{"aria-owns", WEBSCENE_SEMANTIC_RELATION_OWNS_V1},
+            std::pair{"aria-errormessage", WEBSCENE_SEMANTIC_RELATION_ERROR_MESSAGE_V1},
             std::pair{"aria-activedescendant", WEBSCENE_SEMANTIC_RELATION_ACTIVE_DESCENDANT_V1}};
         for (uint32_t source = 0U; source < captured.size(); ++source) {
             for (const auto& [attribute, kind] : relationships) {
@@ -936,6 +951,27 @@
                         sizeof(webscene_semantic_relationship_v1),
                         1U,
                         static_cast<uint32_t>(kind),
+                        source,
+                        target->second});
+                }
+            }
+            if (is_labelable_control(*captured[source].node)) {
+                for (auto* label : control_label_nodes(
+                        *const_cast<dom_node*>(captured[source].node))) {
+                    const auto target = semantic_indices.find(label);
+                    if (target == semantic_indices.end()
+                        || captured[target->second].document_index
+                            != captured[source].document_index) continue;
+                    if (result->relationships.size()
+                        == maximum_semantic_relationships_v1) {
+                        result->flags |=
+                            WEBSCENE_SEMANTIC_SNAPSHOT_TRUNCATED_RELATIONSHIPS_V1;
+                        break;
+                    }
+                    result->relationships.push_back({
+                        sizeof(webscene_semantic_relationship_v1),
+                        1U,
+                        WEBSCENE_SEMANTIC_RELATION_LABELLED_BY_V1,
                         source,
                         target->second});
                 }

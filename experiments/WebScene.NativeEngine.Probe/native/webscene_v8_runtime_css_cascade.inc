@@ -3349,6 +3349,13 @@
 
     void index_explicit_form_validity_subtree(dom_node& root)
     {
+        if (!root.id_attribute.empty())
+            label_targets_by_id[root.id_attribute].insert(&root);
+        if (root.tag == "label") {
+            const auto target = root.attributes.find("for");
+            if (target != root.attributes.end() && !target->second.empty())
+                explicit_labels_by_for[target->second].insert(&root);
+        }
         if (root.tag == "form" && !root.id_attribute.empty())
             form_validity_owners_by_id[root.id_attribute].insert(&root);
         if (const auto form = root.attributes.find("form");
@@ -3488,12 +3495,26 @@
         const std::optional<std::string>& current)
     {
         if (previous == current) return;
+        ensure_explicit_form_validity_dependents();
+        const auto update_index = [&](auto& index) {
+            if (previous.has_value() && !previous->empty()) {
+                const auto known = index.find(*previous);
+                if (known != index.end()) {
+                    known->second.erase(&node);
+                    if (known->second.empty()) index.erase(known);
+                }
+            }
+            if (current.has_value() && !current->empty())
+                index[*current].insert(&node);
+        };
+        if (name == "id") update_index(label_targets_by_id);
+        if (node.tag == "label" && name == "for")
+            update_index(explicit_labels_by_for);
         const auto relevant_form_id = node.tag == "form" && name == "id";
         const auto relevant_owner = name == "form";
         const auto relevant_fieldset = node.tag == "fieldset" && name == "disabled";
         if (!relevant_form_id && !relevant_owner && !relevant_fieldset) return;
 
-        ensure_explicit_form_validity_dependents();
         if (relevant_owner)
             update_explicit_form_validity_dependency(node, previous, current);
         if (relevant_form_id) {

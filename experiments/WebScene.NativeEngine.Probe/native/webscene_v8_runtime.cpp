@@ -3189,6 +3189,8 @@ struct v8_dom_runtime::implementation final {
               globalThis.__webSceneElementInternalsWillValidate;
             const elementInternalsValidity =
               globalThis.__webSceneElementInternalsValidity;
+            const elementInternalsLabels =
+              globalThis.__webSceneElementInternalsLabels;
             const setElementInternalsUserValidity =
               globalThis.__webSceneSetElementInternalsUserValidity;
             const validateElementInternals =
@@ -3394,6 +3396,14 @@ struct v8_dom_runtime::implementation final {
                   const state = elementStates.get(element);
                   return state?.definition.formAssociated
                     ? state.formOwner : null;
+                },
+                enumerable: true,
+                configurable: true
+              },
+              labels: {
+                get() {
+                  const {element} = associatedInternalsRecord(this);
+                  return elementInternalsLabels(element);
                 },
                 enumerable: true,
                 configurable: true
@@ -3980,6 +3990,9 @@ struct v8_dom_runtime::implementation final {
             "__webSceneElementInternalsValidity",
             get_element_internals_validity);
         install_native_bridge(
+            "__webSceneElementInternalsLabels",
+            get_element_internals_labels);
+        install_native_bridge(
             "__webSceneSetElementInternalsUserValidity",
             set_element_internals_user_validity);
         install_native_bridge(
@@ -4413,6 +4426,10 @@ struct v8_dom_runtime::implementation final {
             local_context,
             js_string(isolate, "HTMLCollection"),
             get_html_collection_constructor).Check();
+        global->SetLazyDataProperty(
+            local_context,
+            js_string(isolate, "NodeList"),
+            get_node_list_constructor).Check();
         global->SetLazyDataProperty(
             local_context,
             js_string(isolate, "DOMTokenList"),

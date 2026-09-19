@@ -3503,25 +3503,29 @@
 
     dom_node* label_control_for_click(dom_node& target)
     {
-        if (target.tag == "input" || target.tag == "select") return &target;
+        if (is_labelable_control(target)) return &target;
         auto* label = &target;
         while (label != nullptr && label->tag != "label") label = label->parent;
         if (label == nullptr) return nullptr;
 
         const auto explicit_control = label->attributes.find("for");
-        if (explicit_control != label->attributes.end() && !explicit_control->second.empty()) {
-            auto matches = document.query_selector_all(
-                active_root(),
-                "#" + explicit_control->second);
-            if (!matches.empty()
-                && (matches.front()->tag == "input" || matches.front()->tag == "select")) {
-                return matches.front();
+        if (explicit_control != label->attributes.end()) {
+            if (explicit_control->second.empty()) return nullptr;
+            ensure_explicit_form_validity_dependents();
+            auto first = static_cast<dom_node*>(nullptr);
+            const auto candidates = label_targets_by_id.find(
+                explicit_control->second);
+            if (candidates == label_targets_by_id.end()) return nullptr;
+            const auto* root = forms::tree_root(document, *label);
+            for (auto* candidate : candidates->second) {
+                if (candidate == nullptr || !is_connected(*candidate)
+                    || forms::tree_root(document, *candidate) != root) continue;
+                if (first == nullptr || tree_order_before(*candidate, *first))
+                    first = candidate;
             }
+            return first != nullptr && is_labelable_control(*first) ? first : nullptr;
         }
-        auto descendants = document.query_selector_all(*label, "input");
-        if (!descendants.empty()) return descendants.front();
-        descendants = document.query_selector_all(*label, "select");
-        return descendants.empty() ? nullptr : descendants.front();
+        return first_labelable_descendant(*label);
     }
 
     struct scrollbar_thumb_hit final {

@@ -98,6 +98,9 @@
     v8::Global<v8::FunctionTemplate> html_button_element_template;
     v8::Global<v8::FunctionTemplate> html_input_element_template;
     v8::Global<v8::FunctionTemplate> html_text_area_element_template;
+    v8::Global<v8::FunctionTemplate> html_meter_element_template;
+    v8::Global<v8::FunctionTemplate> html_output_element_template;
+    v8::Global<v8::FunctionTemplate> html_progress_element_template;
     v8::Global<v8::FunctionTemplate> html_form_element_template;
     v8::Global<v8::FunctionTemplate> html_field_set_element_template;
     v8::Global<v8::FunctionTemplate> html_select_element_template;
@@ -113,6 +116,7 @@
     v8::Global<v8::ObjectTemplate> frame_document_template;
     v8::Global<v8::ObjectTemplate> frame_window_template;
     v8::Global<v8::FunctionTemplate> html_collection_template;
+    v8::Global<v8::FunctionTemplate> node_list_template;
     v8::Global<v8::FunctionTemplate> dom_token_list_template;
     v8::Global<v8::Object> dom_implementation_object;
     v8::Global<v8::Object> document_object;
@@ -746,6 +750,10 @@
         explicit_form_validity_dependents;
     std::unordered_map<std::string, std::unordered_set<dom_node*>>
         form_validity_owners_by_id;
+    std::unordered_map<std::string, std::unordered_set<dom_node*>>
+        label_targets_by_id;
+    std::unordered_map<std::string, std::unordered_set<dom_node*>>
+        explicit_labels_by_for;
     bool explicit_form_validity_dependents_initialized{false};
     bool flushing_attribute_selector_transitions{false};
     mutable css::selector_match_context* active_selector_match_context{nullptr};

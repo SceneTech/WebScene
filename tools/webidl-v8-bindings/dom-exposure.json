@@ -408,6 +408,7 @@
       "constructor": "illegal_dom_constructor",
       "parent": "HTMLElement",
       "attributes": [
+        { "name": "labels", "getter": "get_labels" },
         { "name": "validity", "getter": "get_validity" },
         { "name": "validationMessage", "getter": "get_validation_message" },
         { "name": "willValidate", "getter": "get_will_validate" }
@@ -425,6 +426,7 @@
       "constructor": "illegal_dom_constructor",
       "parent": "HTMLElement",
       "attributes": [
+        { "name": "labels", "getter": "get_labels" },
         { "name": "validity", "getter": "get_validity" },
         { "name": "validationMessage", "getter": "get_validation_message" },
         { "name": "willValidate", "getter": "get_will_validate" }
@@ -442,6 +444,7 @@
       "constructor": "illegal_dom_constructor",
       "parent": "HTMLElement",
       "attributes": [
+        { "name": "labels", "getter": "get_labels" },
         { "name": "validity", "getter": "get_validity" },
         { "name": "validationMessage", "getter": "get_validation_message" },
         { "name": "willValidate", "getter": "get_will_validate" }
@@ -451,6 +454,39 @@
         { "name": "checkValidity", "callback": "validate_control", "length": 0 },
         { "name": "reportValidity", "callback": "validate_control", "length": 0 }
       ],
+      "constants": []
+    },
+    {
+      "name": "HTMLMeterElement",
+      "template": "html_meter_element_template",
+      "constructor": "illegal_dom_constructor",
+      "parent": "HTMLElement",
+      "attributes": [
+        { "name": "labels", "getter": "get_labels" }
+      ],
+      "methods": [],
+      "constants": []
+    },
+    {
+      "name": "HTMLOutputElement",
+      "template": "html_output_element_template",
+      "constructor": "illegal_dom_constructor",
+      "parent": "HTMLElement",
+      "attributes": [
+        { "name": "labels", "getter": "get_labels" }
+      ],
+      "methods": [],
+      "constants": []
+    },
+    {
+      "name": "HTMLProgressElement",
+      "template": "html_progress_element_template",
+      "constructor": "illegal_dom_constructor",
+      "parent": "HTMLElement",
+      "attributes": [
+        { "name": "labels", "getter": "get_labels" }
+      ],
+      "methods": [],
       "constants": []
     },
     {
@@ -494,6 +530,7 @@
       "parent": "HTMLElement",
       "indexedGetter": "form_or_select_indexed_getter",
       "attributes": [
+        { "name": "labels", "getter": "get_labels" },
         { "name": "length", "getter": "get_form_or_select_length" },
         { "name": "validity", "getter": "get_validity" },
         { "name": "validationMessage", "getter": "get_validation_message" },

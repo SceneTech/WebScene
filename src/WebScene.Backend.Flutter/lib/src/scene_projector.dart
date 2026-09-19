@@ -1086,7 +1086,8 @@ final class WebSceneSceneProjector extends ChangeNotifier {
       _drawDomSvgMask(canvas, command, resource);
       return;
     }
-    if (resource.startsWith('webscene-mask-v2\t')) {
+    if (resource.startsWith('webscene-mask-v2\t')
+        || resource.startsWith('webscene-mask-v3\t')) {
       _drawDomMaskV2(canvas, scene, command, resource);
       return;
     }
@@ -1103,7 +1104,7 @@ final class WebSceneSceneProjector extends ChangeNotifier {
     WebSceneSceneCommand command,
     String resource,
   ) {
-    final layers = _decodeDomMaskV2(resource);
+    final layers = _decodeDomMaskResource(resource);
     if (layers == null) {
       _clearDomMaskBounds(canvas, command);
       return;
@@ -1125,14 +1126,21 @@ final class WebSceneSceneProjector extends ChangeNotifier {
       canvas.clipRect(bounds, doAntiAlias: false);
       canvas.saveLayer(bounds, ui.Paint()..blendMode = ui.BlendMode.dstIn);
       try {
-        for (final layer in layers) {
+        for (var layerIndex = layers.length - 1;
+            layerIndex >= 0;
+            layerIndex--) {
+          final layer = layers[layerIndex];
+          final blendMode = layerIndex == layers.length - 1
+              || layer.composite == 'add'
+              ? ui.BlendMode.srcOver
+              : ui.BlendMode.xor;
           if (layer.image.trimLeft().toLowerCase().startsWith('url(')) {
             _drawDomSvgMask(
               canvas,
               command,
               'webscene-mask-svg-v1\t${layer.viewBox}\t${layer.repeat}'
               '\t${layer.position}\t${layer.size}\t${layer.markup}',
-              blendMode: ui.BlendMode.srcOver,
+              blendMode: blendMode,
             );
           } else {
             _drawDomLinearMask(
@@ -1141,7 +1149,7 @@ final class WebSceneSceneProjector extends ChangeNotifier {
               command,
               resourceOverride: 'webscene-bg-v2\t${layer.image}'
                   '\t${layer.repeat}\t${layer.position}\t${layer.size}',
-              blendMode: ui.BlendMode.srcOver,
+              blendMode: blendMode,
             );
           }
         }
@@ -1153,8 +1161,11 @@ final class WebSceneSceneProjector extends ChangeNotifier {
     }
   }
 
-  static List<_DomMaskLayer>? _decodeDomMaskV2(String resource) {
-    const prefix = 'webscene-mask-v2\t';
+  static List<_DomMaskLayer>? _decodeDomMaskResource(String resource) {
+    const prefixV2 = 'webscene-mask-v2\t';
+    const prefixV3 = 'webscene-mask-v3\t';
+    final version3 = resource.startsWith(prefixV3);
+    final prefix = version3 ? prefixV3 : prefixV2;
     if (!resource.startsWith(prefix)) return null;
     final bytes = utf8.encode(resource);
     var cursor = utf8.encode(prefix).length;
@@ -1181,20 +1192,23 @@ final class WebSceneSceneProjector extends ChangeNotifier {
       final position = readField();
       final size = readField();
       final mode = readField();
+      final composite = version3 ? readField() : 'add';
       final viewBox = readField();
       final markup = readField();
       if (image == null || repeat == null || position == null || size == null
-          || mode == null || viewBox == null || markup == null) return null;
+          || mode == null || composite == null || viewBox == null || markup == null) return null;
       final normalizedImage = image.trimLeft().toLowerCase();
       final gradient = normalizedImage.startsWith('linear-gradient(')
           || normalizedImage.startsWith('radial-gradient(');
       final url = normalizedImage.startsWith('url(');
       final normalizedRepeat = repeat.trim().toLowerCase();
       final normalizedMode = mode.trim().toLowerCase();
+      final normalizedComposite = composite.trim().toLowerCase();
       if ((!gradient && !url)
           || !const {'repeat', 'no-repeat', 'repeat-x', 'repeat-y'}
               .contains(normalizedRepeat)
           || !const {'alpha', 'match-source'}.contains(normalizedMode)
+          || !const {'add', 'exclude'}.contains(normalizedComposite)
           || (url && (viewBox.isEmpty || markup.isEmpty))
           || (!url && (viewBox.isNotEmpty || markup.isNotEmpty))) return null;
       result.add(_DomMaskLayer(
@@ -1203,6 +1217,7 @@ final class WebSceneSceneProjector extends ChangeNotifier {
         position,
         size,
         normalizedMode,
+        normalizedComposite,
         viewBox,
         markup,
       ));
@@ -2317,6 +2332,7 @@ final class _DomMaskLayer {
     this.position,
     this.size,
     this.mode,
+    this.composite,
     this.viewBox,
     this.markup,
   );
@@ -2326,6 +2342,7 @@ final class _DomMaskLayer {
   final String position;
   final String size;
   final String mode;
+  final String composite;
   final String viewBox;
   final String markup;
 }

@@ -20,7 +20,14 @@ each layer's image, repeat, position, size, mode, view box, and SVG markup.
 Linear, radial, and policy-loaded SVG `add` layers are unioned on one temporary
 surface bounded to the element paint box, then destination-in is applied once.
 Unsupported image functions, excessive layers, malformed resources, luminance
-mode, and non-add composites fail closed; #506 owns the remaining composites.
+mode, and composites other than add/exclude fail closed.
+
+Issue #506 extends the ABI to `webscene-mask-v3` when a layer uses standard
+`exclude` or WebKit `xor`. The authored CSSOM spelling remains intact while the
+retained resource normalizes both spellings to `exclude`. Presenters paint the
+bottom layer first, apply each upper layer with source-over or xor, and retain
+the same single bounded destination-in step. Subtract/intersect remain
+fail-closed.
 
 Native, portable WPT, Avalonia, and Flutter regression contracts are authored
 but have not been executed under the current fast-merge directive. No build,

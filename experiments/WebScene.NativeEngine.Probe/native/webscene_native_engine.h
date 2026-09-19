@@ -170,8 +170,9 @@ typedef struct webscene_scene_header {
 // restores it. v2 carries at most 16 length-prefixed linear/radial/SVG layers
 // with repeat, position, size, and mode identities; consumers union add layers
 // on one bounded temporary surface and apply alpha once. Lengths are UTF-8 byte
-// counts. webscene-mask-invalid-v1 clears the isolated layer for failed or
-// unsupported authored masks.
+// counts. webscene-mask-v3 adds a per-layer add/exclude identity; consumers
+// paint bottom-to-top and use xor for exclude before applying alpha once.
+// webscene-mask-invalid-v1 clears the isolated layer for failed/unsupported masks.
 // DOM kind 48 applies one bounded backdrop effect before the element's own
 // background and descendants. flags indexes a webscene-backdrop-v1 resource
 // containing the authored blur/saturate sequence; rgba is the paint phase,

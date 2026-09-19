@@ -91,6 +91,8 @@ public sealed class CssPropertyCatalogTests
     [InlineData("mask-mode", "none", false)]
     [InlineData("mask-repeat", "no-repeat", true)]
     [InlineData("mask-repeat", "bounce", false)]
+    [InlineData("mask-composite", "exclude, add", true)]
+    [InlineData("-webkit-mask-composite", "xor, xor", true)]
     [InlineData("clip-path", "inset(1px 2px)", true)]
     [InlineData("clip-path", "star(1px)", false)]
     [InlineData("filter", "brightness(0.5) blur(2px)", true)]

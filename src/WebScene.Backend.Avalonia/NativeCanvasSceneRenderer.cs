@@ -1212,6 +1212,7 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
         string Position,
         string Size,
         string Mode,
+        string Composite,
         string ViewBox,
         string Markup);
 
@@ -1528,7 +1529,7 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
                 canvas, svg, command, default, SKBlendMode.DstIn);
             return;
         }
-        if (TryDecodeDomMaskV2(resource, out var maskLayers))
+        if (TryDecodeDomMaskResource(resource, out var maskLayers))
         {
             if (!float.IsFinite(command.Width) || !float.IsFinite(command.Height)
                 || command.Width <= 0 || command.Height <= 0
@@ -1550,21 +1551,27 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
             {
                 canvas.ClipRect(bounds, antialias: false);
                 canvas.SaveLayer(bounds, destinationIn);
-                foreach (var layer in maskLayers)
+                for (var layerIndex = maskLayers.Count - 1;
+                     layerIndex >= 0; layerIndex--)
                 {
+                    var layer = maskLayers[layerIndex];
+                    var blendMode = layerIndex == maskLayers.Count - 1
+                        || layer.Composite == "add"
+                        ? SKBlendMode.SrcOver
+                        : SKBlendMode.Xor;
                     if (layer.Image.TrimStart().StartsWith("url(",
                             StringComparison.OrdinalIgnoreCase))
                     {
                         DrawDomSvgBackground(canvas,
                             new DomSvgBackgroundResource(layer.ViewBox, layer.Repeat,
                                 layer.Position, layer.Size, layer.Markup),
-                            command, default, SKBlendMode.SrcOver);
+                            command, default, blendMode);
                     }
                     else
                     {
                         DrawDomGradientTiles(canvas, layer.Image, command,
                             layer.Repeat, layer.Position, layer.Size,
-                            SKBlendMode.SrcOver);
+                            blendMode);
                     }
                 }
                 canvas.Restore();
@@ -1589,12 +1596,15 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
             SKBlendMode.DstIn);
     }
 
-    private static bool TryDecodeDomMaskV2(
+    private static bool TryDecodeDomMaskResource(
         string resource,
         out List<DomMaskLayer> layers)
     {
-        const string prefix = "webscene-mask-v2\t";
+        const string prefixV2 = "webscene-mask-v2\t";
+        const string prefixV3 = "webscene-mask-v3\t";
         layers = [];
+        var version3 = resource.StartsWith(prefixV3, StringComparison.Ordinal);
+        var prefix = version3 ? prefixV3 : prefixV2;
         if (!resource.StartsWith(prefix, StringComparison.Ordinal)) return false;
         var bytes = Encoding.UTF8.GetBytes(resource);
         var cursor = Encoding.UTF8.GetByteCount(prefix);
@@ -1622,7 +1632,10 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
         {
             if (!ReadField(out var image) || !ReadField(out var repeat)
                 || !ReadField(out var position) || !ReadField(out var size)
-                || !ReadField(out var mode) || !ReadField(out var viewBox)
+                || !ReadField(out var mode)) return false;
+            var composite = "add";
+            if (version3 && !ReadField(out composite)) return false;
+            if (!ReadField(out var viewBox)
                 || !ReadField(out var markup)) return false;
             var normalizedImage = image.TrimStart();
             var gradient = normalizedImage.StartsWith("linear-gradient(",
@@ -1633,13 +1646,15 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
                 StringComparison.OrdinalIgnoreCase);
             var normalizedRepeat = repeat.Trim().ToLowerInvariant();
             var normalizedMode = mode.Trim().ToLowerInvariant();
+            var normalizedComposite = composite.Trim().ToLowerInvariant();
             if ((!gradient && !url)
                 || normalizedRepeat is not ("repeat" or "no-repeat" or "repeat-x" or "repeat-y")
                 || normalizedMode is not ("alpha" or "match-source")
+                || normalizedComposite is not ("add" or "exclude")
                 || (url && (viewBox.Length == 0 || markup.Length == 0))
                 || (!url && (viewBox.Length != 0 || markup.Length != 0))) return false;
             layers.Add(new DomMaskLayer(image, normalizedRepeat, position, size,
-                normalizedMode, viewBox, markup));
+                normalizedMode, normalizedComposite, viewBox, markup));
         }
         return cursor == bytes.Length;
     }

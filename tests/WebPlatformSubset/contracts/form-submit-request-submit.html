@@ -53,7 +53,7 @@ test(()=>{
   assert_equals(submitEvent.submitter,submitter);
   assert_equals(formDataEvent.formData.get('required'),'ready');
   assert_equals(formDataEvent.formData.get('commit'),'yes');
-  assert_false(formDataEvent.bubbles);
+  assert_true(formDataEvent.bubbles);
   assert_false(formDataEvent.cancelable);
 },'requestSubmit keeps #606 validation before submit and formdata after an uncanceled submit');
 

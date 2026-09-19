@@ -4354,6 +4354,32 @@ struct v8_dom_runtime::implementation final {
                     if (submitter.form !== form) throw new DOMException('Submitter belongs to another form', 'NotFoundError');
                   }
                   const root = form.getRootNode();
+                  const appendDirname = control => {
+                    const dirname = control.getAttribute('dirname') || '';
+                    const tag = control.tagName;
+                    const type = String(control.type || 'text').toLowerCase();
+                    if (!dirname || !(tag === 'TEXTAREA' || (tag === 'INPUT'
+                        && ['text', 'search', 'tel', 'url', 'email'].includes(type)))) return;
+                    let direction = 'ltr';
+                    for (let node = control; node; node = node.parentElement) {
+                      const authored = String(node.getAttribute('dir') || '').toLowerCase();
+                      if (authored === 'ltr' || authored === 'rtl') {
+                        direction = authored;
+                        break;
+                      }
+                      if (authored === 'auto' && node === control) {
+                        for (const character of String(control.value || '')) {
+                          if (/[\u05d0-\u05ea\u05ef-\u05f4\u0620-\u064a\u066e-\u066f\u0671-\u06d3\u06d5\u06ee-\u06ef\u06fa-\u06fc\u0750-\u077f\u08a0-\u08c9\ufb1d-\ufdff\ufe70-\ufefc]/.test(character)) {
+                            direction = 'rtl';
+                            break;
+                          }
+                          if (/[A-Za-z\u00c0-\u02b8\u0370-\u058f]/.test(character)) break;
+                        }
+                        break;
+                      }
+                    }
+                    this.append(dirname, direction);
+                  };
                   for (const control of root.querySelectorAll('input,select,textarea,button')) {
                     if (control.form !== form || control.matches(':disabled') || control.closest('datalist')) continue;
                     const tag = control.tagName;
@@ -4371,15 +4397,20 @@ struct v8_dom_runtime::implementation final {
                         if (option.selected && !option.matches(':disabled')) this.append(name, option.value);
                       }
                     } else if (type === 'file') {
-                      throw new TypeError('File controls in FormData are not yet supported');
+                      const files = control.files;
+                      if (!files || files.length === 0) {
+                        this.append(name, new File([], '', {type: 'application/octet-stream'}));
+                      } else {
+                        for (const file of files) this.append(name, file);
+                      }
                     } else {
                       const value = type === 'hidden' && name === '_charset_' ? 'UTF-8' :
                         ['checkbox', 'radio'].includes(type) && !control.hasAttribute('value') ? 'on' : control.value;
                       this.append(name, value);
                     }
+                    appendDirname(control);
                   }
-                  const event = new Event('formdata');
-                  Object.defineProperty(event, 'formData', { value: this, enumerable: true });
+                  const event = new FormDataEvent('formdata', {formData: this, bubbles: true});
                   form.dispatchEvent(event);
                 }
               }
@@ -4443,6 +4474,37 @@ struct v8_dom_runtime::implementation final {
                 return `${result}--${boundary}--\r\n`;
               }
             }
+        )JS", R"JS(
+            const formDataEventValues = new WeakMap();
+            class WebSceneFormDataEvent extends Event {
+              constructor(type, eventInitDict) {
+                super(type, eventInitDict);
+                if (arguments.length < 2 || eventInitDict === null
+                    || (typeof eventInitDict !== 'object'
+                        && typeof eventInitDict !== 'function')) {
+                  throw new TypeError('FormDataEvent requires a FormData formData member');
+                }
+                const formData = eventInitDict.formData;
+                if (!(formData instanceof WebSceneFormData)) {
+                  throw new TypeError('FormDataEvent requires a FormData formData member');
+                }
+                formDataEventValues.set(this, formData);
+              }
+            }
+            Object.defineProperties(WebSceneFormDataEvent, {
+              name: {value: 'FormDataEvent', configurable: true}
+            });
+            Object.defineProperties(WebSceneFormDataEvent.prototype, {
+              formData: {
+                get() {
+                  if (!formDataEventValues.has(this)) throw new TypeError('Illegal invocation');
+                  return formDataEventValues.get(this);
+                },
+                enumerable: true,
+                configurable: true
+              },
+              [Symbol.toStringTag]: {value: 'FormDataEvent', configurable: true}
+            });
             class WebSceneURL {
               constructor(value, base = globalThis.location?.href || '') {
                 __webSceneRecordWebApi(
@@ -4510,6 +4572,7 @@ struct v8_dom_runtime::implementation final {
               URL: { value: WebSceneURL, configurable: true },
               URLSearchParams: { value: WebSceneURLSearchParams, configurable: true },
               FormData: { value: WebSceneFormData, configurable: true },
+              FormDataEvent: { value: WebSceneFormDataEvent, configurable: true },
               DOMException: { value: WebSceneDOMException, configurable: true }
             });
         )JS"};

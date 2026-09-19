@@ -73,14 +73,12 @@ bool fills_after(node_style::animation_data::fill_kind fill) noexcept
 }
 
 void discard_web_animation_events(
-    std::unique_ptr<std::vector<native_document::web_animation_event_record>>& events,
+    std::vector<native_document::web_animation_event_record>& events,
     uint32_t animation_id)
 {
-    if (!events) return;
-    std::erase_if(*events, [animation_id](const auto& event) {
+    std::erase_if(events, [animation_id](const auto& event) {
         return event.animation_id == animation_id;
     });
-    if (events->empty()) events.reset();
 }
 } // namespace
 
@@ -102,9 +100,11 @@ bool native_document::create_web_animation(
         node.style.animations().keyframe_animations.end(),
         [](const auto& track) { return !track.signature.empty(); });
     if (id == 0U
-        || (web_animation_nodes_
-            && web_animation_nodes_->size() >= maximum_live_web_animations)
-        || (web_animation_nodes_ && web_animation_nodes_->contains(id))
+        || (web_animation_auxiliary_
+            && web_animation_auxiliary_->nodes.size()
+                >= maximum_live_web_animations)
+        || (web_animation_auxiliary_
+            && web_animation_auxiliary_->nodes.contains(id))
         || css_track_count + animation.web_animations.size()
             >= node_style::animation_data::max_keyframe_animation_tracks
         || std::any_of(
@@ -130,11 +130,11 @@ bool native_document::create_web_animation(
     record.runtime.painted_scale_y = node.style.transform_scale_y;
     record.runtime.painted_rotation_degrees = node.style.transform_rotate_degrees;
     animation.web_animations.push_back(std::move(record));
-    if (!web_animation_nodes_) {
-        web_animation_nodes_ =
-            std::make_unique<std::unordered_map<uint32_t, uint32_t>>();
+    if (!web_animation_auxiliary_) {
+        web_animation_auxiliary_ =
+            std::make_unique<web_animation_auxiliary_storage>();
     }
-    web_animation_nodes_->emplace(id, node.id);
+    web_animation_auxiliary_->nodes.emplace(id, node.id);
     active_animation_demand_cache_valid_ = false;
     last_animation_advance_timestamp_ms_ =
         std::numeric_limits<double>::quiet_NaN();
@@ -148,9 +148,9 @@ bool native_document::control_web_animation(
     web_animation_command command,
     double seek_time_ms)
 {
-    if (!web_animation_nodes_) return false;
-    const auto owner = web_animation_nodes_->find(id);
-    if (owner == web_animation_nodes_->end()) return false;
+    if (!web_animation_auxiliary_) return false;
+    const auto owner = web_animation_auxiliary_->nodes.find(id);
+    if (owner == web_animation_auxiliary_->nodes.end()) return false;
     auto* node = find_by_native_id(owner->second);
     if (node == nullptr || node->animation_runtime() == nullptr) return false;
     auto* animation = node->animation_runtime();
@@ -163,7 +163,8 @@ bool native_document::control_web_animation(
     switch (command) {
         case web_animation_command::play:
             if (record.finished) {
-                discard_web_animation_events(web_animation_events_, id);
+                discard_web_animation_events(
+                    web_animation_auxiliary_->events, id);
                 runtime.started_ms = animation_frame_timestamp_ms_;
                 runtime.active = true;
                 runtime.filled = false;
@@ -182,14 +183,11 @@ bool native_document::control_web_animation(
             }
             break;
         case web_animation_command::cancel:
-            discard_web_animation_events(web_animation_events_, id);
-            if (!web_animation_events_) {
-                web_animation_events_ =
-                    std::make_unique<std::vector<web_animation_event_record>>();
-            }
-            web_animation_events_->push_back({node->id, id, true});
+            discard_web_animation_events(
+                web_animation_auxiliary_->events, id);
+            web_animation_auxiliary_->events.push_back({node->id, id, true});
             animation->web_animations.erase(found);
-            web_animation_nodes_->erase(id);
+            web_animation_auxiliary_->nodes.erase(id);
             break;
         case web_animation_command::finish: {
             const auto active_duration = keyframe_active_duration_ms(record.effect);
@@ -203,7 +201,8 @@ bool native_document::control_web_animation(
         }
         case web_animation_command::seek:
             if (!std::isfinite(seek_time_ms)) return false;
-            discard_web_animation_events(web_animation_events_, id);
+            discard_web_animation_events(
+                web_animation_auxiliary_->events, id);
             runtime.started_ms = (runtime.paused
                     ? runtime.paused_at_ms : animation_frame_timestamp_ms_)
                 - seek_time_ms;
@@ -224,9 +223,9 @@ bool native_document::control_web_animation(
 std::optional<native_document::web_animation_state>
 native_document::web_animation_status(uint32_t id) const
 {
-    if (!web_animation_nodes_) return std::nullopt;
-    const auto owner = web_animation_nodes_->find(id);
-    if (owner == web_animation_nodes_->end()
+    if (!web_animation_auxiliary_) return std::nullopt;
+    const auto owner = web_animation_auxiliary_->nodes.find(id);
+    if (owner == web_animation_auxiliary_->nodes.end()
         || owner->second == 0U || owner->second > native_id_index_.size()) {
         return std::nullopt;
     }
@@ -271,13 +270,11 @@ void native_document::cancel_web_animations(
         auto* animation = node.animation_runtime();
         if (animation == nullptr || animation->web_animations.empty()) return;
         for (const auto& record : animation->web_animations) {
-            discard_web_animation_events(web_animation_events_, record.id);
-            if (!web_animation_events_) {
-                web_animation_events_ = std::make_unique<
-                    std::vector<web_animation_event_record>>();
-            }
-            web_animation_events_->push_back({node.id, record.id, true});
-            if (web_animation_nodes_) web_animation_nodes_->erase(record.id);
+            discard_web_animation_events(
+                web_animation_auxiliary_->events, record.id);
+            web_animation_auxiliary_->events.push_back(
+                {node.id, record.id, true});
+            web_animation_auxiliary_->nodes.erase(record.id);
         }
         animation->web_animations.clear();
         canceled = true;
@@ -506,16 +503,12 @@ void native_document::update_style_animations(dom_node& node)
         for (size_t index = web_capacity;
              index < animation.web_animations.size(); ++index) {
             discard_web_animation_events(
-                web_animation_events_, animation.web_animations[index].id);
-            if (!web_animation_events_) {
-                web_animation_events_ = std::make_unique<
-                    std::vector<web_animation_event_record>>();
-            }
-            web_animation_events_->push_back(
+                web_animation_auxiliary_->events,
+                animation.web_animations[index].id);
+            web_animation_auxiliary_->events.push_back(
                 {node.id, animation.web_animations[index].id, true});
-            if (web_animation_nodes_) {
-                web_animation_nodes_->erase(animation.web_animations[index].id);
-            }
+            web_animation_auxiliary_->nodes.erase(
+                animation.web_animations[index].id);
         }
         animation.web_animations.resize(web_capacity);
     }
@@ -1860,11 +1853,8 @@ bool native_document::advance_animations() noexcept
             }
             advanced = advanced || (contributes && keyframe_paint_visible);
             if (completed && !runtime.end_event_sent) {
-                if (!web_animation_events_) {
-                    web_animation_events_ = std::make_unique<
-                        std::vector<web_animation_event_record>>();
-                }
-                web_animation_events_->push_back({node.id, record.id, false});
+                web_animation_auxiliary_->events.push_back(
+                    {node.id, record.id, false});
                 runtime.end_event_sent = true;
             }
         }
@@ -2237,8 +2227,8 @@ native_document::take_animation_events()
 std::vector<native_document::web_animation_event_record>
 native_document::take_web_animation_events()
 {
-    if (!web_animation_events_) return {};
-    auto events = std::move(*web_animation_events_);
-    web_animation_events_.reset();
+    if (!web_animation_auxiliary_) return {};
+    auto events = std::move(web_animation_auxiliary_->events);
+    web_animation_auxiliary_->events.clear();
     return events;
 }

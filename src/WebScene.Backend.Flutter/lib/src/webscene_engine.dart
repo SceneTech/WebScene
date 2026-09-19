@@ -6,6 +6,7 @@ import 'package:ffi/ffi.dart';
 
 import 'native_bindings.dart';
 import 'runtime_diagnostics.dart';
+import 'runtime_configuration.dart';
 
 const int webScenePointerMove = 1;
 const int webScenePointerDown = 2;
@@ -33,6 +34,8 @@ final class WebSceneEngine {
     required String runtimeLibrary,
     required String bridgeLibrary,
     String? cacheDirectory,
+    WebSceneValidationMessageCatalog validationMessages =
+        const WebSceneValidationMessageCatalog.empty(),
   }) {
     if (!Platform.isMacOS) {
       throw UnsupportedError(
@@ -47,6 +50,7 @@ final class WebSceneEngine {
     if (!bridgeFile.existsSync()) {
       throw StateError('Flutter native bridge not found at ${bridgeFile.path}');
     }
+    validationMessages.validate();
 
     final runtime = DynamicLibrary.open(runtimeFile.absolute.path);
     final native = WebSceneNativeApi(runtime);
@@ -64,13 +68,41 @@ final class WebSceneEngine {
     )..createSync(recursive: true);
     final runtimePath = runtimeFile.absolute.path.toNativeUtf8();
     final cachePath = cache.path.toNativeUtf8();
+    final options = calloc<WebSceneFlutterEngineOptionsV1>();
+    final entries = validationMessages.messages.entries.toList()
+      ..sort((left, right) => left.key.id.compareTo(right.key.id));
+    final Pointer<WebSceneFlutterValidationMessageV1> nativeEntries =
+        entries.isEmpty
+            ? nullptr
+            : calloc<WebSceneFlutterValidationMessageV1>(entries.length);
+    final messageBuffers = <Pointer<Uint8>>[];
     try {
-      final handle = bridge.create(runtimePath, cachePath);
+      for (var index = 0; index < entries.length; ++index) {
+        final message = utf8.encode(entries[index].value);
+        final buffer = calloc<Uint8>(message.length);
+        buffer.asTypedList(message.length).setAll(0, message);
+        messageBuffers.add(buffer);
+        nativeEntries[index]
+          ..structSize = sizeOf<WebSceneFlutterValidationMessageV1>()
+          ..reason = entries[index].key.id
+          ..messageUtf8 = buffer
+          ..messageLength = message.length;
+      }
+      options.ref
+        ..structSize = sizeOf<WebSceneFlutterEngineOptionsV1>()
+        ..validationMessageCount = entries.length
+        ..validationMessages = nativeEntries;
+      final handle = bridge.createV2(runtimePath, cachePath, options);
       if (handle == nullptr) {
         throw StateError(bridge.lastError().toDartString());
       }
       return WebSceneEngine._(native, bridge, handle, runtime);
     } finally {
+      for (final buffer in messageBuffers) {
+        calloc.free(buffer);
+      }
+      if (nativeEntries != nullptr) calloc.free(nativeEntries);
+      calloc.free(options);
       calloc.free(runtimePath);
       calloc.free(cachePath);
     }

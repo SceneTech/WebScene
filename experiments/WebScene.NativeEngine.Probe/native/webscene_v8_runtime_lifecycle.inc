@@ -294,6 +294,7 @@
         release_all_file_system_handles();
         if (file_grant_releases != nullptr) file_grant_releases->stop();
         pending_dialog_close_events.clear();
+        pending_details_toggle_events.clear();
         pending_programmatic_scroll_events.clear();
         pending_interop_promises.clear();
         pending_callback_promises.clear();

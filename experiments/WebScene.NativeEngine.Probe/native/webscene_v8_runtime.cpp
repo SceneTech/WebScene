@@ -8330,6 +8330,7 @@ bool v8_dom_runtime::has_pending_tasks() const noexcept
         || impl_->has_ready_digest_task()
         || impl_->has_ready_cipher_task()
         || !impl_->pending_dialog_close_events.empty()
+        || !impl_->pending_details_toggle_events.empty()
         || !impl_->pending_programmatic_scroll_events.empty()
         || !impl_->pending_frame_hydrations.empty()
         || impl_->has_ready_connected_resource_task()

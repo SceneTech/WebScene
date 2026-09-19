@@ -142,7 +142,11 @@ void test_details_content_pseudo_static_open_close_layout(webscene_engine* engin
           || Math.abs(body.x-host.x-19)>0.01)
         throw new Error('open details content did not use retained pseudo inset');
       globalThis.detailsToggleCount=0;
-      detailsProbe.addEventListener('toggle',()=>++detailsToggleCount);
+      globalThis.detailsToggleStates=[];
+      detailsProbe.addEventListener('toggle',event=>{
+        ++detailsToggleCount;
+        detailsToggleStates.push(`${event.oldState}>${event.newState}`);
+      });
       detailsSummaryAction.click();
       if (!detailsProbe.open || detailsToggleCount !== 0)
         throw new Error('interactive summary descendant did not retain activation');
@@ -153,11 +157,21 @@ void test_details_content_pseudo_static_open_close_layout(webscene_engine* engin
           -(rtlBody.x+rtlBody.width)-19)>0.01)
         throw new Error('rtl details content did not use logical inline-start inset');
       detailsSummaryLabel.click();
-      if (detailsProbe.open || detailsToggleCount !== 1
+      if (detailsProbe.open || detailsToggleCount !== 0
           || detailsBody.getBoundingClientRect().height !== 0)
-        throw new Error('inert summary descendant did not close details exactly once');
+        throw new Error('details toggle event did not remain queued');
       detailsProbe.open=true;
     )JS","details-content-static.js");
+    auto toggle_result=std::string{};
+    for(int attempt=0;attempt<250;++attempt) {
+        toggle_result=evaluate(engine,
+            "JSON.stringify([detailsToggleCount,detailsToggleStates])",
+            "details-content-toggle-task.js");
+        if(toggle_result==R"JSON([1,["closed>open"]])JSON")break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    require(toggle_result==R"JSON([1,["closed>open"]])JSON",
+        "details open changes did not coalesce into one queued toggle task: "+toggle_result);
     webscene_engine_request_scene_checkpoint(engine);
     bool found_border=false;
     for(int attempt=0;attempt<100 && !found_border;++attempt) {

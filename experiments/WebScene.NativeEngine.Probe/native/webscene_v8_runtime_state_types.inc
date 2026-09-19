@@ -234,6 +234,13 @@
         uint64_t input_sequence;
     };
 
+    struct pending_details_toggle_event final {
+        uint32_t target_id;
+        v8::Global<v8::Context> context;
+        bool old_open;
+        bool new_open;
+    };
+
     struct discrete_wheel_scroll_animation final {
         uint32_t target_id{};
         v8::Global<v8::Context> context;

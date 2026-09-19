@@ -1,8 +1,12 @@
 #pragma once
 #include "dawn_shared_image.h"
 #include "linux_external_image.h"
+#include <span>
 
 namespace webscene::graphics {
+#ifndef WEBSCENE_DAWN_LINUX_EXTERNAL_FACTORY_VERSION
+#define WEBSCENE_DAWN_LINUX_EXTERNAL_FACTORY_VERSION 1U
+#endif
 // The WebGPU C ABI bundled with WebScene exposes Vulkan shared-memory import,
 // but deliberately does not expose Dawn's VkDevice/VkPhysicalDevice.  A native
 // allocator therefore has to be installed by the code which created the exact
@@ -23,7 +27,51 @@ enum class dawn_linux_external_status : uint32_t {
     end_failed,
     uninitialized_handoff,
     unsupported_fence,
-    fence_export_failed
+    fence_export_failed,
+    invalid_device_factory
+};
+
+struct dawn_linux_external_device_lifetime {
+    WGPUAdapter dawn_adapter_token{};
+    WGPUDevice dawn_device_token{};
+    // Opaque borrowed identities for the exact Vulkan tuple. They are never
+    // called or cast by WebScene; native_owner controls their typed lifetime.
+    const void* vk_physical_device{};
+    const void* vk_device{};
+    const void* vk_queue{};
+    std::array<uint8_t,16> device_uuid{};
+    std::array<uint8_t,16> driver_uuid{};
+    uint32_t dawn_queue_family{UINT32_MAX};
+    // Host-defined owner for the exact native device/physical-device/queue
+    // tuple. It must outlive every allocation made from those Vulkan handles.
+    std::shared_ptr<void> native_owner;
+};
+
+struct dawn_linux_external_allocator;
+
+// Atomic result of host-owned Dawn/Vulkan device creation. The pinned public
+// Dawn API cannot build this object: it exposes VkInstance but no supported
+// VkDevice, VkPhysicalDevice or VkQueue accessor and cannot wrap a host VkDevice.
+// AppScene (or another native host with an exact-device integration) creates
+// the Dawn device and allocator together and publishes one shared lifetime.
+struct dawn_linux_external_device {
+    wgpu::Instance instance;
+    wgpu::Adapter adapter;
+    wgpu::Device device;
+    std::shared_ptr<const dawn_linux_external_device_lifetime> lifetime;
+    std::shared_ptr<dawn_linux_external_allocator> allocator;
+};
+
+struct dawn_linux_external_device_request {
+    std::span<const wgpu::FeatureName> required_features;
+    bool force_fallback_adapter{};
+};
+
+struct dawn_linux_external_device_factory {
+    virtual ~dawn_linux_external_device_factory()=default;
+    virtual dawn_linux_external_status create(
+        const dawn_linux_external_device_request&,
+        std::shared_ptr<dawn_linux_external_device>&)=0;
 };
 
 struct dawn_linux_external_capabilities {
@@ -71,6 +119,10 @@ inline dawn_linux_external_status inspect_dawn_linux_external_capabilities(
 struct dawn_linux_external_allocation : linux_external_image_provider {
     // Must be the same public handle used when the native allocator was bound.
     virtual WGPUDevice dawn_device_token() const noexcept=0;
+    // Retaining the exact shared object is part of allocation ownership. A
+    // token/UUID copy alone cannot keep the native Vulkan device alive.
+    virtual std::shared_ptr<const dawn_linux_external_device_lifetime>
+        device_lifetime() const noexcept=0;
     // Required only for opaque-FD. It points to a VkImageCreateInfo retained by
     // this allocation through ImportSharedTextureMemory.
     virtual const void* vk_image_create_info() const noexcept=0;
@@ -84,10 +136,131 @@ struct dawn_linux_external_allocator {
     // Capture device.Get() when the allocator is installed next to Dawn device
     // creation. Ordinary Dawn textures are never accepted as external storage.
     virtual WGPUDevice dawn_device_token() const noexcept=0;
+    virtual std::shared_ptr<const dawn_linux_external_device_lifetime>
+        device_lifetime() const noexcept=0;
     virtual dawn_linux_external_status allocate(const image_metadata&,
         wgpu::TextureFormat,wgpu::TextureUsage,
         std::shared_ptr<dawn_linux_external_allocation>&)=0;
 };
+
+inline bool same_dawn_linux_external_identity(
+    const std::shared_ptr<const dawn_linux_external_device_lifetime>& expected,
+    const std::shared_ptr<const dawn_linux_external_device_lifetime>& actual) noexcept {
+    return expected&&expected==actual&&expected->native_owner&&
+        expected->dawn_adapter_token&&expected->dawn_device_token&&
+        expected->dawn_adapter_token==actual->dawn_adapter_token&&
+        expected->dawn_device_token==actual->dawn_device_token&&
+        expected->vk_physical_device&&expected->vk_device&&expected->vk_queue&&
+        nonzero_uuid(expected->device_uuid)&&nonzero_uuid(expected->driver_uuid)&&
+        expected->dawn_queue_family!=UINT32_MAX;
+}
+
+inline bool dawn_linux_snapshot_matches_device(
+    const linux_external_image_snapshot& snapshot,
+    const dawn_linux_external_device_lifetime& device) noexcept {
+    if(snapshot.device_uuid!=device.device_uuid||snapshot.driver_uuid!=device.driver_uuid)
+        return false;
+    if(snapshot.queue_sharing==linux_queue_sharing::exclusive)
+        return snapshot.consumer_queue_family==device.dawn_queue_family;
+    if(snapshot.queue_sharing!=linux_queue_sharing::concurrent)return false;
+    for(uint32_t index=0;index<snapshot.vk_queue_family_index_count;++index)
+        if(snapshot.vk_queue_family_indices[index]==device.dawn_queue_family)return true;
+    return false;
+}
+
+inline bool valid_dawn_linux_external_binding(WGPUDevice expected,
+    WGPUDevice allocator,WGPUDevice allocation) noexcept;
+
+inline bool valid_dawn_linux_external_device(
+    const dawn_linux_external_device& value) noexcept {
+    return value.instance&&value.adapter&&value.device&&value.allocator&&value.lifetime&&
+        same_dawn_linux_external_identity(value.lifetime,
+            value.allocator->device_lifetime())&&
+        value.adapter.Get()==value.lifetime->dawn_adapter_token&&
+        valid_dawn_linux_external_binding(value.device.Get(),
+            value.lifetime->dawn_device_token,value.allocator->dawn_device_token());
+}
+
+#if defined(__linux__)
+// Concrete ownership boundary returned by an exact-device Vulkan allocator.
+// native_allocation_owner owns the VkImage/VkDeviceMemory (and any allocator
+// state); this object owns the exported memory/wait FDs. SharedTextureMemory is
+// destroyed before the provider releases this allocation.
+class owned_dawn_linux_external_allocation final : public dawn_linux_external_allocation {
+    std::shared_ptr<const dawn_linux_external_device_lifetime> device_;
+    std::shared_ptr<void> native_allocation_owner_;
+    std::shared_ptr<const void> vk_image_create_info_;
+    owned_posix_fd memory_fd_;
+    std::vector<owned_posix_fd> wait_fds_;
+    linux_external_image_snapshot snapshot_;
+    uint64_t first_fence_ordering_domain_{};
+    bool opaque_fences_are_timeline_{};
+public:
+    WGPUDevice dawn_device_token() const noexcept override {
+        return device_?device_->dawn_device_token:nullptr;
+    }
+    std::shared_ptr<const dawn_linux_external_device_lifetime>
+        device_lifetime() const noexcept override {return device_;}
+    const void* vk_image_create_info() const noexcept override {
+        return vk_image_create_info_.get();
+    }
+    uint64_t fence_ordering_domain(size_t index,wgpu::SharedFenceType) const noexcept override {
+        if(index>UINT64_MAX-first_fence_ordering_domain_)return 0;
+        return first_fence_ordering_domain_+index;
+    }
+    bool fence_is_timeline(size_t,wgpu::SharedFenceType type) const noexcept override {
+        return type==wgpu::SharedFenceType::VkSemaphoreOpaqueFD&&opaque_fences_are_timeline_;
+    }
+    bool export_image(const image_metadata& expected,
+        linux_external_image_snapshot& result) const override {
+        if(!same_image_metadata(expected,snapshot_.metadata))return false;
+        result=snapshot_;return true;
+    }
+
+    static dawn_linux_external_status adopt(
+        std::shared_ptr<const dawn_linux_external_device_lifetime> device,
+        linux_external_image_snapshot snapshot,owned_posix_fd memory_fd,
+        std::vector<owned_posix_fd> wait_fds,
+        std::shared_ptr<void> native_allocation_owner,
+        std::shared_ptr<const void> vk_image_create_info,
+        uint64_t first_fence_ordering_domain,bool opaque_fences_are_timeline,
+        std::shared_ptr<dawn_linux_external_allocation>& result) {
+        result.reset();
+        if(!same_dawn_linux_external_identity(device,device)||!memory_fd||!native_allocation_owner||
+            !first_fence_ordering_domain||snapshot.planes.empty()||
+            snapshot.waits.size()!=wait_fds.size())
+            return dawn_linux_external_status::invalid_allocation;
+        if(snapshot.memory_handle==linux_memory_handle::opaque_fd) {
+            if(snapshot.planes.size()!=1||!vk_image_create_info)
+                return dawn_linux_external_status::invalid_allocation;
+        } else if(snapshot.memory_handle==linux_memory_handle::dma_buf) {
+            // The pinned Dawn import supports multiple plane layouts only when
+            // every plane names the same DMA-BUF FD.
+            if(snapshot.planes.size()>3||vk_image_create_info)
+                return dawn_linux_external_status::invalid_allocation;
+        } else return dawn_linux_external_status::invalid_allocation;
+        for(auto& plane:snapshot.planes)plane.borrowed_fd=memory_fd.get();
+        for(size_t index=0;index<snapshot.waits.size();++index) {
+            if(!wait_fds[index])return dawn_linux_external_status::invalid_allocation;
+            snapshot.waits[index].borrowed_fd=wait_fds[index].get();
+        }
+        if(!valid_linux_external_snapshot(snapshot,snapshot.metadata)||
+            !dawn_linux_snapshot_matches_device(snapshot,*device))
+            return dawn_linux_external_status::invalid_allocation;
+        auto owned=std::make_shared<owned_dawn_linux_external_allocation>();
+        owned->device_=std::move(device);
+        owned->native_allocation_owner_=std::move(native_allocation_owner);
+        owned->vk_image_create_info_=std::move(vk_image_create_info);
+        owned->memory_fd_=std::move(memory_fd);
+        owned->wait_fds_=std::move(wait_fds);
+        owned->snapshot_=std::move(snapshot);
+        owned->first_fence_ordering_domain_=first_fence_ordering_domain;
+        owned->opaque_fences_are_timeline_=opaque_fences_are_timeline;
+        result=std::move(owned);
+        return dawn_linux_external_status::success;
+    }
+};
+#endif
 
 inline bool valid_dawn_linux_external_binding(WGPUDevice expected,
     WGPUDevice allocator,WGPUDevice allocation) noexcept {
@@ -133,6 +306,8 @@ inline bool same_dawn_linux_external_allocation(const linux_external_image_snaps
 // Call all methods on the Dawn device owner thread.  export_image starts
 // succeeding only after a fully initialized EndAccess handoff has been encoded.
 class dawn_linux_external_provider final : public linux_external_image_provider {
+    std::shared_ptr<dawn_linux_external_device> exact_device_;
+    std::shared_ptr<const dawn_linux_external_device_lifetime> device_lifetime_;
     wgpu::Device device_;
     std::shared_ptr<dawn_linux_external_allocation> allocation_;
     std::shared_ptr<dawn_shared_image> shared_;
@@ -243,15 +418,24 @@ public:
         dawn_linux_external_capabilities capabilities;
         const auto support=inspect_dawn_linux_external_capabilities(adapter,device,capabilities);
         if(support!=dawn_linux_external_status::native_device_provider_required)return support;
+        const auto lifetime=allocator.device_lifetime();
+        if(!same_dawn_linux_external_identity(lifetime,lifetime)||
+            adapter.Get()!=lifetime->dawn_adapter_token||
+            !valid_dawn_linux_external_binding(device.Get(),
+                lifetime->dawn_device_token,allocator.dawn_device_token()))
+            return dawn_linux_external_status::device_mismatch;
         std::shared_ptr<dawn_linux_external_allocation> allocation;
         auto status=allocator.allocate(metadata,format,usage,allocation);
         if(status!=dawn_linux_external_status::success)return status;
-        if(!allocation||!valid_dawn_linux_external_binding(device.Get(),
-            allocator.dawn_device_token(),allocation->dawn_device_token()))
+        if(!allocation||!same_dawn_linux_external_identity(
+                lifetime,allocation->device_lifetime())||
+            !valid_dawn_linux_external_binding(device.Get(),
+                allocator.dawn_device_token(),allocation->dawn_device_token()))
             return dawn_linux_external_status::device_mismatch;
         linux_external_image_snapshot snapshot;
         if(!allocation->export_image(metadata,snapshot)||
             !valid_linux_external_snapshot(snapshot,metadata)||
+            !dawn_linux_snapshot_matches_device(snapshot,*lifetime)||
             !capabilities.has_memory(snapshot.memory_handle)||
             (snapshot.dedicated_allocation&&!capabilities.dedicated_allocation))
             return dawn_linux_external_status::invalid_allocation;
@@ -283,10 +467,28 @@ public:
         if(!shared)return dawn_linux_external_status::import_failed;
         auto created=std::shared_ptr<dawn_linux_external_provider>(
             new dawn_linux_external_provider);
-        created->device_=device;created->allocation_=std::move(allocation);
+        created->device_lifetime_=lifetime;created->device_=device;
+        created->allocation_=std::move(allocation);
         created->shared_=std::move(shared);created->published_=std::move(snapshot);
         result=std::move(created);
         return dawn_linux_external_status::success;
+    }
+
+    static dawn_linux_external_status create(dawn_linux_external_device_factory& factory,
+        const dawn_linux_external_device_request& request,const image_metadata& metadata,
+        wgpu::TextureFormat format,wgpu::TextureUsage usage,
+        std::shared_ptr<dawn_linux_external_provider>& result) {
+        result.reset();
+        std::shared_ptr<dawn_linux_external_device> exact;
+        const auto status=factory.create(request,exact);
+        if(status!=dawn_linux_external_status::success)return status;
+        if(!exact||!valid_dawn_linux_external_device(*exact))
+            return dawn_linux_external_status::invalid_device_factory;
+        auto provider_status=create(exact->adapter,exact->device,*exact->allocator,
+            metadata,format,usage,result);
+        if(provider_status==dawn_linux_external_status::success)
+            result->exact_device_=std::move(exact);
+        return provider_status;
     }
 
     dawn_linux_external_status begin_access() {

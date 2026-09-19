@@ -2227,6 +2227,12 @@
                         ? html_input_element_template.Get(isolate)
                     : node.tag == "textarea"
                         ? html_text_area_element_template.Get(isolate)
+                    : node.tag == "meter"
+                        ? html_meter_element_template.Get(isolate)
+                    : node.tag == "output"
+                        ? html_output_element_template.Get(isolate)
+                    : node.tag == "progress"
+                        ? html_progress_element_template.Get(isolate)
                     : node.tag == "form"
                         ? html_form_element_template.Get(isolate)
                     : node.tag == "fieldset"
@@ -3462,6 +3468,94 @@
         return nullptr;
     }
 
+    static bool is_labelable_control(const dom_node& node)
+    {
+        if (node.form_control().form_associated_custom_element) return true;
+        if (node.tag == "input") return !forms::input_type_is(node, "hidden");
+        return node.tag == "button" || node.tag == "meter"
+            || node.tag == "output" || node.tag == "progress"
+            || node.tag == "select" || node.tag == "textarea";
+    }
+
+    bool tree_order_before(const dom_node& left, const dom_node& right) const
+    {
+        if (&left == &right) return false;
+        std::vector<const dom_node*> left_path;
+        std::vector<const dom_node*> right_path;
+        for (auto* node = &left; node != nullptr; node = document.dom_parent(*node))
+            left_path.push_back(node);
+        for (auto* node = &right; node != nullptr; node = document.dom_parent(*node))
+            right_path.push_back(node);
+        std::reverse(left_path.begin(), left_path.end());
+        std::reverse(right_path.begin(), right_path.end());
+        size_t shared = 0U;
+        while (shared < left_path.size() && shared < right_path.size()
+            && left_path[shared] == right_path[shared]) ++shared;
+        if (shared == left_path.size()) return true;
+        if (shared == right_path.size() || shared == 0U) return false;
+        const auto& siblings = left_path[shared - 1U]->children;
+        const auto left_position = std::find(
+            siblings.begin(), siblings.end(), left_path[shared]);
+        const auto right_position = std::find(
+            siblings.begin(), siblings.end(), right_path[shared]);
+        return left_position < right_position;
+    }
+
+    dom_node* first_labelable_descendant(dom_node& root) const
+    {
+        for (auto* child : root.children) {
+            if (child == nullptr) continue;
+            if (is_labelable_control(*child)) return child;
+            if (child->tag == "iframe" || document.is_shadow_root(*child)) continue;
+            if (auto* nested = first_labelable_descendant(*child); nested != nullptr)
+                return nested;
+        }
+        return nullptr;
+    }
+
+    std::vector<dom_node*> control_label_nodes(dom_node& control)
+    {
+        std::vector<dom_node*> result;
+        if (!is_labelable_control(control) || !is_connected(control)) return result;
+        ensure_explicit_form_validity_dependents();
+        const auto* root = forms::tree_root(document, control);
+        if (!control.id_attribute.empty()) {
+            auto first_target = static_cast<dom_node*>(nullptr);
+            const auto targets = label_targets_by_id.find(control.id_attribute);
+            if (targets != label_targets_by_id.end()) {
+                for (auto* candidate : targets->second) {
+                    if (candidate == nullptr || !is_connected(*candidate)
+                        || forms::tree_root(document, *candidate) != root) continue;
+                    if (first_target == nullptr
+                        || tree_order_before(*candidate, *first_target))
+                        first_target = candidate;
+                }
+            }
+            if (first_target == &control) {
+                const auto labels = explicit_labels_by_for.find(control.id_attribute);
+                if (labels != explicit_labels_by_for.end()) {
+                    for (auto* label : labels->second)
+                        if (label != nullptr && is_connected(*label)
+                            && forms::tree_root(document, *label) == root)
+                            result.push_back(label);
+                }
+            }
+        }
+        for (auto* ancestor = document.dom_parent(control); ancestor != nullptr;
+            ancestor = document.dom_parent(*ancestor)) {
+            if (ancestor->tag == "iframe") break;
+            if (ancestor->tag != "label" || ancestor->attributes.contains("for"))
+                continue;
+            if (first_labelable_descendant(*ancestor) == &control)
+                result.push_back(ancestor);
+        }
+        std::sort(result.begin(), result.end(), [&](const auto* left, const auto* right) {
+            return tree_order_before(*left, *right);
+        });
+        result.erase(std::unique(result.begin(), result.end()), result.end());
+        return result;
+    }
+
     static void html_collection_constructor(
         const v8::FunctionCallbackInfo<v8::Value>& info)
     {
@@ -3556,6 +3650,153 @@
         if (self == nullptr) return;
         info.GetReturnValue().Set(self->ensure_html_collection_template()
             ->GetFunction(info.GetIsolate()->GetCurrentContext()).ToLocalChecked());
+    }
+
+    static void node_list_constructor(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        if (info.IsConstructCall() && info.Length() == 1
+            && info[0]->IsExternal()) {
+            info.This()->SetAlignedPointerInInternalField(
+                0,
+                info[0].As<v8::External>()->Value(
+                    v8::kExternalPointerTypeTagDefault),
+                v8::kEmbedderDataTypeTagDefault);
+            info.GetReturnValue().Set(info.This());
+            return;
+        }
+        info.GetIsolate()->ThrowException(v8::Exception::TypeError(
+            js_string(info.GetIsolate(), "Illegal constructor")));
+    }
+
+    static dom_node* node_list_root(v8::Local<v8::Object> object)
+    {
+        return object->InternalFieldCount() < 1
+            ? nullptr
+            : static_cast<dom_node*>(object->GetAlignedPointerFromInternalField(
+                0, v8::kEmbedderDataTypeTagDefault));
+    }
+
+    static void get_node_list_length(
+        v8::Local<v8::Name>,
+        const v8::PropertyCallbackInfo<v8::Value>& info)
+    {
+        auto* self=current(info.GetIsolate());
+        auto* root=node_list_root(info.Holder());
+        if(self==nullptr || root==nullptr) return;
+        info.GetReturnValue().Set(v8::Integer::NewFromUnsigned(
+            info.GetIsolate(),
+            static_cast<uint32_t>(self->control_label_nodes(*root).size())));
+    }
+
+    static v8::Intercepted node_list_indexed_getter(
+        uint32_t index,
+        const v8::PropertyCallbackInfo<v8::Value>& info)
+    {
+        auto* self=current(info.GetIsolate());
+        auto* root=node_list_root(info.Holder());
+        if(self==nullptr || root==nullptr) return v8::Intercepted::kNo;
+        const auto nodes=self->control_label_nodes(*root);
+        if(index>=nodes.size()) return v8::Intercepted::kNo;
+        info.GetReturnValue().Set(self->wrap_node(*nodes[index]));
+        return v8::Intercepted::kYes;
+    }
+
+    static void node_list_item(const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* self=current(info.GetIsolate());
+        auto* root=node_list_root(info.This());
+        if(self==nullptr || root==nullptr) return;
+        const auto index=info.Length()>0
+            ? info[0]->Uint32Value(
+                info.GetIsolate()->GetCurrentContext()).FromMaybe(0U):0U;
+        const auto nodes=self->control_label_nodes(*root);
+        info.GetReturnValue().Set(index<nodes.size()
+            ? v8::Local<v8::Value>(self->wrap_node(*nodes[index]))
+            : v8::Local<v8::Value>(v8::Null(info.GetIsolate())));
+    }
+
+    static void node_list_iterator(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* self=current(info.GetIsolate());
+        auto* root=node_list_root(info.This());
+        if(self==nullptr || root==nullptr) return;
+        const auto nodes=self->control_label_nodes(*root);
+        auto context=info.GetIsolate()->GetCurrentContext();
+        auto values=v8::Array::New(
+            info.GetIsolate(),static_cast<int>(nodes.size()));
+        for(uint32_t index=0U;index<nodes.size();++index)
+            values->Set(context,index,self->wrap_node(*nodes[index])).Check();
+        v8::Local<v8::Value> iterator;
+        if(!values->Get(context,v8::Symbol::GetIterator(info.GetIsolate()))
+                .ToLocal(&iterator) || !iterator->IsFunction()) return;
+        v8::Local<v8::Value> result;
+        if(iterator.As<v8::Function>()->Call(context,values,0,nullptr)
+                .ToLocal(&result)) info.GetReturnValue().Set(result);
+    }
+
+    v8::Local<v8::FunctionTemplate> ensure_node_list_template()
+    {
+        if(!node_list_template.IsEmpty()) return node_list_template.Get(isolate);
+        auto node_list=v8::FunctionTemplate::New(isolate,node_list_constructor);
+        node_list->SetClassName(js_string(isolate,"NodeList"));
+        node_list->InstanceTemplate()->SetInternalFieldCount(1);
+        node_list->InstanceTemplate()->SetNativeDataProperty(
+            js_string(isolate,"length"),get_node_list_length);
+        node_list->InstanceTemplate()->SetHandler(
+            v8::IndexedPropertyHandlerConfiguration(node_list_indexed_getter));
+        node_list->PrototypeTemplate()->Set(
+            js_string(isolate,"item"),
+            v8::FunctionTemplate::New(
+                isolate,node_list_item,v8::Local<v8::Value>(),
+                v8::Local<v8::Signature>(),1,
+                v8::ConstructorBehavior::kThrow));
+        node_list->PrototypeTemplate()->Set(
+            v8::Symbol::GetIterator(isolate),
+            v8::FunctionTemplate::New(
+                isolate,node_list_iterator,v8::Local<v8::Value>(),
+                v8::Local<v8::Signature>(),0,
+                v8::ConstructorBehavior::kThrow));
+        node_list->PrototypeTemplate()->Set(
+            v8::Symbol::GetToStringTag(isolate),
+            js_string(isolate,"NodeList"),
+            static_cast<v8::PropertyAttribute>(
+                v8::PropertyAttribute::ReadOnly
+                | v8::PropertyAttribute::DontEnum));
+        node_list_template.Reset(isolate,node_list);
+        return node_list;
+    }
+
+    static void get_node_list_constructor(
+        v8::Local<v8::Name>,
+        const v8::PropertyCallbackInfo<v8::Value>& info)
+    {
+        auto* self=current(info.GetIsolate());
+        if(self==nullptr) return;
+        info.GetReturnValue().Set(self->ensure_node_list_template()
+            ->GetFunction(info.GetIsolate()->GetCurrentContext()).ToLocalChecked());
+    }
+
+    v8::Local<v8::Value> label_collection_for(dom_node& node)
+    {
+        if (!is_labelable_control(node)) return v8::Null(isolate);
+        auto local_context = isolate->GetCurrentContext();
+        auto holder = wrap_node(node);
+        auto private_key = v8::Private::ForApi(
+            isolate,
+            js_string(isolate, "WebScene.form-control.labels"));
+        v8::Local<v8::Value> known;
+        if (holder->GetPrivate(local_context, private_key).ToLocal(&known)
+            && known->IsObject()) return known;
+        auto constructor = ensure_node_list_template()
+            ->GetFunction(local_context).ToLocalChecked();
+        v8::Local<v8::Value> arguments[]{v8::External::New(
+            isolate, &node, v8::kExternalPointerTypeTagDefault)};
+        auto collection = constructor->NewInstance(
+            local_context, 1, arguments).ToLocalChecked();
+        holder->SetPrivate(local_context, private_key, collection).Check();
+        return collection;
     }
 
     static void get_html_collection_length(

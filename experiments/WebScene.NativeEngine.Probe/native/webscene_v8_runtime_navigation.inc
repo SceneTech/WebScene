@@ -312,6 +312,8 @@
         pending_attribute_selector_transition_index.clear();
         explicit_form_validity_dependents.clear();
         form_validity_owners_by_id.clear();
+        label_targets_by_id.clear();
+        explicit_labels_by_for.clear();
         explicit_form_validity_dependents_initialized = false;
         style_recascade_batch_depth = 0U;
         active_stylesheet_owner_id = 0U;

@@ -664,15 +664,219 @@
         self->recascade_radio_group_selector_state_changes(radio_group_state);
     }
 
+    void commit_iframe_security_origin(
+        dom_node& frame,
+        const std::string& navigation_address)
+    {
+        frame_security_origins.insert_or_assign(
+            frame.id,
+            iframe_sandbox_allows(frame, "allow-same-origin")
+                ? (navigation_address == "about:blank"
+                    ? iframe_owner_security_origin(frame)
+                    : resource_origin(navigation_address))
+                : std::string("null"));
+    }
+
+    std::string iframe_owner_security_origin(dom_node& frame)
+    {
+        const auto owner_base = effective_document_base(css_cascade_root_for_node(frame));
+        return resource_origin(owner_base);
+    }
+
+    std::string active_iframe_security_origin(dom_node& frame)
+    {
+        if (frame.parent == nullptr
+            && !frame_unload_dispatches.contains(frame.id)) return "null";
+        const auto known = frame_security_origins.find(frame.id);
+        if (known != frame_security_origins.end()) return known->second;
+        // The initial about:blank Document exists before an authored src
+        // navigation commits and inherits its owner's origin unless sandboxed.
+        const auto origin = iframe_sandbox_allows(frame, "allow-same-origin")
+            ? iframe_owner_security_origin(frame)
+            : std::string("null");
+        frame_security_origins.emplace(frame.id, origin);
+        return origin;
+    }
+
     bool iframe_owner_allows_same_origin_access(dom_node& frame)
     {
-        if (!iframe_sandbox_allows(frame, "allow-same-origin")) return false;
-        const auto source = frame.attributes.find("src");
-        if (source == frame.attributes.end() || source->second.empty()
-            || source->second == "about:blank") return true;
-        const auto owner_base = effective_document_base(css_cascade_root_for_node(frame));
-        const auto target = resolve_resource_url(source->second, owner_base);
-        return resource_origin(target) == resource_origin(owner_base);
+        const auto child_origin = active_iframe_security_origin(frame);
+        return child_origin != "null" && !child_origin.empty()
+            && child_origin == iframe_owner_security_origin(frame);
+    }
+
+    static void cross_origin_window_noop(
+        const v8::FunctionCallbackInfo<v8::Value>&)
+    {
+    }
+
+    static bool is_cross_origin_window_property(std::string_view name)
+    {
+        static const std::unordered_set<std::string_view> allowed{
+            "window", "self", "location", "close", "closed", "focus",
+            "blur", "frames", "length", "top", "opener", "parent",
+            "postMessage"};
+        return allowed.contains(name);
+    }
+
+    bool navigate_cross_origin_window(
+        dom_node& frame,
+        v8::Local<v8::Value> raw_value,
+        bool replace)
+    {
+        if (frame.parent == nullptr) return false;
+        const auto authored = to_utf8(isolate, raw_value);
+        constexpr size_t maximum_navigation_url_bytes = 8192U;
+        if (authored.empty() || authored.size() > maximum_navigation_url_bytes
+            || authored.find_first_of("\r\n\0", 0U, 3U) != std::string::npos) {
+            return false;
+        }
+        auto base = effective_document_base(css_cascade_root_for_node(frame));
+        if (const auto active = actual_frame_contexts.find(frame.id);
+            active != actual_frame_contexts.end() && !active->second.IsEmpty()) {
+            auto* root = static_cast<dom_node*>(
+                active->second.Get(isolate)->GetAlignedPointerFromEmbedderData(
+                    1,
+                    v8::kEmbedderDataTypeTagDefault));
+            const auto& active_address = navigation_address_for_root(root);
+            if (!active_address.empty()) base = active_address;
+        }
+        const auto resolved = resolve_resource_url(authored, base);
+        const auto scheme = resource_scheme(resolved);
+        if (resolved.empty()
+            || (scheme != "http" && scheme != "https" && scheme != "file"
+                && resolved != "about:blank")) {
+            return false;
+        }
+        frame.attributes["src"] = resolved;
+        if (!begin_iframe_navigation(frame)) return false;
+        enqueue_iframe_hydration_if_needed(frame);
+        record_feature(
+            "web-api",
+            replace ? "cross-origin Location.replace"
+                    : "cross-origin Window.location",
+            "partially-supported",
+            "restricted nested WindowProxy navigation",
+            "web-api-binding");
+        return true;
+    }
+
+    static dom_node* cross_origin_location_owner(v8::Local<v8::Object> value)
+    {
+        return value->InternalFieldCount() == 0
+            ? nullptr
+            : static_cast<dom_node*>(value->GetAlignedPointerFromInternalField(
+                0,
+                v8::kEmbedderDataTypeTagDefault));
+    }
+
+    static void get_cross_origin_location_href(
+        v8::Local<v8::Name>,
+        const v8::PropertyCallbackInfo<v8::Value>& info)
+    {
+        throw_dom_exception(
+            info.GetIsolate(),
+            "Blocked a cross-origin frame from reading Location.href",
+            "SecurityError");
+    }
+
+    static void set_cross_origin_location_href(
+        v8::Local<v8::Name>,
+        v8::Local<v8::Value> value,
+        const v8::PropertyCallbackInfo<void>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        auto* frame = cross_origin_location_owner(info.Holder());
+        if (self != nullptr && frame != nullptr) {
+            static_cast<void>(
+                self->navigate_cross_origin_window(*frame, value, false));
+        }
+    }
+
+    static void cross_origin_location_replace(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        auto* frame = cross_origin_location_owner(info.This());
+        if (self != nullptr && frame != nullptr && info.Length() > 0) {
+            static_cast<void>(
+                self->navigate_cross_origin_window(*frame, info[0], true));
+        }
+    }
+
+    v8::Local<v8::Object> cross_origin_frame_location(dom_node& frame)
+    {
+        const auto known = cross_origin_frame_locations.find(frame.id);
+        if (known != cross_origin_frame_locations.end()
+            && !known->second.IsEmpty()) {
+            return known->second.Get(isolate);
+        }
+        auto owner_context = context.Get(isolate);
+        auto location_template = v8::ObjectTemplate::New(isolate);
+        location_template->SetInternalFieldCount(1);
+        location_template->SetNativeDataProperty(
+            js_string(isolate, "href"),
+            get_cross_origin_location_href,
+            set_cross_origin_location_href);
+        location_template->Set(
+            js_string(isolate, "replace"),
+            v8::FunctionTemplate::New(isolate, cross_origin_location_replace));
+        auto location =
+            location_template->NewInstance(owner_context).ToLocalChecked();
+        location->SetAlignedPointerInInternalField(
+            0,
+            &frame,
+            v8::kEmbedderDataTypeTagDefault);
+        cross_origin_frame_locations[frame.id].Reset(isolate, location);
+        return location;
+    }
+
+    dom_node* indexed_child_frame(dom_node& owner, std::string_view name)
+    {
+        if (name.empty()
+            || !std::all_of(name.begin(), name.end(), [](unsigned char value) {
+                return value >= '0' && value <= '9';
+            })) {
+            return nullptr;
+        }
+        size_t requested = 0U;
+        for (const auto character : name) {
+            requested = requested * 10U + static_cast<size_t>(character - '0');
+            if (requested > 4096U) return nullptr;
+        }
+        dom_node* result = nullptr;
+        size_t index = 0U;
+        visit_subtree(owner, [&](dom_node& candidate) {
+            if (result != nullptr || candidate.tag != "iframe"
+                || candidate.parent == nullptr) return;
+            dom_node* direct_owner = nullptr;
+            for (auto* ancestor = candidate.parent;
+                ancestor != nullptr;
+                ancestor = ancestor->parent) {
+                if (ancestor->tag != "iframe") continue;
+                direct_owner = ancestor;
+                break;
+            }
+            if (direct_owner != &owner) return;
+            if (index++ == requested) result = &candidate;
+        });
+        return result;
+    }
+
+    size_t child_frame_count(dom_node& owner)
+    {
+        size_t count = 0U;
+        visit_subtree(owner, [&](dom_node& candidate) {
+            if (candidate.tag != "iframe" || candidate.parent == nullptr) return;
+            for (auto* ancestor = candidate.parent;
+                ancestor != nullptr;
+                ancestor = ancestor->parent) {
+                if (ancestor->tag != "iframe") continue;
+                if (ancestor == &owner) ++count;
+                break;
+            }
+        });
+        return count;
     }
 
     static v8::Intercepted get_frame_window_proxy_named_property(
@@ -681,10 +885,73 @@
     {
         auto* self = current(info.GetIsolate());
         auto* frame = unwrap_node(info.Holder());
-        if (self == nullptr || frame == nullptr
-            || !self->iframe_owner_allows_same_origin_access(*frame)) {
+        if (self == nullptr || frame == nullptr || !property->IsString()) {
             return v8::Intercepted::kNo;
         }
+        const auto name = to_utf8(info.GetIsolate(), property.As<v8::Value>());
+        const auto connected = frame->parent != nullptr;
+        if (name == "closed") {
+            info.GetReturnValue().Set(v8::Boolean::New(info.GetIsolate(), !connected));
+            return v8::Intercepted::kYes;
+        }
+        if (name == "window" || name == "self" || name == "frames") {
+            info.GetReturnValue().Set(info.Holder());
+            return v8::Intercepted::kYes;
+        }
+        if (name == "parent" || name == "top") {
+            info.GetReturnValue().Set(self->context.Get(info.GetIsolate())->Global());
+            return v8::Intercepted::kYes;
+        }
+        if (name == "opener") {
+            info.GetReturnValue().Set(v8::Null(info.GetIsolate()));
+            return v8::Intercepted::kYes;
+        }
+        if (name == "length") {
+            info.GetReturnValue().Set(v8::Integer::NewFromUnsigned(
+                info.GetIsolate(),
+                static_cast<uint32_t>(self->child_frame_count(*frame))));
+            return v8::Intercepted::kYes;
+        }
+        if (auto* child = self->indexed_child_frame(*frame, name);
+            child != nullptr) {
+            info.GetReturnValue().Set(self->frame_window(*child));
+            return v8::Intercepted::kYes;
+        }
+        if (!self->iframe_owner_allows_same_origin_access(*frame)) {
+            if (name == "location") {
+                info.GetReturnValue().Set(self->cross_origin_frame_location(*frame));
+                return v8::Intercepted::kYes;
+            }
+            if (name == "postMessage") {
+                info.GetReturnValue().Set(v8::Function::New(
+                    info.GetIsolate()->GetCurrentContext(),
+                    window_post_message).ToLocalChecked());
+                return v8::Intercepted::kYes;
+            }
+            if (name == "focus") {
+                info.GetReturnValue().Set(v8::Function::New(
+                    info.GetIsolate()->GetCurrentContext(),
+                    window_focus).ToLocalChecked());
+                return v8::Intercepted::kYes;
+            }
+            if (name == "blur" || name == "close") {
+                info.GetReturnValue().Set(v8::Function::New(
+                    info.GetIsolate()->GetCurrentContext(),
+                    cross_origin_window_noop).ToLocalChecked());
+                return v8::Intercepted::kYes;
+            }
+            throw_dom_exception(
+                info.GetIsolate(),
+                "Blocked a frame with a different origin from accessing this Window",
+                "SecurityError");
+            return v8::Intercepted::kYes;
+        }
+        static const std::unordered_set<std::string_view> proxy_properties{
+            "addEventListener", "removeEventListener", "getComputedStyle",
+            "focus", "scrollTo", "scroll", "frameElement", "innerWidth",
+            "innerHeight", "devicePixelRatio", "document", "location",
+            "screen", "performance", "postMessage", "close", "blur"};
+        if (proxy_properties.contains(name)) return v8::Intercepted::kNo;
         const auto context_entry = self->actual_frame_contexts.find(frame->id);
         const auto window_entry = self->actual_frame_windows.find(frame->id);
         if (context_entry == self->actual_frame_contexts.end()
@@ -705,6 +972,112 @@
         return v8::Intercepted::kYes;
     }
 
+    static v8::Intercepted set_frame_window_proxy_named_property(
+        v8::Local<v8::Name> property,
+        v8::Local<v8::Value> value,
+        const v8::PropertyCallbackInfo<void>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        auto* frame = unwrap_node(info.Holder());
+        if (self == nullptr || frame == nullptr || !property->IsString()
+            || self->initializing_frame_window_id == frame->id
+            || self->iframe_owner_allows_same_origin_access(*frame)) {
+            return v8::Intercepted::kNo;
+        }
+        const auto name = to_utf8(info.GetIsolate(), property.As<v8::Value>());
+        if (name == "location") {
+            static_cast<void>(
+                self->navigate_cross_origin_window(*frame, value, false));
+            return v8::Intercepted::kYes;
+        }
+        throw_dom_exception(
+            info.GetIsolate(),
+            "Blocked a frame with a different origin from modifying this Window",
+            "SecurityError");
+        return v8::Intercepted::kYes;
+    }
+
+    static v8::Intercepted query_frame_window_proxy_named_property(
+        v8::Local<v8::Name> property,
+        const v8::PropertyCallbackInfo<v8::Integer>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        auto* frame = unwrap_node(info.Holder());
+        if (self == nullptr || frame == nullptr || !property->IsString()
+            || self->iframe_owner_allows_same_origin_access(*frame)) {
+            return v8::Intercepted::kNo;
+        }
+        const auto name = to_utf8(info.GetIsolate(), property.As<v8::Value>());
+        if (is_cross_origin_window_property(name)
+            || self->indexed_child_frame(*frame, name) != nullptr) {
+            info.GetReturnValue().Set(
+                v8::Integer::New(info.GetIsolate(), v8::None));
+            return v8::Intercepted::kYes;
+        }
+        throw_dom_exception(
+            info.GetIsolate(),
+            "Blocked a frame with a different origin from inspecting this Window",
+            "SecurityError");
+        return v8::Intercepted::kYes;
+    }
+
+    static v8::Intercepted delete_frame_window_proxy_named_property(
+        v8::Local<v8::Name>,
+        const v8::PropertyCallbackInfo<v8::Boolean>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        auto* frame = unwrap_node(info.Holder());
+        if (self == nullptr || frame == nullptr
+            || self->iframe_owner_allows_same_origin_access(*frame)) {
+            return v8::Intercepted::kNo;
+        }
+        throw_dom_exception(
+            info.GetIsolate(),
+            "Blocked a frame with a different origin from modifying this Window",
+            "SecurityError");
+        return v8::Intercepted::kYes;
+    }
+
+    static v8::Intercepted define_frame_window_proxy_named_property(
+        v8::Local<v8::Name>,
+        const v8::PropertyDescriptor&,
+        const v8::PropertyCallbackInfo<v8::Boolean>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        auto* frame = unwrap_node(info.Holder());
+        if (self == nullptr || frame == nullptr
+            || self->iframe_owner_allows_same_origin_access(*frame)) {
+            return v8::Intercepted::kNo;
+        }
+        throw_dom_exception(
+            info.GetIsolate(),
+            "Blocked a frame with a different origin from defining a Window property",
+            "SecurityError");
+        return v8::Intercepted::kYes;
+    }
+
+    static v8::Intercepted describe_frame_window_proxy_named_property(
+        v8::Local<v8::Name> property,
+        const v8::PropertyCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        auto* frame = unwrap_node(info.Holder());
+        if (self == nullptr || frame == nullptr || !property->IsString()
+            || self->iframe_owner_allows_same_origin_access(*frame)) {
+            return v8::Intercepted::kNo;
+        }
+        const auto name = to_utf8(info.GetIsolate(), property.As<v8::Value>());
+        if (is_cross_origin_window_property(name)
+            || self->indexed_child_frame(*frame, name) != nullptr) {
+            return v8::Intercepted::kNo;
+        }
+        throw_dom_exception(
+            info.GetIsolate(),
+            "Blocked a frame with a different origin from inspecting this Window",
+            "SecurityError");
+        return v8::Intercepted::kYes;
+    }
+
     static void get_content_window(
         v8::Local<v8::Name>,
         const v8::PropertyCallbackInfo<v8::Value>& info)
@@ -715,16 +1088,10 @@
             info.GetReturnValue().Set(v8::Null(info.GetIsolate()));
             return;
         }
-        if (!self->iframe_owner_allows_same_origin_access(*node)) {
-            // WebScene does not yet expose a restricted cross-origin
-            // WindowProxy. Fail closed instead of returning the privileged
-            // same-origin object. #267 owns that broader proxy surface.
-            info.GetReturnValue().Set(v8::Null(info.GetIsolate()));
-            return;
-        }
         // A browsing context keeps one WindowProxy while navigation replaces
-        // the Window behind it. frame_window() is the stable owner-realm proxy
-        // and forwards named properties to the current same-origin Window.
+        // the Window behind it. The owner-realm proxy dynamically exposes the
+        // complete Window only for the committed same origin and otherwise
+        // enforces the browser's restricted cross-origin surface.
         info.GetReturnValue().Set(self->frame_window(*node));
     }
 

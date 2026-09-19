@@ -902,12 +902,14 @@ struct v8_dom_runtime::implementation final {
         frame_window->SetInternalFieldCount(1);
         frame_window->SetHandler(v8::NamedPropertyHandlerConfiguration(
             get_frame_window_proxy_named_property,
+            set_frame_window_proxy_named_property,
+            query_frame_window_proxy_named_property,
+            delete_frame_window_proxy_named_property,
             nullptr,
-            nullptr,
-            nullptr,
-            nullptr,
+            define_frame_window_proxy_named_property,
+            describe_frame_window_proxy_named_property,
             {},
-            v8::PropertyHandlerFlags::kNonMasking));
+            v8::PropertyHandlerFlags::kOnlyInterceptStrings));
         frame_window->Set(
             js_string(isolate, "addEventListener"),
             v8::FunctionTemplate::New(isolate, frame_window_add_event_listener));

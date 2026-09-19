@@ -182,6 +182,7 @@ int main()
         }
         if (selected == "iframe-navigation-lifecycle") {
             test_same_origin_iframe_navigation_document_replacement();
+            test_restricted_cross_origin_nested_window_proxy();
             return 0;
         }
         if (selected == "query-iframe-worker-bootstrap") {

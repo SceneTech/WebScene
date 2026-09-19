@@ -346,6 +346,8 @@
         active_css_cascade_root = nullptr;
         frame_documents.clear();
         frame_windows.clear();
+        cross_origin_frame_locations.clear();
+        frame_security_origins.clear();
         frame_window_scroll_offsets.clear();
         frame_load_listeners.clear();
         frame_dom_content_loaded_listeners.clear();

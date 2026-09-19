@@ -241,6 +241,15 @@
 
         auto isolate = info.GetIsolate();
         auto target_context = self->context.Get(isolate);
+        if (auto* proxy_frame = unwrap_node(info.This());
+            proxy_frame != nullptr && proxy_frame->tag == "iframe") {
+            if (proxy_frame->parent == nullptr) return;
+            const auto frame_context =
+                self->actual_frame_contexts.find(proxy_frame->id);
+            if (frame_context == self->actual_frame_contexts.end()
+                || frame_context->second.IsEmpty()) return;
+            target_context = frame_context->second.Get(isolate);
+        }
         for (const auto& [frame_id, persistent_window] :
             self->actual_frame_windows) {
             auto frame_window = persistent_window.Get(isolate);
@@ -2620,7 +2629,8 @@
         implementation& self,
         v8::Local<v8::Object> holder)
     {
-        if (auto* node = unwrap_node(holder); node != nullptr && node->tag == "iframe") {
+        if (auto* node = unwrap_node(holder);
+            node != nullptr && node->tag == "iframe" && node->parent != nullptr) {
             return node;
         }
         for (const auto& [id, persistent] : self.actual_frame_windows) {

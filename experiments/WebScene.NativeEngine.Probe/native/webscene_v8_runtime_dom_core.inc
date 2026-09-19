@@ -1437,6 +1437,8 @@
             actual_frame_contexts.erase(id);
             frame_hydration_states.erase(id);
             retire_iframe_navigation(id);
+            cross_origin_frame_locations.erase(id);
+            frame_security_origins.erase(id);
             frame_beforeunload_dispatches.erase(id);
             frame_pagehide_dispatched.erase(id);
             frame_unload_dispatched.erase(id);
@@ -1990,6 +1992,8 @@
         for (const auto id : node_ids) {
             frame_documents.erase(id);
             frame_windows.erase(id);
+            cross_origin_frame_locations.erase(id);
+            frame_security_origins.erase(id);
             frame_window_scroll_offsets.erase(id);
             actual_frame_windows.erase(id);
             if (const auto found = actual_frame_contexts.find(id);
@@ -2934,6 +2938,10 @@
             0,
             &node,
             v8::kEmbedderDataTypeTagDefault);
+        // The masking interceptor enforces the current committed origin. Its
+        // own backing properties still have to be populated when the first
+        // observation happens after a cross-origin commit.
+        initializing_frame_window_id = node.id;
         auto location = v8::Object::New(isolate);
         const auto source = node.attributes.contains("src") ? node.attributes["src"] : "about:blank";
         location->Set(local_context, js_string(isolate, "href"), js_string(isolate, source.c_str())).Check();
@@ -2949,9 +2957,24 @@
         object->Set(local_context, js_string(isolate, "window"), object).Check();
         object->Set(local_context, js_string(isolate, "self"), object).Check();
         object->Set(local_context, js_string(isolate, "parent"), local_context->Global()).Check();
+        object->Set(local_context, js_string(isolate, "top"), local_context->Global()).Check();
+        object->Set(local_context, js_string(isolate, "opener"), v8::Null(isolate)).Check();
+        object->Set(
+            local_context,
+            js_string(isolate, "postMessage"),
+            v8::Function::New(local_context, window_post_message).ToLocalChecked()).Check();
+        object->Set(
+            local_context,
+            js_string(isolate, "close"),
+            v8::Function::New(local_context, cross_origin_window_noop).ToLocalChecked()).Check();
+        object->Set(
+            local_context,
+            js_string(isolate, "blur"),
+            v8::Function::New(local_context, cross_origin_window_noop).ToLocalChecked()).Check();
         install_screen(local_context, object);
         install_performance_clock(local_context, object);
         install_performance_timeline_on_object(local_context, object);
+        initializing_frame_window_id = 0U;
         frame_windows[node.id].Reset(isolate, object);
         return object;
     }

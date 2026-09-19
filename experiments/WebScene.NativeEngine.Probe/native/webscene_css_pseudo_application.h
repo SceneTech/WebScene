@@ -65,6 +65,19 @@ inline bool split_custom_highlight_selector(
     return true;
 }
 
+inline bool split_selection_selector(
+    std::string_view selector,
+    std::string& origin)
+{
+    constexpr auto standard = std::string_view{"::selection"};
+    constexpr auto moz = std::string_view{"::-moz-selection"};
+    const auto suffix = selector.ends_with(standard)
+        ? standard : selector.ends_with(moz) ? moz : std::string_view{};
+    if (suffix.empty()) return false;
+    origin = trim_value(selector.substr(0U, selector.size() - suffix.size()));
+    return true;
+}
+
 template<typename Decision,typename Resolved>
 void apply_details_content_declaration(
     dom_node& node,

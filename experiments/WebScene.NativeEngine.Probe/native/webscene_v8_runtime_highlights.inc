@@ -129,7 +129,118 @@
                 }
             }
         }
+        struct selection_rule_entry final {
+            const css_rule* rule{};
+            std::string origin;
+        };
+        std::vector<selection_rule_entry> selection_rules;
+        for (const auto& rule : css_rules) {
+            if (!rule.media_matches) continue;
+            std::string origin;
+            if (css::split_selection_selector(rule.selector(), origin)) {
+                selection_rules.push_back({&rule, std::move(origin)});
+            }
+        }
+        constexpr auto selection_priority = std::numeric_limits<int32_t>::max();
+        uint32_t selection_order = 0U;
+        for (auto& [root_id, selection] : window_selections) {
+            if (selection_rules.empty()) break;
+            auto* root = document.find_by_native_id(root_id);
+            if (root == nullptr || !validate_selection(selection)
+                || (selection.anchor_node_id == selection.focus_node_id
+                    && selection.anchor_offset == selection.focus_offset)) continue;
+            refresh_selection_text_nodes(selection, *root);
+            auto* anchor = document.find_by_native_id(selection.anchor_node_id);
+            auto* focus = document.find_by_native_id(selection.focus_node_id);
+            const auto anchor_position = std::find(
+                selection.text_nodes.begin(), selection.text_nodes.end(), anchor);
+            const auto focus_position = std::find(
+                selection.text_nodes.begin(), selection.text_nodes.end(), focus);
+            if (anchor_position == selection.text_nodes.end()
+                || focus_position == selection.text_nodes.end()) continue;
+            const auto forward = anchor_position < focus_position
+                || (anchor_position == focus_position
+                    && selection.anchor_offset <= selection.focus_offset);
+            const auto first = forward ? anchor_position : focus_position;
+            const auto last = forward ? focus_position : anchor_position;
+            const auto first_offset = forward
+                ? selection.anchor_offset : selection.focus_offset;
+            const auto last_offset = forward
+                ? selection.focus_offset : selection.anchor_offset;
+            for (auto iterator = first; iterator <= last; ++iterator) {
+                auto* text = *iterator;
+                if (text == nullptr) continue;
+                auto* origin_node = text->parent;
+                while (origin_node != nullptr
+                    && origin_node->kind != dom_node_kind::element) {
+                    origin_node = origin_node->parent;
+                }
+                if (origin_node == nullptr) continue;
+                std::vector<const css_rule*> matching;
+                for (const auto& entry : selection_rules) {
+                    if (entry.origin.empty() || entry.origin == "*"
+                        || css_selector_matches(*origin_node, entry.origin)) {
+                        matching.push_back(entry.rule);
+                    }
+                }
+                if (matching.empty()) continue;
+                std::stable_sort(
+                    matching.begin(), matching.end(),
+                    [](const css_rule* left, const css_rule* right) {
+                        return css::cascade_rule_precedes(left, right, false);
+                    });
+                resolved_highlight_style style;
+                const css::cascaded_rule_order cascade(matching);
+                css::for_each_cascaded_declaration(
+                    cascade,
+                    false,
+                    [&](const css_declaration& declaration) {
+                        const auto foreground = declaration.name == "color";
+                        const auto background = declaration.name == "background-color";
+                        if (!foreground && !background) return;
+                        auto resolved = declaration.value.find("var(") != std::string::npos
+                            ? resolve_value(*origin_node, declaration.value, css_variables)
+                            : declaration.value;
+                        const auto color = native_document::parse_color(resolved);
+                        if (!css::is_explicit_color_token(resolved, color)) return;
+                        if (foreground) {
+                            style.foreground_rgba = color;
+                            style.foreground_specified = true;
+                        } else {
+                            style.background_rgba = color;
+                            style.background_specified = true;
+                        }
+                    },
+                    [](const css_declaration& declaration) -> std::string_view {
+                        return declaration.name;
+                    });
+                if (!style.foreground_specified && !style.background_specified) continue;
+                const auto text_length = decode_wtf8_to_utf16(text->text_content).size();
+                const auto start_offset = iterator == first
+                    ? std::min(first_offset, text_length) : 0U;
+                const auto end_offset = iterator == last
+                    ? std::min(last_offset, text_length) : text_length;
+                if (start_offset >= end_offset) continue;
+                published.push_back(native_document::custom_highlight_range{
+                    root_id,
+                    text->id,
+                    text->id,
+                    start_offset,
+                    end_offset,
+                    style.foreground_rgba,
+                    style.background_rgba,
+                    selection_priority,
+                    selection_order++,
+                    style.foreground_specified,
+                    style.background_specified});
+            }
+        }
         document.set_custom_highlight_ranges(std::move(published));
+    }
+
+    void selection_paint_changed()
+    {
+        refresh_custom_highlight_paint();
     }
 
     void registered_highlight_changed(const highlight_binding& binding)

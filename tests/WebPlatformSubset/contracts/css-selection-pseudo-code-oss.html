@@ -1,0 +1,25 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Scoped selection pseudo rules preserve Code OSS colors</title>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<style>
+  :root { --selection-background: #123456; }
+  ::selection { background-color: var(--selection-background); color: #abcdef; }
+  .scoped::selection { background-color: #654321 !important; color: #102030; }
+</style>
+<p><span id="first">alpha </span><span id="second" class="scoped">beta</span></p>
+<script>
+  test(() => {
+    const selection = getSelection();
+    selection.removeAllRanges();
+    const range = document.createRange();
+    range.setStart(document.getElementById('first').firstChild, 1);
+    range.setEnd(document.getElementById('second').firstChild, 3);
+    selection.addRange(range);
+    assert_equals(selection.toString(), 'lpha bet');
+    assert_equals(selection.rangeCount, 1);
+    selection.removeAllRanges();
+    assert_equals(selection.rangeCount, 0);
+  }, 'forward cross-node Selection owns one live range for pseudo paint');
+</script>

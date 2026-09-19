@@ -1716,6 +1716,76 @@ void test_custom_highlight_retained_paint_contract(webscene_engine* engine)
         "higher-priority Custom Highlight did not paint after the lower priority");
 }
 
+void test_selection_pseudo_retained_paint_contract(webscene_engine* engine)
+{
+    resize(engine, 640, 240, 7501U);
+    const auto selected = evaluate(engine, R"JS(
+        (() => {
+          document.body.innerHTML = `
+            <style>
+              :root { --selection-background: #123456; }
+              ::selection { background-color: var(--selection-background); color: #abcdef; }
+              .scoped::selection { background-color: #654321 !important; color: #102030; }
+            </style>
+            <p style="font:16px Arial;margin:0"><span>alpha </span><span class="scoped">beta</span></p>`;
+          return JSON.stringify({
+            found: window.find('beta'),
+            text: getSelection().toString(),
+            rangeCount: getSelection().rangeCount
+          });
+        })()
+    )JS", "native-selection-pseudo-retained-paint.js");
+    require(
+        selected == R"({"found":true,"text":"beta","rangeCount":1})",
+        "scoped Selection setup regressed: " + selected);
+
+    const auto observe_scene_colors = [&](uint32_t background, uint32_t foreground) {
+        webscene_engine_request_scene_checkpoint(engine);
+        auto saw_background = false;
+        auto saw_foreground = false;
+        for (auto attempt = 0; attempt < 100; ++attempt) {
+            const auto* scene = webscene_engine_acquire_latest_scene(engine);
+            if (scene != nullptr) {
+                for (uint32_t index = 0; index < scene->header.command_count; ++index) {
+                    const auto& command = scene->commands[index];
+                    saw_background |= command.kind == 2U
+                        && command.rgba == background && command.width > 0.0F;
+                    saw_foreground |= command.kind == 3U
+                        && command.rgba == foreground && command.width > 0.0F;
+                }
+                webscene_scene_acknowledge(scene);
+                webscene_scene_release(scene);
+            }
+            if (saw_background && saw_foreground) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        return saw_background && saw_foreground;
+    };
+    require(observe_scene_colors(0x654321FFU, 0x102030FFU),
+        "selector-qualified ::selection colors were absent from retained paint");
+
+    const auto select_all = evaluate(engine, R"JS(
+        (() => ({
+          selected: document.execCommand('selectAll'),
+          text: getSelection().toString()
+        }))()
+    )JS", "native-selection-pseudo-select-all.js");
+    require(select_all.find(R"("selected":true)") != std::string::npos
+            && select_all.find("alpha beta") != std::string::npos,
+        "cross-node Selection setup regressed: " + select_all);
+    require(observe_scene_colors(0x123456FFU, 0xABCDEFFFU),
+        "global ::selection colors were absent from cross-node retained paint");
+
+    const auto cleared = evaluate(engine, R"JS(
+        (() => {
+          getSelection().removeAllRanges();
+          return JSON.stringify({ count: getSelection().rangeCount, text: getSelection().toString() });
+        })()
+    )JS", "native-selection-pseudo-clear.js");
+    require(cleared == R"({"count":0,"text":""})",
+        "Selection clear contract regressed: " + cleared);
+}
+
 void test_custom_element_mutation_reactions_are_pay_for_use(webscene_engine* engine)
 {
     const auto result = evaluate(engine, R"JS(

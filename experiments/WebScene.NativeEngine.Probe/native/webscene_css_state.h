@@ -49,6 +49,8 @@ struct compiled_css_attribute final {
     uint8_t operator_kind{0};
     std::string value;
     uint8_t case_sensitivity{0};
+
+    bool operator==(const compiled_css_attribute&) const = default;
 };
 
 struct compiled_css_compound final {

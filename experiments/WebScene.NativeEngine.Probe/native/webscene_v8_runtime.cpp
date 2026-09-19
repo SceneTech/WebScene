@@ -4049,6 +4049,32 @@ struct v8_dom_runtime::implementation final {
                 [record.state, normalizedMode]);
               return true;
             };
+            const captureFormAssociatedState = element => {
+              const state = elementStates.get(element);
+              if (!state || state.state !== 'custom'
+                  || !state.definition.formAssociated) return null;
+              const record = attachedInternals.get(element);
+              return record && typeof record.state === 'string'
+                ? record.state : null;
+            };
+            const restoreFormAssociatedStateValue = (
+                element, restoredState, mode = 'restore') => {
+              const state = elementStates.get(element);
+              if (!state || state.state !== 'custom'
+                  || !state.definition.formAssociated
+                  || typeof restoredState !== 'string') return false;
+              const normalizedMode = String(mode);
+              if (normalizedMode !== 'restore'
+                  && normalizedMode !== 'autocomplete') return false;
+              const record = attachedInternals.get(element);
+              if (!record) return false;
+              record.state = restoredState;
+              enqueueReaction(
+                element,
+                state.definition.formStateRestoreCallback,
+                [restoredState, normalizedMode]);
+              return true;
+            };
             Object.defineProperties(globalThis, {
               CustomStateSet: {
                 value: WebSceneCustomStateSet, writable: true, configurable: true
@@ -4073,6 +4099,12 @@ struct v8_dom_runtime::implementation final {
               },
               __webSceneRestoreFormAssociatedState: {
                 value: restoreFormAssociatedState, configurable: true
+              },
+              __webSceneCaptureFormAssociatedState: {
+                value: captureFormAssociatedState, configurable: true
+              },
+              __webSceneRestoreFormAssociatedStateValue: {
+                value: restoreFormAssociatedStateValue, configurable: true
               }
             });
             Object.defineProperty(globalThis, 'customElements', {
@@ -7375,6 +7407,7 @@ struct v8_dom_runtime::implementation final {
 #include "webscene_v8_runtime_web_animations.inc"
 #include "webscene_v8_runtime_diagnostics.inc"
 #include "webscene_v8_runtime_dom_properties.inc"
+#include "webscene_v8_runtime_form_history.inc"
 #include "webscene_v8_runtime_canvas.inc"
 #include "webscene_v8_runtime_document.inc"
 #include "webscene_v8_runtime_semantics.inc"

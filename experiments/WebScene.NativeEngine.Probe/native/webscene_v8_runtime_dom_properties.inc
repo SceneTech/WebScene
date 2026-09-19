@@ -3538,6 +3538,7 @@
         std::unordered_set<dom_node*> affected_form_owners;
         self->refresh_live_form_control(*node, affected_form_owners);
         self->sort_live_form_controls(affected_form_owners);
+        if (enabled) self->restore_pending_form_control(*node);
         const auto selector_state_after=forms::validity_state(
             self->document,*node);
         if(selector_state_before==selector_state_after) return;

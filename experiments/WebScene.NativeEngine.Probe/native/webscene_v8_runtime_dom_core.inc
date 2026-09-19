@@ -2812,6 +2812,18 @@
         // its own dispatch. Preserve the initiator's reflected source.
         restore_requested_source();
         if (frame.parent == nullptr) return false;
+        if (const auto outgoing = actual_frame_contexts.find(frame.id);
+            outgoing != actual_frame_contexts.end()
+            && !outgoing->second.IsEmpty()) {
+            auto outgoing_context = outgoing->second.Get(isolate);
+            if (!frame_history_traversals.contains(frame.id))
+                capture_nested_form_state(outgoing_context, true);
+            if (auto* outgoing_root = static_cast<dom_node*>(
+                    outgoing_context->GetAlignedPointerFromEmbedderData(
+                        1, v8::kEmbedderDataTypeTagDefault));
+                outgoing_root != nullptr)
+                pending_form_restores.erase(outgoing_root->id);
+        }
         if (active_drag_session.has_value()
             && active_drag_session->frame_owner_id == frame.id) {
             active_drag_session.reset();
@@ -2939,6 +2951,9 @@
             pending_frame_preparations.erase(preparation);
         }
         nested_history_states.erase(frame_id);
+        if (const auto root = frame_documents.find(frame_id);
+            root != frame_documents.end() && root->second != nullptr)
+            pending_form_restores.erase(root->second->id);
         frame_reload_navigations.erase(frame_id);
         frame_history_traversals.erase(frame_id);
         frame_history_replace_navigations.erase(frame_id);
@@ -6782,6 +6797,8 @@
         auto history = info.This();
         auto* nested_history = self->nested_history_for_context(
             local_context, true);
+        if (nested_history != nullptr)
+            self->capture_nested_form_state(local_context, false);
         v8::Local<v8::Value> length_value;
         uint32_t length = 1U;
         if (history->GetPrivate(
@@ -6853,6 +6870,7 @@
                 v8::Integer::NewFromUnsigned(
                     isolate,
                     static_cast<uint32_t>(nested_history->entries.size()))).Check();
+            self->capture_nested_form_state(local_context, false);
         } else if (!replace) {
             history->SetPrivate(
                 local_context,
@@ -6897,6 +6915,8 @@
             return;
         }
 
+        capture_nested_form_state(local_context, true);
+
         const auto frame_id = frame->id;
         const auto previous_index = history->index;
         const auto old_url = current_navigation_address();
@@ -6937,6 +6957,13 @@
         if (!apply_same_document_history_url(local_context, entry.url)) {
             history->traversing = false;
             return;
+        }
+        if (!history->entries[history->index].form_state.controls.empty()) {
+            auto* root = static_cast<dom_node*>(
+                local_context->GetAlignedPointerFromEmbedderData(
+                    1, v8::kEmbedderDataTypeTagDefault));
+            if (root != nullptr) restore_form_state(
+                *root, history->entries[history->index].form_state, false);
         }
         history_object->SetPrivate(
             local_context, history_state_key(isolate), state).Check();

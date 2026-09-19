@@ -1614,6 +1614,7 @@ typedef struct webscene_engine_options {
 enum {
     WEBSCENE_PROFILE_CLEAR_COOKIES_V1 = 1U << 0U,
     WEBSCENE_PROFILE_CLEAR_LOCAL_STORAGE_V1 = 1U << 1U,
+    /* Also clears bounded non-secret form restoration state. */
     WEBSCENE_PROFILE_CLEAR_ALL_SITE_DATA_V1 = 1U << 2U
 };
 enum {

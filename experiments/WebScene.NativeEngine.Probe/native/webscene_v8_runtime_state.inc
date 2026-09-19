@@ -38,6 +38,8 @@
     std::unordered_set<uint32_t> frame_unload_dispatched;
     std::unordered_set<uint32_t> hidden_frame_document_roots;
     std::unordered_map<uint32_t, nested_history_state> nested_history_states;
+    std::unordered_map<uint32_t, pending_form_restore_state>
+        pending_form_restores;
     std::unordered_set<uint32_t> frame_reload_navigations;
     std::unordered_set<uint32_t> frame_history_traversals;
     std::unordered_set<uint32_t> frame_history_replace_navigations;

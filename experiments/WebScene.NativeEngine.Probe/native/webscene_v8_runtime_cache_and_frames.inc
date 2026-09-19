@@ -2492,6 +2492,10 @@
         auto document_value = frame_global->Get(
             local_frame_context,
             js_string(isolate, "document")).ToLocalChecked().As<v8::Object>();
+        restore_after_document_parse(
+            *hydration.body, hydration.base_address, frame.id);
+        if (stale_generation() || !is_connected(frame))
+            return restore_outer(frame_hydration_result::complete);
         if (!dispatch_lifecycle_event(document_value, "DOMContentLoaded")) {
             return restore_outer(frame_hydration_result::failed);
         }

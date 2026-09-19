@@ -3345,6 +3345,169 @@
             : js_string(info.GetIsolate(), node->mutable_form_control().value.c_str()));
     }
 
+    static bool is_constraint_validation_control(const dom_node* node)
+    {
+        return node!=nullptr && (node->tag=="button" || node->tag=="input"
+            || node->tag=="select" || node->tag=="textarea");
+    }
+
+    static void get_validity_state_flag(
+        v8::Local<v8::Name> property,
+        const v8::PropertyCallbackInfo<v8::Value>& info)
+    {
+        auto* self=current(info.GetIsolate());
+        auto* node=unwrap_node(info.Holder());
+        if(self==nullptr || !is_constraint_validation_control(node)) return;
+        const auto state=forms::constraint_validity_state(self->document,*node);
+        const auto name=to_utf8(info.GetIsolate(),property);
+        const auto value=name=="valueMissing"?state.value_missing
+            :name=="typeMismatch"?state.type_mismatch
+            :name=="patternMismatch"?state.pattern_mismatch
+            :name=="tooLong"?state.too_long
+            :name=="tooShort"?state.too_short
+            :name=="rangeUnderflow"?state.range_underflow
+            :name=="rangeOverflow"?state.range_overflow
+            :name=="stepMismatch"?state.step_mismatch
+            :name=="badInput"?state.bad_input
+            :name=="customError"?state.custom_error
+            :name=="valid"?state.valid()
+            :false;
+        info.GetReturnValue().Set(v8::Boolean::New(info.GetIsolate(),value));
+    }
+
+    static void get_validity(
+        v8::Local<v8::Name>,
+        const v8::PropertyCallbackInfo<v8::Value>& info)
+    {
+        auto* self=current(info.GetIsolate());
+        auto* node=unwrap_node(info.Holder());
+        if(self==nullptr || !is_constraint_validation_control(node)) return;
+        auto local_context=info.GetIsolate()->GetCurrentContext();
+#if defined(WEBSCENE_NATIVE_ENGINE_GENERATED_DOM_BINDINGS)
+        auto cache_key=v8::Private::ForApi(
+            info.GetIsolate(),js_string(info.GetIsolate(),"WebScene.validity"));
+        v8::Local<v8::Value> cached;
+        if(info.Holder()->GetPrivate(local_context,cache_key).ToLocal(&cached)
+            && cached->IsObject()) {
+            info.GetReturnValue().Set(cached);
+            return;
+        }
+        auto result=self->validity_state_template.Get(info.GetIsolate())
+            ->InstanceTemplate()->NewInstance(local_context).ToLocalChecked();
+        result->SetAlignedPointerInInternalField(
+            0,node,v8::kEmbedderDataTypeTagDefault);
+        result->SetInternalField(1,v8::Undefined(info.GetIsolate()));
+        info.Holder()->SetPrivate(local_context,cache_key,result).Check();
+#else
+        auto result=v8::Object::New(info.GetIsolate());
+        const auto state=forms::constraint_validity_state(self->document,*node);
+        const auto set=[&](const char* name,bool value) {
+            result->Set(local_context,js_string(info.GetIsolate(),name),
+                v8::Boolean::New(info.GetIsolate(),value)).Check();
+        };
+        set("valueMissing",state.value_missing);
+        set("typeMismatch",state.type_mismatch);
+        set("patternMismatch",state.pattern_mismatch);
+        set("tooLong",state.too_long);
+        set("tooShort",state.too_short);
+        set("rangeUnderflow",state.range_underflow);
+        set("rangeOverflow",state.range_overflow);
+        set("stepMismatch",state.step_mismatch);
+        set("badInput",state.bad_input);
+        set("customError",state.custom_error);
+        set("valid",state.valid());
+#endif
+        info.GetReturnValue().Set(result);
+    }
+
+    static void get_validation_message(
+        v8::Local<v8::Name>,
+        const v8::PropertyCallbackInfo<v8::Value>& info)
+    {
+        auto* self=current(info.GetIsolate());
+        auto* node=unwrap_node(info.Holder());
+        if(self==nullptr || !is_constraint_validation_control(node)) return;
+        const auto message=forms::validation_message(self->document,*node);
+        info.GetReturnValue().Set(js_dom_string(info.GetIsolate(),message));
+    }
+
+    static void get_will_validate(
+        v8::Local<v8::Name>,
+        const v8::PropertyCallbackInfo<v8::Value>& info)
+    {
+        auto* self=current(info.GetIsolate());
+        auto* node=unwrap_node(info.Holder());
+        info.GetReturnValue().Set(v8::Boolean::New(
+            info.GetIsolate(),self!=nullptr
+                && is_constraint_validation_control(node)
+                && forms::will_validate(self->document,*node)));
+    }
+
+    static void set_custom_validity(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* self=current(info.GetIsolate());
+        auto* node=unwrap_node(info.This());
+        if(self==nullptr || !is_constraint_validation_control(node)) return;
+        if(info.Length()<1) {
+            info.GetIsolate()->ThrowException(v8::Exception::TypeError(
+                js_string(info.GetIsolate(),"setCustomValidity requires a message")));
+            return;
+        }
+        v8::Local<v8::String> converted;
+        if(!info[0]->ToString(info.GetIsolate()->GetCurrentContext())
+                .ToLocal(&converted)) return;
+        auto message=to_utf8(info.GetIsolate(),converted);
+        const auto selector_state_before=forms::validity_state(
+            self->document,*node);
+        node->mutable_form_control().custom_validation_message=std::move(message);
+        const auto selector_state_after=forms::validity_state(
+            self->document,*node);
+        if(selector_state_before==selector_state_after) return;
+        if(self->is_connected(*node))
+            self->recascade_dynamic_state_subject(*node,"setCustomValidity");
+        else self->document.mark_dirty();
+    }
+
+    bool dispatch_invalid_event(dom_node& node)
+    {
+        auto local_context=isolate->GetCurrentContext();
+        auto target=wrap_node(node);
+        v8::Local<v8::Value> dispatcher;
+        if(!target->Get(local_context,js_string(isolate,"dispatchEvent"))
+                .ToLocal(&dispatcher) || !dispatcher->IsFunction()) return true;
+        auto event=create_event_instance(local_context);
+        event->Set(local_context,js_string(isolate,"type"),
+            js_string(isolate,"invalid")).Check();
+        event->Set(local_context,js_string(isolate,"bubbles"),
+            v8::False(isolate)).Check();
+        event->Set(local_context,js_string(isolate,"cancelable"),
+            v8::True(isolate)).Check();
+        event->Set(local_context,js_string(isolate,"defaultPrevented"),
+            v8::False(isolate)).Check();
+        v8::Local<v8::Value> arguments[]={event};
+        v8::Local<v8::Value> result;
+        return dispatcher.As<v8::Function>()->Call(
+            local_context,target,1,arguments).ToLocal(&result)
+            && !result->IsFalse();
+    }
+
+    static void validate_control(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* self=current(info.GetIsolate());
+        auto* node=unwrap_node(info.This());
+        if(self==nullptr || !is_constraint_validation_control(node)) {
+            info.GetReturnValue().Set(v8::True(info.GetIsolate()));
+            return;
+        }
+        const auto candidate=forms::will_validate(self->document,*node);
+        const auto valid=!candidate
+            || forms::constraint_validity_state(self->document,*node).valid();
+        if(!valid) static_cast<void>(self->dispatch_invalid_event(*node));
+        info.GetReturnValue().Set(v8::Boolean::New(info.GetIsolate(),valid));
+    }
+
     static void get_form_owner(
         v8::Local<v8::Name>,
         const v8::PropertyCallbackInfo<v8::Value>& info)

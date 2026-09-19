@@ -529,6 +529,12 @@ struct v8_dom_runtime::implementation final {
             js_string(isolate, "step"), get_reflected_string_attribute, set_reflected_string_attribute);
         element->InstanceTemplate()->SetNativeDataProperty(
             js_string(isolate, "readOnly"), get_read_only, set_read_only);
+        element->InstanceTemplate()->SetNativeDataProperty(
+            js_string(isolate, "validity"), get_validity);
+        element->InstanceTemplate()->SetNativeDataProperty(
+            js_string(isolate, "validationMessage"), get_validation_message);
+        element->InstanceTemplate()->SetNativeDataProperty(
+            js_string(isolate, "willValidate"), get_will_validate);
         element->InstanceTemplate()->SetNativeDataProperty(js_string(isolate, "options"), get_select_options);
         element->InstanceTemplate()->SetNativeDataProperty(js_string(isolate, "elements"), get_form_elements);
         element->InstanceTemplate()->SetNativeDataProperty(js_string(isolate, "length"), get_legacy_node_length);
@@ -761,6 +767,15 @@ struct v8_dom_runtime::implementation final {
         element->PrototypeTemplate()->Set(
             js_string(isolate, "requestFullscreen"),
             v8::FunctionTemplate::New(isolate, element_request_fullscreen));
+        element->PrototypeTemplate()->Set(
+            js_string(isolate, "setCustomValidity"),
+            v8::FunctionTemplate::New(isolate, set_custom_validity));
+        element->PrototypeTemplate()->Set(
+            js_string(isolate, "checkValidity"),
+            v8::FunctionTemplate::New(isolate, validate_control));
+        element->PrototypeTemplate()->Set(
+            js_string(isolate, "reportValidity"),
+            v8::FunctionTemplate::New(isolate, validate_control));
         element->PrototypeTemplate()->Set(
             js_string(isolate, "reset"),
             v8::FunctionTemplate::New(isolate, form_reset));

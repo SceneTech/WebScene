@@ -411,6 +411,9 @@
         html_iframe_element_template.Reset();
         html_table_cell_element_template.Reset();
         html_dialog_element_template.Reset();
+        html_button_element_template.Reset();
+        html_input_element_template.Reset();
+        html_text_area_element_template.Reset();
         html_form_element_template.Reset();
         html_select_element_template.Reset();
         html_option_element_template.Reset();
@@ -427,6 +430,7 @@
         character_data_template.Reset();
         attr_template.Reset();
         node_template.Reset();
+        validity_state_template.Reset();
         event_target_template.Reset();
 #endif
         frame_context.Reset();

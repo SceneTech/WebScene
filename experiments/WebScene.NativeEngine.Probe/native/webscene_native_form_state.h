@@ -48,6 +48,26 @@ struct numeric_constraint_validity final {
     bool operator==(const numeric_constraint_validity&) const = default;
 };
 
+struct constraint_validity final {
+    bool value_missing{false};
+    bool type_mismatch{false};
+    bool pattern_mismatch{false};
+    bool too_long{false};
+    bool too_short{false};
+    bool range_underflow{false};
+    bool range_overflow{false};
+    bool step_mismatch{false};
+    bool bad_input{false};
+    bool custom_error{false};
+
+    bool valid() const noexcept {
+        return !value_missing && !type_mismatch && !pattern_mismatch
+            && !too_long && !too_short && !range_underflow
+            && !range_overflow && !step_mismatch && !bad_input
+            && !custom_error;
+    }
+};
+
 inline bool form_keyword_equals(std::string_view value,std::string_view expected)
     {
         if(value.size()!=expected.size()) return false;
@@ -1147,38 +1167,62 @@ inline text_constraint_validity text_validity_state(
     return result;
 }
 
-inline simple_validity_state validity_state(
+inline constraint_validity constraint_validity_state(
     const native_document& document,const dom_node& node) {
-    const auto form_control = node.tag == "button" || node.tag == "input"
-        || node.tag == "select" || node.tag == "textarea"
-        || node.tag == "option" || node.tag == "optgroup" || node.tag == "fieldset";
-    if (!form_control || node.tag == "fieldset" || node.tag == "optgroup"
-        || node.tag == "option" || !will_validate(document,node))
-        return simple_validity_state::not_applicable;
+    constraint_validity result;
+    result.custom_error=!node.form_control().custom_validation_message.empty();
+    if(!will_validate(document,node)) return result;
     const auto text_validity=text_validity_state(document,node);
-    if(text_validity.applicable && !text_validity.valid())
-        return simple_validity_state::invalid;
+    result.type_mismatch=text_validity.type_mismatch;
+    result.pattern_mismatch=text_validity.pattern_mismatch;
+    result.too_long=text_validity.too_long;
+    result.too_short=text_validity.too_short;
     const auto numeric_validity=numeric_validity_state(document,node);
-    if(numeric_validity.applicable && !numeric_validity.valid())
-        return simple_validity_state::invalid;
+    result.bad_input=numeric_validity.bad_input;
+    result.range_underflow=numeric_validity.range_underflow;
+    result.range_overflow=numeric_validity.range_overflow;
+    result.step_mismatch=numeric_validity.step_mismatch;
     if(input_type_is(node,"radio")) {
-        return radio_group_value_missing(document,node)
-            ? simple_validity_state::invalid:simple_validity_state::valid;
-    }
-    if(node.tag=="select") {
-        return select_value_missing(node)
-            ? simple_validity_state::invalid:simple_validity_state::valid;
-    }
-    if (node.attributes.contains("required")) {
+        result.value_missing=radio_group_value_missing(document,node);
+    } else if(node.tag=="select") {
+        result.value_missing=select_value_missing(node);
+    } else if(node.attributes.contains("required") && required_applies(node)) {
         const auto empty = input_type_is(node,"checkbox")
             ? !input_checked(node)
             : supports_text_selection(&node)
                 ? text_value_empty(node)
                 : !node.attributes.contains("value")
                     || node.attributes.at("value").empty();
-        if (empty) return simple_validity_state::invalid;
+        result.value_missing=empty;
     }
-    return simple_validity_state::valid;
+    return result;
+}
+
+inline std::string validation_message(
+    const native_document& document,const dom_node& node) {
+    if(!will_validate(document,node)) return {};
+    const auto state=constraint_validity_state(document,node);
+    if(state.custom_error) return node.form_control().custom_validation_message;
+    if(state.value_missing) return "Please fill out this field.";
+    if(state.type_mismatch) return "Please enter a valid value.";
+    if(state.pattern_mismatch) return "Please match the requested format.";
+    if(state.too_long) return "Please shorten this text.";
+    if(state.too_short) return "Please lengthen this text.";
+    if(state.range_underflow) return "The value is below the allowed minimum.";
+    if(state.range_overflow) return "The value is above the allowed maximum.";
+    if(state.step_mismatch) return "Please enter a valid value.";
+    if(state.bad_input) return "Please enter a valid value.";
+    return {};
+}
+
+inline simple_validity_state validity_state(
+    const native_document& document,const dom_node& node) {
+    const auto form_control = node.tag == "button" || node.tag == "input"
+        || node.tag == "select" || node.tag == "textarea";
+    if(!form_control || !will_validate(document,node))
+        return simple_validity_state::not_applicable;
+    return constraint_validity_state(document,node).valid()
+        ? simple_validity_state::valid:simple_validity_state::invalid;
 }
 
 inline bool supports_placeholder_selector(const dom_node& node) {

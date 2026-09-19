@@ -15,6 +15,27 @@
       "constants": []
     },
     {
+      "name": "ValidityState",
+      "template": "validity_state_template",
+      "constructor": "illegal_dom_constructor",
+      "parent": null,
+      "attributes": [
+        { "name": "valueMissing", "getter": "get_validity_state_flag" },
+        { "name": "typeMismatch", "getter": "get_validity_state_flag" },
+        { "name": "patternMismatch", "getter": "get_validity_state_flag" },
+        { "name": "tooLong", "getter": "get_validity_state_flag" },
+        { "name": "tooShort", "getter": "get_validity_state_flag" },
+        { "name": "rangeUnderflow", "getter": "get_validity_state_flag" },
+        { "name": "rangeOverflow", "getter": "get_validity_state_flag" },
+        { "name": "stepMismatch", "getter": "get_validity_state_flag" },
+        { "name": "badInput", "getter": "get_validity_state_flag" },
+        { "name": "customError", "getter": "get_validity_state_flag" },
+        { "name": "valid", "getter": "get_validity_state_flag" }
+      ],
+      "methods": [],
+      "constants": []
+    },
+    {
       "name": "Node",
       "template": "node_template",
       "constructor": "illegal_dom_constructor",
@@ -382,6 +403,57 @@
       "constants": []
     },
     {
+      "name": "HTMLButtonElement",
+      "template": "html_button_element_template",
+      "constructor": "illegal_dom_constructor",
+      "parent": "HTMLElement",
+      "attributes": [
+        { "name": "validity", "getter": "get_validity" },
+        { "name": "validationMessage", "getter": "get_validation_message" },
+        { "name": "willValidate", "getter": "get_will_validate" }
+      ],
+      "methods": [
+        { "name": "setCustomValidity", "callback": "set_custom_validity", "length": 1 },
+        { "name": "checkValidity", "callback": "validate_control", "length": 0 },
+        { "name": "reportValidity", "callback": "validate_control", "length": 0 }
+      ],
+      "constants": []
+    },
+    {
+      "name": "HTMLInputElement",
+      "template": "html_input_element_template",
+      "constructor": "illegal_dom_constructor",
+      "parent": "HTMLElement",
+      "attributes": [
+        { "name": "validity", "getter": "get_validity" },
+        { "name": "validationMessage", "getter": "get_validation_message" },
+        { "name": "willValidate", "getter": "get_will_validate" }
+      ],
+      "methods": [
+        { "name": "setCustomValidity", "callback": "set_custom_validity", "length": 1 },
+        { "name": "checkValidity", "callback": "validate_control", "length": 0 },
+        { "name": "reportValidity", "callback": "validate_control", "length": 0 }
+      ],
+      "constants": []
+    },
+    {
+      "name": "HTMLTextAreaElement",
+      "template": "html_text_area_element_template",
+      "constructor": "illegal_dom_constructor",
+      "parent": "HTMLElement",
+      "attributes": [
+        { "name": "validity", "getter": "get_validity" },
+        { "name": "validationMessage", "getter": "get_validation_message" },
+        { "name": "willValidate", "getter": "get_will_validate" }
+      ],
+      "methods": [
+        { "name": "setCustomValidity", "callback": "set_custom_validity", "length": 1 },
+        { "name": "checkValidity", "callback": "validate_control", "length": 0 },
+        { "name": "reportValidity", "callback": "validate_control", "length": 0 }
+      ],
+      "constants": []
+    },
+    {
       "name": "HTMLFormElement",
       "template": "html_form_element_template",
       "constructor": "illegal_dom_constructor",
@@ -400,10 +472,16 @@
       "parent": "HTMLElement",
       "indexedGetter": "form_or_select_indexed_getter",
       "attributes": [
-        { "name": "length", "getter": "get_form_or_select_length" }
+        { "name": "length", "getter": "get_form_or_select_length" },
+        { "name": "validity", "getter": "get_validity" },
+        { "name": "validationMessage", "getter": "get_validation_message" },
+        { "name": "willValidate", "getter": "get_will_validate" }
       ],
       "methods": [
-        { "name": "add", "callback": "select_add", "length": 2 }
+        { "name": "add", "callback": "select_add", "length": 2 },
+        { "name": "setCustomValidity", "callback": "set_custom_validity", "length": 1 },
+        { "name": "checkValidity", "callback": "validate_control", "length": 0 },
+        { "name": "reportValidity", "callback": "validate_control", "length": 0 }
       ],
       "constants": []
     },
@@ -478,10 +556,8 @@
     }
   ],
   "aliases": {
-    "HTMLButtonElement": "HTMLElement",
     "HTMLCanvasElement": "HTMLElement",
     "HTMLImageElement": "HTMLElement",
-    "HTMLInputElement": "HTMLElement",
     "HTMLParagraphElement": "HTMLElement",
     "Window": "EventTarget"
   }

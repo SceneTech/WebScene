@@ -801,7 +801,7 @@ struct webscene_engine final {
             || request.flags != 0U) {
             return WEBSCENE_SEMANTIC_ACTION_INVALID_V1;
         }
-        const auto support_bit = [](uint32_t action) {
+        const auto support_bit = [](uint32_t action) -> uint32_t {
             switch (action) {
                 case WEBSCENE_SEMANTIC_ACTION_FOCUS_V1:
                     return WEBSCENE_SEMANTIC_ACTION_SUPPORT_FOCUS_V1;

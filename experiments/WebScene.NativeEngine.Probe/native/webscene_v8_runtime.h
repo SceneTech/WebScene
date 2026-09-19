@@ -315,6 +315,15 @@ public:
         uint32_t preferred_color_scheme{WEBSCENE_PREFERRED_COLOR_SCHEME_LIGHT};
     };
 
+    struct resource_redirect_hop final {
+        std::string source_url;
+        std::string destination_url;
+        std::string cors_allow_origin;
+        uint32_t status{};
+        bool credentials_forwarded{};
+        bool cors_credentials_allowed{};
+    };
+
     struct resource_response final {
         std::string content;
         std::string entity_tag;
@@ -326,6 +335,7 @@ public:
         std::string status_text{"OK"};
         std::string final_url;
         std::vector<std::pair<std::string, std::string>> headers;
+        std::vector<resource_redirect_hop> redirect_hops;
         bool has_http_metadata{false};
     };
 

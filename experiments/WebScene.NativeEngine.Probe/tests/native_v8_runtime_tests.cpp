@@ -451,6 +451,7 @@ int main()
         if (selected == "response-header-cookie") {
             test_response_header_cookie_contracts();
             test_durable_profile_restart_contract();
+            test_request_headers_reach_resource_callback_v5();
             test_parallel_resource_prefetch();
             test_fetch_carries_document_origin_to_resource_host();
             test_tradingview_save_acknowledgement_uses_multipart_post();

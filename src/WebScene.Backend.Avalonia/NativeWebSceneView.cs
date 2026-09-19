@@ -487,8 +487,8 @@ public sealed partial class NativeWebSceneView : ContentControl, IAsyncDisposabl
                 persistentStoragePartitionKey: options.PersistentStoragePartitionKey,
                 persistentStorageQuotaBytes: options.PersistentStorageQuotaBytes,
                 validationMessageFormatter: options.ValidationMessageFormatter,
-                validationMessageTimeoutMilliseconds: options.ValidationMessageTimeout is { } timeout
-                    ? checked((uint)timeout.TotalMilliseconds) : 0U);
+                validationMessageTimeoutMilliseconds: options.ValidationMessageTimeout is { } validationMessageTimeout
+                    ? checked((uint)validationMessageTimeout.TotalMilliseconds) : 0U);
             if (engine == IntPtr.Zero)
             {
                 throw new InvalidOperationException(

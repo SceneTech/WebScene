@@ -2333,6 +2333,49 @@
         }
     }
 
+    void recascade_local_link_document_transition(dom_node* root)
+    {
+        if (root == nullptr) root = &document.body();
+        const auto tracked = local_link_selector_subjects.find(root);
+        if (tracked == local_link_selector_subjects.end() || tracked->second.empty())
+            return;
+        const auto indexed = css_invalidation_rules_by_attribute.find(
+            "$local-link-document");
+        if (indexed == css_invalidation_rules_by_attribute.end()
+            || indexed->second.empty()) return;
+
+        // Copy IDs because matching can enroll newly inserted hyperlink
+        // subjects. A base or same-document URL change is one mutation batch,
+        // so all routed style applications coalesce before the batch flushes.
+        const std::vector<uint32_t> subjects(
+            tracked->second.begin(), tracked->second.end());
+        style_recascade_batch_scope recascade_batch(*this);
+        for (const auto id : subjects) {
+            auto* subject = document.find_by_native_id(id);
+            if (subject == nullptr || !is_connected(*subject)
+                || css_cascade_root_for_node(*subject) != root) {
+                tracked->second.erase(id);
+                continue;
+            }
+            recascade_selector_transition(
+                *subject,
+                indexed->second,
+                [](const css::css_compound_dependencies& dependencies) {
+                    css::css_invalidation_targets result;
+                    const auto found = dependencies.attributes.find(
+                        "$local-link-document");
+                    if (found != dependencies.attributes.end())
+                        result.include(found->second);
+                    return result;
+                },
+                [] {},
+                [] {},
+                false,
+                true);
+        }
+        if (tracked->second.empty()) local_link_selector_subjects.erase(tracked);
+    }
+
     bool queue_attribute_selector_transition(
         dom_node& subject,
         std::string_view name,
@@ -4044,6 +4087,10 @@
         css_descendant_attribute_dependencies.clear();
         for (size_t index = 0; index < css_rules.size(); ++index) {
             index_css_rule(index);
+        }
+        if (!css_invalidation_rules_by_attribute.contains(
+                "$local-link-document")) {
+            local_link_selector_subjects.clear();
         }
         rebuild_root_variables();
     }

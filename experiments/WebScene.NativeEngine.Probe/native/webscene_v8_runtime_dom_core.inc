@@ -1099,6 +1099,7 @@
             cache.fallback_address = cache.navigation_address;
         }
         cache.dirty = true;
+        recascade_local_link_document_transition(root);
     }
 
     void invalidate_document_base(dom_node& node)
@@ -1421,6 +1422,7 @@
                         v8::kEmbedderDataTypeTagDefault));
                 frame_base_addresses.erase(frame_root);
                 document_base_caches.erase(frame_root);
+                local_link_selector_subjects.erase(frame_root);
                 if (active_css_cascade_root == frame_root) {
                     activate_css_cascade(&document.body());
                 }
@@ -1996,6 +1998,9 @@
             return nodes.contains(const_cast<dom_node*>(entry.first));
         });
         std::erase_if(document_base_caches, [&](const auto& entry) {
+            return nodes.contains(const_cast<dom_node*>(entry.first));
+        });
+        std::erase_if(local_link_selector_subjects, [&](const auto& entry) {
             return nodes.contains(const_cast<dom_node*>(entry.first));
         });
         if (nodes.contains(const_cast<dom_node*>(active_css_cascade_root))) {
@@ -6698,6 +6703,7 @@
         cache.effective_address = resolved;
         cache.dirty = true;
         set_context_location(local_context, local_context->Global(), resolved);
+        recascade_local_link_document_transition(root);
         return true;
     }
 

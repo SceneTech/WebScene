@@ -1,0 +1,72 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Local link matching follows document URLs with routed invalidation</title>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<style>
+  .candidate { width:11px; }
+  .candidate:local-link { width:61px; }
+  .candidate:is(:local-link) { height:63px; }
+  .adjacent { width:13px; }
+  .candidate:local-link + .adjacent { width:67px; }
+  .consumer { height:17px; }
+  .shell:has(> :local-link) .consumer { height:71px; }
+</style>
+<div class="shell">
+  <a class="candidate" id="candidate">candidate</a>
+  <span class="adjacent" id="adjacent"></span>
+  <span class="consumer" id="consumer"></span>
+</div>
+<script>
+  const candidate = document.getElementById('candidate');
+  const adjacent = document.getElementById('adjacent');
+  const consumer = document.getElementById('consumer');
+  const originalURL = location.href;
+  const documentURL = originalURL.split('#')[0];
+  const snapshot = () => ({
+    local: candidate.matches(':local-link'),
+    width: getComputedStyle(candidate).width,
+    height: getComputedStyle(candidate).height,
+    adjacent: getComputedStyle(adjacent).width,
+    consumer: getComputedStyle(consumer).height,
+  });
+  const matched = {
+    local:true, width:'61px', height:'63px', adjacent:'67px', consumer:'71px',
+  };
+  const unmatched = {
+    local:false, width:'11px', height:'auto', adjacent:'13px', consumer:'17px',
+  };
+
+  test(() => {
+    candidate.setAttribute('href', `${documentURL}#chapter`);
+    assert_object_equals(snapshot(), matched);
+    candidate.setAttribute('href', `${documentURL}?different=1#chapter`);
+    assert_object_equals(snapshot(), unmatched);
+    candidate.setAttribute('href', `${documentURL}#next`);
+    assert_object_equals(snapshot(), matched);
+  }, 'local-link ignores fragments but preserves every other URL component');
+
+  test(() => {
+    history.replaceState(null, '', `${documentURL}?moved=1`);
+    assert_object_equals(snapshot(), unmatched);
+    history.replaceState(null, '', documentURL);
+    assert_object_equals(snapshot(), matched);
+  }, 'same-document URL mutation replays local-link routes synchronously');
+
+  test(() => {
+    candidate.setAttribute('href', location.pathname.split('/').pop());
+    assert_object_equals(snapshot(), matched);
+    const base = document.createElement('base');
+    base.href = '/different-base/';
+    document.head.appendChild(base);
+    assert_object_equals(snapshot(), unmatched);
+    base.remove();
+    assert_object_equals(snapshot(), matched);
+  }, 'effective base insertion and removal invalidate enrolled link subjects');
+
+  test(() => {
+    candidate.removeAttribute('href');
+    assert_object_equals(snapshot(), unmatched);
+    assert_false(document.createElement('link').matches(':local-link'));
+  }, 'href removal clears local-link through the existing attribute routes');
+</script>

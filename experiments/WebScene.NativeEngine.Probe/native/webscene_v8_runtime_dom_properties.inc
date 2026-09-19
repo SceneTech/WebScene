@@ -3769,8 +3769,9 @@
         if (node == nullptr) return;
         node->attributes["src"] = to_utf8(info.GetIsolate(), value);
         if (node->tag == "iframe") {
-            self->begin_iframe_navigation(*node);
-            self->enqueue_iframe_hydration_if_needed(*node);
+            if (self->begin_iframe_navigation(*node)) {
+                self->enqueue_iframe_hydration_if_needed(*node);
+            }
             return;
         }
         if (node->tag != "img") return;

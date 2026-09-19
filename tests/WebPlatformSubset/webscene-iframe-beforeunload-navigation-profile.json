@@ -1,0 +1,40 @@
+{
+  "profile": "webscene-iframe-beforeunload-navigation-1",
+  "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+  "runtime": "v8",
+  "viewport": {
+    "width": 800,
+    "height": 600,
+    "deviceScaleFactor": 1
+  },
+  "required": [
+    {
+      "path": "contracts/iframe-beforeunload-navigation.html",
+      "type": "contract",
+      "capabilities": [
+        "nested-beforeunload-synchronous-dispatch",
+        "nested-beforeunload-cancellation",
+        "nested-navigation-reentrancy-guard",
+        "nested-navigation-generation-veto"
+      ],
+      "evidence": [
+        "wpt-beforeunload-synchronous-2c705104",
+        "wpt-beforeunload-event-order-2c705104",
+        "wpt-beforeunload-canceling-2c705104",
+        "vscode-oss-webview-confirm-before-close"
+      ],
+      "reason": "Pinned-WPT-derived contract for synchronous nested beforeunload ordering and cancellation signaling. The native companion gate additionally proves that 100 canceled iframe src/document.open attempts preserve the active realm and generation, reject same-frame reentrant navigation, allocate no replacement resource work, and allow the next uncanceled navigation before pagehide."
+    }
+  ],
+  "harnessBlocked": [],
+  "excluded": [
+    {
+      "path": "html/browsers/browsing-the-web/unloading-documents/prompt/manual-001.html",
+      "reason": "WebScene has no browser prompt or WebView dependency; native cancellation is returned directly to the nested navigation initiator."
+    },
+    {
+      "path": "html/browsers/browsing-the-web/unloading-documents/beforeunload-sticky-activation-manual.html",
+      "reason": "Sticky-activation prompt UI is outside this reusable native lifecycle slice."
+    }
+  ]
+}

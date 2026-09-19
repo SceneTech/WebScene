@@ -221,6 +221,7 @@
         resize_observers_pending = false;
         frame_load_listeners.clear();
         frame_dom_content_loaded_listeners.clear();
+        frame_beforeunload_dispatches.clear();
         frame_pagehide_dispatched.clear();
         frame_event_listeners.clear();
         window_selections.clear();

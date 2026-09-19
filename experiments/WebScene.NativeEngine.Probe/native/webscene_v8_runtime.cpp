@@ -6526,6 +6526,126 @@ struct v8_dom_runtime::implementation final {
         return true;
     }
 
+    bool enqueue_primary_selection_publication(
+        std::unique_ptr<native_host_request> request)
+    {
+        if (!request) return false;
+        auto notify = false;
+        {
+            std::lock_guard lock(host_request_mutex);
+            const auto pending = std::find_if(
+                typed_host_requests.begin(),
+                typed_host_requests.end(),
+                [](const auto& candidate) {
+                    return candidate != nullptr
+                        && candidate->view.request_id == 0U
+                        && candidate->view.kind
+                            == WEBSCENE_HOST_REQUEST_CLIPBOARD_WRITE_V1
+                        && candidate->view.flags
+                            == (WEBSCENE_HOST_REQUEST_CLIPBOARD_REPLACE_V1
+                                | WEBSCENE_HOST_REQUEST_CLIPBOARD_PRIMARY_V1);
+                });
+            if (pending != typed_host_requests.end()) {
+                *pending = std::move(request);
+                return true;
+            }
+            if (host_requests.size() + typed_host_requests.size()
+                    + reserved_host_request_count
+                >= maximum_host_request_count) return false;
+            typed_host_requests.push_back(std::move(request));
+            notify = true;
+        }
+        if (notify && host_request_available) host_request_available();
+        return true;
+    }
+
+    void discard_primary_selection_publication_for_frame(uint32_t frame_id)
+    {
+        if (frame_id == 0U) return;
+        std::lock_guard lock(host_request_mutex);
+        std::erase_if(typed_host_requests, [&](const auto& request) {
+            return request != nullptr
+                && request->source_frame_owner_id == frame_id
+                && request->view.request_id == 0U
+                && request->view.kind
+                    == WEBSCENE_HOST_REQUEST_CLIPBOARD_WRITE_V1
+                && request->view.flags
+                    == (WEBSCENE_HOST_REQUEST_CLIPBOARD_REPLACE_V1
+                        | WEBSCENE_HOST_REQUEST_CLIPBOARD_PRIMARY_V1);
+        });
+    }
+
+    void mark_primary_selection_publication_dirty(
+        const dom_node* candidate) noexcept
+    {
+        if (candidate != nullptr && candidate == active_element)
+            primary_selection_publication_dirty = true;
+    }
+
+    void flush_primary_selection_publication()
+    {
+        if (!primary_selection_publication_dirty) return;
+        primary_selection_publication_dirty = false;
+        constexpr size_t maximum_primary_selection_bytes = 64U * 1024U;
+        auto* selected = active_element;
+        if (!is_writable_text_control(selected)
+            || !is_connected(*selected)
+            || !selected->form_control().input_focused
+            || forms::input_type_is(*selected, "password")
+            || focus_document_owner(selected) != focused_document_owner_id) {
+            return;
+        }
+        ensure_form_value(*selected);
+        const auto& control = selected->form_control();
+        const auto start = std::min(control.selection_start, control.value.size());
+        const auto end = std::min(control.selection_end, control.value.size());
+        if (start >= end || control.selection_start_utf16_suboffset != 0U
+            || control.selection_end_utf16_suboffset != 0U
+            || end - start > maximum_primary_selection_bytes) {
+            return;
+        }
+        const auto text = std::string_view(control.value).substr(start, end - start);
+        const auto valid_utf8 = [](std::string_view value) noexcept {
+            for (size_t offset = 0U; offset < value.size();) {
+                const auto first = static_cast<unsigned char>(value[offset]);
+                size_t length{};
+                uint32_t scalar{};
+                if (first <= 0x7fU) { length = 1U; scalar = first; }
+                else if (first >= 0xc2U && first <= 0xdfU) {
+                    length = 2U; scalar = first & 0x1fU;
+                } else if (first >= 0xe0U && first <= 0xefU) {
+                    length = 3U; scalar = first & 0x0fU;
+                } else if (first >= 0xf0U && first <= 0xf4U) {
+                    length = 4U; scalar = first & 0x07U;
+                } else return false;
+                if (offset + length > value.size()) return false;
+                for (size_t index = 1U; index < length; ++index) {
+                    const auto continuation =
+                        static_cast<unsigned char>(value[offset + index]);
+                    if ((continuation & 0xc0U) != 0x80U) return false;
+                    scalar = (scalar << 6U) | (continuation & 0x3fU);
+                }
+                if ((length == 2U && scalar < 0x80U)
+                    || (length == 3U && scalar < 0x800U)
+                    || (length == 4U && scalar < 0x10000U)
+                    || (scalar >= 0xd800U && scalar <= 0xdfffU)
+                    || scalar > 0x10ffffU) return false;
+                offset += length;
+            }
+            return true;
+        };
+        if (!valid_utf8(text)) return;
+        auto request = std::make_unique<native_host_request>();
+        request->view.kind = WEBSCENE_HOST_REQUEST_CLIPBOARD_WRITE_V1;
+        request->view.flags = WEBSCENE_HOST_REQUEST_CLIPBOARD_REPLACE_V1
+            | WEBSCENE_HOST_REQUEST_CLIPBOARD_PRIMARY_V1;
+        request->source_frame_owner_id = focus_document_owner(selected);
+        request->content_type = "text/plain";
+        request->bytes.assign(text.begin(), text.end());
+        static_cast<void>(
+            enqueue_primary_selection_publication(std::move(request)));
+    }
+
     bool enqueue_reserved_typed_host_request(
         std::unique_ptr<native_host_request> request)
     {
@@ -7481,14 +7601,16 @@ uint64_t v8_dom_runtime::last_resize_observers_nanoseconds() const noexcept
 
 bool v8_dom_runtime::dispatch_input(const webscene_input_event& event, bool defer_cursor_update)
 {
-    return impl_->dispatch_input(event, defer_cursor_update)
-        && impl_->promote_pending_promise_error();
+    const auto dispatched = impl_->dispatch_input(event, defer_cursor_update);
+    impl_->flush_primary_selection_publication();
+    return dispatched && impl_->promote_pending_promise_error();
 }
 
 bool v8_dom_runtime::dispatch_drag(native_drag_event& event)
 {
-    return impl_->dispatch_drag(event)
-        && impl_->promote_pending_promise_error();
+    const auto dispatched = impl_->dispatch_drag(event);
+    impl_->flush_primary_selection_publication();
+    return dispatched && impl_->promote_pending_promise_error();
 }
 
 void v8_dom_runtime::refresh_pointer_cursor_after_layout()

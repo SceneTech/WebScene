@@ -3883,6 +3883,7 @@
         v8::Local<v8::Value> value,
         const v8::PropertyCallbackInfo<void>& info)
     {
+        auto* self = current(info.GetIsolate());
         auto* node = unwrap_node(info.Holder());
         if (node == nullptr) return;
         const auto index = value->Int32Value(info.GetIsolate()->GetCurrentContext()).FromMaybe(0);
@@ -3908,6 +3909,7 @@
              node->mutable_form_control().selection_end_utf16_suboffset})) {
             node->mutable_form_control().selection_direction = text_selection_direction::none;
         }
+        self->mark_primary_selection_publication_dirty(node);
     }
 
     static void get_selection_end(
@@ -3930,6 +3932,7 @@
         v8::Local<v8::Value> value,
         const v8::PropertyCallbackInfo<void>& info)
     {
+        auto* self = current(info.GetIsolate());
         auto* node = unwrap_node(info.Holder());
         if (node == nullptr) return;
         const auto index = value->Int32Value(info.GetIsolate()->GetCurrentContext()).FromMaybe(0);
@@ -3955,6 +3958,7 @@
              node->mutable_form_control().selection_end_utf16_suboffset})) {
             node->mutable_form_control().selection_direction = text_selection_direction::none;
         }
+        self->mark_primary_selection_publication_dirty(node);
     }
 
     static void get_selection_direction(
@@ -3979,6 +3983,7 @@
         v8::Local<v8::Value> value,
         const v8::PropertyCallbackInfo<void>& info)
     {
+        auto* self = current(info.GetIsolate());
         auto* node = unwrap_node(info.Holder());
         if (node == nullptr) return;
         const auto direction = to_utf8(info.GetIsolate(), value);
@@ -3995,6 +4000,7 @@
              node->mutable_form_control().selection_end_utf16_suboffset})) {
             node->mutable_form_control().selection_direction = text_selection_direction::none;
         }
+        self->mark_primary_selection_publication_dirty(node);
     }
 
     static void get_boolean_attribute(

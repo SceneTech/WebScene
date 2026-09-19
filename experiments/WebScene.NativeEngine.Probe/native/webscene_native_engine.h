@@ -2689,8 +2689,9 @@ WEBSCENE_API void webscene_file_grant_release_request_release_v2(
     const webscene_file_grant_release_request_v2* request);
 
 /* Typed native desktop request ABI. Request memory is immutable and remains
- * valid until release. Byte payloads are capped at 16 MiB, strings are UTF-8,
- * and at most 16 completion-bearing operations may be pending per document. */
+ * valid until release. Byte payloads are capped at 16 MiB, with one-way
+ * selected-text publication capped at 64 KiB. Strings are UTF-8, and at most
+ * 16 completion-bearing operations may be pending per document. */
 enum {
     WEBSCENE_HOST_REQUEST_OPEN_EXTERNAL_URL_V1 = 1,
     WEBSCENE_HOST_REQUEST_CLIPBOARD_READ_V1 = 2,
@@ -2704,9 +2705,11 @@ enum {
 };
 enum {
     WEBSCENE_HOST_REQUEST_CLIPBOARD_REPLACE_V1 = 1U << 0U,
-    /* Selects the platform's primary/selection clipboard for a text/plain
-     * READ request. Ordinary Clipboard API and shortcut requests leave this
-     * clear and continue to address the normal clipboard. */
+    /* Selects the platform's primary/selection clipboard. It is valid either
+     * alone for a completion-bearing text/plain READ request or together with
+     * REPLACE for the engine's zero-ID, one-way selected-text WRITE. Ordinary
+     * Clipboard API and shortcut requests leave this clear and continue to
+     * address the normal clipboard. */
     WEBSCENE_HOST_REQUEST_CLIPBOARD_PRIMARY_V1 = 1U << 1U,
     WEBSCENE_HOST_REQUEST_NAVIGATION_REPLACE_V1 = 1U << 0U,
     WEBSCENE_HOST_REQUEST_EXTERNAL_NEW_CONTEXT_V1 = 1U << 0U,

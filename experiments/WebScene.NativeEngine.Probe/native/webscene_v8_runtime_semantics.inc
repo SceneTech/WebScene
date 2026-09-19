@@ -1110,6 +1110,7 @@
                 node->mutable_form_control().selection_direction =
                     text_selection_direction::none;
                 node->mutable_form_control().selection_explicitly_set = true;
+                mark_primary_selection_publication_dirty(node);
                 document.mark_dirty();
                 break;
             }

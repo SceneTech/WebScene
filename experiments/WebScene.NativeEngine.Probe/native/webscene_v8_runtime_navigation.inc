@@ -143,7 +143,11 @@
         fullscreen_element = nullptr;
         document_fullscreen = false;
         { std::lock_guard lock(host_request_mutex); host_requests.clear(); }
-        { std::lock_guard lock(host_request_mutex); typed_host_requests.clear(); }
+        {
+            std::lock_guard lock(host_request_mutex);
+            typed_host_requests.clear();
+            primary_selection_publication_dirty = false;
+        }
         { std::lock_guard lock(host_request_mutex); download_requests.clear(); }
         { std::lock_guard lock(host_request_mutex); outbound_drag_requests.clear(); }
         object_url_file_data.clear();

@@ -285,6 +285,7 @@
     std::mutex host_request_mutex;
     std::deque<std::string> host_requests;
     std::deque<std::unique_ptr<native_host_request>> typed_host_requests;
+    bool primary_selection_publication_dirty{};
     std::deque<std::unique_ptr<native_download_request>> download_requests;
     std::deque<std::unique_ptr<native_outbound_drag_request>>
         outbound_drag_requests;

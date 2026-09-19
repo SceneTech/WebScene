@@ -2409,6 +2409,8 @@
         std::optional<bool> user_validity_interacted = std::nullopt,
         std::optional<bool> value_changed_by_user = std::nullopt)
     {
+        if (previous_value != current_value)
+            mark_primary_selection_publication_dirty(&subject);
         document.mark_dirty();
         const auto empty_state_changed=previous_value.empty()!=current_value.empty();
         const auto previous_range=forms::range_state(subject,previous_value);

@@ -55,6 +55,7 @@ struct native_host_completion {
 };
 struct native_host_request {
     webscene_host_request_v1 view{};
+    uint32_t source_frame_owner_id{};
     std::string content_type;
     std::vector<uint8_t> bytes;
     std::string url;

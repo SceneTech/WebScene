@@ -1530,6 +1530,7 @@ int main()
     test_clipboard_read_host_completion(engine);
     test_native_clipboard_shortcut_events(engine);
     test_primary_selection_middle_paste(engine);
+    test_primary_selection_publication(engine);
     test_native_image_clipboard_maximum_payload(engine);
     test_native_legacy_clipboard_completion_stress(engine);
     test_native_pending_legacy_clipboard_shutdown(engine);

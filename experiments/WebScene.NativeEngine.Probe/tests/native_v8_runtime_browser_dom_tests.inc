@@ -6281,6 +6281,128 @@ void test_primary_selection_middle_paste(webscene_engine*)
     webscene_engine_destroy(engine);
 }
 
+void test_primary_selection_publication(webscene_engine*)
+{
+    auto* engine = webscene_engine_create(0);
+    require(engine != nullptr, "PRIMARY publication engine creation failed");
+    execute_and_wait(engine, R"JS(
+        document.body.innerHTML = `
+          <textarea id="primary-source"></textarea>
+          <textarea id="unfocused-source"></textarea>`;
+        const source = document.getElementById('primary-source');
+        source.value = 'zero alpha βeta omega';
+        source.focus();
+        source.setSelectionRange(5, 15);
+    )JS", "native-primary-publication-setup.js");
+
+    auto request = take_typed_host_request(engine);
+    require(request.id == 0U
+            && request.kind == WEBSCENE_HOST_REQUEST_CLIPBOARD_WRITE_V1
+            && request.flags
+                == (WEBSCENE_HOST_REQUEST_CLIPBOARD_REPLACE_V1
+                    | WEBSCENE_HOST_REQUEST_CLIPBOARD_PRIMARY_V1)
+            && request.target_node_id == 0U
+            && request.content_type == "text/plain"
+            && request.url.empty()
+            && std::string(request.bytes.begin(), request.bytes.end())
+                == "alpha βeta",
+        "focused selection did not emit the exact one-way PRIMARY write");
+    require(!take_typed_host_request(engine),
+        "one settled selection emitted more than one PRIMARY write");
+
+    execute_and_wait(engine, R"JS(
+        const source = document.getElementById('primary-source');
+        for (let index = 0; index < 10000; ++index) {
+          const start = index % 4;
+          source.setSelectionRange(start, start + 4);
+        }
+        source.setSelectionRange(16, 21);
+    )JS", "native-primary-publication-in-task-coalescing.js");
+    execute_and_wait(engine, R"JS(
+        document.getElementById('primary-source').setSelectionRange(11, 15);
+    )JS", "native-primary-publication-pending-replacement.js");
+    request = take_typed_host_request(engine);
+    require(std::string(request.bytes.begin(), request.bytes.end()) == "βeta"
+            && !take_typed_host_request(engine),
+        "rapid selection changes did not keep one newest pending publication");
+
+    execute_and_wait(engine, R"JS(
+        const source = document.getElementById('primary-source');
+        source.setSelectionRange(5, 10);
+    )JS", "native-primary-publication-retained-setup.js");
+    execute_and_wait(engine, R"JS(
+        const source = document.getElementById('primary-source');
+        source.setSelectionRange(10, 10);
+    )JS", "native-primary-publication-collapse.js");
+    request = take_typed_host_request(engine);
+    require(std::string(request.bytes.begin(), request.bytes.end()) == "alpha"
+            && !take_typed_host_request(engine),
+        "collapsed selection cleared or replaced the pending PRIMARY value");
+
+    execute_and_wait(engine, R"JS(
+        const unfocused = document.getElementById('unfocused-source');
+        unfocused.value = 'must not publish';
+        unfocused.setSelectionRange(0, unfocused.value.length);
+    )JS", "native-primary-publication-unfocused.js");
+    require(!take_typed_host_request(engine),
+        "unfocused text selection reached the PRIMARY host boundary");
+
+    execute_and_wait(engine, R"JS(
+        const source = document.getElementById('primary-source');
+        source.readOnly = true;
+        source.setSelectionRange(0, 4);
+    )JS", "native-primary-publication-readonly.js");
+    require(!take_typed_host_request(engine),
+        "readonly text selection reached the PRIMARY host boundary");
+
+    execute_and_wait(engine, R"JS(
+        const password = document.createElement('input');
+        password.type = 'password';
+        password.value = 'secret';
+        document.body.appendChild(password);
+        password.focus();
+        password.setSelectionRange(0, password.value.length);
+    )JS", "native-primary-publication-password.js");
+    require(!take_typed_host_request(engine),
+        "password selection reached the PRIMARY host boundary");
+
+    execute_and_wait(engine, R"JS(
+        const detached = document.createElement('textarea');
+        detached.value = 'detached';
+        document.body.appendChild(detached);
+        detached.focus();
+        detached.setSelectionRange(0, detached.value.length);
+        detached.remove();
+    )JS", "native-primary-publication-detached.js");
+    require(!take_typed_host_request(engine),
+        "detached selection reached the PRIMARY host boundary");
+
+    execute_and_wait(engine, R"JS(
+        const oversized = document.createElement('textarea');
+        oversized.value = 'x'.repeat(65537);
+        document.body.appendChild(oversized);
+        oversized.focus();
+        oversized.setSelectionRange(0, oversized.value.length);
+    )JS", "native-primary-publication-oversize.js");
+    require(!take_typed_host_request(engine),
+        "oversize selection was truncated or reached the PRIMARY host boundary");
+
+    execute_and_wait(engine, R"JS(
+        const maximum = document.createElement('textarea');
+        maximum.value = 'y'.repeat(65536);
+        document.body.appendChild(maximum);
+        maximum.focus();
+        maximum.setSelectionRange(0, maximum.value.length);
+    )JS", "native-primary-publication-maximum.js");
+    request = take_typed_host_request(engine);
+    require(request.bytes.size() == 65536U
+            && request.bytes.front() == 'y' && request.bytes.back() == 'y'
+            && !take_typed_host_request(engine),
+        "64 KiB PRIMARY selection cap changed");
+
+    webscene_engine_destroy(engine);
+}
+
 void test_native_image_clipboard_maximum_payload(webscene_engine*)
 {
     auto* engine = webscene_engine_create(0);

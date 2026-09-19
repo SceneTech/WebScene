@@ -6,7 +6,24 @@ Implements part of [#23](https://github.com/wieslawsoltes/WebScene/issues/23), t
 
 `dependencies.lock.json` pins Dawn (including Tint and generated WebGPU headers), ANGLE, depot_tools, WebGPU CTS, Khronos WebGL and WPT to exact commits. Dawn's own pinned `DEPS` supplies its transitive source revisions; ANGLE uses its pinned `DEPS` through gclient with depot_tools self-update disabled. The installed package records the transitive Git revision graph, exact CMake/GN settings, tool identities, source licenses/notices and hashes of every installed header/library. There is no ProGPU or renderer replacement dependency.
 
-Dawn uses a shared `webgpu_dawn` monolith exporting WebGPU C entry points. On Linux it also exports the single versioned `websceneDawnQueryVulkanDeviceV1` C entry point, which returns borrowed native identities only for a live device created by this exact Dawn build. Static co-linkage with V8 exposed conflicting unversioned Abseil symbols and caused native runtime hangs; the shared boundary keeps those implementations private. `DawnSymbolBoundary.cmake` applies the export policy, and the builder checks actual binary exports before sealing the SDK. The Linux builder temporarily connects Dawn's authoritative device add/remove path to the query registry and restores the pinned source before provenance sealing. No private Dawn header enters the installed SDK. ANGLE uses shared EGL/GLESv2 with static internal dependencies and C ABI entry points. Windows release builds use static CRT for Dawn, matching the existing native engine/V8; ANGLE's non-component Chromium configuration controls its runtime. Windows build/link and runtime dependency validation (including D3D shader compiler packaging) remain hardware-runner gates. Never exchange CRT-owned allocations between these libraries.
+Dawn uses a shared `webgpu_dawn` monolith exporting WebGPU C entry points. On
+Linux it also exports the additive `websceneDawnQueryVulkanDeviceV1` and
+`websceneDawnQueryVulkanDeviceV2` C entry points. V1 returns the borrowed native
+device tuple; v2 also returns Dawn's exact borrowed `VkInstance`, its exact
+`vkGetInstanceProcAddr` resolver, and required Xlib presentation state. Both
+accept only a live device created by this exact Dawn build. Static co-linkage
+with V8 exposed conflicting unversioned Abseil symbols and caused native
+runtime hangs; the shared boundary keeps those implementations private.
+`DawnSymbolBoundary.cmake` applies the export policy, and the builder checks
+actual binary exports before sealing the SDK. The Linux builder temporarily
+connects Dawn's authoritative device add/remove path to the query registry and
+restores the pinned source before provenance sealing. No private Dawn header
+enters the installed SDK. ANGLE uses shared EGL/GLESv2 with static internal
+dependencies and C ABI entry points. Windows release builds use static CRT for
+Dawn, matching the existing native engine/V8; ANGLE's non-component Chromium
+configuration controls its runtime. Windows build/link and runtime dependency
+validation (including D3D shader compiler packaging) remain hardware-runner
+gates. Never exchange CRT-owned allocations between these libraries.
 
 `GraphicsDependencies.cmake` verifies the SDK before importing it, including revision, RID, lock, settings, complete installed file inventory and content hashes. CMake cannot silently choose another `Dawn_DIR`. A dependency roll requires rebuilding headers and libraries together. Package manifests prove integrity and provenance, not API conformance or hardware execution.
 

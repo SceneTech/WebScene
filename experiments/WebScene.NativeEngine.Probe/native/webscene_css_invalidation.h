@@ -137,7 +137,11 @@ inline std::vector<css_compound_dependencies> compile_invalidation_plan(
                     add(output.attributes["readonly"], route);
                     // Disabled fieldsets bar descendant controls from
                     // constraint validation; the first legend exception is
-                    // already represented by the inherited route.
+                    // represented by the inclusive-descendant route.
+                    auto inherited_route = css_invalidation_route{
+                        css_invalidation_step::inclusive_descendants};
+                    inherited_route.insert(
+                        inherited_route.end(), route.begin(), route.end());
                     add(output.attributes["disabled"], inherited_route);
                     // A non-dirty textarea derives its live value from its
                     // text children. Reuse the structural route machinery.

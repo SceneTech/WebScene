@@ -73,6 +73,7 @@
 
     void retire_document_realm(v8::Local<v8::Context> previous_context)
     {
+        active_drag_session.reset();
         std::vector<v8::Local<v8::Context>> retired_contexts{previous_context};
         retired_contexts.reserve(actual_frame_contexts.size() + 1U);
         for (auto& [id, frame] : actual_frame_contexts) {

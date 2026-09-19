@@ -97,6 +97,7 @@ uint8_t measure_baseline_fixture_text(
 #include "native_file_system_access_tests.inc"
 #include "native_table_cell_copy_tests.inc"
 #include "native_v8_runtime_resource_tests.inc"
+#include "native_v8_runtime_drag_drop_tests.inc"
 #include "native_v8_runtime_service_worker_tests.inc"
 #include "native_v8_runtime_stream_fetch_tests.inc"
 #include "native_v8_runtime_css_mask_resource_tests.inc"
@@ -200,6 +201,10 @@ int main()
         }
         if (selected == "nested-anchor-activation") {
           test_nested_anchor_activation_handoff();
+          return 0;
+        }
+        if (selected == "nested-drag-drop") {
+          test_nested_drag_drop_routing_and_retirement();
           return 0;
         }
         if (selected == "nested-keyboard-handoff") {
@@ -1390,6 +1395,7 @@ int main()
     test_inline_block_preserves_vertical_padding(engine);
     test_pointer_hit_targets_and_related_targets_are_elements(engine);
     test_pointer_cursor_and_external_anchor_host_handoff(engine);
+    test_nested_drag_drop_routing_and_retirement();
     test_typed_window_host_request_performance(engine);
     {
         auto* close_engine = webscene_engine_create(0);

@@ -1238,6 +1238,16 @@
                     changed = true;
                     continue;
                 }
+                if (auto* drag = std::get_if<webscene_native::native_drag_event>(
+                        &request)) {
+                    last_input_sequence_ = std::max(
+                        last_input_sequence_, drag->sequence);
+                    if (runtime_ != nullptr && !runtime_->dispatch_drag(*drag)) {
+                        set_last_error(runtime_->last_error());
+                    }
+                    changed = true;
+                    continue;
+                }
                 if (auto* close = std::get_if<window_close_decision_work>(&request)) {
                     const auto decision = runtime_ == nullptr
                         ? WEBSCENE_WINDOW_CLOSE_ERROR_V1

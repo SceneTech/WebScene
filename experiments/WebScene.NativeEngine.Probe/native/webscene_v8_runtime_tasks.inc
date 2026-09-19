@@ -1007,12 +1007,14 @@
     }
 #endif
 
-    v8::Local<v8::Object> create_event_instance(v8::Local<v8::Context> local_context)
+    v8::Local<v8::Object> create_event_instance(
+        v8::Local<v8::Context> local_context,
+        const char* constructor_name = "Event")
     {
         v8::Local<v8::Value> constructor_value;
         if (local_context->Global()->Get(
                 local_context,
-                js_string(isolate, "Event")).ToLocal(&constructor_value)
+                js_string(isolate, constructor_name)).ToLocal(&constructor_value)
             && constructor_value->IsFunction()) {
             auto constructor = constructor_value.As<v8::Function>();
             if (auto instance = constructor->NewInstance(local_context, 0, nullptr);
@@ -1793,12 +1795,16 @@
         ++event_dispatch_target_counts[type][target.id];
 #endif
         const auto callback_count_before = input_callback_invocation_count;
-        auto event = create_event_instance(local_context);
+        const auto type_view = std::string_view(type);
+        const auto drag_event = type_view == "dragenter"
+            || type_view == "dragover" || type_view == "dragleave"
+            || type_view == "drop";
+        auto event = create_event_instance(
+            local_context, drag_event ? "DragEvent" : "Event");
         auto target_wrapper = wrap_node(target);
         const auto set_number = [&](const char* name, double value) {
             event->Set(local_context, js_string(isolate, name), v8::Number::New(isolate, value)).Check();
         };
-        const auto type_view = std::string_view(type);
         const auto bubbles = type_view != "beforetoggle"
             && type_view != "close"
             && type_view != "cancel"
@@ -1827,6 +1833,12 @@
         event->Set(local_context, js_string(isolate, "bubbles"), v8::Boolean::New(isolate, bubbles)).Check();
         event->Set(local_context, js_string(isolate, "cancelable"), v8::Boolean::New(isolate, cancelable)).Check();
         event->Set(local_context, js_string(isolate, "defaultPrevented"), v8::False(isolate)).Check();
+        if (drag_event && active_drag_session.has_value()) {
+            event->Set(
+                local_context,
+                js_string(isolate, "dataTransfer"),
+                drag_data_transfer_for(target)).Check();
+        }
         event->Set(
             local_context,
             js_string(isolate, "isTrusted"),
@@ -3068,6 +3080,187 @@
         target->mutable_form_control().caret_visible = true;
         caret_blink_epoch_ms = last_animation_frame_timestamp_ms;
         document.mark_dirty();
+        return true;
+    }
+
+    v8::Local<v8::Object> drag_data_transfer_for(dom_node& target)
+    {
+        auto local_context = context_for_node(target);
+        auto* root = css_cascade_root_for_node(target);
+        const auto root_id = root == nullptr ? document.body().id : root->id;
+        if (active_drag_session.has_value()) {
+            if (const auto known = active_drag_session->transfers.find(root_id);
+                known != active_drag_session->transfers.end()
+                && !known->second.IsEmpty()) return known->second.Get(isolate);
+        }
+        auto records = v8::Array::New(
+            isolate,
+            active_drag_session.has_value()
+                ? static_cast<int>(active_drag_session->items.size()) : 0);
+        if (active_drag_session.has_value()) {
+            for (uint32_t index = 0U;
+                 index < active_drag_session->items.size(); ++index) {
+                const auto& item = active_drag_session->items[index];
+                auto record = v8::Object::New(isolate);
+                record->Set(local_context, js_string(isolate, "kind"),
+                    v8::Integer::NewFromUnsigned(isolate, item.kind)).Check();
+                record->Set(local_context, js_string(isolate, "type"),
+                    js_string(isolate, item.mime_type.c_str())).Check();
+                record->Set(local_context, js_string(isolate, "name"),
+                    js_string(isolate, item.name.c_str())).Check();
+                record->Set(local_context, js_string(isolate, "path"),
+                    js_string(isolate, item.relative_path.c_str())).Check();
+                auto buffer = v8::ArrayBuffer::New(isolate, item.bytes.size());
+                if (!item.bytes.empty()) {
+                    std::memcpy(buffer->GetBackingStore()->Data(),
+                        item.bytes.data(), item.bytes.size());
+                }
+                record->Set(local_context, js_string(isolate, "bytes"),
+                    v8::Uint8Array::New(buffer, 0U, item.bytes.size())).Check();
+                records->Set(local_context, index, record).Check();
+            }
+        }
+        v8::Local<v8::Value> factory;
+        v8::Local<v8::Value> result;
+        v8::Local<v8::Value> arguments[]{records};
+        if (!local_context->Global()->Get(local_context,
+                js_string(isolate, "__webSceneCreateDragDataTransfer"))
+                .ToLocal(&factory)
+            || !factory->IsFunction()
+            || !factory.As<v8::Function>()->Call(
+                local_context, local_context->Global(), 1, arguments).ToLocal(&result)
+            || !result->IsObject()) return v8::Object::New(isolate);
+        auto transfer = result.As<v8::Object>();
+        active_drag_session->transfers.emplace(
+            root_id, v8::Global<v8::Object>(isolate, transfer));
+        return transfer;
+    }
+
+    bool retire_drag_session(bool dispatch_leave, const webscene_input_event& input)
+    {
+        if (!active_drag_session.has_value()) return true;
+        auto* target = document.find_by_native_id(
+            active_drag_session->target_node_id);
+        auto succeeded = true;
+        if (dispatch_leave && target != nullptr && is_connected(*target)) {
+            succeeded = dispatch_input_event_type(input, "dragleave", *target);
+        }
+        active_drag_session.reset();
+        return succeeded;
+    }
+
+    bool dispatch_drag(native_drag_event& drag)
+    {
+        struct drag_dispatch_scope final {
+            bool& dispatching;
+            bool previous;
+            explicit drag_dispatch_scope(bool& value)
+                : dispatching(value), previous(value) { dispatching = true; }
+            ~drag_dispatch_scope() { dispatching = previous; }
+        } dispatch_scope{dispatching_user_input};
+        auto isolate_locker = lock_shared_isolate();
+        v8::Isolate::Scope isolate_scope(isolate);
+        v8::HandleScope handle_scope(isolate);
+        auto outer_context = context.Get(isolate);
+        v8::Context::Scope context_scope(outer_context);
+        activate_css_cascade(outer_context);
+        ensure_layout();
+        webscene_input_event input{
+            WEBSCENE_INPUT_POINTER_MOVE,
+            drag.flags,
+            drag.sequence,
+            drag.x,
+            drag.y,
+            0.0,
+            0.0};
+
+        if (drag.action == WEBSCENE_DRAG_ENTER_V1) {
+            if (!retire_drag_session(true, input)) return false;
+            active_drag_session.emplace();
+            active_drag_session->session_id = drag.session_id;
+            active_drag_session->last_sequence = drag.sequence;
+            active_drag_session->document_generation =
+                document_generation.load(std::memory_order_acquire);
+            active_drag_session->items = std::move(drag.items);
+        } else if (!active_drag_session.has_value()
+            || active_drag_session->session_id != drag.session_id) {
+            return true;
+        } else if (drag.sequence <= active_drag_session->last_sequence) {
+            return true;
+        } else {
+            active_drag_session->last_sequence = drag.sequence;
+        }
+        if (active_drag_session->document_generation
+            != document_generation.load(std::memory_order_acquire)) {
+            retire_drag_session(false, input);
+            return true;
+        }
+        if (active_drag_session->frame_owner_id != 0U
+            && active_drag_session->frame_generation
+                != current_iframe_navigation_generation(
+                    active_drag_session->frame_owner_id)) {
+            retire_drag_session(false, input);
+            return true;
+        }
+
+        if (drag.action == WEBSCENE_DRAG_CANCEL_V1
+            || drag.action == WEBSCENE_DRAG_LEAVE_V1) {
+            return retire_drag_session(true, input);
+        }
+
+        auto* target = document.hit_test(
+            document.body(), static_cast<float>(drag.x), static_cast<float>(drag.y));
+        if (target == nullptr) target = &document.body();
+        const auto target_id = target->id;
+        if (active_drag_session->target_node_id != target_id) {
+            auto* previous = document.find_by_native_id(
+                active_drag_session->target_node_id);
+            current_related_target = target;
+            if (previous != nullptr && is_connected(*previous)
+                && !dispatch_input_event_type(input, "dragleave", *previous)) {
+                current_related_target = nullptr;
+                retire_drag_session(false, input);
+                return false;
+            }
+            current_related_target = previous;
+            active_drag_session->target_node_id = target_id;
+            active_drag_session->drop_admitted = false;
+            if (!dispatch_input_event_type(input, "dragenter", *target)) {
+                current_related_target = nullptr;
+                retire_drag_session(false, input);
+                return false;
+            }
+            current_related_target = nullptr;
+            active_drag_session->frame_owner_id = 0U;
+            active_drag_session->frame_generation = 0U;
+            for (auto* ancestor = target->parent; ancestor != nullptr;
+                 ancestor = ancestor->parent) {
+                if (ancestor->tag != "iframe") continue;
+                active_drag_session->frame_owner_id = ancestor->id;
+                active_drag_session->frame_generation =
+                    current_iframe_navigation_generation(ancestor->id);
+                break;
+            }
+        }
+
+        if (drag.action == WEBSCENE_DRAG_OVER_V1) {
+            bool prevented = false;
+            if (!dispatch_input_event_type(
+                    input, "dragover", *target, &prevented)) {
+                static_cast<void>(retire_drag_session(false, input));
+                return false;
+            }
+            active_drag_session->drop_admitted = prevented;
+            return true;
+        }
+        if (drag.action == WEBSCENE_DRAG_DROP_V1) {
+            if (active_drag_session->drop_admitted
+                && !dispatch_input_event_type(input, "drop", *target)) {
+                retire_drag_session(false, input);
+                return false;
+            }
+            retire_drag_session(false, input);
+        }
         return true;
     }
 

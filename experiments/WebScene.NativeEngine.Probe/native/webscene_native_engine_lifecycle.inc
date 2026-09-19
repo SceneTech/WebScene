@@ -187,6 +187,31 @@
         signal_worker();
         return true;
     }
+    bool dispatch_drag(webscene_native::native_drag_event event) {
+#if defined(WEBSCENE_NATIVE_ENGINE_WITH_V8)
+        std::lock_guard lock(script_mutex_);
+        if (event.action == WEBSCENE_DRAG_OVER_V1 && !script_work_.empty()) {
+            if (auto* pending = std::get_if<webscene_native::native_drag_event>(
+                    &script_work_.back());
+                pending != nullptr
+                && pending->action == WEBSCENE_DRAG_OVER_V1
+                && pending->session_id == event.session_id
+                && pending->x == event.x && pending->y == event.y
+                && pending->flags == event.flags) {
+                *pending = std::move(event);
+                signal_worker();
+                return true;
+            }
+        }
+        if (script_work_.size() >= 1024U) return false;
+        script_work_.emplace_back(std::move(event));
+        signal_worker();
+        return true;
+#else
+        static_cast<void>(event);
+        return false;
+#endif
+    }
     bool discard_host_request() {
 #if defined(WEBSCENE_NATIVE_ENGINE_WITH_V8)
         std::lock_guard lock(file_runtime_mutex_);

@@ -84,6 +84,22 @@ struct native_download_request {
         view.source_url = source_url.empty() ? nullptr : source_url.c_str();
     }
 };
+struct native_drag_item {
+    uint32_t kind{};
+    std::string mime_type;
+    std::string name;
+    std::string relative_path;
+    std::vector<uint8_t> bytes;
+};
+struct native_drag_event {
+    uint64_t session_id{};
+    uint64_t sequence{};
+    uint32_t action{};
+    uint32_t flags{};
+    double x{};
+    double y{};
+    std::vector<native_drag_item> items;
+};
 
 class native_document;
 struct dom_node;
@@ -433,6 +449,7 @@ public:
     bool pump_inspector_task(std::stop_token shutdown_token = {});
     bool has_pending_inspector_tasks() const noexcept;
     bool dispatch_resize();
+    bool dispatch_drag(native_drag_event& event);
     bool deliver_resize_observers();
     bool has_open_gpu_output() const;
     void update_gpu_presentation_images(const std::vector<std::shared_ptr<const webscene_gpu_image_lease_v3>>& images);

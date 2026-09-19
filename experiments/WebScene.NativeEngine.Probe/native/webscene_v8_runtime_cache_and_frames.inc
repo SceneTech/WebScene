@@ -1412,6 +1412,11 @@
             mouse_event_template->GetFunction(local_context).ToLocalChecked()).Check();
         global->Set(local_context, js_string(isolate, "WheelEvent"),
             mouse_event_template->GetFunction(local_context).ToLocalChecked()).Check();
+        auto drag_event_template = v8::FunctionTemplate::New(
+            isolate, mouse_event_constructor);
+        drag_event_template->Inherit(mouse_event_template);
+        global->Set(local_context, js_string(isolate, "DragEvent"),
+            drag_event_template->GetFunction(local_context).ToLocalChecked()).Check();
         global->Set(local_context, js_string(isolate, "FocusEvent"),
             event_template->GetFunction(local_context).ToLocalChecked()).Check();
         global->Set(local_context, js_string(isolate, "InputEvent"),
@@ -1982,6 +1987,7 @@
         install_crypto_globals(local_context, global);
         install_indexeddb(local_context);
         install_clipboard_api(local_context);
+        install_drag_data_transfer_api(local_context);
         install_websocket_globals(local_context);
         install_editor_web_platform_globals(local_context);
         install_message_channel(local_context);

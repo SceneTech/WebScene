@@ -1377,6 +1377,7 @@ struct dom_node final {
 
     struct form_control_data final {
         std::string value;
+        std::string custom_validation_message;
         size_t selection_start{0};
         size_t selection_end{0};
         uint8_t selection_start_utf16_suboffset{0};

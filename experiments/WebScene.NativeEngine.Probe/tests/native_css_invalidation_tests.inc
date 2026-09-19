@@ -377,6 +377,63 @@ void test_live_form_state_selectors_and_scaling()
             "date-time-constraint-bad-input.js") == R"(["x",null,true,"47px"])",
         "native date edit did not establish bad-input state");
 
+    const auto constraint_validation_idl = evaluate(engine, R"JS((() => {
+      const constructors=[HTMLButtonElement,HTMLInputElement,HTMLSelectElement,
+        HTMLTextAreaElement];
+      const own=constructors.map(constructor=>[
+        'validity','validationMessage','willValidate','setCustomValidity',
+        'checkValidity','reportValidity'
+      ].every(name=>Object.prototype.hasOwnProperty.call(constructor.prototype,name)));
+      let illegalConstructor=false;
+      try {new ValidityState();} catch(error) {illegalConstructor=error instanceof TypeError;}
+
+      const required=document.createElement('input');required.className='probe';
+      required.setAttribute('required','');document.body.appendChild(required);
+      const retained=required.validity;
+      const requiredStates=[[retained instanceof ValidityState,
+        retained===required.validity,required.willValidate,retained.valueMissing,
+        retained.valid,required.validationMessage.length>0]];
+      required.value='ready';requiredStates.push([
+        retained.valueMissing,retained.valid,required.validationMessage]);
+
+      const number=document.createElement('input');number.type='number';
+      number.min='2';number.max='8';number.step='2';number.value='1';
+      const numeric=[[number.validity.rangeUnderflow,number.validity.rangeOverflow,
+        number.validity.stepMismatch]];
+      number.value='9';numeric.push([number.validity.rangeUnderflow,
+        number.validity.rangeOverflow,number.validity.stepMismatch]);
+      number.value='3';numeric.push([number.validity.rangeUnderflow,
+        number.validity.rangeOverflow,number.validity.stepMismatch]);
+
+      const custom=document.createElement('input');custom.className='probe';
+      document.body.appendChild(custom);const invalid=[];
+      custom.addEventListener('invalid',event=>{
+        invalid.push([event.target===custom,event.bubbles,event.cancelable]);
+        event.preventDefault();
+      });
+      custom.setCustomValidity('owned message');
+      const customInvalid=[custom.validity.customError,custom.validity.valid,
+        custom.validationMessage,custom.matches(':invalid'),
+        getComputedStyle(custom).paddingLeft,custom.checkValidity(),
+        custom.reportValidity(),invalid];
+      custom.setCustomValidity('');
+      const customValid=[custom.validity.customError,custom.validity.valid,
+        custom.validationMessage,custom.matches(':valid'),
+        getComputedStyle(custom).paddingLeft,custom.checkValidity()];
+
+      const hidden=document.createElement('input');hidden.type='hidden';
+      hidden.setCustomValidity('hidden error');let hiddenInvalid=0;
+      hidden.addEventListener('invalid',()=>hiddenInvalid++);
+      const barred=[hidden.willValidate,hidden.validity.customError,
+        hidden.validity.valid,hidden.validationMessage,hidden.checkValidity(),
+        hidden.reportValidity(),hiddenInvalid];
+      return [own,illegalConstructor,requiredStates,numeric,customInvalid,
+        customValid,barred,'validity' in document.createElement('div')];
+    })())JS", "constraint-validation-idl.js");
+    require(constraint_validation_idl == R"JSON([[true,true,true,true],true,[[true,true,true,true,false,true],[false,true,""]],[[true,false,true],[false,true,true],[false,false,true]],[true,false,"owned message",true,"47px",false,false,[[true,false,true],[true,false,true]]],[false,true,"",true,"19px",true],[false,true,false,"",true,true,0],false])JSON",
+        "constraint-validation IDL or control behavior diverged: "
+            + constraint_validation_idl);
+
     const auto setup = evaluate(engine, R"JS((() => {
       document.body.innerHTML='<style>.scale:invalid{width:2px}.scale:placeholder-shown{height:3px}'+
         Array.from({length:1024},(_,i)=>'.noise-'+i+':hover{width:7px}').join('')+'</style>'+

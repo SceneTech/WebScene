@@ -1,0 +1,120 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Form controls expose live constraint-validation IDL</title>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<style>
+.probe:valid {padding-left:11px}
+.probe:invalid {padding-left:47px}
+</style>
+<script>
+test(()=>{
+  for(const constructor of [HTMLButtonElement,HTMLInputElement,
+      HTMLSelectElement,HTMLTextAreaElement]) {
+    assert_own_property(constructor.prototype,'validity');
+    assert_own_property(constructor.prototype,'validationMessage');
+    assert_own_property(constructor.prototype,'willValidate');
+    assert_own_property(constructor.prototype,'setCustomValidity');
+    assert_own_property(constructor.prototype,'checkValidity');
+    assert_own_property(constructor.prototype,'reportValidity');
+  }
+  assert_false('validity' in document.createElement('div'));
+},'constraint-validation members are installed on participating interfaces');
+
+test(()=>{
+  const input=document.createElement('input');
+  input.setAttribute('required','');
+  const validity=input.validity;
+  assert_true(validity instanceof ValidityState);
+  assert_equals(input.validity,validity,'validity is a SameObject attribute');
+  assert_true(input.willValidate);
+  assert_true(validity.valueMissing);
+  assert_false(validity.valid);
+  assert_not_equals(input.validationMessage,'');
+  input.value='ready';
+  assert_false(validity.valueMissing,'the retained ValidityState remains live');
+  assert_true(validity.valid);
+  assert_equals(input.validationMessage,'');
+},'validity, validationMessage, and willValidate expose live control state');
+
+test(()=>{
+  const email=document.createElement('input');
+  email.type='email';email.value='not-an-address';
+  assert_true(email.validity.typeMismatch);
+
+  const pattern=document.createElement('input');
+  pattern.setAttribute('pattern','[A-Z]{2}');pattern.value='ab';
+  assert_true(pattern.validity.patternMismatch);
+
+  const number=document.createElement('input');
+  number.type='number';number.min='2';number.max='8';number.step='2';
+  number.value='1';
+  assert_true(number.validity.rangeUnderflow);
+  assert_false(number.validity.rangeOverflow);
+  number.value='9';
+  assert_true(number.validity.rangeOverflow);
+  number.value='3';
+  assert_true(number.validity.stepMismatch);
+},'ValidityState projects the shared text and numeric constraint model');
+
+test(()=>{
+  const select=document.createElement('select');select.setAttribute('required','');
+  select.innerHTML='<option value="">Choose</option><option value="ok">Ready</option>';
+  assert_true(select.validity.valueMissing);
+  select.value='ok';
+  assert_true(select.validity.valid);
+
+  const first=document.createElement('input');first.type='radio';first.name='group';
+  const second=document.createElement('input');second.type='radio';second.name='group';
+  second.setAttribute('required','');document.body.append(first,second);
+  assert_true(first.validity.valueMissing);
+  assert_true(second.validity.valueMissing);
+  first.checked=true;
+  assert_false(first.validity.valueMissing);
+  assert_false(second.validity.valueMissing);
+},'valueMissing consumes live select and radio-group state');
+
+test(()=>{
+  const input=document.createElement('input');input.className='probe';
+  document.body.appendChild(input);
+  const events=[];
+  input.addEventListener('invalid',event=>{
+    events.push([event.target,event.bubbles,event.cancelable]);
+    event.preventDefault();
+  });
+  input.setCustomValidity('owned message');
+  assert_true(input.validity.customError);
+  assert_false(input.validity.valid);
+  assert_equals(input.validationMessage,'owned message');
+  assert_true(input.matches(':invalid'));
+  assert_equals(getComputedStyle(input).paddingLeft,'47px');
+  assert_false(input.checkValidity());
+  assert_false(input.reportValidity());
+  assert_equals(events.length,2);
+  for(const event of events) {
+    assert_equals(event[0],input);
+    assert_false(event[1]);
+    assert_true(event[2]);
+  }
+  input.setCustomValidity('');
+  assert_false(input.validity.customError);
+  assert_true(input.validity.valid);
+  assert_true(input.checkValidity());
+  assert_true(input.matches(':valid'));
+  assert_equals(getComputedStyle(input).paddingLeft,'11px');
+},'custom validity is live and failing validation dispatches invalid');
+
+test(()=>{
+  const input=document.createElement('input');input.type='hidden';
+  input.setAttribute('required','');
+  let invalidEvents=0;input.addEventListener('invalid',()=>invalidEvents++);
+  input.setCustomValidity('hidden error');
+  assert_false(input.willValidate);
+  assert_true(input.validity.customError);
+  assert_false(input.validity.valid);
+  assert_equals(input.validationMessage,'');
+  assert_true(input.checkValidity());
+  assert_true(input.reportValidity());
+  assert_equals(invalidEvents,0);
+},'barred controls retain customError but do not participate in validation');
+</script>

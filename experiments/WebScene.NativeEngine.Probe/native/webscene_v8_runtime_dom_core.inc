@@ -2214,6 +2214,12 @@
                         ? html_iframe_element_template.Get(isolate)
                     : node.tag == "dialog"
                         ? html_dialog_element_template.Get(isolate)
+                    : node.tag == "button"
+                        ? html_button_element_template.Get(isolate)
+                    : node.tag == "input"
+                        ? html_input_element_template.Get(isolate)
+                    : node.tag == "textarea"
+                        ? html_text_area_element_template.Get(isolate)
                     : node.tag == "form"
                         ? html_form_element_template.Get(isolate)
                     : node.tag == "select"

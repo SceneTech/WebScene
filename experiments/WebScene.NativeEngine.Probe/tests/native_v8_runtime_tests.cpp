@@ -88,6 +88,7 @@ uint8_t measure_baseline_fixture_text(
 #include "native_v8_runtime_test_support.inc"
 #include "native_v8_runtime_semantic_snapshot_tests.inc"
 #include "native_v8_runtime_semantic_action_tests.inc"
+#include "native_v8_runtime_semantic_live_region_tests.inc"
 #include "native_v8_runtime_lifecycle_tests.inc"
 #include "native_v8_runtime_indexeddb_tests.inc"
 #if defined(WEBSCENE_NATIVE_ENGINE_WITH_V8_INSPECTOR)
@@ -1574,6 +1575,7 @@ int main()
     test_dom_listener_callback_retirement();
     test_semantic_snapshot_nested_state_lifecycle_and_bounds();
     test_semantic_action_dom_contract_and_retirement();
+    test_semantic_live_regions_dom_order_busy_and_lifecycle();
     test_low_memory_reclaims_small_detached_dom_batches();
     test_detached_dom_wrappers_do_not_permanently_root_nodes(engine);
     test_connected_style_recascade_skips_detached_wrapper_retention(engine);
@@ -1616,5 +1618,6 @@ int main()
     test_binary_interop_result_outlives_engine();
     test_semantic_snapshot_caps_performance_and_engine_retirement();
     test_semantic_action_queue_caps_and_worker_budget();
+    test_semantic_live_region_caps_and_worker_budget();
     return 0;
 }

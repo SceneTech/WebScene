@@ -165,6 +165,33 @@ typedef enum webscene_semantic_action_admission_v1 {
     WEBSCENE_SEMANTIC_ACTION_PAYLOAD_TOO_LARGE_V1 = 5
 } webscene_semantic_action_admission_v1;
 
+typedef enum webscene_semantic_live_region_role_v1 {
+    WEBSCENE_SEMANTIC_LIVE_REGION_GENERIC_V1 = 0,
+    WEBSCENE_SEMANTIC_LIVE_REGION_STATUS_V1 = 1,
+    WEBSCENE_SEMANTIC_LIVE_REGION_ALERT_V1 = 2,
+    WEBSCENE_SEMANTIC_LIVE_REGION_LOG_V1 = 3
+} webscene_semantic_live_region_role_v1;
+
+typedef enum webscene_semantic_live_politeness_v1 {
+    WEBSCENE_SEMANTIC_LIVE_POLITE_V1 = 1,
+    WEBSCENE_SEMANTIC_LIVE_ASSERTIVE_V1 = 2
+} webscene_semantic_live_politeness_v1;
+
+enum {
+    WEBSCENE_SEMANTIC_LIVE_RELEVANT_ADDITIONS_V1 = 1U << 0U,
+    WEBSCENE_SEMANTIC_LIVE_RELEVANT_TEXT_V1 = 1U << 1U,
+    WEBSCENE_SEMANTIC_LIVE_RELEVANT_REMOVALS_V1 = 1U << 2U,
+    WEBSCENE_SEMANTIC_LIVE_ATOMIC_V1 = 1U << 3U,
+    WEBSCENE_SEMANTIC_LIVE_BUSY_COALESCED_V1 = 1U << 4U,
+    WEBSCENE_SEMANTIC_LIVE_INITIAL_ALERT_V1 = 1U << 5U,
+    WEBSCENE_SEMANTIC_LIVE_TEXT_TRUNCATED_V1 = 1U << 6U,
+    WEBSCENE_SEMANTIC_LIVE_BATCH_DROPPED_EVENTS_V1 = 1U << 0U,
+    WEBSCENE_SEMANTIC_LIVE_MAXIMUM_PENDING_EVENTS_V1 = 256U,
+    WEBSCENE_SEMANTIC_LIVE_MAXIMUM_EVENTS_PER_LEASE_V1 = 64U,
+    WEBSCENE_SEMANTIC_LIVE_MAXIMUM_TEXT_BYTES_V1 = 64U * 1024U,
+    WEBSCENE_SEMANTIC_LIVE_MAXIMUM_QUEUED_TEXT_BYTES_V1 = 1024U * 1024U
+};
+
 typedef struct webscene_semantic_string_v1 {
     uint32_t offset;
     uint32_t length;
@@ -227,6 +254,47 @@ typedef struct webscene_semantic_snapshot_view_v1 {
     uint32_t string_byte_count;
     const void* lease_token;
 } webscene_semantic_snapshot_view_v1;
+
+/*
+ * One platform-neutral live-region change. text is a UTF-8 slice into its
+ * enclosing batch. Sequence and document/frame generations let a native peer
+ * preserve order and reject a publication after navigation. The semantic and
+ * DOM identities name the live-region root, not a platform accessibility
+ * object. Relevant bits describe the coalesced causes represented by text.
+ */
+typedef struct webscene_semantic_live_event_v1 {
+    uint32_t struct_size;
+    uint32_t version;
+    uint64_t sequence;
+    uint64_t top_document_generation;
+    uint64_t frame_generation;
+    uint64_t semantic_id;
+    uint32_t frame_owner_dom_node_id;
+    uint32_t dom_node_id;
+    uint32_t role;
+    uint32_t politeness;
+    uint32_t flags;
+    webscene_semantic_string_v1 text;
+} webscene_semantic_live_event_v1;
+
+/*
+ * Immutable take lease. Taking removes at most 64 queued events. A lease may
+ * outlive the engine. dropped_event_count is the deterministic loss observed
+ * since the preceding successful take, including navigation/low-memory
+ * retirement and oldest-first queue eviction.
+ */
+typedef struct webscene_semantic_live_batch_view_v1 {
+    uint32_t struct_size;
+    uint32_t version;
+    uint64_t batch_generation;
+    uint32_t flags;
+    uint32_t dropped_event_count;
+    const webscene_semantic_live_event_v1* events;
+    uint32_t event_count;
+    const char* string_bytes;
+    uint32_t string_byte_count;
+    const void* lease_token;
+} webscene_semantic_live_batch_view_v1;
 
 /*
  * Host-to-DOM semantic action. The host copies snapshot_generation and
@@ -1611,6 +1679,11 @@ WEBSCENE_API void webscene_semantic_snapshot_release_v1(
 WEBSCENE_API uint32_t webscene_engine_request_semantic_action_v1(
     webscene_engine* engine,
     const webscene_semantic_action_request_v1* request);
+/* Takes the next bounded immutable live-region batch, or null when empty. */
+WEBSCENE_API const webscene_semantic_live_batch_view_v1*
+webscene_engine_take_semantic_live_events_v1(webscene_engine* engine);
+WEBSCENE_API void webscene_semantic_live_batch_release_v1(
+    const webscene_semantic_live_batch_view_v1* batch);
 /* Returns the CSS cursor resolved at the latest hit-tested pointer position. */
 WEBSCENE_API uint32_t webscene_engine_get_cursor(const webscene_engine* engine);
 /*

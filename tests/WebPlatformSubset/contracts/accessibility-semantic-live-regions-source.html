@@ -1,0 +1,86 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Accessibility semantic live-region DOM source</title>
+<body>
+<section id="terminal" role="log"></section>
+<section id="problems" role="status" aria-atomic="true"><b>Problems</b><span>0</span></section>
+<section id="tasks" aria-live="assertive" aria-relevant="text removals">
+  <span id="task-state">Task queued</span><span id="stale-task">Task stale</span>
+</section>
+<section id="chat" role="log" aria-busy="true"></section>
+<section id="hidden-live" aria-live="assertive" hidden></section>
+<script>
+  const state = window.__webSceneWptState = {
+    complete: false, harness: null, results: [], errors: [], diagnostics: []
+  };
+  function assert(condition, message) { if (!condition) throw new Error(message); }
+  function test(name, body) {
+    try {
+      body();
+      state.results.push({ name, status: "PASS", message: null, stack: null });
+    } catch (error) {
+      state.results.push({
+        name, status: "FAIL", message: String(error.message || error), stack: error.stack || null
+      });
+    }
+  }
+
+  const terminal = document.getElementById("terminal");
+  const problems = document.getElementById("problems");
+  const tasks = document.getElementById("tasks");
+  const chat = document.getElementById("chat");
+
+  test("terminal and chat retain implicit polite log semantics", () => {
+    assert(terminal.getAttribute("role") === "log", "terminal log role changed");
+    assert(chat.getAttribute("role") === "log", "chat log role changed");
+    terminal.append(Object.assign(document.createElement("div"), { textContent: "Terminal ready" }));
+    terminal.append(Object.assign(document.createElement("div"), { textContent: "Process complete" }));
+    assert(terminal.textContent === "Terminal readyProcess complete", "terminal additions changed order");
+  });
+
+  test("Problems keeps status atomicity across descendant text replacement", () => {
+    problems.querySelector("span").textContent = "2";
+    assert(problems.getAttribute("role") === "status", "Problems status role changed");
+    assert(problems.getAttribute("aria-atomic") === "true", "Problems lost atomicity");
+    assert(problems.textContent === "Problems2", "Problems final text changed");
+  });
+
+  test("Tasks keeps assertive text and removal relevance", () => {
+    document.getElementById("task-state").textContent = "Task running";
+    document.getElementById("stale-task").remove();
+    assert(tasks.getAttribute("aria-live") === "assertive", "Tasks politeness changed");
+    assert(tasks.getAttribute("aria-relevant") === "text removals", "Tasks relevance changed");
+    assert(tasks.textContent.trim() === "Task running", "Tasks mutation result changed");
+  });
+
+  test("Chat busy state encloses a deterministic coalescing interval", () => {
+    chat.append(Object.assign(document.createElement("div"), { textContent: "Chat one" }));
+    chat.append(Object.assign(document.createElement("div"), { textContent: "Chat two" }));
+    assert(chat.getAttribute("aria-busy") === "true", "Chat cleared busy too early");
+    chat.setAttribute("aria-busy", "false");
+    assert(chat.textContent === "Chat oneChat two", "Chat final order changed");
+  });
+
+  test("hidden and detached regions leave the connected visible subset", () => {
+    const hidden = document.getElementById("hidden-live");
+    hidden.textContent = "silent";
+    assert(hidden.hidden, "hidden live region became visible");
+    chat.remove();
+    chat.textContent = "detached";
+    assert(!document.body.contains(chat), "detached chat remained connected");
+  });
+
+  test("alert insertion retains assertive initial-content source semantics", () => {
+    const alert = document.createElement("section");
+    alert.setAttribute("role", "alert");
+    alert.textContent = "Build failed";
+    document.body.append(alert);
+    assert(alert.isConnected && alert.textContent === "Build failed", "alert source changed");
+  });
+
+  const failure = state.results.find(result => result.status !== "PASS");
+  state.harness = failure
+    ? { status: 1, message: failure.message, stack: failure.stack }
+    : { status: 0, message: null, stack: null };
+  state.complete = true;
+</script>

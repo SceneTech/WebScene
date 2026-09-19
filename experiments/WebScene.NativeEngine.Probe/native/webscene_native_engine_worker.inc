@@ -481,6 +481,8 @@
         uint64_t frame_paced_pointer_observed_after_frame = 0;
         uint64_t last_pointer_dispatch_frame = 0;
         while (!token.stop_requested()) {
+            const auto semantic_epoch_for_iteration =
+                semantic_document_epoch_.load(std::memory_order_acquire);
             // Avalonia observes every compositor boundary even while no V8 RAF
             // or CSS animation is active. Import that clock without treating
             // the observation as input or waking this worker; a later input or
@@ -569,6 +571,8 @@
             if (low_memory_requested_.exchange(false, std::memory_order_acq_rel)
                 && runtime_ != nullptr) {
                 runtime_->notify_low_memory();
+                runtime_->retire_semantic_live_regions_v1();
+                retire_semantic_live_events_v1();
                 trim_scene_storage();
                 low_memory_notifications_.fetch_add(1, std::memory_order_relaxed);
                 update_compilation_metrics();
@@ -578,6 +582,8 @@
                     >= *hidden_low_memory_deadline
                 && runtime_ != nullptr) {
                 runtime_->notify_low_memory();
+                runtime_->retire_semantic_live_regions_v1();
+                retire_semantic_live_events_v1();
                 trim_scene_storage();
                 low_memory_notifications_.fetch_add(1, std::memory_order_relaxed);
                 hidden_low_memory_notifications_.fetch_add(
@@ -1586,6 +1592,13 @@
                     update_component_readiness();
                 }
             }
+            if (runtime_ != nullptr
+                && (changed || document_.dirty()
+                    || document_.scene_generation() != starting_scene_generation)) {
+                publish_semantic_live_events_v1(
+                    runtime_->take_semantic_live_events_v1(),
+                    semantic_epoch_for_iteration);
+            }
 #endif
             if (!semantic_actions_pending_.load(std::memory_order_acquire)
                 && semantic_snapshot_requested_.exchange(
@@ -1764,6 +1777,7 @@
         retire_file_runtime();
 #endif
         retire_semantic_actions_v1();
+        retire_semantic_live_events_v1();
         {
             std::lock_guard semantic_lock(semantic_snapshot_mutex_);
             semantic_document_epoch_.fetch_add(1U, std::memory_order_acq_rel);

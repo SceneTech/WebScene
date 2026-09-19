@@ -6964,6 +6964,17 @@ v8_dom_runtime::dispatch_semantic_action_v1(
     return result;
 }
 
+semantic_live_capture_data_v1
+v8_dom_runtime::take_semantic_live_events_v1()
+{
+    return impl_->take_semantic_live_events_v1();
+}
+
+void v8_dom_runtime::retire_semantic_live_regions_v1()
+{
+    impl_->retire_semantic_live_regions_v1(true);
+}
+
 void v8_dom_runtime::notify_low_memory()
 {
     if (impl_->isolate == nullptr) return;

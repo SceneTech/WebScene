@@ -191,6 +191,387 @@
         return value == 0U ? UINT64_C(1) : value;
     }
 
+    struct semantic_live_configuration_v1 final {
+        uint32_t role{WEBSCENE_SEMANTIC_LIVE_REGION_GENERIC_V1};
+        uint32_t politeness{};
+        uint32_t relevant{};
+        bool atomic{};
+        bool enabled{};
+    };
+
+    static semantic_live_configuration_v1 semantic_live_configuration(
+        const dom_node& node)
+    {
+        semantic_live_configuration_v1 result;
+        auto role = semantic_normalize_text(semantic_attribute(node, "role"));
+        const auto role_separator = role.find(' ');
+        if (role_separator != std::string::npos) role.resize(role_separator);
+        role = lower_html_name(std::move(role));
+        if (role == "status") {
+            result.role = WEBSCENE_SEMANTIC_LIVE_REGION_STATUS_V1;
+            result.politeness = WEBSCENE_SEMANTIC_LIVE_POLITE_V1;
+            result.atomic = true;
+        } else if (role == "alert") {
+            result.role = WEBSCENE_SEMANTIC_LIVE_REGION_ALERT_V1;
+            result.politeness = WEBSCENE_SEMANTIC_LIVE_ASSERTIVE_V1;
+            result.atomic = true;
+        } else if (role == "log") {
+            result.role = WEBSCENE_SEMANTIC_LIVE_REGION_LOG_V1;
+            result.politeness = WEBSCENE_SEMANTIC_LIVE_POLITE_V1;
+        }
+
+        const auto live_attribute = node.attributes.find("aria-live");
+        if (live_attribute != node.attributes.end()) {
+            const auto live = lower_html_name(semantic_normalize_text(
+                live_attribute->second));
+            if (live == "polite") {
+                result.politeness = WEBSCENE_SEMANTIC_LIVE_POLITE_V1;
+            } else if (live == "assertive") {
+                result.politeness = WEBSCENE_SEMANTIC_LIVE_ASSERTIVE_V1;
+            } else {
+                result.politeness = 0U;
+            }
+        }
+        result.enabled = result.politeness != 0U;
+        if (!result.enabled) return result;
+
+        const auto atomic_attribute = node.attributes.find("aria-atomic");
+        if (atomic_attribute != node.attributes.end()) {
+            result.atomic = semantic_true(atomic_attribute->second);
+        }
+        const auto default_relevant = result.role
+                == WEBSCENE_SEMANTIC_LIVE_REGION_LOG_V1
+            ? WEBSCENE_SEMANTIC_LIVE_RELEVANT_ADDITIONS_V1
+            : WEBSCENE_SEMANTIC_LIVE_RELEVANT_ADDITIONS_V1
+                | WEBSCENE_SEMANTIC_LIVE_RELEVANT_TEXT_V1;
+        result.relevant = default_relevant;
+        const auto relevant_attribute = node.attributes.find("aria-relevant");
+        if (relevant_attribute != node.attributes.end()) {
+            result.relevant = 0U;
+            auto tokens = lower_html_name(relevant_attribute->second);
+            size_t cursor = 0U;
+            while (cursor < tokens.size()) {
+                while (cursor < tokens.size() && std::isspace(
+                    static_cast<unsigned char>(tokens[cursor]))) ++cursor;
+                const auto begin = cursor;
+                while (cursor < tokens.size() && !std::isspace(
+                    static_cast<unsigned char>(tokens[cursor]))) ++cursor;
+                const auto token = std::string_view(tokens).substr(
+                    begin, cursor - begin);
+                if (token == "all") {
+                    result.relevant = WEBSCENE_SEMANTIC_LIVE_RELEVANT_ADDITIONS_V1
+                        | WEBSCENE_SEMANTIC_LIVE_RELEVANT_TEXT_V1
+                        | WEBSCENE_SEMANTIC_LIVE_RELEVANT_REMOVALS_V1;
+                } else if (token == "additions") {
+                    result.relevant |= WEBSCENE_SEMANTIC_LIVE_RELEVANT_ADDITIONS_V1;
+                } else if (token == "text") {
+                    result.relevant |= WEBSCENE_SEMANTIC_LIVE_RELEVANT_TEXT_V1;
+                } else if (token == "removals") {
+                    result.relevant |= WEBSCENE_SEMANTIC_LIVE_RELEVANT_REMOVALS_V1;
+                }
+            }
+            if (result.relevant == 0U) result.relevant = default_relevant;
+        }
+        return result;
+    }
+
+    static void semantic_live_append_text(
+        std::string& destination,
+        std::string_view value,
+        bool& truncated)
+    {
+        if (value.empty()) return;
+        auto available = static_cast<size_t>(
+            WEBSCENE_SEMANTIC_LIVE_MAXIMUM_TEXT_BYTES_V1) - destination.size();
+        if (!destination.empty()) {
+            if (available == 0U) {
+                truncated = true;
+                return;
+            }
+            destination.push_back(' ');
+            --available;
+        }
+        auto copied = std::min(available, value.size());
+        if (copied < value.size()) {
+            while (copied > 0U
+                && (static_cast<unsigned char>(value[copied]) & 0xc0U) == 0x80U) {
+                --copied;
+            }
+        }
+        destination.append(value.substr(0U, copied));
+        truncated = truncated || copied != value.size();
+    }
+
+    static void semantic_live_trim_incomplete_utf8(std::string& value)
+    {
+        if (value.empty()) return;
+        auto lead = value.size() - 1U;
+        while (lead > 0U
+            && (static_cast<unsigned char>(value[lead]) & 0xc0U) == 0x80U) {
+            --lead;
+        }
+        const auto first = static_cast<unsigned char>(value[lead]);
+        const auto expected = (first & 0x80U) == 0U ? 1U
+            : (first & 0xe0U) == 0xc0U ? 2U
+            : (first & 0xf0U) == 0xe0U ? 3U
+            : (first & 0xf8U) == 0xf0U ? 4U : 1U;
+        if (value.size() - lead < expected) value.resize(lead);
+    }
+
+    semantic_live_capture_data_v1 take_semantic_live_events_v1()
+    {
+        constexpr size_t maximum_scan_nodes = 16U * 1024U;
+        constexpr size_t maximum_regions = 256U;
+        constexpr size_t maximum_fragments_per_region = 4096U;
+        std::vector<semantic_live_region_state_v1> current;
+        current.reserve(16U);
+        size_t scanned_nodes = 0U;
+        bool scan_truncated = false;
+        const auto top_generation = document_generation.load(
+            std::memory_order_acquire);
+
+        std::function<void(const dom_node&, semantic_live_region_state_v1&, bool)>
+            collect_fragments;
+        collect_fragments = [&](const dom_node& node,
+                                semantic_live_region_state_v1& region,
+                                bool is_root) {
+            if (++scanned_nodes > maximum_scan_nodes
+                || region.fragments.size() >= maximum_fragments_per_region) {
+                scan_truncated = true;
+                return;
+            }
+            if (!is_root && semantic_hidden(document, node)) return;
+            if (!is_root && node.kind == dom_node_kind::element
+                && semantic_live_configuration(node).enabled) return;
+            if (node.kind == dom_node_kind::text) {
+                auto text = semantic_normalize_text(node.text_content);
+                region.text_truncated = region.text_truncated
+                    || node.text_content.size()
+                        > WEBSCENE_SEMANTIC_LIVE_MAXIMUM_TEXT_BYTES_V1;
+                semantic_live_trim_incomplete_utf8(text);
+                if (!text.empty()) {
+                    region.fragments.push_back({node.id, std::move(text)});
+                }
+            }
+            for (const auto* child : document.composed_children(node)) {
+                if (child == nullptr || scan_truncated) continue;
+                collect_fragments(*child, region, false);
+            }
+        };
+
+        std::function<void(const dom_node&, uint32_t, uint64_t, bool, bool)> visit;
+        visit = [&](const dom_node& node, uint32_t frame_owner,
+                    uint64_t frame_generation, bool ancestor_hidden,
+                    bool ancestor_busy) {
+            if (++scanned_nodes > maximum_scan_nodes) {
+                scan_truncated = true;
+                return;
+            }
+            const auto hidden = ancestor_hidden || semantic_hidden(document, node);
+            if (hidden) return;
+            auto active_owner = frame_owner;
+            auto active_frame_generation = frame_generation;
+            if (node.tag == "body" && node.parent != nullptr
+                && node.parent->tag == "iframe") {
+                active_owner = node.parent->id;
+                const auto generation = frame_navigation_generations.find(active_owner);
+                active_frame_generation = generation == frame_navigation_generations.end()
+                    ? 0U : generation->second;
+            }
+            const auto busy = ancestor_busy
+                || semantic_true(semantic_attribute(node, "aria-busy"));
+            const auto configuration = semantic_live_configuration(node);
+            if (configuration.enabled) {
+                if (current.size() == maximum_regions) {
+                    scan_truncated = true;
+                    return;
+                }
+                semantic_live_region_state_v1 region;
+                region.top_document_generation = top_generation;
+                region.frame_generation = active_frame_generation;
+                region.frame_owner_dom_node_id = active_owner;
+                region.dom_node_id = node.id;
+                region.semantic_id = semantic_identity(
+                    top_generation, active_frame_generation, active_owner, node.id);
+                region.role = configuration.role;
+                region.politeness = configuration.politeness;
+                region.relevant = configuration.relevant;
+                region.atomic = configuration.atomic;
+                region.busy = busy;
+                collect_fragments(node, region, true);
+                for (const auto& fragment : region.fragments) {
+                    semantic_live_append_text(
+                        region.text, fragment.text, region.text_truncated);
+                }
+                current.push_back(std::move(region));
+            }
+            for (const auto* child : document.composed_children(node)) {
+                if (child == nullptr || scan_truncated) continue;
+                visit(*child, active_owner, active_frame_generation, hidden, busy);
+            }
+        };
+        visit(document.body(), 0U, 0U, false, false);
+        if (scan_truncated) return {};
+
+        std::vector<semantic_live_event_data_v1> events;
+        events.reserve(std::min(current.size(), static_cast<size_t>(32U)));
+        std::unordered_set<uint64_t> retained;
+        retained.reserve(current.size());
+        for (auto& region : current) {
+            retained.insert(region.semantic_id);
+            auto previous = semantic_live_regions.find(region.semantic_id);
+            if (previous == semantic_live_regions.end()) {
+                if (!region.busy
+                    && !semantic_live_suppress_initial_alerts
+                    && region.role == WEBSCENE_SEMANTIC_LIVE_REGION_ALERT_V1
+                    && !region.text.empty()) {
+                    semantic_live_event_data_v1 event;
+                    event.top_document_generation = region.top_document_generation;
+                    event.frame_generation = region.frame_generation;
+                    event.semantic_id = region.semantic_id;
+                    event.frame_owner_dom_node_id = region.frame_owner_dom_node_id;
+                    event.dom_node_id = region.dom_node_id;
+                    event.role = region.role;
+                    event.politeness = region.politeness;
+                    event.flags = WEBSCENE_SEMANTIC_LIVE_ATOMIC_V1
+                        | WEBSCENE_SEMANTIC_LIVE_INITIAL_ALERT_V1
+                        | WEBSCENE_SEMANTIC_LIVE_RELEVANT_ADDITIONS_V1
+                        | (region.text_truncated
+                            ? WEBSCENE_SEMANTIC_LIVE_TEXT_TRUNCATED_V1 : 0U);
+                    event.text = region.text;
+                    events.push_back(std::move(event));
+                }
+                semantic_live_regions.insert_or_assign(
+                    region.semantic_id, std::move(region));
+                continue;
+            }
+            if (region.busy) {
+                previous->second.busy = true;
+                continue;
+            }
+
+            std::unordered_map<uint32_t, std::string_view> old_fragments;
+            std::unordered_map<uint32_t, std::string_view> new_fragments;
+            old_fragments.reserve(previous->second.fragments.size());
+            new_fragments.reserve(region.fragments.size());
+            for (const auto& fragment : previous->second.fragments)
+                old_fragments.emplace(fragment.dom_node_id, fragment.text);
+            for (const auto& fragment : region.fragments)
+                new_fragments.emplace(fragment.dom_node_id, fragment.text);
+
+            uint32_t causes = 0U;
+            std::string delta;
+            bool text_truncated = false;
+            std::unordered_set<uint32_t> replaced_old_fragments;
+            uint64_t fingerprint = UINT64_C(1469598103934665603);
+            const auto mix = [&](uint64_t value) {
+                fingerprint ^= value;
+                fingerprint *= UINT64_C(1099511628211);
+            };
+            for (size_t index = 0U; index < region.fragments.size(); ++index) {
+                const auto& fragment = region.fragments[index];
+                const auto old = old_fragments.find(fragment.dom_node_id);
+                if (old == old_fragments.end()) {
+                    const auto positional_replacement =
+                        index < previous->second.fragments.size()
+                        && !new_fragments.contains(
+                            previous->second.fragments[index].dom_node_id);
+                    if (positional_replacement) {
+                        replaced_old_fragments.insert(
+                            previous->second.fragments[index].dom_node_id);
+                        if (previous->second.fragments[index].text
+                            == fragment.text) continue;
+                        if ((region.relevant
+                                & WEBSCENE_SEMANTIC_LIVE_RELEVANT_TEXT_V1) == 0U)
+                            continue;
+                        causes |= WEBSCENE_SEMANTIC_LIVE_RELEVANT_TEXT_V1;
+                        mix(previous->second.fragments[index].dom_node_id);
+                    } else {
+                        if ((region.relevant
+                                & WEBSCENE_SEMANTIC_LIVE_RELEVANT_ADDITIONS_V1) == 0U)
+                            continue;
+                        causes |= WEBSCENE_SEMANTIC_LIVE_RELEVANT_ADDITIONS_V1;
+                    }
+                } else if (old->second != fragment.text) {
+                    if ((region.relevant
+                            & WEBSCENE_SEMANTIC_LIVE_RELEVANT_TEXT_V1) == 0U)
+                        continue;
+                    causes |= WEBSCENE_SEMANTIC_LIVE_RELEVANT_TEXT_V1;
+                } else {
+                    continue;
+                }
+                mix(fragment.dom_node_id);
+                semantic_live_append_text(delta, fragment.text, text_truncated);
+            }
+            if ((region.relevant
+                    & WEBSCENE_SEMANTIC_LIVE_RELEVANT_REMOVALS_V1) != 0U) {
+                for (const auto& fragment : previous->second.fragments) {
+                    if (new_fragments.contains(fragment.dom_node_id)
+                        || replaced_old_fragments.contains(fragment.dom_node_id)) continue;
+                    causes |= WEBSCENE_SEMANTIC_LIVE_RELEVANT_REMOVALS_V1;
+                    mix(fragment.dom_node_id);
+                    semantic_live_append_text(delta, fragment.text, text_truncated);
+                }
+            }
+            if (causes != 0U) {
+                auto event_text = region.atomic && !region.text.empty()
+                    ? region.text : std::move(delta);
+                for (const auto character : event_text) mix(
+                    static_cast<unsigned char>(character));
+                mix(causes);
+                if (!event_text.empty()
+                    && fingerprint != previous->second.last_event_fingerprint) {
+                    semantic_live_event_data_v1 event;
+                    event.top_document_generation = region.top_document_generation;
+                    event.frame_generation = region.frame_generation;
+                    event.semantic_id = region.semantic_id;
+                    event.frame_owner_dom_node_id = region.frame_owner_dom_node_id;
+                    event.dom_node_id = region.dom_node_id;
+                    event.role = region.role;
+                    event.politeness = region.politeness;
+                    event.flags = causes
+                        | (region.atomic ? WEBSCENE_SEMANTIC_LIVE_ATOMIC_V1 : 0U)
+                        | (previous->second.busy
+                            ? WEBSCENE_SEMANTIC_LIVE_BUSY_COALESCED_V1 : 0U)
+                        | (text_truncated || region.text_truncated
+                            ? WEBSCENE_SEMANTIC_LIVE_TEXT_TRUNCATED_V1 : 0U);
+                    event.text = std::move(event_text);
+                    events.push_back(std::move(event));
+                    region.last_event_fingerprint = fingerprint;
+                } else {
+                    region.last_event_fingerprint =
+                        previous->second.last_event_fingerprint;
+                }
+            } else {
+                region.last_event_fingerprint = previous->second.last_event_fingerprint;
+            }
+            semantic_live_regions.insert_or_assign(
+                region.semantic_id, std::move(region));
+        }
+        std::erase_if(semantic_live_regions, [&](const auto& entry) {
+            return !retained.contains(entry.first);
+        });
+        semantic_live_suppress_initial_alerts = false;
+        semantic_live_capture_data_v1 capture;
+        capture.complete = true;
+        capture.top_document_generation = top_generation;
+        capture.live_region_semantic_ids.reserve(retained.size());
+        for (const auto identity : retained) {
+            capture.live_region_semantic_ids.push_back(identity);
+        }
+        std::sort(
+            capture.live_region_semantic_ids.begin(),
+            capture.live_region_semantic_ids.end());
+        capture.events = std::move(events);
+        return capture;
+    }
+
+    void retire_semantic_live_regions_v1(bool suppress_initial_alerts)
+    {
+        semantic_live_regions.clear();
+        semantic_live_suppress_initial_alerts = suppress_initial_alerts;
+    }
+
     std::shared_ptr<const semantic_snapshot_data_v1> build_semantic_snapshot_v1(
         uint64_t snapshot_generation)
     {

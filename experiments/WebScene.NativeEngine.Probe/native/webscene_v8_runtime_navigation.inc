@@ -182,6 +182,7 @@
             document_generation.fetch_add(1U, std::memory_order_acq_rel);
             frame_navigation_generations.clear();
         }
+        retire_semantic_live_regions_v1(false);
         std::erase_if(retired_frame_preparations, [](const auto& future) {
             return !future.valid()
                 || future.wait_for(std::chrono::seconds(0))

@@ -493,6 +493,104 @@ struct webscene_engine final {
         semantic_action_payload_bytes_ = 0U;
         semantic_actions_pending_.store(false, std::memory_order_release);
     }
+    void publish_semantic_live_events_v1(
+        webscene_native::semantic_live_capture_data_v1 capture,
+        uint64_t document_epoch) {
+        auto notify = false;
+        {
+            std::lock_guard lock(semantic_live_mutex_);
+            if (document_epoch != semantic_document_epoch_.load(
+                    std::memory_order_acquire)) return;
+            if (!capture.complete) {
+                semantic_live_dropped_events_ = std::min<uint64_t>(
+                    UINT32_MAX,
+                    semantic_live_dropped_events_ + semantic_live_events_.size());
+                semantic_live_events_.clear();
+                semantic_live_text_bytes_ = 0U;
+                return;
+            }
+            std::erase_if(semantic_live_events_, [&](const auto& event) {
+                const auto stale = event.top_document_generation
+                        != capture.top_document_generation
+                    || !std::binary_search(
+                        capture.live_region_semantic_ids.begin(),
+                        capture.live_region_semantic_ids.end(),
+                        event.semantic_id);
+                if (stale) {
+                    semantic_live_text_bytes_ -= event.text.size();
+                    semantic_live_dropped_events_ = std::min<uint64_t>(
+                        UINT32_MAX, semantic_live_dropped_events_ + 1U);
+                }
+                return stale;
+            });
+            for (auto& event : capture.events) {
+                if (event.text.empty()) continue;
+                if (event.text.size()
+                        > WEBSCENE_SEMANTIC_LIVE_MAXIMUM_TEXT_BYTES_V1) {
+                    auto copied = static_cast<size_t>(
+                        WEBSCENE_SEMANTIC_LIVE_MAXIMUM_TEXT_BYTES_V1);
+                    while (copied > 0U
+                        && (static_cast<unsigned char>(event.text[copied])
+                            & 0xc0U) == 0x80U) --copied;
+                    event.text.resize(copied);
+                    event.flags |= WEBSCENE_SEMANTIC_LIVE_TEXT_TRUNCATED_V1;
+                }
+                while (!semantic_live_events_.empty()
+                    && (semantic_live_events_.size()
+                            >= WEBSCENE_SEMANTIC_LIVE_MAXIMUM_PENDING_EVENTS_V1
+                        || event.text.size()
+                            > WEBSCENE_SEMANTIC_LIVE_MAXIMUM_QUEUED_TEXT_BYTES_V1
+                                - semantic_live_text_bytes_)) {
+                    semantic_live_text_bytes_ -=
+                        semantic_live_events_.front().text.size();
+                    semantic_live_events_.pop_front();
+                    semantic_live_dropped_events_ = std::min<uint64_t>(
+                        UINT32_MAX, semantic_live_dropped_events_ + 1U);
+                }
+                event.sequence = next_semantic_live_sequence_++;
+                semantic_live_text_bytes_ += event.text.size();
+                semantic_live_events_.push_back(std::move(event));
+                notify = true;
+            }
+        }
+        if (notify) notify_host_work();
+    }
+    std::shared_ptr<webscene_native::semantic_live_batch_data_v1>
+    take_semantic_live_events_v1() {
+        std::lock_guard lock(semantic_live_mutex_);
+        if (semantic_live_events_.empty()
+            && semantic_live_dropped_events_ == 0U) return {};
+        auto batch = std::make_shared<
+            webscene_native::semantic_live_batch_data_v1>();
+        batch->batch_generation = next_semantic_live_batch_generation_++;
+        batch->dropped_event_count = static_cast<uint32_t>(
+            semantic_live_dropped_events_);
+        if (batch->dropped_event_count != 0U) {
+            batch->flags |= WEBSCENE_SEMANTIC_LIVE_BATCH_DROPPED_EVENTS_V1;
+        }
+        semantic_live_dropped_events_ = 0U;
+        const auto count = std::min<size_t>(
+            semantic_live_events_.size(),
+            WEBSCENE_SEMANTIC_LIVE_MAXIMUM_EVENTS_PER_LEASE_V1);
+        batch->events.reserve(count);
+        batch->strings.reserve(std::min<size_t>(
+            semantic_live_text_bytes_,
+            WEBSCENE_SEMANTIC_LIVE_MAXIMUM_QUEUED_TEXT_BYTES_V1));
+        for (size_t index = 0U; index < count; ++index) {
+            semantic_live_text_bytes_ -= semantic_live_events_.front().text.size();
+            batch->append(std::move(semantic_live_events_.front()));
+            semantic_live_events_.pop_front();
+        }
+        return batch;
+    }
+    void retire_semantic_live_events_v1() {
+        std::lock_guard lock(semantic_live_mutex_);
+        semantic_live_dropped_events_ = std::min<uint64_t>(
+            UINT32_MAX,
+            semantic_live_dropped_events_ + semantic_live_events_.size());
+        semantic_live_events_.clear();
+        semantic_live_text_bytes_ = 0U;
+    }
     void set_work_available_callback(webscene_work_available_callback_v1 callback, void* data) {
         std::lock_guard lock(host_observer_mutex_);
         host_observer_ = callback;
@@ -821,6 +919,13 @@ private:
     std::mutex semantic_action_mutex_;
     size_t semantic_action_payload_bytes_{0U};
     std::atomic<bool> semantic_actions_pending_{false};
+    std::deque<webscene_native::semantic_live_event_data_v1>
+        semantic_live_events_;
+    std::mutex semantic_live_mutex_;
+    size_t semantic_live_text_bytes_{0U};
+    uint64_t semantic_live_dropped_events_{0U};
+    uint64_t next_semantic_live_sequence_{1U};
+    uint64_t next_semantic_live_batch_generation_{1U};
     std::atomic<bool> ordered_scene_consumer_{false};
     std::atomic<bool> producer_gpu_wait_consumer_{false};
 #if defined(WEBSCENE_NATIVE_ENGINE_ENABLE_GRAPHICS)
@@ -2011,6 +2116,27 @@ struct semantic_snapshot_lease_v1 final {
         view.lease_token = this;
     }
 };
+
+struct semantic_live_batch_lease_v1 final {
+    std::shared_ptr<webscene_native::semantic_live_batch_data_v1> value;
+    webscene_semantic_live_batch_view_v1 view{};
+
+    explicit semantic_live_batch_lease_v1(
+        std::shared_ptr<webscene_native::semantic_live_batch_data_v1> batch)
+        : value(std::move(batch))
+    {
+        view.struct_size = sizeof(view);
+        view.version = 1U;
+        view.batch_generation = value->batch_generation;
+        view.flags = value->flags;
+        view.dropped_event_count = value->dropped_event_count;
+        view.events = value->events.empty() ? nullptr : value->events.data();
+        view.event_count = static_cast<uint32_t>(value->events.size());
+        view.string_bytes = value->strings.empty() ? nullptr : value->strings.data();
+        view.string_byte_count = static_cast<uint32_t>(value->strings.size());
+        view.lease_token = this;
+    }
+};
 } // namespace
 
 const webscene_semantic_snapshot_view_v1*
@@ -2048,6 +2174,29 @@ uint32_t webscene_engine_request_semantic_action_v1(
     } catch (...) {
         return WEBSCENE_SEMANTIC_ACTION_INVALID_V1;
     }
+}
+
+const webscene_semantic_live_batch_view_v1*
+webscene_engine_take_semantic_live_events_v1(webscene_engine* engine)
+{
+    if (engine == nullptr) return nullptr;
+    try {
+        auto value = engine->take_semantic_live_events_v1();
+        if (!value) return nullptr;
+        auto* lease = new semantic_live_batch_lease_v1(std::move(value));
+        return &lease->view;
+    } catch (...) {
+        return nullptr;
+    }
+}
+
+void webscene_semantic_live_batch_release_v1(
+    const webscene_semantic_live_batch_view_v1* batch)
+{
+    if (batch == nullptr || batch->version != 1U
+        || batch->struct_size < sizeof(*batch)
+        || batch->lease_token == nullptr) return;
+    delete static_cast<const semantic_live_batch_lease_v1*>(batch->lease_token);
 }
 
 namespace {

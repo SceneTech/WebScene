@@ -5,6 +5,14 @@ include(CTest)
 include(FetchContent)
 
 if(BUILD_TESTING)
+    add_executable(webscene_semantic_live_region_header_tests
+        tests/semantic_live_region_header_tests.c)
+    target_compile_features(webscene_semantic_live_region_header_tests PRIVATE c_std_11)
+    target_include_directories(webscene_semantic_live_region_header_tests PRIVATE native)
+    add_test(NAME webscene_semantic_live_region_header_tests
+        COMMAND webscene_semantic_live_region_header_tests)
+    set_tests_properties(webscene_semantic_live_region_header_tests PROPERTIES
+        LABELS "native;accessibility;live-region;abi;c11" TIMEOUT 10)
     add_executable(webscene_semantic_action_header_tests
         tests/semantic_action_header_tests.c)
     target_compile_features(webscene_semantic_action_header_tests PRIVATE c_std_11)

@@ -555,6 +555,33 @@
                 current_input_sequence});
     }
 
+    void enqueue_details_toggle_event(
+        dom_node& target,
+        bool old_open,
+        bool new_open)
+    {
+        if (target.tag != "details" || old_open == new_open) return;
+        auto local_context = context_for_node(target);
+        const auto existing = std::find_if(
+            pending_details_toggle_events.begin(),
+            pending_details_toggle_events.end(),
+            [&](const auto& event) {
+                return event.target_id == target.id
+                    && event.context.Get(isolate) == local_context;
+            });
+        if (existing != pending_details_toggle_events.end()) {
+            existing->new_open = new_open;
+            return;
+        }
+        if (pending_details_toggle_events.size()
+            >= maximum_pending_details_toggle_events) return;
+        pending_details_toggle_events.push_back(pending_details_toggle_event{
+            target.id,
+            v8::Global<v8::Context>(isolate, local_context),
+            old_open,
+            new_open});
+    }
+
     void cancel_discrete_wheel_scroll(const dom_node* target = nullptr)
     {
         if (discrete_wheel_scroll == nullptr) return;
@@ -696,6 +723,26 @@
         v8::TryCatch try_catch(isolate);
         if (dispatch_input_event_type(input, "scroll", *target)) return true;
         last_error = "Programmatic scroll dispatch failed: "
+            + describe_reported_exception(try_catch, task_context);
+        return false;
+    }
+
+    bool drain_details_toggle_event_task()
+    {
+        if (pending_details_toggle_events.empty()) return true;
+        auto task = std::move(pending_details_toggle_events.front());
+        pending_details_toggle_events.erase(pending_details_toggle_events.begin());
+        auto task_context = task.context.Get(isolate);
+        auto* target = document.find_by_native_id(task.target_id);
+        if (target == nullptr || task_context.IsEmpty()) return true;
+        activate_css_cascade(task_context);
+        v8::Context::Scope task_context_scope(task_context);
+        webscene_input_event input{};
+        v8::TryCatch try_catch(isolate);
+        if (dispatch_input_event_type(
+                input, "toggle", *target, nullptr, nullptr, false,
+                task.old_open, task.new_open)) return true;
+        last_error = "Details toggle dispatch failed: "
             + describe_reported_exception(try_catch, task_context);
         return false;
     }
@@ -851,6 +898,9 @@
         }
         if (!pending_dialog_close_events.empty()) {
             return drain_dialog_close_event_task();
+        }
+        if (!pending_details_toggle_events.empty()) {
+            return drain_details_toggle_event_task();
         }
         if (!pending_programmatic_scroll_events.empty()) {
             return drain_programmatic_scroll_event_task();
@@ -1770,7 +1820,9 @@
         dom_node& target,
         bool* default_prevented = nullptr,
         dom_node* submitter = nullptr,
-        std::optional<bool> trusted = std::nullopt)
+        std::optional<bool> trusted = std::nullopt,
+        std::optional<bool> toggle_old_open = std::nullopt,
+        std::optional<bool> toggle_new_open = std::nullopt)
     {
         const auto type_view = std::string_view(type);
         if ((type_view == "input" || type_view == "change")
@@ -1861,6 +1913,17 @@
             event->Set(local_context, js_string(isolate, "oldState"), js_string(isolate, "closed")).Check();
             event->Set(local_context, js_string(isolate, "newState"), js_string(isolate, "open")).Check();
             event->Set(local_context, js_string(isolate, "source"), v8::Null(isolate)).Check();
+        } else if (type_view == "toggle"
+            && toggle_old_open.has_value()
+            && toggle_new_open.has_value()) {
+            event->Set(
+                local_context,
+                js_string(isolate, "oldState"),
+                js_string(isolate, *toggle_old_open ? "open" : "closed")).Check();
+            event->Set(
+                local_context,
+                js_string(isolate, "newState"),
+                js_string(isolate, *toggle_new_open ? "open" : "closed")).Check();
         }
         if (type_view == "submit") {
             event->Set(
@@ -3507,7 +3570,7 @@
 
     bool apply_details_summary_click_default(
         dom_node& target,
-        const webscene_input_event& input)
+        const webscene_input_event&)
     {
         auto* summary = &target;
         while (summary != nullptr && summary->tag != "summary") {
@@ -3540,8 +3603,9 @@
         recascade_attribute_selector_transition(
             details, "open", old_value, new_value);
         document.mark_dirty();
-        return dispatch_input_event_type(
-            input, "toggle", details, nullptr, nullptr, false);
+        enqueue_details_toggle_event(
+            details, old_value.has_value(), new_value.has_value());
+        return true;
     }
 
     dom_node* label_control_for_click(dom_node& target)

@@ -323,6 +323,8 @@
     std::vector<pending_dialog_close_event> pending_dialog_close_events;
     std::vector<pending_programmatic_scroll_event>
         pending_programmatic_scroll_events;
+    static constexpr size_t maximum_pending_details_toggle_events = 4096U;
+    std::vector<pending_details_toggle_event> pending_details_toggle_events;
     std::unique_ptr<discrete_wheel_scroll_animation>
         discrete_wheel_scroll;
     native_websocket_transport websocket_transport;

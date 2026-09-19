@@ -1361,6 +1361,13 @@
       "reason": "Implementation-first WebScene #756 slice for the unchanged Code OSS completed-response disclosure. The native scene must publish the resolved vertical gradient on only the logical inline-start border while preserving pseudo layout, opacity, and keyword-size clipping."
     },
     {
+      "path": "contracts/html-details-toggle-task.html",
+      "type": "testharness",
+      "capabilities": ["details-toggle-task", "details-toggle-coalescing", "details-toggle-old-new-state", "details-programmatic-open", "details-toggle-navigation-cleanup"],
+      "evidence": ["html-details-toggle-task", "vscode-oss-645f29c-completed-response-rAF-close", "native-bounded-task-queue"],
+      "reason": "Implementation-first WebScene #758 slice for unchanged Code OSS disclosure state synchronization. Native companion coverage requires synchronous reflection with asynchronous coalesced toggle dispatch, state fields, all open mutation paths, and teardown without idle-frame demand."
+    },
+    {
       "path": "contracts/css-placeholder-pseudo-paint.html",
       "type": "testharness",
       "capabilities": ["placeholder-pseudo-color", "placeholder-pseudo-opacity", "placeholder-pseudo-mutation", "placeholder-value-suppression"],

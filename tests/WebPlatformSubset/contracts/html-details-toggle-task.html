@@ -1,0 +1,36 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Details open mutations queue and coalesce toggle events</title>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<details id="probe"><summary>Summary</summary><div>Content</div></details>
+<script>
+  async_test(t => {
+    const events = [];
+    probe.addEventListener('toggle', t.step_func(event => {
+      events.push([event.oldState, event.newState, event.bubbles, event.cancelable]);
+      assert_array_equals(events[0], ['closed', 'open', false, false]);
+      assert_equals(events.length, 1);
+      t.step_timeout(t.step_func_done(() => assert_equals(events.length, 1)), 0);
+    }));
+    probe.open = true;
+    probe.removeAttribute('open');
+    probe.toggleAttribute('open', true);
+    assert_true(probe.open);
+    assert_equals(events.length, 0);
+  }, 'property and attribute changes coalesce into one queued toggle event');
+
+  async_test(t => {
+    const second = document.createElement('details');
+    second.innerHTML = '<summary>Summary</summary><div>Content</div>';
+    document.body.append(second);
+    second.open = true;
+    second.addEventListener('toggle', t.step_func(event => {
+      if (event.newState === 'closed') {
+        assert_false(second.open);
+        t.done();
+      }
+    }));
+    requestAnimationFrame(() => { second.open = false; });
+  }, 'the unchanged Code OSS next-frame initial close reaches its toggle listener');
+</script>

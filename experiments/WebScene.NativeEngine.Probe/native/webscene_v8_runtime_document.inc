@@ -866,6 +866,10 @@
             self->dismiss_validation_message_after_constraint_mutation(*node);
         else self->reconcile_validation_message_eligibility(*node);
         self->notify_custom_element_attribute(*node, name, old_value, value);
+        if (name == "open" && node->tag == "details") {
+            self->enqueue_details_toggle_event(
+                *node, old_value.has_value(), true);
+        }
     }
 
     static void set_attribute_ns(const v8::FunctionCallbackInfo<v8::Value>& info)
@@ -935,6 +939,11 @@
         }
         self->notify_custom_element_attribute(
             *node, name, old_value, value, namespace_uri);
+        if ((!namespace_uri || namespace_uri->empty())
+            && name == "open" && node->tag == "details") {
+            self->enqueue_details_toggle_event(
+                *node, old_value.has_value(), true);
+        }
     }
 
     static void remove_attribute(const v8::FunctionCallbackInfo<v8::Value>& info)
@@ -996,6 +1005,9 @@
         else self->reconcile_validation_message_eligibility(*node);
         self->notify_custom_element_attribute(
             *node, name, old_value, std::nullopt);
+        if (name == "open" && node->tag == "details") {
+            self->enqueue_details_toggle_event(*node, true, false);
+        }
     }
 
     static void get_attribute(const v8::FunctionCallbackInfo<v8::Value>& info)
@@ -1105,6 +1117,10 @@
         }
         self->notify_custom_element_attribute(
             *node, name, old_value, std::nullopt, namespace_uri);
+        if ((!namespace_uri || namespace_uri->empty())
+            && name == "open" && node->tag == "details") {
+            self->enqueue_details_toggle_event(*node, true, false);
+        }
     }
 
     static void toggle_attribute(const v8::FunctionCallbackInfo<v8::Value>& info)
@@ -1184,6 +1200,9 @@
         // read styles or replace this attribute with another value.
         self->notify_custom_element_attribute(*node, name, old_value,
             force_present ? std::optional<std::string>(std::string{}) : std::nullopt);
+        if (name == "open" && node->tag == "details") {
+            self->enqueue_details_toggle_event(*node, present, force_present);
+        }
         info.GetReturnValue().Set(force_present);
     }
 

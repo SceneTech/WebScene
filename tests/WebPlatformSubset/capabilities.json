@@ -257,6 +257,14 @@
       "gap": "Implementation-first candidate for WebScene #756. The exact Code OSS vertical gradient is retained as a bounded existing gradient resource on the details-content inline-start border. Other border-image source, slice, width, outset, repeat, and fill grammars remain unsupported."
     },
     {
+      "family": "html-details-toggle-task",
+      "required": [],
+      "candidate": ["queued details toggle event", "open property reflection", "open attribute mutation", "per-target task coalescing", "ToggleEvent oldState/newState", "navigation cleanup"],
+      "productEvidence": ["unchanged Code OSS completed-response disclosure initial rAF close", "unchanged Code OSS chat find disclosure opening"],
+      "coverage": ["contracts/html-details-toggle-task.html", "test_details_content_pseudo_static_open_close_layout", "docs/validation/html-details-toggle-task-758.md"],
+      "gap": "Implementation-first candidate for WebScene #758. Open changes reflect and recascade synchronously while one bounded task dispatches the coalesced non-bubbling toggle event. Named details groups and implicit-summary rendering remain outside this slice."
+    },
+    {
       "family": "live-range-boundaries",
       "required": [],
       "candidate": ["constructible Range", "document.createRange", "UTF-16 text boundaries", "child-index element boundaries", "setStart/setEnd", "setStartAfter/setEndBefore", "selectNodeContents", "commonAncestorContainer", "crossed-endpoint collapse"],

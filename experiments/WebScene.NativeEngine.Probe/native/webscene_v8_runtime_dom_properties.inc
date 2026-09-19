@@ -4791,6 +4791,10 @@
         const auto new_value=node->attributes.contains(name)
             ? std::optional<std::string>{node->attributes.at(name)}
             : std::optional<std::string>{};
+        if (name == "open" && node->tag == "details") {
+            self->enqueue_details_toggle_event(
+                *node, old_value.has_value(), new_value.has_value());
+        }
         self->recascade_form_attribute_dependencies(
             *node,name,old_value,new_value);
         if(validation_constraint_attribute(name))

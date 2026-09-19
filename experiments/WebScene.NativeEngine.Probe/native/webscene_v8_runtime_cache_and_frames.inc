@@ -1236,6 +1236,8 @@
         actual_frame_documents[frame.id].Reset(isolate, frame_document_value);
         frame_beforeunload_dispatches.erase(frame.id);
         frame_pagehide_dispatched.erase(frame.id);
+        frame_unload_dispatches.erase(frame.id);
+        frame_unload_dispatched.erase(frame.id);
         if (same_origin_access) {
             // Every browsing context has a WindowProxy even when script has
             // not read iframe.contentWindow yet. Materialize it before child

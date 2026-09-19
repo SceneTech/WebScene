@@ -133,10 +133,28 @@ void test_same_origin_iframe_navigation_document_replacement()
             "<main id='original'>Original</main><script>"
             "addEventListener('beforeunload',event=>parent.__iframeBeforeUnloadHandler(event));"
             "addEventListener('pagehide',event=>parent.__iframePageHideHandler(event));"
+            "document.addEventListener('visibilitychange',event=>parent.__iframeVisibilityHandler(event));"
+            "addEventListener('unload',event=>{"
+            "setTimeout(()=>parent.__iframeBeforeUnload.taskRan=true,0);"
+            "parent.__iframeUnloadHandler(event);});"
             "</script></body>"},
         {"https://iframe-navigation.test/fake.html?id=allowed",
             "<!doctype html><title>Allowed</title><body>"
             "<main id='allowed'>Allowed</main></body>"},
+        {"https://iframe-navigation.test/fake.html?id=unload-reentrant",
+            "<!doctype html><title>Unexpected reentrant navigation</title>"},
+        {"https://iframe-navigation.test/fake.html?id=detach-unload",
+            "<!doctype html><title>Detach unload</title><body>"
+            "<main id='detached'>Detached</main><script>"
+            "addEventListener('beforeunload',event=>parent.__iframeDetachBeforeUnload(event));"
+            "addEventListener('pagehide',event=>parent.__iframeDetachPageHide(event));"
+            "document.addEventListener('visibilitychange',event=>parent.__iframeDetachVisibility(event));"
+            "addEventListener('unload',event=>{"
+            "setTimeout(()=>parent.__iframeDetachUnload.taskRan=true,0);"
+            "parent.__iframeDetachUnloadHandler(event);});"
+            "</script></body>"},
+        {"https://iframe-navigation.test/fake.html?id=detach-reentrant",
+            "<!doctype html><title>Unexpected detached navigation</title>"},
         {"https://cross-origin.test/fake.html",
             "<!doctype html><title>Cross origin</title><body>"
             "<script>parent.__crossOriginEscape=true;</script></body>"}
@@ -231,11 +249,16 @@ void test_same_origin_iframe_navigation_document_replacement()
     require(webscene_engine_get_memory_metrics(engine, &memory_before) != 0,
         "iframe navigation memory baseline was unavailable");
     const auto rss_before = service_worker_test_current_rss_bytes();
+    const auto requests_before_unload_ordering = server.requests.load(
+        std::memory_order_relaxed);
     execute(engine, R"JS(
       globalThis.__iframeBeforeUnload = {
         complete:false, error:null, beforeunload:0, pagehide:0,
+        visibilitychange:0, unload:0, order:[],
         synchronous:true, eventShape:true, vetoPreserved:false,
-        reentrantBlocked:false, allowedLoaded:false, stableProxy:false
+        reentrantBlocked:false, reentrantUnloadBlocked:false,
+        visibilityHidden:false, lifecycleIdentity:true, taskRan:false,
+        allowedLoaded:false, stableProxy:false
       };
       (() => {
         const state = __iframeBeforeUnload;
@@ -243,8 +266,11 @@ void test_same_origin_iframe_navigation_document_replacement()
           const frame = document.createElement('iframe');
           frame.setAttribute('sandbox', 'allow-same-origin allow-scripts');
           let vetoEnabled = true;
+          let initialDocument = null;
+          let proxy = null;
           globalThis.__iframeBeforeUnloadHandler = unloadEvent => {
             ++state.beforeunload;
+            state.order.push('beforeunload');
             state.eventShape = state.eventShape
               && unloadEvent.type === 'beforeunload'
               && unloadEvent.bubbles === false
@@ -256,20 +282,51 @@ void test_same_origin_iframe_navigation_document_replacement()
           };
           globalThis.__iframePageHideHandler = pagehideEvent => {
             ++state.pagehide;
+            state.order.push('pagehide');
             state.eventShape = state.eventShape
               && pagehideEvent.bubbles === false
               && pagehideEvent.cancelable === false
               && pagehideEvent.persisted === false;
+            state.lifecycleIdentity = state.lifecycleIdentity
+              && frame.contentWindow === proxy
+              && frame.contentDocument === initialDocument
+              && initialDocument.hidden === false;
+          };
+          globalThis.__iframeVisibilityHandler = visibilityEvent => {
+            ++state.visibilitychange;
+            state.order.push('visibilitychange');
+            state.eventShape = state.eventShape
+              && visibilityEvent.type === 'visibilitychange'
+              && visibilityEvent.bubbles === false
+              && visibilityEvent.cancelable === false;
+            state.visibilityHidden = initialDocument.hidden === true
+              && initialDocument.visibilityState === 'hidden';
+            state.lifecycleIdentity = state.lifecycleIdentity
+              && frame.contentWindow === proxy
+              && frame.contentDocument === initialDocument;
+            frame.src = './fake.html?id=unload-reentrant';
+          };
+          globalThis.__iframeUnloadHandler = unloadEvent => {
+            ++state.unload;
+            state.order.push('unload');
+            state.eventShape = state.eventShape
+              && unloadEvent.type === 'unload'
+              && unloadEvent.bubbles === false
+              && unloadEvent.cancelable === false;
+            state.lifecycleIdentity = state.lifecycleIdentity
+              && frame.contentWindow === proxy
+              && frame.contentDocument === initialDocument
+              && initialDocument.hidden === true;
           };
           frame.src = './fake.html?id=beforeunload';
           document.body.appendChild(frame);
-          const proxy = frame.contentWindow;
+          proxy = frame.contentWindow;
           let initialLoaded = false;
           proxy.addEventListener('DOMContentLoaded', event => {
             try {
               if (!initialLoaded) {
                 initialLoaded = true;
-                const initialDocument = event.target;
+                initialDocument = event.target;
                 for (let attempt = 0; attempt < 50; ++attempt) {
                   const before = state.beforeunload;
                   initialDocument.open();
@@ -294,10 +351,17 @@ void test_same_origin_iframe_navigation_document_replacement()
 
                 vetoEnabled = false;
                 const before = state.beforeunload;
+                state.order.length = 0;
                 frame.src = './fake.html?id=allowed';
                 state.synchronous = state.synchronous
                   && state.beforeunload === before + 1
-                  && state.pagehide === 1;
+                  && state.pagehide === 1
+                  && state.visibilitychange === 1
+                  && state.unload === 1;
+                state.reentrantUnloadBlocked = frame.getAttribute('src')
+                  === './fake.html?id=allowed'
+                  && state.order.join(',')
+                    === 'beforeunload,pagehide,visibilitychange,unload';
                 return;
               }
 
@@ -307,6 +371,8 @@ void test_same_origin_iframe_navigation_document_replacement()
               frame.remove();
               delete globalThis.__iframeBeforeUnloadHandler;
               delete globalThis.__iframePageHideHandler;
+              delete globalThis.__iframeVisibilityHandler;
+              delete globalThis.__iframeUnloadHandler;
               state.complete = true;
             } catch (error) {
               state.error = String(error && error.stack || error);
@@ -328,12 +394,112 @@ void test_same_origin_iframe_navigation_document_replacement()
     require(evaluate(engine, R"JS((() => {
       const s=__iframeBeforeUnload;
       return s.error===null && s.beforeunload===101 && s.pagehide===1
+        && s.visibilitychange===1 && s.unload===1
         && s.synchronous && s.eventShape && s.vetoPreserved
-        && s.reentrantBlocked && s.allowedLoaded && s.stableProxy;
+        && s.reentrantBlocked && s.reentrantUnloadBlocked
+        && s.visibilityHidden && s.lifecycleIdentity && !s.taskRan
+        && s.allowedLoaded && s.stableProxy;
     })())JS", "iframe-beforeunload-result.js") == "true",
         "nested beforeunload cancellation diverged: "
             + evaluate(engine, "JSON.stringify(__iframeBeforeUnload)",
                 "iframe-beforeunload-result-detail.js"));
+    require(server.requests.load(std::memory_order_relaxed)
+            == requests_before_unload_ordering + 2,
+        "reentrant unload navigation admitted an unexpected resource request");
+    const auto requests_before_detach_unload = server.requests.load(
+        std::memory_order_relaxed);
+    execute(engine, R"JS(
+      globalThis.__iframeDetachUnload = {
+        complete:false, error:null, beforeunload:0, pagehide:0,
+        visibilitychange:0, unload:0, order:[], eventShape:true,
+        visibilityHidden:false, lifecycleIdentity:true, taskRan:false
+      };
+      (() => {
+        const state = __iframeDetachUnload;
+        try {
+          const frame = document.createElement('iframe');
+          frame.setAttribute('sandbox', 'allow-same-origin allow-scripts');
+          frame.src = './fake.html?id=detach-unload';
+          document.body.appendChild(frame);
+          const proxy = frame.contentWindow;
+          let initialDocument = null;
+          globalThis.__iframeDetachBeforeUnload = () => ++state.beforeunload;
+          globalThis.__iframeDetachPageHide = event => {
+            ++state.pagehide;
+            state.order.push('pagehide');
+            state.eventShape = state.eventShape
+              && event.bubbles === false && event.cancelable === false
+              && event.persisted === false;
+            state.lifecycleIdentity = state.lifecycleIdentity
+              && frame.contentWindow === null
+              && frame.contentDocument === null
+              && proxy.document === initialDocument
+              && initialDocument.hidden === false;
+          };
+          globalThis.__iframeDetachVisibility = event => {
+            ++state.visibilitychange;
+            state.order.push('visibilitychange');
+            state.eventShape = state.eventShape
+              && event.bubbles === false && event.cancelable === false;
+            state.visibilityHidden = initialDocument.hidden === true
+              && initialDocument.visibilityState === 'hidden';
+            state.lifecycleIdentity = state.lifecycleIdentity
+              && frame.contentWindow === null
+              && frame.contentDocument === null
+              && proxy.document === initialDocument;
+            frame.src = './fake.html?id=detach-reentrant';
+          };
+          globalThis.__iframeDetachUnloadHandler = event => {
+            ++state.unload;
+            state.order.push('unload');
+            state.eventShape = state.eventShape
+              && event.bubbles === false && event.cancelable === false;
+            state.lifecycleIdentity = state.lifecycleIdentity
+              && frame.contentWindow === null
+              && frame.contentDocument === null
+              && proxy.document === initialDocument
+              && initialDocument.hidden === true;
+          };
+          proxy.addEventListener('DOMContentLoaded', event => {
+            try {
+              initialDocument = event.target;
+              frame.remove();
+              setTimeout(() => {
+                delete globalThis.__iframeDetachBeforeUnload;
+                delete globalThis.__iframeDetachPageHide;
+                delete globalThis.__iframeDetachVisibility;
+                delete globalThis.__iframeDetachUnloadHandler;
+                state.complete = true;
+              }, 0);
+            } catch (error) {
+              state.error = String(error && error.stack || error);
+              state.complete = true;
+            }
+          });
+        } catch (error) {
+          state.error = String(error && error.stack || error);
+          state.complete = true;
+        }
+      })();
+    )JS", "iframe-detach-unload-lifecycle.js");
+    require(evaluate_until_equals(engine, "__iframeDetachUnload.complete",
+            "iframe-detach-unload-complete.js", "true", 3'000) == "true",
+        "nested detach unload timed out: "
+            + evaluate(engine, "JSON.stringify(__iframeDetachUnload)",
+                "iframe-detach-unload-timeout-detail.js"));
+    require(evaluate(engine, R"JS((() => {
+      const s=__iframeDetachUnload;
+      return s.error===null && s.beforeunload===0 && s.pagehide===1
+        && s.visibilitychange===1 && s.unload===1 && s.eventShape
+        && s.visibilityHidden && s.lifecycleIdentity && !s.taskRan
+        && s.order.join(',')==='pagehide,visibilitychange,unload';
+    })())JS", "iframe-detach-unload-result.js") == "true",
+        "nested detach unload ordering diverged: "
+            + evaluate(engine, "JSON.stringify(__iframeDetachUnload)",
+                "iframe-detach-unload-result-detail.js"));
+    require(server.requests.load(std::memory_order_relaxed)
+            == requests_before_detach_unload + 1,
+        "reentrant detached-frame navigation admitted a resource request");
     execute(engine, R"JS(
       globalThis.__iframeLifecycleGate = {
         complete:false, error:null, cycles:0, maximumLiveFrames:0,

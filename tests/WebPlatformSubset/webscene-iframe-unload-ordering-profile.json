@@ -1,0 +1,40 @@
+{
+  "profile": "webscene-iframe-unload-ordering-1",
+  "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+  "runtime": "v8",
+  "viewport": {
+    "width": 800,
+    "height": 600,
+    "deviceScaleFactor": 1
+  },
+  "required": [
+    {
+      "path": "contracts/iframe-unload-ordering.html",
+      "type": "contract",
+      "capabilities": [
+        "nested-pagehide-visibilitychange-unload-order",
+        "nested-document-hidden-transition",
+        "nested-unload-reentrancy-guard",
+        "nested-detach-task-retirement"
+      ],
+      "evidence": [
+        "wpt-page-visibility-iframe-unload-2c705104",
+        "wpt-pagehide-unload-order-004-2c705104",
+        "wpt-unload-task-retirement-004-1-2c705104",
+        "html-document-unload-counter"
+      ],
+      "reason": "Pinned-WPT-derived contract for outgoing nested document visibility and final unload ordering on allowed navigation and non-cancelable detach. The native companion gate additionally fixes generation, task, resource, realm and stable WindowProxy retirement at the end of the guarded sequence."
+    }
+  ],
+  "harnessBlocked": [],
+  "excluded": [
+    {
+      "path": "page-visibility/iframe-unload.html",
+      "reason": "The upstream test recursively loads three hosted iframe documents. The authored contract keeps its hidden-state assertion while adding WebScene's reusable navigation, detach and retirement boundary."
+    },
+    {
+      "path": "html/browsers/browsing-the-web/unloading-documents/unload/004.html",
+      "reason": "The upstream test depends on hosted navigation timing. The authored contract preserves its pagehide/unload order and discarded timeout assertion with deterministic native resources."
+    }
+  ]
+}

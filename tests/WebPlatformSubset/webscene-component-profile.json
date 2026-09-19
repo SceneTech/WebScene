@@ -2131,6 +2131,13 @@
       "reason": "Product-neutral assertions for selector families observed in the hosted-component corpus."
     },
     {
+      "path": "contracts/css-link-state-invalidation.html",
+      "type": "contract",
+      "capabilities": ["link-pseudo-class", "any-link-pseudo-class", "href-state-invalidation", "visited-privacy-closure"],
+      "evidence": ["selectors-level-4-link-history-pseudo-classes", "direct-chromium-native-contract"],
+      "reason": "Candidate contract for href-presence matching and targeted invalidation through subject, functional, sibling, and relational selector routes. WebScene retains no browsing-history database, so :visited remains privacy-closed."
+    },
+    {
       "path": "contracts/focus-within-dynamic-border.html",
       "type": "contract",
       "capabilities": ["focus-within-matching", "focus-ancestor-invalidation", "blur-ancestor-invalidation", "grid-absolute-positioned-child", "logical-inset-stretch"],

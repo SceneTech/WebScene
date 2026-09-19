@@ -853,7 +853,8 @@
                     static const std::unordered_set<std::string> supported_pseudo_classes{
                         "root", "first-child", "last-child", "only-child",
                         "first-of-type", "last-of-type", "only-of-type", "empty",
-                        "enabled", "disabled", "checked", "hover", "focus", "focus-visible"};
+                        "enabled", "disabled", "checked", "hover", "focus", "focus-visible",
+                        "link", "any-link"};
                     if (name == "not" || name == "is" || name == "where") {
                         record_selector_feature(
                             "selector:pseudo-class:" + name,

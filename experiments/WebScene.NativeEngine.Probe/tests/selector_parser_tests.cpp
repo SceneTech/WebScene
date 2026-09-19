@@ -373,6 +373,17 @@ void test_compiled_css_invalidation_plans()
     for(const auto* attribute:{"min","max","step"})
         require(numeric_relational[0].attributes.at(attribute).scope==invalidation_ancestors,
             "relational numeric validity must retain its compiled ancestor route");
+    const auto link_subject=compile("a:any-link");
+    require(link_subject[0].attributes.at("href").scope==invalidation_subject,
+        "any-link must compile href mutation to its subject");
+    const auto link_descendant=compile(".navigation:link > .label");
+    require(link_descendant[0].attributes.at("href").routes
+            ==std::vector<css_invalidation_route>{{css_invalidation_step::children}},
+        "link must route href mutation to child subjects");
+    const auto link_relational=compile(".shell:has(> a:any-link)");
+    require(link_relational[0].attributes.at("href").routes
+            ==std::vector<css_invalidation_route>{{css_invalidation_step::parent}},
+        "nested any-link must retain its reverse relational href route");
 
     std::vector<css_child_list_bucket> buckets;
     const auto index = [&](size_t id, std::string_view text) {

@@ -337,6 +337,21 @@ inline bool compound_matches(const Host& host,const dom_node& node,
             } else if (name == "target") {
                 const auto hash=host.selector_target_hash();
                 if (!hash || !css::target_matches(node,*hash)) return false;
+            } else if (name == "link" || name == "any-link") {
+                constexpr std::string_view svg_namespace =
+                    "http://www.w3.org/2000/svg";
+                const auto namespace_uri = node.namespace_uri();
+                const auto hyperlink = node.attributes.contains("href")
+                    && ((node.tag == "a"
+                            && (namespace_uri == dom_node::html_namespace_uri
+                                || namespace_uri == svg_namespace))
+                        || (node.tag == "area"
+                            && namespace_uri == dom_node::html_namespace_uri));
+                if (!hyperlink) return false;
+            } else if (name == "visited") {
+                // WebScene does not retain browsing history. Fail closed rather
+                // than expose host navigation state through selector matching.
+                return false;
             } else if (name == "checked") {
                 if (!css::checked_matches(node)) return false;
             } else if (name == "default") {

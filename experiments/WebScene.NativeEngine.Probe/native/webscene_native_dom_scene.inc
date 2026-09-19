@@ -78,12 +78,55 @@ void native_document::build_scene(
             constexpr float padding = 9.0F;
             constexpr float font_size = 13.0F;
             constexpr float line_height = 18.0F;
-            constexpr float bubble_height = line_height + padding * 2.0F;
             const auto text_width = measure_text_width(state.message, *anchor);
             const auto bubble_width = std::clamp(
                 text_width + padding * 2.0F,
                 std::min(160.0F, viewport_width_),
                 std::min(360.0F, viewport_width_));
+            const auto content_width = std::max(
+                0.0F, bubble_width - padding * 2.0F);
+            constexpr size_t maximum_lines = 4U;
+            std::vector<std::string> lines;
+            lines.reserve(maximum_lines);
+            std::istringstream words(state.message);
+            std::string line;
+            std::string word;
+            bool truncated = false;
+            while(words>>word) {
+                auto candidate=line.empty()?word:line+" "+word;
+                if(line.empty()
+                    || measure_text_width(candidate,*anchor)<=content_width) {
+                    line=std::move(candidate);
+                    continue;
+                }
+                lines.push_back(std::move(line));
+                line=std::move(word);
+                if(lines.size()==maximum_lines) {
+                    truncated=true;
+                    break;
+                }
+            }
+            if(!line.empty() && lines.size()<maximum_lines)
+                lines.push_back(std::move(line));
+            if(lines.empty()) lines.emplace_back();
+            if(words>>word) truncated=true;
+            if(truncated
+                || measure_text_width(lines.back(),*anchor)>content_width) {
+                constexpr std::string_view ellipsis="\xe2\x80\xa6";
+                auto& last=lines.back();
+                while(!last.empty()
+                    && measure_text_width(last+std::string(ellipsis),*anchor)
+                        >content_width) {
+                    auto cut=last.size()-1U;
+                    while(cut>0U
+                        && (static_cast<unsigned char>(last[cut])&0xc0U)==0x80U)
+                        --cut;
+                    last.resize(cut);
+                }
+                last+=ellipsis;
+            }
+            const auto bubble_height = line_height
+                * static_cast<float>(lines.size()) + padding * 2.0F;
             const auto x = std::clamp(
                 anchor->layout.x, 0.0F, std::max(0.0F, viewport_width_ - bubble_width));
             const auto below = anchor->layout.y + anchor->layout.height + 6.0F;
@@ -98,16 +141,20 @@ void native_document::build_scene(
                 0xFFFFFFFFU, anchor->id, 5, 5, 5, 5, 1});
             commands.push_back(webscene_scene_command{
                 12U, 0U, x + padding, y + padding,
-                std::max(0.0F, bubble_width - padding * 2.0F), line_height,
+                content_width,
+                line_height * static_cast<float>(lines.size()),
                 0U, anchor->id});
-            const auto resource = std::to_string(font_size) + '\t'
-                + std::to_string(line_height) + "\t600\tstart\tsans-serif\tauto\t"
-                + state.message;
-            commands.push_back(webscene_scene_command{
-                3U, append_scene_string(resource, strings, string_bytes),
-                x + padding, y + padding,
-                std::max(0.0F, bubble_width - padding * 2.0F), line_height,
-                0xFFFFFFFFU, anchor->id, 0, 0, 0, 0, 0});
+            for(size_t index=0U;index<lines.size();++index) {
+                const auto resource = std::to_string(font_size) + '\t'
+                    + std::to_string(line_height)
+                    + "\t600\tstart\tsans-serif\tauto\t" + lines[index];
+                commands.push_back(webscene_scene_command{
+                    3U, append_scene_string(resource, strings, string_bytes),
+                    x + padding,
+                    y + padding + static_cast<float>(index) * line_height,
+                    content_width, line_height,
+                    0xFFFFFFFFU, anchor->id, 0, 0, 0, 0, 0});
+            }
             commands.push_back(webscene_scene_command{
                 13U, 0U, 0, 0, 0, 0, 0U, anchor->id});
         }

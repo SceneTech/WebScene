@@ -11,11 +11,23 @@ function(webscene_isolate_dawn)
             set_property(TARGET webgpu_dawn_objects PROPERTY ${property} "${definitions}")
         endif()
     endforeach()
+    if(UNIX AND NOT APPLE)
+        # This source is compiled inside Dawn so it can use the pinned private
+        # types. Consumers receive only its versioned C ABI header.
+        target_sources(dawn_native_objects PRIVATE
+            "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/dawn_native_device.cpp")
+        target_include_directories(dawn_native_objects PRIVATE
+            "${CMAKE_CURRENT_FUNCTION_LIST_DIR}"
+            "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../../experiments/WebScene.NativeEngine.Probe/native/graphics")
+        target_compile_definitions(dawn_native_objects PRIVATE
+            WEBSCENE_DAWN_NATIVE_DEVICE_BRIDGE=1)
+    endif()
     if(APPLE)
         file(WRITE "${CMAKE_BINARY_DIR}/webscene-dawn.exports" "_wgpu*\n")
         target_link_options(webgpu_dawn PRIVATE "LINKER:-exported_symbols_list,${CMAKE_BINARY_DIR}/webscene-dawn.exports")
     elseif(UNIX)
-        file(WRITE "${CMAKE_BINARY_DIR}/webscene-dawn.exports" "{ global: wgpu*; local: *; };\n")
+        file(WRITE "${CMAKE_BINARY_DIR}/webscene-dawn.exports"
+            "{ global: wgpu*; websceneDawnQueryVulkanDeviceV1; local: *; };\n")
         target_link_options(webgpu_dawn PRIVATE "LINKER:--version-script=${CMAKE_BINARY_DIR}/webscene-dawn.exports")
     endif()
     # Windows exports only functions decorated by WGPU_SHARED_LIBRARY;

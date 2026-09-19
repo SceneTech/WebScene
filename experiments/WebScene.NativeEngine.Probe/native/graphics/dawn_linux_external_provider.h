@@ -1,6 +1,8 @@
 #pragma once
 #include "dawn_shared_image.h"
 #include "linux_external_image.h"
+#include "webscene/dawn_native_device.h"
+#include <atomic>
 #include <span>
 
 namespace webscene::graphics {
@@ -28,7 +30,9 @@ enum class dawn_linux_external_status : uint32_t {
     uninitialized_handoff,
     unsupported_fence,
     fence_export_failed,
-    invalid_device_factory
+    invalid_device_factory,
+    native_device_query_failed,
+    device_lost
 };
 
 struct dawn_linux_external_device_lifetime {
@@ -42,10 +46,63 @@ struct dawn_linux_external_device_lifetime {
     std::array<uint8_t,16> device_uuid{};
     std::array<uint8_t,16> driver_uuid{};
     uint32_t dawn_queue_family{UINT32_MAX};
+    // Set by the Dawn device-lost callback before the host releases its device.
+    std::shared_ptr<std::atomic<bool>> device_lost;
     // Host-defined owner for the exact native device/physical-device/queue
     // tuple. It must outlive every allocation made from those Vulkan handles.
     std::shared_ptr<void> native_owner;
 };
+
+struct dawn_linux_external_native_device_owner {
+    explicit dawn_linux_external_native_device_owner(const wgpu::Device& value):device(value) {}
+    wgpu::Device device;
+};
+
+// Populate the factory lifetime directly from the WebScene-pinned Dawn build.
+// The copied wgpu::Device keeps every returned borrowed Vulkan identity alive.
+inline dawn_linux_external_status bind_dawn_linux_external_device(
+    const wgpu::Adapter& adapter,const wgpu::Device& device,
+    std::shared_ptr<std::atomic<bool>> device_lost,
+    std::shared_ptr<const dawn_linux_external_device_lifetime>& result) {
+    result.reset();
+    if(!adapter||!device||!device_lost)
+        return dawn_linux_external_status::invalid_argument;
+    if(device_lost->load(std::memory_order_acquire))
+        return dawn_linux_external_status::device_lost;
+    webscene_dawn_native_device_v1 native{};
+    native.struct_size=sizeof(native);
+    native.version=WEBSCENE_DAWN_NATIVE_DEVICE_ABI_VERSION;
+    const auto status=websceneDawnQueryVulkanDeviceV1(device.Get(),&native);
+    if(status==WEBSCENE_DAWN_NATIVE_DEVICE_LOST_V1)
+        return dawn_linux_external_status::device_lost;
+    if(status==WEBSCENE_DAWN_NATIVE_DEVICE_NOT_VULKAN_V1)
+        return dawn_linux_external_status::not_vulkan;
+    if(status!=WEBSCENE_DAWN_NATIVE_DEVICE_SUCCESS_V1)
+        return dawn_linux_external_status::native_device_query_failed;
+    if(native.adapter!=adapter.Get()||native.device!=device.Get()||
+        !native.vk_physical_device||!native.vk_device||!native.vk_queue||
+        native.queue_family==UINT32_MAX)
+        return dawn_linux_external_status::native_device_query_failed;
+    auto lifetime=std::make_shared<dawn_linux_external_device_lifetime>();
+    lifetime->dawn_adapter_token=native.adapter;
+    lifetime->dawn_device_token=native.device;
+    lifetime->vk_physical_device=native.vk_physical_device;
+    lifetime->vk_device=native.vk_device;
+    lifetime->vk_queue=native.vk_queue;
+    for(size_t index=0;index<lifetime->device_uuid.size();++index) {
+        lifetime->device_uuid[index]=native.device_uuid[index];
+        lifetime->driver_uuid[index]=native.driver_uuid[index];
+    }
+    lifetime->dawn_queue_family=native.queue_family;
+    lifetime->device_lost=std::move(device_lost);
+    lifetime->native_owner=std::make_shared<dawn_linux_external_native_device_owner>(device);
+    if(!nonzero_uuid(lifetime->device_uuid)||!nonzero_uuid(lifetime->driver_uuid))
+        return dawn_linux_external_status::native_device_query_failed;
+    if(lifetime->device_lost->load(std::memory_order_acquire))
+        return dawn_linux_external_status::device_lost;
+    result=std::move(lifetime);
+    return dawn_linux_external_status::success;
+}
 
 struct dawn_linux_external_allocator;
 
@@ -147,12 +204,20 @@ inline bool same_dawn_linux_external_identity(
     const std::shared_ptr<const dawn_linux_external_device_lifetime>& expected,
     const std::shared_ptr<const dawn_linux_external_device_lifetime>& actual) noexcept {
     return expected&&expected==actual&&expected->native_owner&&
+        expected->device_lost&&
+        !expected->device_lost->load(std::memory_order_acquire)&&
         expected->dawn_adapter_token&&expected->dawn_device_token&&
         expected->dawn_adapter_token==actual->dawn_adapter_token&&
         expected->dawn_device_token==actual->dawn_device_token&&
         expected->vk_physical_device&&expected->vk_device&&expected->vk_queue&&
         nonzero_uuid(expected->device_uuid)&&nonzero_uuid(expected->driver_uuid)&&
         expected->dawn_queue_family!=UINT32_MAX;
+}
+
+inline bool dawn_linux_external_device_is_lost(
+    const std::shared_ptr<const dawn_linux_external_device_lifetime>& value) noexcept {
+    return value&&value->device_lost&&
+        value->device_lost->load(std::memory_order_acquire);
 }
 
 inline bool dawn_linux_snapshot_matches_device(
@@ -213,7 +278,8 @@ public:
     }
     bool export_image(const image_metadata& expected,
         linux_external_image_snapshot& result) const override {
-        if(!same_image_metadata(expected,snapshot_.metadata))return false;
+        if(!same_dawn_linux_external_identity(device_,device_)||
+            !same_image_metadata(expected,snapshot_.metadata))return false;
         result=snapshot_;return true;
     }
 
@@ -405,7 +471,8 @@ class dawn_linux_external_provider final : public linux_external_image_provider 
 public:
     bool export_image(const image_metadata& expected,
         linux_external_image_snapshot& result) const override {
-        if(!complete_||!same_image_metadata(expected,published_.metadata))return false;
+        if(!same_dawn_linux_external_identity(device_lifetime_,device_lifetime_)||
+            !complete_||!same_image_metadata(expected,published_.metadata))return false;
         result=published_;return true;
     }
     const wgpu::Texture& texture() const noexcept{return shared_->texture();}
@@ -419,6 +486,8 @@ public:
         const auto support=inspect_dawn_linux_external_capabilities(adapter,device,capabilities);
         if(support!=dawn_linux_external_status::native_device_provider_required)return support;
         const auto lifetime=allocator.device_lifetime();
+        if(dawn_linux_external_device_is_lost(lifetime))
+            return dawn_linux_external_status::device_lost;
         if(!same_dawn_linux_external_identity(lifetime,lifetime)||
             adapter.Get()!=lifetime->dawn_adapter_token||
             !valid_dawn_linux_external_binding(device.Get(),
@@ -427,6 +496,8 @@ public:
         std::shared_ptr<dawn_linux_external_allocation> allocation;
         auto status=allocator.allocate(metadata,format,usage,allocation);
         if(status!=dawn_linux_external_status::success)return status;
+        if(dawn_linux_external_device_is_lost(lifetime))
+            return dawn_linux_external_status::device_lost;
         if(!allocation||!same_dawn_linux_external_identity(
                 lifetime,allocation->device_lifetime())||
             !valid_dawn_linux_external_binding(device.Get(),
@@ -492,6 +563,8 @@ public:
     }
 
     dawn_linux_external_status begin_access() {
+        if(!same_dawn_linux_external_identity(device_lifetime_,device_lifetime_))
+            return dawn_linux_external_status::device_lost;
         if(active_||complete_)return dawn_linux_external_status::begin_failed;
         linux_external_image_snapshot source;
         if(!allocation_->export_image(published_.metadata,source)||
@@ -512,6 +585,10 @@ public:
 
     dawn_linux_external_status end_access() {
         if(!active_)return dawn_linux_external_status::end_failed;
+        if(!same_dawn_linux_external_identity(device_lifetime_,device_lifetime_)) {
+            active_=false;
+            return dawn_linux_external_status::device_lost;
+        }
         wgpu::SharedTextureMemoryVkImageLayoutEndState layout{};
         wgpu::SharedTextureMemoryEndAccessState handoff{};handoff.nextInChain=&layout;
         if(!shared_->end(handoff)){active_=false;return dawn_linux_external_status::end_failed;}

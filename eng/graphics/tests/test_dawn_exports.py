@@ -17,7 +17,8 @@ class DawnExportTests(unittest.TestCase):
     def test_native_symbol_formats(self):
         for rid, text in [
             ("osx-arm64", "00001000 T _wgpuCreateInstance\n00001010 T _wgpuGetProcAddress\n"),
-            ("linux-x64", "00001000 T wgpuCreateInstance\n00001010 T wgpuGetProcAddress\n"),
+            ("linux-x64", "00001000 T wgpuCreateInstance\n00001010 T wgpuGetProcAddress\n"
+             "00001020 T websceneDawnQueryVulkanDeviceV1\n"),
             ("win-x64", "  1  0 00001000 wgpuCreateInstance\n  2  1 00001010 wgpuGetProcAddress\n")]:
             with self.subTest(rid=rid):
                 self.assertEqual(self.inspect(text, rid)["status"], "passed")
@@ -25,6 +26,15 @@ class DawnExportTests(unittest.TestCase):
     def test_bundled_dependency_export_is_rejected(self):
         with self.assertRaises(ValueError):
             self.inspect("1000 T wgpuCreateInstance\n1010 T wgpuGetProcAddress\n1020 T AbslInternalSpinLockDelay\n", "linux-x64")
+
+    def test_linux_bridge_is_required_and_exact(self):
+        for text in [
+            "1000 T wgpuCreateInstance\n1010 T wgpuGetProcAddress\n",
+            "1000 T wgpuCreateInstance\n1010 T wgpuGetProcAddress\n"
+            "1020 T websceneDawnQueryVulkanDeviceV2\n",
+        ]:
+            with self.subTest(text=text), self.assertRaises(ValueError):
+                self.inspect(text, "linux-x64")
 
     def test_unrecognized_or_partial_output_is_not_a_pass(self):
         for text in ["", "unexpected symbol tool output", "1000 T _wgpuCreateInstance\n"]:

@@ -380,7 +380,8 @@ if(WEBSCENE_NATIVE_ENGINE_ENABLE_GRAPHICS)
                 tests/graphics_dawn_linux_external_provider_contract_tests.cpp)
             target_compile_features(webscene_graphics_dawn_linux_external_provider_contract_tests PRIVATE cxx_std_20)
             target_compile_definitions(webscene_graphics_dawn_linux_external_provider_contract_tests PRIVATE
-                WEBSCENE_DAWN_LINUX_EXTERNAL_FACTORY_VERSION=1)
+                WEBSCENE_DAWN_LINUX_EXTERNAL_FACTORY_VERSION=1
+                WEBSCENE_DAWN_NATIVE_DEVICE_ABI_VERSION=1)
             target_include_directories(webscene_graphics_dawn_linux_external_provider_contract_tests PRIVATE native)
             target_link_libraries(webscene_graphics_dawn_linux_external_provider_contract_tests PRIVATE
                 dawn::webgpu_dawn)

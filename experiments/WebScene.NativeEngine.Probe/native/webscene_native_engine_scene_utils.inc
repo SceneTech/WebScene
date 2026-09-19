@@ -81,7 +81,8 @@ bool command_uses_dom_string(const webscene_scene_command& command)
 {
     return (command.kind >= 3U && command.kind <= 6U)
         || (command.kind == 12U && (command.flags & (1U << 31U)) != 0U)
-        || command.kind == 47U;
+        || command.kind == 47U
+        || command.kind == 48U;
 }
 
 std::string_view command_dom_string(
@@ -166,7 +167,13 @@ webscene_damage_rect command_damage_bounds(
         bottom = center_y + radius;
     }
     constexpr auto antialias_padding = 2.0F;
-    const auto padding = antialias_padding + std::max(0.0F, effect_padding);
+    constexpr auto backdrop_blur_extent_multiplier = 3.0F;
+    const auto backdrop_padding = command.kind == 48U
+        ? std::clamp(command.stroke_width, 0.0F, 64.0F)
+            * backdrop_blur_extent_multiplier
+        : 0.0F;
+    const auto padding = antialias_padding
+        + std::max(std::max(0.0F, effect_padding), backdrop_padding);
     return {
         left - padding,
         top - padding,
@@ -241,6 +248,27 @@ bool append_localized_dom_damage(
         right = std::max(right, bounds.x + bounds.width);
         bottom = std::max(bottom, bounds.y + bounds.height);
     };
+    const auto intersects = [](const webscene_damage_rect& left,
+        const webscene_damage_rect& right) {
+        return left.x < right.x + right.width
+            && right.x < left.x + left.width
+            && left.y < right.y + right.height
+            && right.y < left.y + left.height;
+    };
+    const auto include_sampled_backdrops = [&](const scene& owner,
+        size_t changed_index,
+        const webscene_damage_rect& changed_bounds) {
+        for (auto index = changed_index + 1U; index < owner.commands.size(); ++index) {
+            const auto& candidate = owner.commands[index];
+            if (candidate.kind != 48U) continue;
+            const auto sample_bounds = command_damage_bounds(
+                candidate,
+                std::clamp(candidate.stroke_width, 0.0F, 64.0F) * 3.0F);
+            if (intersects(changed_bounds, sample_bounds)) {
+                include(candidate, candidate.stroke_width * 3.0F);
+            }
+        }
+    };
     for (size_t index = 0; index < next.commands.size(); ++index) {
         const auto& old_command = previous.commands[index];
         const auto& new_command = next.commands[index];
@@ -263,6 +291,14 @@ bool append_localized_dom_damage(
         changed = true;
         include(old_command, previous_blur_paddings[index]);
         include(new_command, next_blur_paddings[index]);
+        include_sampled_backdrops(
+            previous,
+            index,
+            command_damage_bounds(old_command, previous_blur_paddings[index]));
+        include_sampled_backdrops(
+            next,
+            index,
+            command_damage_bounds(new_command, next_blur_paddings[index]));
     }
     if (!changed) return false;
 

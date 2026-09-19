@@ -52,6 +52,7 @@ final class WebSceneSceneProjector extends ChangeNotifier {
   final Map<String, _SvgPictureEntry> _svgPictures = {};
   final Map<String, _SvgMaskGeometry?> _svgMaskGeometry = {};
   final List<_DomSvgPlacement> _domSvgPlacements = [];
+  final List<_DomBackdropEffect> _domBackdropEffects = [];
   ui.Picture? _backdrop;
   ui.Picture? _overlay;
   int _revision = 0;
@@ -164,9 +165,19 @@ final class WebSceneSceneProjector extends ChangeNotifier {
     final scaleY = sourceHeight <= 0 ? 1.0 : size.height / sourceHeight;
     canvas.save();
     canvas.scale(scaleX, scaleY);
+    _drawBackdropContent(canvas);
+    for (final effect in _domBackdropEffects) {
+      _drawDomBackdropEffect(canvas, effect);
+    }
+    final overlay = _overlay;
+    if (overlay != null) canvas.drawPicture(overlay);
+    _drawDomSvgPictures(canvas);
+    canvas.restore();
+  }
+
+  void _drawBackdropContent(ui.Canvas canvas) {
     final backdrop = _backdrop;
     if (backdrop != null) canvas.drawPicture(backdrop);
-
     final ordered = _layers.values.toList()
       ..sort((left, right) => left.zOrder.compareTo(right.zOrder));
     for (final layer in ordered) {
@@ -195,10 +206,6 @@ final class WebSceneSceneProjector extends ChangeNotifier {
         ..restore()
         ..restore();
     }
-    final overlay = _overlay;
-    if (overlay != null) canvas.drawPicture(overlay);
-    _drawDomSvgPictures(canvas);
-    canvas.restore();
   }
 
   void reset() {
@@ -207,6 +214,7 @@ final class WebSceneSceneProjector extends ChangeNotifier {
     _backdrop = null;
     _overlay = null;
     _domSvgPlacements.clear();
+    _domBackdropEffects.clear();
     _svgMaskGeometry.clear();
     for (final layer in _layers.values) {
       layer.dispose();
@@ -236,7 +244,10 @@ final class WebSceneSceneProjector extends ChangeNotifier {
       layer.stringCount <= scene.stringCount - layer.stringOffset;
 
   ui.Picture _compileDom(WebSceneSceneView scene, {required bool foreground}) {
-    if (foreground) _domSvgPlacements.clear();
+    if (foreground) {
+      _domSvgPlacements.clear();
+      _domBackdropEffects.clear();
+    }
     final recorder = ui.PictureRecorder();
     final canvas = ui.Canvas(
       recorder,
@@ -256,6 +267,8 @@ final class WebSceneSceneProjector extends ChangeNotifier {
           canvas.restore();
         case 47:
           _drawDomMask(canvas, scene, command);
+        case 48 when foreground:
+          _retainDomBackdropEffect(scene, command);
         case 15:
           canvas
             ..save()
@@ -330,6 +343,74 @@ final class WebSceneSceneProjector extends ChangeNotifier {
       }
     }
     return recorder.endRecording();
+  }
+
+  void _retainDomBackdropEffect(
+    WebSceneSceneView scene,
+    WebSceneSceneCommand command,
+  ) {
+    const prefix = 'webscene-backdrop-v1\t';
+    final resource = _domString(scene, command.flags);
+    if (!resource.startsWith(prefix) ||
+        !command.x.isFinite ||
+        !command.y.isFinite ||
+        !command.width.isFinite ||
+        !command.height.isFinite ||
+        command.width <= 0 ||
+        command.height <= 0 ||
+        command.width * command.height > 67108864) {
+      return;
+    }
+    final operations = <_DomBackdropOperation>[];
+    for (final component in resource.substring(prefix.length).split(';')) {
+      if (operations.length >= 16) return;
+      final separator = component.indexOf('=');
+      final amount = separator <= 0
+          ? null
+          : double.tryParse(component.substring(separator + 1));
+      if (amount == null || !amount.isFinite || amount < 0) return;
+      switch (component.substring(0, separator)) {
+        case 'blur' when amount <= 64:
+          operations.add(_DomBackdropOperation.blur(amount));
+        case 'saturate' when amount <= 10:
+          operations.add(_DomBackdropOperation.saturate(amount));
+        default:
+          return;
+      }
+    }
+    if (operations.isEmpty) return;
+    _domBackdropEffects.add(_DomBackdropEffect.fromCommand(command, operations));
+  }
+
+  void _drawDomBackdropEffect(ui.Canvas canvas, _DomBackdropEffect effect) {
+    canvas.save();
+    canvas.clipRRect(effect.bounds, doAntiAlias: true);
+    final bounds = effect.bounds.outerRect;
+    for (final operation in effect.operations.reversed) {
+      final paint = ui.Paint()..blendMode = ui.BlendMode.src;
+      if (operation.blurSigma != null) {
+        paint.imageFilter = ui.ImageFilter.blur(
+          sigmaX: operation.blurSigma!,
+          sigmaY: operation.blurSigma!,
+          tileMode: ui.TileMode.clamp,
+        );
+      } else {
+        final amount = operation.saturation!;
+        final inverse = 1 - amount;
+        paint.colorFilter = ui.ColorFilter.matrix(<double>[
+          0.2126 + 0.7874 * amount, 0.7152 * inverse, 0.0722 * inverse, 0, 0,
+          0.2126 * inverse, 0.7152 + 0.2848 * amount, 0.0722 * inverse, 0, 0,
+          0.2126 * inverse, 0.7152 * inverse, 0.0722 + 0.9278 * amount, 0, 0,
+          0, 0, 0, 1, 0,
+        ]);
+      }
+      canvas.saveLayer(bounds, paint);
+    }
+    _drawBackdropContent(canvas);
+    for (var index = 0; index < effect.operations.length; index++) {
+      canvas.restore();
+    }
+    canvas.restore();
   }
 
   void _retainDomSvg(
@@ -1927,6 +2008,33 @@ final class WebSceneSceneProjector extends ChangeNotifier {
         'luminosity' => ui.BlendMode.luminosity,
         _ => ui.BlendMode.srcOver,
       };
+}
+
+final class _DomBackdropEffect {
+  _DomBackdropEffect.fromCommand(
+    WebSceneSceneCommand command,
+    this.operations,
+  ) : bounds = _domBackdropRRect(command);
+
+  final ui.RRect bounds;
+  final List<_DomBackdropOperation> operations;
+
+  static ui.RRect _domBackdropRRect(WebSceneSceneCommand command) =>
+      ui.RRect.fromRectAndCorners(
+        ui.Rect.fromLTWH(command.x, command.y, command.width, command.height),
+        topLeft: ui.Radius.circular(command.radiusTopLeft),
+        topRight: ui.Radius.circular(command.radiusTopRight),
+        bottomRight: ui.Radius.circular(command.radiusBottomRight),
+        bottomLeft: ui.Radius.circular(command.radiusBottomLeft),
+      );
+}
+
+final class _DomBackdropOperation {
+  const _DomBackdropOperation.blur(this.blurSigma) : saturation = null;
+  const _DomBackdropOperation.saturate(this.saturation) : blurSigma = null;
+
+  final double? blurSigma;
+  final double? saturation;
 }
 
 final class _SvgMaskGeometry {

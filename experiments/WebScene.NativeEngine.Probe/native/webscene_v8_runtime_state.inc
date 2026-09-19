@@ -86,6 +86,7 @@
     v8::Global<v8::FunctionTemplate> html_input_element_template;
     v8::Global<v8::FunctionTemplate> html_text_area_element_template;
     v8::Global<v8::FunctionTemplate> html_form_element_template;
+    v8::Global<v8::FunctionTemplate> html_field_set_element_template;
     v8::Global<v8::FunctionTemplate> html_select_element_template;
     v8::Global<v8::FunctionTemplate> html_option_element_template;
     v8::Global<v8::FunctionTemplate> html_meta_element_template;

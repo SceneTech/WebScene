@@ -60,6 +60,36 @@ struct retained_filter_function final {
     bool operator==(const retained_filter_function&) const = default;
 };
 
+inline float retained_filter_identity_amount(uint32_t flags) noexcept
+{
+    return flags == (1U << 31U) || flags == (1U << 29U)
+        || flags == (1U << 27U) ? 1.0F : 0.0F;
+}
+
+inline bool make_retained_filter_lists_compatible(
+    std::vector<retained_filter_function>& left,
+    std::vector<retained_filter_function>& right)
+{
+    const auto shared = std::min(left.size(), right.size());
+    for (size_t index = 0U; index < shared; ++index) {
+        if (left[index].flags != right[index].flags) return false;
+    }
+    if (left.size() > right.size()) {
+        for (size_t index = right.size(); index < left.size(); ++index) {
+            right.push_back({
+                left[index].flags,
+                retained_filter_identity_amount(left[index].flags)});
+        }
+    } else if (right.size() > left.size()) {
+        for (size_t index = left.size(); index < right.size(); ++index) {
+            left.push_back({
+                right[index].flags,
+                retained_filter_identity_amount(right[index].flags)});
+        }
+    }
+    return true;
+}
+
 struct layout_rect final {
     float x{0};
     float y{0};
@@ -145,6 +175,10 @@ struct node_style final {
         float offset{0};
         float degrees{0};
     };
+    struct filter_keyframe final {
+        float offset{0};
+        std::string value;
+    };
 
     struct transition_timing final {
         float duration_ms{0};
@@ -177,6 +211,8 @@ struct node_style final {
         std::vector<opacity_keyframe> opacity_keyframes;
         std::string rotation_keyframe_animation_signature;
         std::vector<rotation_keyframe> rotation_keyframes;
+        std::string filter_keyframe_animation_signature;
+        std::vector<filter_keyframe> filter_keyframes;
         float opacity_keyframe_duration_ms{0};
         float opacity_keyframe_delay_ms{0};
         float opacity_keyframe_iterations{1};
@@ -1374,6 +1410,11 @@ struct dom_node final {
     // authored animation data. Keeping it inline made every static DOM node
     // pay for three transition machines and two keyframe signatures.
     struct animation_runtime_data final {
+        struct retained_filter_keyframe final {
+            float offset{0};
+            std::vector<retained_filter_function> functions;
+            bool authored_none{false};
+        };
         css_length painted_transform_translate_x{};
         css_length painted_transform_translate_y{};
         css_length transform_animation_from_translate_x{};
@@ -1444,6 +1485,12 @@ struct dom_node final {
         std::string rotation_keyframe_animation_signature;
         double rotation_keyframe_animation_started_ms{0};
         bool rotation_keyframe_animation_active{false};
+        std::string filter_keyframe_animation_signature;
+        std::vector<retained_filter_keyframe> filter_keyframes;
+        std::vector<retained_filter_function> filter_keyframe_underlying;
+        double filter_keyframe_animation_started_ms{0};
+        bool filter_keyframe_animation_active{false};
+        bool filter_keyframe_animation_filled{false};
         bool keyframe_animation_end_event_sent{false};
         uint32_t painted_foreground_rgba{0};
         uint32_t color_animation_from_rgba{0};
@@ -1795,6 +1842,14 @@ struct dom_node final {
             && animation_runtime_state->rotation_keyframe_animation_active;
     }
 
+    bool has_painted_filter_override_value() const noexcept
+    {
+        return animation_runtime_state != nullptr
+            && (animation_runtime_state->filter_animation_active
+                || animation_runtime_state->filter_keyframe_animation_active
+                || animation_runtime_state->filter_keyframe_animation_filled);
+    }
+
     bool transform_animation_active_value() const noexcept
     {
         return animation_runtime_state != nullptr
@@ -1810,8 +1865,7 @@ struct dom_node final {
     std::span<const retained_filter_function> painted_filter_functions_value()
         const noexcept
     {
-        if (animation_runtime_state == nullptr
-            || !animation_runtime_state->filter_animation_active) return {};
+        if (!has_painted_filter_override_value()) return {};
         return animation_runtime_state->painted_filter_functions;
     }
 

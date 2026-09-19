@@ -1093,6 +1093,10 @@
                 declarations.begin(), declarations.end(), [](const auto& declaration) {
                     return declaration.name == "transform";
                 });
+            const auto filter = std::find_if(
+                declarations.begin(), declarations.end(), [](const auto& declaration) {
+                    return declaration.name == "filter";
+                });
             const auto rotation_degrees = [&]() -> std::optional<float> {
                 if (transform == declarations.end()) return std::nullopt;
                 auto value = lower_html_name(trim_css(transform->value));
@@ -1131,6 +1135,9 @@
                 if (rotation_degrees.has_value()) {
                     definition.rotation_stops.push_back({offset, *rotation_degrees});
                 }
+                if (filter != declarations.end()) {
+                    definition.filter_stops.push_back({offset, filter->value});
+                }
             }
             cursor = close + 1U;
         }
@@ -1152,13 +1159,15 @@
         };
         normalize(definition.opacity_stops);
         normalize(definition.rotation_stops);
+        normalize(definition.filter_stops);
         if (definition.rotation_stops.size() == 1U
             && definition.rotation_stops.front().offset > 0) {
             definition.rotation_stops.insert(
                 definition.rotation_stops.begin(), {0, 0});
         }
         if (definition.opacity_stops.size() >= 2U
-            || definition.rotation_stops.size() >= 2U) {
+            || definition.rotation_stops.size() >= 2U
+            || definition.filter_stops.size() >= 2U) {
             opacity_keyframes[lower_html_name(trim_css(std::move(name)))] =
                 std::move(definition);
         }
@@ -1342,7 +1351,7 @@
                     "css",
                     "at-rule:@keyframes",
                     "partially-supported",
-                    "opacity and rotate() keyframes with host-clock timing",
+                    "opacity, rotate(), and bounded filter keyframes with host-clock timing",
                     "stylesheet-parser");
             } else if (prelude.starts_with("@font-face")) {
                 record_feature(
@@ -1459,7 +1468,7 @@
             finish_css_syntax_keyframes(std::move(name), std::move(definition));
             record_feature(
                 "css", "at-rule:@keyframes", "partially-supported",
-                "opacity and rotate() keyframes with host-clock timing",
+                "opacity, rotate(), and bounded filter keyframes with host-clock timing",
                 "stylesheet-parser");
         }
     }

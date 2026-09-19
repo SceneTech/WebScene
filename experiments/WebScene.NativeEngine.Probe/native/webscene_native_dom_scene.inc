@@ -485,7 +485,7 @@ void native_document::append_scene(
     }
     std::vector<retained_filter_function> parsed_foreground_filters;
     auto foreground_filters = node.painted_filter_functions_value();
-    if (foreground_filters.empty()) {
+    if (!node.has_painted_filter_override_value()) {
         const auto& effects = node.style.textual().effect_values;
         const auto known = effects.find("filter");
         if (known != effects.end()

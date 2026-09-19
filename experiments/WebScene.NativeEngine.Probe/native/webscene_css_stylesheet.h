@@ -68,7 +68,7 @@ std::optional<prepared_stylesheet> prepare_stylesheet(std::string_view text,
     for(auto& [name,definition]:sink.keyframes()) {
         finish_keyframes(host.output.keyframes,std::move(name),std::move(definition));
         host.output.diagnostics.push_back({"at-rule:@keyframes","partially-supported",
-            "opacity and rotate() keyframes with host-clock timing"});
+            "opacity, rotate(), and bounded filter keyframes with host-clock timing"});
     }
     // A property known to WebScene must never cross the preparation boundary as
     // raw property grammar. Unknown properties remain explicit diagnostics, and

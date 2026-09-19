@@ -252,6 +252,7 @@ struct compiled_css_selector final {
     struct css_opacity_keyframes final {
         std::vector<node_style::opacity_keyframe> opacity_stops;
         std::vector<node_style::rotation_keyframe> rotation_stops;
+        std::vector<node_style::filter_keyframe> filter_stops;
     };
 
     struct css_inheritance_candidate_rule final {

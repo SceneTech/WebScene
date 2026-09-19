@@ -151,6 +151,8 @@
             record_composition("css-opacity-keyframe-animation",node.id);
         if (!node.style.animations().rotation_keyframe_animation_signature.empty())
             record_composition("css-rotation-keyframe-animation",node.id);
+        if (!node.style.animations().filter_keyframe_animation_signature.empty())
+            record_composition("css-filter-keyframe-animation",node.id);
     }
 
     void recompute_cascaded_line_height(dom_node& node,const std::vector<const css_rule*>& rules)

@@ -615,6 +615,111 @@ void test_rotation_keyframes_use_host_clock_and_wrap_continuously(
             + wrapped_quarter_turn);
 }
 
+void test_filter_keyframes_use_host_clock_and_retained_paint(
+    webscene_engine* engine)
+{
+    execute_and_wait(engine, R"JS(
+        (() => {
+          document.body.innerHTML = `
+            <style>
+              @keyframes dictation-breathe {
+                0%, 100% { filter: brightness(.9); }
+                50% { filter: brightness(1.14); }
+              }
+              @keyframes chat-blur {
+                from { opacity: 0; filter: blur(2px); }
+                to { opacity: 1; filter: blur(0); }
+              }
+              #dictation {
+                width: 40px; height: 24px; background: rgb(80, 120, 160);
+                animation: dictation-breathe 1000ms linear infinite;
+              }
+              #chat {
+                width: 40px; height: 24px; background: rgb(180, 80, 120);
+                animation: chat-blur 400ms linear forwards;
+              }
+            </style>
+            <div id="dictation"></div><div id="chat"></div>`;
+          globalThis.__filterAnimationEvents = [];
+          document.getElementById('chat').addEventListener('animationend', event =>
+            __filterAnimationEvents.push(event.animationName));
+        })()
+    )JS", "filter-keyframes-host-clock-setup.js");
+    animation_frame_and_wait(engine, 2575.0, 7034U);
+    webscene_engine_metrics layout_before{};
+    webscene_engine_get_metrics(engine, &layout_before);
+
+    animation_frame_and_wait(engine, 2825.0, 7035U);
+    const auto midpoint = evaluate(engine, R"JS(
+        (() => ({
+          dictation: getComputedStyle(document.getElementById('dictation')).filter,
+          chat: getComputedStyle(document.getElementById('chat')).filter,
+          opacity: Math.round(Number(getComputedStyle(
+            document.getElementById('chat')).opacity) * 1000) / 1000
+        }))()
+    )JS", "filter-keyframes-midpoint.js");
+    require(
+        midpoint.find("brightness(1.02)") != std::string::npos
+            && midpoint.find("blur(0.75px)") != std::string::npos
+            && midpoint.find(R"("opacity":0.625)") != std::string::npos,
+        "Code OSS filter keyframes did not follow the host clock: " + midpoint);
+
+    webscene_engine_request_scene_checkpoint(engine);
+    auto retained_brightness = -1.0F;
+    auto retained_blur = -1.0F;
+    for (auto attempt = 0; attempt < 100 && retained_blur < 0.0F; ++attempt) {
+        const auto* scene = webscene_engine_acquire_latest_scene(engine);
+        if (scene != nullptr) {
+            if (scene->header.consumed_input_sequence >= 7035U) {
+                for (uint32_t index = 0U; index < scene->header.command_count; ++index) {
+                    const auto& command = scene->commands[index];
+                    if (command.kind != 30U) continue;
+                    if (command.flags == (1U << 31U)) {
+                        retained_brightness = command.stroke_width;
+                    } else if (command.flags == (1U << 28U)) {
+                        retained_blur = command.stroke_width;
+                    }
+                }
+            }
+            webscene_scene_acknowledge(scene);
+            webscene_scene_release(scene);
+        }
+        if (retained_blur < 0.0F) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+    }
+    require(
+        std::abs(retained_brightness - 1.02F) < 0.001F
+            && std::abs(retained_blur - 0.75F) < 0.001F,
+        "filter keyframe values did not reach retained paint");
+    webscene_engine_metrics layout_after{};
+    webscene_engine_get_metrics(engine, &layout_after);
+    require(layout_after.layout_passes == layout_before.layout_passes,
+        "paint-only filter keyframes repeated full document layout");
+
+    animation_frame_and_wait(engine, 3075.0, 7036U);
+    const auto completed = evaluate(engine, R"JS(
+        (() => ({
+          filter: getComputedStyle(document.getElementById('chat')).filter,
+          opacity: getComputedStyle(document.getElementById('chat')).opacity,
+          events: __filterAnimationEvents
+        }))()
+    )JS", "filter-keyframes-fill-complete.js");
+    require(
+        completed.find("blur(0px)") != std::string::npos
+            && completed.find(R"("opacity":"1")") != std::string::npos
+            && completed.find("chat-blur") != std::string::npos,
+        "finite filter keyframe fill or animationend was lost: " + completed);
+
+    execute_and_wait(engine,
+        "document.body.innerHTML = '<div>filter animations detached</div>'",
+        "filter-keyframes-detach.js");
+    wait_for_animation_frame_demand(
+        engine,
+        false,
+        "detached filter keyframes retained host-frame demand");
+}
+
 void test_clipped_offscreen_keyframes_do_not_keep_host_frame_clock_alive(
     webscene_engine* engine)
 {

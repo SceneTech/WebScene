@@ -234,6 +234,8 @@ inline void configure_keyframes(node_style& style,
         animations.opacity_keyframe_animation_signature.clear();
         animations.rotation_keyframes.clear();
         animations.rotation_keyframe_animation_signature.clear();
+        animations.filter_keyframes.clear();
+        animations.filter_keyframe_animation_signature.clear();
         if (animations.animation_name_value == "none") return;
         const auto names = split_css_component_list(animations.animation_name_value, ',');
         if (names.empty()) return;
@@ -266,10 +268,12 @@ inline void configure_keyframes(node_style& style,
         animations.opacity_keyframe_y2 = animation_timing.y2;
         animations.opacity_keyframes = definition->second.opacity_stops;
         animations.rotation_keyframes = definition->second.rotation_stops;
+        animations.filter_keyframes = definition->second.filter_stops;
         if (animations.opacity_keyframe_duration_ms <= 0
             || animations.opacity_keyframe_iterations == 0
             || (animations.opacity_keyframes.size() < 2U
-                && animations.rotation_keyframes.size() < 2U)) return;
+                && animations.rotation_keyframes.size() < 2U
+                && animations.filter_keyframes.size() < 2U)) return;
         std::ostringstream signature;
         signature << name << '|' << animations.opacity_keyframe_duration_ms << '|'
             << animations.opacity_keyframe_delay_ms << '|'
@@ -294,6 +298,14 @@ inline void configure_keyframes(node_style& style,
             }
             animations.rotation_keyframe_animation_signature = signature.str();
         }
+        if (animations.filter_keyframes.size() >= 2U) {
+            signature.str(base_signature);
+            signature.clear();
+            for (const auto& stop : animations.filter_keyframes) {
+                signature << '|' << stop.offset << ':' << stop.value;
+            }
+            animations.filter_keyframe_animation_signature = signature.str();
+        }
     }
 
 inline void append_keyframe(
@@ -308,6 +320,10 @@ inline void append_keyframe(
         const auto transform = std::find_if(
             declarations.begin(), declarations.end(), [](const auto& declaration) {
                 return declaration.name == "transform";
+            });
+        const auto filter = std::find_if(
+            declarations.begin(), declarations.end(), [](const auto& declaration) {
+                return declaration.name == "filter";
             });
         const auto rotation_degrees = [&]() -> std::optional<float> {
             if (transform == declarations.end()) return std::nullopt;
@@ -347,6 +363,9 @@ inline void append_keyframe(
             if (rotation_degrees.has_value()) {
                 definition.rotation_stops.push_back({offset, *rotation_degrees});
             }
+            if (filter != declarations.end()) {
+                definition.filter_stops.push_back({offset, filter->value});
+            }
         }
     }
 
@@ -373,12 +392,14 @@ inline void finish_keyframes(
         };
         normalize(definition.opacity_stops);
         normalize(definition.rotation_stops);
+        normalize(definition.filter_stops);
         if (definition.rotation_stops.size() == 1U
             && definition.rotation_stops.front().offset > 0) {
             definition.rotation_stops.insert(definition.rotation_stops.begin(), {0, 0});
         }
         if (definition.opacity_stops.size() >= 2U
-            || definition.rotation_stops.size() >= 2U) {
+            || definition.rotation_stops.size() >= 2U
+            || definition.filter_stops.size() >= 2U) {
             definitions[ascii_lower(trim_value(std::move(name)))] =
                 std::move(definition);
         }

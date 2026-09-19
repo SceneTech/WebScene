@@ -1177,6 +1177,10 @@
                 static_cast<void>(name);
                 keyframes.opacity_stops.shrink_to_fit();
                 keyframes.rotation_stops.shrink_to_fit();
+                keyframes.filter_stops.shrink_to_fit();
+                for (auto& stop : keyframes.filter_stops) {
+                    stop.value.shrink_to_fit();
+                }
             }
             const auto compact_index = [](auto& index) {
                 for (auto& [key, values] : index) {
@@ -1203,6 +1207,10 @@
                     static_cast<void>(name);
                     keyframes.opacity_stops.shrink_to_fit();
                     keyframes.rotation_stops.shrink_to_fit();
+                    keyframes.filter_stops.shrink_to_fit();
+                    for (auto& stop : keyframes.filter_stops) {
+                        stop.value.shrink_to_fit();
+                    }
                 }
                 compact_index(cascade.rules_by_class);
                 compact_index(cascade.rules_by_id);

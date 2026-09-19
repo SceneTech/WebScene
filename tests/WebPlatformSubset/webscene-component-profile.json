@@ -1784,6 +1784,21 @@
       "reason": "Product-neutral reduction of lazy-loaded artwork that fades from opacity zero and relies on animation-fill-mode: forwards. The final keyframe must remain painted after a finite animation completes instead of reverting to the authored hidden opacity."
     },
     {
+      "path": "contracts/css-filter-keyframes-temporal.html",
+      "type": "contract",
+      "capabilities": ["keyframes-filter", "filter-identity-interpolation", "compound-filter-order", "host-frame-clock", "bounded-frame-samples", "finite-filter-fill", "animationend-event", "filter-lifecycle-cleanup"],
+      "evidence": ["code-oss-dictation-brightness-breathe", "code-oss-incremental-chat-blur"],
+      "reason": "Product-neutral temporal and performance reduction of Code OSS dictation brightness and incremental Chat blur keyframes. It drives 129 retained filters, verifies a compound none-identity interpolation, requires finite fill plus animationend, caps samples and elapsed time, and removes the animated subtree after completion."
+    },
+    {
+      "path": "contracts/css-filter-keyframes-midpoint.html",
+      "type": "reftest",
+      "reference": "contracts/css-filter-keyframes-midpoint-ref.html",
+      "capabilities": ["keyframes-filter-paint", "compound-filter-order", "filter-midpoint-pixels"],
+      "evidence": ["code-oss-incremental-chat-blur"],
+      "reason": "Browser-reduced pixel oracle for a stable host-clock keyframe midpoint across the retained grayscale, blur, saturate, and brightness functions. The static reference preserves authored order."
+    },
+    {
       "path": "contracts/css-rotation-keyframes-cadence.html",
       "type": "contract",
       "capabilities": ["keyframes-rotate", "animation-shorthand", "infinite-iteration", "linear-timing", "host-frame-clock", "bounded-frame-gap", "bounded-angular-step"],

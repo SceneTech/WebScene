@@ -1115,6 +1115,7 @@ int main()
             test_inline_transition_longhands_survive_dynamic_parse_and_recascade(focused_engine);
             test_opacity_keyframes_use_host_clock_with_staggered_infinite_delays(focused_engine);
             test_rotation_keyframes_use_host_clock_and_wrap_continuously(focused_engine);
+            test_filter_keyframes_use_host_clock_and_retained_paint(focused_engine);
             test_clipped_offscreen_keyframes_do_not_keep_host_frame_clock_alive(focused_engine);
             webscene_engine_destroy(focused_engine);
             return 0;
@@ -1599,6 +1600,7 @@ int main()
     test_inline_transition_longhands_survive_dynamic_parse_and_recascade(engine);
     test_opacity_keyframes_use_host_clock_with_staggered_infinite_delays(engine);
     test_rotation_keyframes_use_host_clock_and_wrap_continuously(engine);
+    test_filter_keyframes_use_host_clock_and_retained_paint(engine);
     test_clipped_offscreen_keyframes_do_not_keep_host_frame_clock_alive(engine);
     test_finite_rotation_keyframe_dispatches_animation_end(engine);
     // This regression uses fixed host timestamps beginning at 2700 ms. Give it

@@ -150,7 +150,16 @@ native_document::allocation_metrics native_document::read_allocation_metrics() c
                 + animation->filter_animation_target.capacity()
                     * sizeof(retained_filter_function)
                 + animation->opacity_keyframe_animation_signature.capacity() + 1U
-                + animation->rotation_keyframe_animation_signature.capacity() + 1U;
+                + animation->rotation_keyframe_animation_signature.capacity() + 1U
+                + animation->filter_keyframe_animation_signature.capacity() + 1U
+                + animation->filter_keyframes.capacity()
+                    * sizeof(dom_node::animation_runtime_data::retained_filter_keyframe)
+                + animation->filter_keyframe_underlying.capacity()
+                    * sizeof(retained_filter_function);
+            for (const auto& stop : animation->filter_keyframes) {
+                result.animation_runtime_storage_bytes += stop.functions.capacity()
+                    * sizeof(retained_filter_function);
+            }
         }
         if (node == nullptr || !node->has_canvas_data()) continue;
         ++result.canvas_node_count;
@@ -201,10 +210,16 @@ native_document::allocation_metrics native_document::read_allocation_metrics() c
             + string_bytes(animations->animation_iteration_count_value)
             + string_bytes(animations->opacity_keyframe_animation_signature)
             + string_bytes(animations->rotation_keyframe_animation_signature)
+            + string_bytes(animations->filter_keyframe_animation_signature)
             + animations->opacity_keyframes.capacity()
                 * sizeof(node_style::opacity_keyframe)
             + animations->rotation_keyframes.capacity()
-                * sizeof(node_style::rotation_keyframe);
+                * sizeof(node_style::rotation_keyframe)
+            + animations->filter_keyframes.capacity()
+                * sizeof(node_style::filter_keyframe);
+        for (const auto& stop : animations->filter_keyframes) {
+            result.animation_storage_bytes += string_bytes(stop.value);
+        }
     }
     result.background_image_data_count = background_allocations.size();
     for (const auto* background : background_allocations) {

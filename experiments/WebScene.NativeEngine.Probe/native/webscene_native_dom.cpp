@@ -206,7 +206,7 @@ bool style_establishes_atomic_stacking_context(const dom_node& node) noexcept
         || node.style.contain_stacking_context
         || node.style.opacity < 0.999F
         || node.style.transform_stacking_context
-        || !node.painted_filter_functions_value().empty()
+        || node.has_painted_filter_override_value()
         || (filter != effects.end() && filter->second != "none");
 }
 

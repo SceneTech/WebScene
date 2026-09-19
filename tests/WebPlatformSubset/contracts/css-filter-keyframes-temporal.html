@@ -1,0 +1,133 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Bounded foreground filter keyframes follow the host clock</title>
+<style>
+  #host { display: grid; grid-template-columns: repeat(16, 8px); }
+  .tile { width: 8px; height: 8px; background: rgb(80, 120, 160); }
+  #host.active .dictation {
+    animation: dictation-breathe 400ms linear infinite;
+  }
+  #host.active .chat {
+    opacity: 0;
+    filter: blur(2px);
+    animation: chat-blur 400ms linear forwards;
+  }
+  #host.active #compound {
+    animation: compound-filter 400ms linear infinite;
+  }
+  @keyframes dictation-breathe {
+    0%, 100% { filter: brightness(.9); }
+    50% { filter: brightness(1.14); }
+  }
+  @keyframes chat-blur {
+    from { opacity: 0; filter: blur(2px); }
+    to { opacity: 1; filter: blur(0); }
+  }
+  @keyframes compound-filter {
+    from { filter: none; }
+    to { filter: grayscale(.5) blur(4px) brightness(1.2); }
+  }
+</style>
+<div id="host"><span id="compound" class="tile"></span></div>
+<script>
+  const state = window.__webSceneWptState = {
+    complete: false,
+    harness: null,
+    results: [],
+    errors: [],
+    diagnostics: []
+  };
+
+  function functions(value) {
+    return Array.from(String(value).matchAll(/([a-z-]+)\(([-+.\d]+)(?:px)?\)/g),
+      match => ({ name: match[1], amount: Number(match[2]) }));
+  }
+
+  function finish(error, diagnostics) {
+    state.diagnostics = diagnostics || [];
+    state.results.push({
+      name: "filter keyframes preserve order, identities, cadence, and lifecycle",
+      status: error ? "FAIL" : "PASS",
+      message: error ? String(error && error.message || error) : null,
+      stack: error && error.stack ? String(error.stack) : null
+    });
+    state.harness = error
+      ? { status: 1, message: state.results[0].message, stack: state.results[0].stack }
+      : { status: 0, message: null, stack: null };
+    state.complete = true;
+  }
+
+  try {
+    const host = document.getElementById("host");
+    for (let index = 0; index < 64; index++) {
+      const dictation = document.createElement("span");
+      dictation.className = "tile dictation";
+      host.appendChild(dictation);
+      const chat = document.createElement("span");
+      chat.className = "tile chat";
+      host.appendChild(chat);
+    }
+    const dictation = host.querySelector(".dictation");
+    const chat = host.querySelector(".chat");
+    const compound = document.getElementById("compound");
+    const events = [];
+    chat.addEventListener("animationend", event => events.push(event.animationName));
+    const started = performance.now();
+    requestAnimationFrame(startTimestamp => {
+      host.classList.add("active");
+      const samples = [];
+      const sample = timestamp => {
+        try {
+          const record = {
+            elapsed: timestamp - startTimestamp,
+            brightness: functions(getComputedStyle(dictation).filter),
+            blur: functions(getComputedStyle(chat).filter),
+            opacity: Number(getComputedStyle(chat).opacity),
+            compound: functions(getComputedStyle(compound).filter)
+          };
+          samples.push(record);
+          if (record.elapsed < 450) {
+            requestAnimationFrame(sample);
+            return;
+          }
+          const temporal = samples.find(item =>
+            item.brightness.length === 1
+            && item.brightness[0].amount > .9
+            && item.brightness[0].amount <= 1.14
+            && item.blur.length === 1
+            && item.blur[0].amount > 0
+            && item.blur[0].amount < 2
+            && item.opacity > 0
+            && item.opacity < 1
+            && item.compound.map(value => value.name).join(" ")
+              === "grayscale blur brightness"
+            && item.compound[0].amount > 0
+            && item.compound[0].amount < .5);
+          if (!temporal) {
+            throw new Error("filter keyframe intermediates, compound order, or none identities were lost: "
+              + JSON.stringify(samples));
+          }
+          if (samples.length > 192) {
+            throw new Error("filter keyframe cadence exceeded 192 samples");
+          }
+          if (getComputedStyle(chat).filter !== "blur(0px)"
+              || getComputedStyle(chat).opacity !== "1"
+              || !events.includes("chat-blur")) {
+            throw new Error("finite fill or animationend was lost: "
+              + JSON.stringify(events));
+          }
+          if (performance.now() - started > 5000) {
+            throw new Error("129-filter keyframe gate exceeded five seconds");
+          }
+          host.remove();
+          finish(null, [JSON.stringify({ samples, events })]);
+        } catch (error) {
+          finish(error, [JSON.stringify({ samples, events })]);
+        }
+      };
+      requestAnimationFrame(sample);
+    });
+  } catch (error) {
+    finish(error, []);
+  }
+</script>

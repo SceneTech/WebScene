@@ -37,6 +37,7 @@
         if (work_metrics_enabled.load(std::memory_order_relaxed)) {
             ++work.microtask_checkpoints;
         }
+        if (!dispatching_user_input) flush_primary_selection_publication();
     }
 
     bool execute_timer_task(
@@ -2658,6 +2659,7 @@
                     text_selection_direction::none;
                 next->mutable_form_control().selection_explicitly_set = true;
             }
+            mark_primary_selection_publication_dirty(next);
         }
         // Focus styles are observable synchronously from focus listeners.
         // Recompute them before dispatching focus/focusin, not only after the
@@ -2857,6 +2859,7 @@
                 caret.utf16_suboffset;
             target->mutable_form_control().selection_direction = text_selection_direction::none;
             target->mutable_form_control().selection_explicitly_set = true;
+            mark_primary_selection_publication_dirty(target);
             target->mutable_form_control().caret_visible = true;
             caret_blink_epoch_ms = last_animation_frame_timestamp_ms;
             recascade_form_value_selector_transition(
@@ -3012,6 +3015,7 @@
             target->mutable_form_control().selection_direction =
                 text_selection_direction::none;
             target->mutable_form_control().selection_explicitly_set = true;
+            mark_primary_selection_publication_dirty(target);
             target->mutable_form_control().caret_visible = true;
             caret_blink_epoch_ms = last_animation_frame_timestamp_ms;
             document.mark_dirty();
@@ -3119,6 +3123,7 @@
         if (key_code == 37 || key_code == 38 || key_code == 39 || key_code == 40
             || key_code == 36 || key_code == 35) {
             target->mutable_form_control().selection_explicitly_set = true;
+            mark_primary_selection_publication_dirty(target);
         }
         target->mutable_form_control().caret_visible = true;
         caret_blink_epoch_ms = last_animation_frame_timestamp_ms;

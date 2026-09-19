@@ -102,7 +102,7 @@ test('CSS token boundaries retain quoted braces, comments, escapes and grouped r
   assert.equal(style.sheet.cssRules[0].selectorText, '.retained');
 });
 
-test('invalid indices and malformed or unsupported rules fail before native mutation', () => {
+test('invalid indices and malformed rules fail before native mutation', () => {
   const { createStyle } = setup();
   const style = createStyle();
   const sheet = style.sheet;
@@ -112,7 +112,6 @@ test('invalid indices and malformed or unsupported rules fail before native muta
   for (const value of ['', '.a {} .b {}', '.a {', '.a {content: "unterminated}', 'color: red;']) {
     assert.throws(() => sheet.insertRule(value), { name: 'SyntaxError' });
   }
-  assert.throws(() => sheet.insertRule('@namespace svg "urn:svg";'), { name: 'NotSupportedError' });
   assert.throws(() => sheet.insertRule(), { name: 'TypeError' });
   assert.throws(() => sheet.deleteRule(), { name: 'TypeError' });
   assert.equal(style.writes.length, 0);

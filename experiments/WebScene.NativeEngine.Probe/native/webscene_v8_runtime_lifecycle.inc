@@ -1192,6 +1192,8 @@
             for (auto& [name, keyframes] : opacity_keyframes) {
                 static_cast<void>(name);
                 keyframes.opacity_stops.shrink_to_fit();
+                keyframes.translation_stops.shrink_to_fit();
+                keyframes.scale_stops.shrink_to_fit();
                 keyframes.rotation_stops.shrink_to_fit();
                 keyframes.filter_stops.shrink_to_fit();
                 for (auto& stop : keyframes.filter_stops) {
@@ -1222,6 +1224,8 @@
                 for (auto& [name, keyframes] : cascade.opacity_keyframes) {
                     static_cast<void>(name);
                     keyframes.opacity_stops.shrink_to_fit();
+                    keyframes.translation_stops.shrink_to_fit();
+                    keyframes.scale_stops.shrink_to_fit();
                     keyframes.rotation_stops.shrink_to_fit();
                     keyframes.filter_stops.shrink_to_fit();
                     for (auto& stop : keyframes.filter_stops) {

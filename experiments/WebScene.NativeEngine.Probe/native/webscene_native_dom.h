@@ -173,6 +173,16 @@ struct node_style final {
         float offset{0};
         float degrees{0};
     };
+    struct translation_keyframe final {
+        float offset{0};
+        css_length x{};
+        css_length y{};
+    };
+    struct scale_keyframe final {
+        float offset{0};
+        float x{1};
+        float y{1};
+    };
     struct filter_keyframe final {
         float offset{0};
         std::string value;
@@ -239,6 +249,8 @@ struct node_style final {
             std::string name;
             std::string signature;
             std::vector<opacity_keyframe> opacity_keyframes;
+            std::vector<translation_keyframe> translation_keyframes;
+            std::vector<scale_keyframe> scale_keyframes;
             std::vector<rotation_keyframe> rotation_keyframes;
             std::vector<filter_keyframe> filter_keyframes;
             float duration_ms{0};
@@ -1468,6 +1480,10 @@ struct dom_node final {
             double started_ms{0};
             double paused_at_ms{0};
             float painted_opacity{1};
+            css_length painted_translation_x{};
+            css_length painted_translation_y{};
+            float painted_scale_x{1};
+            float painted_scale_y{1};
             float painted_rotation_degrees{0};
             node_style::animation_data::fill_kind fill_mode{
                 node_style::animation_data::fill_kind::none};
@@ -1543,6 +1559,8 @@ struct dom_node final {
         bool opacity_animation_start_event_sent{false};
         std::vector<keyframe_animation_runtime> keyframe_animations;
         bool keyframe_opacity_override{false};
+        bool keyframe_translation_override{false};
+        bool keyframe_scale_override{false};
         bool keyframe_rotation_override{false};
         bool keyframe_filter_override{false};
         uint32_t painted_foreground_rgba{0};

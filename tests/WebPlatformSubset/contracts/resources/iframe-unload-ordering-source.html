@@ -1,0 +1,21 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Nested unload ordering source</title>
+<main id="outgoing">outgoing</main>
+<script>
+  const lifecycleMode = frameElement.getAttribute("data-lifecycle-mode");
+  addEventListener("beforeunload", event => {
+    parent.__webSceneNestedLifecycleEvent("beforeunload", event, document, window);
+  });
+  addEventListener("pagehide", event => {
+    parent.__webSceneNestedLifecycleEvent("pagehide", event, document, window);
+  });
+  document.addEventListener("visibilitychange", event => {
+    parent.__webSceneNestedLifecycleEvent(
+      "visibilitychange", event, document, window);
+  });
+  addEventListener("unload", event => {
+    setTimeout(() => parent.__webSceneNestedUnloadedTask(lifecycleMode), 0);
+    parent.__webSceneNestedLifecycleEvent("unload", event, document, window);
+  });
+</script>

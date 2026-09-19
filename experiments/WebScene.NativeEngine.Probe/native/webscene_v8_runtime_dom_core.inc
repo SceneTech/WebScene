@@ -1347,20 +1347,23 @@
     void destroy_detached_frame_contexts(dom_node& root)
     {
         std::unordered_set<uint32_t> node_ids;
-        std::unordered_map<uint32_t, dom_node*> detached_frames;
+        std::vector<dom_node*> detached_frames;
         std::vector<v8::Local<v8::Context>> detached_contexts;
         visit_subtree(root, [&](dom_node& node) {
             node_ids.insert(node.id);
-            if (node.tag == "iframe") detached_frames.emplace(node.id, &node);
+            if (node.tag == "iframe") detached_frames.push_back(&node);
         });
+        // Descendant documents unload before their owner document. The HTML
+        // standard leaves sibling order unspecified, so reverse tree order is
+        // sufficient while still making every descendant precede its owner.
+        for (auto frame = detached_frames.rbegin();
+             frame != detached_frames.rend(); ++frame) {
+            dispatch_iframe_unload(**frame);
+        }
         for (const auto id : node_ids) {
             const auto found = actual_frame_contexts.find(id);
             if (found != actual_frame_contexts.end()
                 && !found->second.IsEmpty()) {
-                if (const auto frame = detached_frames.find(id);
-                    frame != detached_frames.end()) {
-                    dispatch_iframe_pagehide(*frame->second);
-                }
                 const auto local_context = found->second.Get(isolate);
                 const auto* frame_root = static_cast<const dom_node*>(
                     local_context->GetAlignedPointerFromEmbedderData(
@@ -1388,6 +1391,7 @@
             retire_iframe_navigation(id);
             frame_beforeunload_dispatches.erase(id);
             frame_pagehide_dispatched.erase(id);
+            frame_unload_dispatched.erase(id);
             actual_frame_windows.erase(id);
             actual_frame_documents.erase(id);
             frame_session_storage.erase(id);
@@ -1889,6 +1893,9 @@
         std::erase_if(detached_document_roots, [&](const auto id) {
             return node_ids.contains(static_cast<uint32_t>(id));
         });
+        std::erase_if(hidden_frame_document_roots, [&](const auto id) {
+            return node_ids.contains(id);
+        });
         for (const auto id : node_ids) {
             erase_pending_stylesheet_replacement(id);
             stylesheet_cssom_sources.erase(id);
@@ -1949,6 +1956,8 @@
             retire_iframe_navigation(id);
             frame_beforeunload_dispatches.erase(id);
             frame_pagehide_dispatched.erase(id);
+            frame_unload_dispatches.erase(id);
+            frame_unload_dispatched.erase(id);
             actual_frame_documents.erase(id);
             frame_session_storage.erase(id);
             frame_local_storage.erase(id);
@@ -2565,37 +2574,70 @@
         return !result->IsFalse();
     }
 
-    void dispatch_iframe_pagehide(dom_node& frame)
+    void dispatch_iframe_unload(dom_node& frame)
     {
         const auto known = actual_frame_contexts.find(frame.id);
         if (known == actual_frame_contexts.end() || known->second.IsEmpty()
-            || frame_pagehide_dispatched.contains(frame.id)) return;
-        frame_pagehide_dispatched.insert(frame.id);
+            || frame_unload_dispatched.contains(frame.id)
+            || !frame_unload_dispatches.insert(frame.id).second) return;
+        frame_unload_dispatched.insert(frame.id);
         auto local_context = known->second.Get(isolate);
         v8::Context::Scope context_scope(local_context);
-        auto target = local_context->Global();
-        v8::Local<v8::Value> dispatcher;
-        if (!target->Get(local_context, js_string(isolate, "dispatchEvent"))
-                .ToLocal(&dispatcher)
-            || !dispatcher->IsFunction()) return;
-        auto event = create_event_instance(local_context);
-        event->Set(local_context, js_string(isolate, "type"),
-            js_string(isolate, "pagehide")).Check();
-        event->Set(local_context, js_string(isolate, "bubbles"),
-            v8::False(isolate)).Check();
-        event->Set(local_context, js_string(isolate, "cancelable"),
-            v8::False(isolate)).Check();
-        event->Set(local_context, js_string(isolate, "persisted"),
-            v8::False(isolate)).Check();
-        v8::TryCatch try_catch(isolate);
-        v8::Local<v8::Value> arguments[] = {event};
-        static_cast<void>(dispatcher.As<v8::Function>()->Call(
-            local_context, target, 1, arguments));
-        perform_microtask_checkpoint();
+        auto window = local_context->Global();
+        auto document_value = actual_frame_documents.find(frame.id);
+        auto document_target = document_value == actual_frame_documents.end()
+                || document_value->second.IsEmpty()
+            ? v8::Local<v8::Object>{}
+            : document_value->second.Get(isolate);
+        const auto dispatch = [&](v8::Local<v8::Object> target,
+                                  std::string_view type,
+                                  bool persisted = false) {
+            if (target.IsEmpty()) return;
+            v8::Local<v8::Value> dispatcher;
+            if (!target->Get(local_context, js_string(isolate, "dispatchEvent"))
+                    .ToLocal(&dispatcher)
+                || !dispatcher->IsFunction()) return;
+            auto event = create_event_instance(local_context);
+            event->Set(local_context, js_string(isolate, "type"),
+                js_string(isolate, std::string(type).c_str())).Check();
+            event->Set(local_context, js_string(isolate, "bubbles"),
+                v8::False(isolate)).Check();
+            event->Set(local_context, js_string(isolate, "cancelable"),
+                v8::False(isolate)).Check();
+            if (type == "pagehide") {
+                event->Set(local_context, js_string(isolate, "persisted"),
+                    v8::Boolean::New(isolate, persisted)).Check();
+            }
+            v8::TryCatch try_catch(isolate);
+            v8::Local<v8::Value> arguments[] = {event};
+            static_cast<void>(dispatcher.As<v8::Function>()->Call(
+                local_context, target, 1, arguments));
+            perform_microtask_checkpoint();
+        };
+        if (frame_pagehide_dispatched.insert(frame.id).second) {
+            dispatch(window, "pagehide");
+        }
+        if (!document_target.IsEmpty()) {
+            auto* root = static_cast<dom_node*>(
+                document_target->GetAlignedPointerFromInternalField(
+                    0,
+                    v8::kEmbedderDataTypeTagDefault));
+            if (root != nullptr
+                && hidden_frame_document_roots.insert(root->id).second) {
+                if (document_visible) {
+                    dispatch(document_target, "visibilitychange");
+                }
+            }
+        }
+        dispatch(window, "unload");
+        frame_unload_dispatches.erase(frame.id);
     }
 
     bool begin_iframe_navigation(dom_node& frame)
     {
+        // The initiating navigation owns the whole unload sequence. A handler
+        // cannot recursively advance the generation or retire its own realm.
+        if (frame_unload_dispatches.contains(frame.id)) return false;
         const auto requested_source = [&]() -> std::optional<std::string> {
             const auto source = frame.attributes.find("src");
             return source == frame.attributes.end()
@@ -2616,11 +2658,22 @@
         // A beforeunload handler cannot replace the navigation which caused
         // its own dispatch. Preserve the initiator's reflected source.
         restore_requested_source();
+        if (frame.parent == nullptr) return false;
         if (active_drag_session.has_value()
             && active_drag_session->frame_owner_id == frame.id) {
             active_drag_session.reset();
         }
-        dispatch_iframe_pagehide(frame);
+        dispatch_iframe_unload(frame);
+        // pagehide, visibilitychange, or unload can synchronously author a
+        // competing source or detach the owner. The original navigation wins
+        // only while its browsing context is still connected.
+        restore_requested_source();
+        if (frame.parent == nullptr) return false;
+        if (const auto outgoing = actual_frame_contexts.find(frame.id);
+            outgoing != actual_frame_contexts.end()
+            && !outgoing->second.IsEmpty()) {
+            cancel_detached_frame_context_tasks(outgoing->second.Get(isolate));
+        }
         {
             std::lock_guard lock(host_request_mutex);
             std::erase_if(download_requests, [&](const auto& request) {
@@ -3651,9 +3704,16 @@
         const v8::PropertyCallbackInfo<v8::Value>& info)
     {
         const auto* self = current(info.GetIsolate());
+        const auto* root = static_cast<const dom_node*>(
+            info.Holder()->GetAlignedPointerFromInternalField(
+                0,
+                v8::kEmbedderDataTypeTagDefault));
         info.GetReturnValue().Set(v8::Boolean::New(
             info.GetIsolate(),
-            self != nullptr && !self->document_visible));
+            self != nullptr
+                && ((root != nullptr
+                        && self->hidden_frame_document_roots.contains(root->id))
+                    || !self->document_visible)));
     }
 
     static void get_document_visibility_state(
@@ -3661,9 +3721,17 @@
         const v8::PropertyCallbackInfo<v8::Value>& info)
     {
         const auto* self = current(info.GetIsolate());
+        const auto* root = static_cast<const dom_node*>(
+            info.Holder()->GetAlignedPointerFromInternalField(
+                0,
+                v8::kEmbedderDataTypeTagDefault));
+        const auto hidden = self != nullptr
+            && ((root != nullptr
+                    && self->hidden_frame_document_roots.contains(root->id))
+                || !self->document_visible);
         info.GetReturnValue().Set(js_string(
             info.GetIsolate(),
-            self != nullptr && !self->document_visible ? "hidden" : "visible"));
+            hidden ? "hidden" : "visible"));
     }
 
     static void get_document_links(

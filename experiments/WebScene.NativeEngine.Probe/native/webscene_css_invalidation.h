@@ -116,16 +116,18 @@ inline std::vector<css_compound_dependencies> compile_invalidation_plan(
                 if (pseudo.name == "required" || pseudo.name == "optional") {
                     add(output.attributes["type"], route);
                 } else {
-                    // Text controls observe live value. Required checkboxes
-                    // additionally consume their live checkedness below; the
-                    // remaining non-text controls retain the authored-value
-                    // dependency until their constraint slices land.
+                    // Text controls observe live value. Checkboxes and radios
+                    // consume live checkedness, while selects consume live
+                    // option selectedness through their owner-select route.
                     add(output.attributes["value"], route);
                     add(output.attributes["$live-form-value"], route);
                     add(output.attributes["type"], route);
                     add(output.attributes["checked"], route);
                     add(output.attributes["$live-form-checkedness"], route);
                     add(output.attributes["$live-form-radio-group-checkedness"], route);
+                    add(output.attributes["$live-form-select-selectedness"], route);
+                    add(output.attributes["multiple"], route);
+                    add(output.attributes["size"], route);
                     // A non-dirty textarea derives its live value from its
                     // text children. Reuse the structural route machinery.
                     output.child_list_sensitive = true;

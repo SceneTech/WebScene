@@ -1,0 +1,97 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Required select validity follows live selectedness and placeholder labels</title>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<style>
+.probe {padding-left:11px}
+.probe:invalid {padding-left:47px}
+</style>
+<script>
+const state=select=>[select.value,select.selectedIndex,
+  select.matches(':valid'),select.matches(':invalid'),
+  getComputedStyle(select).paddingLeft];
+
+test(()=>{
+  const form=document.createElement('form');
+  form.innerHTML='<select class="probe" required><option value="">Choose</option>'+
+    '<option value="x">X</option></select>';
+  document.body.appendChild(form);
+  const select=form.firstElementChild;
+  assert_array_equals(state(select),['',0,false,true,'47px']);
+  select.value='x';
+  assert_array_equals(state(select),['x',1,true,false,'11px']);
+  select.value='';
+  assert_array_equals(state(select),['',0,false,true,'47px']);
+  select.selectedIndex=-1;
+  assert_array_equals(state(select),['',-1,false,true,'47px']);
+  select.options[1].selected=true;
+  assert_array_equals(state(select),['x',1,true,false,'11px']);
+
+  select.options[0].setAttribute('selected','');
+  assert_array_equals(state(select),['x',1,true,false,'11px'],
+    'a content default does not overwrite dirty live selectedness');
+  form.reset();
+  assert_array_equals(state(select),['',0,false,true,'47px'],
+    'reset restores the current selected content default');
+},'required single-select validity follows live value, selectedIndex, option selectedness, and reset');
+
+test(()=>{
+  const select=document.createElement('select');select.required=true;
+  select.innerHTML='<optgroup><option value="" selected>Empty</option></optgroup>'+
+    '<option value="x">X</option>';document.body.appendChild(select);
+  assert_true(select.matches(':valid'),
+    'an empty selected option inside optgroup is not a placeholder label');
+  select.setAttribute('size','2');
+  assert_true(select.matches(':valid'));
+  select.innerHTML='<option value="" selected>Empty</option><option value="x">X</option>';
+  select.setAttribute('size','1');
+  assert_true(select.matches(':invalid'),
+    'an empty direct first option is a placeholder for a size-1 select');
+  select.multiple=true;
+  assert_true(select.matches(':valid'),
+    'a selected empty option satisfies a multiple select');
+  select.selectedIndex=-1;
+  assert_true(select.matches(':invalid'),
+    'a required multiple select with no selected option is value-missing');
+  select.options[0].selected=true;
+  assert_true(select.matches(':valid'));
+  select.multiple=false;
+  assert_true(select.matches(':invalid'));
+},'placeholder-label semantics depend on direct ancestry, multiple, and display size');
+
+test(()=>{
+  const select=document.createElement('select');
+  select.className='probe';select.required=true;
+  select.innerHTML='<option> </option><option value="x">X</option>';
+  document.body.appendChild(select);
+  assert_array_equals(state(select),['',0,false,true,'47px']);
+  const before=document.createElement('option');before.value='before';before.text='Before';
+  select.insertBefore(before,select.firstElementChild);
+  assert_array_equals(state(select),['before',0,true,false,'11px']);
+  before.remove();
+  assert_array_equals(state(select),['',0,false,true,'47px']);
+  select.options[0].value='token';
+  assert_array_equals(state(select),['token',0,true,false,'11px']);
+  select.options[0].setAttribute('value','');
+  assert_array_equals(state(select),['',0,false,true,'47px']);
+  select.options[0].removeAttribute('value');select.options[0].textContent='label';
+  assert_array_equals(state(select),['label',0,true,false,'11px']);
+  select.options[0].firstChild.data=' ';
+  assert_array_equals(state(select),['',0,false,true,'47px']);
+},'option insertion, removal, value mutation, and text mutation update placeholder validity');
+
+test(()=>{
+  const select=document.createElement('select');select.className='probe';select.required=true;
+  select.innerHTML='<option value="">Choose</option><option value="x">X</option>';
+  document.body.appendChild(select);
+  const option=select.options[1];
+  option.setAttribute('selected','');
+  assert_array_equals(state(select),['x',1,true,false,'11px']);
+  option.removeAttribute('selected');
+  assert_array_equals(state(select),['',0,false,true,'47px']);
+  option.selected=true;
+  select.options[0].setAttribute('selected','');
+  assert_array_equals(state(select),['x',1,true,false,'11px']);
+},'selected content mutation affects clean defaults but does not overwrite live selectedness');
+</script>

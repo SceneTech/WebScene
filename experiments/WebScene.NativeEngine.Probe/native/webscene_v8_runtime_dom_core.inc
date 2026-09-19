@@ -4365,6 +4365,9 @@
                 *state->owner,state->name,old_value,text);
         else self->document.mark_dirty();
         self->recascade_radio_group_selector_state_changes(radio_group_state);
+        if(state->namespace_uri.empty() && state->owner->tag=="option"
+            && (state->name=="selected" || state->name=="value"))
+            self->recascade_containing_select_validity(*state->owner);
         self->notify_custom_element_attribute(
             *state->owner, state->name, old_value, text,
             state->namespace_uri.empty()
@@ -4456,6 +4459,9 @@
                 *owner,state->name,old_value,value);
         else self->document.mark_dirty();
         self->recascade_radio_group_selector_state_changes(radio_group_state);
+        if(state->namespace_uri.empty() && owner->tag=="option"
+            && (state->name=="selected" || state->name=="value"))
+            self->recascade_containing_select_validity(*owner);
         self->notify_custom_element_attribute(
             *owner, state->name, old_value, value,
             state->namespace_uri.empty()
@@ -4507,6 +4513,9 @@
                 *owner,state->name,old_value,std::nullopt);
         else self->document.mark_dirty();
         self->recascade_radio_group_selector_state_changes(radio_group_state);
+        if(state->namespace_uri.empty() && owner->tag=="option"
+            && (state->name=="selected" || state->name=="value"))
+            self->recascade_containing_select_validity(*owner);
         self->notify_custom_element_attribute(
             *owner, state->name, old_value, std::nullopt,
             state->namespace_uri.empty()

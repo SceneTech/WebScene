@@ -83,9 +83,28 @@ inline void collect_descendants_by_tag(
         }
     }
 
+inline void collect_descendants_by_tag(
+        const dom_node& root,
+        std::string_view tag,
+        std::vector<const dom_node*>& result)
+    {
+        for (const auto* child : root.children) {
+            if (child == nullptr) continue;
+            if (child->tag == tag) result.push_back(child);
+            collect_descendants_by_tag(*child, tag, result);
+        }
+    }
+
 inline dom_node* containing_select(dom_node& option)
     {
         auto* select = option.parent;
+        while (select != nullptr && select->tag != "select") select = select->parent;
+        return select;
+    }
+
+inline const dom_node* containing_select(const dom_node& option)
+    {
+        const auto* select = option.parent;
         while (select != nullptr && select->tag != "select") select = select->parent;
         return select;
     }
@@ -102,7 +121,7 @@ inline bool option_is_disabled(const dom_node& option)
         return false;
     }
 
-inline bool option_is_selected(dom_node& option)
+inline bool option_is_selected(const dom_node& option)
     {
         if (option.form_control().selectedness_initialized) {
             return option.form_control().selectedness;
@@ -110,7 +129,7 @@ inline bool option_is_selected(dom_node& option)
         auto* select = containing_select(option);
         if (select == nullptr) return option.attributes.contains("selected");
         if (select->form_control().selection_explicitly_empty) return false;
-        std::vector<dom_node*> options;
+        std::vector<const dom_node*> options;
         collect_descendants_by_tag(*select, "option", options);
         const auto has_live_selection = std::any_of(
             options.begin(), options.end(), [](const auto* candidate) {
@@ -118,6 +137,8 @@ inline bool option_is_selected(dom_node& option)
                     && candidate->form_control().selectedness_initialized
                     && candidate->form_control().selectedness;
             });
+        if (select->attributes.contains("multiple"))
+            return option.attributes.contains("selected");
         if (has_live_selection) return false;
         const auto authored = std::find_if(
             options.begin(),
@@ -126,9 +147,7 @@ inline bool option_is_selected(dom_node& option)
                 return candidate != nullptr && candidate->attributes.contains("selected");
             });
         if (authored != options.end()) {
-            return select->attributes.contains("multiple")
-                ? option.attributes.contains("selected")
-                : *authored == &option;
+            return *authored == &option;
         }
         if (select->attributes.contains("multiple")) return false;
         return !options.empty() && options.front() == &option;
@@ -207,6 +226,41 @@ inline void set_select_value(dom_node& select,std::string_view value) {
     }
     select.mutable_form_control().selection_explicitly_empty=!matched;
 }
+
+inline size_t select_display_size(const dom_node& select)
+    {
+        const auto fallback=select.attributes.contains("multiple")?4U:1U;
+        const auto authored=select.attributes.find("size");
+        if(authored==select.attributes.end() || authored->second.empty())
+            return fallback;
+        size_t parsed{};
+        const auto converted=std::from_chars(
+            authored->second.data(),authored->second.data()+authored->second.size(),parsed);
+        return converted.ec==std::errc{}
+                && converted.ptr==authored->second.data()+authored->second.size()
+                && parsed>0U
+            ? parsed:fallback;
+    }
+
+inline bool select_value_missing(const dom_node& select)
+    {
+        if(select.tag!="select" || !select.attributes.contains("required"))
+            return false;
+        std::vector<const dom_node*> options;
+        collect_descendants_by_tag(select,"option",options);
+        std::vector<const dom_node*> selected;
+        for(auto* option:options)
+            if(option!=nullptr && option_is_selected(*option))
+                selected.push_back(option);
+        if(selected.empty()) return true;
+        if(select.attributes.contains("multiple") || select_display_size(select)!=1U)
+            return false;
+        // The empty first option is a placeholder label only when it is a
+        // direct child. An empty option inside OPTGROUP remains a real value.
+        const auto* placeholder=options.empty()?nullptr:options.front();
+        return selected.size()==1U && selected.front()==placeholder
+            && placeholder->parent==&select && option_value(*placeholder).empty();
+    }
 
 inline bool supports_text_selection(const dom_node* node)
     {
@@ -412,6 +466,10 @@ inline simple_validity_state validity_state(
         || node.tag == "option") return simple_validity_state::not_applicable;
     if(input_type_is(node,"radio")) {
         return radio_group_value_missing(document,node)
+            ? simple_validity_state::invalid:simple_validity_state::valid;
+    }
+    if(node.tag=="select") {
+        return select_value_missing(node)
             ? simple_validity_state::invalid:simple_validity_state::valid;
     }
     if (node.attributes.contains("required")) {

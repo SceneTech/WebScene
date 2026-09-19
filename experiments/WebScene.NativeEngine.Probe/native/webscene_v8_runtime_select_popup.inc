@@ -422,9 +422,10 @@
     {
         if(option==nullptr) option=select_popup_highlighted_option(select);
         if(option==nullptr || forms::option_is_disabled(*option)) {close_select_popup(select,false);return true;}
+        const auto previous_value_missing=forms::select_value_missing(select);
         const auto changed=forms::select_option(select,*option);
         close_select_popup(select,false);
-        document.mark_dirty();
+        recascade_select_validity_selector_change(select,previous_value_missing);
         if(!changed) return true;
         return dispatch_input_event_type(input,"input",select)
             && dispatch_input_event_type(input,"change",select);

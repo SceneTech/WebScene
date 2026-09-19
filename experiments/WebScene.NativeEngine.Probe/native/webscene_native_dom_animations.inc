@@ -333,6 +333,76 @@ void native_document::update_style_animations(dom_node& node)
         }
 
     }
+
+    const auto resolved_background = node.style.background_current_color
+        ? resolved_color
+        : node.style.background_rgba;
+    const auto& background_timing =
+        node.style.animations().background_color_transition;
+    if (animation.background_color_animation_active
+        && background_timing.duration_ms <= 0) {
+        transition_events_.push_back({
+            node.id,
+            "transitioncancel",
+            "background-color",
+            std::clamp(
+                static_cast<float>(animation_frame_timestamp_ms_
+                    - animation.background_color_animation_started_ms
+                    - animation.background_color_animation_delay_ms),
+                0.0F,
+                animation.background_color_animation_duration_ms) / 1000.0F});
+        animation.painted_background_rgba = resolved_background;
+        animation.background_color_animation_target_rgba = resolved_background;
+        animation.background_color_animation_active = false;
+    }
+    if (!animation.background_color_animation_initialized) {
+        animation.background_color_animation_initialized = true;
+        animation.painted_background_rgba = resolved_background;
+        animation.background_color_animation_target_rgba = resolved_background;
+    } else if (resolved_background
+        != animation.background_color_animation_target_rgba) {
+        if (animation.background_color_animation_active) {
+            transition_events_.push_back({
+                node.id,
+                "transitioncancel",
+                "background-color",
+                std::clamp(
+                    static_cast<float>(animation_frame_timestamp_ms_
+                        - animation.background_color_animation_started_ms
+                        - animation.background_color_animation_delay_ms),
+                    0.0F,
+                    animation.background_color_animation_duration_ms) / 1000.0F});
+        }
+        animation.background_color_animation_target_rgba = resolved_background;
+        if (background_timing.duration_ms <= 0) {
+            animation.painted_background_rgba = resolved_background;
+            animation.background_color_animation_active = false;
+        } else {
+            animation.background_color_animation_from_rgba =
+                animation.painted_background_rgba;
+            animation.background_color_animation_duration_ms =
+                background_timing.duration_ms;
+            animation.background_color_animation_delay_ms = background_timing.delay_ms;
+            animation.background_color_animation_x1 = background_timing.x1;
+            animation.background_color_animation_y1 = background_timing.y1;
+            animation.background_color_animation_x2 = background_timing.x2;
+            animation.background_color_animation_y2 = background_timing.y2;
+            animation.background_color_animation_started_ms = animation_frame_timestamp_ms_;
+            animation.background_color_animation_active = true;
+            animation.background_color_animation_start_event_sent =
+                background_timing.delay_ms <= 0;
+            transition_events_.push_back({
+                node.id, "transitionrun", "background-color", 0});
+            if (animation.background_color_animation_start_event_sent) {
+                transition_events_.push_back({
+                    node.id,
+                    "transitionstart",
+                    "background-color",
+                    std::min(-background_timing.delay_ms,
+                        background_timing.duration_ms) / 1000.0F});
+            }
+        }
+    }
 }
 
 bool native_document::advance_animations() noexcept
@@ -423,6 +493,17 @@ bool native_document::advance_animations() noexcept
         return left.unit == right.unit
             && std::abs(left.value - right.value) < 0.001F
             && std::abs(left.pixel_offset - right.pixel_offset) < 0.001F;
+    };
+    const auto interpolate_color = [](uint32_t from, uint32_t target, float amount) {
+        uint32_t result = 0;
+        for (auto shift : {24U, 16U, 8U, 0U}) {
+            const auto first = static_cast<float>((from >> shift) & 0xFFU);
+            const auto last = static_cast<float>((target >> shift) & 0xFFU);
+            const auto channel = static_cast<uint32_t>(std::clamp(
+                std::lround(first + (last - first) * amount), 0L, 255L));
+            result |= channel << shift;
+        }
+        return result;
     };
     auto advanced = false;
     auto layout_changed = false;
@@ -622,17 +703,6 @@ bool native_document::advance_animations() noexcept
                 animation.color_animation_y1,
                 animation.color_animation_x2,
                 animation.color_animation_y2);
-            const auto interpolate_color = [](uint32_t from, uint32_t target, float amount) {
-                uint32_t result = 0;
-                for (auto shift : {24U, 16U, 8U, 0U}) {
-                    const auto first = static_cast<float>((from >> shift) & 0xFFU);
-                    const auto last = static_cast<float>((target >> shift) & 0xFFU);
-                    const auto channel = static_cast<uint32_t>(std::clamp(
-                        std::lround(first + (last - first) * amount), 0L, 255L));
-                    result |= channel << shift;
-                }
-                return result;
-            };
             animation.painted_foreground_rgba = interpolate_color(
                 animation.color_animation_from_rgba,
                 animation.color_animation_target_rgba,
@@ -646,6 +716,46 @@ bool native_document::advance_animations() noexcept
                     "transitionend",
                     "color",
                     animation.color_animation_duration_ms / 1000.0F});
+            }
+        }
+
+        if (animation.background_color_animation_active) {
+            const auto elapsed_ms = static_cast<float>(
+                animation_frame_timestamp_ms_
+                - animation.background_color_animation_started_ms
+                - animation.background_color_animation_delay_ms);
+            if (elapsed_ms >= 0
+                && !animation.background_color_animation_start_event_sent) {
+                animation.background_color_animation_start_event_sent = true;
+                transition_events_.push_back({
+                    node.id, "transitionstart", "background-color", 0});
+            }
+            const auto progress = std::clamp(
+                elapsed_ms
+                    / std::max(0.001F,
+                        animation.background_color_animation_duration_ms),
+                0.0F,
+                1.0F);
+            const auto eased = timing_value(
+                progress,
+                animation.background_color_animation_x1,
+                animation.background_color_animation_y1,
+                animation.background_color_animation_x2,
+                animation.background_color_animation_y2);
+            animation.painted_background_rgba = interpolate_color(
+                animation.background_color_animation_from_rgba,
+                animation.background_color_animation_target_rgba,
+                eased);
+            advanced = true;
+            if (progress >= 1) {
+                animation.painted_background_rgba =
+                    animation.background_color_animation_target_rgba;
+                animation.background_color_animation_active = false;
+                transition_events_.push_back({
+                    node.id,
+                    "transitionend",
+                    "background-color",
+                    animation.background_color_animation_duration_ms / 1000.0F});
             }
         }
 
@@ -790,8 +900,9 @@ bool native_document::advance_animations() noexcept
             animation.keyframe_animation_end_event_sent = true;
         }
     }
-    // Opacity, color, scale, and rotation are paint-only. Their interpolated
-    // values are consumed directly by build_scene(), so they must not repeat the
+    // Opacity, foreground/background color, scale, and rotation are paint-only.
+    // Their interpolated values are consumed directly by build_scene(), so they
+    // must not repeat the
     // entire document's intrinsic sizing, shaping, and layout. Translation is
     // still reflected in the retained layout coordinates and therefore remains
     // a geometry invalidation until translated boxes are represented separately.
@@ -815,7 +926,8 @@ bool native_document::has_active_animations() const noexcept
             || animation->left_animation_active
             || animation->top_animation_active
             || animation->opacity_animation_active
-            || animation->color_animation_active;
+            || animation->color_animation_active
+            || animation->background_color_animation_active;
         const auto keyframe_active = animation->opacity_keyframe_animation_active
             || animation->rotation_keyframe_animation_active;
         return transition_active

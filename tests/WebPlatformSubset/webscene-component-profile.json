@@ -323,9 +323,9 @@
     {
       "path": "contracts/paint-transitions-temporal.html",
       "type": "contract",
-      "capabilities": ["transition-longhands", "opacity-interpolation", "color-interpolation", "transition-delay", "transition-events", "transition-cancellation", "transition-reversal", "temporal-paint"],
+      "capabilities": ["transition-longhands", "opacity-interpolation", "color-interpolation", "background-color-interpolation", "background-shorthand-transition-alias", "transition-delay", "transition-events", "transition-cancellation", "transition-reversal", "bounded-frame-samples", "temporal-paint"],
       "evidence": ["product-neutral-hover-and-control-paint-motion"],
-      "reason": "Required product-neutral temporal gate for automatically discoverable paint transitions; it samples forward and reversed intermediate frames and requires run/start/cancel/end event evidence without naming a product control."
+      "reason": "Required product-neutral temporal gate for automatically discoverable paint transitions; it samples bounded forward and reversed opacity, foreground-color, and background-color intermediate frames and requires run/start/cancel/end event evidence without naming a product control."
     },
     {
       "path": "contracts/logical-inset-transition-cadence.html",

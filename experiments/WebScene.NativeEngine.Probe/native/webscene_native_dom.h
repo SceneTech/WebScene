@@ -1535,6 +1535,12 @@ struct dom_node final {
             bool transform_override{false};
             bool filter_override{false};
         };
+        struct web_animation final {
+            uint32_t id{0};
+            node_style::animation_data::keyframe_animation effect;
+            keyframe_animation_runtime runtime;
+            bool finished{false};
+        };
         css_length painted_transform_translate_x{};
         css_length painted_transform_translate_y{};
         css_length transform_animation_from_translate_x{};
@@ -1600,6 +1606,7 @@ struct dom_node final {
         bool opacity_animation_active{false};
         bool opacity_animation_start_event_sent{false};
         std::vector<keyframe_animation_runtime> keyframe_animations;
+        std::vector<web_animation> web_animations;
         pseudo_animation_runtime before_pseudo;
         pseudo_animation_runtime after_pseudo;
         bool keyframe_opacity_override{false};
@@ -2071,6 +2078,26 @@ public:
         std::string pseudo_element;
     };
 
+    struct web_animation_event_record final {
+        uint32_t node_id{0};
+        uint32_t animation_id{0};
+        bool canceled{false};
+    };
+
+    enum class web_animation_command : uint8_t {
+        play,
+        pause,
+        cancel,
+        finish,
+        seek
+    };
+
+    struct web_animation_state final {
+        double current_time_ms{0};
+        bool paused{false};
+        bool finished{false};
+    };
+
     explicit native_document(
         webscene_text_measure_callback text_measure_callback = nullptr,
         void* text_measure_user_data = nullptr);
@@ -2177,6 +2204,18 @@ public:
     bool has_active_animations() const noexcept;
     std::vector<transition_event_record> take_transition_events();
     std::vector<animation_event_record> take_animation_events();
+    bool create_web_animation(
+        dom_node& node,
+        uint32_t id,
+        node_style::animation_data::keyframe_animation effect);
+    bool control_web_animation(
+        uint32_t id,
+        web_animation_command command,
+        double seek_time_ms = 0);
+    std::optional<web_animation_state> web_animation_status(uint32_t id) const;
+    std::vector<uint32_t> web_animation_ids(const dom_node& node) const;
+    void cancel_web_animations(dom_node& root, bool include_descendants);
+    std::vector<web_animation_event_record> take_web_animation_events();
     float measure_inline_content_width(const dom_node& node) const;
     size_t text_caret_offset_at_x(const dom_node& node, float x) const;
     webscene_text_metrics measure_text(
@@ -2575,6 +2614,11 @@ private:
     // vector here would add its full implementation-specific footprint to
     // every document, including documents that never run an animation.
     std::unique_ptr<std::vector<animation_event_record>> animation_events_;
+    std::unique_ptr<std::vector<web_animation_event_record>>
+        web_animation_events_;
+    static constexpr size_t maximum_live_web_animations = 1024U;
+    std::unique_ptr<std::unordered_map<uint32_t, uint32_t>>
+        web_animation_nodes_;
     webscene_text_measure_callback text_measure_callback_{nullptr};
     void* text_measure_user_data_{nullptr};
     mutable std::unordered_map<

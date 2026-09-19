@@ -1196,6 +1196,94 @@ void test_zero_time_animation_tracks_settle_without_frame_demand(
         engine, false, "detached zero-time animations retained frame demand");
 }
 
+void test_bounded_web_animations_share_host_clock_and_lifecycle(
+    webscene_engine* engine)
+{
+    animation_frame_and_wait(engine, 18000.0, 7170U);
+    execute_and_wait(engine, R"JS(
+        (() => {
+          document.body.innerHTML = '<div id="waapi"></div>';
+          const node = document.getElementById('waapi');
+          globalThis.__waapiEvents = [];
+          globalThis.__waapi = node.animate([
+            { opacity: 0, transform: 'translateX(0) scale(1) rotate(0)' },
+            { opacity: 1, transform: 'translateX(40px) scale(2) rotate(180deg)' }
+          ], { duration: 1000, fill: 'both', easing: 'linear' });
+          __waapi.onfinish = () => __waapiEvents.push('finish');
+          __waapi.oncancel = () => __waapiEvents.push('cancel');
+          globalThis.__waapiIdle = new Animation(new KeyframeEffect(node,
+            [{ opacity: 0 }, { opacity: 1 }], { duration: 1000 }));
+        })()
+    )JS", "bounded-waapi-setup.js");
+    wait_for_animation_frame_demand(
+        engine, true, "running WAAPI track lost host-frame demand");
+    animation_frame_and_wait(engine, 18500.0, 7171U);
+    const auto midpoint = evaluate(engine, R"JS(
+        (() => {
+          const style = getComputedStyle(document.getElementById('waapi'));
+          return __waapi instanceof Animation
+            && __waapi.effect instanceof KeyframeEffect
+            && document.getElementById('waapi').getAnimations()[0] === __waapi
+            && document.getAnimations()[0] === __waapi
+            && __waapi.timeline === document.timeline
+            && __waapiIdle.timeline === null
+            && __waapiIdle.playState === 'idle'
+            && __waapiIdle.currentTime === null
+            && !document.getAnimations().includes(__waapiIdle)
+            && __waapi.playState === 'running'
+            && Math.abs(__waapi.currentTime - 500) < .01
+            && Math.abs(Number(style.opacity) - .5) < .01;
+        })()
+    )JS", "bounded-waapi-midpoint.js");
+    require(midpoint == "true",
+        "bounded WAAPI identity, clock, or retained midpoint was incorrect");
+
+    execute_and_wait(engine, "__waapi.pause()", "bounded-waapi-pause.js");
+    wait_for_animation_frame_demand(
+        engine, false, "paused WAAPI track retained host-frame demand");
+    animation_frame_and_wait(engine, 19000.0, 7172U);
+    require(evaluate(engine,
+        "Math.abs(__waapi.currentTime - 500) < .01 && __waapi.playState === 'paused'",
+        "bounded-waapi-held.js") == "true",
+        "paused WAAPI track did not hold host time");
+    execute_and_wait(engine, "__waapi.currentTime = -25",
+        "bounded-waapi-negative-seek.js");
+    require(evaluate(engine,
+        "Math.abs(__waapi.currentTime + 25) < .01 && __waapi.playState === 'paused'",
+        "bounded-waapi-negative-current-time.js") == "true",
+        "negative WAAPI currentTime did not round-trip while paused");
+    execute_and_wait(engine, "__waapi.currentTime = 750; __waapi.play()",
+        "bounded-waapi-seek-resume.js");
+    animation_frame_and_wait(engine, 19250.0, 7173U);
+    require(evaluate(engine, R"JS(
+        __waapi.playState === 'finished' && __waapiEvents.join(',') === 'finish'
+          && Math.abs(Number(getComputedStyle(
+            document.getElementById('waapi')).opacity) - 1) < .001
+    )JS", "bounded-waapi-finished.js") == "true",
+        "WAAPI finish did not settle once with forwards fill");
+    wait_for_animation_frame_demand(
+        engine, false, "filled WAAPI track retained host-frame demand");
+
+    execute_and_wait(engine, R"JS(
+        (() => {
+          const node = document.getElementById('waapi');
+          globalThis.__canceled = node.animate(
+            [{ opacity: 1 }, { opacity: 0 }], 1000);
+          __canceled.oncancel = () => __waapiEvents.push('cancel');
+          __canceled.finished.catch(error => __waapiEvents.push(error.name));
+          node.remove();
+        })()
+    )JS", "bounded-waapi-detach.js");
+    animation_frame_and_wait(engine, 19500.0, 7174U);
+    require(evaluate(engine,
+        "__waapiEvents.filter(value => value === 'AbortError').length === 1"
+        " && __waapiEvents.filter(value => value === 'cancel').length === 1",
+        "bounded-waapi-cancel.js") == "true",
+        "detached WAAPI track did not reject and cancel exactly once");
+    wait_for_animation_frame_demand(
+        engine, false, "detached WAAPI track retained host-frame demand");
+}
+
 void test_transform_keyframes_compose_retained_geometry_and_paint(
     webscene_engine* engine)
 {

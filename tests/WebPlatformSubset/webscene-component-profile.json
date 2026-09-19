@@ -1925,6 +1925,13 @@
       "reason": "WPT-aligned bounded reduction for generated ::before/::after keyframes, originating-element event ownership, retained paint, identity mutation, detach cleanup, and demand-free paused or filled state."
     },
     {
+      "path": "contracts/bounded-web-animations.html",
+      "type": "contract",
+      "capabilities": ["element-animate", "animation-and-keyframe-effect", "current-time-seek", "play-pause-cancel-finish", "finished-and-ready-promises", "element-and-document-get-animations", "retained-host-clock-sampling", "bounded-waapi-lifecycle"],
+      "evidence": ["bounded-web-animations-677-242"],
+      "reason": "WPT-aligned bounded reduction for two-to-sixteen opacity and 2D transform keyframes over the retained host clock, with replace composition, identity, promises, control, detach cleanup, shared eight-track admission, and demand-free paused or settled state."
+    },
+    {
       "path": "contracts/css-filter-keyframes-temporal.html",
       "type": "contract",
       "capabilities": ["keyframes-filter", "filter-identity-interpolation", "compound-filter-order", "host-frame-clock", "bounded-frame-samples", "finite-filter-fill", "animationend-event", "filter-lifecycle-cleanup"],

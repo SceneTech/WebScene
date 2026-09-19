@@ -1782,7 +1782,9 @@
     {
         auto events = document.take_transition_events();
         auto animation_events = document.take_animation_events();
-        if (events.empty() && animation_events.empty()) return true;
+        auto web_animation_events = document.take_web_animation_events();
+        if (events.empty() && animation_events.empty()
+            && web_animation_events.empty()) return true;
         auto isolate_locker = lock_shared_isolate();
         v8::Isolate::Scope isolate_scope(isolate);
         v8::HandleScope handle_scope(isolate);
@@ -1848,6 +1850,32 @@
                     local_context, target, 1, arguments).IsEmpty()) {
                 last_error = "CSS animation-event dispatch failed: "
                     + describe_reported_exception(try_catch, local_context);
+                ++frame_script_error_count;
+                return false;
+            }
+        }
+        for (const auto& animation : web_animation_events) {
+            auto* node = document.find_by_native_id(animation.node_id);
+            if (node == nullptr) continue;
+            auto event_context = context_for_node(*node);
+            if (event_context.IsEmpty()) continue;
+            v8::Context::Scope event_context_scope(event_context);
+            auto global = event_context->Global();
+            v8::Local<v8::Value> settle;
+            if (!global->Get(
+                    event_context,
+                    js_string(isolate, "__webSceneSettleWebAnimation"))
+                    .ToLocal(&settle)
+                || !settle->IsFunction()) {
+                continue;
+            }
+            v8::Local<v8::Value> arguments[]{
+                v8::Integer::NewFromUnsigned(isolate, animation.animation_id),
+                js_string(isolate, animation.canceled ? "cancel" : "finish")};
+            if (settle.As<v8::Function>()->Call(
+                    event_context, global, 2, arguments).IsEmpty()) {
+                last_error = "Web Animation settlement failed: "
+                    + describe_reported_exception(try_catch, event_context);
                 ++frame_script_error_count;
                 return false;
             }

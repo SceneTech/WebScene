@@ -1,0 +1,36 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Bounded Web Animations host-clock contract</title>
+<div id="target"></div>
+<script type="module">
+const target = document.querySelector('#target');
+const animation = target.animate([
+  { opacity: 0, transform: 'translateX(0) scale(1) rotate(0)' },
+  { opacity: 1, transform: 'translateX(40px) scale(2) rotate(180deg)' }
+], { duration: 1000, fill: 'both', easing: 'linear' });
+const idle = new Animation(new KeyframeEffect(target,
+  [{ opacity: 0 }, { opacity: 1 }], { duration: 1000 }));
+const checks = [
+  animation instanceof Animation,
+  animation.effect instanceof KeyframeEffect,
+  target.getAnimations()[0] === animation,
+  document.getAnimations().includes(animation),
+  animation.ready instanceof Promise,
+  animation.finished instanceof Promise,
+  animation.timeline === document.timeline,
+  idle.timeline === null,
+  idle.playState === 'idle',
+  idle.currentTime === null,
+  !document.getAnimations().includes(idle)
+];
+animation.pause();
+checks.push(animation.playState === 'paused');
+animation.currentTime = -25;
+checks.push(animation.currentTime === -25);
+animation.currentTime = 500;
+checks.push(animation.currentTime === 500);
+animation.cancel();
+try { await animation.finished; checks.push(false); }
+catch (error) { checks.push(error.name === 'AbortError'); }
+document.body.dataset.result = checks.every(Boolean) ? 'pass' : 'fail';
+</script>

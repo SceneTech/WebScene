@@ -58,6 +58,10 @@ void test_semantic_action_dom_contract_and_retirement()
       });
       globalThis.semanticInputs = 0;
       document.getElementById('editor').addEventListener('input', () => ++semanticInputs);
+      globalThis.semanticNumericInputs = 0;
+      globalThis.semanticNumericChanges = 0;
+      document.getElementById('level').addEventListener('input', () => ++semanticNumericInputs);
+      document.getElementById('level').addEventListener('change', () => ++semanticNumericChanges);
       true;
     )JS", "semantic-action-setup.js");
 
@@ -87,6 +91,8 @@ void test_semantic_action_dom_contract_and_retirement()
                 & WEBSCENE_SEMANTIC_ACTION_SUPPORT_TOGGLE_V1) != 0U
             && (level->supported_actions
                 & WEBSCENE_SEMANTIC_ACTION_SUPPORT_INCREMENT_V1) != 0U
+            && (level->supported_actions
+                & WEBSCENE_SEMANTIC_ACTION_SUPPORT_SET_VALUE_V1) != 0U
             && (press->supported_actions
                 & WEBSCENE_SEMANTIC_ACTION_SUPPORT_PRESS_V1) != 0U,
         "control actions were not advertised");
@@ -230,6 +236,27 @@ void test_semantic_action_dom_contract_and_retirement()
     require(level != nullptr && semantic_string(*after_decrement, level->value) == "4",
         "semantic decrement did not apply range step");
     webscene_semantic_snapshot_release_v1(after_increment);
+
+    previous_generation = after_decrement->snapshot_generation;
+    require(request_semantic_action(
+                engine, *after_decrement, *level,
+                WEBSCENE_SEMANTIC_ACTION_SET_VALUE_V1, "8")
+            == WEBSCENE_SEMANTIC_ACTION_QUEUED_V1,
+        "semantic absolute numeric value was not admitted");
+    auto* after_numeric_value = wait_for_semantic_action_snapshot(
+        engine, previous_generation, [](const auto& candidate) {
+            const auto* node = find_semantic_node(candidate, "slider", "Level");
+            return node != nullptr
+                && semantic_string(candidate, node->value) == "8";
+        });
+    evaluate(engine, R"JS(
+      if (semanticNumericInputs !== 3 || semanticNumericChanges !== 3)
+        throw new Error('semantic numeric input/change ordering mismatch');
+      true;
+    )JS", "semantic-action-numeric-value-assert.js");
+    webscene_semantic_snapshot_release_v1(after_decrement);
+    after_decrement = after_numeric_value;
+    level = find_semantic_node(*after_decrement, "slider", "Level");
 
     readonly = find_semantic_node(*after_decrement, "textbox", "Readonly");
     require(request_semantic_action(

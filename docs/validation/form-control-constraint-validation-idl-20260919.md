@@ -17,9 +17,10 @@ custom error while `willValidate` is false; its validation message is empty and
 its validation methods return true.
 
 Both validation methods dispatch `invalid` at an invalid validation candidate.
-The event is cancelable and does not bubble. `reportValidity()` currently has
-the same observable dispatch and result as `checkValidity()` because native
-validation UI is outside this slice.
+The event is cancelable and does not bubble. WebScene #708 extends
+`reportValidity()` with the bounded interactive behavior described in
+`interactive-constraint-validation-20260919.md`; `checkValidity()` remains a
+noninteractive validity query.
 
 ## State and invalidation bound
 
@@ -42,8 +43,8 @@ owns the native companion for prototype placement, wrapper identity and
 liveness, flag projection, custom-error selector changes, event dispatch, and
 barred-control behavior.
 
-Form and fieldset aggregation, submission-time validation, interactive native
-validation UI, `datetime-local`, file-input value-missing state, and the UI-only
+Form and fieldset aggregation, submission-time validation, `datetime-local`,
+file-input value-missing state, and the UI-only
 bad-input and user-edited length transitions remain separate work.
 
 Per task direction, no build, generated-binding check, native test, browser/WPT

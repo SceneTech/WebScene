@@ -47,6 +47,7 @@
     std::unordered_map<uint64_t, semantic_live_region_state_v1>
         semantic_live_regions;
     bool semantic_live_suppress_initial_alerts{false};
+    std::optional<semantic_live_event_data_v1> pending_validation_announcement;
     std::shared_ptr<shared_isolate_state> shared_isolate;
     std::shared_ptr<v8::ArrayBuffer::Allocator> allocator;
     v8::Isolate* isolate{nullptr};

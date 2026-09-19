@@ -13,6 +13,7 @@
 #include <limits>
 #include <memory>
 #include <memory_resource>
+#include <optional>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -1458,6 +1459,7 @@ struct dom_node final {
     struct form_control_data final {
         std::string value;
         std::string custom_validation_message;
+        uint32_t validation_anchor_id{0};
         uint16_t element_internals_validity_flags{0};
         size_t selection_start{0};
         size_t selection_end{0};
@@ -2145,6 +2147,11 @@ public:
     bool is_modal_dialog(const dom_node& node) const noexcept;
     bool is_in_modal_layer(const dom_node& node) const noexcept;
     bool is_inert(const dom_node& node) const noexcept;
+    void show_validation_message(
+        const dom_node& target, const dom_node& anchor, std::string message);
+    bool clear_validation_message() noexcept;
+    uint32_t validation_message_target_id() const noexcept;
+    uint32_t validation_message_anchor_id() const noexcept;
     dom_node* hit_test(dom_node& root, float x, float y);
     void clear();
     void layout(float viewport_width, float viewport_height);
@@ -2582,9 +2589,18 @@ private:
     // ever-growing pointer table.
     std::vector<dom_node*> native_id_index_;
     struct modal_dialog_entry final { uint32_t scope_id; uint32_t dialog_id; };
+    struct validation_message_state final {
+        uint32_t target_id{};
+        uint32_t anchor_id{};
+        std::string message;
+    };
     // Most documents never open a modal. Keep the container allocation lazy
     // and its implementation-specific vector footprint out of every document.
-    struct auxiliary_nodes { std::vector<modal_dialog_entry> dialogs; std::vector<dom_node*> media; };
+    struct auxiliary_nodes {
+        std::vector<modal_dialog_entry> dialogs;
+        std::vector<dom_node*> media;
+        std::optional<validation_message_state> validation_message;
+    };
     std::unique_ptr<auxiliary_nodes> auxiliary_nodes_;
     std::span<const modal_dialog_entry> modal_dialogs() const noexcept {
         return auxiliary_nodes_ ? std::span<const modal_dialog_entry>(auxiliary_nodes_->dialogs)

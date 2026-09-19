@@ -9,8 +9,10 @@ namespace webscene_native {
 // and recascades once.
 // Imported sheets use the host stylesheet loader and keep their authored CSSOM
 // tree separate from the flattened native publication payload.
+// Imports inserted into owner-backed sheets load through the document fetch
+// path and publish only while their rule generation remains attached.
 // Semantics: https://www.w3.org/TR/cssom-1/
-inline constexpr std::array<std::string_view, 7> cssCompatibilityScriptParts{R"JS(
+inline constexpr std::array<std::string_view, 8> cssCompatibilityScriptParts{R"JS(
 // SCENETECH_CSS_COMPATIBILITY_V1
 (() => {
   'use strict';
@@ -959,7 +961,8 @@ R"JS(      source = source.slice(identifier[0].length).trim();
     }
     return result;
   };
-  const makeRule = (state, parsed, containingRule = null, nestedStyleContext = false) => {
+  const makeRule = (state, parsed, containingRule = null,
+      nestedStyleContext = false, asynchronousImport = Boolean(state.asyncImports)) => {
     let cssText = parsed.cssText;
     let selectorText = parsed.selectorText;
     if (selectorText !== undefined && nestedStyleContext && !selectorText.includes('&')) {
@@ -1004,7 +1007,8 @@ R"JS(      source = source.slice(identifier[0].length).trim();
       }
     }) : ruleTarget;
     ruleInstances.add(rule);
-    if (importSpec) {
+)JS",
+R"JS(    if (importSpec) {
       importRuleInstances.add(rule);
       Object.setPrototypeOf(rule, CSSImportRuleInterface.prototype);
     } else if (namespaceSpec) {
@@ -1055,6 +1059,8 @@ R"JS(      source = source.slice(identifier[0].length).trim();
       let mediaText = importSpec.mediaText;
       let childState = null;
       let resolvedHref = importSpec.href;
+      let loadGeneration = 0;
+      let loadController = null;
       try { resolvedHref = new URL(importSpec.href, state.baseURL).href; } catch {}
       const attached = () => parent && !containingRule && state.rules.includes(rule);
       const serialize = () => {
@@ -1067,6 +1073,7 @@ R"JS(      source = source.slice(identifier[0].length).trim();
         cssText += ';';
       };
       const commit = () => {
+        synchronize(state);
         serialize();
         if (attached()) publish(state);
       };
@@ -1085,24 +1092,11 @@ R"JS(      source = source.slice(identifier[0].length).trim();
         type: { enumerable: true, value: 'text/css' }
       });
       const ancestors = new Set(state.importAncestors || []);
-      let loaded = null;
       const budget = state.importBudget || { count: 0, bytes: 0 };
-      if (ancestors.size < 16 && budget.count < 1024
-          && !ancestors.has(resolvedHref) && typeof state.loadImport === 'function') {
-        budget.count++;
-        try { loaded = state.loadImport(importSpec.href, state.baseURL); } catch {}
-      }
-      if (typeof loaded?.source === 'string') {
-        const bytes = loaded.source.length * 3;
-        if (bytes > 32 * 1024 * 1024 - Math.min(budget.bytes, 32 * 1024 * 1024)) {
-          loaded = null;
-        } else {
-          budget.bytes += bytes;
-        }
-      }
-      if (loaded?.url) resolvedHref = String(loaded.url);
-)JS",
-R"JS(      ancestors.add(resolvedHref);
+      const requestHref = resolvedHref;
+      const withinBounds = ancestors.size < 16 && budget.count < 1024
+        && !ancestors.has(requestHref);
+      ancestors.add(requestHref);
       childState = {
         sheet: childSheet,
         owner: null,
@@ -1118,10 +1112,30 @@ R"JS(      ancestors.add(resolvedHref);
         loadImport: state.loadImport,
         importAncestors: ancestors,
         importBudget: budget,
+        asyncImports: asynchronousImport,
         parentPublish: commit
       };
       initializeSheet(childState);
-      if (loaded && typeof loaded.source === 'string') {
+      const installLoaded = (loaded, generation = loadGeneration) => {
+        if (!loaded || typeof loaded.source !== 'string') return;
+        if (asynchronousImport) {
+          synchronize(state);
+          if (generation !== loadGeneration || !attached()) return;
+        }
+        let responseURL = requestHref;
+        if (loaded.url) {
+          try { responseURL = new URL(String(loaded.url), requestHref).href; }
+          catch { return; }
+        }
+        if (responseURL !== requestHref
+            && (state.importAncestors || new Set()).has(responseURL)) return;
+        const bytes = loaded.source.length * 3;
+        const maximumBytes = 32 * 1024 * 1024;
+        if (bytes > maximumBytes - Math.min(budget.bytes, maximumBytes)) return;
+        budget.bytes += bytes;
+        resolvedHref = responseURL;
+        childState.baseURL = responseURL;
+        childState.importAncestors.add(responseURL);
         childState.source = loaded.source;
         childState.ownerSource = loaded.source;
         try {
@@ -1131,15 +1145,51 @@ R"JS(      ancestors.add(resolvedHref);
           if (error?.name !== 'SyntaxError') throw error;
           childState.rules = [];
         }
+        if (asynchronousImport && generation === loadGeneration && attached()) commit();
+      };
+      if (withinBounds) {
+        if (asynchronousImport) {
+          const view = state.document?.defaultView || globalThis;
+          if (typeof view.fetch === 'function') {
+            budget.count++;
+            const generation = ++loadGeneration;
+            loadController = typeof view.AbortController === 'function'
+              ? new view.AbortController() : null;
+            Promise.resolve().then(() => view.fetch(requestHref,
+              loadController ? { signal: loadController.signal } : undefined))
+              .then(response => {
+                if (generation !== loadGeneration || !attached()
+                    || !response || response.ok === false) return null;
+                return Promise.resolve(response.text()).then(source => ({
+                  source, url: response.url || requestHref
+                }));
+              }).then(loaded => {
+                if (generation === loadGeneration) installLoaded(loaded, generation);
+              }).catch(() => {}).then(() => {
+                if (generation === loadGeneration) loadController = null;
+              });
+          }
+        } else if (typeof state.loadImport === 'function') {
+          budget.count++;
+          let loaded = null;
+          try { loaded = state.loadImport(importSpec.href, state.baseURL); } catch {}
+          installLoaded(loaded);
+        }
       }
-      Object.defineProperties(rule, {
+)JS",
+R"JS(      Object.defineProperties(rule, {
         type: { enumerable: true, value: 3 },
         href: { enumerable: true, get: () => resolvedHref },
         media: { enumerable: true, get: () => media },
         layerName: { enumerable: true, get: () => importSpec.layerName },
         supportsText: { enumerable: true, get: () => importSpec.supportsText },
         styleSheet: { enumerable: true, get: () => childSheet },
-        detach: { value: () => { parent = null; } },
+        detach: { value: () => {
+          parent = null;
+          loadGeneration++;
+          loadController?.abort();
+          loadController = null;
+        } },
         __webScenePublishedText: { value: () => {
           if (!childState) return '';
           let source = absolutizeCssUrls(
@@ -1719,7 +1769,8 @@ R"JS(      insertRule: { configurable: true, writable: true, value(rule, index =
             && current.rules.slice(index).some(existing => namespaceRuleInstances.has(existing))) {
           exception('Ordinary rules must follow namespace rules', 'HierarchyRequestError');
         }
-        current.rules.splice(index, 0, makeRule(current, parsed[0]));
+        current.rules.splice(index, 0, makeRule(
+          current, parsed[0], null, false, /^@import\b/i.test(parsed[0].cssText)));
         publish(current);
         return index;
       } },

@@ -6952,6 +6952,18 @@ v8_dom_runtime::build_semantic_snapshot_v1(uint64_t snapshot_generation)
     return impl_->build_semantic_snapshot_v1(snapshot_generation);
 }
 
+semantic_action_dispatch_result_v1
+v8_dom_runtime::dispatch_semantic_action_v1(
+    const semantic_action_request_data_v1& request)
+{
+    const auto result = impl_->dispatch_semantic_action_v1(request);
+    if (result == semantic_action_dispatch_result_v1::performed
+        && !impl_->promote_pending_promise_error()) {
+        return semantic_action_dispatch_result_v1::failed;
+    }
+    return result;
+}
+
 void v8_dom_runtime::notify_low_memory()
 {
     if (impl_->isolate == nullptr) return;

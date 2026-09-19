@@ -91,6 +91,7 @@ test('native engine publishes only the versioned leased interop surface', async 
     'webscene_engine_set_accessibility_preferences_v1',
     'webscene_engine_acquire_semantic_snapshot_v1',
     'webscene_semantic_snapshot_release_v1',
+    'webscene_engine_request_semantic_action_v1',
     'webscene_engine_request_window_close_v1',
     'webscene_engine_take_typed_host_request_v1',
     'webscene_host_request_release_v1',

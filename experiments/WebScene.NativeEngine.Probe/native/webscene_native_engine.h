@@ -133,6 +133,38 @@ typedef enum webscene_semantic_relationship_kind_v1 {
     WEBSCENE_SEMANTIC_RELATION_ACTIVE_DESCENDANT_V1 = 5
 } webscene_semantic_relationship_kind_v1;
 
+typedef enum webscene_semantic_action_kind_v1 {
+    WEBSCENE_SEMANTIC_ACTION_FOCUS_V1 = 1,
+    WEBSCENE_SEMANTIC_ACTION_PRESS_V1 = 2,
+    WEBSCENE_SEMANTIC_ACTION_TOGGLE_V1 = 3,
+    WEBSCENE_SEMANTIC_ACTION_INCREMENT_V1 = 4,
+    WEBSCENE_SEMANTIC_ACTION_DECREMENT_V1 = 5,
+    WEBSCENE_SEMANTIC_ACTION_SET_VALUE_V1 = 6,
+    WEBSCENE_SEMANTIC_ACTION_SET_SELECTION_V1 = 7
+} webscene_semantic_action_kind_v1;
+
+enum {
+    WEBSCENE_SEMANTIC_ACTION_SUPPORT_FOCUS_V1 = 1U << 0U,
+    WEBSCENE_SEMANTIC_ACTION_SUPPORT_PRESS_V1 = 1U << 1U,
+    WEBSCENE_SEMANTIC_ACTION_SUPPORT_TOGGLE_V1 = 1U << 2U,
+    WEBSCENE_SEMANTIC_ACTION_SUPPORT_INCREMENT_V1 = 1U << 3U,
+    WEBSCENE_SEMANTIC_ACTION_SUPPORT_DECREMENT_V1 = 1U << 4U,
+    WEBSCENE_SEMANTIC_ACTION_SUPPORT_SET_VALUE_V1 = 1U << 5U,
+    WEBSCENE_SEMANTIC_ACTION_SUPPORT_SET_SELECTION_V1 = 1U << 6U,
+    WEBSCENE_SEMANTIC_ACTION_MAXIMUM_PENDING_V1 = 256U,
+    WEBSCENE_SEMANTIC_ACTION_MAXIMUM_VALUE_BYTES_V1 = 64U * 1024U,
+    WEBSCENE_SEMANTIC_ACTION_MAXIMUM_QUEUED_VALUE_BYTES_V1 = 1024U * 1024U
+};
+
+typedef enum webscene_semantic_action_admission_v1 {
+    WEBSCENE_SEMANTIC_ACTION_INVALID_V1 = 0,
+    WEBSCENE_SEMANTIC_ACTION_QUEUED_V1 = 1,
+    WEBSCENE_SEMANTIC_ACTION_STALE_V1 = 2,
+    WEBSCENE_SEMANTIC_ACTION_UNSUPPORTED_V1 = 3,
+    WEBSCENE_SEMANTIC_ACTION_QUEUE_FULL_V1 = 4,
+    WEBSCENE_SEMANTIC_ACTION_PAYLOAD_TOO_LARGE_V1 = 5
+} webscene_semantic_action_admission_v1;
+
 typedef struct webscene_semantic_string_v1 {
     uint32_t offset;
     uint32_t length;
@@ -166,6 +198,7 @@ typedef struct webscene_semantic_node_v1 {
     webscene_semantic_string_v1 name;
     webscene_semantic_string_v1 value;
     webscene_semantic_string_v1 description;
+    uint32_t supported_actions;
 } webscene_semantic_node_v1;
 
 typedef struct webscene_semantic_relationship_v1 {
@@ -194,6 +227,28 @@ typedef struct webscene_semantic_snapshot_view_v1 {
     uint32_t string_byte_count;
     const void* lease_token;
 } webscene_semantic_snapshot_view_v1;
+
+/*
+ * Host-to-DOM semantic action. The host copies snapshot_generation and
+ * semantic_id from one acquired node. A newer publication may route the same
+ * still-live identity; navigation and node retirement make it stale.
+ * value_utf8 is copied before return and
+ * is accepted only for SET_VALUE. Selection offsets are UTF-16 code units and
+ * are accepted only for SET_SELECTION. flags is reserved and must be zero.
+ * No platform accessibility object crosses this boundary.
+ */
+typedef struct webscene_semantic_action_request_v1 {
+    uint32_t struct_size;
+    uint32_t version;
+    uint64_t snapshot_generation;
+    uint64_t semantic_id;
+    uint32_t action;
+    uint32_t flags;
+    const char* value_utf8;
+    size_t value_byte_count;
+    uint32_t selection_start;
+    uint32_t selection_end;
+} webscene_semantic_action_request_v1;
 
 enum {
     WEBSCENE_INPUT_MODIFIER_SHIFT = 1U << 0U,
@@ -1551,6 +1606,11 @@ WEBSCENE_API const webscene_semantic_snapshot_view_v1*
 webscene_engine_acquire_semantic_snapshot_v1(webscene_engine* engine);
 WEBSCENE_API void webscene_semantic_snapshot_release_v1(
     const webscene_semantic_snapshot_view_v1* snapshot);
+/* Queues bounded worker-thread routing; QUEUED reports admission, not DOM
+ * completion. A later snapshot is the observable action result. */
+WEBSCENE_API uint32_t webscene_engine_request_semantic_action_v1(
+    webscene_engine* engine,
+    const webscene_semantic_action_request_v1* request);
 /* Returns the CSS cursor resolved at the latest hit-tested pointer position. */
 WEBSCENE_API uint32_t webscene_engine_get_cursor(const webscene_engine* engine);
 /*

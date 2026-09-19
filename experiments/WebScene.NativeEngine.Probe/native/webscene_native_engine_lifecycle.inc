@@ -380,6 +380,7 @@
                 std::shared_ptr<const webscene_native::semantic_snapshot_data_v1>{},
                 std::memory_order_release);
         }
+        retire_semantic_actions_v1();
         low_memory_requested_.store(true, std::memory_order_release);
         signal_worker();
         return true;
@@ -868,6 +869,7 @@
                 std::shared_ptr<const webscene_native::semantic_snapshot_data_v1>{},
                 std::memory_order_release);
         }
+        retire_semantic_actions_v1();
         semantic_snapshot_requested_.store(true, std::memory_order_release);
         script_work_.emplace_back(url_request{
             std::string(value, length),

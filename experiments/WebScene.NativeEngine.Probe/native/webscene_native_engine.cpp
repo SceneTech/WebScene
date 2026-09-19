@@ -293,6 +293,10 @@ struct script_request final {
     std::string document_name;
 };
 
+struct semantic_action_work_v1 final {
+    webscene_native::semantic_action_request_data_v1 request;
+};
+
 struct canvas_checkpoint_request {
     uint32_t node_id, command_count;
     uint64_t generation;
@@ -390,6 +394,104 @@ struct webscene_engine final {
         signal_worker();
         return std::atomic_load_explicit(
             &latest_semantic_snapshot_, std::memory_order_acquire);
+    }
+    uint32_t request_semantic_action_v1(
+        const webscene_semantic_action_request_v1& request) {
+        if (request.struct_size < sizeof(request) || request.version != 1U
+            || request.snapshot_generation == 0U || request.semantic_id == 0U
+            || request.flags != 0U) {
+            return WEBSCENE_SEMANTIC_ACTION_INVALID_V1;
+        }
+        const auto support_bit = [](uint32_t action) {
+            switch (action) {
+                case WEBSCENE_SEMANTIC_ACTION_FOCUS_V1:
+                    return WEBSCENE_SEMANTIC_ACTION_SUPPORT_FOCUS_V1;
+                case WEBSCENE_SEMANTIC_ACTION_PRESS_V1:
+                    return WEBSCENE_SEMANTIC_ACTION_SUPPORT_PRESS_V1;
+                case WEBSCENE_SEMANTIC_ACTION_TOGGLE_V1:
+                    return WEBSCENE_SEMANTIC_ACTION_SUPPORT_TOGGLE_V1;
+                case WEBSCENE_SEMANTIC_ACTION_INCREMENT_V1:
+                    return WEBSCENE_SEMANTIC_ACTION_SUPPORT_INCREMENT_V1;
+                case WEBSCENE_SEMANTIC_ACTION_DECREMENT_V1:
+                    return WEBSCENE_SEMANTIC_ACTION_SUPPORT_DECREMENT_V1;
+                case WEBSCENE_SEMANTIC_ACTION_SET_VALUE_V1:
+                    return WEBSCENE_SEMANTIC_ACTION_SUPPORT_SET_VALUE_V1;
+                case WEBSCENE_SEMANTIC_ACTION_SET_SELECTION_V1:
+                    return WEBSCENE_SEMANTIC_ACTION_SUPPORT_SET_SELECTION_V1;
+                default:
+                    return 0U;
+            }
+        };
+        const auto action_support = support_bit(request.action);
+        if (action_support == 0U) {
+            return WEBSCENE_SEMANTIC_ACTION_INVALID_V1;
+        }
+        if (request.value_byte_count
+                > WEBSCENE_SEMANTIC_ACTION_MAXIMUM_VALUE_BYTES_V1) {
+            return WEBSCENE_SEMANTIC_ACTION_PAYLOAD_TOO_LARGE_V1;
+        }
+        if ((request.value_byte_count != 0U && request.value_utf8 == nullptr)
+            || (request.action != WEBSCENE_SEMANTIC_ACTION_SET_VALUE_V1
+                && request.value_byte_count != 0U)
+            || (request.action != WEBSCENE_SEMANTIC_ACTION_SET_SELECTION_V1
+                && (request.selection_start != 0U
+                    || request.selection_end != 0U))
+            || (request.action == WEBSCENE_SEMANTIC_ACTION_SET_SELECTION_V1
+                && request.selection_start > request.selection_end)) {
+            return WEBSCENE_SEMANTIC_ACTION_INVALID_V1;
+        }
+        const std::string_view value{
+            request.value_utf8 == nullptr ? "" : request.value_utf8,
+            request.value_byte_count};
+        if (!webscene_native::file_panel_valid_utf8_v2(value)) {
+            return WEBSCENE_SEMANTIC_ACTION_INVALID_V1;
+        }
+        const auto snapshot = std::atomic_load_explicit(
+            &latest_semantic_snapshot_, std::memory_order_acquire);
+        if (!snapshot
+            || snapshot->snapshot_generation < request.snapshot_generation) {
+            return WEBSCENE_SEMANTIC_ACTION_STALE_V1;
+        }
+        const auto target = std::find_if(
+            snapshot->action_targets.begin(),
+            snapshot->action_targets.end(),
+            [&](const auto& candidate) {
+                return candidate.semantic_id == request.semantic_id;
+            });
+        if (target == snapshot->action_targets.end()) {
+            return WEBSCENE_SEMANTIC_ACTION_STALE_V1;
+        }
+        if ((target->supported_actions & action_support) == 0U) {
+            return WEBSCENE_SEMANTIC_ACTION_UNSUPPORTED_V1;
+        }
+        semantic_action_work_v1 work;
+        work.request.snapshot_generation = request.snapshot_generation;
+        work.request.target = *target;
+        work.request.action = request.action;
+        work.request.selection_start = request.selection_start;
+        work.request.selection_end = request.selection_end;
+        work.request.value.assign(value);
+        {
+            std::lock_guard lock(semantic_action_mutex_);
+            if (semantic_action_work_.size()
+                    >= WEBSCENE_SEMANTIC_ACTION_MAXIMUM_PENDING_V1
+                || work.request.value.size()
+                    > WEBSCENE_SEMANTIC_ACTION_MAXIMUM_QUEUED_VALUE_BYTES_V1
+                        - semantic_action_payload_bytes_) {
+                return WEBSCENE_SEMANTIC_ACTION_QUEUE_FULL_V1;
+            }
+            semantic_action_payload_bytes_ += work.request.value.size();
+            semantic_action_work_.push_back(std::move(work));
+            semantic_actions_pending_.store(true, std::memory_order_release);
+        }
+        signal_worker();
+        return WEBSCENE_SEMANTIC_ACTION_QUEUED_V1;
+    }
+    void retire_semantic_actions_v1() {
+        std::lock_guard lock(semantic_action_mutex_);
+        semantic_action_work_.clear();
+        semantic_action_payload_bytes_ = 0U;
+        semantic_actions_pending_.store(false, std::memory_order_release);
     }
     void set_work_available_callback(webscene_work_available_callback_v1 callback, void* data) {
         std::lock_guard lock(host_observer_mutex_);
@@ -715,6 +817,10 @@ private:
     std::atomic<bool> semantic_snapshot_requested_{false};
     std::atomic<uint64_t> semantic_document_epoch_{1U};
     uint64_t next_semantic_snapshot_generation_{1U};
+    std::deque<semantic_action_work_v1> semantic_action_work_;
+    std::mutex semantic_action_mutex_;
+    size_t semantic_action_payload_bytes_{0U};
+    std::atomic<bool> semantic_actions_pending_{false};
     std::atomic<bool> ordered_scene_consumer_{false};
     std::atomic<bool> producer_gpu_wait_consumer_{false};
 #if defined(WEBSCENE_NATIVE_ENGINE_ENABLE_GRAPHICS)
@@ -1928,6 +2034,20 @@ void webscene_semantic_snapshot_release_v1(
         || snapshot->struct_size < sizeof(*snapshot)
         || snapshot->lease_token == nullptr) return;
     delete static_cast<const semantic_snapshot_lease_v1*>(snapshot->lease_token);
+}
+
+uint32_t webscene_engine_request_semantic_action_v1(
+    webscene_engine* engine,
+    const webscene_semantic_action_request_v1* request)
+{
+    if (engine == nullptr || request == nullptr) {
+        return WEBSCENE_SEMANTIC_ACTION_INVALID_V1;
+    }
+    try {
+        return engine->request_semantic_action_v1(*request);
+    } catch (...) {
+        return WEBSCENE_SEMANTIC_ACTION_INVALID_V1;
+    }
 }
 
 namespace {

@@ -1,0 +1,104 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Accessibility semantic action DOM source</title>
+<body>
+<label for="editor">Editor</label><input id="editor" value="seed">
+<label for="readonly">Readonly</label><input id="readonly" value="fixed" readonly>
+<label for="check">Enabled</label><input id="check" type="checkbox">
+<label for="level">Level</label><input id="level" type="range" min="0" max="10" step="2" value="4">
+<button id="press">Press</button>
+<button id="disabled" disabled>Disabled</button>
+<script>
+  const state = window.__webSceneWptState = {
+    complete: false, harness: null, results: [], errors: [], diagnostics: []
+  };
+  function assert(condition, message) { if (!condition) throw new Error(message); }
+  function test(name, body) {
+    try {
+      body();
+      state.results.push({ name, status: "PASS", message: null, stack: null });
+    } catch (error) {
+      state.results.push({
+        name, status: "FAIL", message: String(error.message || error), stack: error.stack || null
+      });
+    }
+  }
+
+  const editor = document.getElementById("editor");
+  const readonly = document.getElementById("readonly");
+  const check = document.getElementById("check");
+  const level = document.getElementById("level");
+  const press = document.getElementById("press");
+  const disabled = document.getElementById("disabled");
+  const events = [];
+  for (const control of [editor, check, level, press, disabled]) {
+    for (const type of ["focus", "click", "input", "change"]) {
+      control.addEventListener(type, () => events.push(`${control.id}:${type}`));
+    }
+  }
+
+  test("focus and press target only enabled connected controls", () => {
+    editor.focus();
+    press.click();
+    disabled.focus();
+    disabled.click();
+    assert(document.activeElement === editor, "disabled control stole semantic focus");
+    assert(events.includes("editor:focus"), "focus event was absent");
+    assert(events.includes("press:click"), "press click was absent");
+    assert(!events.some(entry => entry.startsWith("disabled:")), "disabled control acted");
+  });
+
+  test("toggle retains native checked and event ordering", () => {
+    check.click();
+    assert(check.checked, "checkbox did not toggle");
+    const observed = events.filter(entry => entry.startsWith("check:")).join(",");
+    assert(observed === "check:click,check:input,check:change",
+      `checkbox event order changed: ${observed}`);
+  });
+
+  test("value and UTF-16 selection edits retain DOM semantics", () => {
+    editor.value = "A😀BC";
+    editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
+    editor.setSelectionRange(1, 3);
+    assert(editor.value === "A😀BC", "text value edit changed");
+    assert(editor.selectionStart === 1 && editor.selectionEnd === 3,
+      "selection did not use UTF-16 offsets");
+    readonly.setSelectionRange(0, 5);
+    assert(readonly.value === "fixed" && readonly.selectionEnd === 5,
+      "readonly selection changed its value");
+  });
+
+  test("numeric increment and decrement respect step and bounds", () => {
+    const adjust = direction => {
+      const minimum = Number(level.getAttribute("min") || 0);
+      const maximum = Number(level.getAttribute("max") || 100);
+      const step = Number(level.getAttribute("step") || 1);
+      level.value = String(Math.max(minimum, Math.min(maximum,
+        Number(level.value) + direction * step)));
+      level.dispatchEvent(new InputEvent("input", { bubbles: true }));
+      level.dispatchEvent(new Event("change", { bubbles: true }));
+    };
+    adjust(1);
+    assert(level.value === "6", "range increment ignored step");
+    adjust(-1);
+    assert(level.value === "4", "range decrement ignored step");
+    level.value = "10";
+    adjust(1);
+    assert(level.value === "10", "range increment exceeded max");
+  });
+
+  test("detached targets retire from the actionable DOM", () => {
+    press.remove();
+    const before = events.length;
+    press.click();
+    assert(!document.body.contains(press), "press target remained connected");
+    assert(events.length === before + 1,
+      "DOM click oracle changed for detached JavaScript references");
+  });
+
+  const failure = state.results.find(result => result.status !== "PASS");
+  state.harness = failure
+    ? { status: 1, message: failure.message, stack: failure.stack }
+    : { status: 0, message: null, stack: null };
+  state.complete = true;
+</script>

@@ -1,0 +1,67 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Bounded form history and restoration contract</title>
+<body>
+<script>
+  const state = window.__webSceneWptState = {
+    complete: false, harness: null, results: [], errors: [], diagnostics: []
+  };
+  const finish = (status, message = null) => {
+    state.results.push({
+      name: "eligible form state restores without secret controls or events",
+      status: status === 0 ? "PASS" : "FAIL", message, stack: null
+    });
+    state.harness = { status, message, stack: null };
+    state.complete = true;
+  };
+  const frame = document.createElement("iframe");
+  frame.srcdoc = `<!doctype html><body>
+    <input id="plain" value="default">
+    <input id="off" autocomplete="off" value="off-default">
+    <input id="password" type="password" value="password-default">
+    <select id="choice"><option>A</option><option>B</option></select>
+    <script>
+      const marker = sessionStorage.getItem('form-history-contract');
+      const plain = document.querySelector('#plain');
+      const off = document.querySelector('#off');
+      const password = document.querySelector('#password');
+      const choice = document.querySelector('#choice');
+      let events = 0;
+      for (const type of ['input', 'change']) {
+        document.addEventListener(type, () => ++events);
+      }
+      if (!marker) {
+        plain.value = 'restored';
+        off.value = 'must-not-restore';
+        password.value = 'must-not-persist';
+        choice.selectedIndex = 1;
+        sessionStorage.setItem('form-history-contract', 'reload');
+        location.reload();
+      } else {
+        sessionStorage.removeItem('form-history-contract');
+        parent.postMessage({
+          type: 'form-history-contract',
+          plain: plain.value,
+          off: off.value,
+          password: password.value,
+          selected: choice.selectedIndex,
+          events
+        }, '*');
+      }
+    <\/script>`;
+  addEventListener("message", event => {
+    if (event.source !== frame.contentWindow
+        || event.data?.type !== "form-history-contract") return;
+    const value = event.data;
+    const passed = value.plain === "restored"
+      && value.off === "off-default"
+      && value.password === "password-default"
+      && value.selected === 1
+      && value.events === 0;
+    finish(passed ? 0 : 1, passed ? null : JSON.stringify(value));
+  });
+  document.body.appendChild(frame);
+  setTimeout(() => {
+    if (!state.complete) finish(1, "restoration contract timed out");
+  }, 5000);
+</script>

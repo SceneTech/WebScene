@@ -87,6 +87,8 @@
 
     void retire_document_realm(v8::Local<v8::Context> previous_context)
     {
+        persist_form_state(
+            current_navigation_address(), capture_form_state(document.body()));
         dismiss_validation_message();
         active_drag_session.reset();
         active_outbound_drag.reset();
@@ -246,6 +248,7 @@
         frame_unload_dispatched.clear();
         hidden_frame_document_roots.clear();
         nested_history_states.clear();
+        pending_form_restores.clear();
         frame_reload_navigations.clear();
         frame_history_traversals.clear();
         frame_history_replace_navigations.clear();
@@ -853,6 +856,8 @@
             local_context,
             js_string(isolate, "currentScript"),
             v8::Null(isolate)).Check();
+        restore_after_document_parse(
+            document.body(), current_navigation_address());
         if (!dispatch_lifecycle_event(outer_document, "DOMContentLoaded")) return false;
         outer_document->Set(
             local_context,

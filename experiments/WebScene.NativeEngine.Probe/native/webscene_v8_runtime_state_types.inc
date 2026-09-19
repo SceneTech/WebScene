@@ -91,6 +91,7 @@
         std::string url;
         std::optional<clone_packet> state;
         uint64_t document_sequence{1U};
+        profile_form_document_state form_state;
     };
 
     struct nested_history_state final {
@@ -99,6 +100,11 @@
         size_t state_bytes{};
         uint64_t next_document_sequence{1U};
         bool traversing{false};
+    };
+
+    struct pending_form_restore_state final {
+        std::unordered_map<std::string, profile_form_control_state> controls;
+        bool autocomplete{false};
     };
 
     using durable_file_grant_locator = std::array<std::uint8_t,

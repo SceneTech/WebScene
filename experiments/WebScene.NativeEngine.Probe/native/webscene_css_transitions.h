@@ -272,7 +272,8 @@ inline void apply_animation_shorthand(node_style& style, const std::string& valu
                     return std::isdigit(character) || character == '.';
                 })) {
                 iterations = lower;
-            } else if (lower == "forwards" || lower == "both") {
+            } else if (lower == "forwards" || lower == "backwards"
+                || lower == "both") {
                 fill_mode = lower;
             } else if (lower == "normal" || lower == "reverse"
                 || lower == "alternate" || lower == "alternate-reverse") {
@@ -318,6 +319,8 @@ inline void configure_keyframes(node_style& style,
             animations.animation_iteration_count_value, ',');
         const auto directions = split_css_component_list(
             animations.animation_direction_value, ',');
+        const auto fill_modes = split_css_component_list(
+            animations.animation_fill_mode_value, ',');
         animations.opacity_keyframe_duration_ms = durations.empty()
             ? 0 : std::max(0.0F, parse_css_time_ms(durations.front()));
         animations.opacity_keyframe_delay_ms = delays.empty()
@@ -336,9 +339,15 @@ inline void configure_keyframes(node_style& style,
                 : direction == "alternate-reverse"
                     ? node_style::animation_data::direction_kind::alternate_reverse
                     : node_style::animation_data::direction_kind::normal;
-        const auto fill_mode = ascii_lower(trim_value(animations.animation_fill_mode_value));
-        animations.opacity_keyframe_fill_forwards =
-            fill_mode == "forwards" || fill_mode == "both";
+        const auto fill_mode = fill_modes.empty()
+            ? std::string("none") : ascii_lower(trim_value(fill_modes.front()));
+        animations.keyframe_fill_mode = fill_mode == "forwards"
+            ? node_style::animation_data::fill_kind::forwards
+            : fill_mode == "backwards"
+                ? node_style::animation_data::fill_kind::backwards
+                : fill_mode == "both"
+                    ? node_style::animation_data::fill_kind::both
+                    : node_style::animation_data::fill_kind::none;
         node_style::transition_timing animation_timing;
         if (!timings.empty()) parse_animation_timing(timings.front(), animation_timing);
         animations.opacity_keyframe_x1 = animation_timing.x1;
@@ -361,7 +370,6 @@ inline void configure_keyframes(node_style& style,
             << animations.opacity_keyframe_delay_ms << '|'
             << animations.opacity_keyframe_iterations << '|'
             << static_cast<unsigned>(animations.keyframe_direction) << '|'
-            << animations.opacity_keyframe_fill_forwards << '|'
             << static_cast<unsigned>(animations.opacity_keyframe_timing_kind) << ','
             << animations.opacity_keyframe_step_count << ','
             << static_cast<unsigned>(animations.opacity_keyframe_step_position) << '|'

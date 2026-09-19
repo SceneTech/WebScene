@@ -1,0 +1,103 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>CSS animation fill maps before and after boundaries without timeline restart</title>
+<style>
+  @keyframes fill-fade { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes fill-turn { from { transform: rotate(0); } to { transform: rotate(180deg); } }
+  @keyframes fill-glow { from { filter: brightness(.5); } to { filter: brightness(1.5); } }
+  .sample { opacity: .8; }
+  #none { animation: fill-fade 200ms linear 150ms 1 normal none; }
+  #backwards { animation: fill-fade 200ms linear 150ms 1 backwards;
+    animation-fill-mode: backwards, forwards; }
+  #reverse-both { animation: fill-fade 200ms linear 150ms 1 reverse both; }
+  #stepped { animation: fill-fade 200ms steps(4, start) 150ms 1 backwards; }
+  #rotation { animation: fill-turn 200ms linear 150ms 1 both; }
+  #filter { filter: brightness(2); animation: fill-glow 200ms linear 150ms 1 both; }
+</style>
+<div id="none" class="sample"></div><div id="backwards" class="sample"></div>
+<div id="reverse-both" class="sample"></div><div id="stepped" class="sample"></div>
+<div id="rotation"></div><div id="filter"></div>
+<script>
+  const state = window.__webSceneWptState = {
+    complete: false, harness: null, results: [], errors: [], diagnostics: []
+  };
+  const backwards = document.getElementById("backwards");
+  let endCount = 0;
+  let settled = false;
+  backwards.addEventListener("animationend", () => ++endCount);
+  const finish = (error, diagnostics = []) => {
+    if (settled) return;
+    settled = true;
+    state.diagnostics = diagnostics;
+    state.results.push({
+      name: "backwards and both fill map direction, timing, and retained boundaries",
+      status: error ? "FAIL" : "PASS",
+      message: error ? String(error && error.message || error) : null,
+      stack: error && error.stack ? String(error.stack) : null
+    });
+    state.harness = error
+      ? { status: 1, message: state.results[0].message, stack: state.results[0].stack }
+      : { status: 0, message: null, stack: null };
+    state.complete = true;
+  };
+  const opacity = id => Number(getComputedStyle(document.getElementById(id)).opacity);
+  const close = (left, right) => Math.abs(left - right) < .025;
+  const timeout = setTimeout(() => finish(new Error("animation fill deadline exceeded")), 1200);
+
+  requestAnimationFrame(() => {
+    try {
+      const fills = ["none", "backwards", "reverse-both", "stepped"]
+        .map(id => getComputedStyle(document.getElementById(id)).animationFillMode);
+      if (JSON.stringify(fills)
+            !== '["none","backwards, forwards","both","backwards"]'
+          || getComputedStyle(backwards).getPropertyValue("animation-fill-mode")
+            !== "backwards, forwards") {
+        throw new Error("computed fill metadata differs: " + fills.join(","));
+      }
+      if (!close(opacity("none"), .8) || !close(opacity("backwards"), 0)
+          || !close(opacity("reverse-both"), 1) || !close(opacity("stepped"), 0)
+          || getComputedStyle(document.getElementById("filter")).filter
+            !== "brightness(0.5)") {
+        throw new Error("before-phase fill values differ");
+      }
+      setTimeout(() => requestAnimationFrame(() => {
+        try {
+          const rotation = getComputedStyle(document.getElementById("rotation")).transform;
+          const matrix = rotation.slice(7, -1).split(",").map(Number);
+          let angle = Math.atan2(matrix[1], matrix[0]) * 180 / Math.PI;
+          if (angle < 0) angle += 360;
+          if (!close(opacity("none"), .8) || !close(opacity("backwards"), .8)
+              || !close(opacity("reverse-both"), 0) || !close(angle, 180)
+              || getComputedStyle(document.getElementById("filter")).filter
+                !== "brightness(1.5)" || endCount !== 1) {
+            throw new Error("after-phase fill values differ");
+          }
+          backwards.style.animationFillMode = "forwards";
+          requestAnimationFrame(() => {
+            try {
+              if (!close(opacity("backwards"), 1) || endCount !== 1) {
+                throw new Error("fill-only update restarted the timeline");
+              }
+              backwards.style.animationFillMode = "";
+              document.getElementById("rotation").style.animation = "none";
+              document.getElementById("filter").style.animation = "none";
+              requestAnimationFrame(() => {
+                try {
+                  if (!close(opacity("backwards"), .8)
+                      || getComputedStyle(document.getElementById("rotation")).transform
+                        !== "none"
+                      || getComputedStyle(document.getElementById("filter")).filter
+                        !== "brightness(2)") {
+                    throw new Error("fill removal left a retained override");
+                  }
+                  clearTimeout(timeout);
+                  finish(null, [JSON.stringify({ fills, angle, endCount })]);
+                } catch (error) { clearTimeout(timeout); finish(error); }
+              });
+            } catch (error) { clearTimeout(timeout); finish(error); }
+          });
+        } catch (error) { clearTimeout(timeout); finish(error); }
+      }), 390);
+    } catch (error) { clearTimeout(timeout); finish(error); }
+  });
+</script>

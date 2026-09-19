@@ -43,6 +43,7 @@ inline constexpr auto specified_property_samples = std::to_array<specified_prope
     {"animation","fade 1s linear 100ms infinite"},{"animation-name","fade"},{"animation-duration","1s"},
     {"animation-delay","100ms"},{"animation-timing-function","ease-in-out"},{"animation-iteration-count","infinite"},
     {"animation-direction","alternate-reverse"},
+    {"animation-fill-mode","both"},
     {"box-shadow","1px 2px 3px 4px rgba(0,0,0,.5)"},
     {"background","#123456"},{"background-color","rgba(1,2,3,.5)"},
     {"background-image","linear-gradient(90deg, red, blue)"},{"background-repeat","no-repeat"},

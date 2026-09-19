@@ -183,6 +183,9 @@ bool apply_decoration_value(dom_node& node,const std::string& name,const std::st
             return true;
         } else if (name == "animation-fill-mode") {
             node.style.mutable_animations().animation_fill_mode_value = value;
+            decision.classification = "partially-supported";
+            decision.semantic_slice =
+                "first animation; none, forwards, backwards, both";
             return true;
         } else if (property_mask(name) == inline_border
             && is_inline(inline_border)) {

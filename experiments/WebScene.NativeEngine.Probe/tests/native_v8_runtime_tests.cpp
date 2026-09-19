@@ -99,6 +99,7 @@ uint8_t measure_baseline_fixture_text(
 #include "native_v8_runtime_resource_tests.inc"
 #include "native_v8_runtime_service_worker_tests.inc"
 #include "native_v8_runtime_stream_fetch_tests.inc"
+#include "native_v8_runtime_css_mask_resource_tests.inc"
 #include "native_v8_runtime_response_cookie_tests.inc"
 #include "native_v8_runtime_diagnostics_tests.inc"
 #include "native_resource_failure_diagnostics_tests.inc"
@@ -1506,6 +1507,8 @@ int main()
     test_positive_z_before_paints_above_lower_z_child(engine);
     test_element_opacity_emits_isolated_group(engine);
     test_svg_background_image_reaches_scene_with_position_and_size(engine);
+    test_css_raster_mask_provider_envelope_and_fail_closed_contract();
+    test_controlled_css_raster_mask_publication_and_stale_rejection();
     test_rounded_icon_surfaces_publish_stable_commands_across_selection_mutation(engine);
     test_tradingview_repeating_svg_checker_background_reaches_scene(engine);
     test_image_elements_load_and_reach_scene(engine);

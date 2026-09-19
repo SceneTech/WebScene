@@ -2456,7 +2456,7 @@
             &node,
             v8::Global<v8::Context>(isolate, resource_context),
             v8::Global<v8::Object>(isolate, wrapper),
-            {}, {}, {}, false, false});
+            {}, {}, {}, false, false, {}, 0U, 0U});
     }
 
     void enqueue_connected_resources_subtree(

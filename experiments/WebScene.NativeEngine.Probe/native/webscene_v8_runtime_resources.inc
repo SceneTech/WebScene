@@ -129,6 +129,138 @@
         return !bytes.empty();
     }
 
+    static std::string encode_base64(std::string_view bytes)
+    {
+        constexpr std::string_view alphabet =
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        std::string result;
+        result.reserve((bytes.size() + 2U) / 3U * 4U);
+        for (size_t index = 0U; index < bytes.size(); index += 3U) {
+            const auto remaining = bytes.size() - index;
+            const auto first = static_cast<uint8_t>(bytes[index]);
+            const auto second = remaining > 1U
+                ? static_cast<uint8_t>(bytes[index + 1U]) : 0U;
+            const auto third = remaining > 2U
+                ? static_cast<uint8_t>(bytes[index + 2U]) : 0U;
+            const auto value = (static_cast<uint32_t>(first) << 16U)
+                | (static_cast<uint32_t>(second) << 8U)
+                | static_cast<uint32_t>(third);
+            result.push_back(alphabet[(value >> 18U) & 0x3fU]);
+            result.push_back(alphabet[(value >> 12U) & 0x3fU]);
+            result.push_back(remaining > 1U ? alphabet[(value >> 6U) & 0x3fU] : '=');
+            result.push_back(remaining > 2U ? alphabet[value & 0x3fU] : '=');
+        }
+        return result;
+    }
+
+    enum class css_raster_image_result : uint8_t {
+        not_raster,
+        ready,
+        rejected
+    };
+
+    static css_raster_image_result css_raster_image_resource(
+        std::string_view content,
+        std::string& resource,
+        std::string& view_box)
+    {
+        // Mask v2/v3 resources are capped at four MiB after base64 expansion.
+        constexpr size_t maximum_encoded_bytes = 5U * 1024U * 1024U / 2U;
+        std::string decoded;
+        std::string_view bytes = content;
+        std::string encoded;
+        auto mime = std::string_view{};
+        constexpr auto host_wrapper_prefix = std::string_view{
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" "
+            "xmlns:xlink=\"http://www.w3.org/1999/xlink\" "};
+        const auto wrapper_open = content.starts_with(host_wrapper_prefix)
+            ? content.find('>') : std::string_view::npos;
+        const auto host_raster_wrapper = wrapper_open != std::string_view::npos
+            && content.substr(wrapper_open + 1U).starts_with("<image ")
+            && content.ends_with("/></svg>")
+            && content.find("<image ", wrapper_open + 2U) == std::string_view::npos;
+        if (host_raster_wrapper) {
+            constexpr std::array<std::string_view, 2> prefixes{
+                "data:image/png;base64,", "data:image/webp;base64,"};
+            size_t payload = std::string_view::npos;
+            for (const auto prefix : prefixes) {
+                const auto known = content.find(prefix);
+                if (known != std::string_view::npos) {
+                    mime = prefix == prefixes.front() ? "image/png" : "image/webp";
+                    payload = known + prefix.size();
+                    break;
+                }
+            }
+            if (payload == std::string_view::npos) {
+                return css_raster_image_result::rejected;
+            }
+            const auto end = content.find_first_of("\"'", payload);
+            if (end == std::string_view::npos || end == payload) {
+                return css_raster_image_result::rejected;
+            }
+            encoded.assign(content.substr(payload, end - payload));
+            if (!decode_base64_data_url(
+                    "data:" + std::string{mime} + ";base64," + encoded,
+                    decoded)) {
+                return css_raster_image_result::rejected;
+            }
+            bytes = decoded;
+        } else if (content.starts_with("<svg")
+            || content.starts_with("<?xml")) {
+            return css_raster_image_result::not_raster;
+        }
+        if (bytes.empty()) return css_raster_image_result::not_raster;
+        if (bytes.size() > maximum_encoded_bytes) {
+            return css_raster_image_result::rejected;
+        }
+        const auto png = bytes.size() >= 8U
+            && bytes.substr(0U, 8U) == std::string_view{"\x89PNG\r\n\x1a\n", 8U};
+        const auto webp = bytes.size() >= 12U
+            && bytes.starts_with("RIFF") && bytes.substr(8U, 4U) == "WEBP";
+        if (!png && !webp) {
+            const auto known_unsupported = (bytes.size() >= 6U
+                    && (bytes.starts_with("GIF87a") || bytes.starts_with("GIF89a")))
+                || (bytes.size() >= 2U
+                    && static_cast<uint8_t>(bytes[0]) == 0xffU
+                    && static_cast<uint8_t>(bytes[1]) == 0xd8U);
+            return known_unsupported
+                ? css_raster_image_result::rejected
+                : css_raster_image_result::not_raster;
+        }
+        const auto little32 = [&](size_t index) {
+            return static_cast<uint32_t>(static_cast<uint8_t>(bytes[index]))
+                | (static_cast<uint32_t>(static_cast<uint8_t>(bytes[index + 1U])) << 8U)
+                | (static_cast<uint32_t>(static_cast<uint8_t>(bytes[index + 2U])) << 16U)
+                | (static_cast<uint32_t>(static_cast<uint8_t>(bytes[index + 3U])) << 24U);
+        };
+        const auto complete_png = !png || bytes.size() >= 45U
+            && bytes.substr(12U, 4U) == "IHDR"
+            && bytes.substr(bytes.size() - 8U, 4U) == "IEND";
+        const auto complete_webp = !webp || bytes.size() >= 20U
+            && static_cast<uint64_t>(little32(4U)) + 8U <= bytes.size()
+            && static_cast<uint64_t>(little32(16U)) + 20U <= bytes.size();
+        if (!complete_png || !complete_webp) {
+            return css_raster_image_result::rejected;
+        }
+        float width = 0.0F;
+        float height = 0.0F;
+        if (!raster_image_dimensions(bytes, width, height)
+            || width * height > 16'777'216.0F) {
+            return css_raster_image_result::rejected;
+        }
+        if (encoded.empty()) encoded = encode_base64(bytes);
+        const auto identity = to_hex(sha256(
+            reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size()));
+        const auto width_value = static_cast<uint32_t>(width);
+        const auto height_value = static_cast<uint32_t>(height);
+        view_box = "0 0 " + std::to_string(width_value)
+            + " " + std::to_string(height_value);
+        resource = "webscene-raster-v2\t" + std::to_string(width_value)
+            + "\t" + std::to_string(height_value) + "\t" + identity
+            + "\t" + encoded;
+        return css_raster_image_result::ready;
+    }
+
     static std::string resource_kind_name(uint32_t kind)
     {
         switch (kind) {
@@ -1096,6 +1228,7 @@
     bool enqueue_controlled_css_image_resource(
         dom_node& node,
         v8::Local<v8::Context> resource_context,
+        const std::string& property,
         const std::string& authored_url)
     {
         if (authored_url.empty() || authored_url.starts_with("data:")
@@ -1111,6 +1244,7 @@
                 connected_resources.end(),
                 [&](const auto& task) {
                     return task.css_image && task.node == &node
+                        && task.css_image_property == property
                         && task.controlled_url == resolved_url;
                 })) {
             return true;
@@ -1135,7 +1269,10 @@
             resolved_url,
             std::chrono::steady_clock::now() + std::chrono::seconds(30),
             true,
-            true});
+            true,
+            property,
+            document_generation.load(std::memory_order_acquire),
+            next_css_image_resource_generation++});
         return true;
     }
 
@@ -1143,7 +1280,121 @@
         connected_resource_task& resource,
         const service_worker_fetch_result* controlled)
     {
-        if (resource.node == nullptr) return;
+        if (resource.node == nullptr || !document.is_connected(*resource.node)
+            || resource.document_generation
+                != document_generation.load(std::memory_order_acquire)) {
+            return;
+        }
+        if (resource.css_image_property == "mask-image") {
+            const auto& effects = resource.node->style.textual().effect_values;
+            const auto current = effects.find("mask-image");
+            if (current == effects.end()) return;
+            const auto images = css::split_css_image_layers(current->second);
+            const auto still_requested = std::any_of(
+                images.begin(), images.end(), [&](const auto& image) {
+                    const auto url = first_css_url(image);
+                    return url.has_value()
+                        && resolve_resource_url(
+                            *url, current_css_base_address(*resource.node))
+                            == resource.controlled_url;
+                });
+            if (!still_requested) return;
+            const auto mark_failed = [&](std::string_view state) {
+                auto& mutable_effects = resource.node->style.mutable_textual().effect_values;
+                for (size_t index = 0U; index < images.size(); ++index) {
+                    const auto url = first_css_url(images[index]);
+                    if (!url.has_value()
+                        || resolve_resource_url(
+                            *url, current_css_base_address(*resource.node))
+                            != resource.controlled_url) {
+                        continue;
+                    }
+                    const auto prefix =
+                        "-webscene-mask-layer-" + std::to_string(index);
+                    mutable_effects.erase(prefix + "-markup");
+                    mutable_effects.erase(prefix + "-view-box");
+                    mutable_effects[prefix + "-generation"] =
+                        std::to_string(resource.css_image_generation);
+                    mutable_effects[prefix + "-policy"] = controlled != nullptr
+                            && controlled->handled
+                        ? "service-worker-denied" : "host-denied";
+                    mutable_effects[prefix + "-cancellation"] = std::string{state};
+                }
+                mutable_effects.erase("-webscene-mask-markup");
+                mutable_effects.erase("-webscene-mask-view-box");
+                document.mark_dirty();
+            };
+            if (controlled != nullptr && controlled->handled) {
+                auto content_type = std::string{};
+                for (const auto& [header, value] : controlled->headers) {
+                    if (lower_html_name(header) == "content-type") {
+                        content_type = lower_html_name(value.substr(0U, value.find(';')));
+                        break;
+                    }
+                }
+                if (!content_type.empty() && content_type != "image/png"
+                    && content_type != "image/webp"
+                    && content_type != "image/svg+xml") {
+                    mark_failed("failed");
+                    return;
+                }
+            }
+            std::string content;
+            std::string resolved_url;
+            if (!load_connected_text_resource(
+                    resource.controlled_url,
+                    current_css_base_address(*resource.node),
+                    WEBSCENE_RESOURCE_IMAGE,
+                    content,
+                    resolved_url,
+                    nullptr,
+                    controlled)) {
+                mark_failed(controlled != nullptr
+                        && controlled->error.find("cancel") != std::string::npos
+                    ? "cancelled" : "failed");
+                return;
+            }
+            std::string raster;
+            auto view_box = svg_view_box(content);
+            const auto raster_result =
+                css_raster_image_resource(content, raster, view_box);
+            if (raster_result == css_raster_image_result::ready) {
+                content = std::move(raster);
+            } else if (raster_result == css_raster_image_result::rejected
+                || view_box.empty()) {
+                mark_failed("failed");
+                return;
+            }
+            auto& mutable_effects = resource.node->style.mutable_textual().effect_values;
+            auto published = false;
+            for (size_t index = 0U; index < images.size(); ++index) {
+                const auto url = first_css_url(images[index]);
+                if (!url.has_value()
+                    || resolve_resource_url(
+                        *url, current_css_base_address(*resource.node))
+                        != resource.controlled_url) {
+                    continue;
+                }
+                const auto prefix = "-webscene-mask-layer-" + std::to_string(index);
+                mutable_effects[prefix + "-resolved-url"] = resolved_url;
+                mutable_effects[prefix + "-markup"] = content;
+                mutable_effects[prefix + "-view-box"] = view_box;
+                mutable_effects[prefix + "-generation"] =
+                    std::to_string(resource.css_image_generation);
+                mutable_effects[prefix + "-policy"] = controlled != nullptr
+                        && controlled->handled
+                    ? "service-worker-allowed" : "host-allowed";
+                mutable_effects[prefix + "-cancellation"] = "ready";
+                published = true;
+            }
+            if (images.size() == 1U && published) {
+                mutable_effects["-webscene-mask-resolved-url"] = resolved_url;
+                mutable_effects["-webscene-mask-markup"] = content;
+                mutable_effects["-webscene-mask-view-box"] = view_box;
+            }
+            if (published) document.mark_dirty();
+            return;
+        }
         const auto current_url = first_css_url(
             resource.node->style.background_image().image_value);
         if (!current_url.has_value()
@@ -1164,7 +1415,12 @@
                 controlled)) {
             return;
         }
-        const auto view_box = svg_view_box(markup);
+        auto view_box = svg_view_box(markup);
+        std::string raster;
+        if (css_raster_image_resource(markup, raster, view_box)
+            == css_raster_image_result::ready) {
+            markup = std::move(raster);
+        }
         if (view_box.empty()) return;
         auto& background = resource.node->style.mutable_background_image();
         background.image_value = "url(\"" + resolved_url + "\")";

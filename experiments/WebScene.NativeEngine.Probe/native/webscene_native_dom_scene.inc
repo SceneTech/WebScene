@@ -653,17 +653,19 @@ void native_document::append_scene(
                 || view_box == effects.end() || view_box->second.empty()) {
                 return invalid();
             }
-            auto resource = std::string{"webscene-mask-svg-v1\t"};
-            resource += view_box->second;
-            resource += '\t';
-            resource += layer_value(repeats, 0U);
-            resource += '\t';
-            resource += layer_value(positions, 0U);
-            resource += '\t';
-            resource += layer_value(sizes, 0U);
-            resource += '\t';
-            resource += markup->second;
-            return append_scene_string(resource, strings, string_bytes);
+            if (!markup->second.starts_with("webscene-raster-v2\t")) {
+                auto resource = std::string{"webscene-mask-svg-v1\t"};
+                resource += view_box->second;
+                resource += '\t';
+                resource += layer_value(repeats, 0U);
+                resource += '\t';
+                resource += layer_value(positions, 0U);
+                resource += '\t';
+                resource += layer_value(sizes, 0U);
+                resource += '\t';
+                resource += markup->second;
+                return append_scene_string(resource, strings, string_bytes);
+            }
         }
 
         const auto has_exclude = [&]() {

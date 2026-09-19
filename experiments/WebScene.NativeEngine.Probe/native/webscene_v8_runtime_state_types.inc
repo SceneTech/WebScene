@@ -391,6 +391,9 @@
         std::chrono::steady_clock::time_point controlled_deadline{};
         bool interception_started{};
         bool css_image{};
+        std::string css_image_property;
+        uint64_t document_generation{};
+        uint64_t css_image_generation{};
     };
 
     enum class resize_observer_box { content, border, device_pixel_content };

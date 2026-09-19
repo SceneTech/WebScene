@@ -167,9 +167,13 @@ typedef struct webscene_scene_header {
 // DOM kind 47 applies an indexed webscene-bg-v2 linear gradient,
 // webscene-mask-svg-v1 tiled SVG resource, or webscene-mask-v2 bounded ordered
 // layer list to the current isolated layer using destination-in before kind 31
-// restores it. v2 carries at most 16 length-prefixed linear/radial/SVG layers
-// with repeat, position, size, and mode identities; consumers union add layers
-// on one bounded temporary surface and apply alpha once. Lengths are UTF-8 byte
+// restores it. v2 carries at most 16 length-prefixed linear/radial/SVG/raster
+// layers with repeat, position, size, and mode identities. Raster markup uses
+// webscene-raster-v2 followed by width, height, SHA-256 content identity, and
+// a base64 PNG/WebP payload; its viewBox is `0 0 width height`. The same nested
+// markup is valid in webscene-bg-svg-v1 so consumers can share decoded images.
+// Consumers union
+// add layers on one bounded temporary surface and apply alpha once. Lengths are UTF-8 byte
 // counts. webscene-mask-v3 adds a per-layer add/exclude identity; consumers
 // paint bottom-to-top and use xor for exclude before applying alpha once.
 // webscene-mask-invalid-v1 clears the isolated layer for failed/unsupported masks.

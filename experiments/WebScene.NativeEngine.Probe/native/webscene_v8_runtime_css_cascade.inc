@@ -527,6 +527,8 @@
             node.style.mutable_after_pseudo().layout =
                 previous_style.after_pseudo().layout;
         }
+        document.update_details_content_transition(
+            node, previous_style.details_content_pseudo());
 #if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
         const auto declarations_completed = trace_css
             ? std::chrono::steady_clock::now()
@@ -574,6 +576,7 @@
         size_t first_new_rule) const
     {
         if (node.tag == "#text" || first_new_rule >= css_rules.size()) return false;
+        const auto previous_details_content = node.style.details_content_pseudo();
         const auto contains_new_rule = [first_new_rule](
             const std::vector<size_t>& indexes) {
             return !indexes.empty() && indexes.back() >= first_new_rule;
@@ -740,6 +743,8 @@
                 : node.style.mutable_after_pseudo();
             apply_pseudo_css_declaration(node, pseudo, declaration);
         });
+        document.update_details_content_transition(
+            node, previous_details_content);
         configure_style_keyframe_animation(node);
         document.update_style_animations(node);
         detect_css_compositions(node);

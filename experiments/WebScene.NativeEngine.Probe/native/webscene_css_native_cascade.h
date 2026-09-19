@@ -172,6 +172,8 @@ bool apply_native_cascade(native_document& document,dom_node& node,
             node.style.mutable_before_pseudo().layout=previous.before_pseudo().layout;
         if(node.style.after_pseudo().generated && previous.after_pseudo().generated)
             node.style.mutable_after_pseudo().layout=previous.after_pseudo().layout;
+        document.update_details_content_transition(
+            node, previous.details_content_pseudo());
         configure_keyframes(
             node.style,
             sheets.state().opacity_keyframes,

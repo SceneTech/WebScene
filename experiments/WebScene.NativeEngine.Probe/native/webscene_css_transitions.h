@@ -292,10 +292,8 @@ inline bool is_animation_timing_function(const std::string& value)
         return parse_animation_timing(value, timing);
     }
 
-inline void configure_style_transitions(node_style& style)
+inline void configure_transitions(node_style::animation_data& animations)
     {
-        if (!style.has_animation_data()) return;
-        auto& animations = style.mutable_animations();
         const auto properties = split_css_component_list(animations.transition_property_value, ',');
         const auto durations = split_css_component_list(animations.transition_duration_value, ',');
         const auto delays = split_css_component_list(animations.transition_delay_value, ',');
@@ -342,10 +340,21 @@ inline void configure_style_transitions(node_style& style)
         const auto display = resolve("display");
         animations.display_transition = display.first;
         animations.display_transition_allow_discrete = display.second;
+        animations.block_size_transition = resolve("block-size").first;
+        const auto content_visibility = resolve("content-visibility");
+        animations.content_visibility_transition = content_visibility.first;
+        animations.content_visibility_transition_allow_discrete =
+            content_visibility.second;
+    }
+
+inline void configure_style_transitions(node_style& style)
+    {
+        if (!style.has_animation_data()) return;
+        configure_transitions(style.mutable_animations());
     }
 
 inline void apply_transition_shorthand(
-    node_style& style,
+    node_style::animation_data& animations,
     const std::string& value,
     bool configure = true)
     {
@@ -391,13 +400,20 @@ inline void apply_transition_shorthand(
             }
             return result;
         };
-        auto& animations = style.mutable_animations();
         animations.transition_property_value = join(properties);
         animations.transition_duration_value = join(durations);
         animations.transition_delay_value = join(delays);
         animations.transition_timing_function_value = join(timings);
         animations.transition_behavior_value = join(behaviors);
-        if (configure) configure_style_transitions(style);
+        if (configure) configure_transitions(animations);
+    }
+
+inline void apply_transition_shorthand(
+    node_style& style,
+    const std::string& value,
+    bool configure = true)
+    {
+        apply_transition_shorthand(style.mutable_animations(), value, configure);
     }
 
 inline bool apply_compiled_single_transition_shorthand(

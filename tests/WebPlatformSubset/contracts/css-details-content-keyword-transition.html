@@ -1,0 +1,42 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Details content transitions between zero and intrinsic block size</title>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<style>
+  #probe { width: 300px; interpolate-size: allow-keywords; }
+  #probe::details-content {
+    block-size: 0;
+    overflow: hidden;
+    opacity: 0;
+    transition:
+      block-size 180ms linear,
+      opacity 140ms linear,
+      content-visibility 180ms allow-discrete;
+  }
+  #probe[open]::details-content { block-size: auto; opacity: 1; }
+</style>
+<details id="probe">
+  <summary>Completed response</summary>
+  <div style="height: 60px">Animated retained content</div>
+</details>
+<script>
+  promise_test(async () => {
+    const closed = probe.getBoundingClientRect().height;
+    probe.open = true;
+    await new Promise(resolve => requestAnimationFrame(resolve));
+    await new Promise(resolve => setTimeout(resolve, 90));
+    const midpoint = probe.getBoundingClientRect().height;
+    assert_greater_than(midpoint, closed);
+    assert_less_than(midpoint, closed + 60);
+    await new Promise(resolve => setTimeout(resolve, 120));
+    assert_approx_equals(probe.getBoundingClientRect().height, closed + 60, 1);
+    probe.open = false;
+    await new Promise(resolve => setTimeout(resolve, 90));
+    const closing = probe.getBoundingClientRect().height;
+    assert_greater_than(closing, closed);
+    assert_less_than(closing, closed + 60);
+    await new Promise(resolve => setTimeout(resolve, 120));
+    assert_approx_equals(probe.getBoundingClientRect().height, closed, 1);
+  }, 'details content retains and clips intrinsic content during open and close transitions');
+</script>

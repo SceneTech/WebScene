@@ -19,6 +19,8 @@ inline void reset_cascaded_style(dom_node& node,
         node.style.aspect_ratio_inline = false;
         node.style.aspect_ratio_inline_important = false;
         node.style.aspect_ratio_important = false;
+        node.style.interpolate_size_allow_keywords = node.parent != nullptr
+            && node.parent->style.interpolate_size_allow_keywords;
         if (const auto authored = node.authored_style().declarations.find("aspect-ratio");
             authored != node.authored_style().declarations.end()) {
             auto ratio_width = 0.0F;

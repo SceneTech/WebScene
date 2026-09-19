@@ -3920,7 +3920,8 @@ void native_document::layout_children(dom_node& parent)
                     content.x + (rtl ? 0.0F : margin),
                     content_top,
                     std::max(0.0F, content.width - margin),
-                    std::max(0.0F, content_bottom - content_top)};
+                    std::max(0.0F, content_bottom - content_top)
+                        * details_content_used_block_fraction(parent)};
             }
         }
     }
@@ -5175,6 +5176,22 @@ void native_document::layout_child(
                         descendant->style.margin_bottom,
                         child.layout.height,
                         0));
+        }
+        if (child.tag == "details"
+            && child.style.details_content_pseudo().present) {
+            auto used_bottom = child.layout.y;
+            if (const auto* summary = first_details_summary(child);
+                summary != nullptr && summary->visible) {
+                used_bottom = std::max(
+                    used_bottom, summary->layout.y + summary->layout.height);
+            }
+            if (!details_content_is_suppressed(child)) {
+                const auto& details_content = child.style.details_content_pseudo();
+                used_bottom = std::max(
+                    used_bottom,
+                    details_content.layout.y + details_content.layout.height);
+            }
+            content_bottom = used_bottom;
         }
         const auto padding_bottom = resolve_vertical_padding(
             child,

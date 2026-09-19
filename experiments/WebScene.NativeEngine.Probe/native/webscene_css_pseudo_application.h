@@ -149,9 +149,15 @@ void apply_details_content_declaration(
         } else {
             decision.classification = "invalid-authoring";
         }
-    } else if (declaration.name == "transition"
-        || declaration.name == "content-visibility"
-        || declaration.name == "border-image") {
+    } else if (declaration.name == "transition") {
+        apply_transition_shorthand(details_content.transitions, value);
+        decision.classification = "supported";
+        decision.semantic_slice = "retained details-content transition timeline";
+    } else if (declaration.name == "content-visibility") {
+        decision.classification = lower == "visible" || lower == "hidden"
+            ? "supported" : "unsupported";
+        decision.semantic_slice = "discrete details-content visibility";
+    } else if (declaration.name == "border-image") {
         decision.semantic_slice = "static details-content paint and layout";
     }
 }

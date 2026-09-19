@@ -238,7 +238,15 @@
       "candidate": ["::details-content classification", "closed-content suppression", "HTMLDetailsElement.open reflection", "first-summary activation with interactive-descendant isolation", "static zero/auto block-size", "opacity", "inherited-direction inline-start inset and border"],
       "productEvidence": ["unchanged Code OSS completed-response disclosure", "unchanged Code OSS checkpoint file-changes disclosure"],
       "coverage": ["contracts/css-details-content-static.html", "test_details_content_pseudo_static_open_close_layout", "V8-free shared CSS pseudo classification/application contract"],
-      "gap": "Implementation-first candidate for WebScene #237. The ten unchanged Code OSS selectors reduce to static closed/open layout and paint plus reduced-motion transition overrides. The candidate retains only the observed static components and details activation lifecycle without anonymous DOM nodes, scans, polling, or idle frames. Keyword-size interpolation, transition timing, discrete content-visibility transitions, the border-image gradient, implicit summaries, name-group exclusivity, and programmatic-open toggle task coalescing remain open."
+      "gap": "Implementation-first candidate for WebScene #237. The ten unchanged Code OSS selectors reduce to static closed/open layout and paint plus reduced-motion transition overrides. The candidate retains only the observed static components and details activation lifecycle without anonymous DOM nodes, scans, polling, or idle frames. Keyword-size and discrete visibility transitions are covered by #754; the border-image gradient, implicit summaries, name-group exclusivity, and programmatic-open toggle task coalescing remain open."
+    },
+    {
+      "family": "details-content-keyword-transition",
+      "required": [],
+      "candidate": ["interpolate-size allow-keywords", "::details-content zero-to-auto block-size transition", "pseudo opacity transition", "discrete content-visibility deferral", "open and close interruption", "host-clock completion"],
+      "productEvidence": ["unchanged Code OSS completed-response disclosure", "unchanged Code OSS checkpoint file-changes disclosure"],
+      "coverage": ["contracts/css-details-content-keyword-transition.html", "test_details_content_keyword_size_transition", "docs/validation/css-details-content-keyword-transition-754.md"],
+      "gap": "Implementation-first candidate for WebScene #754. The retained pseudo wrapper interpolates used intrinsic block size and opacity on the host clock, clips content while opening and closing, avoids per-frame cascade, and releases frame demand on completion. Border-image gradients, implicit summaries, name-group exclusivity, and programmatic-open toggle task coalescing remain in the broader details backlog."
     },
     {
       "family": "live-range-boundaries",

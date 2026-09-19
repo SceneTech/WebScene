@@ -380,6 +380,126 @@ void native_document::update_discrete_display_transition(
     }
 }
 
+void native_document::update_details_content_transition(
+    dom_node& node,
+    const node_style::pseudo_element_pair::details_content_element& previous)
+{
+    if (node.tag != "details") return;
+    const auto& current = node.style.details_content_pseudo();
+    if (!previous.present || !current.present) return;
+    const auto block_target = current.block_size_zero ? 0.0F : 1.0F;
+    const auto opacity_target = current.opacity;
+    auto* existing = node.animation_runtime();
+    const auto block_changed = previous.block_size_zero != current.block_size_zero;
+    const auto opacity_changed = std::abs(previous.opacity - current.opacity) >= 0.0001F;
+    const auto block_can_animate = node.style.interpolate_size_allow_keywords
+        && current.transitions.block_size_transition.duration_ms > 0;
+    const auto opacity_can_animate =
+        current.transitions.opacity_transition.duration_ms > 0;
+    if (existing == nullptr
+        && !(block_changed && block_can_animate)
+        && !(opacity_changed && opacity_can_animate)) return;
+    auto& runtime = node.mutable_animation_runtime();
+    if (!runtime.details_content_initialized) {
+        runtime.details_content_initialized = true;
+        runtime.details_content_painted_block_fraction =
+            previous.block_size_zero ? 0.0F : 1.0F;
+        runtime.details_content_block_target =
+            runtime.details_content_painted_block_fraction;
+        runtime.details_content_painted_opacity = previous.opacity;
+        runtime.details_content_opacity_target = previous.opacity;
+    }
+    const auto cancel = [&](const char* property, bool& active,
+                            double started, float delay, float duration) {
+        if (!active) return;
+        transition_events_.push_back({
+            node.id, "transitioncancel", property,
+            std::clamp(static_cast<float>(animation_frame_timestamp_ms_
+                - started - delay), 0.0F, duration) / 1000.0F});
+        active = false;
+    };
+    const auto start = [&](const char* property,
+                           float target,
+                           const node_style::transition_timing& timing,
+                           float& painted,
+                           float& from,
+                           float& stored_target,
+                           float& duration,
+                           float& delay,
+                           float& x1,
+                           float& y1,
+                           float& x2,
+                           float& y2,
+                           double& started,
+                           bool& active,
+                           bool& start_sent) {
+        if (std::abs(target - stored_target) < 0.0001F) {
+            if (active && timing.duration_ms <= 0) {
+                cancel(property, active, started, delay, duration);
+                painted = target;
+            }
+            return;
+        }
+        cancel(property, active, started, delay, duration);
+        stored_target = target;
+        if (timing.duration_ms <= 0) {
+            painted = target;
+            return;
+        }
+        from = painted;
+        duration = timing.duration_ms;
+        delay = timing.delay_ms;
+        x1 = timing.x1;
+        y1 = timing.y1;
+        x2 = timing.x2;
+        y2 = timing.y2;
+        started = animation_frame_timestamp_ms_;
+        active = true;
+        start_sent = delay <= 0;
+        transition_events_.push_back({node.id, "transitionrun", property, 0});
+        if (start_sent) {
+            transition_events_.push_back({
+                node.id, "transitionstart", property,
+                std::min(-delay, duration) / 1000.0F});
+        }
+    };
+    const auto& transitions = current.transitions;
+    auto block_timing = transitions.block_size_transition;
+    if (!node.style.interpolate_size_allow_keywords) {
+        block_timing.duration_ms = 0;
+    }
+    start(
+        "block-size", block_target, block_timing,
+        runtime.details_content_painted_block_fraction,
+        runtime.details_content_block_from,
+        runtime.details_content_block_target,
+        runtime.details_content_block_duration_ms,
+        runtime.details_content_block_delay_ms,
+        runtime.details_content_block_x1,
+        runtime.details_content_block_y1,
+        runtime.details_content_block_x2,
+        runtime.details_content_block_y2,
+        runtime.details_content_block_started_ms,
+        runtime.details_content_block_active,
+        runtime.details_content_block_start_event_sent);
+    start(
+        "opacity", opacity_target, transitions.opacity_transition,
+        runtime.details_content_painted_opacity,
+        runtime.details_content_opacity_from,
+        runtime.details_content_opacity_target,
+        runtime.details_content_opacity_duration_ms,
+        runtime.details_content_opacity_delay_ms,
+        runtime.details_content_opacity_x1,
+        runtime.details_content_opacity_y1,
+        runtime.details_content_opacity_x2,
+        runtime.details_content_opacity_y2,
+        runtime.details_content_opacity_started_ms,
+        runtime.details_content_opacity_active,
+        runtime.details_content_opacity_start_event_sent);
+    active_animation_demand_cache_valid_ = false;
+    mark_dirty();
+}
+
 void native_document::prime_starting_style(
     dom_node& node,
     const node_style& starting_style)
@@ -1429,6 +1549,71 @@ bool native_document::advance_animations() noexcept
                 advanced = true;
             }
         }
+        const auto advance_details_content = [&] (
+            const char* property,
+            float& painted,
+            float from,
+            float target,
+            float duration,
+            float delay,
+            float x1,
+            float y1,
+            float x2,
+            float y2,
+            double started,
+            bool& active,
+            bool& start_sent) {
+            if (!active) return false;
+            const auto elapsed = static_cast<float>(
+                animation_frame_timestamp_ms_ - started - delay);
+            if (elapsed >= 0 && !start_sent) {
+                start_sent = true;
+                transition_events_.push_back({
+                    node.id, "transitionstart", property, 0});
+            }
+            const auto progress = std::clamp(
+                elapsed / std::max(0.001F, duration), 0.0F, 1.0F);
+            const auto eased = timing_value(progress, x1, y1, x2, y2);
+            const auto previous = painted;
+            painted = from + (target - from) * eased;
+            if (progress >= 1.0F) {
+                painted = target;
+                active = false;
+                transition_events_.push_back({
+                    node.id, "transitionend", property, duration / 1000.0F});
+            }
+            return std::abs(previous - painted) >= 0.0001F;
+        };
+        const auto details_block_changed = advance_details_content(
+            "block-size",
+            animation.details_content_painted_block_fraction,
+            animation.details_content_block_from,
+            animation.details_content_block_target,
+            animation.details_content_block_duration_ms,
+            animation.details_content_block_delay_ms,
+            animation.details_content_block_x1,
+            animation.details_content_block_y1,
+            animation.details_content_block_x2,
+            animation.details_content_block_y2,
+            animation.details_content_block_started_ms,
+            animation.details_content_block_active,
+            animation.details_content_block_start_event_sent);
+        const auto details_opacity_changed = advance_details_content(
+            "opacity",
+            animation.details_content_painted_opacity,
+            animation.details_content_opacity_from,
+            animation.details_content_opacity_target,
+            animation.details_content_opacity_duration_ms,
+            animation.details_content_opacity_delay_ms,
+            animation.details_content_opacity_x1,
+            animation.details_content_opacity_y1,
+            animation.details_content_opacity_x2,
+            animation.details_content_opacity_y2,
+            animation.details_content_opacity_started_ms,
+            animation.details_content_opacity_active,
+            animation.details_content_opacity_start_event_sent);
+        layout_changed = layout_changed || details_block_changed;
+        advanced = advanced || details_block_changed || details_opacity_changed;
         const auto keyframe_paint_visible = intersects_visible_paint_area(node);
         const auto advance_inset_transition = [&] (
             const char* property_name,
@@ -2496,7 +2681,9 @@ bool native_document::has_active_animations() const noexcept
             || animation->color_animation_active
             || animation->background_color_animation_active
             || animation->filter_animation_active
-            || animation->display_animation_active;
+            || animation->display_animation_active
+            || animation->details_content_block_active
+            || animation->details_content_opacity_active;
         const auto keyframe_active = std::any_of(
             animation->keyframe_animations.begin(),
             animation->keyframe_animations.end(), [](const auto& track) {

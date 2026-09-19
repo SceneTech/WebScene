@@ -1343,7 +1343,14 @@
       "type": "testharness",
       "capabilities": ["details-content-pseudo-classification", "details-closed-content-suppression", "details-open-reflection", "details-summary-activation-isolation", "details-content-logical-static-inset-paint"],
       "evidence": ["css-pseudo-elements-4-details-content", "html-details-disclosure-state", "native-retained-layout-scene-contract", "vscode-oss-645f29c-details-content-ledger"],
-      "reason": "Implementation-first WebScene #237 slice for the ten ::details-content selectors in unchanged Code OSS core CSS. Native companion coverage requires closed content suppression, open-property reflection, first-summary activation with interactive-descendant isolation, static zero/auto layout, inherited-direction logical inline-start geometry, opacity and border paint, and cleanup without transition or idle frame demand. Direct browser/native profile execution remains validation debt; keyword-size transitions, discrete content visibility, and border-image gradient paint remain outside this candidate."
+      "reason": "Implementation-first WebScene #237 slice for the ten ::details-content selectors in unchanged Code OSS core CSS. Native companion coverage requires closed content suppression, open-property reflection, first-summary activation with interactive-descendant isolation, static zero/auto layout, inherited-direction logical inline-start geometry, opacity and border paint, and cleanup without transition or idle frame demand. Keyword-size and discrete visibility transitions are covered by #754; border-image gradient paint remains outside this candidate."
+    },
+    {
+      "path": "contracts/css-details-content-keyword-transition.html",
+      "type": "testharness",
+      "capabilities": ["details-content-keyword-size-transition", "details-content-opacity-transition", "details-content-discrete-visibility", "details-content-host-clock", "details-content-transition-cleanup"],
+      "evidence": ["css-sizing-4-interpolate-size", "css-transitions-2-discrete-behavior", "native-retained-layout-scene-contract", "vscode-oss-645f29c-details-content-transition-ledger"],
+      "reason": "Implementation-first WebScene #754 slice for unchanged Code OSS disclosure animations. Native companion coverage requires midpoint zero/auto geometry, retained close paint, opacity interpolation, host-clock completion, and no lingering animation-frame demand."
     },
     {
       "path": "contracts/css-placeholder-pseudo-paint.html",

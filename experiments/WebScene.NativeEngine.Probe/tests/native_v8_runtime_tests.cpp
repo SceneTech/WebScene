@@ -390,6 +390,12 @@ int main()
             webscene_engine_destroy(focused_engine);
             return 0;
         }
+        if(selected=="details-content-transition") {
+            auto* focused_engine=webscene_engine_create(0);
+            require(focused_engine!=nullptr,"details-content transition engine creation failed");
+            test_details_content_keyword_size_transition(focused_engine);
+            webscene_engine_destroy(focused_engine);return 0;
+        }
         if (selected == "paint-only-cascade") {
             auto* focused_engine=webscene_engine_create(0);
             require(focused_engine != nullptr,"paint invalidation engine creation failed");
@@ -1375,6 +1381,7 @@ int main()
     test_modal_backdrop_scene(engine);
     test_placeholder_pseudo_color_and_opacity_reach_scene(engine);
     test_details_content_pseudo_static_open_close_layout(engine);
+    test_details_content_keyword_size_transition(engine);
     test_responsive_positioned_sizing(engine);
     test_compact_go_to_fixed_grid_tracks_preserve_trailing_space(engine);
     test_named_grid_template_areas_layout_cssom_and_mutation(engine);

@@ -2548,6 +2548,10 @@
 
     void begin_iframe_navigation(dom_node& frame)
     {
+        if (active_drag_session.has_value()
+            && active_drag_session->frame_owner_id == frame.id) {
+            active_drag_session.reset();
+        }
         dispatch_iframe_pagehide(frame);
         {
             std::lock_guard lock(host_request_mutex);

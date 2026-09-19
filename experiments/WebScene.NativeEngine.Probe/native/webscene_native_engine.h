@@ -131,6 +131,53 @@ typedef struct webscene_input_event {
     double delta_y;
 } webscene_input_event;
 
+/* Typed host-to-browser drag session input. The engine copies every item
+ * before returning; native paths and platform objects are never exposed.
+ * ENTER starts or replaces a session and carries its complete item set.
+ * OVER, LEAVE, DROP and CANCEL carry no items. DROP is dispatched only after
+ * the current target cancelled dragover, matching the browser admission rule.
+ *
+ * Limits per session: 64 items, 64 MiB file bytes, 1 MiB string payload and
+ * metadata, 4 KiB names/relative paths, and 256-byte MIME types. A relative
+ * path describes a bounded virtual directory tree; it conveys no filesystem
+ * authority. Delivery is asynchronous on the engine worker. */
+enum {
+    WEBSCENE_DRAG_ENTER_V1 = 1,
+    WEBSCENE_DRAG_OVER_V1 = 2,
+    WEBSCENE_DRAG_LEAVE_V1 = 3,
+    WEBSCENE_DRAG_DROP_V1 = 4,
+    WEBSCENE_DRAG_CANCEL_V1 = 5
+};
+enum {
+    WEBSCENE_DRAG_ITEM_STRING_V1 = 1,
+    WEBSCENE_DRAG_ITEM_FILE_V1 = 2,
+    WEBSCENE_DRAG_ITEM_DIRECTORY_V1 = 3
+};
+typedef struct webscene_drag_item_v1 {
+    uint32_t struct_size, version;
+    uint32_t kind, reserved;
+    const char* mime_type;
+    size_t mime_type_length;
+    const char* name;
+    size_t name_length;
+    const char* relative_path;
+    size_t relative_path_length;
+    const uint8_t* bytes;
+    size_t byte_count;
+} webscene_drag_item_v1;
+typedef struct webscene_drag_event_v1 {
+    uint32_t struct_size, version;
+    uint64_t session_id;
+    uint64_t sequence;
+    uint32_t action, flags;
+    double x, y;
+    const webscene_drag_item_v1* items;
+    size_t item_count;
+} webscene_drag_event_v1;
+WEBSCENE_API uint8_t webscene_engine_dispatch_drag_v1(
+    webscene_engine* engine,
+    const webscene_drag_event_v1* event);
+
 typedef struct webscene_scene_header {
     uint64_t revision;
     uint64_t base_revision;

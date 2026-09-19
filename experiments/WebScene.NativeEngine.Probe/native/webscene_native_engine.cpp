@@ -1272,6 +1272,125 @@ uint8_t webscene_engine_enqueue(webscene_engine* engine, const webscene_input_ev
     return engine != nullptr && event != nullptr && engine->enqueue(*event) ? 1U : 0U;
 }
 
+uint8_t webscene_engine_dispatch_drag_v1(
+    webscene_engine* engine,
+    const webscene_drag_event_v1* event)
+{
+    constexpr size_t maximum_items = 64U;
+    constexpr size_t maximum_file_bytes = 64U * 1024U * 1024U;
+    constexpr size_t maximum_string_and_metadata_bytes = 1U * 1024U * 1024U;
+    constexpr size_t maximum_name_bytes = 4096U;
+    constexpr size_t maximum_mime_bytes = 256U;
+    constexpr uint32_t allowed_flags = 0x1FU | 0xFF00U
+        | WEBSCENE_INPUT_POINTER_MODIFIER_SHIFT
+        | WEBSCENE_INPUT_POINTER_MODIFIER_CONTROL
+        | WEBSCENE_INPUT_POINTER_MODIFIER_ALT
+        | WEBSCENE_INPUT_POINTER_MODIFIER_META;
+    const auto invalid_text = [](const char* value, size_t length) {
+        if (length != 0U && value == nullptr) return true;
+        return value != nullptr && std::find(value, value + length, '\0')
+            != value + length;
+    };
+    const auto invalid_name = [&](const char* value, size_t length) {
+        return invalid_text(value, length)
+            || (value != nullptr && std::any_of(
+                value, value + length,
+                [](unsigned char byte) {
+                    return byte < 0x20U || byte == '/' || byte == '\\';
+                }));
+    };
+    const auto invalid_relative_path = [&](const char* value, size_t length) {
+        if (invalid_text(value, length)) return true;
+        if (length == 0U) return false;
+        if (value[0] == '/' || value[0] == '\\') return true;
+        size_t start = 0U;
+        for (size_t index = 0U; index <= length; ++index) {
+            const auto boundary = index == length || value[index] == '/'
+                || value[index] == '\\';
+            if (!boundary) {
+                if (static_cast<unsigned char>(value[index]) < 0x20U) return true;
+                continue;
+            }
+            if (index == start || (index - start == 1U && value[start] == '.')
+                || (index - start == 2U && value[start] == '.'
+                    && value[start + 1U] == '.')) return true;
+            start = index + 1U;
+        }
+        return false;
+    };
+    if (engine == nullptr || event == nullptr
+        || event->struct_size < sizeof(*event) || event->version != 1U
+        || event->session_id == 0U || event->sequence == 0U
+        || event->action < WEBSCENE_DRAG_ENTER_V1
+        || event->action > WEBSCENE_DRAG_CANCEL_V1
+        || (event->flags & ~allowed_flags) != 0U
+        || !std::isfinite(event->x) || !std::isfinite(event->y)
+        || event->item_count > maximum_items
+        || (event->item_count != 0U && event->items == nullptr)
+        || (event->action != WEBSCENE_DRAG_ENTER_V1
+            && event->item_count != 0U)) {
+        return 0U;
+    }
+    webscene_native::native_drag_event copied;
+    copied.session_id = event->session_id;
+    copied.sequence = event->sequence;
+    copied.action = event->action;
+    copied.flags = event->flags;
+    copied.x = event->x;
+    copied.y = event->y;
+    size_t file_bytes = 0U;
+    size_t metadata_bytes = 0U;
+    copied.items.reserve(event->item_count);
+    for (size_t index = 0U; index < event->item_count; ++index) {
+        const auto& item = event->items[index];
+        if (item.struct_size < sizeof(item) || item.version != 1U
+            || item.reserved != 0U
+            || item.kind < WEBSCENE_DRAG_ITEM_STRING_V1
+            || item.kind > WEBSCENE_DRAG_ITEM_DIRECTORY_V1
+            || item.mime_type_length > maximum_mime_bytes
+            || item.name_length > maximum_name_bytes
+            || item.relative_path_length > maximum_name_bytes
+            || invalid_text(item.mime_type, item.mime_type_length)
+            || invalid_name(item.name, item.name_length)
+            || invalid_relative_path(
+                item.relative_path, item.relative_path_length)
+            || (item.byte_count != 0U && item.bytes == nullptr)
+            || (item.kind == WEBSCENE_DRAG_ITEM_STRING_V1
+                && (item.mime_type_length == 0U || item.name_length != 0U
+                    || item.relative_path_length != 0U))
+            || (item.kind == WEBSCENE_DRAG_ITEM_FILE_V1
+                && item.name_length == 0U)
+            || (item.kind == WEBSCENE_DRAG_ITEM_DIRECTORY_V1
+                && (item.name_length == 0U || item.byte_count != 0U))) return 0U;
+        if (item.kind == WEBSCENE_DRAG_ITEM_FILE_V1) {
+            if (item.byte_count > maximum_file_bytes - file_bytes) return 0U;
+            file_bytes += item.byte_count;
+        } else if (item.kind == WEBSCENE_DRAG_ITEM_STRING_V1) {
+            if (item.byte_count > maximum_string_and_metadata_bytes - metadata_bytes)
+                return 0U;
+            metadata_bytes += item.byte_count;
+        }
+        const auto item_metadata = item.mime_type_length + item.name_length
+            + item.relative_path_length;
+        if (item_metadata > maximum_string_and_metadata_bytes - metadata_bytes)
+            return 0U;
+        metadata_bytes += item_metadata;
+        webscene_native::native_drag_item value;
+        value.kind = item.kind;
+        value.mime_type.assign(
+            item.mime_type == nullptr ? "" : item.mime_type,
+            item.mime_type_length);
+        value.name.assign(item.name == nullptr ? "" : item.name, item.name_length);
+        value.relative_path.assign(
+            item.relative_path == nullptr ? "" : item.relative_path,
+            item.relative_path_length);
+        if (item.byte_count != 0U)
+            value.bytes.assign(item.bytes, item.bytes + item.byte_count);
+        copied.items.push_back(std::move(value));
+    }
+    return engine->dispatch_drag(std::move(copied)) ? 1U : 0U;
+}
+
 uint8_t webscene_engine_enqueue_resize_frame(
     webscene_engine* engine,
     const webscene_input_event* resize_event,

@@ -195,6 +195,18 @@
         frame_dom_content_loaded_listeners;
     std::unordered_map<std::string, std::vector<event_listener_registration>>
         frame_event_listeners;
+    struct drag_session_state final {
+        uint64_t session_id{};
+        uint64_t last_sequence{};
+        uint64_t document_generation{};
+        uint32_t frame_owner_id{};
+        uint64_t frame_generation{};
+        uint32_t target_node_id{};
+        bool drop_admitted{false};
+        std::vector<native_drag_item> items;
+        std::unordered_map<uint32_t, v8::Global<v8::Object>> transfers;
+    };
+    std::optional<drag_session_state> active_drag_session;
 #if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
     std::unordered_map<std::string, uint64_t> event_dispatch_counts;
     std::unordered_map<std::string, std::unordered_map<uint32_t, uint64_t>>

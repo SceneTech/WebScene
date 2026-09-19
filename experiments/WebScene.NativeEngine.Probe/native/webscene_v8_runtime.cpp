@@ -3851,6 +3851,11 @@ struct v8_dom_runtime::implementation final {
             mouse_event_template->GetFunction(local_context).ToLocalChecked()).Check();
         global->Set(local_context, js_string(isolate, "WheelEvent"),
             mouse_event_template->GetFunction(local_context).ToLocalChecked()).Check();
+        auto drag_event_template = v8::FunctionTemplate::New(
+            isolate, mouse_event_constructor);
+        drag_event_template->Inherit(mouse_event_template);
+        global->Set(local_context, js_string(isolate, "DragEvent"),
+            drag_event_template->GetFunction(local_context).ToLocalChecked()).Check();
         global->Set(local_context, js_string(isolate, "FocusEvent"),
             event_template->GetFunction(local_context).ToLocalChecked()).Check();
         global->Set(local_context, js_string(isolate, "InputEvent"),
@@ -4492,6 +4497,7 @@ struct v8_dom_runtime::implementation final {
         install_service_worker_control(local_context, local_context->Global());
         install_worker_constructor(local_context);
         install_clipboard_api(local_context);
+        install_drag_data_transfer_api(local_context);
         install_file_system_access_api(local_context);
         install_websocket_globals(local_context);
         install_editor_web_platform_globals(local_context);
@@ -5756,6 +5762,162 @@ struct v8_dom_runtime::implementation final {
         script->Run(local_context).ToLocalChecked();
     }
 
+    void install_drag_data_transfer_api(v8::Local<v8::Context> local_context)
+    {
+        constexpr std::string_view source = R"JS(
+          (() => {
+            class WebSceneDataTransferItem {
+              constructor(record, file = null, entry = null) {
+                this.kind = record.kind === 1 ? 'string' : 'file';
+                this.type = String(record.type || '').toLowerCase();
+                this._record = record;
+                this._file = file;
+                this._entry = entry;
+              }
+              getAsFile() { return this._file; }
+              getAsString(callback) {
+                if (this.kind !== 'string' || typeof callback !== 'function') return;
+                const value = new TextDecoder().decode(this._record.bytes);
+                Promise.resolve().then(() => callback(value));
+              }
+              webkitGetAsEntry() {
+                if (this.kind !== 'file') return null;
+                return this._entry;
+              }
+              getAsFileSystemHandle() { return Promise.resolve(null); }
+            }
+            const indexedList = values => {
+              const list = {
+                get length() { return values.length; },
+                item(index) { return values[Number(index)] || null; },
+                *[Symbol.iterator]() { yield* values; }
+              };
+              for (let index = 0; index < values.length; ++index) {
+                Object.defineProperty(list, index, {
+                  value: values[index], enumerable: true
+                });
+              }
+              return Object.freeze(list);
+            };
+            class WebSceneDataTransfer {
+              constructor(records = []) {
+                const strings = Object.create(null);
+                const files = [];
+                const items = [];
+                const filesByRecord = new Map();
+                const pathOf = record => String(
+                  record.path || record.name || '').replace(/\\/g, '/');
+                for (const record of records) {
+                  if (record.kind !== 2) continue;
+                  const file = new File([record.bytes], record.name, {
+                    type: String(record.type || '').toLowerCase()
+                  });
+                  Object.defineProperty(file, 'webkitRelativePath', {
+                    value: pathOf(record), enumerable: true
+                  });
+                  files.push(file);
+                  filesByRecord.set(record, file);
+                }
+                const entryFor = record => {
+                  const path = pathOf(record);
+                  if (record.kind === 2) {
+                    const file = filesByRecord.get(record);
+                    return Object.freeze({
+                      name: record.name,
+                      fullPath: '/' + path,
+                      isDirectory: false,
+                      isFile: true,
+                      createReader() { throw new Error('Unsupported for files'); },
+                      file(callback) {
+                        if (typeof callback === 'function')
+                          Promise.resolve().then(() => callback(file));
+                      }
+                    });
+                  }
+                  let read = false;
+                  const prefix = path + '/';
+                  const children = records.filter(candidate => {
+                    if (candidate.kind === 1) return false;
+                    const candidatePath = pathOf(candidate);
+                    return candidatePath.startsWith(prefix)
+                      && !candidatePath.slice(prefix.length).includes('/');
+                  });
+                  return Object.freeze({
+                    name: record.name,
+                    fullPath: '/' + path,
+                    isDirectory: true,
+                    isFile: false,
+                    createReader() {
+                      return Object.freeze({
+                        readEntries(callback) {
+                          const entries = read ? [] : children.map(entryFor);
+                          read = true;
+                          if (typeof callback === 'function')
+                            Promise.resolve().then(() => callback(entries));
+                        }
+                      });
+                    },
+                    file() {}
+                  });
+                };
+                for (const record of records) {
+                  const type = String(record.type || '').toLowerCase();
+                  if (record.kind === 1) {
+                    strings[type] = new TextDecoder().decode(record.bytes);
+                    items.push(new WebSceneDataTransferItem(record));
+                    continue;
+                  }
+                  const path = pathOf(record);
+                  if (records.some(parent => parent.kind === 3
+                      && path.startsWith(pathOf(parent) + '/'))) continue;
+                  const file = filesByRecord.get(record) || null;
+                  items.push(new WebSceneDataTransferItem(
+                    record, file, entryFor(record)));
+                }
+                this._strings = strings;
+                this._files = indexedList(files);
+                this._items = indexedList(items);
+                this.effectAllowed = 'all';
+                this._dropEffect = 'none';
+              }
+              get types() {
+                const types = Object.keys(this._strings);
+                if (this._items[Symbol.iterator]
+                    && Array.from(this._items).some(item => item.kind === 'file')) {
+                  types.push('Files');
+                }
+                return Object.freeze(types);
+              }
+              get files() { return this._files; }
+              get items() { return this._items; }
+              get dropEffect() { return this._dropEffect; }
+              set dropEffect(value) {
+                if (['none', 'copy', 'link', 'move'].includes(value))
+                  this._dropEffect = value;
+              }
+              getData(type) { return this._strings[String(type).toLowerCase()] || ''; }
+              setData() {}
+              clearData() {}
+              setDragImage() {}
+            }
+            Object.defineProperties(globalThis, {
+              DataTransfer: { value: WebSceneDataTransfer, configurable: true },
+              DataTransferItem: {
+                value: WebSceneDataTransferItem, configurable: true
+              },
+              __webSceneCreateDragDataTransfer: {
+                configurable: true,
+                value(records) { return new WebSceneDataTransfer(records); }
+              }
+            });
+          })();
+        )JS";
+        auto script = v8::Script::Compile(
+            local_context,
+            js_string(isolate, std::string(source).c_str())).ToLocalChecked();
+        script->Run(local_context).ToLocalChecked();
+    }
+
     bool try_take_host_request(std::string& request)
     {
         std::lock_guard lock(host_request_mutex);
@@ -6753,6 +6915,12 @@ uint64_t v8_dom_runtime::last_resize_observers_nanoseconds() const noexcept
 bool v8_dom_runtime::dispatch_input(const webscene_input_event& event, bool defer_cursor_update)
 {
     return impl_->dispatch_input(event, defer_cursor_update)
+        && impl_->promote_pending_promise_error();
+}
+
+bool v8_dom_runtime::dispatch_drag(native_drag_event& event)
+{
+    return impl_->dispatch_drag(event)
         && impl_->promote_pending_promise_error();
 }
 

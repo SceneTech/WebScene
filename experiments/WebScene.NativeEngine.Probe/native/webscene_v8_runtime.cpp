@@ -6060,8 +6060,15 @@ struct v8_dom_runtime::implementation final {
             v8::Function::New(
                 local_context,
                 read_clipboard).ToLocalChecked()).Check();
+        global->Set(
+            local_context,
+            js_string(isolate, "__webSceneClipboardPasteTargetLive"),
+            v8::Function::New(
+                local_context,
+                clipboard_paste_target_live).ToLocalChecked()).Check();
         constexpr std::string_view source = R"JS(
           (() => {
+            const primaryClipboardReadFlag = 1 << 1;
             const supportedClipboardTypes = Object.freeze([
               'image/png', 'image/jpeg', 'image/tiff',
               'text/plain', 'text/html'
@@ -6213,10 +6220,14 @@ struct v8_dom_runtime::implementation final {
                 }
               });
             };
-            const dispatchClipboardEvent = (type, target, clipboardData) => {
+            const dispatchClipboardEvent = (
+              type, target, clipboardData, trusted = false) => {
               const event = new Event(type, {
                 bubbles: true, cancelable: true, composed: true
               });
+              if (trusted) {
+                Object.defineProperty(event, 'isTrusted', { value: true });
+              }
               Object.defineProperty(event, 'clipboardData', {
                 value: clipboardData, enumerable: true
               });
@@ -6224,11 +6235,29 @@ struct v8_dom_runtime::implementation final {
             };
             Object.defineProperty(globalThis, '__webSceneClipboardShortcut', {
               configurable: true,
-              value(type, target) {
+              value(type, target, readFlags = 0) {
                 if (!target || typeof target.dispatchEvent !== 'function') return false;
                 const transfer = createClipboardData();
                 const clipboardData = transfer.clipboardData;
                 if (type === 'paste') {
+                  const primary = readFlags === primaryClipboardReadFlag;
+                  if (primary) {
+                    __webSceneReadClipboard('text/plain', readFlags, target)
+                      .then(result => {
+                        if (result.type !== 'text/plain') {
+                          throw new DOMException(
+                            'The native host returned a non-text PRIMARY item',
+                            'DataError');
+                        }
+                        clipboardData.setData(
+                          'text/plain', new TextDecoder().decode(result.bytes));
+                        if (__webSceneClipboardPasteTargetLive(
+                          result._primaryTargetNodeId)) {
+                          dispatchClipboardEvent(type, target, clipboardData, true);
+                        }
+                      }).catch(() => {});
+                    return true;
+                  }
                   clipboard.read().then(async sourceItems => {
                     for (const sourceItem of sourceItems) {
                       for (const itemType of sourceItem.types) {
@@ -6681,10 +6710,16 @@ struct v8_dom_runtime::implementation final {
         return true;
     }
 
-    bool queue_external_navigation(dom_node& target, uint32_t activation_flags = 0U)
+    bool queue_external_navigation(
+        dom_node& target,
+        uint32_t activation_flags = 0U,
+        bool* matched_default = nullptr)
     {
         if (file_service_enabled.load() && target.tag == "input"
-            && target.attributes["type"] == "file") return queue_file_request(target, false);
+            && target.attributes["type"] == "file") {
+            if (matched_default != nullptr) *matched_default = true;
+            return queue_file_request(target, false);
+        }
         auto* document_root = css_cascade_root_for_node(target);
         auto* anchor = &target;
         while (anchor != nullptr && anchor->tag != "a") {
@@ -6695,6 +6730,7 @@ struct v8_dom_runtime::implementation final {
         v8::Context::Scope navigation_context_scope(context_for_node(*anchor));
         const auto authored = anchor->attributes.find("href");
         if (authored == anchor->attributes.end() || authored->second.empty()) return true;
+        if (matched_default != nullptr) *matched_default = true;
 
         if (const auto target_attribute = anchor->attributes.find("target");
             target_attribute != anchor->attributes.end()) {

@@ -1302,6 +1302,9 @@
     void cancel_detached_frame_context_tasks(
         v8::Local<v8::Context> local_context)
     {
+        cancel_native_host_promises_for_context(
+            local_context,
+            "The frame navigated before the native host completed the request");
         cancel_crypto_tasks_for_context(local_context);
         std::erase_if(pending_fetches, [&](auto& fetch) {
             if (fetch.context.Get(isolate) != local_context) return false;
@@ -2048,6 +2051,10 @@
         if (nodes.contains(active_element)) active_element = nullptr;
         if (nodes.contains(pointer_capture_target)) pointer_capture_target = nullptr;
         if (nodes.contains(pointer_down_target)) pointer_down_target = nullptr;
+        if (middle_paste_target_id != 0U
+            && node_ids.contains(middle_paste_target_id)) {
+            middle_paste_target_id = 0U;
+        }
         if (nodes.contains(active_pointer_target)) active_pointer_target = nullptr;
         if (nodes.contains(scrollbar_drag_target)) scrollbar_drag_target = nullptr;
         if (nodes.contains(hover_target)) hover_target = nullptr;

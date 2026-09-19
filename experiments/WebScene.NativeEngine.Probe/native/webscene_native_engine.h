@@ -2704,6 +2704,10 @@ enum {
 };
 enum {
     WEBSCENE_HOST_REQUEST_CLIPBOARD_REPLACE_V1 = 1U << 0U,
+    /* Selects the platform's primary/selection clipboard for a text/plain
+     * READ request. Ordinary Clipboard API and shortcut requests leave this
+     * clear and continue to address the normal clipboard. */
+    WEBSCENE_HOST_REQUEST_CLIPBOARD_PRIMARY_V1 = 1U << 1U,
     WEBSCENE_HOST_REQUEST_NAVIGATION_REPLACE_V1 = 1U << 0U,
     WEBSCENE_HOST_REQUEST_EXTERNAL_NEW_CONTEXT_V1 = 1U << 0U,
     WEBSCENE_HOST_REQUEST_EXTERNAL_BACKGROUND_V1 = 1U << 1U

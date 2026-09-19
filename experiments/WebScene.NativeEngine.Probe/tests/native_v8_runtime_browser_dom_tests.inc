@@ -5814,6 +5814,7 @@ void test_clipboard_read_host_completion(webscene_engine* engine)
     auto request = take_typed_host_request(engine);
     require(
         request.kind == WEBSCENE_HOST_REQUEST_CLIPBOARD_READ_V1
+            && request.flags == 0U
             && request.id != 0U && request.content_type == "text/plain"
             && request.bytes.empty(),
         "Clipboard.readText did not emit the typed host request");
@@ -5845,6 +5846,7 @@ void test_clipboard_read_host_completion(webscene_engine* engine)
         "unsupported Clipboard.read did not drain through the engine worker");
     request = take_typed_host_request(engine);
     require(request.kind == WEBSCENE_HOST_REQUEST_CLIPBOARD_READ_V1
+                && request.flags == 0U
                 && request.content_type == "*/*",
         "Clipboard.read did not emit its wildcard typed host request");
     constexpr uint8_t unsupported[] = {1U};
@@ -5901,7 +5903,8 @@ void test_clipboard_read_host_completion(webscene_engine* engine)
         "clipboard saturation batch did not drain through the engine worker");
     for (unsigned index = 0; index < 16U; ++index) {
         const auto pending = take_typed_host_request(engine);
-        require(pending.kind == WEBSCENE_HOST_REQUEST_CLIPBOARD_READ_V1,
+        require(pending.kind == WEBSCENE_HOST_REQUEST_CLIPBOARD_READ_V1
+                && pending.flags == 0U,
             "clipboard queue lost a bounded pending read");
         require(webscene_engine_complete_host_request_v1(
                     engine, pending.id, 1U, nullptr, nullptr, 0U, nullptr) != 0,
@@ -6047,6 +6050,7 @@ void test_native_clipboard_shortcut_events(webscene_engine*)
         "native paste shortcut was not consumed");
     request = take_typed_host_request(engine);
     require(request.kind == WEBSCENE_HOST_REQUEST_CLIPBOARD_READ_V1
+                && request.flags == 0U
                 && request.content_type == "*/*",
         "native paste event did not request a supported item from the host");
     constexpr uint8_t paste[] = {'s','h','o','r','t','c','u','t',' ','p','a','s','t','e'};
@@ -6087,6 +6091,7 @@ void test_native_clipboard_shortcut_events(webscene_engine*)
         "native image paste shortcut was not consumed");
     request = take_typed_host_request(engine);
     require(request.kind == WEBSCENE_HOST_REQUEST_CLIPBOARD_READ_V1
+                && request.flags == 0U
                 && request.content_type == "*/*",
         "native image paste did not request a supported item from the host");
     constexpr uint8_t png[] = {137U, 80U, 78U, 71U, 13U, 10U, 26U, 10U};
@@ -6127,6 +6132,152 @@ void test_native_clipboard_shortcut_events(webscene_engine*)
         "unsupported legacy command claimed success");
     require(!take_typed_host_request(engine),
         "native clipboard shortcuts retained an unexpected host request");
+    webscene_engine_destroy(engine);
+}
+
+void test_primary_selection_middle_paste(webscene_engine*)
+{
+    auto* engine = webscene_engine_create(0);
+    require(engine != nullptr, "PRIMARY middle-paste engine creation failed");
+    resize(engine, 400, 240, 9780U);
+    wait_for_consumed_inputs(
+        engine, 1U, "PRIMARY middle-paste viewport was not consumed");
+
+    execute_and_wait(engine, R"JS(
+        document.body.innerHTML = `
+          <textarea id="primary-editor"
+            style="position:absolute;left:0;top:0;width:240px;height:80px"></textarea>`;
+        globalThis.__primaryPasteEvents = [];
+        const editor = document.getElementById('primary-editor');
+        editor.addEventListener('mouseup', () => __primaryPasteEvents.push('mouseup'));
+        editor.addEventListener('auxclick', () => __primaryPasteEvents.push('auxclick'));
+        editor.addEventListener('paste', event => {
+          __primaryPasteEvents.push(
+            `paste:${event.clipboardData.getData('text/plain')}:${event.isTrusted}`);
+          event.preventDefault();
+        });
+    )JS", "native-primary-middle-paste-setup.js");
+
+    uint64_t sequence = 9781U;
+    const auto middle_click = [&](double x = 30, double y = 30) {
+        webscene_engine_metrics metrics{};
+        webscene_engine_get_metrics(engine, &metrics);
+        const webscene_input_event down{
+            WEBSCENE_INPUT_POINTER_DOWN,
+            4U | (2U << 8U), sequence++, x, y, 0, 0};
+        const webscene_input_event up{
+            WEBSCENE_INPUT_POINTER_UP,
+            2U << 8U, sequence++, x, y, 0, 0};
+        require(webscene_engine_enqueue(engine, &down) != 0
+                && webscene_engine_enqueue(engine, &up) != 0,
+            "PRIMARY middle gesture was rejected");
+        wait_for_consumed_inputs(
+            engine, metrics.enqueued_inputs + 2U,
+            "PRIMARY middle gesture was not consumed");
+    };
+
+    middle_click();
+    auto request = take_typed_host_request(engine);
+    require(request.kind == WEBSCENE_HOST_REQUEST_CLIPBOARD_READ_V1
+            && request.flags == WEBSCENE_HOST_REQUEST_CLIPBOARD_PRIMARY_V1
+            && request.content_type == "text/plain" && request.bytes.empty(),
+        "middle gesture did not issue one bounded PRIMARY text read");
+    require(!take_typed_host_request(engine),
+        "one middle gesture issued more than one PRIMARY read");
+    constexpr uint8_t primary_text[] = {'p','r','i','m','a','r','y'};
+    require(webscene_engine_complete_host_request_v1(
+                engine, request.id, 0U, "text/plain",
+                primary_text, sizeof(primary_text), nullptr) != 0,
+        "PRIMARY text completion was rejected");
+    require(evaluate(engine,
+                "JSON.stringify(__primaryPasteEvents)",
+                "native-primary-middle-paste-result.js")
+            == R"(["mouseup","auxclick","paste:primary:true"])",
+        "PRIMARY paste diverged from mouseup/auxclick/paste ordering");
+
+    execute_and_wait(engine, R"JS(
+        globalThis.__primaryMalformed = 'pending';
+        const editor = document.getElementById('primary-editor');
+        Promise.all([
+          __webSceneReadClipboard('text/plain', 4, editor)
+            .then(() => 'fulfilled', error => error.name),
+          __webSceneReadClipboard('*/*', 2, editor)
+            .then(() => 'fulfilled', error => error.name)
+        ]).then(values => __primaryMalformed = values);
+    )JS", "native-primary-malformed-flags.js");
+    require(evaluate(engine,
+                "JSON.stringify(__primaryMalformed)",
+                "native-primary-malformed-flags-result.js")
+            == R"(["NotSupportedError","NotSupportedError"])",
+        "malformed PRIMARY read flags or MIME reached the host");
+    require(!take_typed_host_request(engine),
+        "malformed PRIMARY request escaped to the host queue");
+
+    execute(engine, R"JS(
+        document.getElementById('primary-editor').addEventListener(
+          'mouseup', event => event.preventDefault(), { once: true });
+    )JS", "native-primary-cancel-mouseup.js");
+    middle_click();
+    require(!take_typed_host_request(engine),
+        "mouseup cancellation did not veto PRIMARY paste");
+
+    execute(engine, R"JS(
+        document.getElementById('primary-editor').addEventListener(
+          'auxclick', event => event.preventDefault(), { once: true });
+    )JS", "native-primary-cancel-auxclick.js");
+    middle_click();
+    require(!take_typed_host_request(engine),
+        "auxclick cancellation did not veto PRIMARY paste");
+
+    middle_click();
+    request = take_typed_host_request(engine);
+    execute(engine,
+        "document.getElementById('primary-editor').remove()",
+        "native-primary-detach-target.js");
+    require(webscene_engine_complete_host_request_v1(
+                engine, request.id, 0U, "text/plain",
+                primary_text, sizeof(primary_text), nullptr) != 0,
+        "stale PRIMARY completion was not safely admitted");
+    require(evaluate(engine,
+                "JSON.stringify(__primaryPasteEvents)",
+                "native-primary-detach-target-result.js")
+            == R"(["mouseup","auxclick","paste:primary:true","mouseup","auxclick","mouseup","auxclick","mouseup","auxclick"])",
+        "detached PRIMARY target received a late paste");
+
+    execute_and_wait(engine, R"JS(
+        document.body.innerHTML = `
+          <a id="primary-link" href="https://example.com/primary"
+            style="position:absolute;left:0;top:0;width:240px;height:80px">link</a>`;
+    )JS", "native-primary-anchor-setup.js");
+    middle_click();
+    request = take_typed_host_request(engine);
+    require(request.kind == WEBSCENE_HOST_REQUEST_OPEN_EXTERNAL_URL_V1
+            && request.flags
+                == (WEBSCENE_HOST_REQUEST_EXTERNAL_NEW_CONTEXT_V1
+                    | WEBSCENE_HOST_REQUEST_EXTERNAL_BACKGROUND_V1)
+            && request.url == "https://example.com/primary",
+        "middle anchor activation lost its existing external handoff");
+    require(!take_typed_host_request(engine),
+        "middle anchor activation also issued a PRIMARY read");
+
+    execute_and_wait(engine, R"JS(
+        document.body.innerHTML = `
+          <textarea id="primary-editor"
+            style="position:absolute;left:0;top:0;width:240px;height:80px"></textarea>`;
+    )JS", "native-primary-saturation-setup.js");
+    for (auto index = 0U; index < 17U; ++index) middle_click();
+    for (auto index = 0U; index < 16U; ++index) {
+        request = take_typed_host_request(engine);
+        require(request.kind == WEBSCENE_HOST_REQUEST_CLIPBOARD_READ_V1
+                && request.flags == WEBSCENE_HOST_REQUEST_CLIPBOARD_PRIMARY_V1,
+            "bounded PRIMARY request queue lost a pending read");
+        require(webscene_engine_complete_host_request_v1(
+                    engine, request.id, 1U,
+                    nullptr, nullptr, 0U, nullptr) != 0,
+            "bounded PRIMARY request could not be cancelled");
+    }
+    require(!take_typed_host_request(engine),
+        "PRIMARY middle gestures exceeded the 16-operation limit");
     webscene_engine_destroy(engine);
 }
 
@@ -6179,6 +6330,7 @@ void test_native_image_clipboard_maximum_payload(webscene_engine*)
         "maximum image paste shortcut was not consumed");
     const auto request = take_typed_host_request(engine);
     require(request.kind == WEBSCENE_HOST_REQUEST_CLIPBOARD_READ_V1
+                && request.flags == 0U
                 && request.content_type == "*/*",
         "maximum image paste did not request a supported host item");
 

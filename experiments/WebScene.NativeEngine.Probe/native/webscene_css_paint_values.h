@@ -68,32 +68,6 @@ inline std::optional<std::string> first_css_url(const std::string& value)
         return first_decoded_css_url(value);
     }
 
-inline std::vector<std::string> split_css_image_layers(std::string_view value)
-    {
-        std::vector<std::string> result;
-        size_t start = 0U;
-        size_t depth = 0U;
-        char quote = '\0';
-        for (size_t index = 0U; index <= value.size(); ++index) {
-            const auto character = index < value.size() ? value[index] : ',';
-            if (quote != '\0') {
-                if (character == '\\' && index + 1U < value.size()) ++index;
-                else if (character == quote) quote = '\0';
-                continue;
-            }
-            if (character == '\'' || character == '"') quote = character;
-            else if (character == '(') ++depth;
-            else if (character == ')' && depth > 0U) --depth;
-            else if (character == ',' && depth == 0U) {
-                auto layer = trim_value(value.substr(start, index - start));
-                if (layer.empty()) return {};
-                result.push_back(std::move(layer));
-                start = index + 1U;
-            }
-        }
-        return result;
-    }
-
 inline void apply_background_position(node_style& style, const std::string& value)
     {
         auto& background = style.mutable_background_image();

@@ -1,0 +1,90 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Nested beforeunload navigation contract</title>
+<body>
+<script>
+  const state = globalThis.__webSceneWptState = {
+    complete: false, harness: null, results: [], errors: [], diagnostics: []
+  };
+  const record = (name, condition, detail = null) => state.results.push({
+    name, status: condition ? "PASS" : "FAIL",
+    message: condition ? null : String(detail || "Contract failed"), stack: null
+  });
+  const finish = error => {
+    if (state.complete) return;
+    if (error) state.errors.push(String(error && error.stack || error));
+    const failed = state.results.find(result => result.status !== "PASS");
+    state.harness = error || failed
+      ? { status: 1, message: error ? String(error) : failed.message, stack: null }
+      : { status: 0, message: null, stack: null };
+    state.complete = true;
+  };
+
+  try {
+    const frame = document.createElement("iframe");
+    frame.setAttribute("sandbox", "allow-same-origin allow-scripts");
+    let beforeunloadCount = 0;
+    let pagehideCount = 0;
+    let observerSawCancellation = false;
+    const order = ["before src change"];
+    globalThis.__webSceneBeforeUnloadHandler = unloadEvent => {
+      ++beforeunloadCount;
+      order.push("beforeunload");
+      record("beforeunload has the navigation event shape",
+        unloadEvent.type === "beforeunload"
+          && unloadEvent.bubbles === false
+          && unloadEvent.cancelable === true);
+      unloadEvent.preventDefault();
+      unloadEvent.returnValue = "";
+    };
+    globalThis.__webSceneBeforeUnloadObserver = unloadEvent => {
+      observerSawCancellation = unloadEvent.defaultPrevented;
+    };
+    globalThis.__webScenePageHideHandler = () => ++pagehideCount;
+    frame.src = "resources/iframe-beforeunload-source.html";
+    document.body.appendChild(frame);
+    const proxy = frame.contentWindow;
+    let handled = false;
+    const timeout = setTimeout(() => finish(new Error(
+      "initial nested document did not become ready")), 3000);
+    proxy.addEventListener("DOMContentLoaded", event => {
+      if (handled) return;
+      handled = true;
+      try {
+        const initialDocument = event.target;
+        frame.src = "resources/iframe-same-origin-navigation-fake.html?replacement";
+        order.push("after src change");
+
+        record("beforeunload dispatch is synchronous and singular",
+          beforeunloadCount === 1
+            && order.join(",") === "before src change,beforeunload,after src change",
+          JSON.stringify({ beforeunloadCount, order }));
+        record("later listeners observe beforeunload cancellation",
+          observerSawCancellation);
+        record("the navigation source remains reflected synchronously",
+          frame.getAttribute("src")?.endsWith("?replacement"),
+          frame.getAttribute("src"));
+        record("the WindowProxy remains stable during the unload decision",
+          frame.contentWindow === proxy);
+        record("pagehide does not precede the synchronous beforeunload decision",
+          pagehideCount === 0, pagehideCount);
+        state.diagnostics.push({
+          beforeunloadCount, pagehideCount, observerSawCancellation,
+          initialHref: initialDocument.location.href
+        });
+        clearTimeout(timeout);
+        finish();
+        frame.remove();
+        delete globalThis.__webSceneBeforeUnloadHandler;
+        delete globalThis.__webSceneBeforeUnloadObserver;
+        delete globalThis.__webScenePageHideHandler;
+      } catch (error) {
+        clearTimeout(timeout);
+        finish(error);
+      }
+    });
+  } catch (error) {
+    finish(error);
+  }
+</script>
+</body>

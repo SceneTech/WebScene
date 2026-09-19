@@ -128,6 +128,15 @@ void test_same_origin_iframe_navigation_document_replacement()
         {std::string{address}, "<!doctype html><title>frame navigation</title><body></body>"},
         {"https://iframe-navigation.test/fake.html?id=markdown-preview",
             "<!doctype html><title>Fake</title><body></body>"},
+        {"https://iframe-navigation.test/fake.html?id=beforeunload",
+            "<!doctype html><title>Before unload</title><body>"
+            "<main id='original'>Original</main><script>"
+            "addEventListener('beforeunload',event=>parent.__iframeBeforeUnloadHandler(event));"
+            "addEventListener('pagehide',event=>parent.__iframePageHideHandler(event));"
+            "</script></body>"},
+        {"https://iframe-navigation.test/fake.html?id=allowed",
+            "<!doctype html><title>Allowed</title><body>"
+            "<main id='allowed'>Allowed</main></body>"},
         {"https://cross-origin.test/fake.html",
             "<!doctype html><title>Cross origin</title><body>"
             "<script>parent.__crossOriginEscape=true;</script></body>"}
@@ -222,6 +231,109 @@ void test_same_origin_iframe_navigation_document_replacement()
     require(webscene_engine_get_memory_metrics(engine, &memory_before) != 0,
         "iframe navigation memory baseline was unavailable");
     const auto rss_before = service_worker_test_current_rss_bytes();
+    execute(engine, R"JS(
+      globalThis.__iframeBeforeUnload = {
+        complete:false, error:null, beforeunload:0, pagehide:0,
+        synchronous:true, eventShape:true, vetoPreserved:false,
+        reentrantBlocked:false, allowedLoaded:false, stableProxy:false
+      };
+      (() => {
+        const state = __iframeBeforeUnload;
+        try {
+          const frame = document.createElement('iframe');
+          frame.setAttribute('sandbox', 'allow-same-origin allow-scripts');
+          let vetoEnabled = true;
+          globalThis.__iframeBeforeUnloadHandler = unloadEvent => {
+            ++state.beforeunload;
+            state.eventShape = state.eventShape
+              && unloadEvent.type === 'beforeunload'
+              && unloadEvent.bubbles === false
+              && unloadEvent.cancelable === true;
+            if (!vetoEnabled) return;
+            frame.src = './fake.html?id=reentrant';
+            unloadEvent.preventDefault();
+            unloadEvent.returnValue = '';
+          };
+          globalThis.__iframePageHideHandler = pagehideEvent => {
+            ++state.pagehide;
+            state.eventShape = state.eventShape
+              && pagehideEvent.bubbles === false
+              && pagehideEvent.cancelable === false
+              && pagehideEvent.persisted === false;
+          };
+          frame.src = './fake.html?id=beforeunload';
+          document.body.appendChild(frame);
+          const proxy = frame.contentWindow;
+          let initialLoaded = false;
+          proxy.addEventListener('DOMContentLoaded', event => {
+            try {
+              if (!initialLoaded) {
+                initialLoaded = true;
+                const initialDocument = event.target;
+                for (let attempt = 0; attempt < 50; ++attempt) {
+                  const before = state.beforeunload;
+                  initialDocument.open();
+                  state.synchronous = state.synchronous
+                    && state.beforeunload === before + 1;
+                }
+                for (let attempt = 0; attempt < 50; ++attempt) {
+                  const before = state.beforeunload;
+                  if ((attempt & 1) === 0) {
+                    frame.src = `./blocked.html?attempt=${attempt}`;
+                  } else {
+                    frame.setAttribute('src', `./blocked.html?attempt=${attempt}`);
+                  }
+                  state.synchronous = state.synchronous
+                    && state.beforeunload === before + 1;
+                }
+                state.vetoPreserved = state.pagehide === 0
+                  && initialDocument.querySelector('#original')?.textContent === 'Original'
+                  && frame.contentDocument === initialDocument
+                  && frame.contentWindow === proxy;
+                state.reentrantBlocked = !initialDocument.location.href.includes('reentrant');
+
+                vetoEnabled = false;
+                const before = state.beforeunload;
+                frame.src = './fake.html?id=allowed';
+                state.synchronous = state.synchronous
+                  && state.beforeunload === before + 1
+                  && state.pagehide === 1;
+                return;
+              }
+
+              state.allowedLoaded = event.target.querySelector('#allowed')?.textContent
+                === 'Allowed';
+              state.stableProxy = frame.contentWindow === proxy;
+              frame.remove();
+              delete globalThis.__iframeBeforeUnloadHandler;
+              delete globalThis.__iframePageHideHandler;
+              state.complete = true;
+            } catch (error) {
+              state.error = String(error && error.stack || error);
+              frame.remove();
+              state.complete = true;
+            }
+          });
+        } catch (error) {
+          state.error = String(error && error.stack || error);
+          state.complete = true;
+        }
+      })();
+    )JS", "iframe-beforeunload-lifecycle.js");
+    require(evaluate_until_equals(engine, "__iframeBeforeUnload.complete",
+            "iframe-beforeunload-complete.js", "true", 3'000) == "true",
+        "nested beforeunload gate timed out: "
+            + evaluate(engine, "JSON.stringify(__iframeBeforeUnload)",
+                "iframe-beforeunload-timeout-detail.js"));
+    require(evaluate(engine, R"JS((() => {
+      const s=__iframeBeforeUnload;
+      return s.error===null && s.beforeunload===101 && s.pagehide===1
+        && s.synchronous && s.eventShape && s.vetoPreserved
+        && s.reentrantBlocked && s.allowedLoaded && s.stableProxy;
+    })())JS", "iframe-beforeunload-result.js") == "true",
+        "nested beforeunload cancellation diverged: "
+            + evaluate(engine, "JSON.stringify(__iframeBeforeUnload)",
+                "iframe-beforeunload-result-detail.js"));
     execute(engine, R"JS(
       globalThis.__iframeLifecycleGate = {
         complete:false, error:null, cycles:0, maximumLiveFrames:0,

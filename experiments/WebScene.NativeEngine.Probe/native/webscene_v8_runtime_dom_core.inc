@@ -1386,6 +1386,7 @@
             actual_frame_contexts.erase(id);
             frame_hydration_states.erase(id);
             retire_iframe_navigation(id);
+            frame_beforeunload_dispatches.erase(id);
             frame_pagehide_dispatched.erase(id);
             actual_frame_windows.erase(id);
             actual_frame_documents.erase(id);
@@ -1946,6 +1947,7 @@
             actual_frame_contexts.erase(id);
             frame_hydration_states.erase(id);
             retire_iframe_navigation(id);
+            frame_beforeunload_dispatches.erase(id);
             frame_pagehide_dispatched.erase(id);
             actual_frame_documents.erase(id);
             frame_session_storage.erase(id);
@@ -2517,6 +2519,52 @@
             .first->second;
     }
 
+    bool dispatch_iframe_beforeunload(dom_node& frame)
+    {
+        const auto known = actual_frame_contexts.find(frame.id);
+        if (known == actual_frame_contexts.end() || known->second.IsEmpty()) {
+            return true;
+        }
+        if (frame_pagehide_dispatched.contains(frame.id)) return true;
+        // HTML blocks a navigation targeted at the browsing context which is
+        // already prompting to unload. A sibling frame remains independent.
+        if (!frame_beforeunload_dispatches.insert(frame.id).second) return false;
+        auto local_context = known->second.Get(isolate);
+        v8::Context::Scope context_scope(local_context);
+        auto target = local_context->Global();
+        v8::Local<v8::Value> dispatcher;
+        if (!target->Get(local_context, js_string(isolate, "dispatchEvent"))
+                .ToLocal(&dispatcher)
+            || !dispatcher->IsFunction()) {
+            frame_beforeunload_dispatches.erase(frame.id);
+            return true;
+        }
+        auto event = create_event_instance(local_context);
+        event->Set(local_context, js_string(isolate, "type"),
+            js_string(isolate, "beforeunload")).Check();
+        event->Set(local_context, js_string(isolate, "bubbles"),
+            v8::False(isolate)).Check();
+        event->Set(local_context, js_string(isolate, "cancelable"),
+            v8::True(isolate)).Check();
+        event->Set(local_context, js_string(isolate, "defaultPrevented"),
+            v8::False(isolate)).Check();
+        v8::TryCatch try_catch(isolate);
+        v8::Local<v8::Value> result;
+        v8::Local<v8::Value> arguments[] = {event};
+        const auto dispatched = dispatcher.As<v8::Function>()->Call(
+            local_context, target, 1, arguments).ToLocal(&result);
+        perform_microtask_checkpoint();
+        frame_beforeunload_dispatches.erase(frame.id);
+        if (!dispatched) {
+            frame_last_error_value = "Nested beforeunload dispatch failed: "
+                + describe_reported_exception(try_catch, local_context);
+            ++frame_script_error_count;
+            report_document_script_error(frame_last_error_value);
+            return true;
+        }
+        return !result->IsFalse();
+    }
+
     void dispatch_iframe_pagehide(dom_node& frame)
     {
         const auto known = actual_frame_contexts.find(frame.id);
@@ -2546,8 +2594,28 @@
         perform_microtask_checkpoint();
     }
 
-    void begin_iframe_navigation(dom_node& frame)
+    bool begin_iframe_navigation(dom_node& frame)
     {
+        const auto requested_source = [&]() -> std::optional<std::string> {
+            const auto source = frame.attributes.find("src");
+            return source == frame.attributes.end()
+                ? std::nullopt
+                : std::optional<std::string>{source->second};
+        }();
+        const auto restore_requested_source = [&] {
+            if (requested_source.has_value()) {
+                frame.attributes["src"] = *requested_source;
+            } else {
+                frame.attributes.erase("src");
+            }
+        };
+        if (!dispatch_iframe_beforeunload(frame)) {
+            restore_requested_source();
+            return false;
+        }
+        // A beforeunload handler cannot replace the navigation which caused
+        // its own dispatch. Preserve the initiator's reflected source.
+        restore_requested_source();
         if (active_drag_session.has_value()
             && active_drag_session->frame_owner_id == frame.id) {
             active_drag_session.reset();
@@ -2580,6 +2648,7 @@
             pending_frame_preparations.erase(preparation);
         }
         std::erase(pending_frame_hydrations, &frame);
+        return true;
     }
 
     void retire_iframe_navigation(uint32_t frame_id)

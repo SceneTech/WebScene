@@ -754,7 +754,7 @@
         auto* self = current(info.GetIsolate());
         auto* node = provisional_frame_owner(info.This());
         if (node == nullptr) return;
-        self->begin_iframe_navigation(*node);
+        if (!self->begin_iframe_navigation(*node)) return;
         node->attributes["frame-html"].clear();
         auto* target = unwrap_node(info.This());
         if (target != nullptr && target->tag == "html") {

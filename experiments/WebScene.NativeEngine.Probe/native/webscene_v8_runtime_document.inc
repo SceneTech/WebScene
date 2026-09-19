@@ -787,8 +787,9 @@
             return;
         }
         node->attributes[name] = value;
+        auto iframe_navigation_allowed = true;
         if (name == "src" && node->tag == "iframe") {
-            self->begin_iframe_navigation(*node);
+            iframe_navigation_allowed = self->begin_iframe_navigation(*node);
         }
         if (node->tag == "base" && name == "href") {
             self->invalidate_document_base(*node);
@@ -811,7 +812,9 @@
             node->style.inline_property_mask |= inline_property_mask;
         }
         else if (name == "src" && node->tag == "iframe") {
-            self->enqueue_iframe_hydration_if_needed(*node);
+            if (iframe_navigation_allowed) {
+                self->enqueue_iframe_hydration_if_needed(*node);
+            }
         }
         else if (name == "src" && node->tag == "img") {
             node->clear_replaced_image();

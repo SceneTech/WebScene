@@ -87,6 +87,7 @@
 
     void retire_document_realm(v8::Local<v8::Context> previous_context)
     {
+        dismiss_validation_message();
         active_drag_session.reset();
         active_outbound_drag.reset();
         outbound_drag_threshold_crossed = false;

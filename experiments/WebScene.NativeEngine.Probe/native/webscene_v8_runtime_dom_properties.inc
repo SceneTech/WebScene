@@ -3631,7 +3631,27 @@
 
     void dismiss_validation_message()
     {
+        validation_message_deadline.reset();
+        ++validation_message_generation;
         if(document.clear_validation_message()) pending_validation_announcement.reset();
+    }
+
+    bool service_validation_message_deadline()
+    {
+        if(!validation_message_deadline
+            || validation_message_deadline->deadline
+                > std::chrono::steady_clock::now()) return false;
+        const auto expired=*validation_message_deadline;
+        validation_message_deadline.reset();
+        if(expired.document_generation
+                != document_generation.load(std::memory_order_acquire)
+            || expired.message_generation!=validation_message_generation
+            || expired.target_id!=document.validation_message_target_id())
+            return false;
+        ++validation_message_generation;
+        // Timed dismissal is visual policy. The exactly-once semantic alert
+        // remains pending until the ordinary semantic capture consumes it.
+        return document.clear_validation_message();
     }
 
     bool validation_mutation_affects_active_message(const dom_node& subject)
@@ -3698,6 +3718,15 @@
         webscene_input_event synthetic{};
         if(!set_active_element(&anchor,synthetic)) return false;
         document.show_validation_message(target,anchor,message);
+        const auto message_generation=++validation_message_generation;
+        if(validation_message_timeout.count()!=0) {
+            validation_message_deadline=validation_message_deadline_record{
+                std::chrono::steady_clock::now()+validation_message_timeout,
+                document_generation.load(std::memory_order_acquire),
+                message_generation,target.id};
+        } else {
+            validation_message_deadline.reset();
+        }
         semantic_live_event_data_v1 event;
         event.top_document_generation=document_generation.load(
             std::memory_order_acquire);

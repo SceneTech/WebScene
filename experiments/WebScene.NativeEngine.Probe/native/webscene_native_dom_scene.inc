@@ -3420,6 +3420,46 @@ void native_document::append_scene(
             details_content.layout.width,
             0);
         if (border_width > 0.0F && details_content_opacity > 0.001F) {
+            const auto border_x = resolved_right_to_left(node)
+                ? details_content.layout.x + details_content.layout.width - border_width
+                : details_content.layout.x;
+            if (!details_content.border_image_value.empty()) {
+                if (details_content_opacity < 0.999F) {
+                    commands.push_back(webscene_scene_command{
+                        30U, 0U,
+                        border_x,
+                        details_content.layout.y,
+                        border_width,
+                        details_content.layout.height,
+                        static_cast<uint32_t>(std::clamp(
+                            std::lround(details_content_opacity * 255.0F),
+                            0L,
+                            255L)),
+                        node.id});
+                }
+                auto resource = std::string{"webscene-bg-v2\t"};
+                resource += details_content.border_image_value;
+                resource += "\tno-repeat\t0% 0%\t100% 100%";
+                commands.push_back(webscene_scene_command{
+                    21U,
+                    append_scene_string(resource, strings, string_bytes),
+                    border_x,
+                    details_content.layout.y,
+                    border_width,
+                    details_content.layout.height,
+                    0U,
+                    node.id});
+                if (details_content_opacity < 0.999F) {
+                    commands.push_back(webscene_scene_command{
+                        31U, 0U,
+                        border_x,
+                        details_content.layout.y,
+                        border_width,
+                        details_content.layout.height,
+                        0U,
+                        node.id});
+                }
+            } else {
             auto border_color = details_content.border_inline_start_current_color
                 ? resolved_foreground(node)
                 : details_content.border_inline_start_rgba;
@@ -3432,14 +3472,13 @@ void native_document::append_scene(
             commands.push_back(webscene_scene_command{
                 2U,
                 0U,
-                resolved_right_to_left(node)
-                    ? details_content.layout.x + details_content.layout.width - border_width
-                    : details_content.layout.x,
+                border_x,
                 details_content.layout.y,
                 border_width,
                 details_content.layout.height,
                 with_opacity(border_color),
                 node.id});
+            }
         }
     }
     for (const auto& entry : ordered_paint) {

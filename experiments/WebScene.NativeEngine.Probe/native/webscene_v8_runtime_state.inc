@@ -188,6 +188,8 @@
     std::unordered_set<uint64_t> detached_document_roots;
     std::unordered_map<uint64_t, v8::Global<v8::Object>> detached_documents;
     std::unordered_map<uint32_t, window_selection_state> window_selections;
+    static constexpr size_t maximum_live_ranges = 4096U;
+    std::vector<std::unique_ptr<range_binding>> range_bindings;
     // Document.getElementById overwhelmingly targets unique IDs. Cache the
     // first tree-order match per document root, and rebuild lazily after any
     // DOM generation change so duplicate IDs, reparents, detached nodes, and

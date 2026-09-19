@@ -1,0 +1,61 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Live Range boundaries cover Code OSS Custom Highlight inputs</title>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<div id="root"><span id="a">alpha</span><i id="start"></i><span id="b">beta</span><i id="end"></i></div>
+<script>
+  const root = document.getElementById('root');
+  const a = document.getElementById('a').firstChild;
+  const b = document.getElementById('b').firstChild;
+
+  test(() => {
+    const range = document.createRange();
+    range.setStart(a, 1);
+    range.setEnd(b, 3);
+    assert_true(range instanceof Range);
+    assert_equals(range.startContainer, a);
+    assert_equals(range.startOffset, 1);
+    assert_equals(range.endContainer, b);
+    assert_equals(range.endOffset, 3);
+    assert_equals(range.commonAncestorContainer, root);
+    assert_false(range.collapsed);
+  }, 'document.createRange retains cross-text-node UTF-16 boundaries');
+
+  test(() => {
+    const range = new Range();
+    range.setStartAfter(document.getElementById('start'));
+    range.setEndBefore(document.getElementById('end'));
+    assert_equals(range.startContainer, root);
+    assert_equals(range.startOffset, 2);
+    assert_equals(range.endContainer, root);
+    assert_equals(range.endOffset, 3);
+  }, 'marker sibling helpers retain parent child-index boundaries');
+
+  test(() => {
+    const range = new Range();
+    range.selectNodeContents(a);
+    assert_equals(range.startOffset, 0);
+    assert_equals(range.endOffset, 5);
+    assert_false(range.collapsed);
+  }, 'selectNodeContents uses UTF-16 text length');
+
+  test(() => {
+    const range = new Range();
+    range.setStart(a, 1);
+    range.setEnd(b, 3);
+    range.setStart(b, 4);
+    assert_true(range.collapsed);
+    assert_equals(range.endContainer, b);
+    assert_equals(range.endOffset, 4);
+    range.setEnd(a, 1);
+    assert_true(range.collapsed);
+    assert_equals(range.startContainer, a);
+    assert_equals(range.startOffset, 1);
+  }, 'crossed endpoints collapse onto the newly assigned boundary');
+
+  test(() => {
+    const range = new Range();
+    assert_throws_dom('IndexSizeError', () => range.setStart(a, 99));
+  }, 'out-of-range UTF-16 offsets are rejected atomically');
+</script>

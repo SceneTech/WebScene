@@ -1311,6 +1311,13 @@
   ],
   "candidate": [
     {
+      "path": "contracts/dom-range-boundaries-code-oss.html",
+      "type": "testharness",
+      "capabilities": ["range-constructor", "document-create-range", "range-utf16-boundaries", "range-marker-sibling-boundaries", "range-crossed-endpoint-collapse", "range-generation-lifecycle"],
+      "evidence": ["dom-range-boundary-points", "css-highlight-api-dependency", "vscode-oss-645f29c-chat-find-range-ledger", "vscode-oss-645f29c-markdown-diff-range-ledger"],
+      "reason": "Implementation-first WebScene #741 stack base for #740. Native companion coverage requires constructible and document-created Range objects, UTF-16 and child-index boundaries, Code OSS endpoint helpers, common-ancestor reflection, endpoint collapse, atomic errors, bounded weak lifetime, and zero frame/style/tree demand. Highlight registry and paint remain subsequent stacked work."
+    },
+    {
       "path": "contracts/css-details-content-static.html",
       "type": "testharness",
       "capabilities": ["details-content-pseudo-classification", "details-closed-content-suppression", "details-open-reflection", "details-summary-activation-isolation", "details-content-logical-static-inset-paint"],

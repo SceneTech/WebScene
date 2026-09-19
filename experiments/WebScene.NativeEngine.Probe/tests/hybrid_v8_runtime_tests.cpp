@@ -298,6 +298,15 @@ void test_web_crypto_aes_gcm_vectors_realms_and_bounds() {
         const jwk = await crypto.subtle.exportKey('jwk', key);
         if (jwk.kty !== 'oct' || jwk.alg !== 'A128GCM' || jwk.k !== 'AAAAAAAAAAAAAAAAAAAAAA')
           throw Error('JWK export changed');
+        let malformedJwk = '';
+        try {
+          await crypto.subtle.importKey('jwk', {
+            kty:'oct', k:'AAAAAAAAAAAAAAAAAAAAAA!', alg:'A128GCM',
+            ext:true, key_ops:['encrypt']
+          }, 'AES-GCM', true, ['encrypt']);
+        } catch (error) { malformedJwk = error.name; }
+        if (malformedJwk !== 'DataError')
+          throw Error(`malformed AES JWK rejection: ${malformedJwk}`);
         const jwkKey = await crypto.subtle.importKey('jwk', jwk, 'AES-GCM', true, ['decrypt']);
         if (hex(await crypto.subtle.decrypt({name:'AES-GCM',iv}, jwkKey, encrypted)) !== hex(plain))
           throw Error('JWK import changed');
@@ -525,6 +534,10 @@ void test_web_crypto_hmac_vectors_and_bounds() {
           'b617318655057264e28bc0b6fb378c8ef146be00')throw Error('RFC 2202 HMAC-SHA-1 vector changed');
         const jwk=await crypto.subtle.exportKey('jwk',key);
         if(jwk.alg!=='HS256'||jwk.k!=='CwsLCwsLCwsLCwsLCwsLCwsLCws')throw Error('HMAC JWK changed');
+        let malformedJwk='';try{await crypto.subtle.importKey('jwk',{
+          kty:'oct',k:'CwsLCwsLCwsLCwsLCwsLCwsLCws!',alg:'HS256',ext:true,key_ops:['sign']
+        },{name:'HMAC',hash:'SHA-256'},true,['sign']);}catch(error){malformedJwk=error.name;}
+        if(malformedJwk!=='DataError')throw Error(`malformed HMAC JWK rejection: ${malformedJwk}`);
         const copied=new Uint8Array(1024);copied.fill(0x5a);
         const pending=crypto.subtle.sign('HMAC',key,copied);copied.fill(0);keyBytes.fill(0);
         const expected=hex(await crypto.subtle.sign('HMAC',key,new Uint8Array(1024).fill(0x5a)));

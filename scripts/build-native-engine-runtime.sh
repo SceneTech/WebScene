@@ -447,6 +447,11 @@ if [[ ! -f "$mbedtls_license" ]]; then
   echo "Mbed TLS license was not found at '$mbedtls_license'." >&2
   exit 1
 fi
+c_header_path="$repo_root/experiments/WebScene.NativeEngine.Probe/native/webscene_native_engine.h"
+if [[ ! -f "$c_header_path" ]]; then
+  echo "Native engine public C ABI header is missing: '$c_header_path'." >&2
+  exit 1
+fi
 if [[ "$expected_kernel" == Linux ]] \
     && readelf -SW "$native_path" 2>&1 | grep -Eq '\.crel(\.|$)'; then
   echo "Native engine output contains unsupported CREL relocation sections: $native_path" >&2
@@ -461,6 +466,7 @@ pack_args=(
   -o "$output_dir"
   "-p:WebSceneNativeEngineRid=$rid"
   "-p:WebSceneNativeEnginePath=$native_path"
+  "-p:WebSceneNativeEngineCHeaderPath=$c_header_path"
   "-p:WebSceneNativeEngineIcuDataPath=$icu_data"
   "-p:WebSceneNativeEngineMedia=true"
   "-p:WebSceneNativeEngineMiniaudioLicensePath=$miniaudio_license"

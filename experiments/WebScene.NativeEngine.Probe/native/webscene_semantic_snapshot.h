@@ -133,7 +133,8 @@ struct semantic_snapshot_data_v1 final {
     uint64_t top_document_generation{};
     uint64_t layout_generation{};
     uint32_t flags{};
-    uint32_t focused_node_index{WEBSCENE_SEMANTIC_NONE_INDEX_V1};
+    uint32_t focused_node_index{
+        static_cast<uint32_t>(WEBSCENE_SEMANTIC_NONE_INDEX_V1)};
     std::vector<webscene_semantic_document_v1> documents;
     std::vector<webscene_semantic_node_v1> nodes;
     std::vector<webscene_semantic_relationship_v1> relationships;

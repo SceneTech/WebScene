@@ -597,12 +597,14 @@
         last_child_indices.reserve(result->nodes.capacity());
         std::vector<std::unordered_map<std::string, uint32_t>> ids;
         std::vector<std::unordered_map<std::string, const dom_node*>> all_id_nodes;
+        constexpr auto no_semantic_index =
+            static_cast<uint32_t>(WEBSCENE_SEMANTIC_NONE_INDEX_V1);
 
         const auto append_document = [&](uint32_t frame_owner, uint64_t frame_generation,
                                          std::string_view origin) -> uint32_t {
             if (result->documents.size() == maximum_semantic_documents_v1) {
                 result->flags |= WEBSCENE_SEMANTIC_SNAPSHOT_TRUNCATED_DOCUMENTS_V1;
-                return WEBSCENE_SEMANTIC_NONE_INDEX_V1;
+                return no_semantic_index;
             }
             webscene_semantic_document_v1 view{};
             view.struct_size = sizeof(view);
@@ -610,7 +612,7 @@
             view.document_generation = result->top_document_generation;
             view.frame_generation = frame_generation;
             view.frame_owner_dom_node_id = frame_owner;
-            view.root_node_index = WEBSCENE_SEMANTIC_NONE_INDEX_V1;
+            view.root_node_index = no_semantic_index;
             view.origin = result->append_string(origin);
             result->documents.push_back(view);
             ids.emplace_back();
@@ -661,8 +663,8 @@
                 view.dom_node_id = node.id;
                 view.document_index = active_document;
                 view.parent_index = parent_index;
-                view.first_child_index = WEBSCENE_SEMANTIC_NONE_INDEX_V1;
-                view.next_sibling_index = WEBSCENE_SEMANTIC_NONE_INDEX_V1;
+                view.first_child_index = no_semantic_index;
+                view.next_sibling_index = no_semantic_index;
                 const auto& semantic_document = result->documents[active_document];
                 view.semantic_id = semantic_identity(
                     semantic_document.document_generation,
@@ -689,7 +691,7 @@
                     node.id,
                     view.supported_actions});
                 captured.push_back({&node, active_document});
-                last_child_indices.push_back(WEBSCENE_SEMANTIC_NONE_INDEX_V1);
+                last_child_indices.push_back(no_semantic_index);
                 if (!node.id_attribute.empty()) {
                     ids[active_document].try_emplace(node.id_attribute, node_index);
                 }
@@ -716,7 +718,7 @@
                     break;
             }
         };
-        visit(document.body(), top_document, WEBSCENE_SEMANTIC_NONE_INDEX_V1, false);
+        visit(document.body(), top_document, no_semantic_index, false);
 
         const auto subtree_text = [&](const dom_node& root) {
             std::string text;

@@ -1,0 +1,27 @@
+{
+  "profile": "worker-terminated-capacity",
+  "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+  "runtime": "v8",
+  "viewport": {
+    "width": 800,
+    "height": 600,
+    "deviceScaleFactor": 1
+  },
+  "required": [],
+  "candidate": [
+    {
+      "path": "contracts/worker-terminated-capacity-reuse.html",
+      "type": "contract",
+      "capabilities": [
+        "dedicated-worker-termination",
+        "worker-execution-capacity-reuse",
+        "bounded-retained-worker-bindings"
+      ],
+      "evidence": [
+        "webscene-worker-lifecycle-capacity"
+      ],
+      "reason": "Product-neutral regression for reusing native Worker execution slots while terminated JavaScript wrappers remain safely callable."
+    }
+  ],
+  "harnessBlocked": []
+}

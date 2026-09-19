@@ -7,6 +7,8 @@
         std::deque<std::string> errors;
         bool stopped{false};
         bool wake_requested{false};
+        bool wrapper_weak{false};
+        bool wrapper_collected{false};
         uint64_t low_memory_requested{};
         uint64_t low_memory_completed{};
         v8::Isolate* running_isolate{};
@@ -32,10 +34,86 @@
     bool force_dedicated_isolate{false};
     bool worker_module_realm{false};
     static constexpr size_t maximum_dedicated_workers = 64U;
+    // Stopped Worker wrappers can remain reachable from JavaScript and must
+    // keep their callback data alive. Bound those lightweight bindings
+    // separately from the threads/isolates counted above.
+    static constexpr size_t maximum_worker_bindings = 256U;
     static constexpr size_t maximum_worker_queue_messages = 256U;
     static constexpr size_t maximum_worker_queue_bytes = 16U * 1024U * 1024U;
     static constexpr size_t maximum_worker_errors = 16U;
     static constexpr size_t maximum_worker_error_length = 4096U;
+
+    static void worker_wrapper_collected(
+        const v8::WeakCallbackInfo<worker_state>& info)
+    {
+        auto* state = info.GetParameter();
+        if (state == nullptr) return;
+        state->wrapper.Reset();
+        state->realm.Reset();
+        std::lock_guard lock(state->mutex);
+        state->wrapper_collected = true;
+    }
+
+    void release_stopped_worker_wrapper(worker_state& state)
+    {
+        {
+            std::lock_guard lock(state.mutex);
+            if (!state.stopped || state.wrapper_weak
+                || state.wrapper_collected) {
+                return;
+            }
+        }
+        // Join before weakening the wrapper. No worker thread may retain or
+        // publish more parent-realm work after this ownership transition.
+        state.stop();
+        if (state.wrapper.IsEmpty()) {
+            std::lock_guard lock(state.mutex);
+            state.wrapper_collected = true;
+            return;
+        }
+        state.wrapper.SetWeak(
+            &state,
+            worker_wrapper_collected,
+            v8::WeakCallbackType::kParameter);
+        std::lock_guard lock(state.mutex);
+        state.wrapper_weak = true;
+    }
+
+    void reclaim_collected_worker_bindings()
+    {
+        std::erase_if(dedicated_workers, [](const auto& worker) {
+            if (worker == nullptr) return true;
+            std::lock_guard lock(worker->mutex);
+            return worker->stopped && worker->wrapper_collected;
+        });
+    }
+
+    bool reserve_worker_binding()
+    {
+        for (const auto& worker : dedicated_workers) {
+            if (worker != nullptr) release_stopped_worker_wrapper(*worker);
+        }
+        reclaim_collected_worker_bindings();
+        if (dedicated_workers.size() < maximum_worker_bindings) return true;
+
+        // Native worker bindings are outside V8's heap. Give unreachable,
+        // already-terminated wrappers one collection opportunity before
+        // reporting the explicit retained-wrapper bound.
+        isolate->LowMemoryNotification();
+        reclaim_collected_worker_bindings();
+        return dedicated_workers.size() < maximum_worker_bindings;
+    }
+
+    size_t active_worker_count() const
+    {
+        size_t count = 0U;
+        for (const auto& worker : dedicated_workers) {
+            if (worker == nullptr) continue;
+            std::lock_guard lock(worker->mutex);
+            if (!worker->stopped) ++count;
+        }
+        return count;
+    }
 
     void request_worker_low_memory()
     {
@@ -140,6 +218,30 @@
             worker_constructor).Check();
     }
 
+    static v8::Local<v8::Private> worker_state_private(v8::Isolate* isolate)
+    {
+        return v8::Private::ForApi(
+            isolate, js_string(isolate, "WebScene.Worker.State"));
+    }
+
+    static worker_state* worker_state_from_receiver(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto realm = info.GetIsolate()->GetCurrentContext();
+        v8::Local<v8::Value> value;
+        if (info.This()->IsObject()
+            && info.This().As<v8::Object>()->GetPrivate(
+                realm, worker_state_private(info.GetIsolate())).ToLocal(&value)
+            && value->IsExternal()) {
+            return static_cast<worker_state*>(
+                value.As<v8::External>()->Value(
+                    v8::kExternalPointerTypeTagDefault));
+        }
+        info.GetIsolate()->ThrowException(v8::Exception::TypeError(
+            js_string(info.GetIsolate(), "Illegal invocation")));
+        return nullptr;
+    }
+
     static v8::MaybeLocal<v8::Value> worker_transfer(
         const v8::FunctionCallbackInfo<v8::Value>& info) {
         if (info.Length() < 2) return v8::Undefined(info.GetIsolate());
@@ -148,7 +250,8 @@
         return info[1];
     }
     static void worker_post_message_impl(const v8::FunctionCallbackInfo<v8::Value>& info) {
-        auto* state = static_cast<worker_state*>(info.Data().As<v8::External>()->Value(v8::kExternalPointerTypeTagDefault));
+        auto* state = worker_state_from_receiver(info);
+        if (state == nullptr) return;
         v8::Local<v8::Value> transfer;
         if (!worker_transfer(info).ToLocal(&transfer)) return;
         size_t remaining_bytes = 0U;
@@ -212,13 +315,22 @@
         if (state->notify_parent) state->notify_parent();
     }
     static void worker_terminate(const v8::FunctionCallbackInfo<v8::Value>& info) {
-        auto* state = static_cast<worker_state*>(info.Data().As<v8::External>()->Value(v8::kExternalPointerTypeTagDefault));
+        auto* state = worker_state_from_receiver(info);
+        if (state == nullptr) return;
         state->stop();
+        if (auto* self = current(info.GetIsolate()); self != nullptr)
+            self->release_stopped_worker_wrapper(*state);
     }
     static void worker_close(const v8::FunctionCallbackInfo<v8::Value>& info) {
         auto* self = current(info.GetIsolate());
         if (self && self->worker_owner) {
-            std::lock_guard lock(self->worker_owner->mutex); self->worker_owner->stopped = true;
+            auto* state = self->worker_owner;
+            {
+                std::lock_guard lock(state->mutex);
+                state->stopped = true;
+            }
+            state->ready.notify_all();
+            if (state->notify_parent) state->notify_parent();
         }
     }
 
@@ -290,7 +402,11 @@
     bool has_worker_messages() const {
         for (auto& state : dedicated_workers) {
             std::lock_guard lock(state->mutex);
-            if (!state->outgoing.empty() || !state->errors.empty()) return true;
+            if (!state->outgoing.empty() || !state->errors.empty()
+                || (state->stopped && !state->wrapper_weak
+                    && !state->wrapper_collected)) {
+                return true;
+            }
         }
         return false;
     }
@@ -305,7 +421,13 @@
                     const auto bytes=clone_packet_size(*packet);
                     state->outgoing_bytes=bytes>state->outgoing_bytes?0U:state->outgoing_bytes-bytes;
                 }
-                else continue;
+                else if (!state->stopped || state->wrapper_weak
+                    || state->wrapper_collected) continue;
+            }
+            if (!packet && error.empty()) {
+                release_stopped_worker_wrapper(*state);
+                reclaim_collected_worker_bindings();
+                return true;
             }
             return dispatch_worker_message(state->realm.Get(isolate),state->wrapper.Get(isolate),
                 packet ? &*packet : nullptr,error);
@@ -353,8 +475,12 @@
             if(!info[1].As<v8::Object>()->Get(realm,js_string(isolate,"name")).ToLocal(&name))return;
             if(!name->IsUndefined())worker_name=to_utf8(isolate,name);
         }
-        if (self->dedicated_workers.size() >= maximum_dedicated_workers) {
+        if (self->active_worker_count() >= maximum_dedicated_workers) {
             isolate->ThrowException(v8::Exception::RangeError(js_string(isolate,"Worker capacity exhausted"))); return;
+        }
+        if (!self->reserve_worker_binding()) {
+            isolate->ThrowException(v8::Exception::RangeError(
+                js_string(isolate,"Retained Worker wrapper capacity exhausted"))); return;
         }
         v8::Local<v8::Value> target_constructor;
         if (!realm->Global()->Get(realm,js_string(isolate,"EventTarget")).ToLocal(&target_constructor) || !target_constructor->IsFunction()) return;
@@ -368,8 +494,9 @@
         raw->notify_parent = self->runtime_work_available;
         raw->wrapper.Reset(isolate,target);raw->realm.Reset(isolate,realm);
         auto data=v8::External::New(isolate,raw,v8::kExternalPointerTypeTagDefault);
-        target->Set(realm,js_string(isolate,"postMessage"),v8::Function::New(realm,worker_post_message,data,1).ToLocalChecked()).Check();
-        target->Set(realm,js_string(isolate,"terminate"),v8::Function::New(realm,worker_terminate,data).ToLocalChecked()).Check();
+        target->SetPrivate(realm,worker_state_private(isolate),data).Check();
+        target->Set(realm,js_string(isolate,"postMessage"),v8::Function::New(realm,worker_post_message,{},1).ToLocalChecked()).Check();
+        target->Set(realm,js_string(isolate,"terminate"),v8::Function::New(realm,worker_terminate).ToLocalChecked()).Check();
         auto loader=self->load_resource_callback;
         auto root=self->resource_root;
         auto object_url_registry=self->object_url_registry;
@@ -434,6 +561,7 @@
                     global->Delete(realm,js_string(child->isolate,"window")).FromMaybe(false);
                     child->install_dedicated_worker_global_scope(realm);
                     std::string source,resolved,error;
+                    bool startup_failed = false;
                     if (embedded_source) { source = *embedded_source; resolved = url; }
                     const resource_request_context request_context{
                         WEBSCENE_RESOURCE_INITIATOR_SUBRESOURCE,
@@ -444,9 +572,19 @@
                         "GET", {}, {}, WEBSCENE_FETCH_CREDENTIALS_SAME_ORIGIN, {}};
                     if(!embedded_source && !child->load_text_resource(
                             url, {}, WEBSCENE_RESOURCE_SCRIPT, source, resolved,
-                            nullptr, request_context))report("Unable to load worker: "+url);
+                            nullptr, request_context)) {
+                        report("Unable to load worker: "+url);
+                        startup_failed = true;
+                    }
                     else if(!(module ? child->execute_module(realm,source,resolved,error)
-                                      : child->execute_in_context(realm,source,resolved,error)))report(error);
+                                      : child->execute_in_context(realm,source,resolved,error))) {
+                        report(error);
+                        startup_failed = true;
+                    }
+                    if (startup_failed) {
+                        std::lock_guard lock(raw->mutex);
+                        raw->stopped = true;
+                    }
                 }
                 while(true) {
                     std::optional<clone_packet> packet;
@@ -493,6 +631,12 @@
                 {std::lock_guard lock(raw->mutex);raw->running_isolate=nullptr;}
                 report(e.what());
             }
+            {
+                std::lock_guard lock(raw->mutex);
+                raw->running_isolate = nullptr;
+                raw->stopped = true;
+            }
+            if (raw->notify_parent) raw->notify_parent();
         });
         info.GetReturnValue().Set(target);
     }

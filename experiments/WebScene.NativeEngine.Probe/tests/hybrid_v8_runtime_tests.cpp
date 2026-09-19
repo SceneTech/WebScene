@@ -1603,6 +1603,121 @@ void test_worker_termination_race() {
         "Worker termination did not cancel active execution promptly");
 }
 
+void test_terminated_worker_capacity_reuse() {
+    webscene_native::native_document document;
+    webscene_native::v8_dom_runtime runtime(document,
+        []{return webscene_native::v8_dom_runtime::viewport_metrics{640,480,1,0};});
+    bool completed = false;
+    runtime.register_compiled_template("worker-capacity-result",
+        [&](auto& dom, const std::string& value) -> auto& {
+            require(value == "42", "replacement Worker response changed");
+            completed = true;
+            return dom.create_element("span");
+        });
+    require(runtime.initialize(), "Worker capacity reuse runtime failed");
+    require(runtime.execute(R"JS(
+      (() => {
+        const url = URL.createObjectURL(new Blob([
+          'onmessage = event => postMessage(event.data + 1);'
+        ], {type:'text/javascript'}));
+        const retired = [];
+        // Keep every stopped wrapper strongly reachable. These JavaScript
+        // objects still need safe postMessage/terminate callback data, but
+        // must no longer consume the 64 live execution-context slots.
+        for (let index = 0; index < 80; ++index) {
+          const worker = new Worker(url);
+          if (index === 0) {
+            const detachedTerminate = worker.terminate;
+            let rejected = false;
+            try { detachedTerminate(); }
+            catch (error) { rejected = error instanceof TypeError; }
+            if (!rejected)
+              throw Error('detached Worker method retained native state');
+          }
+          worker.terminate();
+          retired.push(worker);
+        }
+        if (retired[0].postMessage('ignored') !== undefined)
+          throw Error('postMessage on a terminated Worker changed shape');
+        retired[0].terminate();
+        globalThis.__webSceneRetiredWorkers = retired;
+
+        const replacement = new Worker(url);
+        URL.revokeObjectURL(url);
+        replacement.onerror = event => document.createCompiledTemplate(
+          'worker-capacity-result', `error:${event.message}`);
+        replacement.onmessage = event => {
+          replacement.terminate();
+          document.createCompiledTemplate(
+            'worker-capacity-result', String(event.data));
+        };
+        replacement.postMessage(41);
+      })();
+    )JS", "terminated-worker-capacity-reuse"), runtime.last_error().c_str());
+    for (unsigned index = 0; index < 5000 && !completed; ++index) {
+        require(runtime.pump_task(), runtime.last_error().c_str());
+        if (!runtime.has_pending_tasks())
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    require(completed,
+        "Terminated Worker wrappers permanently exhausted execution capacity");
+}
+
+void test_failed_worker_startup_releases_execution_capacity() {
+    webscene_native::native_document document;
+    webscene_native::v8_dom_runtime runtime(document,
+        []{return webscene_native::v8_dom_runtime::viewport_metrics{640,480,1,0};});
+    bool completed = false;
+    runtime.register_compiled_template("failed-worker-capacity-result",
+        [&](auto& dom, const std::string& value) -> auto& {
+            require(value == "42", "post-failure Worker response changed");
+            completed = true;
+            return dom.create_element("span");
+        });
+    require(runtime.initialize(), "Failed Worker capacity runtime failed");
+    require(runtime.execute(R"JS(
+      (() => {
+        const failedUrl = URL.createObjectURL(new Blob([
+          'throw new Error("expected startup failure");'
+        ], {type:'text/javascript'}));
+        const failed = [];
+        const createReplacement = () => {
+          URL.revokeObjectURL(failedUrl);
+          globalThis.__webSceneFailedWorkers = failed;
+          const replacementUrl = URL.createObjectURL(new Blob([
+            'onmessage = event => postMessage(event.data + 1);'
+          ], {type:'text/javascript'}));
+          const replacement = new Worker(replacementUrl);
+          URL.revokeObjectURL(replacementUrl);
+          replacement.onerror = event => document.createCompiledTemplate(
+            'failed-worker-capacity-result', `error:${event.message}`);
+          replacement.onmessage = event => {
+            replacement.terminate();
+            document.createCompiledTemplate(
+              'failed-worker-capacity-result', String(event.data));
+          };
+          replacement.postMessage(41);
+        };
+        const createFailure = () => {
+          const worker = new Worker(failedUrl);
+          failed.push(worker);
+          worker.onerror = () => {
+            if (failed.length < 80) createFailure();
+            else createReplacement();
+          };
+        };
+        createFailure();
+      })();
+    )JS", "failed-worker-capacity-reuse"), runtime.last_error().c_str());
+    for (unsigned index = 0; index < 10000 && !completed; ++index) {
+        require(runtime.pump_task(), runtime.last_error().c_str());
+        if (!runtime.has_pending_tasks())
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    require(completed,
+        "Failed Worker startup permanently exhausted execution capacity");
+}
+
 void test_worker_error_delivery() {
     webscene_native::native_document document;
     webscene_native::v8_dom_runtime runtime(document,
@@ -1806,6 +1921,8 @@ void test_worker_message_port_contracts() {
     test_iframe_worker_extension_host_port_bootstrap();
     test_editor_worker_rpc_and_ui_responsiveness();
     test_worker_termination_race();
+    test_terminated_worker_capacity_reuse();
+    test_failed_worker_startup_releases_execution_capacity();
     test_worker_error_delivery();
     test_worker_and_port_navigation_shutdown();
     test_window_messageerror_on_receiver_resource_exhaustion();
@@ -1866,6 +1983,11 @@ int main() {
             }
             if (selected == "messageport-worker-gc") {
                 test_worker_message_port_active_listener_gc();
+                return 0;
+            }
+            if (selected == "worker-lifecycle-capacity") {
+                test_terminated_worker_capacity_reuse();
+                test_failed_worker_startup_releases_execution_capacity();
                 return 0;
             }
         }

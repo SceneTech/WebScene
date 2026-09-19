@@ -1139,6 +1139,304 @@ void execute_and_wait_for_wrapper_retention_scene(
 }
 #endif
 
+void test_empty_panel_replace_children_skips_visual_work()
+{
+    auto* engine = webscene_engine_create(0);
+    require(engine != nullptr, "empty panel churn engine creation failed");
+
+    const auto acknowledge_latest_scene = [engine](const char* failure) {
+        for (auto attempt = 0; attempt < 100; ++attempt) {
+            const auto* scene = webscene_engine_acquire_latest_scene(engine);
+            if (scene != nullptr) {
+                require(webscene_scene_acknowledge(scene) != 0, failure);
+                webscene_scene_release(scene);
+                return;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        fail(failure);
+    };
+    const auto wait_for_publication = [engine](
+        uint64_t previous, const char* failure) {
+        webscene_engine_metrics result{};
+        for (auto attempt = 0; attempt < 100; ++attempt) {
+            webscene_engine_get_metrics(engine, &result);
+            if (result.published_scenes > previous) return result;
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        fail(failure);
+        return result;
+    };
+    acknowledge_latest_scene("empty panel initial scene could not be acknowledged");
+
+    execute_and_wait(engine, R"JS(
+        (() => {
+          globalThis.__emptyPanelConnected = 0;
+          globalThis.__emptyPanelDisconnected = 0;
+          class EmptyPanelRow extends HTMLElement {
+            connectedCallback() { ++globalThis.__emptyPanelConnected; }
+            disconnectedCallback() { ++globalThis.__emptyPanelDisconnected; }
+          }
+          customElements.define('empty-panel-row', EmptyPanelRow);
+          const style = document.createElement('style');
+          style.textContent = `
+            #empty-panel { display:block; width:240px; }
+            #empty-panel > empty-panel-row { display:block; height:20px; }
+            #empty-panel > empty-panel-row:last-child { width:120px; }
+          `;
+          document.head.appendChild(style);
+          const surface = document.createElement('main');
+          const panel = document.createElement('section');
+          panel.id = 'empty-panel';
+          surface.appendChild(panel);
+          document.body.appendChild(surface);
+          globalThis.__emptyPanelStyle = style;
+          globalThis.__emptyPanelSurface = surface;
+          globalThis.__emptyPanel = panel;
+          globalThis.__emptyPanelRows = [];
+        })()
+    )JS", "empty-panel-setup.js");
+    require(
+        evaluate(engine, "__emptyPanel.offsetWidth", "empty-panel-ready.js") == "240",
+        "empty panel fixture did not complete initial layout");
+    acknowledge_latest_scene("empty panel setup scene could not be acknowledged");
+
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+    std::this_thread::sleep_for(std::chrono::milliseconds(275));
+    execute_and_wait_for_wrapper_retention_scene(engine,
+        "document.body.setAttribute('data-empty-panel-diagnostic', 'before')",
+        "empty-panel-diagnostic-before.js");
+    acknowledge_latest_scene("empty panel baseline diagnostic scene could not be acknowledged");
+    const auto recascades_before = runtime_counter_diagnostic(
+        engine, "style-recascade-schedule-requests");
+#endif
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    webscene_engine_metrics connected_before{};
+    webscene_engine_get_metrics(engine, &connected_before);
+    webscene_engine_memory_metrics memory_before{sizeof(memory_before)};
+    require(webscene_engine_get_memory_metrics(engine, &memory_before) != 0,
+        "empty panel memory baseline was unavailable");
+    const auto connected = evaluate(engine, R"JS((() => {
+      for (let index = 0; index < 4096; ++index) __emptyPanel.replaceChildren();
+      return [
+        __emptyPanel.childNodes.length,
+        __emptyPanelConnected,
+        __emptyPanelDisconnected,
+        __emptyPanel.isConnected
+      ];
+    })())JS", "empty-panel-connected-churn.js");
+    require(
+        connected == "[0,0,0,true]",
+        "empty connected panel churn changed DOM or lifecycle state: " + connected);
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    webscene_engine_metrics connected_after{};
+    webscene_engine_get_metrics(engine, &connected_after);
+    require(
+        connected_after.layout_passes == connected_before.layout_passes
+            && connected_after.published_scenes == connected_before.published_scenes,
+        "empty connected panel churn scheduled layout or publication");
+    webscene_engine_memory_metrics connected_memory{sizeof(connected_memory)};
+    require(webscene_engine_get_memory_metrics(engine, &connected_memory) != 0
+            && connected_memory.native_dom_node_count
+                == memory_before.native_dom_node_count,
+        "empty connected panel churn allocated native DOM nodes");
+
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+    std::this_thread::sleep_for(std::chrono::milliseconds(275));
+    execute_and_wait_for_wrapper_retention_scene(engine,
+        "document.body.setAttribute('data-empty-panel-diagnostic', 'after')",
+        "empty-panel-diagnostic-after.js");
+    acknowledge_latest_scene("empty panel result diagnostic scene could not be acknowledged");
+    require(
+        runtime_counter_diagnostic(
+            engine, "style-recascade-schedule-requests")
+                == recascades_before,
+        "empty connected panel churn scheduled style recascades");
+#endif
+
+    execute_and_wait(engine, "__emptyPanel.remove()", "empty-panel-detach.js");
+    acknowledge_latest_scene("empty panel detach scene could not be acknowledged");
+    std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    webscene_engine_metrics detached_before{};
+    webscene_engine_get_metrics(engine, &detached_before);
+    const auto detached = evaluate(engine, R"JS((() => {
+      for (let index = 0; index < 4096; ++index) __emptyPanel.replaceChildren();
+      return [
+        __emptyPanel.childNodes.length,
+        __emptyPanelConnected,
+        __emptyPanelDisconnected,
+        __emptyPanel.isConnected
+      ];
+    })())JS", "empty-panel-detached-churn.js");
+    require(
+        detached == "[0,0,0,false]",
+        "empty detached panel churn changed DOM or lifecycle state: " + detached);
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    webscene_engine_metrics detached_after{};
+    webscene_engine_get_metrics(engine, &detached_after);
+    require(
+        detached_after.layout_passes == detached_before.layout_passes
+            && detached_after.published_scenes == detached_before.published_scenes,
+        "empty detached panel churn scheduled visual work");
+
+    require(
+        evaluate(engine, R"JS((() => {
+          for (let index = 0; index < 512; ++index) {
+            const row = document.createElement('empty-panel-row');
+            row.dataset.index = String(index);
+            __emptyPanelRows.push(row);
+          }
+          return [
+            __emptyPanel.children.length,
+            __emptyPanelConnected,
+            __emptyPanelDisconnected,
+            __emptyPanelRows.every(row => !row.isConnected)
+          ];
+        })())JS", "empty-panel-build-rows.js")
+            == "[0,0,0,true]",
+        "detached panel row construction changed identity or lifecycle state");
+    acknowledge_latest_scene("detached row construction scene could not be acknowledged");
+    std::this_thread::sleep_for(std::chrono::milliseconds(25));
+
+    webscene_engine_metrics reattach_before{};
+    webscene_engine_get_metrics(engine, &reattach_before);
+    execute_and_wait(engine,
+        "__emptyPanelSurface.appendChild(__emptyPanel)",
+        "empty-panel-reattach.js");
+    const auto reattached = wait_for_publication(
+        reattach_before.published_scenes,
+        "empty panel reattach did not publish a scene");
+    require(
+        evaluate(engine, R"JS((() => [
+          __emptyPanelConnected,
+          __emptyPanelDisconnected,
+          __emptyPanel.children.length,
+          __emptyPanel.isConnected
+        ]))())JS", "empty-panel-reattach-result.js")
+            == "[0,0,0,true]",
+        "empty panel reattach changed row lifecycle or DOM state");
+    require(
+        reattached.layout_passes == reattach_before.layout_passes + 1U
+            && reattached.published_scenes == reattach_before.published_scenes + 1U,
+        "empty panel reattach escaped one layout/publication");
+    acknowledge_latest_scene("empty panel reattach scene could not be acknowledged");
+
+    webscene_engine_metrics populate_before{};
+    webscene_engine_get_metrics(engine, &populate_before);
+    execute_and_wait(engine, R"JS(
+      const fragment = document.createDocumentFragment();
+      fragment.append(...__emptyPanelRows);
+      __emptyPanel.appendChild(fragment);
+    )JS", "empty-panel-populate.js");
+    const auto populated = wait_for_publication(
+        populate_before.published_scenes,
+        "connected panel population did not publish a scene");
+    require(
+        evaluate(engine, R"JS((() => [
+          __emptyPanelConnected,
+          __emptyPanelDisconnected,
+          __emptyPanel.children.length,
+          __emptyPanelRows.every((row, index) => row === __emptyPanel.children[index]),
+          getComputedStyle(__emptyPanel.lastElementChild).width
+        ]))())JS", "empty-panel-populate-result.js")
+            == R"([512,0,512,true,"120px"])",
+        "connected panel population changed row lifecycle, identity, or style");
+    require(
+        populated.layout_passes == populate_before.layout_passes + 1U
+            && populated.published_scenes == populate_before.published_scenes + 1U,
+        "connected panel population escaped one layout/publication");
+    acknowledge_latest_scene("connected panel population scene could not be acknowledged");
+
+    webscene_engine_metrics clear_before{};
+    webscene_engine_get_metrics(engine, &clear_before);
+    execute_and_wait(engine,
+        "__emptyPanel.replaceChildren()",
+        "populated-panel-clear.js");
+    const auto cleared = wait_for_publication(
+        clear_before.published_scenes,
+        "populated panel clear did not publish a scene");
+    require(
+        evaluate(engine, R"JS((() => [
+          __emptyPanel.children.length,
+          __emptyPanelConnected,
+          __emptyPanelDisconnected,
+          __emptyPanelRows.every(row => !row.isConnected)
+        ]))())JS", "populated-panel-clear-result.js")
+            == "[0,512,512,true]",
+        "populated panel clear skipped row disconnection semantics");
+    require(
+        cleared.layout_passes == clear_before.layout_passes + 1U
+            && cleared.published_scenes == clear_before.published_scenes + 1U,
+        "populated panel clear escaped one layout/publication");
+    acknowledge_latest_scene("populated panel clear scene could not be acknowledged");
+
+    webscene_engine_metrics restore_before{};
+    webscene_engine_get_metrics(engine, &restore_before);
+    execute_and_wait(engine,
+        "__emptyPanel.append(...__emptyPanelRows)",
+        "populated-panel-restore.js");
+    const auto restored = wait_for_publication(
+        restore_before.published_scenes,
+        "populated panel restore did not publish a scene");
+    require(
+        evaluate(engine, R"JS((() => [
+          __emptyPanelConnected,
+          __emptyPanelDisconnected,
+          __emptyPanel.children.length,
+          __emptyPanelRows.every((row, index) => row === __emptyPanel.children[index]),
+          getComputedStyle(__emptyPanel.lastElementChild).width
+        ]))())JS", "populated-panel-restore-result.js")
+            == R"([1024,512,512,true,"120px"])",
+        "populated panel restore changed row lifecycle, identity, or style");
+    require(
+        restored.layout_passes == restore_before.layout_passes + 1U
+            && restored.published_scenes == restore_before.published_scenes + 1U,
+        "populated panel restore escaped one layout/publication");
+    acknowledge_latest_scene("populated panel restore scene could not be acknowledged");
+
+    execute_and_wait(engine, R"JS(
+      __emptyPanelSurface.remove();
+      __emptyPanelStyle.remove();
+      delete globalThis.__emptyPanelRows;
+      delete globalThis.__emptyPanel;
+      delete globalThis.__emptyPanelSurface;
+      delete globalThis.__emptyPanelStyle;
+      delete globalThis.__emptyPanelConnected;
+      delete globalThis.__emptyPanelDisconnected;
+    )JS", "empty-panel-cleanup.js");
+    acknowledge_latest_scene("empty panel cleanup scene could not be acknowledged");
+    webscene_engine_metrics cleanup_metrics{};
+    webscene_engine_get_metrics(engine, &cleanup_metrics);
+    require(webscene_engine_request_low_memory(engine) != 0,
+        "empty panel low-memory request was rejected");
+    webscene_engine_memory_metrics memory_after{sizeof(memory_after)};
+    for (auto attempt = 0; attempt < 250; ++attempt) {
+        require(webscene_engine_get_memory_metrics(engine, &memory_after) != 0,
+            "empty panel final memory metrics were unavailable");
+        if (memory_after.low_memory_notifications
+                > memory_before.low_memory_notifications
+            && memory_after.native_dom_node_count
+                <= memory_before.native_dom_node_count + 8U) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    webscene_engine_metrics collected_metrics{};
+    webscene_engine_get_metrics(engine, &collected_metrics);
+    require(
+        memory_after.low_memory_notifications
+                > memory_before.low_memory_notifications
+            && memory_after.native_dom_node_count
+                <= memory_before.native_dom_node_count + 8U,
+        "empty panel row churn retained detached native DOM nodes");
+    require(
+        collected_metrics.layout_passes == cleanup_metrics.layout_passes
+            && collected_metrics.published_scenes == cleanup_metrics.published_scenes,
+        "empty panel low-memory collection scheduled visual work");
+    webscene_engine_destroy(engine);
+}
+
 void test_identical_selector_attribute_writes_do_not_schedule_transitions()
 {
     auto* engine = webscene_engine_create(0);
@@ -1817,6 +2115,7 @@ void test_resize_event_coalesces_attribute_selector_recascades(
         delete globalThis.__resizeHasBatchRoot;
         delete globalThis.__resizeAttributeBatchResult;
     )JS", "native-resize-attribute-batching-cleanup.js");
+    test_empty_panel_replace_children_skips_visual_work();
     test_identical_selector_attribute_writes_do_not_schedule_transitions();
 }
 

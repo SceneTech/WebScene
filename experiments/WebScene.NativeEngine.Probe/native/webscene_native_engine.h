@@ -998,6 +998,52 @@ WEBSCENE_API int32_t webscene_gpu_d3d11_seal_v3(void* import_owner);
 WEBSCENE_API int32_t webscene_gpu_d3d11_poll_v3(void* import_owner);
 WEBSCENE_API void webscene_gpu_d3d11_destroy_v3(void* import_owner);
 
+/* Windows D3D12/DXGI shared-image import envelope. Acquire duplicates the
+ * producer's NT texture handle and every attached DXGI fence handle atomically;
+ * pointers in the returned views are borrowed from shared_owner. The caller
+ * imports them into one same-adapter D3D12/Dawn device before releasing that
+ * owner. Imported native objects own their independent references.
+ *
+ * Releasing shared_owner only closes WebScene's duplicate handles. It neither
+ * retires GPU sampling nor completes consumer. Keep consumer alive until the
+ * presenting queue's completion primitive proves all image reads finished, then
+ * call webscene_gpu_image_complete_consumer_v3. This is the same explicit GPU
+ * retirement rule as the IOSurface and D3D11 paths.
+ */
+enum {
+    WEBSCENE_GPU_D3D12_SHARED_NT_HANDLE_V3 = UINT64_C(1) << 0U,
+    WEBSCENE_GPU_D3D12_SHARED_TEXTURE2D_V3 = UINT64_C(1) << 1U,
+    WEBSCENE_GPU_D3D12_SHARED_SIMULTANEOUS_ACCESS_V3 = UINT64_C(1) << 2U,
+    WEBSCENE_GPU_D3D12_SHARED_EXPLICIT_RETIREMENT_V3 = UINT64_C(1) << 3U,
+    WEBSCENE_GPU_D3D12_SHARED_PRODUCER_FENCES_V3 = UINT64_C(1) << 4U
+};
+typedef struct webscene_gpu_d3d12_shared_image_view_v3 {
+    uint32_t struct_size, version;
+    uint64_t capabilities;
+    void* borrowed_texture_handle;
+    uint64_t allocation_bytes;
+    uint64_t allocation;
+    uint64_t allocation_generation;
+    uint64_t content_serial;
+    uint32_t width, height;
+    uint32_t format, alpha, color_space, orientation;
+    uint32_t adapter_luid_low;
+    int32_t adapter_luid_high;
+    uint32_t producer_fence_count;
+    uint32_t reserved;
+} webscene_gpu_d3d12_shared_image_view_v3;
+typedef struct webscene_gpu_dxgi_fence_view_v3 {
+    uint32_t struct_size, version;
+    void* borrowed_fence_handle;
+    uint64_t signaled_value;
+} webscene_gpu_dxgi_fence_view_v3;
+WEBSCENE_API int32_t webscene_gpu_d3d12_acquire_shared_v3(
+    const webscene_gpu_image_consumer_v3* consumer,void** shared_owner,
+    webscene_gpu_d3d12_shared_image_view_v3* result);
+WEBSCENE_API uint8_t webscene_gpu_d3d12_get_producer_fence_v3(
+    const void* shared_owner,uint32_t index,webscene_gpu_dxgi_fence_view_v3* result);
+WEBSCENE_API void webscene_gpu_d3d12_release_shared_v3(void* shared_owner);
+
 /* Optional native producer synchronization. Borrowed event ownership follows the
  * consumer; callers must encode every dependency before reading an early image.
  * A successful zero count means no attached dependencies, not GPU completion.

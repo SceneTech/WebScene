@@ -72,11 +72,10 @@ public:
     }
     // Read-only native bridge lookup. The caller must keep consumer alive through
     // its GPU completion; returning this object neither begins access nor waits.
-    static const d3d12_shared_color& resolve(const owned_image_pool::consumer& consumer,
-        adapter_luid adapter) {
+    static const d3d12_shared_color& resolve(const owned_image_pool::consumer& consumer) {
         const auto metadata=consumer.describe();
         const auto anchor=consumer.provider();
-        if (!anchor || anchor->kind()!=image_provider_kind::d3d12 || !adapter.valid)
+        if (!anchor || anchor->kind()!=image_provider_kind::d3d12)
             throw std::invalid_argument("foreign D3D12 image provider");
         const auto provider=std::static_pointer_cast<storage>(anchor);
         std::lock_guard lock(provider->mutex);
@@ -84,11 +83,17 @@ public:
             if (slot.color && slot.metadata.allocation==metadata.allocation
                 && slot.metadata.allocation_generation==metadata.allocation_generation
                 && slot.metadata.content_serial==metadata.content_serial) {
-                if (!(slot.color->adapter()==adapter)) throw std::invalid_argument("cross-adapter D3D12 image");
                 return *slot.color;
             }
         }
         throw std::invalid_argument("D3D12 image allocation unavailable");
+    }
+    static const d3d12_shared_color& resolve(const owned_image_pool::consumer& consumer,
+        adapter_luid adapter) {
+        if (!adapter.valid) throw std::invalid_argument("unknown D3D12 consumer adapter");
+        const auto& source=resolve(consumer);
+        if (!(source.adapter()==adapter)) throw std::invalid_argument("cross-adapter D3D12 image");
+        return source;
     }
     uint64_t allocation_bytes() const { check_thread(); return storage_->bytes; }
     size_t busy_images() const { return pool_.busy_images(); }

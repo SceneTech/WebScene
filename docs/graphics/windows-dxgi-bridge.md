@@ -262,3 +262,35 @@ The hosted native test includes the implementation and unopened/null-queue check
 Portable tests pass locally (0.35 seconds). Windows compilation, successful fence
 opening, delayed producer ordering and failed-enqueue behavior remain unverified.
 The latest SDK run was pending when checked; that is not a Windows pass.
+
+## Public D3D12 shared-image consumer envelope
+
+ABI 3 now exposes a product-neutral D3D12/DXGI import envelope for native
+presenters. `webscene_gpu_d3d12_acquire_shared_v3` resolves the exact retained
+allocation and content generation, then duplicates its NT texture handle and the
+complete producer DXGI fence set before publishing anything. The immutable view
+also carries dimensions, color metadata, allocation size, adapter LUID and
+capability bits. Fence views preserve the producer's full 64-bit signal values.
+This gives a Dawn presenter enough information to import
+`SharedTextureMemoryDXGISharedHandle` and each
+`SharedFenceDXGISharedHandle` without borrowing producer-owned handles.
+
+The shared owner controls only the duplicate handles used during native import.
+Releasing it does not signal, wait for or retire presenter work. The original
+`webscene_gpu_image_consumer_v3` continues to anchor the producer allocation and
+must remain alive until the presenter proves completion on its own GPU timeline;
+only then may it call `webscene_gpu_image_complete_consumer_v3`. This separation
+prevents handle-import completion from being mistaken for GPU completion and
+matches the existing IOSurface and D3D11 lease rules.
+
+The source ABI layout assertions cover the new fixed wire structures. Windows
+compilation and device execution were intentionally not performed for this source
+change, so successful Dawn import, fence ordering, adapter rejection, device loss
+and leak-free repeated retirement remain qualification work.
+
+The installed CMake SDK still has macOS and Linux profiles only, while the Windows
+runtime package carries a DLL rather than a C/C++ development import library and
+headers. A Windows `WebSceneConfig.cmake` target would therefore advertise an
+artifact the package does not contain. Native hosts can resolve these ABI 3
+exports from the RID runtime DLL; adding a compiled CMake target belongs with a
+future Windows development SDK package.

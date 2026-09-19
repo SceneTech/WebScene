@@ -357,6 +357,14 @@ void test_compiled_css_invalidation_plans()
     require(compile(".left + .right > .target")[1].child_list.routes
         == std::vector<css_invalidation_route>{{css_invalidation_step::children}},
         "sibling mutations must start at the right-hand compound");
+    const auto radio_validity=compile(".choice:invalid");
+    require(radio_validity[0].attributes.at(
+            "$live-form-radio-group-checkedness").scope==invalidation_subject,
+        "radio group validity must compile a subject-routed checkedness dependency");
+    const auto radio_relational=compile(".field:has(.choice:invalid)");
+    require(radio_relational[0].attributes.at(
+            "$live-form-radio-group-checkedness").scope==invalidation_ancestors,
+        "relational radio validity must retain its compiled ancestor route");
 
     std::vector<css_child_list_bucket> buckets;
     const auto index = [&](size_t id, std::string_view text) {

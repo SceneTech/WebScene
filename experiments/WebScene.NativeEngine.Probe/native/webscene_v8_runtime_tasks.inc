@@ -2314,16 +2314,7 @@
 
     dom_node* form_owner(dom_node& control)
     {
-        const auto explicit_owner = control.attributes.find("form");
-        if (explicit_owner != control.attributes.end()) {
-            if (explicit_owner->second.empty()) return nullptr;
-            auto* candidate = document.find_by_id(explicit_owner->second);
-            return candidate != nullptr && candidate->tag == "form" ? candidate : nullptr;
-        }
-        for (auto* ancestor = control.parent; ancestor != nullptr; ancestor = ancestor->parent) {
-            if (ancestor->tag == "form") return ancestor;
-        }
-        return nullptr;
+        return const_cast<dom_node*>(forms::form_owner(document,control));
     }
 
     static bool is_submit_button(const dom_node* node)
@@ -3342,42 +3333,31 @@
 
     std::vector<dom_node*> radio_group_members(dom_node& target)
     {
-        const auto type=target.attributes.find("type");
-        if(target.tag!="input" || type==target.attributes.end()
-            || lower_html_name(type->second)!="radio") return {};
-        const auto name=target.attributes.find("name");
-        if(name==target.attributes.end() || name->second.empty()) return {&target};
-        auto* root=css_cascade_root_for_node(target);
-        if(root==nullptr) return {&target};
-        auto inputs=document.query_selector_all(*root,"input");
-        std::erase_if(inputs,[&](const auto* candidate) {
-            if(candidate==nullptr) return true;
-            const auto candidate_type=candidate->attributes.find("type");
-            const auto candidate_name=candidate->attributes.find("name");
-            return candidate_type==candidate->attributes.end()
-                || lower_html_name(candidate_type->second)!="radio"
-                || candidate_name==candidate->attributes.end()
-                || candidate_name->second!=name->second;
-        });
-        return inputs;
+        const auto members=forms::radio_group_members(document,target);
+        std::vector<dom_node*> result;
+        result.reserve(members.size());
+        for(const auto* member:members)
+            result.push_back(const_cast<dom_node*>(member));
+        return result;
     }
 
     bool set_native_checkedness(dom_node& target, bool checked)
     {
         const auto previous = native_checkedness(target);
+        const auto group=radio_group_members(target);
         target.mutable_form_control().checkedness_initialized = true;
         target.mutable_form_control().checkedness = checked;
         if (previous != checked) {
             if (is_connected(target)) {
                 recascade_form_checkedness_selector_transition(
                     target,previous,checked);
-                // A radio's :indeterminate state is shared by its group. The
-                // required-radio validity rule is a later slice, but preserve
-                // the existing group refresh for that already-supported pseudo.
-                for(auto* member:radio_group_members(target))
+                // Group validity and radio :indeterminate both consume the
+                // changed member's checkedness. Revisit only this radio group
+                // through their compiled dependency.
+                for(auto* member:group)
                     if(member!=&target)
-                        recascade_dynamic_state_subject(
-                            *member,"native-radio-group-checkedness");
+                        recascade_radio_group_checkedness_selector_transition(
+                            *member,target,previous,checked);
             } else {
                 document.mark_dirty();
             }
@@ -3413,27 +3393,12 @@
             return true;
         }
 
-        const auto name_iterator = target.attributes.find("name");
-        const auto name = name_iterator == target.attributes.end()
-            ? std::string{}
-            : name_iterator->second;
-        if (!name.empty()) {
-            for (auto* candidate : document.query_selector_all(active_root(), "input")) {
-                if (candidate == &target) continue;
-                const auto candidate_type = candidate->attributes.find("type");
-                const auto candidate_name = candidate->attributes.find("name");
-                if (candidate_type == candidate->attributes.end()
-                    || lower_html_name(candidate_type->second) != "radio"
-                    || candidate_name == candidate->attributes.end()
-                    || candidate_name->second != name
-                    || !native_checkedness(*candidate)) {
-                    continue;
-                }
-                if (activation.previously_checked_radio == nullptr) {
-                    activation.previously_checked_radio = candidate;
-                }
-                set_native_checkedness(*candidate, false);
+        for (auto* candidate : radio_group_members(target)) {
+            if (candidate == &target || !native_checkedness(*candidate)) continue;
+            if (activation.previously_checked_radio == nullptr) {
+                activation.previously_checked_radio = candidate;
             }
+            set_native_checkedness(*candidate, false);
         }
         activation.changed = set_native_checkedness(target, true);
         return true;

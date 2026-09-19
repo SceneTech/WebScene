@@ -317,15 +317,15 @@ inline bool compound_matches(const Host& host,const dom_node& node,
             } else if (name == "read-only") {
                 if (css::is_read_write(document,node)) return false;
             } else if (name == "valid") {
-                if (forms::validity_state(node) != forms::simple_validity_state::valid) return false;
+                if (forms::validity_state(document,node) != forms::simple_validity_state::valid) return false;
             } else if (name == "invalid") {
-                if (forms::validity_state(node) != forms::simple_validity_state::invalid) return false;
+                if (forms::validity_state(document,node) != forms::simple_validity_state::invalid) return false;
             } else if (name == "user-valid") {
                 if (!node.form_control().user_validity_interacted
-                    || forms::validity_state(node) != forms::simple_validity_state::valid) return false;
+                    || forms::validity_state(document,node) != forms::simple_validity_state::valid) return false;
             } else if (name == "user-invalid") {
                 if (!node.form_control().user_validity_interacted
-                    || forms::validity_state(node) != forms::simple_validity_state::invalid) return false;
+                    || forms::validity_state(document,node) != forms::simple_validity_state::invalid) return false;
             } else if (name == "placeholder-shown") {
                 if (!forms::supports_placeholder_selector(node)
                     || !node.attributes.contains("placeholder")
@@ -342,7 +342,7 @@ inline bool compound_matches(const Host& host,const dom_node& node,
             } else if (name == "default") {
                 if (!css::default_matches(document,node)) return false;
             } else if (name == "indeterminate") {
-                if (!css::indeterminate_matches(node)) return false;
+                if (!css::indeterminate_matches(document,node)) return false;
             } else if (name == "in-range") {
                 if (forms::range_state(node) != forms::numeric_range_state::in_range) return false;
             } else if (name == "out-of-range") {

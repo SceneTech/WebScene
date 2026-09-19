@@ -159,6 +159,24 @@ inline std::vector<css_compound_dependencies> compile_invalidation_plan(
                 add(output.attributes["$live-form-value"], route);
                 output.child_list_sensitive = true;
                 add(output.child_list, route);
+            } else if (pseudo.name == "target" || pseudo.name == "target-within") {
+                for (const auto* dependency : {"id", "$target-document"}) {
+                    add(output.attributes[dependency], route);
+                    if (pseudo.name == "target-within") {
+                        auto ancestor_route = route;
+                        ancestor_route.insert(
+                            ancestor_route.begin(), css_invalidation_step::ancestors);
+                        add(output.attributes[dependency], ancestor_route);
+                    }
+                }
+                if (pseudo.name == "target-within") {
+                    output.child_list_sensitive = true;
+                    add(output.child_list, route);
+                    auto ancestor_route = route;
+                    ancestor_route.insert(
+                        ancestor_route.begin(), css_invalidation_step::ancestors);
+                    add(output.child_list, ancestor_route);
+                }
             } else if (pseudo.name == "link" || pseudo.name == "any-link"
                 || pseudo.name == "local-link") {
                 add(output.attributes["href"], route);

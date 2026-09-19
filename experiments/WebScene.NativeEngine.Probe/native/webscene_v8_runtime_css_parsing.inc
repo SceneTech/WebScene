@@ -854,7 +854,7 @@
                         "root", "first-child", "last-child", "only-child",
                         "first-of-type", "last-of-type", "only-of-type", "empty",
                         "enabled", "disabled", "checked", "hover", "focus", "focus-visible",
-                        "link", "any-link", "local-link"};
+                        "link", "any-link", "local-link", "target", "target-within"};
                     if (name == "not" || name == "is" || name == "where") {
                         record_selector_feature(
                             "selector:pseudo-class:" + name,
@@ -1842,6 +1842,57 @@
                 }
                 auto hash = to_utf8(isolate, hash_value);
                 return hash;
+    }
+    dom_node* selector_target_for_hash(dom_node& root,std::string_view hash)
+    {
+        if(const auto known=selector_target_caches.find(&root);
+            known!=selector_target_caches.end()
+            &&known->second.hash==hash)return known->second.target;
+        auto raw=hash;
+        if(raw.starts_with('#'))raw.remove_prefix(1U);
+        const auto decoded=css::decoded_target_identifier(raw);
+        const auto find=[&](const auto& recurse,dom_node& node)->dom_node* {
+            if(!raw.empty()&&(node.id_attribute==raw
+                ||node.id_attribute==decoded))return &node;
+            for(auto* child:node.children) {
+                if(child==nullptr)continue;
+                if(child!=&root&&(child==active_css_cascade_root
+                    ||inactive_css_cascades.contains(child)))continue;
+                if(auto* match=recurse(recurse,*child);match!=nullptr)return match;
+            }
+            return nullptr;
+        };
+        auto* target=raw.empty()?nullptr:find(find,root);
+        std::vector<dom_node*> inclusive_chain;
+        for(auto* current=target;current!=nullptr;current=current->parent) {
+            inclusive_chain.push_back(current);
+            if(current==&root)break;
+        }
+        selector_target_caches.insert_or_assign(
+            &root,selector_target_cache_entry{
+                std::string(hash),target,std::move(inclusive_chain)});
+        return target;
+    }
+    bool selector_target_matches(const dom_node& node) const
+    {
+        auto& self=const_cast<implementation&>(*this);
+        auto* root=self.css_cascade_root_for_node(const_cast<dom_node&>(node));
+        if(root==nullptr)return false;
+        const auto hash=url_fragment(self.navigation_address_for_root(root));
+        return self.selector_target_for_hash(*root,hash)==&node;
+    }
+    bool selector_target_within_matches(const dom_node& node) const
+    {
+        auto& self=const_cast<implementation&>(*this);
+        auto* root=self.css_cascade_root_for_node(const_cast<dom_node&>(node));
+        if(root==nullptr)return false;
+        const auto hash=url_fragment(self.navigation_address_for_root(root));
+        for(auto* current=self.selector_target_for_hash(*root,hash);
+            current!=nullptr;current=current->parent) {
+            if(current==&node)return true;
+            if(current==root)break;
+        }
+        return false;
     }
     bool selector_local_link_matches(const dom_node& node) const
     {

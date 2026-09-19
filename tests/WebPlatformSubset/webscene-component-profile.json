@@ -2145,6 +2145,13 @@
       "reason": "WPT-aligned candidate contract for fragment-insensitive current-document URL matching plus routed href, effective-base, and same-document URL invalidation without retained browsing history."
     },
     {
+      "path": "contracts/css-target-within-invalidation.html",
+      "type": "contract",
+      "capabilities": ["target-pseudo-class", "target-within-pseudo-class", "fragment-target-invalidation", "target-identity-invalidation", "target-tree-invalidation"],
+      "evidence": ["selectors-level-4-target-within-pseudo-class", "native-selector-source-contract"],
+      "reason": "WPT-aligned contract for browsing-context-local target and inclusive ancestor matching with routed fragment, History, ID, and tree transition invalidation."
+    },
+    {
       "path": "contracts/focus-within-dynamic-border.html",
       "type": "contract",
       "capabilities": ["focus-within-matching", "focus-ancestor-invalidation", "blur-ancestor-invalidation", "grid-absolute-positioned-child", "logical-inset-stretch"],

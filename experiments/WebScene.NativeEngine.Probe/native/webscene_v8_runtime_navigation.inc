@@ -271,6 +271,7 @@
         actual_frame_documents.clear();
         frame_base_addresses.clear();
         local_link_selector_subjects.clear();
+        selector_target_caches.clear();
         provisional_frame_bodies.clear();
         frame_session_storage.clear();
         frame_local_storage.clear();

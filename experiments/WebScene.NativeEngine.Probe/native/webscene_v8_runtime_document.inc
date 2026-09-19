@@ -1560,6 +1560,11 @@
                 js_string(isolate, "href"),
                 get_location_href,
                 set_location_href).Check();
+            location->SetNativeDataProperty(
+                local_context,
+                js_string(isolate, "hash"),
+                get_location_hash,
+                set_location_hash).Check();
         }
         const auto scheme_end = href.find(':');
         const auto authority_start = href.find("://");
@@ -1592,9 +1597,6 @@
                 query_start,
                 (hash_start == std::string::npos ? href.size() : hash_start)
                     - query_start);
-        const auto hash = hash_start == std::string::npos
-            ? std::string{}
-            : href.substr(hash_start);
         location->SetPrivate(
             local_context,
             location_href_key(isolate),
@@ -1626,7 +1628,6 @@
             js_string(isolate, origin.c_str())).Check();
         location->Set(local_context, js_string(isolate, "pathname"), js_string(isolate, path.c_str())).Check();
         location->Set(local_context, js_string(isolate, "search"), js_string(isolate, search.c_str())).Check();
-        location->Set(local_context, js_string(isolate, "hash"), js_string(isolate, hash.c_str())).Check();
         if (!reuse_location) {
             location->Set(
                 local_context,

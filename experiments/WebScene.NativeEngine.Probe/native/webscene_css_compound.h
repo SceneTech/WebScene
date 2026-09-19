@@ -382,8 +382,18 @@ inline bool compound_matches(const Host& host,const dom_node& node,
             } else if (name == "dir") {
                 if (!css::direction_matches(document,node,argument)) return false;
             } else if (name == "target") {
-                const auto hash=host.selector_target_hash();
-                if (!hash || !css::target_matches(node,*hash)) return false;
+                if constexpr (requires { host.selector_target_matches(node); }) {
+                    if (!host.selector_target_matches(node)) return false;
+                } else {
+                    const auto hash=host.selector_target_hash();
+                    if (!hash || !css::target_matches(node,*hash)) return false;
+                }
+            } else if (name == "target-within") {
+                if constexpr (requires { host.selector_target_within_matches(node); }) {
+                    if (!host.selector_target_within_matches(node)) return false;
+                } else {
+                    return false;
+                }
             } else if (name == "link" || name == "any-link") {
                 if (!css::is_hyperlink_source(node)) return false;
             } else if (name == "local-link") {

@@ -90,12 +90,14 @@
     struct history_entry_state final {
         std::string url;
         std::optional<clone_packet> state;
+        uint64_t document_sequence{1U};
     };
 
     struct nested_history_state final {
         std::vector<history_entry_state> entries;
         size_t index{};
         size_t state_bytes{};
+        uint64_t next_document_sequence{1U};
         bool traversing{false};
     };
 

@@ -1,0 +1,87 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Nested cross-document history traversal contract</title>
+<body>
+<script>
+  const state = globalThis.__webSceneWptState = {
+    complete: false, harness: null, results: [], errors: [], diagnostics: []
+  };
+  const record = (name, condition, detail = null) => state.results.push({
+    name, status: condition ? "PASS" : "FAIL",
+    message: condition ? null : String(detail || "Contract failed"), stack: null
+  });
+  const finish = error => {
+    if (state.complete) return;
+    if (error) state.errors.push(String(error && error.stack || error));
+    const failed = state.results.find(result => result.status !== "PASS");
+    state.harness = error || failed
+      ? { status: 1, message: error ? String(error) : failed.message, stack: null }
+      : { status: 0, message: null, stack: null };
+    state.complete = true;
+  };
+
+  const frame = document.createElement("iframe");
+  frame.src = "resources/iframe-cross-document-history-a.html";
+  let proxy = null;
+  let loads = 0;
+  let firstA = null;
+  let firstB = null;
+  let restoredA = null;
+  const popstates = [];
+  globalThis.__webSceneCrossDocumentPopstate = (page, value, source) => {
+    try {
+      popstates.push(`${page}:${value && value.page || "null"}`);
+      if (page === "a") {
+        record("back restores state into a replacement A document",
+          value && value.page === "a" && source === frame.contentDocument
+            && source !== firstA && proxy.location.hash === "#saved");
+        restoredA = source;
+        setTimeout(() => proxy.history.forward(), 0);
+      } else {
+        record("forward restores B without carrying A state",
+          value === null && source === frame.contentDocument
+            && source !== firstB && source !== restoredA);
+        record("cross-document traversal dispatches one popstate per commit",
+          popstates.join(",") === "a:a,b:null", popstates);
+        record("the owner-facing WindowProxy remains stable",
+          frame.contentWindow === proxy && proxy.history.length === 2);
+        state.diagnostics.push({ loads, popstates: [...popstates] });
+        delete globalThis.__webSceneCrossDocumentPopstate;
+        frame.remove();
+        finish();
+      }
+    } catch (error) {
+      frame.remove();
+      finish(error);
+    }
+  };
+  frame.addEventListener("load", () => {
+    try {
+      ++loads;
+      const page = frame.contentDocument.querySelector("#page").textContent;
+      if (loads === 1) {
+        firstA = frame.contentDocument;
+        proxy.history.replaceState({ page: "a" }, "", "#saved");
+        frame.src = "resources/iframe-cross-document-history-b.html";
+      } else if (loads === 2) {
+        firstB = frame.contentDocument;
+        record("ordinary child navigation appends one bounded history entry",
+          page === "b" && proxy.history.length === 2
+            && proxy.history.state === null);
+        proxy.history.back();
+      } else if (loads === 3) {
+        record("history traversal does not rewrite the iframe src attribute",
+          page === "a"
+            && frame.getAttribute("src")
+              === "resources/iframe-cross-document-history-b.html");
+      }
+    } catch (error) {
+      frame.remove();
+      finish(error);
+    }
+  });
+  document.body.appendChild(frame);
+  proxy = frame.contentWindow;
+  setTimeout(() => finish(new Error("nested cross-document history timed out")), 4000);
+</script>
+</body>

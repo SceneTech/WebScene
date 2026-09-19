@@ -1,0 +1,40 @@
+{
+  "profile": "webscene-iframe-cross-document-history-1",
+  "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+  "runtime": "v8",
+  "viewport": {
+    "width": 800,
+    "height": 600,
+    "deviceScaleFactor": 1
+  },
+  "required": [
+    {
+      "path": "contracts/iframe-cross-document-history-traversal.html",
+      "type": "contract",
+      "capabilities": [
+        "nested-cross-document-history-back-forward",
+        "nested-history-state-restoration",
+        "nested-history-popstate-after-replacement",
+        "nested-history-windowproxy-identity",
+        "nested-history-reflected-src-preservation"
+      ],
+      "evidence": [
+        "wpt-traverse-the-history-1-2c705104",
+        "wpt-history-cross-document-2c705104",
+        "native-iframe-cross-document-history"
+      ],
+      "reason": "Pinned-WPT-derived contract for bounded child back/forward traversal across active documents, restored state and stable browsing-context identity."
+    }
+  ],
+  "harnessBlocked": [],
+  "excluded": [
+    {
+      "path": "html/browsers/history/the-history-interface/traverse_the_history_1.html",
+      "reason": "The upstream test uses hosted top-level and child joint session history. This contract isolates two active child documents while preserving its queued traversal and state restoration boundary."
+    },
+    {
+      "path": "html/browsers/browsing-the-web/history-traversal/",
+      "reason": "The broader upstream directory includes bfcache, persisted user state, pageshow and joint top-level traversal. Those require infrastructure outside this active-document replacement slice."
+    }
+  ]
+}

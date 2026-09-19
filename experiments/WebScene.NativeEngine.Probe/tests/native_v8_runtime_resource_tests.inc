@@ -144,6 +144,30 @@ void test_same_origin_iframe_navigation_document_replacement()
         });
       }
       </script></body>)HTML";
+    constexpr std::string_view cross_document_history_a = R"HTML(<!doctype html><body>
+      <main id="page">a</main><script>
+      for (const type of ['beforeunload','pagehide','unload']) {
+        addEventListener(type, event =>
+          parent.__crossDocumentHistoryLifecycle('a', type, event, document));
+      }
+      document.addEventListener('visibilitychange', event =>
+        parent.__crossDocumentHistoryLifecycle(
+          'a', 'visibilitychange', event, document));
+      addEventListener('popstate', event =>
+        parent.__crossDocumentHistoryPopstate('a', event.state, document));
+      </script></body>)HTML";
+    constexpr std::string_view cross_document_history_b = R"HTML(<!doctype html><body>
+      <main id="page">b</main><script>
+      for (const type of ['beforeunload','pagehide','unload']) {
+        addEventListener(type, event =>
+          parent.__crossDocumentHistoryLifecycle('b', type, event, document));
+      }
+      document.addEventListener('visibilitychange', event =>
+        parent.__crossDocumentHistoryLifecycle(
+          'b', 'visibilitychange', event, document));
+      addEventListener('popstate', event =>
+        parent.__crossDocumentHistoryPopstate('b', event.state, document));
+      </script></body>)HTML";
     resource_server server{.content = {
         {std::string{address}, "<!doctype html><title>frame navigation</title><body></body>"},
         {"https://iframe-navigation.test/fake.html?id=markdown-preview",
@@ -181,6 +205,12 @@ void test_same_origin_iframe_navigation_document_replacement()
             std::string{history_reload_page}},
         {"https://iframe-navigation.test/fake.html?id=history-reload#two",
             std::string{history_reload_page}},
+        {"https://iframe-navigation.test/fake.html?id=history-a",
+            std::string{cross_document_history_a}},
+        {"https://iframe-navigation.test/fake.html?id=history-a#saved",
+            std::string{cross_document_history_a}},
+        {"https://iframe-navigation.test/fake.html?id=history-b",
+            std::string{cross_document_history_b}},
         {"https://cross-origin.test/fake.html",
             "<!doctype html><title>Cross origin</title><body>"
             "<script>parent.__crossOriginEscape=true;</script></body>"}
@@ -634,6 +664,90 @@ void test_same_origin_iframe_navigation_document_replacement()
     require(server.requests.load(std::memory_order_relaxed)
             == requests_before_nested_history + 2,
         "nested traversal or unload reentrancy admitted an extra resource request");
+    const auto requests_before_cross_document_history = server.requests.load(
+        std::memory_order_relaxed);
+    execute(engine, R"JS(
+      globalThis.__crossDocumentHistory = {
+        complete:false,error:null,loads:[],popstates:[],lifecycle:[],
+        stable:true,restoredA:false,restoredB:false,reflectedSource:false
+      };
+      (() => {
+        const state=__crossDocumentHistory;
+        const frame=document.createElement('iframe');
+        frame.setAttribute('sandbox','allow-same-origin allow-scripts');
+        frame.src='./fake.html?id=history-a';
+        document.body.appendChild(frame);
+        const proxy=frame.contentWindow;
+        let firstA=null,firstB=null;
+        globalThis.__crossDocumentHistoryLifecycle=(page,type,event,source)=>{
+          state.lifecycle.push(`${page}:${type}`);
+          state.stable=state.stable && frame.contentWindow===proxy
+            && source===frame.contentDocument;
+        };
+        globalThis.__crossDocumentHistoryPopstate=(page,value,source)=>{
+          state.popstates.push(`${page}:${value?.page||'null'}`);
+          state.stable=state.stable && frame.contentWindow===proxy
+            && source===frame.contentDocument;
+          if(page==='a'){
+            state.restoredA=value?.page==='a' && source!==firstA
+              && proxy.location.hash==='#saved' && proxy.history.length===2;
+            setTimeout(()=>proxy.history.forward(),0);
+          }else{
+            state.restoredB=value===null && source!==firstB
+              && proxy.history.length===2;
+            setTimeout(()=>{
+              delete globalThis.__crossDocumentHistoryLifecycle;
+              delete globalThis.__crossDocumentHistoryPopstate;
+              frame.remove();state.complete=true;
+            },0);
+          }
+        };
+        proxy.addEventListener('DOMContentLoaded',event=>{
+          try{
+            const page=event.target.querySelector('#page')?.textContent;
+            state.loads.push(page);
+            state.stable=state.stable && frame.contentWindow===proxy
+              && frame.contentDocument===event.target;
+            if(state.loads.length===1){
+              firstA=event.target;
+              proxy.history.replaceState({page:'a'},'','#saved');
+              frame.src='./fake.html?id=history-b';
+            }else if(state.loads.length===2){
+              firstB=event.target;
+              if(proxy.history.length!==2 || proxy.history.state!==null)
+                throw new Error('page b history did not retain two entries');
+              proxy.history.back();
+            }else if(state.loads.length===3){
+              state.reflectedSource=
+                frame.getAttribute('src')==='./fake.html?id=history-b';
+            }
+          }catch(error){
+            state.error=String(error&&error.stack||error);
+            frame.remove();state.complete=true;
+          }
+        });
+      })();
+    )JS", "iframe-cross-document-history.js");
+    require(evaluate_until_equals(engine, "__crossDocumentHistory.complete",
+            "iframe-cross-document-history-complete.js", "true", 4'000) == "true",
+        "nested cross-document history contract timed out: "
+            + evaluate(engine, "JSON.stringify(__crossDocumentHistory)",
+                "iframe-cross-document-history-timeout-detail.js"));
+    require(evaluate(engine, R"JS((()=>{const s=__crossDocumentHistory;
+      return s.error===null && s.stable && s.restoredA && s.restoredB
+        && s.reflectedSource && s.loads.join(',')==='a,b,a,b'
+        && s.popstates.join(',')==='a:a,b:null'
+        && s.lifecycle.join(',')===
+          'a:beforeunload,a:pagehide,a:visibilitychange,a:unload,'+
+          'b:beforeunload,b:pagehide,b:visibilitychange,b:unload,'+
+          'a:beforeunload,a:pagehide,a:visibilitychange,a:unload';
+    })())JS", "iframe-cross-document-history-result.js") == "true",
+        "nested cross-document history diverged: "
+            + evaluate(engine, "JSON.stringify(__crossDocumentHistory)",
+                "iframe-cross-document-history-result-detail.js"));
+    require(server.requests.load(std::memory_order_relaxed)
+            == requests_before_cross_document_history + 4,
+        "nested cross-document traversal admitted an unexpected resource request");
     execute(engine, R"JS(
       globalThis.__iframeLifecycleGate = {
         complete:false, error:null, cycles:0, maximumLiveFrames:0,

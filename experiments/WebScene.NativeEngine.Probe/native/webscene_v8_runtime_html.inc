@@ -749,7 +749,11 @@
             return false;
         }
         frame.attributes["src"] = resolved;
-        if (!begin_iframe_navigation(frame)) return false;
+        if (replace) frame_history_replace_navigations.insert(frame.id);
+        if (!begin_iframe_navigation(frame)) {
+            frame_history_replace_navigations.erase(frame.id);
+            return false;
+        }
         enqueue_iframe_hydration_if_needed(frame);
         record_feature(
             "web-api",
@@ -1123,7 +1127,11 @@
         auto* self = current(info.GetIsolate());
         auto* node = provisional_frame_owner(info.This());
         if (node == nullptr) return;
-        if (!self->begin_iframe_navigation(*node)) return;
+        self->frame_history_replace_navigations.insert(node->id);
+        if (!self->begin_iframe_navigation(*node)) {
+            self->frame_history_replace_navigations.erase(node->id);
+            return;
+        }
         node->attributes["frame-html"].clear();
         auto* target = unwrap_node(info.This());
         if (target != nullptr && target->tag == "html") {

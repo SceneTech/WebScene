@@ -358,6 +358,8 @@
         hidden_frame_document_roots.clear();
         nested_history_states.clear();
         frame_reload_navigations.clear();
+        frame_history_traversals.clear();
+        frame_history_replace_navigations.clear();
         frame_reload_reflected_sources.clear();
         frame_event_listeners.clear();
         window_selections.clear();

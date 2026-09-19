@@ -2500,6 +2500,8 @@
             return restore_outer(frame_hydration_result::failed);
         }
         perform_microtask_checkpoint();
+        complete_nested_cross_document_history_traversal(
+            frame, local_frame_context);
         frame_last_error_value.clear();
         static_cast<void>(frame);
         return restore_outer(frame_hydration_result::complete);

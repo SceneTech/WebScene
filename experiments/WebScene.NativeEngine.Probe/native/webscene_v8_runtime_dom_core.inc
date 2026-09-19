@@ -2685,6 +2685,62 @@
         frame_unload_dispatches.erase(frame.id);
     }
 
+    void record_nested_cross_document_navigation(
+        dom_node& frame,
+        const std::optional<std::string>& requested_source,
+        bool replace)
+    {
+        constexpr size_t maximum_history_entries = 1024U;
+        constexpr size_t maximum_history_url_bytes = 8192U;
+        auto history = nested_history_states.find(frame.id);
+        if (history == nested_history_states.end()) return;
+        auto& state = history->second;
+        if (state.entries.empty() || state.index >= state.entries.size()) return;
+
+        const auto owner_base =
+            effective_document_base(css_cascade_root_for_node(frame));
+        auto target = requested_source.has_value()
+            && !requested_source->empty()
+            ? resolve_resource_url(*requested_source, owner_base)
+            : std::string("about:blank");
+        if (target.size() > maximum_history_url_bytes) target.clear();
+
+        const auto reclaim = [&](size_t first) {
+            for (auto index = first; index < state.entries.size(); ++index) {
+                if (state.entries[index].state.has_value()) {
+                    state.state_bytes -= clone_packet_size(
+                        *state.entries[index].state);
+                }
+            }
+            state.entries.erase(
+                state.entries.begin() + static_cast<std::ptrdiff_t>(first),
+                state.entries.end());
+        };
+        const auto document_sequence = ++state.next_document_sequence;
+        if (replace) {
+            if (state.entries[state.index].state.has_value()) {
+                state.state_bytes -= clone_packet_size(
+                    *state.entries[state.index].state);
+            }
+            state.entries[state.index] = history_entry_state{
+                std::move(target), std::nullopt, document_sequence};
+        } else {
+            reclaim(state.index + 1U);
+            if (state.entries.size() >= maximum_history_entries) {
+                if (state.entries.front().state.has_value()) {
+                    state.state_bytes -= clone_packet_size(
+                        *state.entries.front().state);
+                }
+                state.entries.erase(state.entries.begin());
+                if (state.index != 0U) --state.index;
+            }
+            state.entries.push_back(history_entry_state{
+                std::move(target), std::nullopt, document_sequence});
+            state.index = state.entries.size() - 1U;
+        }
+        state.traversing = false;
+    }
+
     bool begin_iframe_navigation(dom_node& frame)
     {
         // The initiating navigation owns the whole unload sequence. A handler
@@ -2729,13 +2785,20 @@
             retire_service_worker_clients(
                 std::vector<v8::Local<v8::Context>>{outgoing_context});
         }
-        if (frame_reload_navigations.contains(frame.id)) {
+        if (frame_history_traversals.contains(frame.id)) {
+            // History traversal selected the retained entry before initiating
+            // this replacement. Keep the list and its traversal guard alive
+            // until the replacement realm dispatches popstate.
+        } else if (frame_reload_navigations.contains(frame.id)) {
             if (auto history = nested_history_states.find(frame.id);
                 history != nested_history_states.end()) {
                 history->second.traversing = false;
             }
         } else {
-            nested_history_states.erase(frame.id);
+            const auto replace =
+                frame_history_replace_navigations.erase(frame.id) != 0U;
+            record_nested_cross_document_navigation(
+                frame, requested_source, replace);
         }
         {
             std::lock_guard lock(host_request_mutex);
@@ -2830,6 +2893,8 @@
         }
         nested_history_states.erase(frame_id);
         frame_reload_navigations.erase(frame_id);
+        frame_history_traversals.erase(frame_id);
+        frame_history_replace_navigations.erase(frame_id);
         frame_reload_reflected_sources.erase(frame_id);
     }
 
@@ -5795,9 +5860,11 @@
         auto address = navigation_address_for_root(static_cast<dom_node*>(
             local_context->GetAlignedPointerFromEmbedderData(
                 1, v8::kEmbedderDataTypeTagDefault)));
+        constexpr size_t maximum_history_url_bytes = 8192U;
+        if (address.size() > maximum_history_url_bytes) address.clear();
         auto inserted = nested_history_states.try_emplace(frame->id).first;
         inserted->second.entries.push_back(
-            history_entry_state{std::move(address), std::nullopt});
+            history_entry_state{std::move(address), std::nullopt, 1U});
         return &inserted->second;
     }
 
@@ -6043,14 +6110,19 @@
         history->SetPrivate(
             local_context, history_state_key(isolate), state).Check();
         if (nested_history != nullptr) {
+            const auto document_sequence =
+                nested_history->entries[nested_history->index]
+                    .document_sequence;
             nested_history->state_bytes -= reclaimed_state_bytes;
             if (replace) {
                 nested_history->entries[nested_history->index] =
-                    history_entry_state{resolved, std::move(packet)};
+                    history_entry_state{
+                        resolved, std::move(packet), document_sequence};
             } else {
                 nested_history->entries.resize(retained_nested_entries);
                 nested_history->entries.push_back(
-                    history_entry_state{resolved, std::move(packet)});
+                    history_entry_state{
+                        resolved, std::move(packet), document_sequence});
                 nested_history->index = nested_history->entries.size() - 1U;
             }
             nested_history->state_bytes += clone_packet_size(
@@ -6106,8 +6178,34 @@
         }
 
         const auto frame_id = frame->id;
+        const auto previous_index = history->index;
         const auto old_url = current_navigation_address();
         const auto entry = history->entries[static_cast<size_t>(target)];
+        const auto cross_document = entry.document_sequence
+            != history->entries[history->index].document_sequence;
+        if (cross_document) {
+            const auto authored_source = frame->attributes.find("src");
+            frame_reload_reflected_sources.insert_or_assign(
+                frame_id,
+                authored_source == frame->attributes.end()
+                    ? std::nullopt
+                    : std::optional<std::string>{authored_source->second});
+            history->index = static_cast<size_t>(target);
+            frame->attributes["src"] = entry.url;
+            frame_history_traversals.insert(frame_id);
+            if (entry.url.empty() || !begin_iframe_navigation(*frame)) {
+                if (auto current = nested_history_states.find(frame_id);
+                    current != nested_history_states.end()) {
+                    current->second.index = previous_index;
+                    current->second.traversing = false;
+                }
+                frame_history_traversals.erase(frame_id);
+                restore_nested_reload_reflected_source(*frame);
+                return;
+            }
+            enqueue_iframe_hydration_if_needed(*frame);
+            return;
+        }
         v8::Local<v8::Value> state = v8::Null(isolate);
         if (entry.state.has_value()
             && !deserialize_clone(
@@ -6142,6 +6240,37 @@
         record_feature(
             "web-api", "History.go", "partially-supported",
             "bounded nested same-document traversal with popstate and hashchange",
+            "web-api-binding");
+    }
+
+    void complete_nested_cross_document_history_traversal(
+        dom_node& frame,
+        v8::Local<v8::Context> local_context)
+    {
+        if (frame_history_traversals.erase(frame.id) == 0U) return;
+        auto history = nested_history_states.find(frame.id);
+        if (history == nested_history_states.end()
+            || history->second.index >= history->second.entries.size()) {
+            return;
+        }
+        auto& state = history->second;
+        v8::Local<v8::Value> restored_state = v8::Null(isolate);
+        const auto& entry = state.entries[state.index];
+        if (entry.state.has_value()
+            && !deserialize_clone(
+                isolate, local_context, *entry.state).ToLocal(&restored_state)) {
+            state.traversing = false;
+            return;
+        }
+        dispatch_same_document_history_event(
+            local_context, "popstate", restored_state);
+        if (auto current = nested_history_states.find(frame.id);
+            current != nested_history_states.end()) {
+            current->second.traversing = false;
+        }
+        record_feature(
+            "web-api", "History.go", "partially-supported",
+            "bounded nested cross-document traversal with active-realm replacement",
             "web-api-binding");
     }
 

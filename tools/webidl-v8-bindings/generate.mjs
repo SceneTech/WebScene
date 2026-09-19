@@ -197,6 +197,13 @@ for (const value of manifest.interfaces) {
     line(`    ${local}->InstanceTemplate()->SetHandler(`);
     line(`        v8::IndexedPropertyHandlerConfiguration(${value.indexedGetter}));`);
   }
+  if (value.namedGetter) {
+    line(`    ${local}->InstanceTemplate()->SetHandler(`);
+    line("        v8::NamedPropertyHandlerConfiguration(");
+    line(`            ${value.namedGetter}, nullptr, nullptr, nullptr,`);
+    line(`            ${value.namedEnumerator ?? "nullptr"}, {},`);
+    line("            v8::PropertyHandlerFlags::kNonMasking));");
+  }
   if (value.attributes.length || value.methods.length) {
     line(`    auto generated_${safe(value.name)}_signature =`);
     line(`        v8::Signature::New(isolate, ${local});`);

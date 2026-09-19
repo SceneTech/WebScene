@@ -3088,43 +3088,44 @@
         info.GetReturnValue().Set(result);
     }
 
-    static bool is_form_associated_control(const dom_node& node)
-    {
-        return node.tag == "button" || node.tag == "fieldset" || node.tag == "input"
-            || node.tag == "object" || node.tag == "output" || node.tag == "select"
-            || node.tag == "textarea";
-    }
-
-    static void collect_form_controls(dom_node& root, std::vector<dom_node*>& result)
-    {
-        for (auto* child : root.children) {
-            if (child == nullptr) continue;
-            if (is_form_associated_control(*child)) result.push_back(child);
-            collect_form_controls(*child, result);
-        }
-    }
-
     static void get_form_elements(
         v8::Local<v8::Name>,
         const v8::PropertyCallbackInfo<v8::Value>& info)
     {
         auto* self = current(info.GetIsolate());
         auto* node = unwrap_node(info.Holder());
-        if (node == nullptr || node->tag != "form") return;
-        std::vector<dom_node*> controls;
-        collect_form_controls(*node, controls);
+        if (self == nullptr || node == nullptr || node->tag != "form") return;
+        self->ensure_explicit_form_validity_dependents();
+        auto isolate = info.GetIsolate();
         auto local_context = info.GetIsolate()->GetCurrentContext();
-        auto result = v8::Array::New(info.GetIsolate(), static_cast<int>(controls.size()));
-        for (uint32_t index = 0; index < controls.size(); ++index) {
-            result->Set(local_context, index, self->wrap_node(*controls[index])).Check();
+        auto private_key = v8::Private::ForApi(
+            isolate, js_string(isolate, "WebScene.HTMLFormElement.elements"));
+        v8::Local<v8::Value> known;
+        if (info.Holder()->GetPrivate(local_context, private_key).ToLocal(&known)
+            && known->IsObject()) {
+            info.GetReturnValue().Set(known);
+            return;
         }
-        info.GetReturnValue().Set(result);
+        auto constructor = self->ensure_html_form_controls_collection_template()
+            ->GetFunction(local_context).ToLocalChecked();
+        v8::Local<v8::Value> arguments[]{
+            v8::External::New(
+                isolate, node, v8::kExternalPointerTypeTagDefault),
+            info.Holder()};
+        auto collection = constructor->NewInstance(
+            local_context, 2, arguments).ToLocalChecked();
+        info.Holder()->SetPrivate(local_context, private_key, collection).Check();
+        info.GetReturnValue().Set(collection);
     }
 
-    static std::vector<dom_node*> form_or_select_items(dom_node& node)
+    std::vector<dom_node*> form_or_select_items(dom_node& node)
     {
         std::vector<dom_node*> items;
-        if (node.tag == "form") collect_form_controls(node, items);
+        if (node.tag == "form") {
+            ensure_explicit_form_validity_dependents();
+            const auto known = live_form_controls.find(&node);
+            if (known != live_form_controls.end()) items = known->second;
+        }
         else if (node.tag == "select") collect_descendants_by_tag(node, "option", items);
         return items;
     }
@@ -3133,11 +3134,13 @@
         v8::Local<v8::Name>,
         const v8::PropertyCallbackInfo<v8::Value>& info)
     {
+        auto* self = current(info.GetIsolate());
         auto* node = unwrap_node(info.Holder());
-        if (node == nullptr || (node->tag != "form" && node->tag != "select")) return;
+        if (self == nullptr || node == nullptr
+            || (node->tag != "form" && node->tag != "select")) return;
         info.GetReturnValue().Set(v8::Integer::NewFromUnsigned(
             info.GetIsolate(),
-            static_cast<uint32_t>(form_or_select_items(*node).size())));
+            static_cast<uint32_t>(self->form_or_select_items(*node).size())));
     }
 
     static void get_legacy_node_length(v8::Local<v8::Name> name,
@@ -3158,7 +3161,7 @@
             || (node->tag != "form" && node->tag != "select")) {
             return v8::Intercepted::kNo;
         }
-        const auto items = form_or_select_items(*node);
+        const auto items = self->form_or_select_items(*node);
         if (index >= items.size()) return v8::Intercepted::kNo;
         info.GetReturnValue().Set(self->wrap_node(*items[index]));
         return v8::Intercepted::kYes;
@@ -3532,6 +3535,9 @@
         // Labelability and semantic relationships change even when the
         // element remains constraint-valid on both sides of registration.
         self->document.mark_dirty();
+        std::unordered_set<dom_node*> affected_form_owners;
+        self->refresh_live_form_control(*node, affected_form_owners);
+        self->sort_live_form_controls(affected_form_owners);
         const auto selector_state_after=forms::validity_state(
             self->document,*node);
         if(selector_state_before==selector_state_after) return;

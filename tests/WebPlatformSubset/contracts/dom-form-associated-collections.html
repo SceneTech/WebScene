@@ -54,6 +54,70 @@
     equal(Array.from(form.elements).map(control => control.name).join(","), "query,mode,submit", "form control order");
   });
 
+  test("form.elements is a live branded same-object collection", () => {
+    const form = document.createElement("form");
+    document.body.appendChild(form);
+    const controls = form.elements;
+    assert(controls === form.elements, "form.elements same-object identity");
+    assert(controls instanceof HTMLFormControlsCollection, "collection brand");
+    assert(controls instanceof HTMLCollection, "HTMLCollection inheritance");
+    const input = document.createElement("input");
+    form.appendChild(input);
+    equal(controls.length, 1, "live insertion");
+    input.remove();
+    equal(controls.length, 0, "live removal");
+  });
+
+  test("external form owners participate in document tree order", () => {
+    const root = document.createElement("div");
+    root.innerHTML = `<input id="before" form="owned"><form id="owned"><input id="inside"></form><input id="after" form="owned">`;
+    document.body.appendChild(root);
+    const form = root.querySelector("form");
+    equal(Array.from(form.elements).map(node => node.id).join(","),
+      "before,inside,after", "external owner order");
+    root.querySelector("#before").setAttribute("form", "missing");
+    equal(Array.from(form.elements).map(node => node.id).join(","),
+      "inside,after", "live form attribute reassociation");
+    form.id = "renamed";
+    equal(form.elements.length, 1, "live form id reassociation");
+    root.querySelector("#after").setAttribute("form", "renamed");
+    equal(form.elements.length, 2, "live renamed form association");
+  });
+
+  test("named lookup returns nodes or a live RadioNodeList", () => {
+    const form = document.createElement("form");
+    form.innerHTML = `<input id="single"><input type="radio" name="choice" value="a"><input type="radio" name="choice" value="b" checked>`;
+    document.body.appendChild(form);
+    assert(form.elements.namedItem("single") === form.elements[0], "single namedItem");
+    assert(form.single === form.elements[0], "form named getter");
+    const choices = form.elements.namedItem("choice");
+    assert(choices instanceof RadioNodeList, "duplicate lookup brand");
+    assert(choices instanceof NodeList, "NodeList inheritance");
+    equal(choices.length, 2, "duplicate length");
+    equal(choices.value, "b", "checked radio value");
+    choices.value = "a";
+    equal(choices.value, "a", "radio value setter");
+    form.elements[1].name = "other";
+    equal(choices.length, 1, "live duplicate list membership");
+    assert(Object.keys(form.elements).includes("choice"), "supported property names");
+  });
+
+  test("listed custom elements join their current form owner", () => {
+    const tag = `listed-control-${Date.now()}`;
+    customElements.define(tag, class extends HTMLElement {
+      static formAssociated = true;
+      constructor() { super(); this.attachInternals(); }
+    });
+    const form = document.createElement("form");
+    form.id = "custom-owner";
+    const control = document.createElement(tag);
+    control.setAttribute("form", "custom-owner");
+    document.body.append(form, control);
+    assert(form.elements[0] === control, "custom control association");
+    control.remove();
+    equal(form.elements.length, 0, "custom control removal");
+  });
+
   test("select.options and selectedIndex expose option state", () => {
     const select = document.createElement("select");
     select.innerHTML = `<option value="a">A</option><option value="b">B</option>`;

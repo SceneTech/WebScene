@@ -116,6 +116,8 @@
     v8::Global<v8::ObjectTemplate> frame_document_template;
     v8::Global<v8::ObjectTemplate> frame_window_template;
     v8::Global<v8::FunctionTemplate> html_collection_template;
+    v8::Global<v8::FunctionTemplate> html_form_controls_collection_template;
+    v8::Global<v8::FunctionTemplate> radio_node_list_template;
     v8::Global<v8::FunctionTemplate> node_list_template;
     v8::Global<v8::FunctionTemplate> dom_token_list_template;
     v8::Global<v8::Object> dom_implementation_object;
@@ -758,6 +760,11 @@
         label_targets_by_id;
     std::unordered_map<std::string, std::unordered_set<dom_node*>>
         explicit_labels_by_for;
+    // Form controls can be outside their owner subtree through the form=
+    // attribute. Keep this tree-order index beside the #713 ownership reverse
+    // indexes so form.elements reads never rescan the document.
+    std::unordered_map<dom_node*, std::vector<dom_node*>> live_form_controls;
+    std::unordered_map<dom_node*, dom_node*> live_form_owner_by_control;
     bool explicit_form_validity_dependents_initialized{false};
     bool flushing_attribute_selector_transitions{false};
     mutable css::selector_match_context* active_selector_match_context{nullptr};

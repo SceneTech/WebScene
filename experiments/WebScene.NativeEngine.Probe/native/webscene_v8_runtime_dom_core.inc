@@ -3987,7 +3987,7 @@
         if (known != attached_attributes.end()) return *known->second;
         const auto value = owner.attributes.find(name);
         return create_attr_state(
-            std::string(name), {}, &owner,
+            std::string(name), std::string(owner.attributes.namespace_uri(name)), &owner,
             value == owner.attributes.end() ? std::string{} : value->second);
     }
 
@@ -4162,7 +4162,17 @@
         const auto old_value = owner->attributes.contains(state->name)
             ? std::optional<std::string>(owner->attributes.at(state->name))
             : std::nullopt;
-        owner->attributes[state->name] = value;
+        if (state->namespace_uri.empty()) {
+            owner->attributes[state->name] = value;
+        } else {
+            const auto colon = state->name.find(':');
+            owner->attributes.set_namespaced(
+                state->name,
+                colon == std::string::npos
+                    ? state->name : state->name.substr(colon + 1U),
+                state->namespace_uri,
+                value);
+        }
         if (state->namespace_uri.empty()
             && owner->tag == "base" && state->name == "href") {
             self->invalidate_document_base(*owner);

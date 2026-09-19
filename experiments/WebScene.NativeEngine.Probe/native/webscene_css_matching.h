@@ -8,6 +8,100 @@
 
 namespace webscene_native::css {
 inline std::string trim_value(std::string_view text) { return std::string(trim_css_view(text)); }
+inline bool attribute_value_equals(
+    std::string_view left,
+    std::string_view right,
+    bool ascii_case_insensitive)
+{
+    if (!ascii_case_insensitive) return left == right;
+    return left.size() == right.size()
+        && std::equal(left.begin(), left.end(), right.begin(), [](char a, char b) {
+            return std::tolower(static_cast<unsigned char>(a))
+                == std::tolower(static_cast<unsigned char>(b));
+        });
+}
+
+inline bool attribute_matches(
+        const dom_node& node,
+        const compiled_css_attribute& condition)
+    {
+        auto wanted_name = condition.local_name;
+        if (!node.xml_mode
+            && node.namespace_uri() == dom_node::html_namespace_uri) {
+            wanted_name = ascii_lower(wanted_name);
+        }
+        const auto insensitive = condition.case_sensitivity == 1U
+            || (condition.case_sensitivity == 3U
+                && !node.xml_mode
+                && node.namespace_uri() == dom_node::html_namespace_uri);
+        const auto compare = [&](std::string_view left, std::string_view right) {
+            return attribute_value_equals(left, right, insensitive);
+        };
+        const auto evaluate = [&](std::string_view actual) {
+            if (condition.operator_kind == 0U) return true;
+            const auto wanted = std::string_view(condition.value);
+            if (condition.operator_kind == 1U) return compare(actual, wanted);
+            if (wanted.empty()
+                && (condition.operator_kind == 4U
+                    || condition.operator_kind == 5U
+                    || condition.operator_kind == 6U)) return false;
+            if (condition.operator_kind == 4U) {
+                return actual.size() >= wanted.size()
+                    && compare(actual.substr(0U, wanted.size()), wanted);
+            }
+            if (condition.operator_kind == 6U) {
+                return actual.size() >= wanted.size()
+                    && compare(actual.substr(actual.size() - wanted.size()), wanted);
+            }
+            if (condition.operator_kind == 5U) {
+                if (!insensitive) return actual.find(wanted) != std::string_view::npos;
+                for (size_t offset = 0U; offset + wanted.size() <= actual.size(); ++offset) {
+                    if (compare(actual.substr(offset, wanted.size()), wanted)) return true;
+                }
+                return false;
+            }
+            if (condition.operator_kind == 3U) {
+                return compare(actual, wanted)
+                    || (actual.size() > wanted.size()
+                        && actual[wanted.size()] == '-'
+                        && compare(actual.substr(0U, wanted.size()), wanted));
+            }
+            if (condition.operator_kind == 2U) {
+                size_t start = 0U;
+                while (start < actual.size()) {
+                    while (start < actual.size()
+                        && (actual[start] == ' ' || actual[start] == '\t'
+                            || actual[start] == '\r' || actual[start] == '\n'
+                            || actual[start] == '\f')) ++start;
+                    auto end = start;
+                    while (end < actual.size()
+                        && actual[end] != ' ' && actual[end] != '\t'
+                        && actual[end] != '\r' && actual[end] != '\n'
+                        && actual[end] != '\f') ++end;
+                    if (end > start && compare(actual.substr(start, end - start), wanted)) {
+                        return true;
+                    }
+                    start = end;
+                }
+            }
+            return false;
+        };
+        for (const auto& attribute : node.attributes) {
+            auto local_name = node.attributes.local_name(attribute.first);
+            if (!node.xml_mode
+                && node.namespace_uri() == dom_node::html_namespace_uri) {
+                if (ascii_lower(local_name) != wanted_name) continue;
+            } else if (local_name != wanted_name) {
+                continue;
+            }
+            if (condition.namespace_uri.has_value()
+                && node.attributes.namespace_uri(attribute.first)
+                    != *condition.namespace_uri) continue;
+            if (evaluate(attribute.second)) return true;
+        }
+        return false;
+    }
+
 // Native matching primitives shared with the ordinary WebScene CSS runtime.
 inline bool attribute_matches(
         const dom_node& node,

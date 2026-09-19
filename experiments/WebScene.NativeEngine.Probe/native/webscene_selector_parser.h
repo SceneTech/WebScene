@@ -8,10 +8,24 @@
 
 namespace webscene_native {
 
+struct selector_syntax_attribute final {
+    std::string local_name;
+    // Zero is any namespace; one is the exact namespace_url (including empty).
+    uint8_t namespace_kind{0};
+    std::string namespace_url;
+    // Zero is presence, followed by =, ~=, |=, ^=, *=, and $=.
+    uint8_t operator_kind{0};
+    std::string value;
+    // Zero is sensitive, one ASCII-insensitive, two explicit-sensitive, and
+    // three follows HTML enumerated-attribute matching rules.
+    uint8_t case_sensitivity{0};
+};
+
 struct selector_syntax_selector final {
     std::string serialized;
     uint32_t specificity{0};
     std::vector<std::string> compounds;
+    std::vector<std::vector<selector_syntax_attribute>> attributes;
     std::vector<char> combinators;
 };
 

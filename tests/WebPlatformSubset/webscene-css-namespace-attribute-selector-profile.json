@@ -1,0 +1,23 @@
+{
+  "profile": "webscene-css-namespace-attribute-selector-1",
+  "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+  "runtime": "v8",
+  "viewport": { "width": 800, "height": 600, "deviceScaleFactor": 1 },
+  "required": [
+    {
+      "path": "contracts/css-namespace-attribute-selector-matching.html",
+      "type": "contract",
+      "capabilities": [
+        "css-namespace-prefixed-attribute-selector",
+        "css-namespace-any-and-empty-attribute-selectors",
+        "css-namespace-attribute-value-operators-and-case-flags",
+        "css-namespace-attribute-cache-and-dynamic-recascade",
+        "css-namespace-attribute-adopted-stylesheet-lifecycle"
+      ],
+      "evidence": ["css-namespace-attribute-selector-matching-519"],
+      "reason": "CSS Namespaces and Selectors regression for expanded attribute-name matching, operators, case flags, unknown prefixes, cache identity, owner replacement, and adopted stylesheet lifecycle."
+    }
+  ],
+  "harnessBlocked": [],
+  "excluded": []
+}

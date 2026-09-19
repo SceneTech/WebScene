@@ -1,5 +1,6 @@
 #include "webscene_selector_parser.h"
 #include "webscene_css_invalidation.h"
+#include "webscene_css_matching.h"
 
 #include <cstdlib>
 #include <iostream>
@@ -148,6 +149,61 @@ void require_namespace_resolution()
         "undeclared namespace prefix must reject the selector");
 }
 
+void require_attribute_namespace_resolution()
+{
+    using namespace webscene_native;
+    using namespace webscene_native::css;
+    selector_namespace_context first;
+    first.prefixes.emplace("p", "urn:webscene:first");
+    const auto selector = compile_selector(
+        R"CSS([p|name="VALUE" i][*|token~="beta" s][|plain^="pre"])CSS",
+        &first);
+    require(selector.compiled_compounds.size() == 1U
+        && selector.compiled_compounds[0].attributes.size() == 3U,
+        "Servo attribute metadata was not retained per compound");
+    const auto& exact = selector.compiled_compounds[0].attributes[0];
+    const auto& any = selector.compiled_compounds[0].attributes[1];
+    const auto& empty = selector.compiled_compounds[0].attributes[2];
+    require(exact.local_name == "name"
+        && exact.namespace_uri == "urn:webscene:first"
+        && exact.operator_kind == 1U
+        && exact.value == "VALUE"
+        && exact.case_sensitivity == 1U,
+        "prefixed attribute selector identity/operator/case flag changed");
+    require(any.local_name == "token" && !any.namespace_uri.has_value()
+        && any.operator_kind == 2U && any.case_sensitivity == 2U,
+        "any-namespace attribute selector metadata changed");
+    require(empty.local_name == "plain" && empty.namespace_uri == std::string{}
+        && empty.operator_kind == 4U,
+        "empty-namespace attribute selector metadata changed");
+    require(compile_selector("[missing|name]", &first).compounds.empty(),
+        "undeclared attribute namespace prefix must reject the selector");
+
+    selector_namespace_context second;
+    second.prefixes.emplace("p", "urn:webscene:second");
+    const auto first_again = compile_selector("[p|name]", &first);
+    const auto second_selector = compile_selector("[p|name]", &second);
+    require(first_again.compiled_compounds[0].attributes[0].namespace_uri
+            == "urn:webscene:first"
+        && second_selector.compiled_compounds[0].attributes[0].namespace_uri
+            == "urn:webscene:second",
+        "selector cache reused attribute namespace identity across contexts");
+
+    dom_node node;
+    node.tag = "div";
+    node.attributes.set_namespaced(
+        "p:name", "name", "urn:webscene:first", "value");
+    node.attributes["name"] = "plain";
+    require(attribute_matches(node, first_again.compiled_compounds[0].attributes[0])
+        && !attribute_matches(node, second_selector.compiled_compounds[0].attributes[0]),
+        "DOM attribute matching did not compare expanded namespace identity");
+    const auto no_namespace = compile_selector("[|name]", &first);
+    const auto any_namespace = compile_selector("[*|name]", &first);
+    require(attribute_matches(node, no_namespace.compiled_compounds[0].attributes[0])
+        && attribute_matches(node, any_namespace.compiled_compounds[0].attributes[0]),
+        "empty and any attribute namespace constraints changed semantics");
+}
+
 void test_compiled_css_invalidation_plans()
 {
     using namespace webscene_native::css;
@@ -258,6 +314,7 @@ int main()
     require_wtf8_domstring_round_trip();
     require_nested_has_selector_list_tokenization();
     require_namespace_resolution();
+    require_attribute_namespace_resolution();
     test_compiled_css_invalidation_plans();
     std::cout << "selector parser tests passed\n";
     return 0;

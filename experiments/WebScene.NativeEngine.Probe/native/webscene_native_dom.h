@@ -961,6 +961,26 @@ public:
     using iterator = storage_type::iterator;
     using const_iterator = storage_type::const_iterator;
 
+    attribute_collection() = default;
+    attribute_collection(const attribute_collection& other)
+        : values_(other.values_)
+    {
+        if (other.namespaces_ != nullptr) {
+            namespaces_ = std::make_unique<namespace_state>(*other.namespaces_);
+        }
+    }
+    attribute_collection& operator=(const attribute_collection& other)
+    {
+        if (this == &other) return *this;
+        values_ = other.values_;
+        namespaces_ = other.namespaces_ == nullptr
+            ? nullptr
+            : std::make_unique<namespace_state>(*other.namespaces_);
+        return *this;
+    }
+    attribute_collection(attribute_collection&&) noexcept = default;
+    attribute_collection& operator=(attribute_collection&&) noexcept = default;
+
     iterator begin() noexcept { return values_.begin(); }
     iterator end() noexcept { return values_.end(); }
     const_iterator begin() const noexcept { return values_.begin(); }
@@ -973,6 +993,17 @@ public:
         auto result = values_.capacity() * sizeof(value_type);
         for (const auto& [name, value] : values_) {
             result += name.capacity() + value.capacity() + 2U;
+        }
+        if (namespaces_ != nullptr) {
+            result += sizeof(namespace_state)
+                + namespaces_->attributes.capacity() * sizeof(namespace_entry)
+                + namespaces_->element_namespace_uri.capacity()
+                + namespaces_->element_namespace_prefix.capacity() + 2U;
+            for (const auto& entry : namespaces_->attributes) {
+                result += entry.qualified_name.capacity()
+                    + entry.local_name.capacity()
+                    + entry.namespace_uri.capacity() + 3U;
+            }
         }
         return result;
     }
@@ -994,6 +1025,121 @@ public:
     bool contains(std::string_view name) const noexcept
     {
         return find(name) != end();
+    }
+
+    iterator find_expanded(
+        std::string_view namespace_uri,
+        std::string_view local_name) noexcept
+    {
+        const auto qualified = qualified_name(namespace_uri, local_name);
+        return qualified.empty() ? end() : find(qualified);
+    }
+
+    const_iterator find_expanded(
+        std::string_view namespace_uri,
+        std::string_view local_name) const noexcept
+    {
+        const auto qualified = qualified_name(namespace_uri, local_name);
+        return qualified.empty() ? end() : find(qualified);
+    }
+
+    std::string_view namespace_uri(std::string_view qualified_name) const noexcept
+    {
+        if (namespaces_ != nullptr) {
+            const auto found = std::find_if(
+                namespaces_->attributes.begin(), namespaces_->attributes.end(),
+                [qualified_name](const auto& entry) {
+                    return entry.qualified_name == qualified_name;
+                });
+            if (found != namespaces_->attributes.end()) return found->namespace_uri;
+        }
+        return {};
+    }
+
+    std::string_view local_name(std::string_view qualified_name) const noexcept
+    {
+        if (namespaces_ != nullptr) {
+            const auto found = std::find_if(
+                namespaces_->attributes.begin(), namespaces_->attributes.end(),
+                [qualified_name](const auto& entry) {
+                    return entry.qualified_name == qualified_name;
+                });
+            if (found != namespaces_->attributes.end()) return found->local_name;
+        }
+        return qualified_name;
+    }
+
+    std::string& set_namespaced(
+        std::string qualified_name,
+        std::string local_name,
+        std::string namespace_uri,
+        std::string value = {})
+    {
+        if (namespace_uri.empty()) {
+            auto& result = (*this)[qualified_name];
+            result = std::move(value);
+            return result;
+        }
+        if (auto existing = find_expanded(namespace_uri, local_name);
+            existing != end() && existing->first != qualified_name) {
+            erase(existing->first);
+        }
+        auto& result = (*this)[qualified_name];
+        result = std::move(value);
+        if (namespaces_ == nullptr) {
+            namespaces_ = std::make_unique<namespace_state>();
+        }
+        const auto known = std::find_if(
+            namespaces_->attributes.begin(), namespaces_->attributes.end(),
+            [&](const auto& entry) { return entry.qualified_name == qualified_name; });
+        if (known == namespaces_->attributes.end()) {
+            namespaces_->attributes.push_back({
+                std::move(qualified_name),
+                std::move(local_name),
+                std::move(namespace_uri)});
+        } else {
+            known->local_name = std::move(local_name);
+            known->namespace_uri = std::move(namespace_uri);
+        }
+        return result;
+    }
+
+    std::string_view element_namespace_uri() const noexcept
+    {
+        return namespaces_ == nullptr
+            ? std::string_view{}
+            : std::string_view(namespaces_->element_namespace_uri);
+    }
+
+    bool has_element_namespace() const noexcept
+    {
+        return namespaces_ != nullptr && namespaces_->has_element_namespace;
+    }
+
+    std::string_view element_namespace_prefix() const noexcept
+    {
+        return namespaces_ == nullptr
+            ? std::string_view{}
+            : std::string_view(namespaces_->element_namespace_prefix);
+    }
+
+    void set_element_namespace(std::string_view uri, std::string_view prefix)
+    {
+        if (namespaces_ == nullptr) {
+            namespaces_ = std::make_unique<namespace_state>();
+        }
+        namespaces_->has_element_namespace = true;
+        namespaces_->element_namespace_uri.assign(uri);
+        namespaces_->element_namespace_prefix.assign(prefix);
+    }
+
+    void clear_element_namespace()
+    {
+        if (namespaces_ == nullptr) return;
+        namespaces_->has_element_namespace = false;
+        namespaces_->element_namespace_uri.clear();
+        namespaces_->element_namespace_prefix.clear();
+        release_empty_namespace_state();
     }
 
     std::string& operator[](std::string_view name)
@@ -1019,7 +1165,14 @@ public:
     {
         const auto known = find(name);
         if (known == end()) return 0;
+        const auto erased_name = known->first;
         values_.erase(known);
+        if (namespaces_ != nullptr) {
+            std::erase_if(namespaces_->attributes, [&erased_name](const auto& entry) {
+                return entry.qualified_name == erased_name;
+            });
+            release_empty_namespace_state();
+        }
         return 1;
     }
 
@@ -1028,12 +1181,54 @@ public:
         if (values_.size() != other.values_.size()) return false;
         return std::all_of(values_.begin(), values_.end(), [&other](const auto& entry) {
             const auto match = other.find(entry.first);
-            return match != other.end() && match->second == entry.second;
+            return match != other.end() && match->second == entry.second
+                && namespace_uri(entry.first) == other.namespace_uri(entry.first)
+                && local_name(entry.first) == other.local_name(entry.first);
         });
     }
 
 private:
+    struct namespace_entry final {
+        std::string qualified_name;
+        std::string local_name;
+        std::string namespace_uri;
+    };
+    struct namespace_state final {
+        std::vector<namespace_entry> attributes;
+        std::string element_namespace_uri;
+        std::string element_namespace_prefix;
+        bool has_element_namespace{false};
+    };
+
+    void release_empty_namespace_state()
+    {
+        if (namespaces_ != nullptr && namespaces_->attributes.empty()
+            && !namespaces_->has_element_namespace
+            && namespaces_->element_namespace_uri.empty()
+            && namespaces_->element_namespace_prefix.empty()) {
+            namespaces_.reset();
+        }
+    }
+
+    std::string_view qualified_name(
+        std::string_view namespace_uri,
+        std::string_view local_name) const noexcept
+    {
+        if (namespace_uri.empty()) return local_name;
+        if (namespaces_ == nullptr) return {};
+        const auto found = std::find_if(
+            namespaces_->attributes.begin(), namespaces_->attributes.end(),
+            [&](const auto& entry) {
+                return entry.namespace_uri == namespace_uri
+                    && entry.local_name == local_name;
+            });
+        return found == namespaces_->attributes.end()
+            ? std::string_view{}
+            : std::string_view(found->qualified_name);
+    }
+
     storage_type values_;
+    std::unique_ptr<namespace_state> namespaces_;
 };
 
 enum class text_selection_direction : uint8_t {
@@ -1062,11 +1257,6 @@ struct dom_node final {
     uint64_t parser_line{0};
     static constexpr std::string_view html_namespace_uri =
         "http://www.w3.org/1999/xhtml";
-
-    struct namespace_data final {
-        std::string uri;
-        std::string prefix;
-    };
 
     struct authored_style_data final {
         std::unordered_map<std::string, std::string> declarations;
@@ -1287,36 +1477,30 @@ struct dom_node final {
     attribute_collection attributes;
     std::string_view namespace_uri() const noexcept
     {
-        if (namespace_state != nullptr) return namespace_state->uri;
+        if (attributes.has_element_namespace()) {
+            return attributes.element_namespace_uri();
+        }
         return kind == dom_node_kind::element ? html_namespace_uri : std::string_view{};
     }
 
     std::string_view namespace_prefix() const noexcept
     {
-        return namespace_state == nullptr
-            ? std::string_view{}
-            : std::string_view(namespace_state->prefix);
+        return attributes.element_namespace_prefix();
     }
 
     void set_namespace(std::string_view uri, std::string_view prefix = {})
     {
         if (kind == dom_node_kind::element
-            && uri == html_namespace_uri
-            && prefix.empty()) {
-            namespace_state.reset();
-            return;
+            && uri == html_namespace_uri && prefix.empty()) {
+            attributes.clear_element_namespace();
+        } else {
+            attributes.set_element_namespace(uri, prefix);
         }
-        if (namespace_state == nullptr) {
-            namespace_state = std::make_unique<namespace_data>();
-        }
-        namespace_state->uri.assign(uri);
-        namespace_state->prefix.assign(prefix);
     }
 
     // HTML is represented by the null state, so ordinary elements pay one
     // pointer rather than two inline std::string objects. Foreign/XML
     // namespaces remain lossless and allocate only on the uncommon path.
-    std::unique_ptr<namespace_data> namespace_state;
     const authored_style_data& authored_style() const noexcept
     {
         static const authored_style_data empty;

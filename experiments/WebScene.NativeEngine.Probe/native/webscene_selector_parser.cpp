@@ -130,7 +130,7 @@ bool write_selector_persistent_cache(std::string_view input, const selector_synt
         std::chrono::steady_clock::now().time_since_epoch().count()) + ".tmp";
     std::ofstream stream(temporary, std::ios::binary | std::ios::trunc);
     if (!stream) return false;
-    constexpr char magic[8] = {'W','S','S','L','C','0','0','1'};
+    constexpr char magic[8] = {'W','S','S','L','C','0','0','2'};
     stream.write(magic, sizeof(magic));
     const uint32_t schema = 1U;
     const auto hash = selector_hash(input);
@@ -143,8 +143,23 @@ bool write_selector_persistent_cache(std::string_view input, const selector_synt
         if (!write_string(stream, selector.serialized)
             || !write_scalar(stream, selector.specificity)
             || !write_scalar(stream, compound_count)) return false;
-        for (const auto& compound : selector.compounds)
-            if (!write_string(stream, compound)) return false;
+        for (size_t compound_index = 0U;
+            compound_index < selector.compounds.size(); ++compound_index) {
+            if (!write_string(stream, selector.compounds[compound_index])) return false;
+            const auto attribute_count = static_cast<uint64_t>(
+                compound_index < selector.attributes.size()
+                    ? selector.attributes[compound_index].size() : 0U);
+            if (!write_scalar(stream, attribute_count)) return false;
+            if (compound_index >= selector.attributes.size()) continue;
+            for (const auto& attribute : selector.attributes[compound_index]) {
+                if (!write_string(stream, attribute.local_name)
+                    || !write_scalar(stream, attribute.namespace_kind)
+                    || !write_string(stream, attribute.namespace_url)
+                    || !write_scalar(stream, attribute.operator_kind)
+                    || !write_string(stream, attribute.value)
+                    || !write_scalar(stream, attribute.case_sensitivity)) return false;
+            }
+        }
         if (!write_scalar(stream, combinator_count)) return false;
         if (combinator_count) {
             stream.write(selector.combinators.data(),
@@ -175,7 +190,7 @@ std::optional<selector_syntax_output> read_selector_persistent_cache(std::string
     if (!stream) return std::nullopt;
     char magic[8]{};
     stream.read(magic, sizeof(magic));
-    constexpr char expected[8] = {'W','S','S','L','C','0','0','1'};
+    constexpr char expected[8] = {'W','S','S','L','C','0','0','2'};
     uint32_t schema{};
     uint64_t hash{}, selector_count{};
     std::string stored_input;
@@ -195,10 +210,30 @@ std::optional<selector_syntax_output> read_selector_persistent_cache(std::string
             || !read_scalar(stream, selector.specificity)
             || !read_scalar(stream, compound_count) || compound_count > 4096U) return std::nullopt;
         selector.compounds.reserve(static_cast<size_t>(compound_count));
+        selector.attributes.reserve(static_cast<size_t>(compound_count));
         for (uint64_t compound = 0; compound < compound_count; ++compound) {
             std::string value;
             if (!read_string(stream, value)) return std::nullopt;
             selector.compounds.push_back(std::move(value));
+            uint64_t attribute_count{};
+            if (!read_scalar(stream, attribute_count) || attribute_count > 4096U)
+                return std::nullopt;
+            auto& attributes = selector.attributes.emplace_back();
+            attributes.reserve(static_cast<size_t>(attribute_count));
+            for (uint64_t attribute_index = 0U;
+                attribute_index < attribute_count; ++attribute_index) {
+                selector_syntax_attribute attribute;
+                if (!read_string(stream, attribute.local_name)
+                    || !read_scalar(stream, attribute.namespace_kind)
+                    || attribute.namespace_kind > 1U
+                    || !read_string(stream, attribute.namespace_url)
+                    || !read_scalar(stream, attribute.operator_kind)
+                    || attribute.operator_kind > 6U
+                    || !read_string(stream, attribute.value)
+                    || !read_scalar(stream, attribute.case_sensitivity)
+                    || attribute.case_sensitivity > 3U) return std::nullopt;
+                attributes.push_back(std::move(attribute));
+            }
         }
         if (!read_scalar(stream, combinator_count) || combinator_count > 4096U) return std::nullopt;
         selector.combinators.resize(static_cast<size_t>(combinator_count));
@@ -454,6 +489,7 @@ selector_syntax_output parse_selector_syntax_impl(
         if (transformed_wtf8) restore_wtf8_surrogates(selector.serialized);
         selector.specificity = view.specificity;
         selector.compounds.reserve(view.compound_count);
+        selector.attributes.reserve(view.compound_count);
         for (size_t compound_index = 0;
             compound_index < view.compound_count;
             ++compound_index) {
@@ -469,6 +505,43 @@ selector_syntax_output parse_selector_syntax_impl(
             auto copied_compound = copy_slice(compound);
             if (transformed_wtf8) restore_wtf8_surrogates(copied_compound);
             selector.compounds.push_back(std::move(copied_compound));
+            const auto attribute_count = webscene_selector_compound_attribute_count(
+                parsed.handle, selector_index, compound_index);
+            if (attribute_count > 4096U) {
+                output.error = "Servo returned too many attribute selectors";
+                return output;
+            }
+            auto& attributes = selector.attributes.emplace_back();
+            attributes.reserve(attribute_count);
+            for (size_t attribute_index = 0U;
+                attribute_index < attribute_count; ++attribute_index) {
+                webscene_selector_attribute_view attribute_view{};
+                if (webscene_selector_compound_attribute_at(
+                        parsed.handle,
+                        selector_index,
+                        compound_index,
+                        attribute_index,
+                        &attribute_view) == 0U
+                    || attribute_view.namespace_kind > 1U
+                    || attribute_view.operator_kind > 6U
+                    || attribute_view.case_sensitivity > 3U) {
+                    output.error = "Servo returned an invalid attribute selector";
+                    return output;
+                }
+                selector_syntax_attribute attribute{
+                    copy_slice(attribute_view.local_name),
+                    attribute_view.namespace_kind,
+                    copy_slice(attribute_view.namespace_url),
+                    attribute_view.operator_kind,
+                    copy_slice(attribute_view.value),
+                    attribute_view.case_sensitivity};
+                if (transformed_wtf8) {
+                    restore_wtf8_surrogates(attribute.local_name);
+                    restore_wtf8_surrogates(attribute.namespace_url);
+                    restore_wtf8_surrogates(attribute.value);
+                }
+                attributes.push_back(std::move(attribute));
+            }
         }
         selector.combinators.reserve(view.combinator_count);
         for (size_t combinator_index = 0;

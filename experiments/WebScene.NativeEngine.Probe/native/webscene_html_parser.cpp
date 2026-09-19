@@ -62,13 +62,22 @@ Result guard(sink_context& context, Result fallback, Callback&& callback) noexce
 
 void apply_attribute(dom_node& target, const webscene_html_attribute& attribute, bool missing_only)
 {
-    auto name = copy_slice(attribute.name.local_name);
-    if (name.empty()) return;
-    if (missing_only && target.attributes.contains(name)) return;
+    auto local_name = copy_slice(attribute.name.local_name);
+    if (local_name.empty()) return;
+    auto namespace_uri = copy_slice(attribute.name.namespace_uri);
+    auto prefix = copy_slice(attribute.name.prefix);
+    auto name = prefix.empty() ? local_name : prefix + ":" + local_name;
+    if (missing_only
+        && target.attributes.find_expanded(namespace_uri, local_name)
+            != target.attributes.end()) return;
     auto value = copy_slice(attribute.value);
-    if (name == "id") target.id_attribute = value;
-    if (name == "class") target.class_name = value;
-    target.attributes[std::move(name)] = std::move(value);
+    if (namespace_uri.empty() && local_name == "id") target.id_attribute = value;
+    if (namespace_uri.empty() && local_name == "class") target.class_name = value;
+    target.attributes.set_namespaced(
+        std::move(name),
+        std::move(local_name),
+        std::move(namespace_uri),
+        std::move(value));
 }
 
 webscene_html_node_handle create_element(

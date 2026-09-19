@@ -74,10 +74,8 @@ inline std::vector<css_compound_dependencies> compile_invalidation_plan(
             else if (marker == '#') add(output.attributes["id"], route);
         }
         for (const auto& attribute : compound.attributes) {
-            auto text = trim_css_view(attribute);
-            size_t cursor = 0;
-            auto name = read_css_identifier(text, cursor);
-            if (!name.empty()) add(output.attributes[std::move(name)], route);
+            if (!attribute.local_name.empty())
+                add(output.attributes[attribute.local_name], route);
         }
         for (const auto& pseudo : compound.pseudos) {
             if (pseudo.name == "has" || pseudo.name == "empty"
@@ -255,9 +253,10 @@ inline void index_child_list_rule(size_t rule_index,
                 return;
             }
             for (const auto& attribute : compound.attributes) {
-                size_t cursor = 0;
-                const auto name = read_css_identifier(trim_css_view(attribute), cursor);
-                if (!name.empty()) { append(bucket.by_attribute[ascii_lower(name)]); return; }
+                if (!attribute.local_name.empty()) {
+                    append(bucket.by_attribute[ascii_lower(attribute.local_name)]);
+                    return;
+                }
             }
             append(bucket.universal);
         };

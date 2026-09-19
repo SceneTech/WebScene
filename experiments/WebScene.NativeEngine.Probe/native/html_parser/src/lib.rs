@@ -1294,8 +1294,12 @@ mod selector_syntax {
     };
     use precomputed_hash::PrecomputedHash;
     use selectors::parser::{
-        Combinator, NonTSPseudoClass, ParseRelative, PseudoElement, SelectorParseError,
-        SelectorParseErrorKind,
+        Combinator, Component, NonTSPseudoClass, ParseRelative, PseudoElement,
+        SelectorParseError, SelectorParseErrorKind,
+    };
+    use selectors::attr::{
+        AttrSelectorOperator, NamespaceConstraint, ParsedAttrSelectorOperation,
+        ParsedCaseSensitivity,
     };
     use selectors::{Parser as SelectorParser, SelectorImpl, SelectorList};
     use std::borrow::Borrow;
@@ -1620,7 +1624,18 @@ mod selector_syntax {
         serialized: String,
         specificity: u32,
         compounds: Vec<String>,
+        attributes: Vec<Vec<FlatAttribute>>,
         combinators: Vec<u8>,
+    }
+
+    #[derive(Default)]
+    struct FlatAttribute {
+        local_name: String,
+        namespace_url: String,
+        value: String,
+        namespace_kind: u8,
+        operator: u8,
+        case_sensitivity: u8,
     }
 
     #[derive(Default)]
@@ -1647,12 +1662,70 @@ mod selector_syntax {
             .split(|component| component.is_combinator())
             .rev();
         let mut compounds = Vec::new();
+        let mut attributes = Vec::new();
         let mut native_combinators = Vec::new();
         let mut current = String::new();
         for compound in compound_groups {
+            let mut compound_attributes = Vec::new();
             for component in compound {
                 let _ = component.to_css(&mut current);
+                let attribute = match component {
+                    Component::AttributeInNoNamespaceExists { local_name, .. } => {
+                        Some(FlatAttribute {
+                            local_name: local_name.0.clone(),
+                            namespace_kind: 1,
+                            ..Default::default()
+                        })
+                    },
+                    Component::AttributeInNoNamespace {
+                        local_name,
+                        operator,
+                        value,
+                        case_sensitivity,
+                    } => Some(FlatAttribute {
+                        local_name: local_name.0.clone(),
+                        value: value.0.clone(),
+                        namespace_kind: 1,
+                        operator: attribute_operator(*operator),
+                        case_sensitivity: attribute_case_sensitivity(*case_sensitivity),
+                        ..Default::default()
+                    }),
+                    Component::AttributeOther(attribute) => {
+                        let (namespace_kind, namespace_url) = match &attribute.namespace {
+                            Some(NamespaceConstraint::Any) => (0, String::new()),
+                            Some(NamespaceConstraint::Specific((_, url))) => {
+                                (1, url.0.clone())
+                            },
+                            None => (1, String::new()),
+                        };
+                        let (operator, case_sensitivity, value) = match &attribute.operation {
+                            ParsedAttrSelectorOperation::Exists => (0, 0, String::new()),
+                            ParsedAttrSelectorOperation::WithValue {
+                                operator,
+                                case_sensitivity,
+                                value,
+                            } => (
+                                attribute_operator(*operator),
+                                attribute_case_sensitivity(*case_sensitivity),
+                                value.0.clone(),
+                            ),
+                        };
+                        Some(FlatAttribute {
+                            local_name: attribute.local_name.0.clone(),
+                            namespace_url,
+                            value,
+                            namespace_kind,
+                            operator,
+                            case_sensitivity,
+                        })
+                    },
+                    _ => None,
+                };
+                if let Some(attribute) = attribute {
+                    compound_attributes.push(attribute);
+                }
             }
+            attributes.push(compound_attributes);
             match combinators.next() {
                 Some(Combinator::Child) => {
                     compounds.push(std::mem::take(&mut current));
@@ -1680,7 +1753,28 @@ mod selector_syntax {
             serialized: selector.to_css_string(),
             specificity: native_specificity(selector.specificity()),
             compounds,
+            attributes,
             combinators: native_combinators,
+        }
+    }
+
+    fn attribute_operator(operator: AttrSelectorOperator) -> u8 {
+        match operator {
+            AttrSelectorOperator::Equal => 1,
+            AttrSelectorOperator::Includes => 2,
+            AttrSelectorOperator::DashMatch => 3,
+            AttrSelectorOperator::Prefix => 4,
+            AttrSelectorOperator::Substring => 5,
+            AttrSelectorOperator::Suffix => 6,
+        }
+    }
+
+    fn attribute_case_sensitivity(case_sensitivity: ParsedCaseSensitivity) -> u8 {
+        match case_sensitivity {
+            ParsedCaseSensitivity::AsciiCaseInsensitive => 1,
+            ParsedCaseSensitivity::ExplicitCaseSensitive => 2,
+            ParsedCaseSensitivity::CaseSensitive => 0,
+            ParsedCaseSensitivity::AsciiCaseInsensitiveIfInHtmlElementInHtmlDocument => 3,
         }
     }
 
@@ -1709,6 +1803,17 @@ mod selector_syntax {
     pub struct SelectorNamespace {
         pub prefix: ByteSlice,
         pub namespace_url: ByteSlice,
+    }
+
+    #[repr(C)]
+    #[derive(Clone, Copy, Default)]
+    pub struct SelectorAttributeView {
+        pub local_name: ByteSlice,
+        pub namespace_url: ByteSlice,
+        pub value: ByteSlice,
+        pub namespace_kind: u8,
+        pub operator: u8,
+        pub case_sensitivity: u8,
     }
 
     fn selector_error(status: u32) -> SelectorParseResult {
@@ -1829,6 +1934,55 @@ mod selector_syntax {
             specificity: selector.specificity,
             compound_count: selector.compounds.len(),
             combinator_count: selector.combinators.len(),
+        };
+        1
+    }
+
+    #[no_mangle]
+    pub unsafe extern "C" fn webscene_selector_compound_attribute_count(
+        handle: *const c_void,
+        selector_index: usize,
+        compound_index: usize,
+    ) -> usize {
+        let Some(output) = (unsafe { handle.cast::<SelectorOutput>().as_ref() }) else {
+            return 0;
+        };
+        output
+            .selectors
+            .get(selector_index)
+            .and_then(|selector| selector.attributes.get(compound_index))
+            .map_or(0, Vec::len)
+    }
+
+    #[no_mangle]
+    pub unsafe extern "C" fn webscene_selector_compound_attribute_at(
+        handle: *const c_void,
+        selector_index: usize,
+        compound_index: usize,
+        attribute_index: usize,
+        view: *mut SelectorAttributeView,
+    ) -> u8 {
+        let Some(output) = (unsafe { handle.cast::<SelectorOutput>().as_ref() }) else {
+            return 0;
+        };
+        let Some(attribute) = output
+            .selectors
+            .get(selector_index)
+            .and_then(|selector| selector.attributes.get(compound_index))
+            .and_then(|attributes| attributes.get(attribute_index))
+        else {
+            return 0;
+        };
+        let Some(view) = (unsafe { view.as_mut() }) else {
+            return 0;
+        };
+        *view = SelectorAttributeView {
+            local_name: ByteSlice::from_bytes(attribute.local_name.as_bytes()),
+            namespace_url: ByteSlice::from_bytes(attribute.namespace_url.as_bytes()),
+            value: ByteSlice::from_bytes(attribute.value.as_bytes()),
+            namespace_kind: attribute.namespace_kind,
+            operator: attribute.operator,
+            case_sensitivity: attribute.case_sensitivity,
         };
         1
     }

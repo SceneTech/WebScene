@@ -322,6 +322,7 @@
 
     using css_declaration = webscene_native::css::css_declaration;
     using compiled_css_pseudo = webscene_native::css::compiled_css_pseudo;
+    using compiled_css_attribute = webscene_native::css::compiled_css_attribute;
     using compiled_css_compound = webscene_native::css::compiled_css_compound;
     using transparent_string_hash = webscene_native::css::transparent_string_hash;
     using transparent_string_equal = webscene_native::css::transparent_string_equal;

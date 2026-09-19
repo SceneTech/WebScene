@@ -1,0 +1,117 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>CSS namespace-qualified attribute selector matching</title>
+<body>
+<script>
+  const state = window.__webSceneWptState = {
+    complete: false, harness: null, results: [], errors: [], diagnostics: []
+  };
+  const record = (name, error) => state.results.push({
+    name, status: error ? "FAIL" : "PASS",
+    message: error ? String(error && error.message || error) : null,
+    stack: error && error.stack ? String(error.stack) : null
+  });
+  const check = (condition, detail) => condition ? null : new Error(JSON.stringify(detail));
+  try {
+    const first = 'urn:webscene:wpt:attribute:first';
+    const second = 'urn:webscene:wpt:attribute:second';
+    const target = document.createElement('div');
+    target.setAttribute('name', 'plain');
+    target.setAttributeNS(first, 'p:name', 'VALUE');
+    target.setAttributeNS(first, 'p:words', 'alpha Beta gamma');
+    target.setAttributeNS(first, 'p:lang', 'en-US');
+    target.setAttributeNS(first, 'p:prefix', 'AbCd');
+    target.setAttributeNS(first, 'p:suffix', 'wXyZ');
+    target.setAttributeNS(first, 'p:contains', 'mIdDlE');
+    document.body.appendChild(target);
+
+    const owner = document.createElement('style');
+    owner.textContent = `
+      @namespace p url("${first}");
+      [p|name="value" i] { width: 21px; }
+      [*|name] { padding-top: 22px; }
+      [|name] { height: 23px; }
+      [p|words~="beta" i] { margin-left: 24px; }
+      [p|lang|="EN" i] { margin-top: 25px; }
+      [p|prefix^="ab" i] { margin-right: 26px; }
+      [p|suffix$="YZ" i] { margin-bottom: 27px; }
+      [p|contains*="IDDLE" i] { padding-left: 28px; }
+      [p|name="value" s] { padding-right: 999px; }
+      [missing|name] { width: 999px; }
+    `;
+    document.head.appendChild(owner);
+    const style = () => getComputedStyle(target);
+    const operatorSnapshot = {
+      width: style().width, paddingTop: style().paddingTop, height: style().height,
+      marginLeft: style().marginLeft, marginTop: style().marginTop,
+      marginRight: style().marginRight, marginBottom: style().marginBottom,
+      paddingLeft: style().paddingLeft, paddingRight: style().paddingRight
+    };
+    record('prefixed, any, empty, operators, case flags, and unknown prefixes', check(
+      operatorSnapshot.width === '21px'
+        && operatorSnapshot.paddingTop === '22px'
+        && operatorSnapshot.height === '23px'
+        && operatorSnapshot.marginLeft === '24px'
+        && operatorSnapshot.marginTop === '25px'
+        && operatorSnapshot.marginRight === '26px'
+        && operatorSnapshot.marginBottom === '27px'
+        && operatorSnapshot.paddingLeft === '28px'
+        && operatorSnapshot.paddingRight !== '999px',
+      operatorSnapshot));
+
+    target.setAttributeNS(first, 'q:name', 'miss');
+    const removed = style().width;
+    target.setAttributeNS(first, 'q:name', 'VALUE');
+    const restored = style().width;
+    record('setAttributeNS replacement recascades by expanded attribute name', check(
+      removed !== '21px' && restored === '21px'
+        && target.getAttributeNS(first, 'name') === 'VALUE',
+      { removed, restored, value: target.getAttributeNS(first, 'name') }));
+
+    const secondOwner = document.createElement('style');
+    secondOwner.textContent = `@namespace p url("${second}");
+      [p|name] { max-width: 31px; }`;
+    document.head.appendChild(secondOwner);
+    const beforeSecond = style().maxWidth;
+    target.setAttributeNS(second, 's:name', 'other');
+    const afterSecond = style().maxWidth;
+    owner.textContent = `@namespace p url("${second}");
+      [p|name] { width: 32px; }`;
+    const afterOwnerReplacement = style().width;
+    record('namespace contexts separate cache identity across owner replacement', check(
+      beforeSecond !== '31px' && afterSecond === '31px'
+        && afterOwnerReplacement === '32px',
+      { beforeSecond, afterSecond, afterOwnerReplacement }));
+
+    const adopted = new CSSStyleSheet();
+    adopted.replaceSync(`@namespace p url("${first}");
+      [p|name] { border-left-width: 33px; border-left-style: solid; }`);
+    document.adoptedStyleSheets.push(adopted);
+    const adoptedWidth = style().borderLeftWidth;
+    document.adoptedStyleSheets.pop();
+    const removedWidth = style().borderLeftWidth;
+    const started = performance.now();
+    for (let index = 0; index < 128; ++index) {
+      document.adoptedStyleSheets.push(adopted);
+      void style().borderLeftWidth;
+      document.adoptedStyleSheets.pop();
+    }
+    const elapsed = performance.now() - started;
+    record('adopted stylesheet lifecycle remains bounded and recascades', check(
+      adoptedWidth === '33px' && removedWidth !== '33px' && elapsed < 2000,
+      { adoptedWidth, removedWidth, elapsed }));
+    state.diagnostics.push(JSON.stringify({ operatorSnapshot, elapsed }));
+  } catch (error) {
+    record('namespace-qualified attribute selector setup', error);
+  }
+  const failure = state.results.find(result => result.status !== 'PASS');
+  state.harness = failure
+    ? { status: 1, message: failure.message, stack: failure.stack }
+    : { status: 0, message: null, stack: null };
+  state.complete = true;
+  const evidence = document.createElement('pre');
+  evidence.id = 'css-namespace-attribute-selector-matching-evidence';
+  evidence.hidden = true;
+  evidence.textContent = JSON.stringify(state);
+  document.body.appendChild(evidence);
+</script>

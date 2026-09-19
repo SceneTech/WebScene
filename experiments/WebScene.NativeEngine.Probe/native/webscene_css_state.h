@@ -37,12 +37,21 @@ struct compiled_css_pseudo final {
     std::string argument;
 };
 
+struct compiled_css_attribute final {
+    std::string local_name;
+    // Missing means any namespace. An empty value means explicitly no namespace.
+    std::optional<std::string> namespace_uri;
+    uint8_t operator_kind{0};
+    std::string value;
+    uint8_t case_sensitivity{0};
+};
+
 struct compiled_css_compound final {
     std::string tag;
     // Missing means any namespace. An empty value means explicitly no namespace.
     std::optional<std::string> namespace_uri;
     std::vector<std::pair<char, std::string>> identities;
-    std::vector<std::string> attributes;
+    std::vector<compiled_css_attribute> attributes;
     std::vector<compiled_css_pseudo> pseudos;
     bool valid{false};
     bool pseudo_element{false};

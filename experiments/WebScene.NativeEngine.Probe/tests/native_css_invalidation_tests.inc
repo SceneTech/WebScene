@@ -9,9 +9,11 @@ void test_live_form_state_selectors_and_scaling()
 
     const auto correctness = evaluate(engine, R"JS((() => {
       document.body.innerHTML = `<style>
-        .probe {padding-left:19px;padding-top:17px}
+        .probe {padding-left:19px;padding-top:17px;margin-left:5px;margin-top:7px}
         .probe:invalid {padding-left:47px}
         .probe:placeholder-shown {padding-top:83px}
+        .probe:user-valid {margin-left:43px}
+        .probe:user-invalid {margin-top:61px}
       </style><form id="form"></form>`;
       const form=document.getElementById('form');
       const textarea=document.createElement('textarea');
@@ -54,20 +56,40 @@ void test_live_form_state_selectors_and_scaling()
     const auto native_setup = evaluate(engine, R"JS((() => {
       const input=document.createElement('input'); input.id='native-value';
       input.className='probe'; input.setAttribute('required',''); input.setAttribute('placeholder','type');
-      document.body.appendChild(input); input.focus(); return [
+      document.getElementById('form').appendChild(input); input.focus(); return [
         input.matches(':invalid'),input.matches(':placeholder-shown'),
-        getComputedStyle(input).paddingLeft,getComputedStyle(input).paddingTop];
+        input.matches(':user-valid'),input.matches(':user-invalid'),
+        getComputedStyle(input).paddingLeft,getComputedStyle(input).paddingTop,
+        getComputedStyle(input).marginLeft,getComputedStyle(input).marginTop];
     })())JS", "live-form-state-native-setup.js");
-    require(native_setup == R"([true,true,"47px","83px"])",
+    require(native_setup == R"([true,true,false,false,"47px","83px","5px","7px"])",
         "native form-state setup diverged: " + native_setup);
     keyboard_input(engine, WEBSCENE_INPUT_TEXT, 'x', 2U);
     wait_for_consumed_inputs(engine, 2U, "native form-state input was not consumed");
     const auto native_result = evaluate(engine, R"JS((() => {const input=document.getElementById('native-value');return [
       input.value,input.matches(':valid'),input.matches(':invalid'),
-      input.matches(':placeholder-shown'),getComputedStyle(input).paddingLeft,
-      getComputedStyle(input).paddingTop];})())JS", "live-form-state-native-result.js");
-    require(native_result == R"(["x",true,false,false,"19px","17px"])",
+      input.matches(':placeholder-shown'),input.matches(':user-valid'),
+      input.matches(':user-invalid'),getComputedStyle(input).paddingLeft,
+      getComputedStyle(input).paddingTop,getComputedStyle(input).marginLeft,
+      getComputedStyle(input).marginTop];})())JS", "live-form-state-native-result.js");
+    require(native_result == R"(["x",true,false,false,true,false,"19px","17px","43px","7px"])",
         "native input did not invalidate live form state: " + native_result);
+    const auto user_validity_lifecycle = evaluate(engine, R"JS((() => {
+      const input=document.getElementById('native-value'),first=document.getElementById('form');
+      const snapshot=()=>{const style=getComputedStyle(input);return [
+        input.matches(':valid'),input.matches(':invalid'),input.matches(':user-valid'),
+        input.matches(':user-invalid'),style.marginLeft,style.marginTop];};
+      input.value='';const states=[snapshot()];
+      input.removeAttribute('required');states.push(snapshot());
+      input.setAttribute('required','');input.remove();states.push([
+        input.matches(':valid'),input.matches(':invalid'),input.matches(':user-valid'),
+        input.matches(':user-invalid')]);
+      const second=document.createElement('form');document.body.appendChild(second);second.appendChild(input);
+      first.reset();states.push(snapshot());second.reset();states.push(snapshot());
+      return states;
+    })())JS", "live-form-user-validity-lifecycle.js");
+    require(user_validity_lifecycle == R"JSON([[false,true,false,true,"5px","61px"],[true,false,true,false,"43px","7px"],[false,true,false,true],[false,true,false,true,"5px","61px"],[false,true,false,false,"5px","7px"]])JSON",
+        "live user-validity lifecycle diverged: " + user_validity_lifecycle);
 
     const auto setup = evaluate(engine, R"JS((() => {
       document.body.innerHTML='<style>.scale:invalid{width:2px}.scale:placeholder-shown{height:3px}'+

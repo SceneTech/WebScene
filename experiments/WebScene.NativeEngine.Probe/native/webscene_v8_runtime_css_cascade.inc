@@ -2401,14 +2401,19 @@
     void recascade_form_value_selector_transition(
         dom_node& subject,
         std::string previous_value,
-        std::string current_value)
+        std::string current_value,
+        std::optional<bool> user_validity_interacted = std::nullopt)
     {
         document.mark_dirty();
         const auto empty_state_changed=previous_value.empty()!=current_value.empty();
         const auto previous_range=forms::range_state(subject,previous_value);
         const auto current_range=forms::range_state(subject,current_value);
         const auto range_state_changed=previous_range!=current_range;
-        if(!empty_state_changed && !range_state_changed) return;
+        const auto previous_user_validity=subject.form_control().user_validity_interacted;
+        const auto current_user_validity=user_validity_interacted.value_or(previous_user_validity);
+        const auto user_validity_changed=previous_user_validity!=current_user_validity;
+        subject.mutable_form_control().user_validity_interacted=current_user_validity;
+        if(!empty_state_changed && !range_state_changed && !user_validity_changed) return;
         webscene_frame_trace::scope invalidation_trace(
             frame_trace,
             "form-state-invalidation-start",
@@ -2424,6 +2429,7 @@
         };
         if(empty_state_changed) append_rules("$live-form-value");
         if(range_state_changed) append_rules("$live-form-range");
+        if(user_validity_changed) append_rules("$live-form-user-validity");
         std::ranges::sort(changed_rule_storage);
         changed_rule_storage.erase(
             std::unique(changed_rule_storage.begin(),changed_rule_storage.end()),
@@ -2441,10 +2447,19 @@
                 };
                 if(empty_state_changed) include("$live-form-value");
                 if(range_state_changed) include("$live-form-range");
+                if(user_validity_changed) include("$live-form-user-validity");
                 return result;
             },
-            [&] { subject.mutable_form_control().value = previous_value; },
-            [&] { subject.mutable_form_control().value = current_value; });
+            [&] {
+                auto& control=subject.mutable_form_control();
+                control.value=previous_value;
+                control.user_validity_interacted=previous_user_validity;
+            },
+            [&] {
+                auto& control=subject.mutable_form_control();
+                control.value=current_value;
+                control.user_validity_interacted=current_user_validity;
+            });
     }
 
     void recascade_class_selector_transition(

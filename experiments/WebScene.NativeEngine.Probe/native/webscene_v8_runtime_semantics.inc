@@ -1000,7 +1000,7 @@
         node.mutable_form_control().value_initialized = true;
         node.mutable_form_control().dirty_value = true;
         recascade_form_value_selector_transition(
-            node, previous, node.form_control().value);
+            node, previous, node.form_control().value, true);
         webscene_input_event synthetic{};
         if (!dispatch_input_event_type(synthetic, "input", node)
             || !dispatch_input_event_type(synthetic, "change", node)) {
@@ -1086,7 +1086,7 @@
                     text_selection_direction::none;
                 node->mutable_form_control().selection_explicitly_set = true;
                 recascade_form_value_selector_transition(
-                    *node, previous, node->form_control().value);
+                    *node, previous, node->form_control().value, true);
                 succeeded = dispatch_input_event_type(synthetic, "input", *node);
                 break;
             }

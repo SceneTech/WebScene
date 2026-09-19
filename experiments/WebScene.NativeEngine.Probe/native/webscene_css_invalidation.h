@@ -108,7 +108,8 @@ inline std::vector<css_compound_dependencies> compile_invalidation_plan(
                 output.child_list_sensitive = true;
                 add(output.child_list, inherited_route);
             } else if (pseudo.name == "required" || pseudo.name == "optional"
-                || pseudo.name == "valid" || pseudo.name == "invalid") {
+                || pseudo.name == "valid" || pseudo.name == "invalid"
+                || pseudo.name == "user-valid" || pseudo.name == "user-invalid") {
                 add(output.attributes["required"], route);
                 if (pseudo.name == "required" || pseudo.name == "optional") {
                     add(output.attributes["type"], route);
@@ -121,6 +122,8 @@ inline std::vector<css_compound_dependencies> compile_invalidation_plan(
                     // text children. Reuse the structural route machinery.
                     output.child_list_sensitive = true;
                     add(output.child_list, route);
+                    if (pseudo.name == "user-valid" || pseudo.name == "user-invalid")
+                        add(output.attributes["$live-form-user-validity"], route);
                 }
             } else if (pseudo.name == "placeholder-shown") {
                 add(output.attributes["placeholder"], route);

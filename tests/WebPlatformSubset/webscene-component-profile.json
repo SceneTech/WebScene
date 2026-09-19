@@ -1311,6 +1311,13 @@
   ],
   "candidate": [
     {
+      "path": "contracts/css-user-validity-state.html",
+      "type": "testharness",
+      "capabilities": ["user-valid-selector", "user-invalid-selector", "live-user-validity-invalidation"],
+      "evidence": ["wpt-css-ui-user-validity-derived", "native-source-companion-contract"],
+      "reason": "Implementation-first candidate for WebScene #257. The focused text-control slice keeps user validity as non-reflected live state: native input marks it, programmatic value writes preserve it without creating it, required/value changes recalculate matching, detach/reparent retains it, and reset by the current form owner clears it. Direct browser/native execution remains validation debt."
+    },
+    {
       "path": "contracts/css-grid-auto-fill-minmax-custom-property.html",
       "type": "testharness",
       "capabilities": ["css-grid", "auto-fill-tracks", "minmax", "custom-property-track-minimum", "responsive-track-count"],

@@ -1019,6 +1019,119 @@ void test_nested_window_focus_ownership() {
   webscene_engine_destroy(engine);
 }
 
+void test_nested_pointer_coordinate_projection() {
+  constexpr std::string_view address{
+      "https://iframe-pointer.test/index.html"};
+  resource_server server{
+      .content = {{std::string{address},
+                   "<!doctype html><title>frame pointer</title><body></body>"},
+                  {"https://iframe-pointer.test/outer.html",
+                   "<!doctype html><title>outer frame</title><body></body>"},
+                  {"https://iframe-pointer.test/inner.html",
+                   "<!doctype html><title>inner frame</title><body></body>"}}};
+  webscene_engine_options options{};
+  options.struct_size = sizeof(options);
+  options.resource_load_callback = load_test_resource;
+  options.resource_load_user_data = &server;
+  auto* engine = webscene_engine_create_with_options(&options);
+  require(engine != nullptr, "nested pointer coordinate engine creation failed");
+  require(webscene_engine_load_url(engine, address.data(), address.size()) != 0U,
+          "nested pointer coordinate outer document failed");
+  require(evaluate_until_equals(
+              engine, "location.href", "nested-pointer-ready.js",
+              R"("https://iframe-pointer.test/index.html")", 2'500)
+              == R"("https://iframe-pointer.test/index.html")",
+          "nested pointer coordinate outer document did not become ready");
+
+  execute(engine, R"JS(
+      globalThis.__nestedPointer = {complete:false,error:null,events:[]};
+      (() => {
+        try {
+          document.body.style.margin = '0';
+          const outer = document.createElement('iframe');
+          outer.setAttribute('sandbox', 'allow-same-origin allow-scripts');
+          outer.style.cssText = 'position:absolute;left:80px;top:60px;width:200px;height:120px;border:4px solid black';
+          outer.src = './outer.html';
+          document.body.appendChild(outer);
+          outer.contentWindow.addEventListener('DOMContentLoaded', outerEvent => {
+            try {
+              const outerDocument = outerEvent.target;
+              outerDocument.body.style.margin = '0';
+              const inner = outerDocument.createElement('iframe');
+              inner.setAttribute('sandbox', 'allow-same-origin allow-scripts');
+              inner.style.cssText = 'position:absolute;left:30px;top:25px;width:100px;height:70px;border:3px solid black';
+              inner.src = './inner.html';
+              outerDocument.body.appendChild(inner);
+              inner.contentWindow.addEventListener('DOMContentLoaded', innerEvent => {
+                try {
+                  const innerDocument = innerEvent.target;
+                  innerDocument.body.style.margin = '0';
+                  const target = innerDocument.createElement('div');
+                  target.id = 'target';
+                  target.style.cssText = 'position:absolute;left:10px;top:8px;width:40px;height:30px';
+                  innerDocument.body.appendChild(target);
+                  for (const type of ['pointerdown','mousedown','contextmenu','pointerup','mouseup','auxclick']) {
+                    target.addEventListener(type, event => __nestedPointer.events.push([
+                      event.type,event.clientX,event.clientY,event.pageX,event.pageY,
+                      event.screenX,event.screenY,event.offsetX,event.offsetY,event.isTrusted
+                    ]));
+                  }
+                  __nestedPointer.complete = true;
+                } catch (error) {
+                  __nestedPointer.error = String(error && error.stack || error);
+                  __nestedPointer.complete = true;
+                }
+              });
+            } catch (error) {
+              __nestedPointer.error = String(error && error.stack || error);
+              __nestedPointer.complete = true;
+            }
+          });
+        } catch (error) {
+          __nestedPointer.error = String(error && error.stack || error);
+          __nestedPointer.complete = true;
+        }
+      })();
+    )JS", "nested-pointer-coordinate-setup.js");
+  require(evaluate_until_equals(
+              engine, "__nestedPointer.complete", "nested-pointer-complete.js",
+              "true", 3'000) == "true",
+          "nested pointer coordinate setup timed out: "
+              + evaluate(engine, "JSON.stringify(__nestedPointer)",
+                         "nested-pointer-timeout.js"));
+  require(evaluate(engine, "__nestedPointer.error",
+                   "nested-pointer-setup-result.js") == "null",
+          "nested pointer coordinate setup failed: "
+              + evaluate(engine, "JSON.stringify(__nestedPointer)",
+                         "nested-pointer-setup-detail.js"));
+
+  // Host point (132,105) is (15,13) in the innermost viewport and (5,5)
+  // inside its target. The outer and inner iframe borders are part of the
+  // host-space offset but not either child Window's client coordinates.
+  const webscene_input_event down{
+      WEBSCENE_INPUT_POINTER_DOWN, 2U | (3U << 8U), 9301U,
+      132, 105, 0, 0};
+  const webscene_input_event up{
+      WEBSCENE_INPUT_POINTER_UP, (3U << 8U), 9302U,
+      132, 105, 0, 0};
+  const auto consumed_before_click = consumed_input_count(engine);
+  require(webscene_engine_enqueue(engine, &down) != 0,
+          "nested secondary pointer down was rejected");
+  require(webscene_engine_enqueue(engine, &up) != 0,
+          "nested secondary pointer up was rejected");
+  wait_for_consumed_inputs(
+      engine, consumed_before_click + 2,
+      "nested secondary pointer inputs were not consumed");
+  const auto result = evaluate(
+      engine, "__nestedPointer.events", "nested-pointer-coordinate-result.js");
+  const auto expected =
+      R"([["pointerdown",15,13,15,13,132,105,5,5,true],["mousedown",15,13,15,13,132,105,5,5,true],["contextmenu",15,13,15,13,132,105,5,5,true],["pointerup",15,13,15,13,132,105,5,5,true],["mouseup",15,13,15,13,132,105,5,5,true],["auxclick",15,13,15,13,132,105,5,5,true]])";
+  require(result == expected,
+          "nested pointer coordinates were not projected into the target viewport: "
+              + result);
+  webscene_engine_destroy(engine);
+}
+
 size_t load_contextual_test_resource(
     void* user_data,
     uint32_t kind,

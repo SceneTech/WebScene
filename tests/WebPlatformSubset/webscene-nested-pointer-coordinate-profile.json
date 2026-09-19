@@ -1,0 +1,26 @@
+{
+  "profile": "webscene-nested-pointer-coordinate-1",
+  "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+  "runtime": "v8",
+  "viewport": {
+    "width": 800,
+    "height": 600,
+    "deviceScaleFactor": 1
+  },
+  "required": [
+    {
+      "path": "contracts/nested-pointer-coordinate-projection.html",
+      "type": "contract",
+      "capabilities": [
+        "nested-pointer-client-coordinates",
+        "nested-context-menu-coordinate-handoff"
+      ],
+      "evidence": [
+        "code-oss-webview-context-menu"
+      ],
+      "reason": "Chrome/native oracle for projecting host pointer coordinates into the innermost webview viewport."
+    }
+  ],
+  "harnessBlocked": [],
+  "excluded": []
+}

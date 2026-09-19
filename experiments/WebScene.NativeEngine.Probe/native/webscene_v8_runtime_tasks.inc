@@ -1852,10 +1852,72 @@
             current_related_target == nullptr
                 ? v8::Local<v8::Value>(v8::Null(isolate))
                 : v8::Local<v8::Value>(wrap_node(*current_related_target))).Check();
-        set_number("clientX", input.x);
-        set_number("clientY", input.y);
-        set_number("pageX", input.x);
-        set_number("pageY", input.y);
+        auto client_x = input.x;
+        auto client_y = input.y;
+        auto page_x = input.x;
+        auto page_y = input.y;
+        const auto pointer_input = input.kind == WEBSCENE_INPUT_POINTER_MOVE
+            || input.kind == WEBSCENE_INPUT_POINTER_DOWN
+            || input.kind == WEBSCENE_INPUT_POINTER_UP
+            || input.kind == WEBSCENE_INPUT_POINTER_LEAVE
+            || input.kind == WEBSCENE_INPUT_WHEEL;
+        if (pointer_input) {
+            // The native host reports coordinates in the top-level viewport.
+            // A pointer event dispatched in a child browsing context exposes
+            // client coordinates in that context's viewport instead. Layout
+            // remains host-relative for hit testing and retained painting, so
+            // project only the script-visible event fields at this boundary.
+            for (auto* ancestor = target.parent; ancestor != nullptr;
+                 ancestor = ancestor->parent) {
+                if (ancestor->tag != "iframe") continue;
+                const auto border_left = document.resolve_used_length(
+                    *ancestor,
+                    ancestor->style.border_left_width,
+                    ancestor->layout.width,
+                    0);
+                const auto border_top = document.resolve_used_length(
+                    *ancestor,
+                    ancestor->style.border_top_width,
+                    ancestor->layout.height,
+                    0);
+                const auto padding_left = document.resolve_used_length(
+                    *ancestor,
+                    ancestor->style.padding_left,
+                    ancestor->layout.width,
+                    0);
+                const auto padding_top = document.resolve_used_length(
+                    *ancestor,
+                    ancestor->style.padding_top,
+                    ancestor->layout.height,
+                    0);
+                client_x -= ancestor->layout.x + border_left + padding_left;
+                client_y -= ancestor->layout.y + border_top + padding_top;
+                page_x = client_x;
+                page_y = client_y;
+                if (const auto scroll = frame_window_scroll_offsets.find(ancestor->id);
+                    scroll != frame_window_scroll_offsets.end()) {
+                    page_x += scroll->second.first;
+                    page_y += scroll->second.second;
+                } else {
+                    auto* frame_root = &target;
+                    while (frame_root->parent != nullptr
+                        && frame_root->parent != ancestor) {
+                        frame_root = frame_root->parent;
+                    }
+                    if (frame_root->parent == ancestor) {
+                        page_x += frame_root->scroll_left;
+                        page_y += frame_root->scroll_top;
+                    }
+                }
+                // The nearest owner defines the target event's Window. Its
+                // layout position already includes every outer frame offset.
+                break;
+            }
+        }
+        set_number("clientX", client_x);
+        set_number("clientY", client_y);
+        set_number("pageX", page_x);
+        set_number("pageY", page_y);
         set_number("screenX", input.x);
         set_number("screenY", input.y);
         set_number("offsetX", input.x - target.layout.x);
@@ -1900,11 +1962,6 @@
             mouse_button_event ? legacy_changed_button : (primary_button_held ? 1 : 0));
         const auto keyboard_input = input.kind == WEBSCENE_INPUT_KEY_DOWN
             || input.kind == WEBSCENE_INPUT_KEY_UP;
-        const auto pointer_input = input.kind == WEBSCENE_INPUT_POINTER_MOVE
-            || input.kind == WEBSCENE_INPUT_POINTER_DOWN
-            || input.kind == WEBSCENE_INPUT_POINTER_UP
-            || input.kind == WEBSCENE_INPUT_POINTER_LEAVE
-            || input.kind == WEBSCENE_INPUT_WHEEL;
         const auto text_input = input.kind == WEBSCENE_INPUT_TEXT;
         event->Set(local_context, js_string(isolate, "altKey"), v8::Boolean::New(
             isolate, (keyboard_input && (input.flags & WEBSCENE_INPUT_MODIFIER_ALT) != 0U)

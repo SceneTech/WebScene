@@ -190,6 +190,10 @@ int main()
           test_nested_window_focus_ownership();
           return 0;
         }
+        if (selected == "nested-pointer-coordinates") {
+          test_nested_pointer_coordinate_projection();
+          return 0;
+        }
         if (selected == "idle-v8-platform") {
             test_idle_v8_foreground_completion();
             return 0;

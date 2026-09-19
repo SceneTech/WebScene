@@ -1,0 +1,28 @@
+{
+  "profile": "webscene-cssom-font-face-rule-mutation-1",
+  "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+  "runtime": "v8",
+  "viewport": {
+    "width": 800,
+    "height": 600,
+    "deviceScaleFactor": 1
+  },
+  "required": [
+    {
+      "path": "contracts/cssom-font-face-rule-mutation.html",
+      "type": "contract",
+      "capabilities": [
+        "cssom-font-face-rule-identity",
+        "cssom-font-face-descriptor-mutation",
+        "cssom-font-face-registration-invalidation",
+        "cssom-font-face-imported-ownership",
+        "cssom-font-face-adopted-ownership",
+        "cssom-font-face-rule-detachment"
+      ],
+      "evidence": ["cssom-font-face-rule-mutation-239"],
+      "reason": "Pinned-WPT-derived CSS Fonts regression for CSSFontFaceRule brand/type, SameObject descriptor reflection and PutForwards cssText mutation, single-line serialization, synchronous native font registration and layout invalidation, iframe realms, imported and constructed/adopted ownership, recursive detachment, and isolated detached snapshots."
+    }
+  ],
+  "harnessBlocked": [],
+  "excluded": []
+}

@@ -51,8 +51,7 @@ mutation.
 
 ## Remaining #237 boundary
 
-Functional path-depth `:local-link()`, shadow-specific selectors and
-shadow-inclusive target ancestry, complete pseudo-element matching, the
-remaining Selectors Level 4/5 state and specificity inventory, and cumulative
-browser/package/performance qualification remain open. This slice changes no
-Code OSS source.
+Shadow-specific selectors and shadow-inclusive target ancestry, complete
+pseudo-element matching, the remaining Selectors Level 4/5 state and
+specificity inventory, and cumulative browser/package/performance
+qualification remain open. This slice changes no Code OSS source.

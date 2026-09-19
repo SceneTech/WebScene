@@ -17,8 +17,8 @@ path differences therefore remain non-local. URL inputs are refused above the
 existing 8 KiB navigation bound.
 
 No browsing-history state is read or retained. `:visited` remains
-privacy-closed. The functional path-depth form of `:local-link()` is outside
-this slice.
+privacy-closed. Functional path-depth behavior is implemented by the dependent
+`css-local-link-depth-237-235.md` slice.
 
 ## Bounded invalidation
 
@@ -44,7 +44,7 @@ candidate coverage; current mainstream browsers do not yet provide a shipping
 
 ## Remaining #237 boundary
 
-`:target-within`, functional path-depth `:local-link()`, shadow-specific
-selectors, complete pseudo-element matching, the remaining Selectors
-Level 4/5 state and specificity inventory, and cumulative browser/package/
-performance qualification remain open. This slice changes no Code OSS source.
+Shadow-specific selectors, complete pseudo-element matching, the remaining
+Selectors Level 4/5 state and specificity inventory, and cumulative browser/
+package/performance qualification remain open. This slice changes no Code OSS
+source.

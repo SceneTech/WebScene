@@ -78,6 +78,16 @@ void require_validation()
         "escaped language identifier accepted");
     require(static_cast<bool>(parse_selector_syntax("div:is(.valid, :unknown-state)")),
         "forgiving :is list retains valid selector");
+    require(static_cast<bool>(parse_selector_syntax(":local-link(0)"))
+        &&static_cast<bool>(parse_selector_syntax(":local-link(+12)"))
+        &&static_cast<bool>(parse_selector_syntax(":local-link(-0)"))
+        &&static_cast<bool>(parse_selector_syntax(":local-link(/* bounded */ 2)")),
+        "local-link must accept one non-negative integer argument and signed zero");
+    for(const auto invalid:{":local-link()",":local-link(-1)",
+            ":local-link(1.0)",":local-link(1 2)",":local-link(all)",
+            ":local-link(2147483648)"})
+        require(!parse_selector_syntax(invalid),
+            "malformed, negative, or overflowing local-link argument accepted");
 }
 
 void require_wtf8_domstring_round_trip()
@@ -399,6 +409,12 @@ void test_compiled_css_invalidation_plans()
     require(local_link_relational[0].attributes.at("$local-link-document").routes
             ==std::vector<css_invalidation_route>{{css_invalidation_step::parent}},
         "nested local-link must retain its reverse relational document route");
+    const auto local_link_depth=compile("a:is(:local-link(2)) + .marker");
+    require(local_link_depth[0].attributes.at("href").routes
+            ==std::vector<css_invalidation_route>{{css_invalidation_step::next_sibling}}
+        &&local_link_depth[0].attributes.at("$local-link-document").routes
+            ==std::vector<css_invalidation_route>{{css_invalidation_step::next_sibling}},
+        "functional local-link must inherit nested href/document sibling routes");
     const auto target_within=compile(".branch:target-within");
     for(const auto* dependency:{"id","$target-document"})
         require((target_within[0].attributes.at(dependency).scope
@@ -483,6 +499,46 @@ void require_local_link_matching()
             "https://example.test/docs/index.html",
             "https://example.test/docs/index.html"),
         "stylesheet metadata must not become a local hyperlink");
+
+    anchor.tag = "a";
+    anchor.attributes["href"] = "http://www.example.com/";
+    constexpr auto document_url = "http://www.example.com/2011/03/";
+    require(css::local_link_matches(
+            anchor,document_url,document_url,uint32_t{0U})
+        &&!css::local_link_matches(
+            anchor,document_url,document_url,uint32_t{1U}),
+        "local-link(0) must compare only origin while depth one requires a segment");
+    anchor.attributes["href"] = "http://WWW.EXAMPLE.COM:80/2011";
+    require(css::local_link_matches(
+            anchor,document_url,document_url,uint32_t{1U})
+        &&!css::local_link_matches(
+            anchor,document_url,document_url,uint32_t{2U}),
+        "functional local-link must normalize origin and require every requested segment");
+    anchor.attributes["href"] = "http://user:secret@www.example.com/2011/03?other=1#chapter";
+    require(css::local_link_matches(
+            anchor,document_url,document_url,uint32_t{2U})
+        &&!css::local_link_matches(
+            anchor,document_url,document_url,uint32_t{3U}),
+        "functional local-link must ignore credentials/query/fragment but preserve path depth");
+    anchor.attributes["href"] = "http://www.example.com/2011/03/";
+    require(css::local_link_matches(
+            anchor,document_url,document_url,uint32_t{3U})
+        &&!css::local_link_matches(
+            anchor,document_url,document_url,uint32_t{4U}),
+        "a trailing slash must contribute its empty path segment only once");
+    anchor.attributes["href"] = "https://www.example.com/2011/03/";
+    require(!css::local_link_matches(
+            anchor,document_url,document_url,uint32_t{0U})
+        &&!css::local_link_matches(
+            anchor,"mailto:author@example.com","mailto:author@example.com",uint32_t{0U}),
+        "functional local-link must reject cross-origin and non-hierarchical URLs");
+    anchor.attributes["href"] = "webscene-test://host.test:0/section";
+    require(!css::local_link_matches(
+            anchor,
+            "webscene-test://host.test/section",
+            "webscene-test://host.test/section",
+            uint32_t{0U}),
+        "an explicit port zero must not equal no port for a scheme without a known default");
 }
 
 void require_target_identifier_matching()

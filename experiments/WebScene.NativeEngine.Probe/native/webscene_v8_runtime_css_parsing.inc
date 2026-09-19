@@ -1894,7 +1894,8 @@
         }
         return false;
     }
-    bool selector_local_link_matches(const dom_node& node) const
+    bool selector_local_link_matches(
+        const dom_node& node,std::optional<uint32_t> path_depth) const
     {
         // Compound matching exposes a const host. Resolving the effective
         // document base only refreshes the existing derived URL cache.
@@ -1915,7 +1916,8 @@
         return css::local_link_matches(
             node,
             self.effective_document_base(root),
-            self.navigation_address_for_root(root));
+            self.navigation_address_for_root(root),
+            path_depth);
     }
     bool custom_state_matches(const dom_node& node, std::string_view state) const
     {

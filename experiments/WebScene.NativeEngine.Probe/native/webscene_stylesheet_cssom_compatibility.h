@@ -34,6 +34,8 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
   const containerRuleInstances = new WeakSet();
   const layerBlockRuleInstances = new WeakSet();
   const layerStatementRuleInstances = new WeakSet();
+  const keyframesRuleInstances = new WeakSet();
+  const keyframeRuleInstances = new WeakSet();
   const nestedDeclarationsInstances = new WeakSet();
   const mediaListInstances = new WeakSet();
   const ruleListInstances = new WeakSet();
@@ -113,6 +115,10 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
     'CSSLayerBlockRule', layerBlockRuleInstances, CSSGroupingRuleInterface);
   const CSSLayerStatementRuleInterface = interfaceConstructor(
     'CSSLayerStatementRule', layerStatementRuleInstances, CSSRuleInterface);
+  const CSSKeyframesRuleInterface = interfaceConstructor(
+    'CSSKeyframesRule', keyframesRuleInstances, CSSRuleInterface);
+  const CSSKeyframeRuleInterface = interfaceConstructor(
+    'CSSKeyframeRule', keyframeRuleInstances, CSSRuleInterface);
   const CSSNestedDeclarationsInterface = interfaceConstructor(
     'CSSNestedDeclarations', nestedDeclarationsInstances, CSSRuleInterface);
   const MediaListInterface = interfaceConstructor('MediaList', mediaListInstances);
@@ -131,6 +137,8 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
       ['CSSContainerRule', CSSContainerRuleInterface],
       ['CSSLayerBlockRule', CSSLayerBlockRuleInterface],
       ['CSSLayerStatementRule', CSSLayerStatementRuleInterface],
+      ['CSSKeyframesRule', CSSKeyframesRuleInterface],
+      ['CSSKeyframeRule', CSSKeyframeRuleInterface],
       ['CSSNestedDeclarations', CSSNestedDeclarationsInterface],
       ['MediaList', MediaListInterface],
       ['CSSRuleList', CSSRuleListInterface]
@@ -145,6 +153,10 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
         target, 'NAMESPACE_RULE', { value: 10, enumerable: true });
       if (target && !('SUPPORTS_RULE' in target)) Object.defineProperty(
         target, 'SUPPORTS_RULE', { value: 12, enumerable: true });
+      if (target && !('KEYFRAMES_RULE' in target)) Object.defineProperty(
+        target, 'KEYFRAMES_RULE', { value: 7, enumerable: true });
+      if (target && !('KEYFRAME_RULE' in target)) Object.defineProperty(
+        target, 'KEYFRAME_RULE', { value: 8, enumerable: true });
     }
   };
   // Split only at top-level CSS rule boundaries. Quoted strings, escaped
@@ -829,6 +841,58 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
   };
   const escapeCssString = value => String(value)
     .replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  const parseKeyframeSelector = value => {
+    const source = value.replace(/\/\*[\s\S]*?\*\//g, ' ').trim();
+    if (!source) return null;
+    const selectors = [];
+    for (const componentSource of source.split(',')) {
+      const component = componentSource.trim();
+      if (/^from$/i.test(component)) {
+        selectors.push('0%');
+        continue;
+      }
+      if (/^to$/i.test(component)) {
+        selectors.push('100%');
+        continue;
+      }
+      const match = /^([+-]?(?:(?:[0-9]+(?:\.[0-9]*)?)|(?:\.[0-9]+))(?:e[+-]?[0-9]+)?)%$/i
+        .exec(component);
+      if (!match) return null;
+      const percentage = Number(match[1]);
+      if (!Number.isFinite(percentage) || percentage < 0 || percentage > 100)
+        return null;
+      selectors.push(`${Object.is(percentage, -0) ? 0 : percentage}%`);
+    }
+    return selectors.length ? selectors.join(', ') : null;
+  };
+  const parseKeyframesPrelude = parsed => {
+    if (parsed.body === undefined) return null;
+    const open = parsed.cssText.length - parsed.body.length - 2;
+    const match = /^@(-webkit-)?keyframes\b([\s\S]*)$/i
+      .exec(parsed.cssText.slice(0, open).trim());
+    if (!match) return null;
+    const source = match[2].trim();
+    if (!source) return null;
+    let name;
+    if (source[0] === '"' || source[0] === "'") {
+      if (source.length < 2 || source.at(-1) !== source[0]) return null;
+      name = decodeCssIdentifier(source.slice(1, -1));
+    } else {
+      if (!cssIdentifierPattern.test(source)) return null;
+      name = decodeCssIdentifier(source);
+    }
+    return { prefixed: Boolean(match[1]), name };
+  };
+  const serializeKeyframesName = value => {
+    const name = String(value);
+    const keyword = name.toLowerCase();
+    const quoted = !cssIdentifierPattern.test(name)
+      || keyword === 'none' || keyword === 'initial' || keyword === 'inherit'
+      || keyword === 'unset' || keyword === 'revert' || keyword === 'revert-layer'
+      || keyword === 'default';
+    return quoted ? `"${escapeCssString(name)}"`
+      : globalThis.CSS?.escape ? globalThis.CSS.escape(name) : name;
+  };
   const absolutizeCssUrls = (source, baseURL) => {
     let result = '', quote = '', comment = false;
     for (let index = 0; index < source.length;) {
@@ -895,10 +959,33 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
     const supportsMatch = /^@supports(?:\s+([^\{]*?))?\s*\{/i.exec(parsed.cssText);
     const containerMatch = /^@container(?:\s+([^\{]*?))?\s*\{/i.exec(parsed.cssText);
     const layerBlockMatch = /^@layer(?:\s+([^\{]*?))?\s*\{/i.exec(parsed.cssText);
+    const keyframesSpec = parseKeyframesPrelude(parsed);
     const layerStatementNames = parsed.body === undefined
       ? parseLayerStatementNames(parsed.cssText) : undefined;
     const groupingMatch = mediaMatch || supportsMatch || containerMatch || layerBlockMatch;
-    const rule = {};
+    let keyframeChildren = null;
+    const ruleTarget = {};
+    const rule = keyframesSpec ? new Proxy(ruleTarget, {
+      get(target, key, receiver) {
+        if (typeof key === 'string' && /^(0|[1-9][0-9]*)$/.test(key)) {
+          synchronize(state);
+          return keyframeChildren?.[Number(key)];
+        }
+        return Reflect.get(target, key, receiver);
+      },
+      set(target, key, value, receiver) {
+        if (typeof key === 'string' && /^(0|[1-9][0-9]*)$/.test(key)) return false;
+        return Reflect.set(target, key, value, receiver);
+      },
+      defineProperty(target, key, descriptor) {
+        if (typeof key === 'string' && /^(0|[1-9][0-9]*)$/.test(key)) return false;
+        return Reflect.defineProperty(target, key, descriptor);
+      },
+      deleteProperty(target, key) {
+        if (typeof key === 'string' && /^(0|[1-9][0-9]*)$/.test(key)) return false;
+        return Reflect.deleteProperty(target, key);
+      }
+    }) : ruleTarget;
     ruleInstances.add(rule);
     if (importSpec) {
       importRuleInstances.add(rule);
@@ -925,6 +1012,9 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
       groupingRuleInstances.add(rule);
       layerBlockRuleInstances.add(rule);
       Object.setPrototypeOf(rule, CSSLayerBlockRuleInterface.prototype);
+    } else if (keyframesSpec) {
+      keyframesRuleInstances.add(rule);
+      Object.setPrototypeOf(rule, CSSKeyframesRuleInterface.prototype);
     } else if (layerStatementNames) {
       layerStatementRuleInstances.add(rule);
       Object.setPrototypeOf(rule, CSSLayerStatementRuleInterface.prototype);
@@ -1049,6 +1139,148 @@ inline constexpr std::string_view cssCompatibilityScript = R"JS(
         prefix: { enumerable: true, value: namespaceSpec.prefix },
         namespaceURI: { enumerable: true, value: namespaceSpec.namespaceURI },
         detach: { value: () => { parent = null; } }
+      });
+    } else if (keyframesSpec) {
+      let name = keyframesSpec.name;
+      const prefix = keyframesSpec.prefixed ? '@-webkit-keyframes' : '@keyframes';
+      const attached = () => parent && (containingRule
+        ? Array.from(containingRule.cssRules || []).includes(rule)
+        : state.rules.includes(rule));
+      let list;
+      const serialize = () => {
+        cssText = `${prefix} ${serializeKeyframesName(name)} {${
+          keyframeChildren.map(child => child.cssText).join('')}}`;
+      };
+      const commit = () => {
+        serialize();
+        if (parent && containingRule?.__webSceneSerialize)
+          containingRule.__webSceneSerialize();
+        if (attached()) publish(state);
+      };
+      const makeKeyframeRule = childParsed => {
+        if (childParsed.selectorText === undefined) return null;
+        let keyText = parseKeyframeSelector(childParsed.selectorText);
+        if (!keyText) return null;
+        let childParent = parent;
+        let declaration;
+        const child = {};
+        ruleInstances.add(child);
+        keyframeRuleInstances.add(child);
+        Object.setPrototypeOf(child, CSSKeyframeRuleInterface.prototype);
+        const childAttached = () => childParent && keyframeChildren.includes(child);
+        const serializeChild = () => {
+          const declarations = declaration.cssText.trim();
+          childCssText = `${keyText} {${declarations ? ' ' + declarations + ' ' : ''}}`;
+        };
+        const commitChild = () => {
+          synchronize(state);
+          serializeChild();
+          serialize();
+          if (parent && containingRule?.__webSceneSerialize)
+            containingRule.__webSceneSerialize();
+          if (childAttached() && attached()) publish(state);
+        };
+        let childCssText = '';
+        declaration = makeDeclaration(state, childParsed.body || '', commitChild);
+        Object.defineProperties(child, {
+          type: { enumerable: true, value: 8 },
+          cssText: { enumerable: true, get: () => childCssText },
+          parentStyleSheet: { enumerable: true, get: () => childParent },
+          parentRule: { enumerable: true, get: () => childParent ? rule : null },
+          keyText: {
+            enumerable: true,
+            get: () => keyText,
+            set(value) {
+              const normalized = parseKeyframeSelector(text(value));
+              if (!normalized)
+                exception('The keyframe selector is invalid', 'SyntaxError');
+              if (normalized === keyText) return;
+              keyText = normalized;
+              commitChild();
+            }
+          },
+          style: {
+            enumerable: true,
+            get: () => declaration,
+            set(value) { declaration.cssText = text(value); }
+          },
+          detach: { value: () => { childParent = null; } }
+        });
+        serializeChild();
+        return child;
+      };
+      keyframeChildren = splitRules(parsed.body || '')
+        .map(makeKeyframeRule).filter(Boolean);
+      list = makeList(() => keyframeChildren, () => synchronize(state));
+      Object.defineProperties(rule, {
+        type: { enumerable: true, value: 7 },
+        name: {
+          enumerable: true,
+          get: () => name,
+          set(value) {
+            synchronize(state);
+            value = text(value);
+            if (value === name) return;
+            name = value;
+            commit();
+          }
+        },
+        cssRules: { enumerable: true, get: () => list },
+        length: { enumerable: true, get: () => {
+          synchronize(state);
+          return keyframeChildren.length;
+        } },
+        appendRule: { writable: true, value(ruleText) {
+          if (arguments.length === 0) throw new TypeError('A keyframe rule is required');
+          synchronize(state);
+          let parsedChildren;
+          try {
+            parsedChildren = splitRules(text(ruleText));
+          } catch (error) {
+            if (error?.name === 'SyntaxError') return;
+            throw error;
+          }
+          if (parsedChildren.length !== 1) return;
+          const child = makeKeyframeRule(parsedChildren[0]);
+          if (!child) return;
+          keyframeChildren.push(child);
+          commit();
+        } },
+        deleteRule: { writable: true, value(select) {
+          if (arguments.length === 0) throw new TypeError('A keyframe selector is required');
+          synchronize(state);
+          const normalized = parseKeyframeSelector(text(select));
+          if (!normalized) return;
+          for (let index = keyframeChildren.length - 1; index >= 0; index--) {
+            if (keyframeChildren[index].keyText !== normalized) continue;
+            keyframeChildren.splice(index, 1)[0].detach();
+            commit();
+            return;
+          }
+        } },
+        findRule: { writable: true, value(select) {
+          if (arguments.length === 0) throw new TypeError('A keyframe selector is required');
+          synchronize(state);
+          const normalized = parseKeyframeSelector(text(select));
+          if (!normalized) return null;
+          for (let index = keyframeChildren.length - 1; index >= 0; index--) {
+            if (keyframeChildren[index].keyText === normalized)
+              return keyframeChildren[index];
+          }
+          return null;
+        } },
+        detach: { value: () => {
+          parent = null;
+          for (const child of keyframeChildren) child.detach();
+        } }
+      });
+      serialize();
+      Object.defineProperty(rule, '__webSceneSerialize', {
+        value: () => {
+          serialize();
+          if (containingRule?.__webSceneSerialize)
+            containingRule.__webSceneSerialize();
+        }
       });
     } else if (groupingMatch) {
       let children = splitRules(parsed.body || '').map(child =>

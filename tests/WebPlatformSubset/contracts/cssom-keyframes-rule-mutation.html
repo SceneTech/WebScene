@@ -1,0 +1,287 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>CSS keyframes rules retain browser identity, lookup, and mutation</title>
+<body>
+<script>
+  const state = window.__webSceneWptState = {
+    complete: false, harness: null, results: [], errors: [], diagnostics: []
+  };
+
+  function record(name, error) {
+    state.results.push({
+      name,
+      status: error ? "FAIL" : "PASS",
+      message: error ? String(error && error.message || error) : null,
+      stack: error && error.stack ? String(error.stack) : null
+    });
+  }
+
+  function exercise(document, view, prefix) {
+    const animationName = `${prefix}-pulse`;
+    const style = document.createElement("style");
+    const target = document.createElement("div");
+    style.textContent = `
+      @keyframes ${animationName} {
+        from { opacity: 0; }
+        25%, 75% { opacity: .25; }
+        to { opacity: 1; }
+      }
+      @-webkit-keyframes ${prefix}-webkit {
+        from { opacity: 0; }
+        to { opacity: 1; }
+      }`;
+    target.style.cssText = `opacity: .2; animation: ${animationName}
+      1000000s -500000s linear infinite;`;
+    document.head.appendChild(style);
+    document.body.appendChild(target);
+
+    const sheet = style.sheet;
+    const keyframes = sheet.cssRules[0];
+    const rules = keyframes.cssRules;
+    const from = rules[0];
+    const middle = rules[1];
+    const to = rules[2];
+    const middleStyle = middle.style;
+    const authoredText = style.textContent;
+    const initial = {
+      constructor: keyframes.constructor.name,
+      keyframesRule: keyframes instanceof view.CSSKeyframesRule,
+      rule: keyframes instanceof view.CSSRule,
+      type: keyframes.type,
+      keyframesConstant: view.CSSRule.KEYFRAMES_RULE,
+      childConstructor: from.constructor.name,
+      keyframeRule: from instanceof view.CSSKeyframeRule,
+      childRule: from instanceof view.CSSRule,
+      childType: from.type,
+      keyframeConstant: view.CSSRule.KEYFRAME_RULE,
+      name: keyframes.name,
+      rulesIdentity: keyframes.cssRules === rules,
+      length: keyframes.length,
+      indexedIdentity: keyframes[0] === from && keyframes[2] === to,
+      indexedMiss: keyframes[3],
+      listIdentity: rules.item(1) === middle,
+      parentRule: from.parentRule === keyframes,
+      parentSheet: from.parentStyleSheet === sheet,
+      selectors: Array.from(rules, rule => rule.keyText),
+      styleIdentity: middle.style === middleStyle,
+      prefixed: sheet.cssRules[1] instanceof view.CSSKeyframesRule
+        && sheet.cssRules[1].cssText.startsWith("@-webkit-keyframes")
+    };
+
+    const lookup = {
+      from: keyframes.findRule("from") === from,
+      zero: keyframes.findRule("0%") === from,
+      exactList: keyframes.findRule("25%,75%") === middle,
+      partialList: keyframes.findRule("75%"),
+      invalid: keyframes.findRule("invalid")
+    };
+
+    const errors = {};
+    for (const [name, invoke] of Object.entries({
+      appendMissing: () => keyframes.appendRule(),
+      deleteMissing: () => keyframes.deleteRule(),
+      findMissing: () => keyframes.findRule(),
+      appendSymbol: () => keyframes.appendRule(Symbol()),
+      keyTextInvalid: () => { from.keyText = "101%"; }
+    })) {
+      try { invoke(); errors[name] = "none"; }
+      catch (error) { errors[name] = error.name; }
+    }
+    errors.keyTextAfterInvalid = from.keyText;
+
+    const invalidLength = rules.length;
+    for (const source of [
+      "from { opacity: 0 } garbage",
+      "from { opacity: 0 } to { opacity: 1 }",
+      "invalid { opacity: 1 }",
+      "@media all {}"
+    ]) keyframes.appendRule(source);
+    const invalidAppend = {
+      length: rules.length,
+      unchanged: rules.length === invalidLength,
+      textStable: style.textContent === authoredText
+    };
+
+    keyframes.appendRule("to { opacity: .4; }");
+    const appended = rules[rules.length - 1];
+    const afterAppend = {
+      length: keyframes.length,
+      indexed: keyframes[keyframes.length - 1] === appended,
+      lastMatch: keyframes.findRule("100%") === appended,
+      keyText: appended.keyText,
+      parentRule: appended.parentRule === keyframes,
+      parentSheet: appended.parentStyleSheet === sheet,
+      serialized: keyframes.cssText.includes("opacity: 0.4"),
+      textStable: style.textContent === authoredText,
+      opacity: Number(view.getComputedStyle(target).opacity)
+    };
+    keyframes.deleteRule("to");
+    const afterDelete = {
+      length: keyframes.length,
+      restoredMatch: keyframes.findRule("to") === to,
+      parentRule: appended.parentRule,
+      parentStyleSheet: appended.parentStyleSheet,
+      opacity: Number(view.getComputedStyle(target).opacity)
+    };
+
+    middle.keyText = ".5%, 1e1%, TO";
+    middle.style = "opacity: .8; transform: rotate(90deg);";
+    const childMutation = {
+      keyText: middle.keyText,
+      styleIdentity: middle.style === middleStyle,
+      opacity: middle.style.opacity,
+      transform: middle.style.transform,
+      cssText: middle.cssText,
+      parentSerialized: keyframes.cssText.includes("0.5%, 10%, 100%")
+        && keyframes.cssText.includes("rotate(90deg)"),
+      textStable: style.textContent === authoredText
+    };
+
+    keyframes.name = `${animationName}-renamed`;
+    const afterRename = {
+      name: keyframes.name,
+      serialized: keyframes.cssText.startsWith(
+        `@keyframes ${animationName}-renamed`),
+      opacity: Number(view.getComputedStyle(target).opacity)
+    };
+    keyframes.name = "initial";
+    const keywordName = {
+      name: keyframes.name,
+      quoted: keyframes.cssText.startsWith('@keyframes "initial"')
+    };
+
+    const mediaIndex = sheet.insertRule(`@media (min-width: 1px) {
+      @keyframes ${prefix}-nested { from { opacity: 0; } }
+    }`, sheet.cssRules.length);
+    const media = sheet.cssRules[mediaIndex];
+    const nestedKeyframes = media.cssRules[0];
+    nestedKeyframes.appendRule("to { opacity: 1; }");
+    const nestedMutation = {
+      keyframesRule: nestedKeyframes instanceof view.CSSKeyframesRule,
+      parentRule: nestedKeyframes.parentRule === media,
+      parentSheet: nestedKeyframes.parentStyleSheet === sheet,
+      childParentRule: nestedKeyframes[1].parentRule === nestedKeyframes,
+      childParentSheet: nestedKeyframes[1].parentStyleSheet === sheet,
+      serialized: media.cssText.includes("to { opacity: 1"),
+      textStable: style.textContent === authoredText
+    };
+
+    const retainedChild = keyframes.cssRules[0];
+    sheet.deleteRule(0);
+    keyframes.appendRule("50% { opacity: .6; }");
+    const detached = {
+      parentStyleSheet: keyframes.parentStyleSheet,
+      childParentRule: retainedChild.parentRule,
+      childParentStyleSheet: retainedChild.parentStyleSheet,
+      length: keyframes.length,
+      serialized: keyframes.cssText.includes("opacity: 0.6"),
+      opacity: Number(view.getComputedStyle(target).opacity),
+      textStable: style.textContent === authoredText
+    };
+
+    style.remove();
+    target.remove();
+    return { initial, lookup, errors, invalidAppend, afterAppend, afterDelete,
+      childMutation, afterRename, keywordName, nestedMutation, detached };
+  }
+
+  try {
+    const frame = document.createElement("iframe");
+    document.body.appendChild(frame);
+    const main = exercise(document, window, "keyframes-main");
+    const nested = exercise(
+      frame.contentDocument, frame.contentWindow, "keyframes-frame");
+    const both = predicate => predicate(main) && predicate(nested);
+
+    record("keyframes rules expose inherited identity, type, parents, and live lists",
+      both(value => value.initial.constructor === "CSSKeyframesRule"
+          && value.initial.keyframesRule && value.initial.rule
+          && value.initial.type === 7 && value.initial.keyframesConstant === 7
+          && value.initial.childConstructor === "CSSKeyframeRule"
+          && value.initial.keyframeRule && value.initial.childRule
+          && value.initial.childType === 8 && value.initial.keyframeConstant === 8
+          && value.initial.name.endsWith("-pulse")
+          && value.initial.rulesIdentity && value.initial.length === 3
+          && value.initial.indexedIdentity && value.initial.indexedMiss === undefined
+          && value.initial.listIdentity && value.initial.parentRule
+          && value.initial.parentSheet
+          && value.initial.selectors.join("|") === "0%|25%, 75%|100%"
+          && value.initial.styleIdentity && value.initial.prefixed)
+        ? null : new Error(JSON.stringify({ main: main.initial, nested: nested.initial })));
+    record("findRule normalizes selectors and returns the last exact-list match",
+      both(value => value.lookup.from && value.lookup.zero
+          && value.lookup.exactList && value.lookup.partialList === null
+          && value.lookup.invalid === null)
+        ? null : new Error(JSON.stringify({ main: main.lookup, nested: nested.lookup })));
+    record("keyframes mutation reports browser conversion and selector errors",
+      both(value => value.errors.appendMissing === "TypeError"
+          && value.errors.deleteMissing === "TypeError"
+          && value.errors.findMissing === "TypeError"
+          && value.errors.appendSymbol === "TypeError"
+          && value.errors.keyTextInvalid === "SyntaxError"
+          && value.errors.keyTextAfterInvalid === "0%"
+          && value.invalidAppend.unchanged && value.invalidAppend.textStable)
+        ? null : new Error(JSON.stringify({ main, nested })));
+    record("appendRule and deleteRule update last-match identity and animation synchronously",
+      both(value => value.afterAppend.length === 4
+          && value.afterAppend.indexed && value.afterAppend.lastMatch
+          && value.afterAppend.keyText === "100%"
+          && value.afterAppend.parentRule && value.afterAppend.parentSheet
+          && value.afterAppend.serialized && value.afterAppend.textStable
+          && value.afterAppend.opacity >= 0 && value.afterAppend.opacity <= .5
+          && value.afterDelete.length === 3 && value.afterDelete.restoredMatch
+          && value.afterDelete.parentRule === null
+          && value.afterDelete.parentStyleSheet === null
+          && value.afterDelete.opacity >= value.afterAppend.opacity)
+        ? null : new Error(JSON.stringify({ main, nested })));
+    record("keyText and SameObject style mutation reserialize through the parent",
+      both(value => value.childMutation.keyText === "0.5%, 10%, 100%"
+          && value.childMutation.styleIdentity
+          && value.childMutation.opacity === "0.8"
+          && value.childMutation.transform === "rotate(90deg)"
+          && value.childMutation.cssText.includes("rotate(90deg)")
+          && value.childMutation.parentSerialized
+          && value.childMutation.textStable)
+        ? null : new Error(JSON.stringify({
+            main: main.childMutation, nested: nested.childMutation
+          })));
+    record("keyframes names publish synchronously and quote reserved names",
+      both(value => value.afterRename.name.endsWith("-pulse-renamed")
+          && value.afterRename.serialized
+          && Math.abs(value.afterRename.opacity - .2) < .001
+          && value.keywordName.name === "initial" && value.keywordName.quoted)
+        ? null : new Error(JSON.stringify({ main, nested })));
+    record("nested keyframes mutation preserves containing-rule ownership",
+      both(value => value.nestedMutation.keyframesRule
+          && value.nestedMutation.parentRule && value.nestedMutation.parentSheet
+          && value.nestedMutation.childParentRule
+          && value.nestedMutation.childParentSheet
+          && value.nestedMutation.serialized && value.nestedMutation.textStable)
+        ? null : new Error(JSON.stringify({
+            main: main.nestedMutation, nested: nested.nestedMutation
+          })));
+    record("deleted keyframes trees retain detached snapshots without recascade",
+      both(value => value.detached.parentStyleSheet === null
+          && value.detached.childParentRule === null
+          && value.detached.childParentStyleSheet === null
+          && value.detached.length === 4 && value.detached.serialized
+          && Math.abs(value.detached.opacity - .2) < .001
+          && value.detached.textStable)
+        ? null : new Error(JSON.stringify({ main: main.detached, nested: nested.detached })));
+    state.diagnostics.push(JSON.stringify({ main, nested }));
+    frame.remove();
+  } catch (error) {
+    record("CSS keyframes rule mutation setup", error);
+  }
+
+  const failure = state.results.find(result => result.status !== "PASS");
+  state.harness = failure
+    ? { status: 1, message: failure.message, stack: failure.stack }
+    : { status: 0, message: null, stack: null };
+  state.complete = true;
+  const evidence = document.createElement("pre");
+  evidence.id = "cssom-keyframes-rule-mutation-evidence";
+  evidence.hidden = true;
+  evidence.textContent = JSON.stringify(state);
+  document.body.appendChild(evidence);
+</script>

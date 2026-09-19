@@ -1538,6 +1538,37 @@
                 }
             }
 #endif
+            if (semantic_snapshot_requested_.exchange(
+                    false,
+                    std::memory_order_acq_rel)) {
+#if defined(WEBSCENE_NATIVE_ENGINE_WITH_V8)
+                if (runtime_ != nullptr) {
+                    const auto document_epoch = semantic_document_epoch_.load(
+                        std::memory_order_acquire);
+                    auto snapshot = runtime_->build_semantic_snapshot_v1(
+                        next_semantic_snapshot_generation_++);
+                    {
+                        std::lock_guard semantic_lock(semantic_snapshot_mutex_);
+                        if (document_epoch == semantic_document_epoch_.load(
+                                std::memory_order_acquire)) {
+                            std::atomic_store_explicit(
+                                &latest_semantic_snapshot_,
+                                std::move(snapshot),
+                                std::memory_order_release);
+                        } else {
+                            semantic_snapshot_requested_.store(
+                                true, std::memory_order_release);
+                        }
+                    }
+                    notify_host_work();
+                }
+#else
+                std::atomic_store_explicit(
+                    &latest_semantic_snapshot_,
+                    std::shared_ptr<const webscene_native::semantic_snapshot_data_v1>{},
+                    std::memory_order_release);
+#endif
+            }
             update_host_animation_frame_demand();
             changed = changed
                 || document_.scene_generation() != starting_scene_generation
@@ -1650,6 +1681,8 @@
                     || preferred_color_scheme_changed_.load(
                         std::memory_order_acquire)
                     || accessibility_preferences_changed_.load(
+                        std::memory_order_acquire)
+                    || semantic_snapshot_requested_.load(
                         std::memory_order_acquire);
                 });
             if (collect_runtime_work_metrics && signalled) {
@@ -1678,5 +1711,13 @@
         file_grant_release_broker_v2_.retire();
         retire_file_runtime();
 #endif
+        {
+            std::lock_guard semantic_lock(semantic_snapshot_mutex_);
+            semantic_document_epoch_.fetch_add(1U, std::memory_order_acq_rel);
+            std::atomic_store_explicit(
+                &latest_semantic_snapshot_,
+                std::shared_ptr<const webscene_native::semantic_snapshot_data_v1>{},
+                std::memory_order_release);
+        }
         frame_trace_.dump();
     }

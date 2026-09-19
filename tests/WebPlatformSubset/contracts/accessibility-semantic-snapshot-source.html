@@ -1,0 +1,69 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Accessibility semantic snapshot source</title>
+<body>
+<main role="main" aria-label="Workbench">
+  <label id="query-label" for="query">Search files</label>
+  <input id="query" value="needle" aria-describedby="query-help">
+  <span id="query-help">Filters the file tree</span>
+  <button id="toggle" aria-expanded="false" aria-controls="panel">Open panel</button>
+  <section id="panel" role="region" aria-label="Results"></section>
+  <iframe id="preview" src="about:blank"></iframe>
+</main>
+<script>
+  const state = window.__webSceneWptState = {
+    complete: false, harness: null, results: [], errors: [], diagnostics: []
+  };
+  function assert(condition, message) { if (!condition) throw new Error(message); }
+  function test(name, body) {
+    try {
+      body();
+      state.results.push({ name, status: "PASS", message: null, stack: null });
+    } catch (error) {
+      state.results.push({
+        name, status: "FAIL", message: String(error.message || error), stack: error.stack || null
+      });
+    }
+  }
+
+  const query = document.getElementById("query");
+  const toggle = document.getElementById("toggle");
+  const panel = document.getElementById("panel");
+  const nested = document.getElementById("preview").contentDocument;
+  nested.open();
+  nested.write(`<article aria-label="Preview"><h2>Nested heading</h2><a href="#target">Jump</a></article>`);
+  nested.close();
+
+  test("authored role, name, value, description, and relationships remain observable", () => {
+    assert(document.querySelector("main").getAttribute("role") === "main", "main role changed");
+    assert(document.querySelector("main").getAttribute("aria-label") === "Workbench", "main name changed");
+    assert(document.querySelector(`label[for="${query.id}"]`).textContent === "Search files", "label relation changed");
+    assert(query.value === "needle", "live value changed");
+    assert(document.getElementById(query.getAttribute("aria-describedby")).textContent === "Filters the file tree",
+      "description relation changed");
+    assert(document.getElementById(toggle.getAttribute("aria-controls")) === panel,
+      "controls relation changed");
+  });
+
+  test("focus and dynamic state update without replacing semantic identity", () => {
+    query.focus();
+    assert(document.activeElement === query, "textbox did not become focused");
+    toggle.setAttribute("aria-expanded", "true");
+    query.value = "updated";
+    assert(toggle.getAttribute("aria-expanded") === "true", "expanded state did not update");
+    assert(query.value === "updated", "live value did not update");
+  });
+
+  test("nested document order and detached subtree retirement are deterministic", () => {
+    assert(nested.querySelector("h2").textContent === "Nested heading", "nested heading was absent");
+    assert(nested.querySelector("a").getAttribute("href") === "#target", "nested link was absent");
+    panel.remove();
+    assert(!document.body.contains(panel), "removed controlled region remained connected");
+  });
+
+  const failure = state.results.find(result => result.status !== "PASS");
+  state.harness = failure
+    ? { status: 1, message: failure.message, stack: failure.stack }
+    : { status: 0, message: null, stack: null };
+  state.complete = true;
+</script>

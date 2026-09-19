@@ -6499,6 +6499,7 @@ struct v8_dom_runtime::implementation final {
 #include "webscene_v8_runtime_dom_properties.inc"
 #include "webscene_v8_runtime_canvas.inc"
 #include "webscene_v8_runtime_document.inc"
+#include "webscene_v8_runtime_semantics.inc"
 #include "webscene_v8_runtime_css_parsing.inc"
 #include "webscene_v8_runtime_css_cascade.inc"
 #include "webscene_v8_runtime_cache_and_frames.inc"
@@ -6943,6 +6944,12 @@ bool v8_dom_runtime::dispatch_transition_events()
 uint32_t v8_dom_runtime::current_cursor_kind() const noexcept
 {
     return impl_->current_cursor_kind();
+}
+
+std::shared_ptr<const semantic_snapshot_data_v1>
+v8_dom_runtime::build_semantic_snapshot_v1(uint64_t snapshot_generation)
+{
+    return impl_->build_semantic_snapshot_v1(snapshot_generation);
 }
 
 void v8_dom_runtime::notify_low_memory()

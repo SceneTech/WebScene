@@ -96,6 +96,105 @@ typedef enum webscene_accessibility_preference_flags_v1 {
     WEBSCENE_ACCESSIBILITY_PREFERENCE_MORE_CONTRAST_V1 = 1U << 2U
 } webscene_accessibility_preference_flags_v1;
 
+/*
+ * Immutable, host-readable accessibility projection. Strings are UTF-8
+ * slices into semantic_snapshot_view.string_bytes. Node and relationship
+ * indices use WEBSCENE_SEMANTIC_NONE_INDEX_V1 when absent. A lease is a
+ * complete point-in-time value and may outlive its engine.
+ */
+enum {
+    WEBSCENE_SEMANTIC_NONE_INDEX_V1 = UINT32_MAX,
+    WEBSCENE_SEMANTIC_SNAPSHOT_TRUNCATED_NODES_V1 = 1U << 0U,
+    WEBSCENE_SEMANTIC_SNAPSHOT_TRUNCATED_RELATIONSHIPS_V1 = 1U << 1U,
+    WEBSCENE_SEMANTIC_SNAPSHOT_TRUNCATED_STRINGS_V1 = 1U << 2U,
+    WEBSCENE_SEMANTIC_SNAPSHOT_TRUNCATED_DOCUMENTS_V1 = 1U << 3U,
+    WEBSCENE_SEMANTIC_NODE_DISABLED_V1 = UINT64_C(1) << 0U,
+    WEBSCENE_SEMANTIC_NODE_READONLY_V1 = UINT64_C(1) << 1U,
+    WEBSCENE_SEMANTIC_NODE_SELECTED_V1 = UINT64_C(1) << 2U,
+    WEBSCENE_SEMANTIC_NODE_CHECKED_V1 = UINT64_C(1) << 3U,
+    WEBSCENE_SEMANTIC_NODE_MIXED_V1 = UINT64_C(1) << 4U,
+    WEBSCENE_SEMANTIC_NODE_EXPANDED_V1 = UINT64_C(1) << 5U,
+    WEBSCENE_SEMANTIC_NODE_COLLAPSED_V1 = UINT64_C(1) << 6U,
+    WEBSCENE_SEMANTIC_NODE_PRESSED_V1 = UINT64_C(1) << 7U,
+    WEBSCENE_SEMANTIC_NODE_HIDDEN_V1 = UINT64_C(1) << 8U,
+    WEBSCENE_SEMANTIC_NODE_FOCUSED_V1 = UINT64_C(1) << 9U,
+    WEBSCENE_SEMANTIC_NODE_REQUIRED_V1 = UINT64_C(1) << 10U,
+    WEBSCENE_SEMANTIC_NODE_INVALID_V1 = UINT64_C(1) << 11U,
+    WEBSCENE_SEMANTIC_NODE_BUSY_V1 = UINT64_C(1) << 12U,
+    WEBSCENE_SEMANTIC_NODE_MODAL_V1 = UINT64_C(1) << 13U,
+    WEBSCENE_SEMANTIC_NODE_MULTISELECTABLE_V1 = UINT64_C(1) << 14U
+};
+
+typedef enum webscene_semantic_relationship_kind_v1 {
+    WEBSCENE_SEMANTIC_RELATION_LABELLED_BY_V1 = 1,
+    WEBSCENE_SEMANTIC_RELATION_DESCRIBED_BY_V1 = 2,
+    WEBSCENE_SEMANTIC_RELATION_CONTROLS_V1 = 3,
+    WEBSCENE_SEMANTIC_RELATION_OWNS_V1 = 4,
+    WEBSCENE_SEMANTIC_RELATION_ACTIVE_DESCENDANT_V1 = 5
+} webscene_semantic_relationship_kind_v1;
+
+typedef struct webscene_semantic_string_v1 {
+    uint32_t offset;
+    uint32_t length;
+} webscene_semantic_string_v1;
+
+typedef struct webscene_semantic_document_v1 {
+    uint32_t struct_size;
+    uint32_t version;
+    uint64_t document_generation;
+    uint64_t frame_generation;
+    uint32_t frame_owner_dom_node_id;
+    uint32_t root_node_index;
+    webscene_semantic_string_v1 origin;
+} webscene_semantic_document_v1;
+
+typedef struct webscene_semantic_node_v1 {
+    uint32_t struct_size;
+    uint32_t version;
+    uint64_t semantic_id;
+    uint64_t states;
+    uint32_t dom_node_id;
+    uint32_t document_index;
+    uint32_t parent_index;
+    uint32_t first_child_index;
+    uint32_t next_sibling_index;
+    float x;
+    float y;
+    float width;
+    float height;
+    webscene_semantic_string_v1 role;
+    webscene_semantic_string_v1 name;
+    webscene_semantic_string_v1 value;
+    webscene_semantic_string_v1 description;
+} webscene_semantic_node_v1;
+
+typedef struct webscene_semantic_relationship_v1 {
+    uint32_t struct_size;
+    uint32_t version;
+    uint32_t kind;
+    uint32_t source_node_index;
+    uint32_t target_node_index;
+} webscene_semantic_relationship_v1;
+
+typedef struct webscene_semantic_snapshot_view_v1 {
+    uint32_t struct_size;
+    uint32_t version;
+    uint64_t snapshot_generation;
+    uint64_t top_document_generation;
+    uint64_t layout_generation;
+    uint32_t flags;
+    uint32_t focused_node_index;
+    const webscene_semantic_document_v1* documents;
+    uint32_t document_count;
+    const webscene_semantic_node_v1* nodes;
+    uint32_t node_count;
+    const webscene_semantic_relationship_v1* relationships;
+    uint32_t relationship_count;
+    const char* string_bytes;
+    uint32_t string_byte_count;
+    const void* lease_token;
+} webscene_semantic_snapshot_view_v1;
+
 enum {
     WEBSCENE_INPUT_MODIFIER_SHIFT = 1U << 0U,
     WEBSCENE_INPUT_MODIFIER_CONTROL = 1U << 1U,
@@ -1441,6 +1540,17 @@ WEBSCENE_API uint8_t webscene_engine_set_preferred_color_scheme(
 WEBSCENE_API uint8_t webscene_engine_set_accessibility_preferences_v1(
     webscene_engine* engine,
     uint32_t preference_flags);
+/*
+ * Requests an updated semantic publication and acquires the latest completed
+ * immutable snapshot. The first call may return null while the engine worker
+ * builds the initial value; publication signals the ordinary work-available
+ * callback. Limits are 16,384 nodes, 256 documents, 65,536 relationships and
+ * 4 MiB of UTF-8. Truncation is explicit in snapshot flags.
+ */
+WEBSCENE_API const webscene_semantic_snapshot_view_v1*
+webscene_engine_acquire_semantic_snapshot_v1(webscene_engine* engine);
+WEBSCENE_API void webscene_semantic_snapshot_release_v1(
+    const webscene_semantic_snapshot_view_v1* snapshot);
 /* Returns the CSS cursor resolved at the latest hit-tested pointer position. */
 WEBSCENE_API uint32_t webscene_engine_get_cursor(const webscene_engine* engine);
 /*

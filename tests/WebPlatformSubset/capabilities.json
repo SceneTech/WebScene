@@ -378,6 +378,14 @@
       "productEvidence": ["mixed-weight status prose", "compact labels beside pseudo-painted fixed-height timeline segments"],
       "coverage": ["contracts/system-ui-inline-text-paint.html", "contracts/inline-generated-content-timeline-alignment.html", "webscene-retina-text-profile.json", "NativeTextShapingTests", "test_merged_inline_fragment_uses_contextual_host_advance", "test_flattened_inline_fragment_honors_text_alignment"],
       "gap": "The candidate visual lanes retain native and Chromium screenshots for the same deterministic system-UI fixture at both 1x and 2x, including normal and bold colored runs, light body copy, generated whitespace, and compact-label alignment against a positioned pseudo-element translated with its flex-baseline subtree. Glyph antialiasing is presenter-dependent, so exact whole-frame pixel identity remains diagnostic; broader script fallback, variable-font optical axes, complex shaping and bidirectional text remain outside this bounded claim."
+    },
+    {
+      "family": "registered-custom-property-animation",
+      "required": ["document-level @property parsing", "bounded <angle> and <percentage> registrations", "inherits:false initial values", "typed host-clock keyframe interpolation", "dependent retained paint-token updates", "CSSPropertyRule identity and descriptors", "stylesheet and teardown cleanup"],
+      "candidate": ["browser/native deterministic midpoint comparison", "conic-gradient raster consumer", "border-image gradient raster consumer"],
+      "productEvidence": ["Code OSS chat input and session banner border beams", "inline and terminal chat progress borders", "voice processing ring", "chat last-edit highlight"],
+      "coverage": ["contracts/css-registered-custom-property-animation.html", "webscene_css_parser_tests", "native_web_css_service", "test_registered_custom_property_keyframes_update_dependent_paint"],
+      "gap": "Issue #748 implements the exact <angle>/<percentage> registration and interpolation slice used by unchanged Code OSS, with bounded registration/track/stop storage and change-only dependent token updates. Direct browser/native profile execution and product pixels remain candidate evidence. Conic-gradient and border-image gradient rasterization, arbitrary syntaxes, CSS.registerProperty(), and additive composition remain separate work."
     }
   ]
 }

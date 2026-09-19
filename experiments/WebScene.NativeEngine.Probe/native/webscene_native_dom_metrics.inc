@@ -92,7 +92,7 @@ native_document::allocation_metrics native_document::read_allocation_metrics() c
             const auto& custom = node->style.custom_properties();
             ++result.custom_property_node_count;
             result.custom_property_entry_count +=
-                custom.values.size();
+                custom.values.size() + custom.dependent_values.size();
             const auto map_hash_bytes = [](const auto& values) {
                 using value_type = typename std::decay_t<decltype(values)>::value_type;
                 return values.bucket_count() * sizeof(void*)
@@ -101,13 +101,18 @@ native_document::allocation_metrics native_document::read_allocation_metrics() c
             result.custom_property_storage_bytes +=
                 sizeof(node_style::custom_property_data) + 2U * sizeof(void*)
                 + map_hash_bytes(custom.values)
-                + map_hash_bytes(custom.important);
+                + map_hash_bytes(custom.important)
+                + map_hash_bytes(custom.dependent_values);
             for (const auto& [name, value] : custom.values) {
                 result.custom_property_storage_bytes +=
                     name.capacity() + value.capacity() + 2U;
             }
             for (const auto& name : custom.important) {
                 result.custom_property_storage_bytes += name.capacity() + 1U;
+            }
+            for (const auto& [name, value] : custom.dependent_values) {
+                result.custom_property_storage_bytes +=
+                    name.capacity() + value.capacity() + 2U;
             }
         }
         if (node != nullptr && node->style.has_background_image_data()) {

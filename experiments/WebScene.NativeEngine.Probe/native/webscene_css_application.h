@@ -284,6 +284,15 @@ void apply_declaration(native_document& document,dom_node& node,
         decision.semantic_slice="unresolved custom property at computed-value time";
         return;
     }
+    if (contains_variable
+        && (declaration.name == "background"
+            || declaration.name == "background-image"
+            || declaration.name == "mask"
+            || declaration.name == "mask-image"
+            || declaration.name == "border-image")) {
+        node.style.mutable_custom_properties().dependent_values[
+            declaration.name] = declaration.value;
+    }
     on_resolved(contains_variable);
     apply_resolved_declaration(
         document,

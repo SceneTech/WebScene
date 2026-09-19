@@ -112,19 +112,80 @@ inline std::string resolve_value(const dom_node& node,std::string value,
         return resolved.valid ? resolved.value : std::string{};
     }
 
-inline void seed_inline_custom_properties(dom_node& node) {
-        node.style.clear_custom_properties();
-        node.authored_style().for_each_declaration(
-            [&](const std::string& name, const std::string& value) {
+inline bool registered_custom_value_is_valid(
+    std::string_view value,
+    registered_property_syntax syntax);
+
+inline void seed_inline_custom_properties(
+    dom_node& node,
+    const std::unordered_map<std::string, registered_custom_property>* registrations = nullptr) {
+    node.style.clear_custom_properties();
+    node.authored_style().for_each_declaration(
+        [&](const std::string& name, const std::string& value) {
             if (!name.starts_with("--")) return;
             auto& custom = node.style.mutable_custom_properties();
-            custom.values[name] = value;
+            auto computed_value = value;
+            if (registrations != nullptr) {
+                const auto registration = registrations->find(name);
+                if (registration != registrations->end()
+                    && !registered_custom_value_is_valid(
+                        value, registration->second.syntax)) {
+                    computed_value = registration->second.initial_value;
+                }
+            }
+            custom.values[name] = std::move(computed_value);
             if (node.authored_style().important_declarations.contains(name)) {
                 custom.important.insert(name);
             }
         });
 }
-inline bool apply_custom_property(dom_node& node,const css_declaration& declaration) {
+inline bool registered_custom_value_is_valid(
+    std::string_view value,
+    registered_property_syntax syntax)
+{
+    const auto source = ascii_lower(trim_value(value));
+    const auto unit = syntax == registered_property_syntax::angle
+        ? std::string_view{"deg"} : std::string_view{"%"};
+    if (!source.ends_with(unit)) return false;
+    const auto number = source.substr(0U, source.size() - unit.size());
+    if (number.empty()) return false;
+    char* end = nullptr;
+    const auto parsed = std::strtof(number.c_str(), &end);
+    return end == number.c_str() + number.size() && std::isfinite(parsed);
+}
+
+template<typename RuleReferences>
+inline void seed_relevant_registered_custom_properties(
+    dom_node& node,
+    const std::unordered_map<std::string, registered_custom_property>& registrations,
+    RuleReferences&& rule_references)
+{
+    for (const auto& [name, registration] : registrations) {
+        if (registration.inherits
+            || node.style.custom_properties().values.contains(name)) continue;
+        const auto variable_token = "var(" + name;
+        auto relevant = node.authored_style().declarations.contains(name);
+        if (!relevant) {
+            for (const auto& [property, value]
+                 : node.authored_style().declarations) {
+                static_cast<void>(property);
+                if (value.find(variable_token) != std::string::npos) {
+                    relevant = true;
+                    break;
+                }
+            }
+        }
+        relevant = relevant || rule_references(name, variable_token);
+        if (!relevant) continue;
+        node.style.mutable_custom_properties().values.emplace(
+            name, registration.initial_value);
+    }
+}
+
+inline bool apply_custom_property(
+    dom_node& node,
+    const css_declaration& declaration,
+    const std::unordered_map<std::string, registered_custom_property>* registrations = nullptr) {
     const auto& name=declaration.name;
     if(!name.starts_with("--")) return false;
     const auto& custom=node.style.custom_properties();
@@ -133,7 +194,16 @@ inline bool apply_custom_property(dom_node& node,const css_declaration& declarat
     const bool inline_important=existing_inline && node.authored_style().important_declarations.contains(name);
     if(inline_important || (!declaration.important && (existing_important || existing_inline))) return false;
     auto& values=node.style.mutable_custom_properties();
-    values.values[name]=declaration.value;
+    auto value=declaration.value;
+    if (registrations != nullptr) {
+        const auto registration=registrations->find(name);
+        if (registration != registrations->end()
+            && !registered_custom_value_is_valid(
+                value, registration->second.syntax)) {
+            value=registration->second.initial_value;
+        }
+    }
+    values.values[name]=std::move(value);
     if(declaration.important) values.important.insert(name);
     else values.important.erase(name);
     return true;

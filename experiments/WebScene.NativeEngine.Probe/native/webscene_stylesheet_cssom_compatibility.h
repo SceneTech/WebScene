@@ -39,6 +39,7 @@ inline constexpr std::array<std::string_view, 8> cssCompatibilityScriptParts{R"J
   const layerStatementRuleInstances = new WeakSet();
   const keyframesRuleInstances = new WeakSet();
   const keyframeRuleInstances = new WeakSet();
+  const propertyRuleInstances = new WeakSet();
   const nestedDeclarationsInstances = new WeakSet();
   const mediaListInstances = new WeakSet();
   const ruleListInstances = new WeakSet();
@@ -124,6 +125,8 @@ inline constexpr std::array<std::string_view, 8> cssCompatibilityScriptParts{R"J
     'CSSKeyframesRule', keyframesRuleInstances, CSSRuleInterface);
   const CSSKeyframeRuleInterface = interfaceConstructor(
     'CSSKeyframeRule', keyframeRuleInstances, CSSRuleInterface);
+  const CSSPropertyRuleInterface = interfaceConstructor(
+    'CSSPropertyRule', propertyRuleInstances, CSSRuleInterface);
   const CSSNestedDeclarationsInterface = interfaceConstructor(
     'CSSNestedDeclarations', nestedDeclarationsInstances, CSSRuleInterface);
   const MediaListInterface = interfaceConstructor('MediaList', mediaListInstances);
@@ -145,6 +148,7 @@ inline constexpr std::array<std::string_view, 8> cssCompatibilityScriptParts{R"J
       ['CSSLayerStatementRule', CSSLayerStatementRuleInterface],
       ['CSSKeyframesRule', CSSKeyframesRuleInterface],
       ['CSSKeyframeRule', CSSKeyframeRuleInterface],
+      ['CSSPropertyRule', CSSPropertyRuleInterface],
       ['CSSNestedDeclarations', CSSNestedDeclarationsInterface],
       ['MediaList', MediaListInterface],
       ['CSSRuleList', CSSRuleListInterface]
@@ -980,6 +984,7 @@ R"JS(      source = source.slice(identifier[0].length).trim();
     const containerMatch = /^@container(?:\s+([^\{]*?))?\s*\{/i.exec(parsed.cssText);
     const layerBlockMatch = /^@layer(?:\s+([^\{]*?))?\s*\{/i.exec(parsed.cssText);
     const keyframesSpec = parseKeyframesPrelude(parsed);
+    const propertyMatch = /^@property\s+(--[-_a-zA-Z0-9]+)\s*\{/i.exec(parsed.cssText);
     const layerStatementNames = parsed.body === undefined
       ? parseLayerStatementNames(parsed.cssText) : undefined;
     const groupingMatch = mediaMatch || supportsMatch || containerMatch || layerBlockMatch;
@@ -1039,6 +1044,9 @@ R"JS(    if (importSpec) {
     } else if (keyframesSpec) {
       keyframesRuleInstances.add(rule);
       Object.setPrototypeOf(rule, CSSKeyframesRuleInterface.prototype);
+    } else if (propertyMatch) {
+      propertyRuleInstances.add(rule);
+      Object.setPrototypeOf(rule, CSSPropertyRuleInterface.prototype);
     } else if (layerStatementNames) {
       layerStatementRuleInstances.add(rule);
       Object.setPrototypeOf(rule, CSSLayerStatementRuleInterface.prototype);
@@ -1496,6 +1504,21 @@ R"JS(        deleteRule: { writable: true, value(index) {
       }
       Object.defineProperties(rule, descriptors);
       serialize();
+    } else if (propertyMatch) {
+      const descriptors = makeConstructedDeclaration(parsed.body || '', () => {});
+      let syntax = descriptors.getPropertyValue('syntax').trim();
+      if (syntax.length >= 2 && (syntax[0] === '"' || syntax[0] === "'")
+          && syntax.at(-1) === syntax[0]) syntax = syntax.slice(1, -1);
+      const inherits = descriptors.getPropertyValue('inherits').trim().toLowerCase();
+      const initialValue = descriptors.getPropertyValue('initial-value').trim();
+      Object.defineProperties(rule, {
+        type: { enumerable: true, value: 0 },
+        name: { enumerable: true, value: propertyMatch[1] },
+        syntax: { enumerable: true, value: syntax },
+        inherits: { enumerable: true, value: inherits === 'true' },
+        initialValue: { enumerable: true, value: initialValue },
+        detach: { value: () => { parent = null; } }
+      });
     } else if (layerStatementNames) {
       Object.defineProperties(rule, {
         type: { enumerable: true, value: 0 },

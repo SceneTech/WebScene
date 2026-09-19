@@ -182,7 +182,8 @@
 
     void configure_style_keyframe_animation(dom_node& node)
     {
-        css::configure_keyframes(node.style,opacity_keyframes);
+        css::configure_keyframes(
+            node.style, opacity_keyframes, registered_custom_properties);
         for (const auto& track : node.style.animations().keyframe_animations) {
             if (track.opacity_keyframes.size() >= 2U)
                 record_composition("css-opacity-keyframe-animation",node.id);
@@ -196,7 +197,9 @@
         }
         const auto configure_pseudo = [&](node_style::pseudo_element& pseudo) {
             if (!pseudo.has_animation_data()) return;
-            css::configure_keyframes(pseudo.mutable_animations(), opacity_keyframes);
+            css::configure_keyframes(
+                pseudo.mutable_animations(), opacity_keyframes,
+                registered_custom_properties);
             for (const auto& track : pseudo.animations().keyframe_animations) {
                 if (track.opacity_keyframes.size() >= 2U)
                     record_composition("css-pseudo-opacity-keyframe-animation",node.id);
@@ -258,7 +261,8 @@
             return;
         }
         if (name.starts_with("--")) {
-            css::apply_custom_property(node,declaration);
+            css::apply_custom_property(
+                node, declaration, &registered_custom_properties);
             record_feature("css","custom-property","supported",{},"style-application");
             return;
         }
@@ -344,7 +348,8 @@
         ++css_cascade_applications;
 #endif
         const auto previous_style = node.style;
-        css::reset_cascaded_style(node,css_variables);
+        css::reset_cascaded_style(
+            node, css_variables, &registered_custom_properties);
 #if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
         const auto reset_completed = trace_css
             ? std::chrono::steady_clock::now()
@@ -390,6 +395,25 @@
             });
         auto& matched_rules=matching.ordinary;
         auto& matched_pseudo_rules=matching.pseudo;
+        css::seed_relevant_registered_custom_properties(
+            node, registered_custom_properties,
+            [&](const std::string& name, const std::string& variable_token) {
+                const auto references = [&](const css_rule* rule) {
+                    return std::any_of(
+                        rule->declarations().begin(),
+                        rule->declarations().end(),
+                        [&](const css_declaration& declaration) {
+                            return declaration.name == name
+                                || declaration.value.find(variable_token)
+                                    != std::string::npos;
+                        });
+                };
+                return std::any_of(
+                        matched_rules.begin(), matched_rules.end(), references)
+                    || std::any_of(
+                        matched_pseudo_rules.begin(), matched_pseudo_rules.end(),
+                        [&](const auto& entry) { return references(entry.second); });
+            });
 #if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
         if (trace_css) css_profile_matched_rules += matched_rules.size();
         const auto matching_completed = trace_css
@@ -4260,12 +4284,20 @@
             if (node.tag == "style" || node.tag == "link") owners.insert(node.id);
         });
         if (owners.empty()) return false;
+        const auto previous_registration_size = registered_custom_properties.size();
+        std::erase_if(registered_custom_properties, [&](const auto& entry) {
+            return entry.second.stylesheet_owner_id != 0U
+                && owners.contains(entry.second.stylesheet_owner_id);
+        });
         const auto previous_size = css_rules.size();
         std::erase_if(css_rules, [&](const css_rule& rule) {
             return rule.stylesheet_owner_id != 0
                 && owners.contains(rule.stylesheet_owner_id);
         });
-        if (css_rules.size() == previous_size) return false;
+        if (css_rules.size() == previous_size
+            && registered_custom_properties.size() == previous_registration_size) {
+            return false;
+        }
         rebuild_css_rule_indexes_and_root_variables();
         if (recascade) recascade_after_stylesheet_change();
         return true;

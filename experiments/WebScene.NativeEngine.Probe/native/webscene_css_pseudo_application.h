@@ -297,6 +297,12 @@ void apply_pseudo_declaration(dom_node& node,node_style::pseudo_element& pseudo,
             return;
         }
         const auto& name = declaration.name;
+        if (contains_variable
+            && (name == "background" || name == "background-image"
+                || name == "mask" || name == "mask-image"
+                || name == "border-image")) {
+            pseudo.variable_dependent_values[name] = declaration.value;
+        }
         on_resolved(contains_variable);
         if (name == "font-family"
             && pseudo.font_family_important

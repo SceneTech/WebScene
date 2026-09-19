@@ -571,12 +571,24 @@ void native_document::update_style_animations(dom_node& node)
             runtime.filter_keyframes.clear();
             runtime.filter_underlying.clear();
             runtime.painted_filter_functions.clear();
+            runtime.painted_custom_properties.clear();
+            runtime.underlying_custom_properties.clear();
             runtime.painted_opacity = node.style.opacity;
             runtime.painted_translation_x = node.style.transform_translate_x;
             runtime.painted_translation_y = node.style.transform_translate_y;
             runtime.painted_scale_x = node.style.transform_scale_x;
             runtime.painted_scale_y = node.style.transform_scale_y;
             runtime.painted_rotation_degrees = node.style.transform_rotate_degrees;
+            for (const auto& custom : configured.custom_property_animations) {
+                const auto found = node.style.custom_properties().values.find(
+                    custom.name);
+                const auto underlying = found == node.style.custom_properties().values.end()
+                    ? std::string{} : found->second;
+                runtime.underlying_custom_properties.emplace(
+                    custom.name, underlying);
+                runtime.painted_custom_properties.emplace(
+                    custom.name, underlying);
+            }
             if (!configured.filter_keyframes.empty()) {
                 auto valid = configured.filter_keyframes.size() >= 2U;
                 size_t longest = 0U;
@@ -608,7 +620,9 @@ void native_document::update_style_animations(dom_node& node)
                 if (configured.opacity_keyframes.size() < 2U
                     && configured.translation_keyframes.size() < 2U
                     && configured.scale_keyframes.size() < 2U
-                    && configured.rotation_keyframes.size() < 2U && !valid) {
+                    && configured.rotation_keyframes.size() < 2U
+                    && configured.custom_property_animations.empty()
+                    && !valid) {
                     runtime.active = false;
                 }
             }
@@ -706,12 +720,27 @@ void native_document::update_style_animations(dom_node& node)
                 runtime.filter_keyframes.clear();
                 runtime.filter_underlying.clear();
                 runtime.painted_filter_functions.clear();
+                runtime.painted_custom_properties.clear();
+                runtime.underlying_custom_properties.clear();
                 runtime.painted_opacity = pseudo.opacity;
                 runtime.painted_translation_x = {0, length_unit::pixels};
                 runtime.painted_translation_y = {0, length_unit::pixels};
                 runtime.painted_scale_x = 1;
                 runtime.painted_scale_y = 1;
                 runtime.painted_rotation_degrees = 0;
+                for (const auto& custom : source.custom_property_animations) {
+                    auto underlying = std::string{};
+                    const auto registration_value =
+                        node.style.custom_properties().values.find(custom.name);
+                    if (registration_value
+                        != node.style.custom_properties().values.end()) {
+                        underlying = registration_value->second;
+                    }
+                    runtime.underlying_custom_properties.emplace(
+                        custom.name, underlying);
+                    runtime.painted_custom_properties.emplace(
+                        custom.name, underlying);
+                }
                 if (!source.filter_keyframes.empty()) {
                     auto valid = source.filter_keyframes.size() >= 2U;
                     size_t longest = 0U;
@@ -743,7 +772,9 @@ void native_document::update_style_animations(dom_node& node)
                     if (source.opacity_keyframes.size() < 2U
                         && source.translation_keyframes.size() < 2U
                         && source.scale_keyframes.size() < 2U
-                        && source.rotation_keyframes.size() < 2U && !valid) {
+                        && source.rotation_keyframes.size() < 2U
+                        && source.custom_property_animations.empty()
+                        && !valid) {
                         runtime.active = false;
                     }
                 }
@@ -1161,6 +1192,48 @@ bool native_document::advance_animations() noexcept
     };
     auto advanced = false;
     auto layout_changed = false;
+    const auto serialize_custom_number = [](float value, std::string_view unit) {
+        std::ostringstream stream;
+        stream << value << unit;
+        return stream.str();
+    };
+    const auto replace_token = [](std::string& value,
+                                  const std::string& previous,
+                                  const std::string& current) {
+        if (previous.empty() || previous == current) return false;
+        auto changed = false;
+        size_t offset = 0U;
+        while ((offset = value.find(previous, offset)) != std::string::npos) {
+            value.replace(offset, previous.size(), current);
+            offset += current.size();
+            changed = true;
+        }
+        return changed;
+    };
+    const auto replace_node_dependent_tokens = [&](dom_node& node,
+                                                   const std::string& previous,
+                                                   const std::string& current) {
+        auto changed = false;
+        if (node.style.has_background_image_data()) {
+            changed = replace_token(
+                node.style.mutable_background_image().image_value,
+                previous, current) || changed;
+        }
+        if (auto* textual = node.style.mutable_textual_if_present();
+            textual != nullptr) {
+            for (auto& [name, value] : textual->effect_values) {
+                static_cast<void>(name);
+                changed = replace_token(value, previous, current) || changed;
+            }
+        }
+        return changed;
+    };
+    const auto replace_pseudo_dependent_tokens = [&](node_style::pseudo_element& pseudo,
+                                                     const std::string& previous,
+                                                     const std::string& current) {
+        return replace_token(
+            pseudo.background_image.image_value, previous, current);
+    };
     for (auto& owner : nodes_) {
         auto& node = *owner;
         auto* animation_pointer = node.animation_runtime();
@@ -1679,6 +1752,40 @@ bool native_document::advance_animations() noexcept
                 winning_filter = &runtime.painted_filter_functions;
                 animation.keyframe_filter_override = true;
             }
+            for (const auto& custom : configured.custom_property_animations) {
+                if (custom.keyframes.size() < 2U) continue;
+                auto sampled = runtime.underlying_custom_properties[custom.name];
+                if (contributes) {
+                    auto right = std::lower_bound(
+                        custom.keyframes.begin(), custom.keyframes.end(), progress,
+                        [](const auto& stop, float value) {
+                            return stop.offset < value;
+                        });
+                    auto number = 0.0F;
+                    if (right == custom.keyframes.begin()) {
+                        number = right->value;
+                    } else if (right == custom.keyframes.end()) {
+                        number = custom.keyframes.back().value;
+                    } else {
+                        const auto& from = *(right - 1);
+                        const auto local = std::clamp(
+                            (progress - from.offset)
+                                / std::max(0.0001F, right->offset - from.offset),
+                            0.0F, 1.0F);
+                        const auto eased = eased_segment(local);
+                        number = from.value + (right->value - from.value) * eased;
+                    }
+                    sampled = serialize_custom_number(number, custom.unit);
+                }
+                auto& previous = runtime.painted_custom_properties[custom.name];
+                if (sampled != previous) {
+                    const auto token_changed = replace_node_dependent_tokens(
+                        node, previous, sampled);
+                    node.style.mutable_custom_properties().values[custom.name] = sampled;
+                    previous = sampled;
+                    advanced = advanced || token_changed || contributes;
+                }
+            }
             advanced = advanced || (contributes && keyframe_paint_visible);
             if (completed && !runtime.end_event_sent) {
                 if (!animation_events_) {
@@ -1903,7 +2010,7 @@ bool native_document::advance_animations() noexcept
         }
 
         const auto advance_pseudo = [&] (
-            const node_style::pseudo_element& pseudo,
+            node_style::pseudo_element& pseudo,
             dom_node::animation_runtime_data::pseudo_animation_runtime& pseudo_runtime,
             std::string_view pseudo_name) {
             if (!pseudo.generated || pseudo.display_none) {
@@ -2110,6 +2217,39 @@ bool native_document::advance_animations() noexcept
                     winning_filter = &runtime.painted_filter_functions;
                     filter_override = true;
                 }
+                for (const auto& custom : configured.custom_property_animations) {
+                    if (custom.keyframes.size() < 2U) continue;
+                    auto sampled = runtime.underlying_custom_properties[custom.name];
+                    if (contributes) {
+                        auto right = std::lower_bound(
+                            custom.keyframes.begin(), custom.keyframes.end(), progress,
+                            [](const auto& stop, float value) {
+                                return stop.offset < value;
+                            });
+                        auto number = 0.0F;
+                        if (right == custom.keyframes.begin()) {
+                            number = right->value;
+                        } else if (right == custom.keyframes.end()) {
+                            number = custom.keyframes.back().value;
+                        } else {
+                            const auto& from = *(right - 1);
+                            const auto eased = eased_segment(std::clamp(
+                                (progress - from.offset)
+                                    / std::max(0.0001F, right->offset - from.offset),
+                                0.0F, 1.0F));
+                            number = from.value
+                                + (right->value - from.value) * eased;
+                        }
+                        sampled = serialize_custom_number(number, custom.unit);
+                    }
+                    auto& previous = runtime.painted_custom_properties[custom.name];
+                    if (sampled != previous) {
+                        const auto token_changed = replace_pseudo_dependent_tokens(
+                            pseudo, previous, sampled);
+                        previous = sampled;
+                        advanced = advanced || token_changed || contributes;
+                    }
+                }
                 advanced = advanced || (contributes && keyframe_paint_visible);
                 if (completed && !runtime.end_event_sent) {
                     if (!animation_events_) {
@@ -2141,9 +2281,9 @@ bool native_document::advance_animations() noexcept
             }
         };
         advance_pseudo(
-            node.style.before_pseudo(), animation.before_pseudo, "::before");
+            node.style.mutable_before_pseudo(), animation.before_pseudo, "::before");
         advance_pseudo(
-            node.style.after_pseudo(), animation.after_pseudo, "::after");
+            node.style.mutable_after_pseudo(), animation.after_pseudo, "::after");
     }
     // Opacity, colors, filters, scale, and rotation are paint-only.
     // Their interpolated values are consumed directly by build_scene(), so they

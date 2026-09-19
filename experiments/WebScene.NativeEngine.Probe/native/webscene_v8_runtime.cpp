@@ -9242,6 +9242,19 @@ v8_dom_runtime::memory_metrics v8_dom_runtime::read_memory_metrics() const noexc
         for (const auto& stop : keyframes.filter_stops) {
             result.native_css_rule_storage_bytes += string_bytes(stop.value);
         }
+        for (const auto& [property, stops] : keyframes.custom_property_stops) {
+            result.native_css_rule_storage_bytes += string_bytes(property)
+                + sizeof(decltype(keyframes.custom_property_stops)::value_type)
+                + stops.capacity() * sizeof(css_opacity_keyframes::custom_property_stop);
+            for (const auto& stop : stops) {
+                result.native_css_rule_storage_bytes += string_bytes(stop.value);
+            }
+        }
+    }
+    for (const auto& [name, property] : impl_->registered_custom_properties) {
+        result.native_css_rule_storage_bytes += string_bytes(name)
+            + sizeof(decltype(impl_->registered_custom_properties)::value_type)
+            + string_bytes(property.name) + string_bytes(property.initial_value);
     }
     for (const auto& [root, cascade] : impl_->inactive_css_cascades) {
         static_cast<void>(root);
@@ -9261,6 +9274,22 @@ v8_dom_runtime::memory_metrics v8_dom_runtime::read_memory_metrics() const noexc
             for (const auto& stop : keyframes.filter_stops) {
                 result.native_css_rule_storage_bytes += string_bytes(stop.value);
             }
+            for (const auto& [property, stops] : keyframes.custom_property_stops) {
+                result.native_css_rule_storage_bytes += string_bytes(property)
+                    + sizeof(decltype(keyframes.custom_property_stops)::value_type)
+                    + stops.capacity()
+                        * sizeof(css_opacity_keyframes::custom_property_stop);
+                for (const auto& stop : stops) {
+                    result.native_css_rule_storage_bytes += string_bytes(stop.value);
+                }
+            }
+        }
+        for (const auto& [name, property]
+             : cascade.registered_custom_properties) {
+            result.native_css_rule_storage_bytes += string_bytes(name)
+                + sizeof(decltype(cascade.registered_custom_properties)::value_type)
+                + string_bytes(property.name)
+                + string_bytes(property.initial_value);
         }
     }
     {

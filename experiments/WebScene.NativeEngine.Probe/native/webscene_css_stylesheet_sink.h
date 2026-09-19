@@ -84,6 +84,11 @@ public:
         if (name == "keyframes" || name == "-webkit-keyframes") {
             current.keyframes = true;
             current.prelude = std::string(prelude);
+        } else if (name == "property" && stack_.empty() && has_block) {
+            current.property_rule = true;
+            current.prelude = trim_value(prelude);
+            current.declarations.reserve(3U);
+            current.children_active = false;
         } else if (name == "font-face") {
             current.children_active = false;
             owner_.record_feature(
@@ -185,7 +190,8 @@ public:
         if (stack_.empty()) return false;
         auto& current = stack_.back();
         ++current.observed_declarations;
-        if (current.active && current.kind == css_syntax_style_rule) {
+        if (current.active
+            && (current.kind == css_syntax_style_rule || current.property_rule)) {
             append_declaration(
                 current.declarations, name, value, important);
         }
@@ -251,6 +257,20 @@ public:
             completed_keyframes_.emplace_back(
                 std::move(current.prelude),
                 std::move(current.keyframe_definition));
+        } else if (current.property_rule) {
+            const auto parsed = parse_registered_property(current);
+            if (parsed.has_value()) {
+                owner_.register_custom_property(*parsed);
+                owner_.record_feature(
+                    "css", "at-rule:@property", "supported",
+                    "bounded <angle> and <percentage> registrations",
+                    "stylesheet-parser");
+            } else {
+                owner_.record_feature(
+                    "css", "at-rule:@property", "invalid-authoring",
+                    "requires a custom name, syntax, inherits and typed initial-value",
+                    "stylesheet-parser");
+            }
         }
         return true;
     }
@@ -321,7 +341,85 @@ private:
         bool active{false};
         bool children_active{false};
         bool keyframes{false};
+        bool property_rule{false};
     };
+
+    static std::optional<float> parse_typed_number(
+        std::string_view value,
+        registered_property_syntax syntax)
+    {
+        const auto source = ascii_lower(trim_value(value));
+        const auto unit = syntax == registered_property_syntax::angle
+            ? std::string_view{"deg"} : std::string_view{"%"};
+        if (!source.ends_with(unit)) return std::nullopt;
+        const auto number = source.substr(0U, source.size() - unit.size());
+        if (number.empty() || number.size() > 64U) return std::nullopt;
+        char* end = nullptr;
+        const auto parsed = std::strtof(number.c_str(), &end);
+        if (end != number.c_str() + number.size() || !std::isfinite(parsed)) {
+            return std::nullopt;
+        }
+        return parsed;
+    }
+
+    static std::optional<registered_custom_property> parse_registered_property(
+        const frame& source)
+    {
+        if (!source.prelude.starts_with("--") || source.prelude.size() > 128U
+            || source.prelude.size() < 3U) return std::nullopt;
+        for (const auto value : std::string_view(source.prelude).substr(2U)) {
+            const auto byte = static_cast<unsigned char>(value);
+            if (std::isalnum(byte) == 0 && value != '-' && value != '_') {
+                return std::nullopt;
+            }
+        }
+        const css_declaration* syntax = nullptr;
+        const css_declaration* inherits = nullptr;
+        const css_declaration* initial = nullptr;
+        for (const auto& declaration : source.declarations) {
+            if (declaration.important) return std::nullopt;
+            if (declaration.name == "syntax") {
+                if (syntax != nullptr) return std::nullopt;
+                syntax = &declaration;
+            } else if (declaration.name == "inherits") {
+                if (inherits != nullptr) return std::nullopt;
+                inherits = &declaration;
+            } else if (declaration.name == "initial-value") {
+                if (initial != nullptr) return std::nullopt;
+                initial = &declaration;
+            }
+        }
+        if (syntax == nullptr || inherits == nullptr || initial == nullptr) {
+            return std::nullopt;
+        }
+        auto syntax_value = trim_value(syntax->value);
+        if (syntax_value.size() >= 2U
+            && ((syntax_value.front() == '\'' && syntax_value.back() == '\'')
+                || (syntax_value.front() == '"' && syntax_value.back() == '"'))) {
+            syntax_value = syntax_value.substr(1U, syntax_value.size() - 2U);
+        }
+        registered_custom_property result;
+        result.name = source.prelude;
+        if (syntax_value == "<angle>") {
+            result.syntax = registered_property_syntax::angle;
+        } else if (syntax_value == "<percentage>") {
+            result.syntax = registered_property_syntax::percentage;
+        } else {
+            return std::nullopt;
+        }
+        const auto inherits_value = ascii_lower(trim_value(inherits->value));
+        if (inherits_value != "true" && inherits_value != "false") {
+            return std::nullopt;
+        }
+        result.inherits = inherits_value == "true";
+        const auto number = parse_typed_number(initial->value, result.syntax);
+        if (!number.has_value() || initial->value.size() > 128U) {
+            return std::nullopt;
+        }
+        result.initial_number = *number;
+        result.initial_value = trim_value(initial->value);
+        return result;
+    }
 
     frame* nearest_style_frame() noexcept
     {

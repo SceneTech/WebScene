@@ -549,8 +549,27 @@ inline std::string serialize_animation_shorthand(
         return result;
     }
 
+inline std::optional<float> parse_registered_custom_number(
+    std::string_view value,
+    registered_property_syntax syntax)
+{
+    const auto source = ascii_lower(trim_value(value));
+    const auto unit = syntax == registered_property_syntax::angle
+        ? std::string_view{"deg"} : std::string_view{"%"};
+    if (!source.ends_with(unit)) return std::nullopt;
+    const auto number = source.substr(0U, source.size() - unit.size());
+    if (number.empty()) return std::nullopt;
+    char* end = nullptr;
+    const auto parsed = std::strtof(number.c_str(), &end);
+    if (end != number.c_str() + number.size() || !std::isfinite(parsed)) {
+        return std::nullopt;
+    }
+    return parsed;
+}
+
 inline void configure_keyframes(node_style::animation_data& animations,
-    const std::unordered_map<std::string,css_opacity_keyframes>& definitions)
+    const std::unordered_map<std::string,css_opacity_keyframes>& definitions,
+    const std::unordered_map<std::string,registered_custom_property>& registrations = {})
     {
         animations.keyframe_animations.clear();
         const auto names = split_css_component_list(animations.animation_name_value, ',');
@@ -625,13 +644,34 @@ inline void configure_keyframes(node_style::animation_data& animations,
                 track.scale_keyframes = definition->second.scale_stops;
                 track.rotation_keyframes = definition->second.rotation_stops;
                 track.filter_keyframes = definition->second.filter_stops;
+                for (const auto& [property_name, raw_stops]
+                     : definition->second.custom_property_stops) {
+                    const auto registration = registrations.find(property_name);
+                    if (registration == registrations.end()) continue;
+                    node_style::custom_property_animation custom;
+                    custom.name = property_name;
+                    custom.unit = registration->second.syntax
+                            == registered_property_syntax::angle
+                        ? "deg" : "%";
+                    for (const auto& raw : raw_stops) {
+                        const auto number = parse_registered_custom_number(
+                            raw.value, registration->second.syntax);
+                        if (number.has_value()) {
+                            custom.keyframes.push_back({raw.offset, *number});
+                        }
+                    }
+                    if (custom.keyframes.size() >= 2U) {
+                        track.custom_property_animations.push_back(std::move(custom));
+                    }
+                }
             }
             const auto has_supported_effect =
                 track.opacity_keyframes.size() >= 2U
                     || track.translation_keyframes.size() >= 2U
                     || track.scale_keyframes.size() >= 2U
                     || track.rotation_keyframes.size() >= 2U
-                    || track.filter_keyframes.size() >= 2U;
+                    || track.filter_keyframes.size() >= 2U
+                    || !track.custom_property_animations.empty();
             if (has_supported_effect) {
                 std::ostringstream signature;
                 signature << normalized_name << '|' << track.duration_ms << '|'
@@ -656,6 +696,12 @@ inline void configure_keyframes(node_style::animation_data& animations,
                     signature << "|r" << stop.offset << ':' << stop.degrees;
                 for (const auto& stop : track.filter_keyframes)
                     signature << "|f" << stop.offset << ':' << stop.value;
+                for (const auto& custom : track.custom_property_animations) {
+                    signature << "|c" << custom.name << ':' << custom.unit;
+                    for (const auto& stop : custom.keyframes) {
+                        signature << ',' << stop.offset << ':' << stop.value;
+                    }
+                }
                 track.signature = signature.str();
             }
             animations.keyframe_animations.push_back(std::move(track));
@@ -663,10 +709,11 @@ inline void configure_keyframes(node_style::animation_data& animations,
     }
 
 inline void configure_keyframes(node_style& style,
-    const std::unordered_map<std::string,css_opacity_keyframes>& definitions)
+    const std::unordered_map<std::string,css_opacity_keyframes>& definitions,
+    const std::unordered_map<std::string,registered_custom_property>& registrations = {})
 {
     if (!style.has_animation_data()) return;
-    configure_keyframes(style.mutable_animations(), definitions);
+    configure_keyframes(style.mutable_animations(), definitions, registrations);
 }
 
 inline void append_keyframe(
@@ -686,6 +733,12 @@ inline void append_keyframe(
             declarations.begin(), declarations.end(), [](const auto& declaration) {
                 return declaration.name == "filter";
             });
+        std::vector<const css_declaration*> custom_properties;
+        for (const auto& declaration : declarations) {
+            if (declaration.name.starts_with("--")) {
+                custom_properties.push_back(&declaration);
+            }
+        }
         const auto transform_value = transform == declarations.end()
             ? std::optional<parsed_keyframe_transform>{}
             : parse_keyframe_transform(transform->value);
@@ -714,6 +767,22 @@ inline void append_keyframe(
             }
             if (filter != declarations.end()) {
                 definition.filter_stops.push_back({offset, filter->value});
+            }
+            for (const auto* custom : custom_properties) {
+                if (custom->name.size() > 128U || custom->value.size() > 128U) {
+                    continue;
+                }
+                auto found = definition.custom_property_stops.find(custom->name);
+                if (found == definition.custom_property_stops.end()) {
+                    if (definition.custom_property_stops.size() >= 8U) continue;
+                    found = definition.custom_property_stops.emplace(
+                        custom->name,
+                        std::vector<css_opacity_keyframes::custom_property_stop>{})
+                        .first;
+                }
+                if (found->second.size() < 64U) {
+                    found->second.push_back({offset, custom->value});
+                }
             }
         }
     }
@@ -744,6 +813,10 @@ inline void finish_keyframes(
         normalize(definition.scale_stops);
         normalize(definition.rotation_stops);
         normalize(definition.filter_stops);
+        for (auto& [name, stops] : definition.custom_property_stops) {
+            static_cast<void>(name);
+            normalize(stops);
+        }
         if (definition.rotation_stops.size() == 1U
             && definition.rotation_stops.front().offset > 0) {
             definition.rotation_stops.insert(definition.rotation_stops.begin(), {0, 0});
@@ -763,7 +836,11 @@ inline void finish_keyframes(
             || definition.translation_stops.size() >= 2U
             || definition.scale_stops.size() >= 2U
             || definition.rotation_stops.size() >= 2U
-            || definition.filter_stops.size() >= 2U) {
+            || definition.filter_stops.size() >= 2U
+            || std::any_of(
+                definition.custom_property_stops.begin(),
+                definition.custom_property_stops.end(),
+                [](const auto& entry) { return entry.second.size() >= 2U; })) {
             definitions[ascii_lower(trim_value(std::move(name)))] =
                 std::move(definition);
         }

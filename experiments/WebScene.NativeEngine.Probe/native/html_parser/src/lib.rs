@@ -964,6 +964,7 @@ mod css_syntax {
             let mut declarations = 0usize;
             if prelude.name.eq_ignore_ascii_case("font-face")
                 || prelude.name.eq_ignore_ascii_case("page")
+                || prelude.name.eq_ignore_ascii_case("property")
             {
                 declarations = parse_css_stream_declaration_list(
                     input,

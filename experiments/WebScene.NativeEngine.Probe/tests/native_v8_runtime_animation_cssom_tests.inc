@@ -471,6 +471,94 @@ void test_opacity_keyframes_use_host_clock_with_staggered_infinite_delays(
         "detached CSS animations retained host-frame demand");
 }
 
+void test_registered_custom_property_keyframes_update_dependent_paint()
+{
+    auto* engine = webscene_engine_create(0);
+    require(engine != nullptr, "typed custom-property engine creation failed");
+    execute_and_wait(engine, R"JS(
+        (() => {
+          document.body.innerHTML = `
+            <style id="typed-sheet">
+              @property --progress {
+                syntax: '<percentage>';
+                inherits: false;
+                initial-value: 0%;
+              }
+              @property --angle {
+                syntax: '<angle>';
+                inherits: false;
+                initial-value: 135deg;
+              }
+              @keyframes typed-progress {
+                from { --progress: 0%; --angle: 135deg; }
+                to { --progress: 100%; --angle: 495deg; }
+              }
+              #typed {
+                background-image: linear-gradient(90deg, red var(--progress), blue);
+                animation: typed-progress 1000ms linear 1 forwards;
+              }
+            </style>
+            <div id="typed"></div>
+            <div id="registered-parent" style="--progress: 25%">
+              <div id="registered-child"></div>
+            </div>`;
+        })()
+    )JS", "typed-custom-property-setup.js");
+    const auto reflected = evaluate(engine, R"JS(
+        (() => {
+          const rules = document.getElementById('typed-sheet').sheet.cssRules;
+          const dynamic = new CSSStyleSheet();
+          dynamic.replaceSync("@property --dynamic { syntax: '<angle>'; inherits: false; initial-value: 0deg; }");
+          const dynamicName = dynamic.cssRules[0].name;
+          dynamic.deleteRule(0);
+          dynamic.insertRule("@property --replacement { syntax: '<percentage>'; inherits: false; initial-value: 5%; }");
+          return [rules[0].constructor.name, rules[0] instanceof CSSPropertyRule,
+            rules[0].name, rules[0].syntax, rules[0].inherits,
+            rules[0].initialValue, rules[1].syntax, dynamicName,
+            dynamic.cssRules[0].name];
+        })()
+    )JS", "typed-custom-property-cssom.js");
+    require(
+        reflected == R"(["CSSPropertyRule",true,"--progress","<percentage>",false,"0%","<angle>","--dynamic","--replacement"])",
+        "CSSPropertyRule reflection diverged: " + reflected);
+    const auto initial_semantics = evaluate(engine, R"JS(
+        (() => {
+          const child = document.getElementById('registered-child');
+          const initial = getComputedStyle(child).getPropertyValue('--progress');
+          child.style.setProperty('--progress', 'invalid');
+          return [initial, child.style.getPropertyValue('--progress'),
+            getComputedStyle(child).getPropertyValue('--progress')];
+        })()
+    )JS", "typed-custom-property-initial.js");
+    require(initial_semantics == R"(["0%","invalid","0%"])",
+        "registered inheritance/invalid-value semantics diverged: "
+            + initial_semantics);
+
+    animation_frame_and_wait(engine, 500.0, 7481U);
+    const auto midpoint = evaluate(engine, R"JS(
+        (() => {
+          const style = getComputedStyle(document.getElementById('typed'));
+          return [style.getPropertyValue('--progress'),
+            style.getPropertyValue('--angle'), style.backgroundImage];
+        })()
+    )JS", "typed-custom-property-midpoint.js");
+    require(
+        midpoint.find("50%") != std::string::npos
+            && midpoint.find("315deg") != std::string::npos
+            && midpoint.find("linear-gradient") != std::string::npos,
+        "typed custom-property midpoint did not reach computed paint: " + midpoint);
+
+    animation_frame_and_wait(engine, 1000.0, 7482U);
+    const auto terminal = evaluate(engine, R"JS(
+        getComputedStyle(document.getElementById('typed'))
+          .getPropertyValue('--progress')
+    )JS", "typed-custom-property-terminal.js");
+    require(terminal == R"("100%")",
+        "typed custom-property forwards fill did not retain terminal value: "
+            + terminal);
+    webscene_engine_destroy(engine);
+}
+
 void test_rotation_keyframes_use_host_clock_and_wrap_continuously(
     webscene_engine* engine)
 {

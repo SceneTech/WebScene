@@ -1386,6 +1386,14 @@
     }
 
 #if defined(WEBSCENE_NATIVE_ENGINE_CSSPARSER)
+    void register_custom_property(registered_custom_property property)
+    {
+        if (registered_custom_properties.size() >= 64U
+            && !registered_custom_properties.contains(property.name)) return;
+        property.stylesheet_owner_id = active_stylesheet_owner_id;
+        registered_custom_properties[property.name] = std::move(property);
+    }
+
     void finish_css_syntax_keyframes(std::string name, css_opacity_keyframes definition)
     { css::finish_keyframes(opacity_keyframes,std::move(name),std::move(definition)); }
 
@@ -1436,6 +1444,10 @@
         css::rebuild_root_variables(
             css_rules, css_variables, important_css_variables);
         for (const auto& [name, frames] : sheet.keyframes) opacity_keyframes[name] = frames;
+        for (auto property : sheet.registered_custom_properties) {
+            property.stylesheet_owner_id = active_stylesheet_owner_id;
+            registered_custom_properties[property.name] = std::move(property);
+        }
         for (const auto& diagnostic : sheet.diagnostics)
             record_feature("css", diagnostic.feature, diagnostic.classification,
                 diagnostic.detail, "compiled-stylesheet");

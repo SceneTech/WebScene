@@ -14,6 +14,7 @@ struct prepared_stylesheet {
     std::string source_address;
     std::vector<std::shared_ptr<const css_rule_payload>> rules;
     std::unordered_map<std::string,css_opacity_keyframes> keyframes;
+    std::vector<registered_custom_property> registered_custom_properties;
     std::vector<stylesheet_diagnostic> diagnostics;
     // First-appearance order. Empty entries are distinct anonymous layers;
     // named entries are unified by the consuming document across stylesheets.

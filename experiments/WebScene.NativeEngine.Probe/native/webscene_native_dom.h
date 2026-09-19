@@ -189,6 +189,15 @@ struct node_style final {
         float offset{0};
         std::string value;
     };
+    struct custom_property_keyframe final {
+        float offset{0};
+        float value{0};
+    };
+    struct custom_property_animation final {
+        std::string name;
+        std::string unit;
+        std::vector<custom_property_keyframe> keyframes;
+    };
 
     struct transition_timing final {
         enum class function_kind : uint8_t { cubic_bezier, steps };
@@ -255,6 +264,7 @@ struct node_style final {
             std::vector<scale_keyframe> scale_keyframes;
             std::vector<rotation_keyframe> rotation_keyframes;
             std::vector<filter_keyframe> filter_keyframes;
+            std::vector<custom_property_animation> custom_property_animations;
             float duration_ms{0};
             float delay_ms{0};
             float iterations{1};
@@ -308,6 +318,7 @@ struct node_style final {
     struct custom_property_data final {
         std::unordered_map<std::string, std::string> values;
         std::unordered_set<std::string> important;
+        std::unordered_map<std::string, std::string> dependent_values;
     };
 
     const custom_property_data& custom_properties() const noexcept
@@ -331,7 +342,8 @@ struct node_style final {
     {
         return custom_property_state != nullptr
             && (!custom_property_state->values.empty()
-                || !custom_property_state->important.empty());
+                || !custom_property_state->important.empty()
+                || !custom_property_state->dependent_values.empty());
     }
 
     const custom_property_data* custom_property_data_identity() const noexcept
@@ -535,6 +547,7 @@ struct node_style final {
         std::string font_family;
         bool font_family_important{false};
         std::string content;
+        std::unordered_map<std::string, std::string> variable_dependent_values;
         bool generated{false};
         bool display_none{false};
         bool visibility_hidden{false};
@@ -1556,6 +1569,8 @@ struct dom_node final {
             std::vector<retained_filter_keyframe> filter_keyframes;
             std::vector<retained_filter_function> filter_underlying;
             std::vector<retained_filter_function> painted_filter_functions;
+            std::unordered_map<std::string, std::string> painted_custom_properties;
+            std::unordered_map<std::string, std::string> underlying_custom_properties;
             double started_ms{0};
             double paused_at_ms{0};
             float painted_opacity{1};

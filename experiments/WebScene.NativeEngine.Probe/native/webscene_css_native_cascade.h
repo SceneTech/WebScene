@@ -39,15 +39,42 @@ bool apply_native_cascade(native_document& document,dom_node& node,
                 if(declaration.important) authored.important_declarations.insert(declaration.name);
             }
         }
-        reset_cascaded_style(node,variables);
+        reset_cascaded_style(
+            node, variables, &sheets.state().registered_custom_properties);
         auto indices=sheets.candidates(node,focused);
         auto matched=match_candidates(document,node,sheets.state().rules,indices,
             [&](const auto& subject,const auto& rule,const auto&) { return query.matches_prepared(subject,rule.payload->compiled_pseudo_origin); },
             [&](const auto& subject,const auto& rule) { return query.matches_prepared(subject,rule.compiled_selector()); });
+        seed_relevant_registered_custom_properties(
+            node, sheets.state().registered_custom_properties,
+            [&](const std::string& name, const std::string& variable_token) {
+                const auto references = [&](const css_rule* rule) {
+                    return std::any_of(
+                        rule->declarations().begin(),
+                        rule->declarations().end(),
+                        [&](const css_declaration& declaration) {
+                            return declaration.name == name
+                                || declaration.value.find(variable_token)
+                                    != std::string::npos;
+                        });
+                };
+                return std::any_of(
+                        matched.ordinary.begin(), matched.ordinary.end(), references)
+                    || std::any_of(
+                        matched.pseudo.begin(), matched.pseudo.end(),
+                        [&](const auto& entry) { return references(entry.second); });
+            });
         const cascaded_rule_order cascade_order(matched.ordinary);
         apply_matched_declarations(node,cascade_order,[&](const css_declaration& declaration,bool inline_origin) {
             property_result result;
-            apply_declaration(document,node,declaration,variables,inline_origin,result,load_svg,[](bool) {});
+            if (declaration.name.starts_with("--")) {
+                apply_custom_property(
+                    node, declaration,
+                    &sheets.state().registered_custom_properties);
+                result.classification = "supported";
+            } else {
+                apply_declaration(document,node,declaration,variables,inline_origin,result,load_svg,[](bool) {});
+            }
             observe(declaration,result);
         });
         if(inline_attributes) {
@@ -94,14 +121,23 @@ bool apply_native_cascade(native_document& document,dom_node& node,
             node.style.mutable_before_pseudo().layout=previous.before_pseudo().layout;
         if(node.style.after_pseudo().generated && previous.after_pseudo().generated)
             node.style.mutable_after_pseudo().layout=previous.after_pseudo().layout;
-        configure_keyframes(node.style,sheets.state().opacity_keyframes);
+        configure_keyframes(
+            node.style,
+            sheets.state().opacity_keyframes,
+            sheets.state().registered_custom_properties);
         if(node.style.has_pseudo_elements()) {
             auto& before=node.style.mutable_before_pseudo();
             auto& after=node.style.mutable_after_pseudo();
             if(before.has_animation_data())
-                configure_keyframes(before.mutable_animations(),sheets.state().opacity_keyframes);
+                configure_keyframes(
+                    before.mutable_animations(),
+                    sheets.state().opacity_keyframes,
+                    sheets.state().registered_custom_properties);
             if(after.has_animation_data())
-                configure_keyframes(after.mutable_animations(),sheets.state().opacity_keyframes);
+                configure_keyframes(
+                    after.mutable_animations(),
+                    sheets.state().opacity_keyframes,
+                    sheets.state().registered_custom_properties);
         }
         document.update_style_animations(node);
     }

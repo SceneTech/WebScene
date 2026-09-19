@@ -19,7 +19,10 @@ class DawnExportTests(unittest.TestCase):
             ("osx-arm64", "00001000 T _wgpuCreateInstance\n00001010 T _wgpuGetProcAddress\n"),
             ("linux-x64", "00001000 T wgpuCreateInstance\n00001010 T wgpuGetProcAddress\n"
              "00001020 T websceneDawnQueryVulkanDeviceV1\n"
-             "00001030 T websceneDawnQueryVulkanDeviceV2\n"),
+             "00001030 T websceneDawnQueryVulkanDeviceV2\n"
+             "00001040 T websceneDawnQueryVulkanDeviceV3\n"
+             "00001050 T websceneDawnAcquireVulkanQueueV3\n"
+             "00001060 T websceneDawnReleaseVulkanQueueV3\n"),
             ("win-x64", "  1  0 00001000 wgpuCreateInstance\n  2  1 00001010 wgpuGetProcAddress\n")]:
             with self.subTest(rid=rid):
                 self.assertEqual(self.inspect(text, rid)["status"], "passed")
@@ -35,6 +38,10 @@ class DawnExportTests(unittest.TestCase):
             "1020 T websceneDawnQueryVulkanDeviceV1\n",
             "1000 T wgpuCreateInstance\n1010 T wgpuGetProcAddress\n"
             "1020 T websceneDawnQueryVulkanDeviceV2\n",
+            "1000 T wgpuCreateInstance\n1010 T wgpuGetProcAddress\n"
+            "1020 T websceneDawnQueryVulkanDeviceV1\n"
+            "1030 T websceneDawnQueryVulkanDeviceV2\n"
+            "1040 T websceneDawnQueryVulkanDeviceV3\n",
         ]:
             with self.subTest(text=text), self.assertRaises(ValueError):
                 self.inspect(text, "linux-x64")

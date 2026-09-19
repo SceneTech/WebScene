@@ -27,7 +27,7 @@ function(webscene_isolate_dawn)
         target_link_options(webgpu_dawn PRIVATE "LINKER:-exported_symbols_list,${CMAKE_BINARY_DIR}/webscene-dawn.exports")
     elseif(UNIX)
         file(WRITE "${CMAKE_BINARY_DIR}/webscene-dawn.exports"
-            "{ global: wgpu*; websceneDawnQueryVulkanDeviceV1; websceneDawnQueryVulkanDeviceV2; local: *; };\n")
+            "{ global: wgpu*; websceneDawnQueryVulkanDeviceV1; websceneDawnQueryVulkanDeviceV2; websceneDawnQueryVulkanDeviceV3; websceneDawnAcquireVulkanQueueV3; websceneDawnReleaseVulkanQueueV3; local: *; };\n")
         target_link_options(webgpu_dawn PRIVATE "LINKER:--version-script=${CMAKE_BINARY_DIR}/webscene-dawn.exports")
     endif()
     # Windows exports only functions decorated by WGPU_SHARED_LIBRARY;

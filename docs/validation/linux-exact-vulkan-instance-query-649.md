@@ -31,11 +31,13 @@ lifetime. The host supplies the X11 `Display` and visual ID and must call
 `vkGetPhysicalDeviceXlibPresentationSupportKHR` through the returned resolver
 before it creates an Xlib surface.
 
-`bind_dawn_linux_external_device` consumes v2 and copies the public
-`wgpu::Device` into the existing native owner. That reference retains the Dawn
-backend and every borrowed Vulkan identity. Allocator identity checks now
-include the instance, resolver and presentation capability mask. No Vulkan
-object returned by this API may be destroyed by the consumer, and no second
+Issue #651 subsequently advances `bind_dawn_linux_external_device` to v3 so it
+can require balanced access to Dawn's exact queue; direct v2 consumers remain
+ABI compatible. The binding copies the public `wgpu::Device` into the existing
+native owner. That reference retains the Dawn backend and every borrowed Vulkan
+identity. Allocator identity checks include the instance, resolver,
+presentation capability mask and v3 queue-access capability. No Vulkan object
+returned by this API may be destroyed by the consumer, and no second
 instance/device or CPU transfer path is permitted.
 
 ## SDK and build contracts

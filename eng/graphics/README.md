@@ -25,6 +25,13 @@ configuration controls its runtime. Windows build/link and runtime dependency
 validation (including D3D shader compiler packaging) remain hardware-runner
 gates. Never exchange CRT-owned allocations between these libraries.
 
+Linux also exports the additive v3 query and balanced
+`websceneDawnAcquireVulkanQueueV3`/`websceneDawnReleaseVulkanQueueV3` pair. An
+active access retains the exact public device and Dawn object and holds the
+same `DeviceGuard` used by generated Dawn API entry points and Vulkan surface
+presentation. It serializes external submit/present work with Dawn without
+publishing a second queue or any private Dawn type.
+
 `GraphicsDependencies.cmake` verifies the SDK before importing it, including revision, RID, lock, settings, complete installed file inventory and content hashes. CMake cannot silently choose another `Dawn_DIR`. A dependency roll requires rebuilding headers and libraries together. Package manifests prove integrity and provenance, not API conformance or hardware execution.
 
 Dependency checkouts explicitly set both `core.autocrlf=false` and `core.eol=lf`: upstream `text=auto` attributes otherwise permit Windows-native CRLF license bytes. The optional Dawn C++ module wrapper is disabled; WebScene uses generated C/C++ headers and does not require compiler module scanning. This avoids a hosted GCC configuration that passed the language feature test but lacked CMake import-graph discovery support.

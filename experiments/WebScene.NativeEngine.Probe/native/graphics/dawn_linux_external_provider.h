@@ -3,7 +3,9 @@
 #include "linux_external_image.h"
 #include "webscene/dawn_native_device.h"
 #include <atomic>
+#include <exception>
 #include <span>
+#include <utility>
 
 namespace webscene::graphics {
 #ifndef WEBSCENE_DAWN_LINUX_EXTERNAL_FACTORY_VERSION
@@ -33,7 +35,11 @@ enum class dawn_linux_external_status : uint32_t {
     invalid_device_factory,
     native_device_query_failed,
     device_lost,
-    xlib_presentation_unavailable
+    xlib_presentation_unavailable,
+    queue_access_unavailable,
+    queue_access_nested,
+    invalid_queue_access,
+    queue_access_wrong_thread
 };
 
 struct dawn_linux_external_device_lifetime {
@@ -45,8 +51,10 @@ struct dawn_linux_external_device_lifetime {
     const void* vk_physical_device{};
     const void* vk_device{};
     const void* vk_queue{};
-    webscene_dawn_vk_get_instance_proc_addr_v2 vk_get_instance_proc_addr{};
-    webscene_dawn_vulkan_instance_capabilities_v2 instance_capabilities{};
+    webscene_dawn_vk_get_instance_proc_addr_v3 vk_get_instance_proc_addr{};
+    webscene_dawn_vulkan_instance_capabilities_v3 instance_capabilities{};
+    webscene_dawn_vulkan_queue_access_capabilities_v3
+        queue_access_capabilities{};
     std::array<uint8_t,16> device_uuid{};
     std::array<uint8_t,16> driver_uuid{};
     uint32_t dawn_queue_family{UINT32_MAX};
@@ -73,17 +81,19 @@ inline dawn_linux_external_status bind_dawn_linux_external_device(
         return dawn_linux_external_status::invalid_argument;
     if(device_lost->load(std::memory_order_acquire))
         return dawn_linux_external_status::device_lost;
-    webscene_dawn_native_device_v2 native{};
+    webscene_dawn_native_device_v3 native{};
     native.struct_size=sizeof(native);
-    native.version=WEBSCENE_DAWN_NATIVE_DEVICE_ABI_VERSION_V2;
-    const auto status=websceneDawnQueryVulkanDeviceV2(device.Get(),&native);
-    if(status==WEBSCENE_DAWN_NATIVE_DEVICE_LOST_V2)
+    native.version=WEBSCENE_DAWN_NATIVE_DEVICE_ABI_VERSION_V3;
+    const auto status=websceneDawnQueryVulkanDeviceV3(device.Get(),&native);
+    if(status==WEBSCENE_DAWN_NATIVE_DEVICE_LOST_OR_CLOSING_V3)
         return dawn_linux_external_status::device_lost;
-    if(status==WEBSCENE_DAWN_NATIVE_DEVICE_NOT_VULKAN_V2)
+    if(status==WEBSCENE_DAWN_NATIVE_DEVICE_NOT_VULKAN_V3)
         return dawn_linux_external_status::not_vulkan;
-    if(status==WEBSCENE_DAWN_NATIVE_DEVICE_XLIB_PRESENTATION_UNAVAILABLE_V2)
+    if(status==WEBSCENE_DAWN_NATIVE_DEVICE_XLIB_PRESENTATION_UNAVAILABLE_V3)
         return dawn_linux_external_status::xlib_presentation_unavailable;
-    if(status!=WEBSCENE_DAWN_NATIVE_DEVICE_SUCCESS_V2)
+    if(status==WEBSCENE_DAWN_NATIVE_DEVICE_QUEUE_ACCESS_UNAVAILABLE_V3)
+        return dawn_linux_external_status::queue_access_unavailable;
+    if(status!=WEBSCENE_DAWN_NATIVE_DEVICE_SUCCESS_V3)
         return dawn_linux_external_status::native_device_query_failed;
     if(native.adapter!=adapter.Get()||native.device!=device.Get()||
         !native.vk_instance||!native.vk_physical_device||!native.vk_device||
@@ -91,7 +101,10 @@ inline dawn_linux_external_status bind_dawn_linux_external_device(
         native.queue_family==UINT32_MAX||
         (native.instance_capabilities&
             WEBSCENE_DAWN_VULKAN_XLIB_PRESENTATION_REQUIRED_V2)!=
-            WEBSCENE_DAWN_VULKAN_XLIB_PRESENTATION_REQUIRED_V2)
+            WEBSCENE_DAWN_VULKAN_XLIB_PRESENTATION_REQUIRED_V2||
+        (native.queue_access_capabilities&
+            WEBSCENE_DAWN_VULKAN_QUEUE_ACCESS_REQUIRED_V3)!=
+            WEBSCENE_DAWN_VULKAN_QUEUE_ACCESS_REQUIRED_V3)
         return dawn_linux_external_status::native_device_query_failed;
     auto lifetime=std::make_shared<dawn_linux_external_device_lifetime>();
     lifetime->dawn_adapter_token=native.adapter;
@@ -102,6 +115,7 @@ inline dawn_linux_external_status bind_dawn_linux_external_device(
     lifetime->vk_queue=native.vk_queue;
     lifetime->vk_get_instance_proc_addr=native.vk_get_instance_proc_addr;
     lifetime->instance_capabilities=native.instance_capabilities;
+    lifetime->queue_access_capabilities=native.queue_access_capabilities;
     for(size_t index=0;index<lifetime->device_uuid.size();++index) {
         lifetime->device_uuid[index]=native.device_uuid[index];
         lifetime->driver_uuid[index]=native.driver_uuid[index];
@@ -227,6 +241,9 @@ inline bool same_dawn_linux_external_identity(
         (expected->instance_capabilities&
             WEBSCENE_DAWN_VULKAN_XLIB_PRESENTATION_REQUIRED_V2)==
             WEBSCENE_DAWN_VULKAN_XLIB_PRESENTATION_REQUIRED_V2&&
+        (expected->queue_access_capabilities&
+            WEBSCENE_DAWN_VULKAN_QUEUE_ACCESS_REQUIRED_V3)==
+            WEBSCENE_DAWN_VULKAN_QUEUE_ACCESS_REQUIRED_V3&&
         nonzero_uuid(expected->device_uuid)&&nonzero_uuid(expected->driver_uuid)&&
         expected->dawn_queue_family!=UINT32_MAX;
 }
@@ -235,6 +252,93 @@ inline bool dawn_linux_external_device_is_lost(
     const std::shared_ptr<const dawn_linux_external_device_lifetime>& value) noexcept {
     return value&&value->device_lost&&
         value->device_lost->load(std::memory_order_acquire);
+}
+
+inline dawn_linux_external_status dawn_linux_queue_access_status(
+    webscene_dawn_native_device_status_v3 value) noexcept {
+    if(value==WEBSCENE_DAWN_NATIVE_DEVICE_SUCCESS_V3)
+        return dawn_linux_external_status::success;
+    if(value==WEBSCENE_DAWN_NATIVE_DEVICE_LOST_OR_CLOSING_V3)
+        return dawn_linux_external_status::device_lost;
+    if(value==WEBSCENE_DAWN_NATIVE_DEVICE_QUEUE_ACCESS_NESTED_V3)
+        return dawn_linux_external_status::queue_access_nested;
+    if(value==WEBSCENE_DAWN_NATIVE_DEVICE_INVALID_QUEUE_ACCESS_V3)
+        return dawn_linux_external_status::invalid_queue_access;
+    if(value==WEBSCENE_DAWN_NATIVE_DEVICE_QUEUE_ACCESS_WRONG_THREAD_V3)
+        return dawn_linux_external_status::queue_access_wrong_thread;
+    if(value==WEBSCENE_DAWN_NATIVE_DEVICE_QUEUE_ACCESS_UNAVAILABLE_V3)
+        return dawn_linux_external_status::queue_access_unavailable;
+    if(value==WEBSCENE_DAWN_NATIVE_DEVICE_INVALID_ARGUMENT_V3)
+        return dawn_linux_external_status::invalid_argument;
+    if(value==WEBSCENE_DAWN_NATIVE_DEVICE_NOT_VULKAN_V3)
+        return dawn_linux_external_status::not_vulkan;
+    return dawn_linux_external_status::native_device_query_failed;
+}
+
+// Lexically scoped access to Dawn's exact queue. The scope is neither movable
+// nor copyable, so ordinary use acquires and releases on one thread. Calling a
+// WebGPU entry point, nesting access, or transferring the scope is forbidden.
+class dawn_linux_external_queue_access final {
+    std::shared_ptr<const dawn_linux_external_device_lifetime> lifetime_;
+    webscene_dawn_vulkan_queue_access_v3 access_{};
+    bool active_{};
+public:
+    dawn_linux_external_queue_access(
+        std::shared_ptr<const dawn_linux_external_device_lifetime> lifetime,
+        dawn_linux_external_status& status) noexcept
+        :lifetime_(std::move(lifetime)) {
+        status=dawn_linux_external_status::invalid_argument;
+        if(!lifetime_||!lifetime_->native_owner||!lifetime_->dawn_device_token||
+            dawn_linux_external_device_is_lost(lifetime_)) {
+            if(lifetime_&&dawn_linux_external_device_is_lost(lifetime_))
+                status=dawn_linux_external_status::device_lost;
+            return;
+        }
+        access_.struct_size=sizeof(access_);
+        access_.version=WEBSCENE_DAWN_NATIVE_DEVICE_ABI_VERSION_V3;
+        const auto acquired=websceneDawnAcquireVulkanQueueV3(
+            lifetime_->dawn_device_token,&access_);
+        status=dawn_linux_queue_access_status(acquired);
+        if(acquired!=WEBSCENE_DAWN_NATIVE_DEVICE_SUCCESS_V3)return;
+        if(access_.device!=lifetime_->dawn_device_token||
+            access_.vk_queue!=lifetime_->vk_queue||
+            access_.queue_family!=lifetime_->dawn_queue_family) {
+            const auto released=websceneDawnReleaseVulkanQueueV3(&access_);
+            if(released!=WEBSCENE_DAWN_NATIVE_DEVICE_SUCCESS_V3&&
+                released!=WEBSCENE_DAWN_NATIVE_DEVICE_LOST_OR_CLOSING_V3)
+                std::terminate();
+            status=dawn_linux_external_status::device_mismatch;
+            return;
+        }
+        active_=true;
+    }
+    ~dawn_linux_external_queue_access() {
+        if(!active_)return;
+        const auto released=websceneDawnReleaseVulkanQueueV3(&access_);
+        active_=false;
+        if(released!=WEBSCENE_DAWN_NATIVE_DEVICE_SUCCESS_V3&&
+            released!=WEBSCENE_DAWN_NATIVE_DEVICE_LOST_OR_CLOSING_V3)
+            std::terminate();
+    }
+    dawn_linux_external_queue_access(const dawn_linux_external_queue_access&)=delete;
+    dawn_linux_external_queue_access& operator=(
+        const dawn_linux_external_queue_access&)=delete;
+    dawn_linux_external_queue_access(dawn_linux_external_queue_access&&)=delete;
+    dawn_linux_external_queue_access& operator=(
+        dawn_linux_external_queue_access&&)=delete;
+    explicit operator bool() const noexcept{return active_;}
+    const void* vk_queue() const noexcept{return access_.vk_queue;}
+    uint32_t queue_family() const noexcept{return access_.queue_family;}
+};
+
+template<class Operation>
+dawn_linux_external_status with_dawn_linux_external_queue_access(
+    std::shared_ptr<const dawn_linux_external_device_lifetime> lifetime,
+    Operation&& operation) {
+    dawn_linux_external_status status{};
+    dawn_linux_external_queue_access access(std::move(lifetime),status);
+    if(!access)return status;
+    return std::forward<Operation>(operation)(access);
 }
 
 inline bool dawn_linux_snapshot_matches_device(

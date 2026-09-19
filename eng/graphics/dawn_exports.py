@@ -20,7 +20,10 @@ def inspect_exports(library, rid):
             symbol = match.group(1)
             symbols.append(symbol[1:] if rid.startswith("osx-") and symbol.startswith("_") else symbol)
     allowed_bridge = ({"websceneDawnQueryVulkanDeviceV1",
-                       "websceneDawnQueryVulkanDeviceV2"}
+                       "websceneDawnQueryVulkanDeviceV2",
+                       "websceneDawnQueryVulkanDeviceV3",
+                       "websceneDawnAcquireVulkanQueueV3",
+                       "websceneDawnReleaseVulkanQueueV3"}
                       if rid.startswith("linux-") else set())
     unexpected = [name for name in symbols
                   if not re.fullmatch(r"wgpu[A-Z][A-Za-z0-9]*", name)

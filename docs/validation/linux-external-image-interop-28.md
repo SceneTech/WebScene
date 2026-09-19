@@ -90,6 +90,12 @@ The X11 host must still call
 unsupported displays fail before surface creation and cannot select a second
 Vulkan instance or a CPU presentation route.
 
+Issue #651 adds v3 without changing v1 or v2. V3 preserves the exact native
+tuple and adds a balanced queue-access capability. Its acquire/release pair
+holds Dawn's own device synchronization guard around external Graphite submit
+and native present work, so those calls cannot race Dawn's submissions to the
+same `VkQueue`.
+
 The SDK now exposes `dawn_linux_external_device_factory`. An AppScene host with
 an exact-device Dawn integration creates the WebGPU instance/adapter/device and
 native allocator atomically, and returns one

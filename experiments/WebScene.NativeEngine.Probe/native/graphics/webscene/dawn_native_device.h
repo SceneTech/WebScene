@@ -12,6 +12,9 @@ extern "C" {
 #ifndef WEBSCENE_DAWN_NATIVE_DEVICE_ABI_VERSION_V2
 #define WEBSCENE_DAWN_NATIVE_DEVICE_ABI_VERSION_V2 2U
 #endif
+#ifndef WEBSCENE_DAWN_NATIVE_DEVICE_ABI_VERSION_V3
+#define WEBSCENE_DAWN_NATIVE_DEVICE_ABI_VERSION_V3 3U
+#endif
 /* The original name remains the v1 value for source compatibility. New code
  * selects the explicit versioned constant matching the query it calls. */
 #ifndef WEBSCENE_DAWN_NATIVE_DEVICE_ABI_VERSION
@@ -94,6 +97,69 @@ typedef struct webscene_dawn_native_device_v2 {
     uint8_t driver_uuid[16];
 } webscene_dawn_native_device_v2;
 
+typedef uint32_t webscene_dawn_native_device_status_v3;
+enum {
+    WEBSCENE_DAWN_NATIVE_DEVICE_SUCCESS_V3 = 0,
+    WEBSCENE_DAWN_NATIVE_DEVICE_INVALID_ARGUMENT_V3 = 1,
+    WEBSCENE_DAWN_NATIVE_DEVICE_INCOMPATIBLE_ABI_V3 = 2,
+    WEBSCENE_DAWN_NATIVE_DEVICE_FOREIGN_DEVICE_V3 = 3,
+    WEBSCENE_DAWN_NATIVE_DEVICE_NOT_VULKAN_V3 = 4,
+    WEBSCENE_DAWN_NATIVE_DEVICE_LOST_OR_CLOSING_V3 = 5,
+    WEBSCENE_DAWN_NATIVE_DEVICE_INVALID_IDENTITY_V3 = 6,
+    WEBSCENE_DAWN_NATIVE_DEVICE_XLIB_PRESENTATION_UNAVAILABLE_V3 = 7,
+    WEBSCENE_DAWN_NATIVE_DEVICE_QUEUE_ACCESS_UNAVAILABLE_V3 = 8,
+    WEBSCENE_DAWN_NATIVE_DEVICE_QUEUE_ACCESS_NESTED_V3 = 9,
+    WEBSCENE_DAWN_NATIVE_DEVICE_INVALID_QUEUE_ACCESS_V3 = 10,
+    WEBSCENE_DAWN_NATIVE_DEVICE_QUEUE_ACCESS_WRONG_THREAD_V3 = 11
+};
+
+typedef webscene_dawn_vk_proc_v2 webscene_dawn_vk_proc_v3;
+typedef webscene_dawn_vk_get_instance_proc_addr_v2
+    webscene_dawn_vk_get_instance_proc_addr_v3;
+typedef webscene_dawn_vulkan_instance_capabilities_v2
+    webscene_dawn_vulkan_instance_capabilities_v3;
+
+typedef uint32_t webscene_dawn_vulkan_queue_access_capabilities_v3;
+enum {
+    WEBSCENE_DAWN_VULKAN_QUEUE_ACCESS_DEVICE_GUARD_V3 = 1U << 0,
+    WEBSCENE_DAWN_VULKAN_QUEUE_ACCESS_REQUIRED_V3 =
+        WEBSCENE_DAWN_VULKAN_QUEUE_ACCESS_DEVICE_GUARD_V3
+};
+
+/* V3 preserves the v2 native tuple and proves that the exported balanced
+ * access functions serialize with Dawn submissions and presentation. */
+typedef struct webscene_dawn_native_device_v3 {
+    uint32_t struct_size;
+    uint32_t version;
+    WGPUAdapter adapter;
+    WGPUDevice device;
+    void* vk_instance;
+    void* vk_physical_device;
+    void* vk_device;
+    void* vk_queue;
+    webscene_dawn_vk_get_instance_proc_addr_v3 vk_get_instance_proc_addr;
+    uint32_t queue_family;
+    webscene_dawn_vulkan_instance_capabilities_v3 instance_capabilities;
+    webscene_dawn_vulkan_queue_access_capabilities_v3 queue_access_capabilities;
+    uint32_t reserved;
+    uint8_t device_uuid[16];
+    uint8_t driver_uuid[16];
+} webscene_dawn_native_device_v3;
+
+/* Opaque balanced access to the exact queue reported by the v3 query. One
+ * access may be active per thread. Acquire and release must occur on the same
+ * thread, and access scopes must not nest. The caller must not copy or modify
+ * an active value. */
+typedef struct webscene_dawn_vulkan_queue_access_v3 {
+    uint32_t struct_size;
+    uint32_t version;
+    WGPUDevice device;
+    void* vk_queue;
+    uint32_t queue_family;
+    uint32_t reserved;
+    void* access_token;
+} webscene_dawn_vulkan_queue_access_v3;
+
 #if defined(_WIN32)
 #define WEBSCENE_DAWN_NATIVE_DEVICE_EXPORT __declspec(dllimport)
 #elif defined(__GNUC__)
@@ -117,6 +183,22 @@ websceneDawnQueryVulkanDeviceV1(
 WEBSCENE_DAWN_NATIVE_DEVICE_EXPORT webscene_dawn_native_device_status_v2
 websceneDawnQueryVulkanDeviceV2(
     WGPUDevice device, webscene_dawn_native_device_v2* result);
+
+/* V3 succeeds only when Dawn's device-wide synchronization guard protects the
+ * exact Vulkan queue. Failure leaves result unchanged. */
+WEBSCENE_DAWN_NATIVE_DEVICE_EXPORT webscene_dawn_native_device_status_v3
+websceneDawnQueryVulkanDeviceV3(
+    WGPUDevice device, webscene_dawn_native_device_v3* result);
+
+/* Acquire retains the WGPUDevice and Dawn's internal device until release.
+ * It fails for foreign, stale, lost or closing devices before private state is
+ * used. Release always ends a valid same-thread scope, including after loss. */
+WEBSCENE_DAWN_NATIVE_DEVICE_EXPORT webscene_dawn_native_device_status_v3
+websceneDawnAcquireVulkanQueueV3(
+    WGPUDevice device, webscene_dawn_vulkan_queue_access_v3* result);
+WEBSCENE_DAWN_NATIVE_DEVICE_EXPORT webscene_dawn_native_device_status_v3
+websceneDawnReleaseVulkanQueueV3(
+    webscene_dawn_vulkan_queue_access_v3* access);
 
 #undef WEBSCENE_DAWN_NATIVE_DEVICE_EXPORT
 

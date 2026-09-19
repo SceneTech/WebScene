@@ -43,7 +43,8 @@ if(WEBSCENE_SDK_WEBGPU)
   target_compile_definitions(webscene_sdk_webgpu INTERFACE
     WEBSCENE_DAWN_LINUX_EXTERNAL_FACTORY_VERSION=1
     WEBSCENE_DAWN_NATIVE_DEVICE_ABI_VERSION=1
-    WEBSCENE_DAWN_NATIVE_DEVICE_ABI_VERSION_V2=2)
+    WEBSCENE_DAWN_NATIVE_DEVICE_ABI_VERSION_V2=2
+    WEBSCENE_DAWN_NATIVE_DEVICE_ABI_VERSION_V3=3)
   target_link_libraries(webscene_sdk_webgpu INTERFACE webscene_core dawn::webgpu_dawn Threads::Threads)
   add_library(WebScene::WebGPU ALIAS webscene_sdk_webgpu)
   install(DIRECTORY "${WEBSCENE_GRAPHICS_SDK_ROOT}/dawn/include/" DESTINATION include)

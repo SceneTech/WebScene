@@ -1139,7 +1139,7 @@ void execute_and_wait_for_wrapper_retention_scene(
 }
 #endif
 
-void test_identical_id_writes_do_not_schedule_selector_transitions()
+void test_identical_selector_attribute_writes_do_not_schedule_transitions()
 {
     auto* engine = webscene_engine_create(0);
     require(engine != nullptr, "id no-op engine creation failed");
@@ -1161,7 +1161,9 @@ void test_identical_id_writes_do_not_schedule_selector_transitions()
     execute_and_wait(engine, R"JS(
         (() => {
           class IdNoopProbe extends HTMLElement {
-            static get observedAttributes() { return ['id']; }
+            static get observedAttributes() {
+              return ['id', 'data-index', 'aria-posinset'];
+            }
             constructor() {
               super();
               this.attributeNotifications = 0;
@@ -1175,7 +1177,7 @@ void test_identical_id_writes_do_not_schedule_selector_transitions()
           customElements.define('id-noop-probe', IdNoopProbe);
           const style = document.createElement('style');
           style.textContent = `
-            #code-oss-row-id {
+            #code-oss-row-id[data-index="17"][aria-posinset="18"] {
               display: block;
               width: 120px;
               height: 24px;
@@ -1184,6 +1186,8 @@ void test_identical_id_writes_do_not_schedule_selector_transitions()
           document.head.appendChild(style);
           const target = document.createElement('id-noop-probe');
           target.id = 'code-oss-row-id';
+          target.setAttribute('data-index', '17');
+          target.setAttribute('aria-posinset', '18');
           document.body.appendChild(target);
           globalThis.__idNoopTarget = target;
         })()
@@ -1210,19 +1214,26 @@ void test_identical_id_writes_do_not_schedule_selector_transitions()
       const target = __idNoopTarget;
       const notificationsBefore = target.attributeNotifications;
       for (let index = 0; index < 4096; ++index) {
-        if (index & 1) target.id = 'code-oss-row-id';
-        else target.setAttribute('id', 'code-oss-row-id');
+        if (index & 1) {
+          target.id = 'code-oss-row-id';
+          target.setAttribute('aria-posinset', '18');
+        } else {
+          target.setAttribute('id', 'code-oss-row-id');
+          target.setAttribute('data-index', '17');
+        }
       }
       return [
         target.attributeNotifications - notificationsBefore,
         target.id,
         target.getAttribute('id'),
+        target.getAttribute('data-index'),
+        target.getAttribute('aria-posinset'),
         target.lastAttributeChange
       ];
     })())JS", "id-noop-connected.js");
     require(
-        connected == R"JSON([4096,"code-oss-row-id","code-oss-row-id",["id","code-oss-row-id","code-oss-row-id"]])JSON",
-        "identical connected id writes changed reflection or reaction semantics: "
+        connected == R"JSON([8192,"code-oss-row-id","code-oss-row-id","17","18",["aria-posinset","18","18"]])JSON",
+        "identical connected selector-attribute writes changed reflection or reaction semantics: "
             + connected);
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
     webscene_engine_metrics connected_after{};
@@ -1230,7 +1241,7 @@ void test_identical_id_writes_do_not_schedule_selector_transitions()
     require(
         connected_after.layout_passes == connected_before.layout_passes
             && connected_after.published_scenes == connected_before.published_scenes,
-        "identical connected id writes scheduled layout or publication");
+        "identical connected selector-attribute writes scheduled layout or publication");
 
 #if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
     std::this_thread::sleep_for(std::chrono::milliseconds(275));
@@ -1242,7 +1253,7 @@ void test_identical_id_writes_do_not_schedule_selector_transitions()
         runtime_counter_diagnostic(
             engine, "attribute-transition-schedule-requests")
                 == transitions_before,
-        "identical id writes entered the attribute selector transition planner");
+        "identical selector-attribute writes entered the transition planner");
 #endif
 
     execute_and_wait(engine,
@@ -1257,14 +1268,19 @@ void test_identical_id_writes_do_not_schedule_selector_transitions()
       const target = __idNoopTarget;
       const notificationsBefore = target.attributeNotifications;
       for (let index = 0; index < 4096; ++index) {
-        if (index & 1) target.id = 'code-oss-row-id';
-        else target.setAttribute('id', 'code-oss-row-id');
+        if (index & 1) {
+          target.id = 'code-oss-row-id';
+          target.setAttribute('aria-posinset', '18');
+        } else {
+          target.setAttribute('id', 'code-oss-row-id');
+          target.setAttribute('data-index', '17');
+        }
       }
       return [target.attributeNotifications - notificationsBefore, target.isConnected];
     })())JS", "id-noop-detached.js");
     require(
-        detached == "[4096,false]",
-        "identical detached id writes changed reaction or lifecycle semantics: "
+        detached == "[8192,false]",
+        "identical detached selector-attribute writes changed reaction or lifecycle semantics: "
             + detached);
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
     webscene_engine_metrics detached_after{};
@@ -1272,7 +1288,7 @@ void test_identical_id_writes_do_not_schedule_selector_transitions()
     require(
         detached_after.layout_passes == detached_before.layout_passes
             && detached_after.published_scenes == detached_before.published_scenes,
-        "identical detached id writes scheduled visual work");
+        "identical detached selector-attribute writes scheduled visual work");
 
     execute_and_wait(engine,
         "document.body.appendChild(__idNoopTarget)",
@@ -1287,13 +1303,15 @@ void test_identical_id_writes_do_not_schedule_selector_transitions()
         evaluate(engine, R"JS((() => ({
           reflected: __idNoopTarget.id,
           attribute: __idNoopTarget.getAttribute('id'),
+          dataIndex: __idNoopTarget.getAttribute('data-index'),
+          ariaPosition: __idNoopTarget.getAttribute('aria-posinset'),
           width: __idNoopTarget.offsetWidth,
           connected: __idNoopTarget.isConnected,
           indexed: document.getElementById('code-oss-row-id') === __idNoopTarget,
           notifications: __idNoopTarget.attributeNotifications
         }))())JS", "id-noop-reattach-result.js")
-            == R"JSON({"reflected":"code-oss-row-id","attribute":"code-oss-row-id","width":120,"connected":true,"indexed":true,"notifications":8193})JSON",
-        "id no-op state did not survive detach and reconnect");
+            == R"JSON({"reflected":"code-oss-row-id","attribute":"code-oss-row-id","dataIndex":"17","ariaPosition":"18","width":120,"connected":true,"indexed":true,"notifications":16387})JSON",
+        "selector-attribute no-op state did not survive detach and reconnect");
     webscene_engine_get_metrics(engine, &reattached);
     require(
         reattached.layout_passes == detached_after.layout_passes + 1U
@@ -1775,7 +1793,7 @@ void test_resize_event_coalesces_attribute_selector_recascades(
         delete globalThis.__resizeHasBatchRoot;
         delete globalThis.__resizeAttributeBatchResult;
     )JS", "native-resize-attribute-batching-cleanup.js");
-    test_identical_id_writes_do_not_schedule_selector_transitions();
+    test_identical_selector_attribute_writes_do_not_schedule_transitions();
 }
 
 void test_cross_frame_post_message_and_window_frames(webscene_engine* engine)

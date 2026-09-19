@@ -857,6 +857,8 @@
         self->finish_input_value_attribute_change(
             *node, previous_live_value, value);
         self->recascade_radio_group_selector_state_changes(radio_group_state);
+        if(node->tag=="option" && (name=="selected" || name=="value"))
+            self->recascade_containing_select_validity(*node);
         self->notify_custom_element_attribute(*node, name, old_value, value);
     }
 
@@ -914,6 +916,9 @@
         self->finish_input_value_attribute_change(
             *node, previous_live_value, value);
         self->recascade_radio_group_selector_state_changes(radio_group_state);
+        if((!namespace_uri || namespace_uri->empty()) && node->tag=="option"
+            && (name=="selected" || name=="value"))
+            self->recascade_containing_select_validity(*node);
         self->notify_custom_element_attribute(
             *node, name, old_value, value, namespace_uri);
     }
@@ -968,6 +973,8 @@
         self->finish_input_value_attribute_change(
             *node, previous_live_value, std::nullopt);
         self->recascade_radio_group_selector_state_changes(radio_group_state);
+        if(node->tag=="option" && (name=="selected" || name=="value"))
+            self->recascade_containing_select_validity(*node);
         self->notify_custom_element_attribute(
             *node, name, old_value, std::nullopt);
     }
@@ -1066,6 +1073,9 @@
         self->finish_input_value_attribute_change(
             *node, previous_live_value, std::nullopt);
         self->recascade_radio_group_selector_state_changes(radio_group_state);
+        if((!namespace_uri || namespace_uri->empty()) && node->tag=="option"
+            && (name=="selected" || name=="value"))
+            self->recascade_containing_select_validity(*node);
         self->notify_custom_element_attribute(
             *node, name, old_value, std::nullopt, namespace_uri);
     }
@@ -1131,6 +1141,8 @@
                 ? std::optional<std::string>(std::string{})
                 : std::nullopt);
         self->recascade_radio_group_selector_state_changes(radio_group_state);
+        if(node->tag=="option" && (name=="selected" || name=="value"))
+            self->recascade_containing_select_validity(*node);
         // Queue invalidation before author callbacks: they may synchronously
         // read styles or replace this attribute with another value.
         self->notify_custom_element_attribute(*node, name, old_value,

@@ -2629,6 +2629,40 @@
         }
     }
 
+    void recascade_select_validity_selector_change(
+        dom_node& select,std::optional<bool> previous_value_missing=std::nullopt)
+    {
+        document.mark_dirty();
+        if(select.tag!="select" || !is_connected(select)) return;
+        const auto current_value_missing=forms::select_value_missing(select);
+        if(previous_value_missing && *previous_value_missing==current_value_missing)
+            return;
+        const auto indexed=css_invalidation_rules_by_attribute.find(
+            "$live-form-select-selectedness");
+        if(indexed==css_invalidation_rules_by_attribute.end()) return;
+        const std::span<const size_t> changed_rules{indexed->second};
+        recascade_selector_transition(
+            select,
+            changed_rules,
+            [](const css::css_compound_dependencies& dependencies) {
+                css::css_invalidation_targets result;
+                const auto found=dependencies.attributes.find(
+                    "$live-form-select-selectedness");
+                if(found!=dependencies.attributes.end()) result.include(found->second);
+                return result;
+            },
+            [] {},
+            [] {},
+            false,
+            true);
+    }
+
+    void recascade_containing_select_validity(dom_node& node)
+    {
+        auto* select=node.tag=="select"?&node:forms::containing_select(node);
+        if(select!=nullptr) recascade_select_validity_selector_change(*select);
+    }
+
     void recascade_class_selector_transition(
         dom_node& subject,
         const std::optional<std::string>& previous_value,
@@ -3279,6 +3313,7 @@
         if (inserted != nullptr) recascade_connected_subtree(*inserted, "inserted-child");
         // The transition collector already includes its subject.
         if (rules.empty()) recascade_connected_node(parent);
+        recascade_containing_select_validity(parent);
     }
 
     void recascade_completed_child_list(dom_node& parent,

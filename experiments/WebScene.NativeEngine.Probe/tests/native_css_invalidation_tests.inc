@@ -188,6 +188,53 @@ void test_live_form_state_selectors_and_scaling()
         "radio validity did not invalidate old/new groups after membership mutations: "
             + radio_group_mutations);
 
+    const auto select_validity = evaluate(engine, R"JS((() => {
+      const snapshot=select=>[select.value,select.selectedIndex,
+        select.matches(':valid'),select.matches(':invalid'),
+        getComputedStyle(select).paddingLeft];
+      const form=document.createElement('form');
+      form.innerHTML='<select class="probe" required><option value="">Choose</option>'+
+        '<option value="x">X</option></select>';
+      document.body.appendChild(form);
+      const single=form.firstElementChild,defaults=[snapshot(single)];
+      single.value='x';defaults.push(snapshot(single));
+      single.value='';defaults.push(snapshot(single));
+      single.selectedIndex=-1;defaults.push(snapshot(single));
+      single.options[1].selected=true;defaults.push(snapshot(single));
+      single.options[0].setAttribute('selected','');defaults.push(snapshot(single));
+      form.reset();defaults.push(snapshot(single));
+
+      const grouped=document.createElement('select');grouped.required=true;
+      grouped.innerHTML='<optgroup><option value="" selected>Empty</option></optgroup>'+
+        '<option value="x">X</option>';document.body.appendChild(grouped);
+      const placeholder=[grouped.matches(':valid')];
+      grouped.setAttribute('size','2');placeholder.push(grouped.matches(':valid'));
+      grouped.innerHTML='<option value="" selected>Empty</option><option value="x">X</option>';
+      grouped.setAttribute('size','1');
+      placeholder.push(grouped.matches(':invalid'));
+      grouped.multiple=true;placeholder.push(grouped.matches(':valid'));
+      grouped.selectedIndex=-1;placeholder.push(grouped.matches(':invalid'));
+      grouped.options[0].selected=true;placeholder.push(grouped.matches(':valid'));
+      grouped.multiple=false;grouped.setAttribute('size','1');
+      placeholder.push(grouped.matches(':invalid'));
+
+      const mutated=document.createElement('select');mutated.className='probe';
+      mutated.required=true;mutated.innerHTML='<option> </option><option value="x">X</option>';
+      document.body.appendChild(mutated);const mutation=[snapshot(mutated)];
+      const before=document.createElement('option');before.value='before';before.text='Before';
+      mutated.insertBefore(before,mutated.firstElementChild);mutation.push(snapshot(mutated));
+      before.remove();mutation.push(snapshot(mutated));
+      mutated.options[0].value='token';mutation.push(snapshot(mutated));
+      mutated.options[0].setAttribute('value','');mutation.push(snapshot(mutated));
+      mutated.options[0].removeAttribute('value');mutated.options[0].textContent='label';
+      mutation.push(snapshot(mutated));
+      mutated.options[0].firstChild.data=' ';mutation.push(snapshot(mutated));
+      return [defaults,placeholder,mutation];
+    })())JS", "required-select-value-missing.js");
+    require(select_validity == R"JSON([[["",0,false,true,"47px"],["x",1,true,false,"19px"],["",0,false,true,"47px"],["",-1,false,true,"47px"],["x",1,true,false,"19px"],["x",1,true,false,"19px"],["",0,false,true,"47px"]],[true,true,true,true,true,true,true],[["",0,false,true,"47px"],["before",0,true,false,"19px"],["",0,false,true,"47px"],["token",0,true,false,"19px"],["",0,false,true,"47px"],["label",0,true,false,"19px"],["",0,false,true,"47px"]]])JSON",
+        "required select validity did not follow selectedness and placeholder rules: "
+            + select_validity);
+
     const auto setup = evaluate(engine, R"JS((() => {
       document.body.innerHTML='<style>.scale:invalid{width:2px}.scale:placeholder-shown{height:3px}'+
         Array.from({length:1024},(_,i)=>'.noise-'+i+':hover{width:7px}').join('')+'</style>'+

@@ -289,6 +289,7 @@
             activate_connected_stylesheet(node);
             if (empty_state_changed && node.parent != nullptr)
                 recascade_changed_child_list(*node.parent);
+            else recascade_containing_select_validity(node);
         }
         document.mark_dirty();
     }
@@ -2723,6 +2724,8 @@
                 *node,name,old_value,text);
         else self->document.mark_dirty();
         self->recascade_radio_group_selector_state_changes(radio_group_state);
+        if(node->tag=="option" && (name=="selected" || name=="value"))
+            self->recascade_containing_select_validity(*node);
         self->notify_custom_element_attribute(*node, name, old_value, text);
     }
 
@@ -3198,8 +3201,9 @@
         auto* parent = reference == nullptr ? select : reference->parent;
         if (parent == nullptr) return;
 
+        dom_node* old_parent=nullptr;
         if (item->parent != nullptr) {
-            auto* old_parent = item->parent;
+            old_parent = item->parent;
             if (self->is_connected(*item)) {
                 self->notify_custom_elements_subtree(*item, "disconnected");
             }
@@ -3220,6 +3224,9 @@
         }
         self->recascade_connected_subtree(*item);
         self->recascade_connected_node(*parent);
+        if(old_parent!=nullptr && old_parent!=parent)
+            self->recascade_containing_select_validity(*old_parent);
+        self->recascade_containing_select_validity(*parent);
         self->activate_connected_stylesheet(*item);
         self->enqueue_connected_resources_subtree(
             *item,
@@ -3253,9 +3260,11 @@
         auto* self = current(info.GetIsolate());
         auto* node = unwrap_node(info.Holder());
         if (node == nullptr || node->tag != "select") return;
+        const auto previous_value_missing=forms::select_value_missing(*node);
         const auto selected = value->Int32Value(info.GetIsolate()->GetCurrentContext()).FromMaybe(-1);
         set_select_selected_index(*node, selected);
-        self->document.mark_dirty();
+        self->recascade_select_validity_selector_change(
+            *node,previous_value_missing);
     }
 
     static void get_form_value(
@@ -3355,13 +3364,21 @@
         auto* node = unwrap_node(info.Holder());
         if (node == nullptr) return;
         if (node->tag == "option") {
+            auto* select=containing_select(*node);
+            const auto previous_value_missing=select==nullptr
+                ? std::optional<bool>{}
+                : std::optional<bool>{forms::select_value_missing(*select)};
             node->attributes["value"] = value->IsNullOrUndefined()
                 ? std::string{}
                 : to_utf8(info.GetIsolate(), value);
-            self->document.mark_dirty();
+            if(select!=nullptr)
+                self->recascade_select_validity_selector_change(
+                    *select,previous_value_missing);
+            else self->document.mark_dirty();
             return;
         }
         if (node->tag == "select") {
+            const auto previous_value_missing=forms::select_value_missing(*node);
             const auto expected = value->IsNullOrUndefined()
                 ? std::string{}
                 : to_utf8(info.GetIsolate(), value);
@@ -3380,7 +3397,8 @@
                 }
             }
             node->mutable_form_control().selection_explicitly_empty = !matched;
-            self->document.mark_dirty();
+            self->recascade_select_validity_selector_change(
+                *node,previous_value_missing);
             return;
         }
         if (node->tag == "progress" || node->tag == "meter") {
@@ -3644,6 +3662,9 @@
         auto* node = unwrap_node(info.Holder());
         if (node == nullptr || node->tag != "option") return;
         auto* select = containing_select(*node);
+        const auto previous_value_missing=select==nullptr
+            ? std::optional<bool>{}
+            : std::optional<bool>{forms::select_value_missing(*select)};
         if (!value->BooleanValue(info.GetIsolate())) {
             node->mutable_form_control().selectedness_initialized = true;
             node->mutable_form_control().selectedness = false;
@@ -3656,6 +3677,9 @@
                     });
             }
             self->recascade_connected_subtree(*node, "style.setProperty-custom");
+            if(select!=nullptr)
+                self->recascade_select_validity_selector_change(
+                    *select,previous_value_missing);
             return;
         }
         if (select != nullptr && !select->attributes.contains("multiple")) {
@@ -3674,6 +3698,9 @@
         node->mutable_form_control().selectedness = true;
         if (select != nullptr) select->mutable_form_control().selection_explicitly_empty = false;
         self->recascade_connected_subtree(*node);
+        if(select!=nullptr)
+            self->recascade_select_validity_selector_change(
+                *select,previous_value_missing);
     }
 
     static void form_reset(const v8::FunctionCallbackInfo<v8::Value>& info)
@@ -3683,6 +3710,9 @@
         if (form == nullptr || form->tag != "form") return;
         style_recascade_batch_scope style_batch(*self);
         const auto reset_subtree = [&](const auto& recurse, dom_node& node) -> void {
+            const auto previous_select_value_missing=node.tag=="select"
+                ? std::optional<bool>{forms::select_value_missing(node)}
+                : std::optional<bool>{};
             if (node.tag == "select") node.mutable_form_control().selection_explicitly_empty = false;
             if (node.tag == "option") {
                 node.mutable_form_control().selectedness_initialized = false;
@@ -3721,6 +3751,9 @@
             for (auto* child : node.children) {
                 if (child != nullptr) recurse(recurse, *child);
             }
+            if(previous_select_value_missing)
+                self->recascade_select_validity_selector_change(
+                    node,previous_select_value_missing);
         };
         reset_subtree(reset_subtree, *form);
         self->document.mark_dirty();
@@ -3736,7 +3769,22 @@
         v8::Local<v8::Value> value,
         const v8::PropertyCallbackInfo<void>& info)
     {
-        set_boolean_attribute(value, info, "multiple");
+        auto* self=current(info.GetIsolate());
+        auto* node=unwrap_node(info.Holder());
+        if(node==nullptr) return;
+        const auto present=node->attributes.contains("multiple");
+        const auto old_value=present
+            ? std::optional<std::string>{node->attributes.at("multiple")}
+            : std::optional<std::string>{};
+        const auto next=value->BooleanValue(info.GetIsolate());
+        if(next) node->attributes["multiple"]=std::string{};
+        else node->attributes.erase("multiple");
+        self->recascade_attribute_selector_transition(
+            *node,
+            "multiple",
+            old_value,
+            next?std::optional<std::string>{std::string{}}
+                :std::optional<std::string>{});
     }
 
     static void get_disabled(v8::Local<v8::Name>, const v8::PropertyCallbackInfo<v8::Value>& info)

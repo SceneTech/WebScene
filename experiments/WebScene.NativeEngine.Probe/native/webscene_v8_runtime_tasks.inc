@@ -3269,6 +3269,7 @@
         bool last,
         bool wrap)
     {
+        const auto previous_value_missing=forms::select_value_missing(select);
         std::vector<dom_node*> options;
         const auto collect = [&](const auto& self, dom_node& node) -> void {
             for (auto* child : node.children) {
@@ -3314,6 +3315,8 @@
             option->mutable_form_control().selectedness_initialized = true;
             option->mutable_form_control().selectedness = option == *next;
         }
+        recascade_select_validity_selector_change(
+            select,previous_value_missing);
         return true;
     }
 

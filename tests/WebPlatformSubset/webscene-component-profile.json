@@ -2145,6 +2145,13 @@
       "reason": "WPT-aligned candidate contract for fragment-insensitive current-document URL matching plus routed href, effective-base, and same-document URL invalidation without retained browsing history."
     },
     {
+      "path": "contracts/css-local-link-depth.html",
+      "type": "contract",
+      "capabilities": ["functional-local-link-pseudo-class", "local-link-origin-matching", "local-link-path-depth-matching", "local-link-document-invalidation", "local-link-privacy-closure"],
+      "evidence": ["selectors-level-5-functional-local-link-pseudo-class", "native-selector-source-contract"],
+      "reason": "Selectors Level 5 candidate contract for origin plus bounded path-segment matching, strict integer syntax, and routed href/same-document URL invalidation without retained browsing history."
+    },
+    {
       "path": "contracts/css-target-within-invalidation.html",
       "type": "contract",
       "capabilities": ["target-pseudo-class", "target-within-pseudo-class", "fragment-target-invalidation", "target-identity-invalidation", "target-tree-invalidation"],

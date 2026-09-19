@@ -1,0 +1,72 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Functional local-link compares origin and bounded path depth</title>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<style>
+  .candidate { width:11px; height:12px; padding-left:0; }
+  .candidate:local-link(0) { width:51px; }
+  .candidate:local-link(1) { height:52px; }
+  .candidate:local-link(2) { padding-left:53px; }
+</style>
+<a class="candidate" id="candidate">candidate</a>
+<script>
+  const candidate = document.getElementById('candidate');
+  const originalURL = new URL(location.href);
+  const documentSegments = originalURL.pathname.slice(1).split('/');
+  const firstSegment = documentSegments[0];
+  const secondSegment = documentSegments[1];
+  const sameOrigin = `${originalURL.origin}/`;
+  const firstLevel = `${originalURL.origin}/${firstSegment}/different`;
+  const sameDepth = `${originalURL.origin}/${firstSegment}/${secondSegment}?other=1#chapter`;
+  const snapshot = () => ({
+    zero:candidate.matches(':local-link(0)'),
+    one:candidate.matches(':local-link(1)'),
+    two:candidate.matches(':local-link(2)'),
+    width:getComputedStyle(candidate).width,
+    height:getComputedStyle(candidate).height,
+    padding:getComputedStyle(candidate).paddingLeft,
+  });
+
+  test(() => {
+    candidate.href = sameOrigin;
+    assert_object_equals(snapshot(), {
+      zero:true, one:false, two:false,
+      width:'51px', height:'12px', padding:'0px',
+    });
+    assert_true(candidate.matches(':local-link(-0)'),
+      'signed zero is the standard unsigned zero');
+    candidate.href = firstLevel;
+    assert_object_equals(snapshot(), {
+      zero:true, one:true, two:false,
+      width:'51px', height:'52px', padding:'0px',
+    });
+    candidate.href = sameDepth;
+    assert_object_equals(snapshot(), {
+      zero:true, one:true, two:true,
+      width:'51px', height:'52px', padding:'53px',
+    });
+  }, 'functional local-link compares origin plus exactly the requested path prefix');
+
+  test(() => {
+    candidate.href = sameDepth;
+    history.replaceState(null, '', `${originalURL.origin}/different/${secondSegment}`);
+    assert_object_equals(snapshot(), {
+      zero:true, one:false, two:false,
+      width:'51px', height:'12px', padding:'0px',
+    });
+    history.replaceState(null, '', originalURL.href);
+    assert_true(candidate.matches(':local-link(2)'));
+  }, 'same-document URL changes reuse enrolled local-link invalidation routes');
+
+  test(() => {
+    candidate.href = `https://example.invalid/${firstSegment}/${secondSegment}`;
+    assert_false(candidate.matches(':local-link(0)'));
+    for (const invalid of [
+      ':local-link()', ':local-link(-1)', ':local-link(1.0)',
+      ':local-link(1 2)', ':local-link(all)', ':local-link(2147483648)',
+    ]) {
+      assert_throws_dom('SyntaxError', () => document.querySelector(invalid), invalid);
+    }
+  }, 'functional local-link rejects cross-origin links and invalid arguments');
+</script>

@@ -1581,6 +1581,64 @@ mod selector_syntax {
                 }
                 return Ok(WebScenePseudoClass::State(argument.to_string()));
             }
+            if name == "local-link" {
+                let start = parser.position();
+                let value = parser.expect_integer().map_err(|_| {
+                    parser.new_custom_error(
+                        SelectorParseErrorKind::UnsupportedPseudoClassOrElement(name.clone().into()),
+                    )
+                })?;
+                parser.expect_exhausted().map_err(|_| {
+                    parser.new_custom_error(
+                        SelectorParseErrorKind::UnsupportedPseudoClassOrElement(name.clone().into()),
+                    )
+                })?;
+                let authored = parser.slice_from(start);
+                let mut spelling = String::new();
+                let mut cursor = 0usize;
+                let bytes = authored.as_bytes();
+                while cursor < bytes.len() {
+                    if bytes[cursor].is_ascii_whitespace() {
+                        cursor += 1;
+                        continue;
+                    }
+                    if cursor + 1 < bytes.len()
+                        && bytes[cursor] == b'/' && bytes[cursor + 1] == b'*'
+                    {
+                        let Some(relative_end) = authored[cursor + 2..].find("*/") else {
+                            return Err(parser.new_custom_error(
+                                SelectorParseErrorKind::UnsupportedPseudoClassOrElement(
+                                    name.into(),
+                                ),
+                            ));
+                        };
+                        cursor += relative_end + 4;
+                        continue;
+                    }
+                    spelling.push(bytes[cursor] as char);
+                    cursor += 1;
+                }
+                // cssparser clamps an overflowing integer token. Compare the
+                // authored decimal spelling so overflow remains a syntax error.
+                // CSS Values treats both signs of zero as the standard unsigned
+                // zero, while genuinely negative integers remain invalid here.
+                let negative = spelling.starts_with('-');
+                let digits = spelling
+                    .strip_prefix('+')
+                    .or_else(|| spelling.strip_prefix('-'))
+                    .unwrap_or(&spelling);
+                let exact = digits.parse::<u32>().ok()
+                    .filter(|candidate| *candidate <= i32::MAX as u32);
+                let is_exact_non_negative = value >= 0
+                    && exact == Some(value as u32)
+                    && (!negative || value == 0);
+                if !is_exact_non_negative {
+                    return Err(parser.new_custom_error(
+                        SelectorParseErrorKind::UnsupportedPseudoClassOrElement(name.into()),
+                    ));
+                }
+                return Ok(WebScenePseudoClass::Functional(name, value.to_string()));
+            }
             if name != "lang" && name != "dir" {
                 return Err(parser.new_custom_error(
                     SelectorParseErrorKind::UnsupportedPseudoClassOrElement(name.into()),

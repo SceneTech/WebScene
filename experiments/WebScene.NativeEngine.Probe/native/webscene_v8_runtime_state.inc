@@ -233,6 +233,7 @@
     std::unordered_map<uint64_t, websocket_binding> websocket_bindings;
     uint8_t next_async_message_task_source{0U};
     std::vector<connected_resource_task> connected_resources;
+    uint64_t next_css_image_resource_generation{1U};
     std::mutex host_request_mutex;
     std::deque<std::string> host_requests;
     std::deque<std::unique_ptr<native_host_request>> typed_host_requests;

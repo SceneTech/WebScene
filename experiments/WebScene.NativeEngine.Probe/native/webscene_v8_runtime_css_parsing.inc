@@ -1169,7 +1169,8 @@
         css::prepare_style_rule(prelude,std::move(declarations),inherited_media,stylesheet_address,
             [this](const css_declaration& declaration) {
                 inventory_css_value_functions(declaration.value);
-                if(declaration.name == "background-image") {
+                if(declaration.name == "background-image"
+                    || declaration.name == "mask-image") {
                     if(const auto url=first_css_url(declaration.value);url.has_value())
                         if (!has_claimed_service_worker_for_url(
                                 current_navigation_address()))
@@ -1187,7 +1188,8 @@
                 std::move(declaration.value),
                 stylesheet_address);
             inventory_css_value_functions(declaration.value);
-            if (declaration.name == "background-image") {
+            if (declaration.name == "background-image"
+                || declaration.name == "mask-image") {
                 if (const auto url = first_css_url(declaration.value); url.has_value()) {
                     if (!has_claimed_service_worker_for_url(
                             current_navigation_address())) {

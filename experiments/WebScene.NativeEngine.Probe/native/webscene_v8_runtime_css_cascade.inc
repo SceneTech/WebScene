@@ -203,7 +203,7 @@
         }
         const auto* resolved_declaration = &declaration;
         std::optional<css_declaration> resolved_resource_declaration;
-        if ((name == "background" || name == "background-image")
+        if ((name == "background" || name == "background-image" || name == "mask-image")
             && first_css_url(declaration.value).has_value()) {
             resolved_resource_declaration = declaration;
             resolved_resource_declaration->value = resolve_css_resource_urls(
@@ -216,17 +216,33 @@
             feature_decision::css_property_tag{},
             name);
         css::apply_declaration(document,node,*resolved_declaration,css_variables,inline_origin,decision,
-            [this,&node](const std::string& url,std::string& markup,std::string& resolved,std::string& view_box) {
+            [this,&node,&name](const std::string& url,std::string& markup,std::string& resolved,std::string& view_box) {
                 auto resource_context = isolate->GetCurrentContext();
                 if (resource_context.IsEmpty()) resource_context = context_for_node(node);
                 if (!resource_context.IsEmpty()
                     && enqueue_controlled_css_image_resource(
-                        node, resource_context, url)) {
+                        node, resource_context, name, url)) {
+                    if (name == "mask-image") {
+                        markup = "webscene-mask-pending-v1";
+                        resolved = resolve_resource_url(
+                            url, current_css_base_address(node));
+                        view_box = "pending";
+                        return true;
+                    }
                     return false;
                 }
                 if(!load_text_resource(url,current_css_base_address(node),WEBSCENE_RESOURCE_IMAGE,markup,resolved))
                     return false;
                 view_box=svg_view_box(markup);
+                std::string raster;
+                const auto raster_result =
+                    css_raster_image_resource(markup, raster, view_box);
+                if (raster_result == css_raster_image_result::ready) {
+                    markup = std::move(raster);
+                } else if (name == "mask-image"
+                    && raster_result == css_raster_image_result::rejected) {
+                    view_box.clear();
+                }
                 return true;
             },[&](bool contains_variable) {
                 if(contains_variable && is_paint_property(name))

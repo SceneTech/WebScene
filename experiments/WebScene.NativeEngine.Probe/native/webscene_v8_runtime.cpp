@@ -4549,6 +4549,46 @@ struct v8_dom_runtime::implementation final {
             local_context,
             js_string(isolate, "Range"),
             range_template->GetFunction(local_context).ToLocalChecked()).Check();
+        auto highlight_template = v8::FunctionTemplate::New(
+            isolate, highlight_constructor);
+        highlight_template->SetClassName(js_string(isolate, "Highlight"));
+        highlight_template->InstanceTemplate()->SetInternalFieldCount(1);
+        highlight_template->InstanceTemplate()->SetNativeDataProperty(
+            js_string(isolate, "size"), highlight_size_get);
+        highlight_template->InstanceTemplate()->SetNativeDataProperty(
+            js_string(isolate, "priority"),
+            highlight_priority_get, highlight_priority_set);
+        highlight_template->PrototypeTemplate()->Set(
+            js_string(isolate, "add"),
+            v8::FunctionTemplate::New(isolate, highlight_add));
+        highlight_template->PrototypeTemplate()->Set(
+            js_string(isolate, "delete"),
+            v8::FunctionTemplate::New(isolate, highlight_delete));
+        highlight_template->PrototypeTemplate()->Set(
+            js_string(isolate, "clear"),
+            v8::FunctionTemplate::New(isolate, highlight_clear));
+        highlight_template->PrototypeTemplate()->Set(
+            js_string(isolate, "has"),
+            v8::FunctionTemplate::New(isolate, highlight_has));
+        highlight_template->PrototypeTemplate()->Set(
+            js_string(isolate, "keys"),
+            v8::FunctionTemplate::New(isolate, highlight_values));
+        highlight_template->PrototypeTemplate()->Set(
+            js_string(isolate, "values"),
+            v8::FunctionTemplate::New(isolate, highlight_values));
+        highlight_template->PrototypeTemplate()->Set(
+            js_string(isolate, "entries"),
+            v8::FunctionTemplate::New(isolate, highlight_entries));
+        highlight_template->PrototypeTemplate()->Set(
+            js_string(isolate, "forEach"),
+            v8::FunctionTemplate::New(isolate, highlight_for_each));
+        highlight_template->PrototypeTemplate()->Set(
+            v8::Symbol::GetIterator(isolate),
+            v8::FunctionTemplate::New(isolate, highlight_values));
+        global->Set(
+            local_context,
+            js_string(isolate, "Highlight"),
+            highlight_template->GetFunction(local_context).ToLocalChecked()).Check();
         auto css = v8::Object::New(isolate);
         css->Set(
             local_context,
@@ -4558,6 +4598,13 @@ struct v8_dom_runtime::implementation final {
             local_context,
             js_string(isolate, "supports"),
             v8::Function::New(local_context, css_supports).ToLocalChecked()).Check();
+        if (auto* highlight_root = range_root_for_context(local_context);
+            highlight_root != nullptr) {
+            css->Set(
+                local_context,
+                js_string(isolate, "highlights"),
+                ensure_highlight_registry(local_context, highlight_root->id)).Check();
+        }
         global->Set(local_context, js_string(isolate, "CSS"), css).Check();
         global->Set(local_context, js_string(isolate, "atob"),
             v8::Function::New(local_context, window_atob).ToLocalChecked()).Check();
@@ -7452,6 +7499,7 @@ struct v8_dom_runtime::implementation final {
 #include "webscene_v8_runtime_web_animations.inc"
 #include "webscene_v8_runtime_diagnostics.inc"
 #include "webscene_v8_runtime_dom_properties.inc"
+#include "webscene_v8_runtime_highlights.inc"
 #include "webscene_v8_runtime_form_history.inc"
 #include "webscene_v8_runtime_canvas.inc"
 #include "webscene_v8_runtime_document.inc"

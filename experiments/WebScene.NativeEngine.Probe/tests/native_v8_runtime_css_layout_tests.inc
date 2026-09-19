@@ -1569,6 +1569,72 @@ void test_live_range_boundary_contract(webscene_engine* engine)
         "live Range boundary contract regressed: " + result);
 }
 
+void test_custom_highlight_registry_contract(webscene_engine* engine)
+{
+    const auto result = evaluate(engine, R"JS(
+        (() => {
+          document.body.innerHTML = '<p id="highlight-text">alpha beta</p>';
+          const text = document.getElementById('highlight-text').firstChild;
+          const first = new Range();
+          first.setStart(text, 0);
+          first.setEnd(text, 5);
+          const second = new Range();
+          second.setStart(text, 6);
+          second.setEnd(text, 10);
+          const highlight = new Highlight(first, first);
+          highlight.add(second);
+          highlight.priority = 7;
+          const setlike = [
+            highlight.size,
+            highlight.has(first),
+            highlight.has(second),
+            [...highlight].length,
+            [...highlight.entries()].every(([left, right]) => left === right),
+            highlight.priority
+          ];
+          CSS.highlights.set('chat-find-current-match', highlight);
+          const firstRegistry = [
+            CSS.highlights.size,
+            CSS.highlights.has('chat-find-current-match'),
+            CSS.highlights.get('chat-find-current-match') === highlight,
+            [...CSS.highlights.keys()].join(','),
+            [...CSS.highlights.values()][0] === highlight
+          ];
+          highlight.clear();
+          highlight.add(first).add(second);
+          const removed = highlight.delete(first);
+          const replacement = new Highlight(first);
+          CSS.highlights.set('chat-find-current-match', replacement);
+          CSS.highlights.set('chat-find-other-match', highlight);
+          CSS.highlights.delete('chat-find-current-match');
+          CSS.highlights.set('chat-find-current-match', replacement);
+          const order = [...CSS.highlights].map(([name]) => name).join(',');
+          const visited = [];
+          CSS.highlights.forEach((value, name, registry) => {
+            visited.push(`${name}:${value.size}:${registry === CSS.highlights}`);
+          });
+          let invalid = false;
+          try { CSS.highlights.set('invalid', {}); } catch (error) {
+            invalid = error instanceof TypeError;
+          }
+          CSS.highlights.clear();
+          return JSON.stringify({
+            setlike,
+            firstRegistry,
+            removed,
+            remaining: highlight.size,
+            order,
+            visited,
+            invalid,
+            cleared: CSS.highlights.size
+          });
+        })()
+    )JS", "native-custom-highlight-registry.js");
+    require(
+        result == R"({"setlike":[2,true,true,2,true,7],"firstRegistry":[1,true,true,"chat-find-current-match",true],"removed":true,"remaining":1,"order":"chat-find-other-match,chat-find-current-match","visited":["chat-find-other-match:1:true","chat-find-current-match:1:true"],"invalid":true,"cleared":0})",
+        "Custom Highlight registry contract regressed: " + result);
+}
+
 void test_custom_element_mutation_reactions_are_pay_for_use(webscene_engine* engine)
 {
     const auto result = evaluate(engine, R"JS(

@@ -24,12 +24,14 @@ struct semantic_delta_data_v1 final {
     uint64_t new_layout_generation{};
     uint32_t flags{};
     std::vector<webscene_semantic_delta_operation_v1> operations;
+    std::vector<webscene_semantic_typed_value_v2> typed_values;
     std::string strings;
 
     void require_full_snapshot(uint32_t reason)
     {
         flags |= WEBSCENE_SEMANTIC_DELTA_FULL_SNAPSHOT_REQUIRED_V1 | reason;
         std::vector<webscene_semantic_delta_operation_v1>().swap(operations);
+        std::vector<webscene_semantic_typed_value_v2>().swap(typed_values);
         std::string().swap(strings);
     }
 };
@@ -137,6 +139,7 @@ struct semantic_snapshot_data_v1 final {
         static_cast<uint32_t>(WEBSCENE_SEMANTIC_NONE_INDEX_V1)};
     std::vector<webscene_semantic_document_v1> documents;
     std::vector<webscene_semantic_node_v1> nodes;
+    std::vector<webscene_semantic_typed_value_v2> typed_values;
     std::vector<webscene_semantic_relationship_v1> relationships;
     std::vector<semantic_action_target_v1> action_targets;
     std::string strings;

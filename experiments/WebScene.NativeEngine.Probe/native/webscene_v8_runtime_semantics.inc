@@ -71,6 +71,8 @@
         if (node.tag == "th") return "columnheader";
         if (node.tag == "td") return "cell";
         if (node.tag == "dialog") return "dialog";
+        if (node.tag == "progress") return "progressbar";
+        if (node.tag == "meter") return "meter";
         if (node.tag == "iframe") return "document";
         if (node.tag.size() == 2U && node.tag[0] == 'h'
             && node.tag[1] >= '1' && node.tag[1] <= '6') return "heading";
@@ -126,6 +128,104 @@
             std::string(semantic_attribute(node, "type")));
         return type.empty() || type == "text" || type == "search"
             || type == "tel" || type == "url" || type == "password";
+    }
+
+    static void populate_semantic_typed_value(
+        const dom_node& node,
+        webscene_semantic_typed_value_v2& typed)
+    {
+        const auto publish_number = [&](uint32_t flag,
+                                        std::optional<double> value,
+                                        double& destination) {
+            if (!value || !std::isfinite(*value)) return;
+            destination = *value;
+            typed.flags |= flag;
+        };
+        const auto reject_inverted_bounds = [&] {
+            const auto bounds = WEBSCENE_SEMANTIC_TYPED_NUMERIC_MINIMUM_V2
+                | WEBSCENE_SEMANTIC_TYPED_NUMERIC_MAXIMUM_V2;
+            if ((typed.flags & bounds) == bounds
+                && typed.numeric_minimum > typed.numeric_maximum) {
+                typed.flags &= ~bounds;
+                typed.numeric_minimum = 0.0;
+                typed.numeric_maximum = 0.0;
+            }
+        };
+
+        if (semantic_text_selection_control(node) && node.has_form_control()) {
+            const auto& control = node.form_control();
+            const auto start = forms::utf16_offset_from_utf8_selection(
+                control.value,
+                {control.selection_start, control.selection_start_utf16_suboffset});
+            const auto end = forms::utf16_offset_from_utf8_selection(
+                control.value,
+                {control.selection_end, control.selection_end_utf16_suboffset});
+            constexpr auto maximum = std::numeric_limits<uint32_t>::max();
+            typed.text_selection_start_utf16 = static_cast<uint32_t>(
+                std::min(start, static_cast<size_t>(maximum)));
+            typed.text_selection_end_utf16 = static_cast<uint32_t>(
+                std::min(end, static_cast<size_t>(maximum)));
+            typed.text_caret_offset_utf16 = control.selection_direction
+                    == text_selection_direction::backward
+                ? typed.text_selection_start_utf16
+                : typed.text_selection_end_utf16;
+            typed.flags |= WEBSCENE_SEMANTIC_TYPED_TEXT_CARET_V2
+                | WEBSCENE_SEMANTIC_TYPED_TEXT_SELECTION_V2;
+        }
+
+        const auto native_kind = forms::numeric_kind(node);
+        if (native_kind == forms::numeric_input_kind::number
+            || native_kind == forms::numeric_input_kind::range) {
+            const auto parameters = forms::numeric_parameters(node);
+            const auto value = node.has_form_control()
+                ? forms::numeric_value(native_kind, node.form_control().value)
+                : forms::numeric_attribute(node, "value", native_kind);
+            publish_number(WEBSCENE_SEMANTIC_TYPED_NUMERIC_VALUE_V2,
+                value, typed.numeric_value);
+            publish_number(WEBSCENE_SEMANTIC_TYPED_NUMERIC_MINIMUM_V2,
+                parameters.minimum, typed.numeric_minimum);
+            publish_number(WEBSCENE_SEMANTIC_TYPED_NUMERIC_MAXIMUM_V2,
+                parameters.maximum, typed.numeric_maximum);
+            if (!parameters.step_any) {
+                publish_number(WEBSCENE_SEMANTIC_TYPED_NUMERIC_INCREMENT_V2,
+                    parameters.step, typed.numeric_increment);
+            }
+            reject_inverted_bounds();
+            return;
+        }
+
+        const auto role = semantic_role(node, false);
+        if (role == "slider" || role == "spinbutton" || role == "scrollbar"
+            || role == "progressbar" || role == "meter") {
+            publish_number(WEBSCENE_SEMANTIC_TYPED_NUMERIC_VALUE_V2,
+                forms::finite_number(semantic_attribute(node, "aria-valuenow")),
+                typed.numeric_value);
+            publish_number(WEBSCENE_SEMANTIC_TYPED_NUMERIC_MINIMUM_V2,
+                forms::finite_number(semantic_attribute(node, "aria-valuemin")),
+                typed.numeric_minimum);
+            publish_number(WEBSCENE_SEMANTIC_TYPED_NUMERIC_MAXIMUM_V2,
+                forms::finite_number(semantic_attribute(node, "aria-valuemax")),
+                typed.numeric_maximum);
+        }
+        if (node.tag == "progress" || node.tag == "meter") {
+            const auto authored_value = forms::finite_number(
+                semantic_attribute(node, "value"));
+            const auto authored_minimum = node.tag == "meter"
+                ? forms::finite_number(semantic_attribute(node, "min"))
+                : std::optional<double>{0.0};
+            const auto authored_maximum = forms::finite_number(
+                semantic_attribute(node, "max"));
+            publish_number(WEBSCENE_SEMANTIC_TYPED_NUMERIC_VALUE_V2,
+                std::optional<double>{authored_value.value_or(0.0)},
+                typed.numeric_value);
+            publish_number(WEBSCENE_SEMANTIC_TYPED_NUMERIC_MINIMUM_V2,
+                std::optional<double>{authored_minimum.value_or(0.0)},
+                typed.numeric_minimum);
+            publish_number(WEBSCENE_SEMANTIC_TYPED_NUMERIC_MAXIMUM_V2,
+                std::optional<double>{authored_maximum.value_or(1.0)},
+                typed.numeric_maximum);
+        }
+        reject_inverted_bounds();
     }
 
     uint32_t semantic_supported_actions(const dom_node& node)
@@ -603,6 +703,7 @@
         result->layout_generation = document.scene_generation();
         result->documents.reserve(8U);
         result->nodes.reserve(std::min<size_t>(document.node_count(), 4096U));
+        result->typed_values.reserve(result->nodes.capacity());
         result->relationships.reserve(256U);
         result->action_targets.reserve(result->nodes.capacity());
         result->strings.reserve(16U * 1024U);
@@ -703,6 +804,10 @@
                 view.supported_actions = semantic_supported_actions(node);
                 node_index = static_cast<uint32_t>(result->nodes.size());
                 result->nodes.push_back(view);
+                webscene_semantic_typed_value_v2 typed{};
+                typed.struct_size = sizeof(typed);
+                typed.version = 2U;
+                result->typed_values.push_back(typed);
                 result->action_targets.push_back({
                     view.semantic_id,
                     semantic_document.document_generation,
@@ -866,6 +971,7 @@
             }
             if (value.empty() && node.tag == "option") value = subtree_text(node);
             view.value = result->append_string(value);
+            populate_semantic_typed_value(node, result->typed_values[index]);
 
             const auto has = [&](std::string_view attribute) {
                 return node.attributes.find(std::string(attribute)) != node.attributes.end();

@@ -271,6 +271,14 @@
 #endif
         return {};
     }
+    std::unique_ptr<webscene_native::native_download_request>
+    take_download_request() {
+#if defined(WEBSCENE_NATIVE_ENGINE_WITH_V8)
+        std::lock_guard lock(file_runtime_mutex_);
+        if (file_runtime_ready_) return runtime_->take_download_request();
+#endif
+        return {};
+    }
     bool enqueue(const webscene_input_event& event)
     {
         if (event.kind == WEBSCENE_INPUT_RESIZE) {

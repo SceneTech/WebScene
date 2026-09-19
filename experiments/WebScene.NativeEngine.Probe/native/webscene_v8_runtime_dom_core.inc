@@ -2550,6 +2550,16 @@
     {
         dispatch_iframe_pagehide(frame);
         {
+            std::lock_guard lock(host_request_mutex);
+            std::erase_if(download_requests, [&](const auto& request) {
+                if (request == nullptr) return false;
+                const auto* target = document.find_by_native_id(
+                    static_cast<uint32_t>(request->view.target_node_id));
+                return request->view.frame_owner_node_id == frame.id
+                    || (target != nullptr && subtree_contains(frame, target));
+            });
+        }
+        {
             std::lock_guard lock(document_generation_mutex);
             ++frame_navigation_generations.try_emplace(frame.id, 0U)
                 .first->second;

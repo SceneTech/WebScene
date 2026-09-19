@@ -1540,6 +1540,46 @@ WEBSCENE_API uint8_t webscene_engine_complete_file_request_v1(webscene_engine* e
     uint64_t request_id, uint32_t status, const webscene_file_data_v1* files,
     size_t file_count, const char* error_message);
 
+/* Browser download transfer v1. A request is admitted only from a recent
+ * native user activation and, for framed documents, through every sandboxed
+ * owner carrying allow-downloads. The immutable lease is the stream handoff:
+ * byte-backed downloads may be copied incrementally until release. URL and
+ * canvas sources remain explicit so a host can deny them or resolve them with
+ * its own destination policy. No path, bookmark, grant, or destination is
+ * selected by WebScene. Navigation generations let a host reject a lease that
+ * outlives its source document.
+ *
+ * Limits: 16 queued requests, 64 MiB per and across queued byte payloads,
+ * 4 KiB UTF-8 names and origins, 256-byte MIME types, and 8 KiB source URLs.
+ * UINT64_MAX denotes an unknown total size. Releasing a request also
+ * represents host cancellation. */
+enum {
+    WEBSCENE_DOWNLOAD_SOURCE_BYTES_V1 = 1,
+    WEBSCENE_DOWNLOAD_SOURCE_URL_V1 = 2,
+    WEBSCENE_DOWNLOAD_SOURCE_CANVAS_V1 = 3
+};
+typedef struct webscene_download_request_v1 {
+    uint32_t struct_size, version;
+    uint64_t request_id;
+    uint64_t document_generation;
+    uint64_t frame_generation;
+    uint64_t target_node_id;
+    uint64_t frame_owner_node_id;
+    uint32_t source_kind, reserved;
+    const char* source_origin;
+    const char* suggested_name;
+    const char* mime_type;
+    uint64_t total_size;
+    const uint8_t* bytes;
+    size_t byte_count;
+    const char* source_url;
+    uint64_t canvas_node_id;
+} webscene_download_request_v1;
+WEBSCENE_API const webscene_download_request_v1*
+webscene_engine_take_download_request_v1(webscene_engine* engine);
+WEBSCENE_API void webscene_download_request_release_v1(
+    const webscene_download_request_v1* request);
+
 /* Native file panel transport v2. This queue is independent of the v1
  * byte-copy service. Requests contain presentation metadata and an optional
  * opaque initial-location token. Successful results contain only bounded

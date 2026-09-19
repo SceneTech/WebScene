@@ -301,6 +301,52 @@ typed_host_request_snapshot take_typed_host_request(webscene_engine* engine)
     return result;
 }
 
+struct download_request_snapshot {
+    uint64_t id{};
+    uint64_t document_generation{};
+    uint64_t frame_generation{};
+    uint64_t target_node_id{};
+    uint64_t frame_owner_node_id{};
+    uint32_t source_kind{};
+    std::string source_origin;
+    std::string suggested_name;
+    std::string mime_type;
+    uint64_t total_size{};
+    std::vector<uint8_t> bytes;
+    std::string source_url;
+    uint64_t canvas_node_id{};
+    explicit operator bool() const noexcept { return id != 0U; }
+};
+
+download_request_snapshot take_download_request(webscene_engine* engine)
+{
+    download_request_snapshot result;
+    const auto* request = webscene_engine_take_download_request_v1(engine);
+    if (request == nullptr) return result;
+    require(request->struct_size == sizeof(*request) && request->version == 1U,
+        "download request ABI metadata changed");
+    result.id = request->request_id;
+    result.document_generation = request->document_generation;
+    result.frame_generation = request->frame_generation;
+    result.target_node_id = request->target_node_id;
+    result.frame_owner_node_id = request->frame_owner_node_id;
+    result.source_kind = request->source_kind;
+    result.source_origin = request->source_origin == nullptr
+        ? "" : request->source_origin;
+    result.suggested_name = request->suggested_name == nullptr
+        ? "" : request->suggested_name;
+    result.mime_type = request->mime_type == nullptr ? "" : request->mime_type;
+    result.total_size = request->total_size;
+    result.source_url = request->source_url == nullptr ? "" : request->source_url;
+    result.canvas_node_id = request->canvas_node_id;
+    if (request->byte_count != 0U) {
+        require(request->bytes != nullptr, "download request bytes were null");
+        result.bytes.assign(request->bytes, request->bytes + request->byte_count);
+    }
+    webscene_download_request_release_v1(request);
+    return result;
+}
+
 void execute(webscene_engine* engine, std::string_view source, std::string_view name)
 {
     if (webscene_engine_execute_script(

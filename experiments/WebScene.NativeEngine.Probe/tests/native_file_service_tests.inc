@@ -32,6 +32,8 @@ void test_native_file_service(webscene_engine* engine) {
     request=take(); const auto cancel_id=request->request_id;webscene_file_request_release_v1(request);
     require(webscene_engine_complete_file_request_v1(engine,cancel_id,1,nullptr,0,nullptr),"Cancel completion failed");
     require(evaluate(engine,"fileEvents.join(',')","file-events.js").find("change,cancel")!=std::string::npos,"Cancellation delivered a change or was lost");
+    pointer_button(engine,WEBSCENE_INPUT_POINTER_DOWN,400,300,7001U,true);
+    pointer_button(engine,WEBSCENE_INPUT_POINTER_UP,400,300,7002U,false);
     execute(engine,R"JS(
       const bytes=new Uint8Array([99,0,1,255,65,99]);
       const blob=new Blob([bytes.subarray(1,5)],{type:'application/octet-stream'});
@@ -42,19 +44,23 @@ void test_native_file_service(webscene_engine* engine) {
       const a=document.createElement('a');a.href=url;a.download='../café.bin';a.click();URL.revokeObjectURL(url);
       fetch(url).then(()=>globalThis.revokedBlobRejected=false,()=>globalThis.revokedBlobRejected=true);
     )JS","native-file-save.js");
-    request=take();
-    require(request->kind==2 && std::string(request->file.name)=="café.bin" && request->file.byte_count==4 && std::memcmp(request->file.bytes,bytes,4)==0,"Save bytes, typed array slice or name sanitization failed");
-    const auto save_id=request->request_id;webscene_file_request_release_v1(request);
+    const auto save_request=take_download_request(engine);
+    require(save_request.source_kind==WEBSCENE_DOWNLOAD_SOURCE_BYTES_V1
+        && save_request.suggested_name=="café.bin"
+        && save_request.mime_type=="application/octet-stream"
+        && save_request.bytes==std::vector<uint8_t>({0,1,255,65})
+        && save_request.total_size==4,
+        "Save bytes, typed array slice, MIME, size, or name sanitization failed");
     require(evaluate(engine,"JSON.stringify(globalThis.savedBlobFetch)==='[0,1,255,65]'","saved-blob-fetch.js")=="true",
         "Native Save lost the binary Blob fetch payload");
     require(evaluate(engine,"revokedBlobRejected","revoked-blob-fetch.js")=="true",
         "Revoked native Save Blob URL remained fetchable");
-    require(webscene_engine_complete_file_request_v1(engine,save_id,1,nullptr,0,nullptr),"Save cancellation failed");
     require(!webscene_engine_complete_file_request_v1(engine,0,0,nullptr,0,nullptr),"Invalid completion accepted");
     execute(engine,"(()=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([]));a.download='empty.bin';a.click();URL.revokeObjectURL(a.href);})()","empty-save.js");
-    request=take();require(request->file.byte_count==0,"Empty export changed bytes");
-    const auto empty_id=request->request_id;webscene_file_request_release_v1(request);
-    require(webscene_engine_complete_file_request_v1(engine,empty_id,2,nullptr,0,"write denied"),"Save failure completion rejected");
+    const auto empty_request=take_download_request(engine);
+    require(empty_request.source_kind==WEBSCENE_DOWNLOAD_SOURCE_BYTES_V1
+        && empty_request.bytes.empty() && empty_request.total_size==0,
+        "Empty export changed bytes");
     // A completion from a previous document must never populate the next one.
     execute(engine,"document.getElementById('native-file').click()","before-navigation.js");
     request=take();const auto old_id=request->request_id;webscene_file_request_release_v1(request);

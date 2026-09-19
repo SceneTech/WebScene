@@ -2171,6 +2171,18 @@ const webscene_file_request_v1* webscene_engine_take_file_request_v1(webscene_en
 void webscene_file_request_release_v1(const webscene_file_request_v1* request) {
     delete reinterpret_cast<const webscene_native::native_file_request*>(request);
 }
+const webscene_download_request_v1*
+webscene_engine_take_download_request_v1(webscene_engine* engine) {
+    if (!engine) return nullptr;
+    auto request = engine->take_download_request();
+    if (!request) return nullptr;
+    request->bind();
+    return &request.release()->view;
+}
+void webscene_download_request_release_v1(
+    const webscene_download_request_v1* request) {
+    delete reinterpret_cast<const webscene_native::native_download_request*>(request);
+}
 uint8_t webscene_engine_complete_file_request_v1(webscene_engine* engine,
     uint64_t id, uint32_t status, const webscene_file_data_v1* files,
     size_t count, const char* error) {

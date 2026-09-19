@@ -141,6 +141,7 @@
         document_fullscreen = false;
         { std::lock_guard lock(host_request_mutex); host_requests.clear(); }
         { std::lock_guard lock(host_request_mutex); typed_host_requests.clear(); }
+        { std::lock_guard lock(host_request_mutex); download_requests.clear(); }
         object_url_file_data.clear();
         release_owned_binary_object_urls();
         object_urls.clear();

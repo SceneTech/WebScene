@@ -42,10 +42,31 @@ struct profile_local_storage final {
     std::unordered_map<std::string, std::string> values;
 };
 
+enum class profile_form_control_kind : uint8_t {
+    value,
+    checked,
+    selected,
+    custom
+};
+
+struct profile_form_control_state final {
+    std::string identity;
+    std::string value;
+    std::vector<uint32_t> selected_indices;
+    profile_form_control_kind kind{profile_form_control_kind::value};
+    bool checked{false};
+};
+
+struct profile_form_document_state final {
+    std::vector<profile_form_control_state> controls;
+};
+
 struct browser_profile_state final {
     uint64_t revision{0};
     std::vector<profile_cookie> cookies;
     std::unordered_map<std::string, profile_local_storage> local_storage;
+    std::vector<std::string> form_state_order;
+    std::unordered_map<std::string, profile_form_document_state> form_states;
 };
 
 struct profile_storage_result final {
@@ -83,6 +104,9 @@ public:
     void replace_cookies(std::vector<profile_cookie> cookies);
     void replace_local_storage(std::string origin, profile_local_storage storage);
     void clear_local_storage_origin(const std::string& origin);
+    void replace_form_state(
+        std::string document,
+        profile_form_document_state state);
     browser_profile_state snapshot() const;
 
     static profile_storage_result clear_partition_sync(

@@ -1,0 +1,29 @@
+{
+  "profile": "webscene-css-animation-fill-mode-1",
+  "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+  "runtime": "v8",
+  "viewport": {
+    "width": 800,
+    "height": 600,
+    "deviceScaleFactor": 1
+  },
+  "required": [
+    {
+      "path": "contracts/css-animation-fill-mode-boundaries.html",
+      "type": "contract",
+      "capabilities": [
+        "animation-fill-mode-longhand",
+        "animation-fill-mode-shorthand",
+        "backwards-both-fill",
+        "direction-aware-fill-boundaries",
+        "opacity-rotation-filter-fill",
+        "fill-only-timeline-preservation",
+        "settled-frame-demand"
+      ],
+      "evidence": ["css-animation-fill-mode-661-242"],
+      "reason": "WPT-aligned CSS Animations reduction for first-list fill metadata, direction-aware before fill with timing functions excluded during positive delay, retained supported-property terminal values, live fill changes that preserve time, and removal cleanup."
+    }
+  ],
+  "harnessBlocked": [],
+  "excluded": []
+}

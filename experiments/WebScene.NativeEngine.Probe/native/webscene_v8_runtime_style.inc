@@ -288,6 +288,8 @@
             if (!has_authored_transition) node.style.inline_property_mask &= ~inline_transition;
         } else if (name == "animationDirection" || name == "animation-direction") {
             node.style.mutable_animations().animation_direction_value = "normal";
+        } else if (name == "animationFillMode" || name == "animation-fill-mode") {
+            node.style.mutable_animations().animation_fill_mode_value = "none";
         } else if (name == "animation" || name == "animationName"
             || name == "animation-name" || name == "animationDuration"
             || name == "animation-duration" || name == "animationDelay"
@@ -301,6 +303,7 @@
             animations.animation_timing_function_value = "ease";
             animations.animation_iteration_count_value = "1";
             animations.animation_direction_value = "normal";
+            animations.animation_fill_mode_value = "none";
         } else if (name == "opacity") {
             node.style.opacity = 1;
             node.style.inline_property_mask &= ~inline_opacity;
@@ -1381,7 +1384,7 @@
             } else if (name == "transform") {
                 if (node->style.transform_specified
                     || node->transform_animation_active_value()
-                    || node->rotation_keyframe_animation_active_value()) {
+                    || node->has_painted_rotation_keyframe_override_value()) {
                     constexpr double degrees_to_radians = 0.017453292519943295;
                     const auto radians = static_cast<double>(
                         node->painted_transform_rotation_value())
@@ -1432,6 +1435,8 @@
                     : node->style.animations().transition_delay_value;
             } else if (name == "transition-timing-function") {
                 value = node->style.animations().transition_timing_function_value;
+            } else if (name == "animation-fill-mode") {
+                value = node->style.animations().animation_fill_mode_value;
             } else if (name == "opacity") {
                 value = serialize_css_number(node->painted_opacity_value());
             } else if (name == "color") {
@@ -1980,7 +1985,7 @@
         } else if (name == "transform") {
             if (!node->style.transform_specified
                 && !node->transform_animation_active_value()
-                && !node->rotation_keyframe_animation_active_value()) {
+                && !node->has_painted_rotation_keyframe_override_value()) {
                 value = "none";
             } else {
                 constexpr double degrees_to_radians = 0.017453292519943295;
@@ -2040,7 +2045,8 @@
                 + node->style.animations().animation_timing_function_value + " "
                 + node->style.animations().animation_delay_value + " "
                 + node->style.animations().animation_iteration_count_value + " "
-                + node->style.animations().animation_direction_value;
+                + node->style.animations().animation_direction_value + " "
+                + node->style.animations().animation_fill_mode_value;
         } else if (name == "animationName" || name == "animation-name") {
             value = node->style.animations().animation_name_value;
         } else if (name == "animationDuration" || name == "animation-duration") {
@@ -2055,6 +2061,8 @@
             value = node->style.animations().animation_iteration_count_value;
         } else if (name == "animationDirection" || name == "animation-direction") {
             value = node->style.animations().animation_direction_value;
+        } else if (name == "animationFillMode" || name == "animation-fill-mode") {
+            value = node->style.animations().animation_fill_mode_value;
         } else if (name == "zIndex") {
             value = node->style.z_index_auto
                 ? "auto" : std::to_string(node->style.z_index);
@@ -2566,6 +2574,8 @@
             node->style.mutable_animations().animation_iteration_count_value = value;
         } else if (name == "animationDirection") {
             node->style.mutable_animations().animation_direction_value = value;
+        } else if (name == "animationFillMode") {
+            node->style.mutable_animations().animation_fill_mode_value = value;
         } else if (name == "opacity") {
             node->style.opacity = raw_value->IsNullOrUndefined()
                 ? 1.0F

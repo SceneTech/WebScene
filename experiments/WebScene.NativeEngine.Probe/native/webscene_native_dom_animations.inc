@@ -37,6 +37,18 @@ float terminal_keyframe_progress(
     const auto iteration = fractional > 0.0 ? whole : std::max(0.0, whole - 1.0);
     return directed_keyframe_progress(progress, iteration, direction);
 }
+
+bool fills_before(node_style::animation_data::fill_kind fill) noexcept
+{
+    return fill == node_style::animation_data::fill_kind::backwards
+        || fill == node_style::animation_data::fill_kind::both;
+}
+
+bool fills_after(node_style::animation_data::fill_kind fill) noexcept
+{
+    return fill == node_style::animation_data::fill_kind::forwards
+        || fill == node_style::animation_data::fill_kind::both;
+}
 } // namespace
 
 void native_document::signal_animation_frame(double timestamp_ms) noexcept
@@ -245,6 +257,9 @@ void native_document::update_style_animations(dom_node& node)
     const auto filter_keyframe_changed =
         animation.filter_keyframe_animation_signature
             != node.style.animations().filter_keyframe_animation_signature;
+    const auto fill_mode_changed = animation.keyframe_fill_mode
+        != node.style.animations().keyframe_fill_mode;
+    animation.keyframe_fill_mode = node.style.animations().keyframe_fill_mode;
     if (opacity_keyframe_changed || rotation_keyframe_changed
         || filter_keyframe_changed) {
         animation.keyframe_animation_end_event_sent = false;
@@ -266,6 +281,7 @@ void native_document::update_style_animations(dom_node& node)
         animation.rotation_keyframe_animation_signature =
             node.style.animations().rotation_keyframe_animation_signature;
         animation.rotation_keyframe_animation_started_ms = animation_frame_timestamp_ms_;
+        animation.rotation_keyframe_animation_filled = false;
         animation.rotation_keyframe_animation_active =
             !animation.rotation_keyframe_animation_signature.empty()
             && node.style.animations().rotation_keyframes.size() >= 2U
@@ -292,6 +308,7 @@ void native_document::update_style_animations(dom_node& node)
             node.style.animations().filter_keyframe_animation_signature;
         animation.filter_keyframe_animation_started_ms = animation_frame_timestamp_ms_;
         animation.filter_keyframe_animation_active = false;
+        animation.filter_keyframe_animation_valid = false;
         animation.filter_keyframe_animation_filled = false;
         animation.filter_keyframes.clear();
         auto valid = !animation.filter_keyframe_animation_signature.empty()
@@ -322,9 +339,32 @@ void native_document::update_style_animations(dom_node& node)
                 }
             }
         }
+        animation.filter_keyframe_animation_valid = valid;
         animation.filter_keyframe_animation_active = valid;
         animation.painted_filter_functions =
             animation.filter_keyframe_underlying;
+    }
+    if (fill_mode_changed) {
+        if (!opacity_keyframe_changed) {
+            animation.opacity_keyframe_animation_active =
+                !animation.opacity_keyframe_animation_signature.empty()
+                && node.style.animations().opacity_keyframes.size() >= 2U
+                && node.style.animations().opacity_keyframe_duration_ms > 0
+                && node.style.animations().opacity_keyframe_iterations != 0;
+        }
+        if (!rotation_keyframe_changed) {
+            animation.rotation_keyframe_animation_filled = false;
+            animation.rotation_keyframe_animation_active =
+                !animation.rotation_keyframe_animation_signature.empty()
+                && node.style.animations().rotation_keyframes.size() >= 2U
+                && node.style.animations().opacity_keyframe_duration_ms > 0
+                && node.style.animations().opacity_keyframe_iterations != 0;
+        }
+        if (!filter_keyframe_changed) {
+            animation.filter_keyframe_animation_filled = false;
+            animation.filter_keyframe_animation_active =
+                animation.filter_keyframe_animation_valid;
+        }
     }
 
     if (animation.opacity_animation_active && node.style.animations().transition_property_value == "none") {
@@ -1013,12 +1053,47 @@ bool native_document::advance_animations() noexcept
 
         auto keyframe_animation_completed = false;
         if (animation.opacity_keyframe_animation_active) {
+            const auto sample_opacity = [&](float cycle_progress) {
+                const auto& stops = node.style.animations().opacity_keyframes;
+                auto right = std::lower_bound(
+                    stops.begin(), stops.end(), cycle_progress,
+                    [](const node_style::opacity_keyframe& stop, float progress) {
+                        return stop.offset < progress;
+                    });
+                if (right == stops.begin()) {
+                    animation.painted_opacity = right->opacity;
+                } else if (right == stops.end()) {
+                    animation.painted_opacity = stops.back().opacity;
+                } else {
+                    const auto& from = *(right - 1);
+                    const auto span = std::max(
+                        0.0001F, right->offset - from.offset);
+                    const auto segment_progress = std::clamp(
+                        (cycle_progress - from.offset) / span, 0.0F, 1.0F);
+                    const auto eased = timing_value(
+                        segment_progress,
+                        node.style.animations().opacity_keyframe_x1,
+                        node.style.animations().opacity_keyframe_y1,
+                        node.style.animations().opacity_keyframe_x2,
+                        node.style.animations().opacity_keyframe_y2,
+                        node.style.animations().opacity_keyframe_timing_kind,
+                        node.style.animations().opacity_keyframe_step_count,
+                        node.style.animations().opacity_keyframe_step_position);
+                    animation.painted_opacity = from.opacity
+                        + (right->opacity - from.opacity) * eased;
+                }
+            };
             const auto elapsed_ms = static_cast<float>(
                 animation_frame_timestamp_ms_
                 - animation.opacity_keyframe_animation_started_ms
                 - node.style.animations().opacity_keyframe_delay_ms);
             if (elapsed_ms < 0) {
-                animation.painted_opacity = node.style.opacity;
+                if (fills_before(node.style.animations().keyframe_fill_mode)) {
+                    sample_opacity(directed_keyframe_progress(
+                        0.0F, 0.0, node.style.animations().keyframe_direction));
+                } else {
+                    animation.painted_opacity = node.style.opacity;
+                }
                 advanced = advanced || keyframe_paint_visible;
             } else {
                 const auto duration = std::max(
@@ -1028,38 +1103,8 @@ bool native_document::advance_animations() noexcept
                 const auto total_duration = finite
                     ? duration * std::max(0.0F, iterations)
                     : 0.0F;
-                const auto sample_opacity = [&](float cycle_progress) {
-                    const auto& stops = node.style.animations().opacity_keyframes;
-                    auto right = std::lower_bound(
-                        stops.begin(), stops.end(), cycle_progress,
-                        [](const node_style::opacity_keyframe& stop, float progress) {
-                            return stop.offset < progress;
-                        });
-                    if (right == stops.begin()) {
-                        animation.painted_opacity = right->opacity;
-                    } else if (right == stops.end()) {
-                        animation.painted_opacity = stops.back().opacity;
-                    } else {
-                        const auto& from = *(right - 1);
-                        const auto span = std::max(
-                            0.0001F, right->offset - from.offset);
-                        const auto segment_progress = std::clamp(
-                            (cycle_progress - from.offset) / span, 0.0F, 1.0F);
-                        const auto eased = timing_value(
-                            segment_progress,
-                            node.style.animations().opacity_keyframe_x1,
-                            node.style.animations().opacity_keyframe_y1,
-                            node.style.animations().opacity_keyframe_x2,
-                            node.style.animations().opacity_keyframe_y2,
-                            node.style.animations().opacity_keyframe_timing_kind,
-                            node.style.animations().opacity_keyframe_step_count,
-                            node.style.animations().opacity_keyframe_step_position);
-                        animation.painted_opacity = from.opacity
-                            + (right->opacity - from.opacity) * eased;
-                    }
-                };
                 if (finite && elapsed_ms >= total_duration) {
-                    if (node.style.animations().opacity_keyframe_fill_forwards) {
+                    if (fills_after(node.style.animations().keyframe_fill_mode)) {
                         sample_opacity(terminal_keyframe_progress(
                             iterations, node.style.animations().keyframe_direction));
                     } else {
@@ -1078,13 +1123,48 @@ bool native_document::advance_animations() noexcept
         }
 
         if (animation.rotation_keyframe_animation_active) {
+            const auto sample_rotation = [&](float cycle_progress) {
+                const auto& stops = node.style.animations().rotation_keyframes;
+                auto right = std::lower_bound(
+                    stops.begin(), stops.end(), cycle_progress,
+                    [](const node_style::rotation_keyframe& stop, float progress) {
+                        return stop.offset < progress;
+                    });
+                if (right == stops.begin()) {
+                    animation.painted_transform_rotate_degrees = right->degrees;
+                } else if (right == stops.end()) {
+                    animation.painted_transform_rotate_degrees = stops.back().degrees;
+                } else {
+                    const auto& from = *(right - 1);
+                    const auto span = std::max(
+                        0.0001F, right->offset - from.offset);
+                    const auto segment_progress = std::clamp(
+                        (cycle_progress - from.offset) / span, 0.0F, 1.0F);
+                    const auto eased = timing_value(
+                        segment_progress,
+                        node.style.animations().opacity_keyframe_x1,
+                        node.style.animations().opacity_keyframe_y1,
+                        node.style.animations().opacity_keyframe_x2,
+                        node.style.animations().opacity_keyframe_y2,
+                        node.style.animations().opacity_keyframe_timing_kind,
+                        node.style.animations().opacity_keyframe_step_count,
+                        node.style.animations().opacity_keyframe_step_position);
+                    animation.painted_transform_rotate_degrees = from.degrees
+                        + (right->degrees - from.degrees) * eased;
+                }
+            };
             const auto elapsed_ms = static_cast<float>(
                 animation_frame_timestamp_ms_
                 - animation.rotation_keyframe_animation_started_ms
                 - node.style.animations().opacity_keyframe_delay_ms);
             if (elapsed_ms < 0) {
-                animation.painted_transform_rotate_degrees =
-                    node.style.transform_rotate_degrees;
+                if (fills_before(node.style.animations().keyframe_fill_mode)) {
+                    sample_rotation(directed_keyframe_progress(
+                        0.0F, 0.0, node.style.animations().keyframe_direction));
+                } else {
+                    animation.painted_transform_rotate_degrees =
+                        node.style.transform_rotate_degrees;
+                }
                 advanced = advanced || keyframe_paint_visible;
             } else {
                 const auto duration = std::max(
@@ -1095,56 +1175,84 @@ bool native_document::advance_animations() noexcept
                     ? duration * std::max(0.0F, iterations)
                     : 0.0F;
                 if (finite && elapsed_ms >= total_duration) {
-                    animation.painted_transform_rotate_degrees =
-                        node.style.transform_rotate_degrees;
+                    if (fills_after(node.style.animations().keyframe_fill_mode)) {
+                        sample_rotation(terminal_keyframe_progress(
+                            iterations, node.style.animations().keyframe_direction));
+                        animation.rotation_keyframe_animation_filled = true;
+                    } else {
+                        animation.painted_transform_rotate_degrees =
+                            node.style.transform_rotate_degrees;
+                        animation.rotation_keyframe_animation_filled = false;
+                    }
                     animation.rotation_keyframe_animation_active = false;
                     keyframe_animation_completed = true;
                     advanced = advanced || keyframe_paint_visible;
                 } else {
-                    const auto cycle_progress = active_keyframe_progress(
+                    sample_rotation(active_keyframe_progress(
                         elapsed_ms, duration,
-                        node.style.animations().keyframe_direction);
-                    const auto& stops = node.style.animations().rotation_keyframes;
-                    auto right = std::lower_bound(
-                        stops.begin(), stops.end(), cycle_progress,
-                        [](const node_style::rotation_keyframe& stop, float progress) {
-                            return stop.offset < progress;
-                        });
-                    if (right == stops.begin()) {
-                        animation.painted_transform_rotate_degrees = right->degrees;
-                    } else if (right == stops.end()) {
-                        animation.painted_transform_rotate_degrees = stops.back().degrees;
-                    } else {
-                        const auto& from = *(right - 1);
-                        const auto span = std::max(
-                            0.0001F, right->offset - from.offset);
-                        const auto segment_progress = std::clamp(
-                            (cycle_progress - from.offset) / span, 0.0F, 1.0F);
-                        const auto eased = timing_value(
-                            segment_progress,
-                            node.style.animations().opacity_keyframe_x1,
-                            node.style.animations().opacity_keyframe_y1,
-                            node.style.animations().opacity_keyframe_x2,
-                            node.style.animations().opacity_keyframe_y2,
-                            node.style.animations().opacity_keyframe_timing_kind,
-                            node.style.animations().opacity_keyframe_step_count,
-                            node.style.animations().opacity_keyframe_step_position);
-                        animation.painted_transform_rotate_degrees = from.degrees
-                            + (right->degrees - from.degrees) * eased;
-                    }
+                        node.style.animations().keyframe_direction));
                     advanced = advanced || keyframe_paint_visible;
                 }
             }
         }
 
         if (animation.filter_keyframe_animation_active) {
+            const auto sample_filter = [&](float cycle_progress) {
+                const auto& stops = animation.filter_keyframes;
+                const auto assign_stop = [&](const auto& stop) {
+                    if (stop.authored_none) {
+                        animation.painted_filter_functions.clear();
+                    } else {
+                        animation.painted_filter_functions = stop.functions;
+                    }
+                };
+                auto right = std::lower_bound(
+                    stops.begin(), stops.end(), cycle_progress,
+                    [](const auto& stop, float progress) {
+                        return stop.offset < progress;
+                    });
+                if (right == stops.begin()) {
+                    assign_stop(*right);
+                } else if (right == stops.end()) {
+                    assign_stop(stops.back());
+                } else if (std::abs(cycle_progress - right->offset) < 0.000001F) {
+                    assign_stop(*right);
+                } else {
+                    const auto& from = *(right - 1);
+                    const auto span = std::max(
+                        0.0001F, right->offset - from.offset);
+                    const auto segment_progress = std::clamp(
+                        (cycle_progress - from.offset) / span, 0.0F, 1.0F);
+                    const auto eased = timing_value(
+                        segment_progress,
+                        node.style.animations().opacity_keyframe_x1,
+                        node.style.animations().opacity_keyframe_y1,
+                        node.style.animations().opacity_keyframe_x2,
+                        node.style.animations().opacity_keyframe_y2,
+                        node.style.animations().opacity_keyframe_timing_kind,
+                        node.style.animations().opacity_keyframe_step_count,
+                        node.style.animations().opacity_keyframe_step_position);
+                    animation.painted_filter_functions = from.functions;
+                    for (size_t index = 0U;
+                         index < animation.painted_filter_functions.size(); ++index) {
+                        const auto start = from.functions[index].amount;
+                        animation.painted_filter_functions[index].amount = start
+                            + (right->functions[index].amount - start) * eased;
+                    }
+                }
+            };
             const auto elapsed_ms = static_cast<float>(
                 animation_frame_timestamp_ms_
                 - animation.filter_keyframe_animation_started_ms
                 - node.style.animations().opacity_keyframe_delay_ms);
             if (elapsed_ms < 0) {
-                animation.painted_filter_functions =
-                    animation.filter_keyframe_underlying;
+                if (fills_before(node.style.animations().keyframe_fill_mode)) {
+                    sample_filter(directed_keyframe_progress(
+                        0.0F, 0.0, node.style.animations().keyframe_direction));
+                } else {
+                    animation.painted_filter_functions =
+                        animation.filter_keyframe_underlying;
+                }
                 advanced = advanced || keyframe_paint_visible;
             } else {
                 const auto duration = std::max(
@@ -1154,58 +1262,15 @@ bool native_document::advance_animations() noexcept
                 const auto total_duration = finite
                     ? duration * std::max(0.0F, iterations)
                     : 0.0F;
-                const auto sample_filter = [&](float cycle_progress) {
-                    const auto& stops = animation.filter_keyframes;
-                    const auto assign_stop = [&](const auto& stop) {
-                        if (stop.authored_none) {
-                            animation.painted_filter_functions.clear();
-                        } else {
-                            animation.painted_filter_functions = stop.functions;
-                        }
-                    };
-                    auto right = std::lower_bound(
-                        stops.begin(), stops.end(), cycle_progress,
-                        [](const auto& stop, float progress) {
-                            return stop.offset < progress;
-                        });
-                    if (right == stops.begin()) {
-                        assign_stop(*right);
-                    } else if (right == stops.end()) {
-                        assign_stop(stops.back());
-                    } else if (std::abs(cycle_progress - right->offset) < 0.000001F) {
-                        assign_stop(*right);
-                    } else {
-                        const auto& from = *(right - 1);
-                        const auto span = std::max(
-                            0.0001F, right->offset - from.offset);
-                        const auto segment_progress = std::clamp(
-                            (cycle_progress - from.offset) / span, 0.0F, 1.0F);
-                        const auto eased = timing_value(
-                            segment_progress,
-                            node.style.animations().opacity_keyframe_x1,
-                            node.style.animations().opacity_keyframe_y1,
-                            node.style.animations().opacity_keyframe_x2,
-                            node.style.animations().opacity_keyframe_y2,
-                            node.style.animations().opacity_keyframe_timing_kind,
-                            node.style.animations().opacity_keyframe_step_count,
-                            node.style.animations().opacity_keyframe_step_position);
-                        animation.painted_filter_functions = from.functions;
-                        for (size_t index = 0U;
-                             index < animation.painted_filter_functions.size(); ++index) {
-                            const auto start = from.functions[index].amount;
-                            animation.painted_filter_functions[index].amount = start
-                                + (right->functions[index].amount - start) * eased;
-                        }
-                    }
-                };
                 if (finite && elapsed_ms >= total_duration) {
-                    if (node.style.animations().opacity_keyframe_fill_forwards) {
+                    if (fills_after(node.style.animations().keyframe_fill_mode)) {
                         sample_filter(terminal_keyframe_progress(
                             iterations, node.style.animations().keyframe_direction));
                         animation.filter_keyframe_animation_filled = true;
                     } else {
                         animation.painted_filter_functions =
                             animation.filter_keyframe_underlying;
+                        animation.filter_keyframe_animation_filled = false;
                     }
                     animation.filter_keyframe_animation_active = false;
                     keyframe_animation_completed = true;

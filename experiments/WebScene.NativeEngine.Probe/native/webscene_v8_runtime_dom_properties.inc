@@ -3676,7 +3676,9 @@
                 }
                 if (self->is_connected(node)) {
                     self->recascade_form_value_selector_transition(
-                        node, previous_value, node.form_control().value);
+                        node, previous_value, node.form_control().value, false);
+                } else {
+                    node.mutable_form_control().user_validity_interacted = false;
                 }
             }
             for (auto* child : node.children) {

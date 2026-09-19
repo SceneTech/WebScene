@@ -1,0 +1,46 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>User validity is live, non-reflected form-control state</title>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<script src="/resources/testdriver.js"></script>
+<script src="/resources/testdriver-vendor.js"></script>
+<style>
+.probe {padding-left:11px;padding-top:13px}
+.probe:user-valid {padding-left:43px}
+.probe:user-invalid {padding-top:61px}
+</style>
+<form id="first"><input id="control" class="probe" required><button type="button">next</button></form>
+<form id="second"></form>
+<script>
+promise_test(async t=>{
+  const first=document.getElementById('first'),second=document.getElementById('second');
+  const control=document.getElementById('control');
+  const snapshot=()=>{const style=getComputedStyle(control);return [
+    control.matches(':valid'),control.matches(':invalid'),
+    control.matches(':user-valid'),control.matches(':user-invalid'),
+    style.paddingLeft,style.paddingTop];};
+  assert_array_equals(snapshot(),[false,true,false,false,'11px','13px'],'initial invalid state is not user-invalid');
+
+  control.value='seed';
+  assert_array_equals(snapshot(),[true,false,false,false,'11px','13px'],'programmatic IDL value does not mark user validity');
+  control.value='';
+  await test_driver.send_keys(control,'x');
+  await test_driver.send_keys(control,'\uE004');
+  assert_array_equals(snapshot(),[true,false,true,false,'43px','13px'],'native input marks user-valid');
+  assert_equals(first.querySelectorAll(':user-valid').length,1,'selector API shares live user-valid state');
+
+  control.value='';
+  assert_array_equals(snapshot(),[false,true,false,true,'11px','61px'],'later IDL value preserves interaction and updates validity');
+  control.removeAttribute('required');
+  assert_array_equals(snapshot(),[true,false,true,false,'43px','13px'],'required removal updates user validity');
+  control.setAttribute('required','');
+  control.remove();
+  assert_true(control.matches(':user-invalid'),'detaching preserves element-owned interaction state');
+  second.appendChild(control);
+  first.reset();
+  assert_true(control.matches(':user-invalid'),'resetting the former owner does not clear reparented state');
+  second.reset();
+  assert_array_equals(snapshot(),[false,true,false,false,'11px','13px'],'current owner reset clears user validity');
+},':user-valid and :user-invalid use native interaction state across value, attribute, lifecycle, and reset transitions');
+</script>

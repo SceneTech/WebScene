@@ -317,20 +317,15 @@ inline bool compound_matches(const Host& host,const dom_node& node,
             } else if (name == "read-only") {
                 if (css::is_read_write(document,node)) return false;
             } else if (name == "valid") {
-                if (!form_control || node.tag == "fieldset" || node.tag == "optgroup"
-                    || node.tag == "option") return false;
-                if (node.attributes.contains("required")) {
-                    if (forms::supports_text_selection(&node)
-                        ? forms::text_value_empty(node)
-                        : !node.attributes.contains("value")
-                            || node.attributes.at("value").empty()) return false;
-                }
+                if (forms::validity_state(node) != forms::simple_validity_state::valid) return false;
             } else if (name == "invalid") {
-                if (!form_control || !node.attributes.contains("required")) return false;
-                if (forms::supports_text_selection(&node)
-                    ? !forms::text_value_empty(node)
-                    : node.attributes.contains("value")
-                        && !node.attributes.at("value").empty()) return false;
+                if (forms::validity_state(node) != forms::simple_validity_state::invalid) return false;
+            } else if (name == "user-valid") {
+                if (!node.form_control().user_validity_interacted
+                    || forms::validity_state(node) != forms::simple_validity_state::valid) return false;
+            } else if (name == "user-invalid") {
+                if (!node.form_control().user_validity_interacted
+                    || forms::validity_state(node) != forms::simple_validity_state::invalid) return false;
             } else if (name == "placeholder-shown") {
                 if (!forms::supports_placeholder_selector(node)
                     || !node.attributes.contains("placeholder")

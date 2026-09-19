@@ -10,6 +10,12 @@ enum class numeric_range_state : uint8_t {
     out_of_range,
 };
 
+enum class simple_validity_state : uint8_t {
+    not_applicable,
+    valid,
+    invalid,
+};
+
 inline bool form_keyword_equals(std::string_view value,std::string_view expected)
     {
         if(value.size()!=expected.size()) return false;
@@ -286,6 +292,22 @@ inline bool text_value_empty(const dom_node& node) {
     }
     const auto attribute=node.attributes.find("value");
     return attribute==node.attributes.end() || attribute->second.empty();
+}
+
+inline simple_validity_state validity_state(const dom_node& node) {
+    const auto form_control = node.tag == "button" || node.tag == "input"
+        || node.tag == "select" || node.tag == "textarea"
+        || node.tag == "option" || node.tag == "optgroup" || node.tag == "fieldset";
+    if (!form_control || node.tag == "fieldset" || node.tag == "optgroup"
+        || node.tag == "option") return simple_validity_state::not_applicable;
+    if (node.attributes.contains("required")) {
+        const auto empty = supports_text_selection(&node)
+            ? text_value_empty(node)
+            : !node.attributes.contains("value")
+                || node.attributes.at("value").empty();
+        if (empty) return simple_validity_state::invalid;
+    }
+    return simple_validity_state::valid;
 }
 
 inline bool supports_placeholder_selector(const dom_node& node) {

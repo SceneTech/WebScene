@@ -286,10 +286,10 @@
                 : pending.locators.size();
             if (pending.next_durable_index >= count) continue;
             const auto index = pending.next_durable_index++;
-            const auto action = exporting
+            const auto action = static_cast<std::uint32_t>(exporting
                 ? WEBSCENE_FILE_GRANT_DURABLE_EXPORT_V2
                 : restoring ? WEBSCENE_FILE_GRANT_DURABLE_RESTORE_V2
-                            : WEBSCENE_FILE_GRANT_DURABLE_REVOKE_V2;
+                            : WEBSCENE_FILE_GRANT_DURABLE_REVOKE_V2);
             webscene_file_grant_durable_request_v2 request{
                 sizeof(request), 2U, ++next_host_request_id, action, 0U,
                 {}, {}, {}, {}};

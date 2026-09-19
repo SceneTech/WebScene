@@ -64,9 +64,10 @@ struct entry_fixture final {
             {sizeof(webscene_file_grant_metadata_v2), 2,
                 kind == WEBSCENE_FILE_PANEL_ENTRY_FILE_V2 ? 7U : 0U,
                 123, kind, 0},
-            kind == WEBSCENE_FILE_PANEL_ENTRY_FILE_V2
-                ? WEBSCENE_FILE_PANEL_GRANT_READ_V2
-                : WEBSCENE_FILE_PANEL_GRANT_ENUMERATE_V2,
+            static_cast<std::uint32_t>(
+                kind == WEBSCENE_FILE_PANEL_ENTRY_FILE_V2
+                    ? WEBSCENE_FILE_PANEL_GRANT_READ_V2
+                    : WEBSCENE_FILE_PANEL_GRANT_ENUMERATE_V2),
             0, {name.data(), name.size()}, {grant.data(), grant.size()}};
     }
 };

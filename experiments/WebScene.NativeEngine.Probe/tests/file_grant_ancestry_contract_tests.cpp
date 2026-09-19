@@ -170,8 +170,9 @@ int main() {
                 && current_lease->view.request_id == 100 + index,
             "ancestry lifecycle lease was lost");
         completion_fixture result{100 + index,
-            index % 2 == 0 ? WEBSCENE_FILE_GRANT_ANCESTRY_SUCCESS_V2
-                           : WEBSCENE_FILE_GRANT_ANCESTRY_NOT_DESCENDANT_V2,
+            static_cast<std::uint32_t>(
+                index % 2 == 0 ? WEBSCENE_FILE_GRANT_ANCESTRY_SUCCESS_V2
+                               : WEBSCENE_FILE_GRANT_ANCESTRY_NOT_DESCENDANT_V2),
             index % 2 == 0 ? std::vector<std::string>{"child"}
                            : std::vector<std::string>{}};
         require(broker.complete(result.completion),

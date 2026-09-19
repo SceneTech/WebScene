@@ -10,6 +10,9 @@ _Static_assert(offsetof(webscene_semantic_node_v1, semantic_id) == 8,
 _Static_assert(offsetof(webscene_semantic_node_v1, role)
         < offsetof(webscene_semantic_node_v1, description),
     "semantic string fields changed order");
+_Static_assert(offsetof(webscene_semantic_node_v1, supported_actions)
+        > offsetof(webscene_semantic_node_v1, description),
+    "semantic node actions must remain additive");
 _Static_assert(WEBSCENE_SEMANTIC_NONE_INDEX_V1 == UINT32_MAX,
     "semantic absent-index sentinel changed");
 _Static_assert(WEBSCENE_SEMANTIC_RELATION_ACTIVE_DESCENDANT_V1 == 5,

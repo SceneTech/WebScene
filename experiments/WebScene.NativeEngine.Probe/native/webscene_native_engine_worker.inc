@@ -590,6 +590,55 @@
                 changed = true;
             }
 #endif
+            std::deque<semantic_action_work_v1> semantic_actions;
+            {
+                std::lock_guard lock(semantic_action_mutex_);
+                constexpr size_t maximum_semantic_action_batch = 64U;
+                const auto count = std::min(
+                    semantic_action_work_.size(), maximum_semantic_action_batch);
+                for (size_t index = 0U; index < count; ++index) {
+                    semantic_action_payload_bytes_ -=
+                        semantic_action_work_.front().request.value.size();
+                    semantic_actions.push_back(
+                        std::move(semantic_action_work_.front()));
+                    semantic_action_work_.pop_front();
+                }
+                semantic_actions_pending_.store(
+                    !semantic_action_work_.empty(), std::memory_order_release);
+            }
+#if defined(WEBSCENE_NATIVE_ENGINE_WITH_V8)
+            for (auto& action : semantic_actions) {
+                const auto snapshot = std::atomic_load_explicit(
+                    &latest_semantic_snapshot_, std::memory_order_acquire);
+                if (!snapshot
+                    || snapshot->snapshot_generation
+                        < action.request.snapshot_generation
+                    || runtime_ == nullptr) {
+                    continue;
+                }
+                const auto target = std::find_if(
+                    snapshot->action_targets.begin(),
+                    snapshot->action_targets.end(),
+                    [&](const auto& candidate) {
+                        return candidate.semantic_id
+                            == action.request.target.semantic_id;
+                    });
+                if (target == snapshot->action_targets.end()) continue;
+                action.request.target = *target;
+                const auto result = runtime_->dispatch_semantic_action_v1(
+                    action.request);
+                if (result
+                    == webscene_native::semantic_action_dispatch_result_v1::failed) {
+                    script_errors_.fetch_add(1U, std::memory_order_relaxed);
+                    set_last_error(runtime_->last_error());
+                } else if (result
+                    == webscene_native::semantic_action_dispatch_result_v1::performed) {
+                    changed = true;
+                    semantic_snapshot_requested_.store(
+                        true, std::memory_order_release);
+                }
+            }
+#endif
             // Treat the latest coalesced viewport as a barrier for pointer work.
             // Avalonia reports pointer coordinates in the newly arranged control,
             // so dispatching queued input against the preceding DOM viewport makes
@@ -1538,7 +1587,8 @@
                 }
             }
 #endif
-            if (semantic_snapshot_requested_.exchange(
+            if (!semantic_actions_pending_.load(std::memory_order_acquire)
+                && semantic_snapshot_requested_.exchange(
                     false,
                     std::memory_order_acq_rel)) {
 #if defined(WEBSCENE_NATIVE_ENGINE_WITH_V8)
@@ -1682,6 +1732,8 @@
                         std::memory_order_acquire)
                     || accessibility_preferences_changed_.load(
                         std::memory_order_acquire)
+                    || semantic_actions_pending_.load(
+                        std::memory_order_acquire)
                     || semantic_snapshot_requested_.load(
                         std::memory_order_acquire);
                 });
@@ -1711,6 +1763,7 @@
         file_grant_release_broker_v2_.retire();
         retire_file_runtime();
 #endif
+        retire_semantic_actions_v1();
         {
             std::lock_guard semantic_lock(semantic_snapshot_mutex_);
             semantic_document_epoch_.fetch_add(1U, std::memory_order_acq_rel);

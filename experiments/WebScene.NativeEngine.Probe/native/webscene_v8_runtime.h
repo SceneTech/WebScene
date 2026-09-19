@@ -466,6 +466,8 @@ public:
     uint32_t current_cursor_kind() const noexcept;
     std::shared_ptr<const semantic_snapshot_data_v1> build_semantic_snapshot_v1(
         uint64_t snapshot_generation);
+    semantic_action_dispatch_result_v1 dispatch_semantic_action_v1(
+        const semantic_action_request_data_v1& request);
     void notify_low_memory();
     void signal_animation_frame(double timestamp_ms);
     bool advance_discrete_wheel_scroll(double timestamp_ms);

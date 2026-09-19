@@ -1,0 +1,31 @@
+{
+  "profile": "webscene-accessibility-semantic-actions-1",
+  "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+  "runtime": "v8",
+  "viewport": {
+    "width": 800,
+    "height": 600,
+    "deviceScaleFactor": 1
+  },
+  "required": [
+    {
+      "path": "contracts/accessibility-semantic-actions-source.html",
+      "type": "contract",
+      "capabilities": [
+        "semantic-focus-and-press-source",
+        "semantic-toggle-source",
+        "semantic-increment-decrement-source",
+        "semantic-value-edit-source",
+        "semantic-utf16-selection-source",
+        "disabled-and-detached-action-retirement"
+      ],
+      "evidence": [
+        "webscene-generation-stamped-semantic-action-abi",
+        "appscene-native-accessibility-action-boundary"
+      ],
+      "reason": "Browser/native source contract for the bounded focus, press, toggle, numeric adjustment, value edit and selection action slice consumed by AppScene native peers. Platform objects and peer implementations remain in AppScene #30."
+    }
+  ],
+  "harnessBlocked": [],
+  "excluded": []
+}

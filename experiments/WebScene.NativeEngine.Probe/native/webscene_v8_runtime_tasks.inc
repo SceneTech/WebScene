@@ -1796,7 +1796,8 @@
 #endif
         const auto callback_count_before = input_callback_invocation_count;
         const auto type_view = std::string_view(type);
-        const auto drag_event = type_view == "dragenter"
+        const auto drag_event = type_view == "dragstart" || type_view == "dragend"
+            || type_view == "dragenter"
             || type_view == "dragover" || type_view == "dragleave"
             || type_view == "drop";
         auto event = create_event_instance(
@@ -1838,6 +1839,12 @@
                 local_context,
                 js_string(isolate, "dataTransfer"),
                 drag_data_transfer_for(target)).Check();
+        } else if (drag_event && active_outbound_drag.has_value()
+            && !active_outbound_drag->transfer.IsEmpty()) {
+            event->Set(
+                local_context,
+                js_string(isolate, "dataTransfer"),
+                active_outbound_drag->transfer.Get(isolate)).Check();
         }
         event->Set(
             local_context,
@@ -3942,6 +3949,7 @@
                     "active-pointer-down");
             }
             pointer_down_target = target;
+            outbound_drag_threshold_crossed = false;
             pointer_down_x = input.x;
             pointer_down_y = input.y;
             types[type_count++] = "pointerdown";
@@ -4027,6 +4035,12 @@
                 pointer_focus_default_prevented = pointer_focus_default_prevented
                     || event_default_prevented;
             }
+        }
+        if (!maybe_begin_outbound_drag(input)) {
+            last_error = "Native outbound drag initiation failed: "
+                + describe_reported_exception(try_catch, local_context);
+            report_input_exception();
+            return false;
         }
         if (input.kind == WEBSCENE_INPUT_WHEEL && !wheel_default_prevented) {
             const auto discrete_wheel =
@@ -4253,6 +4267,7 @@
         if (input.kind == WEBSCENE_INPUT_POINTER_UP) {
             pointer_capture_target = nullptr;
             pointer_down_target = nullptr;
+            outbound_drag_threshold_crossed = false;
             if (pointer_outside) return leave_host();
         }
         if (input.kind == WEBSCENE_INPUT_POINTER_MOVE

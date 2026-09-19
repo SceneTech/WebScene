@@ -1207,6 +1207,12 @@
                     changed = true;
                     continue;
                 }
+                if (auto* drag = std::get_if<
+                        webscene_native::native_outbound_drag_completion>(&request)) {
+                    if (runtime_) runtime_->complete_outbound_drag(*drag);
+                    changed = true;
+                    continue;
+                }
                 if (auto* panel = std::get_if<
                         webscene_native::file_panel_completion_data_v2>(&request)) {
                     if (runtime_) runtime_->complete_file_panel_request(*panel);

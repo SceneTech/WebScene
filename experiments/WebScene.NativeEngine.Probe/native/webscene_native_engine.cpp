@@ -2637,6 +2637,46 @@ void webscene_download_request_release_v1(
     const webscene_download_request_v1* request) {
     delete reinterpret_cast<const webscene_native::native_download_request*>(request);
 }
+const webscene_outbound_drag_request_v1*
+webscene_engine_take_outbound_drag_request_v1(webscene_engine* engine) {
+    if (!engine) return nullptr;
+    auto request = engine->take_outbound_drag_request();
+    if (!request) return nullptr;
+    request->bind();
+    return &request.release()->view;
+}
+void webscene_outbound_drag_request_release_v1(
+    const webscene_outbound_drag_request_v1* request) {
+    delete reinterpret_cast<
+        const webscene_native::native_outbound_drag_request*>(request);
+}
+uint8_t webscene_engine_complete_outbound_drag_v1(
+    webscene_engine* engine,
+    const webscene_outbound_drag_completion_v1* completion) {
+    constexpr uint32_t allowed_operations =
+        WEBSCENE_OUTBOUND_DRAG_OPERATION_COPY_V1
+        | WEBSCENE_OUTBOUND_DRAG_OPERATION_LINK_V1
+        | WEBSCENE_OUTBOUND_DRAG_OPERATION_MOVE_V1;
+    constexpr uint32_t allowed_modifiers =
+        WEBSCENE_INPUT_POINTER_MODIFIER_SHIFT
+        | WEBSCENE_INPUT_POINTER_MODIFIER_CONTROL
+        | WEBSCENE_INPUT_POINTER_MODIFIER_ALT
+        | WEBSCENE_INPUT_POINTER_MODIFIER_META;
+    if (engine == nullptr || completion == nullptr
+        || completion->struct_size < sizeof(*completion)
+        || completion->version != 1U || completion->request_id == 0U
+        || completion->document_generation == 0U
+        || completion->status < WEBSCENE_OUTBOUND_DRAG_COMPLETED_V1
+        || completion->status > WEBSCENE_OUTBOUND_DRAG_FAILED_V1
+        || (completion->selected_operation & ~allowed_operations) != 0U
+        || (completion->modifiers & ~allowed_modifiers) != 0U
+        || !std::isfinite(completion->x) || !std::isfinite(completion->y)
+        || (completion->status != WEBSCENE_OUTBOUND_DRAG_COMPLETED_V1
+            && completion->selected_operation != 0U)) return 0U;
+    webscene_native::native_outbound_drag_completion owned;
+    owned.value = *completion;
+    return engine->complete_outbound_drag(std::move(owned)) ? 1U : 0U;
+}
 uint8_t webscene_engine_complete_file_request_v1(webscene_engine* engine,
     uint64_t id, uint32_t status, const webscene_file_data_v1* files,
     size_t count, const char* error) {

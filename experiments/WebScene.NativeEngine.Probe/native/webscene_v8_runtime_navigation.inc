@@ -74,6 +74,8 @@
     void retire_document_realm(v8::Local<v8::Context> previous_context)
     {
         active_drag_session.reset();
+        active_outbound_drag.reset();
+        outbound_drag_threshold_crossed = false;
         std::vector<v8::Local<v8::Context>> retired_contexts{previous_context};
         retired_contexts.reserve(actual_frame_contexts.size() + 1U);
         for (auto& [id, frame] : actual_frame_contexts) {
@@ -143,6 +145,7 @@
         { std::lock_guard lock(host_request_mutex); host_requests.clear(); }
         { std::lock_guard lock(host_request_mutex); typed_host_requests.clear(); }
         { std::lock_guard lock(host_request_mutex); download_requests.clear(); }
+        { std::lock_guard lock(host_request_mutex); outbound_drag_requests.clear(); }
         object_url_file_data.clear();
         release_owned_binary_object_urls();
         object_urls.clear();

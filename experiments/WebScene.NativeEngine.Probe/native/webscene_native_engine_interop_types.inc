@@ -436,6 +436,7 @@ using script_work_request =
         webscene_native::file_grant_remove_completion_data_v2,
         webscene_native::native_host_completion,
         webscene_native::native_drag_event,
+        webscene_native::native_outbound_drag_completion,
         url_request,
         interop_evaluate_work_v3,
         interop_invoke_work_v3,

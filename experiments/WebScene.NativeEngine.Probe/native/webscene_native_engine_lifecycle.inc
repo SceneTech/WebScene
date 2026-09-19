@@ -187,6 +187,19 @@
         signal_worker();
         return true;
     }
+    bool complete_outbound_drag(
+        webscene_native::native_outbound_drag_completion completion) {
+#if defined(WEBSCENE_NATIVE_ENGINE_WITH_V8)
+        std::lock_guard lock(script_mutex_);
+        if (script_work_.size() >= 1024U) return false;
+        script_work_.emplace_back(std::move(completion));
+        signal_worker();
+        return true;
+#else
+        static_cast<void>(completion);
+        return false;
+#endif
+    }
     bool dispatch_drag(webscene_native::native_drag_event event) {
 #if defined(WEBSCENE_NATIVE_ENGINE_WITH_V8)
         std::lock_guard lock(script_mutex_);
@@ -301,6 +314,14 @@
 #if defined(WEBSCENE_NATIVE_ENGINE_WITH_V8)
         std::lock_guard lock(file_runtime_mutex_);
         if (file_runtime_ready_) return runtime_->take_download_request();
+#endif
+        return {};
+    }
+    std::unique_ptr<webscene_native::native_outbound_drag_request>
+    take_outbound_drag_request() {
+#if defined(WEBSCENE_NATIVE_ENGINE_WITH_V8)
+        std::lock_guard lock(file_runtime_mutex_);
+        if (file_runtime_ready_) return runtime_->take_outbound_drag_request();
 #endif
         return {};
     }

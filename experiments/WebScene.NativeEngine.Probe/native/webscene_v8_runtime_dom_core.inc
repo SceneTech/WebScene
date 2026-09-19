@@ -5855,6 +5855,18 @@
     }
 
     void clear_selections_containing(const dom_node &subtree) {
+      if (active_outbound_drag.has_value()) {
+        auto* source = document.find_by_native_id(
+            active_outbound_drag->source_node_id);
+        if (source != nullptr && subtree_contains(subtree, source)) {
+          active_outbound_drag.reset();
+          std::lock_guard lock(host_request_mutex);
+          std::erase_if(outbound_drag_requests, [&](const auto& request) {
+            return request != nullptr
+                && request->view.source_node_id == source->id;
+          });
+        }
+      }
       for (auto &[root_id, selection] : window_selections) {
         static_cast<void>(root_id);
         selection.text_generation = std::numeric_limits<uint64_t>::max();

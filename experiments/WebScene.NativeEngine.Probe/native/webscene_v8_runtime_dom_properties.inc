@@ -2578,7 +2578,13 @@
         const auto tab_index = value->Int32Value(
             info.GetIsolate()->GetCurrentContext()).FromMaybe(0);
         self->record_html_attribute_feature("tabindex", "dom-property-set");
-        node->attributes["tabindex"] = std::to_string(tab_index);
+        const auto serialized = std::to_string(tab_index);
+        const auto previous = node->attributes.find("tabindex");
+        if (previous != node->attributes.end()
+            && previous->second == serialized) {
+            return;
+        }
+        node->attributes["tabindex"] = serialized;
         self->recascade_connected_subtree(*node, "style.cssText");
     }
 

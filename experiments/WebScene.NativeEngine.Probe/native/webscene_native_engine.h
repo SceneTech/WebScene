@@ -130,7 +130,8 @@ typedef enum webscene_semantic_relationship_kind_v1 {
     WEBSCENE_SEMANTIC_RELATION_DESCRIBED_BY_V1 = 2,
     WEBSCENE_SEMANTIC_RELATION_CONTROLS_V1 = 3,
     WEBSCENE_SEMANTIC_RELATION_OWNS_V1 = 4,
-    WEBSCENE_SEMANTIC_RELATION_ACTIVE_DESCENDANT_V1 = 5
+    WEBSCENE_SEMANTIC_RELATION_ACTIVE_DESCENDANT_V1 = 5,
+    WEBSCENE_SEMANTIC_RELATION_ERROR_MESSAGE_V1 = 6
 } webscene_semantic_relationship_kind_v1;
 
 typedef enum webscene_semantic_action_kind_v1 {

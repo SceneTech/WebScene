@@ -3442,6 +3442,30 @@
         info.GetReturnValue().Set(js_dom_string(info.GetIsolate(),message));
     }
 
+    static void get_labels(
+        v8::Local<v8::Name>,
+        const v8::PropertyCallbackInfo<v8::Value>& info)
+    {
+        auto* self=current(info.GetIsolate());
+        auto* node=unwrap_node(info.Holder());
+        if(self==nullptr || node==nullptr) return;
+        info.GetReturnValue().Set(self->label_collection_for(*node));
+    }
+
+    static void get_element_internals_labels(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* self=current(info.GetIsolate());
+        auto* node=info.Length()>0 && info[0]->IsObject()
+            ? unwrap_node(info[0].As<v8::Object>()):nullptr;
+        if(self==nullptr || node==nullptr
+            || !node->form_control().form_associated_custom_element) {
+            info.GetReturnValue().Set(v8::Null(info.GetIsolate()));
+            return;
+        }
+        info.GetReturnValue().Set(self->label_collection_for(*node));
+    }
+
     static void get_will_validate(
         v8::Local<v8::Name>,
         const v8::PropertyCallbackInfo<v8::Value>& info)
@@ -3469,9 +3493,12 @@
         if(!info[0]->ToString(info.GetIsolate()->GetCurrentContext())
                 .ToLocal(&converted)) return;
         auto message=to_utf8(info.GetIsolate(),converted);
+        const auto message_changed=
+            node->form_control().custom_validation_message!=message;
         const auto selector_state_before=forms::validity_state(
             self->document,*node);
         node->mutable_form_control().custom_validation_message=std::move(message);
+        if(message_changed) self->document.mark_dirty();
         const auto selector_state_after=forms::validity_state(
             self->document,*node);
         if(self->document.validation_message_target_id()==node->id)
@@ -3502,6 +3529,9 @@
             control.validation_anchor_id=0U;
             control.user_validity_interacted=false;
         }
+        // Labelability and semantic relationships change even when the
+        // element remains constraint-valid on both sides of registration.
+        self->document.mark_dirty();
         const auto selector_state_after=forms::validity_state(
             self->document,*node);
         if(selector_state_before==selector_state_after) return;
@@ -3534,6 +3564,7 @@
                 anchor!=nullptr && self->subtree_contains(*node,anchor))
                 control.validation_anchor_id=anchor->id;
         }
+        self->document.mark_dirty();
         const auto selector_state_after=forms::validity_state(
             self->document,*node);
         if(self->document.validation_message_target_id()==node->id)

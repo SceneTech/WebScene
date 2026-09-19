@@ -17,6 +17,8 @@ _Static_assert(WEBSCENE_SEMANTIC_NONE_INDEX_V1 == UINT32_MAX,
     "semantic absent-index sentinel changed");
 _Static_assert(WEBSCENE_SEMANTIC_RELATION_ACTIVE_DESCENDANT_V1 == 5,
     "semantic relationship ABI changed");
+_Static_assert(WEBSCENE_SEMANTIC_RELATION_ERROR_MESSAGE_V1 == 6,
+    "semantic error-message relationship ABI changed");
 
 int main(void)
 {

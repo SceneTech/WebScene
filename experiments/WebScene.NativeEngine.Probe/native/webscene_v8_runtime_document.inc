@@ -1092,6 +1092,9 @@
         self->finish_input_value_attribute_change(
             *node, previous_live_value, std::nullopt);
         self->recascade_radio_group_selector_state_changes(radio_group_state);
+        if(!namespace_uri || namespace_uri->empty())
+            self->recascade_form_attribute_dependencies(
+                *node,name,old_value,std::nullopt);
         if((!namespace_uri || namespace_uri->empty()) && node->tag=="option"
             && (name=="selected" || name=="value"))
             self->recascade_containing_select_validity(*node);

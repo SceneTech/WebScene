@@ -239,6 +239,8 @@
 #endif
         frame_documents.clear();
         frame_windows.clear();
+        cross_origin_frame_locations.clear();
+        frame_security_origins.clear();
         frame_window_scroll_offsets.clear();
         actual_frame_windows.clear();
         actual_frame_contexts.clear();

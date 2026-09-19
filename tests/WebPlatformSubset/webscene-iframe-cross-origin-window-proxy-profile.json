@@ -1,0 +1,40 @@
+{
+  "profile": "webscene-iframe-cross-origin-window-proxy-1",
+  "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+  "runtime": "v8",
+  "viewport": {
+    "width": 800,
+    "height": 600,
+    "deviceScaleFactor": 1
+  },
+  "required": [
+    {
+      "path": "contracts/iframe-cross-origin-window-proxy.html",
+      "type": "contract",
+      "capabilities": [
+        "nested-cross-origin-windowproxy-identity",
+        "nested-cross-origin-windowproxy-allowed-surface",
+        "nested-cross-origin-windowproxy-security-errors",
+        "nested-cross-origin-location-navigation",
+        "nested-windowproxy-origin-transition-retirement"
+      ],
+      "evidence": [
+        "wpt-cross-origin-objects-2c705104",
+        "wpt-windowproxy-2c705104",
+        "native-iframe-cross-origin-window-proxy"
+      ],
+      "reason": "Pinned-WPT-derived contract for the restricted cross-origin WindowProxy surface, stable browsing-context identity, Location navigation and repeated same-origin/opaque commits."
+    }
+  ],
+  "harnessBlocked": [],
+  "excluded": [
+    {
+      "path": "html/browsers/origin/cross-origin-objects/cross-origin-objects.html",
+      "reason": "The upstream matrix depends on multiple hosted origins, popup creation and broad Window/Location descriptors. This contract isolates nested contexts and the operations implemented by the native frame navigation path."
+    },
+    {
+      "path": "html/browsers/the-window-object/windowproxy.html",
+      "reason": "The upstream WindowProxy suite covers top-level auxiliary browsing contexts. This contract retains its stable identity boundary across nested origin transitions."
+    }
+  ]
+}

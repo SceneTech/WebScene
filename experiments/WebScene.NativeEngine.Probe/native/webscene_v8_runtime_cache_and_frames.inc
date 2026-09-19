@@ -2624,6 +2624,10 @@
             && !frame_source->second.empty()
             ? resolve_resource_url(frame_source->second, parent_base)
             : parent_base;
+        // Commit the replacement origin before creating its realm. The
+        // outgoing realm remains authoritative throughout beforeunload and
+        // unload, and the new realm cannot inherit access from reflected src.
+        commit_iframe_security_origin(frame, frame_navigation_address);
         const auto preparation = take_frame_preparation(frame, html);
         std::vector<std::string> stylesheets;
         std::vector<frame_script> scripts;
@@ -2766,9 +2770,12 @@
         if (iframe_owner_allows_same_origin_access(frame)) {
             local_frame_context->SetSecurityToken(context.Get(isolate)->GetSecurityToken());
         } else {
+            const auto frame_origin = active_iframe_security_origin(frame);
             local_frame_context->SetSecurityToken(js_string(
                 isolate,
-                ("webscene-opaque-sandbox-" + std::to_string(frame.id)).c_str()));
+                (frame_origin == "null" || frame_origin.empty()
+                    ? "webscene-opaque-sandbox-" + std::to_string(frame.id)
+                    : "webscene-frame-origin:" + frame_origin).c_str()));
         }
         local_frame_context->SetAlignedPointerInEmbedderData(
             runtime_context_embedder_slot,

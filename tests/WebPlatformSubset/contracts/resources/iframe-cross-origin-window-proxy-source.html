@@ -1,0 +1,10 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Restricted WindowProxy source</title>
+<body>
+<main id="realm">nested realm</main>
+<script>
+  globalThis.__windowProxyRealmMarker =
+    (globalThis.__windowProxyRealmMarker || 0) + 1;
+</script>
+</body>

@@ -1,0 +1,88 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Restricted cross-origin nested WindowProxy contract</title>
+<body>
+<script>
+  const state = globalThis.__webSceneWptState = {
+    complete: false, harness: null, results: [], errors: [], diagnostics: []
+  };
+  const record = (name, condition, detail = null) => state.results.push({
+    name, status: condition ? "PASS" : "FAIL",
+    message: condition ? null : String(detail || "Contract failed"), stack: null
+  });
+  const finish = error => {
+    if (state.complete) return;
+    if (error) state.errors.push(String(error && error.stack || error));
+    const failed = state.results.find(result => result.status !== "PASS");
+    state.harness = error || failed
+      ? { status: 1, message: error ? String(error) : failed.message, stack: null }
+      : { status: 0, message: null, stack: null };
+    state.complete = true;
+  };
+  const securityError = callback => {
+    try { callback(); return false; }
+    catch (error) { return error && error.name === "SecurityError"; }
+  };
+
+  const frame = document.createElement("iframe");
+  frame.setAttribute("sandbox", "allow-scripts");
+  frame.src = "resources/iframe-cross-origin-window-proxy-source.html";
+  let proxy = null;
+  let phase = 0;
+  frame.addEventListener("load", () => {
+    try {
+      ++phase;
+      if (phase === 1) {
+        record("opaque nested documents expose a stable restricted WindowProxy",
+          proxy !== null && frame.contentWindow === proxy
+            && frame.contentDocument === null);
+        record("the cross-origin identity and hierarchy surface remains available",
+          proxy.window === proxy && proxy.self === proxy && proxy.frames === proxy
+            && proxy.parent === window && proxy.top === window
+            && proxy.opener === null && proxy.closed === false
+            && proxy.length === 0);
+        record("browser cross-origin operations remain callable",
+          typeof proxy.postMessage === "function"
+            && typeof proxy.focus === "function"
+            && typeof proxy.blur === "function"
+            && typeof proxy.close === "function"
+            && typeof proxy.location.replace === "function");
+        record("privileged Window and Location reads throw SecurityError",
+          securityError(() => proxy.document)
+            && securityError(() => proxy.frameElement)
+            && securityError(() => proxy.__windowProxyRealmMarker)
+            && securityError(() => proxy.location.href));
+        record("cross-origin expandos cannot bypass the restricted surface",
+          securityError(() => { proxy.__windowProxyEscape = true; }));
+        proxy.postMessage({ allowed: true }, "*");
+        frame.setAttribute("sandbox", "allow-same-origin allow-scripts");
+        proxy.location.replace(
+          "resources/iframe-cross-origin-window-proxy-source.html");
+        return;
+      }
+      if (phase === 2) {
+        record("same-origin commit preserves the WindowProxy and admits its realm",
+          frame.contentWindow === proxy && frame.contentDocument !== null
+            && proxy.document === frame.contentDocument
+            && proxy.__windowProxyRealmMarker === 1);
+        frame.setAttribute("sandbox", "allow-scripts");
+        proxy.location = "resources/iframe-cross-origin-window-proxy-source.html";
+        return;
+      }
+      record("a later opaque commit restricts the same WindowProxy again",
+        frame.contentWindow === proxy && frame.contentDocument === null
+          && securityError(() => proxy.__windowProxyRealmMarker)
+          && securityError(() => proxy.document));
+      state.diagnostics.push({ phases: phase, stable: frame.contentWindow === proxy });
+      frame.remove();
+      finish();
+    } catch (error) {
+      frame.remove();
+      finish(error);
+    }
+  });
+  document.body.appendChild(frame);
+  proxy = frame.contentWindow;
+  setTimeout(() => finish(new Error("restricted WindowProxy timed out")), 3000);
+</script>
+</body>

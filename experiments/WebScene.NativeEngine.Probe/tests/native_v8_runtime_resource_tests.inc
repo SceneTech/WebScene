@@ -645,8 +645,13 @@ void test_same_origin_iframe_navigation_document_replacement()
           denied.setAttribute('sandbox', 'allow-scripts');
           denied.src = './fake.html?id=markdown-preview';
           document.body.appendChild(denied);
-          __iframeLifecycleGate.opaqueDenied =
-            denied.contentWindow === null && denied.contentDocument === null;
+          const deniedProxy = denied.contentWindow;
+          let opaqueWindowDenied = false;
+          try { void deniedProxy.document; }
+          catch (error) { opaqueWindowDenied = error?.name === 'SecurityError'; }
+          __iframeLifecycleGate.opaqueDenied = deniedProxy !== null
+            && denied.contentDocument === null && opaqueWindowDenied
+            && typeof deniedProxy.postMessage === 'function';
           denied.remove();
 
           const crossOrigin = document.createElement('iframe');
@@ -655,9 +660,14 @@ void test_same_origin_iframe_navigation_document_replacement()
           crossOrigin.src = 'https://cross-origin.test/fake.html';
           document.body.appendChild(crossOrigin);
           await new Promise(resolve => setTimeout(resolve, 150));
-          __iframeLifecycleGate.crossOriginDenied =
-            crossOrigin.contentWindow === null && crossOrigin.contentDocument === null
-              && globalThis.__crossOriginEscape === false;
+          const crossOriginProxy = crossOrigin.contentWindow;
+          let crossOriginWindowDenied = false;
+          try { void crossOriginProxy.document; }
+          catch (error) { crossOriginWindowDenied = error?.name === 'SecurityError'; }
+          __iframeLifecycleGate.crossOriginDenied = crossOriginProxy !== null
+            && crossOrigin.contentDocument === null && crossOriginWindowDenied
+            && typeof crossOriginProxy.postMessage === 'function'
+            && globalThis.__crossOriginEscape === false;
           crossOrigin.remove();
 
           for (let cycle = 0; cycle < 100; ++cycle) {
@@ -770,6 +780,137 @@ void test_same_origin_iframe_navigation_document_replacement()
               << "ms heapBefore=" << memory_before.v8_used_heap_bytes
               << " heapAfter=" << memory_after.v8_used_heap_bytes
               << " rssBefore=" << rss_before << " rssAfter=" << rss_after << '\n';
+    webscene_engine_destroy(engine);
+}
+
+void test_restricted_cross_origin_nested_window_proxy()
+{
+    constexpr std::string_view address{
+        "https://window-proxy.test/index.html"};
+    resource_server server{.content = {
+        {std::string{address},
+            "<!doctype html><title>restricted WindowProxy</title><body></body>"},
+        {"https://other-window-proxy.test/cross.html",
+            "<!doctype html><body><script>"
+            "globalThis.__crossSecret='cross';"
+            "addEventListener('message',event=>globalThis.__received=event.data);"
+            "</script></body>"},
+        {"https://window-proxy.test/same.html",
+            "<!doctype html><body><main id='same'>same</main><script>"
+            "globalThis.__sameSecret='same';"
+            "</script></body>"}
+    }};
+    webscene_engine_options options{};
+    options.struct_size = sizeof(options);
+    options.resource_load_callback = load_test_resource;
+    options.resource_load_user_data = &server;
+    auto* engine = webscene_engine_create_with_options(&options);
+    require(engine != nullptr, "restricted WindowProxy engine creation failed");
+    require(webscene_engine_load_url(engine, address.data(), address.size()) != 0U,
+        "restricted WindowProxy outer document failed");
+    require(evaluate_until_equals(
+            engine,
+            "location.href",
+            "cross-origin-window-proxy-ready.js",
+            R"("https://window-proxy.test/index.html")",
+            2'500) == R"("https://window-proxy.test/index.html")",
+        "restricted WindowProxy outer document did not become ready");
+
+    execute(engine, R"JS(
+      (() => {
+        const frame = document.createElement('iframe');
+        frame.setAttribute('sandbox', 'allow-same-origin allow-scripts');
+        frame.src = 'https://other-window-proxy.test/cross.html';
+        document.body.appendChild(frame);
+        globalThis.__restrictedProxy = {
+          frame, proxy:frame.contentWindow, initialDocument:frame.contentDocument
+        };
+      })();
+    )JS", "cross-origin-window-proxy-create.js");
+    require(evaluate_until_equals(
+            engine,
+            "__restrictedProxy.frame.contentDocument === null",
+            "cross-origin-window-proxy-committed.js",
+            "true",
+            2'500) == "true",
+        "cross-origin frame did not commit its restricted origin");
+    const auto restricted = evaluate(engine, R"JS((() => {
+      const {frame,proxy}=__restrictedProxy;
+      const denied=[];
+      for(const name of ['document','frameElement','getComputedStyle','__crossSecret']){
+        try{ void proxy[name]; denied.push(false); }
+        catch(error){ denied.push(error?.name==='SecurityError'); }
+      }
+      let hrefDenied=false, descriptorDenied=false, mutationDenied=false;
+      try{ void proxy.location.href; }catch(error){ hrefDenied=error?.name==='SecurityError'; }
+      try{ Object.getOwnPropertyDescriptor(proxy,'document'); }
+      catch(error){ descriptorDenied=error?.name==='SecurityError'; }
+      try{ proxy.__escape=true; }
+      catch(error){ mutationDenied=error?.name==='SecurityError'; }
+      proxy.postMessage('allowed','*');
+      __restrictedProxy.location=proxy.location;
+      return {
+        stable:frame.contentWindow===proxy,
+        initialInherited:__restrictedProxy.initialDocument!==null,
+        documentHidden:frame.contentDocument===null,
+        identities:proxy.window===proxy && proxy.self===proxy && proxy.frames===proxy,
+        hierarchy:proxy.parent===window && proxy.top===window && proxy.opener===null,
+        operations:[typeof proxy.postMessage,typeof proxy.focus,typeof proxy.blur,
+          typeof proxy.close,typeof proxy.location.replace].join(',')
+          ==='function,function,function,function,function',
+        state:proxy.closed===false && proxy.length===0,
+        denied:denied.every(Boolean),hrefDenied,descriptorDenied,mutationDenied
+      };
+    })())JS", "cross-origin-window-proxy-restrictions.js");
+    require(restricted ==
+            R"({"stable":true,"initialInherited":true,"documentHidden":true,"identities":true,"hierarchy":true,"operations":true,"state":true,"denied":true,"hrefDenied":true,"descriptorDenied":true,"mutationDenied":true})",
+        "restricted cross-origin WindowProxy surface diverged: " + restricted);
+
+    execute(engine, R"JS(
+      __restrictedProxy.proxy.location = 'https://window-proxy.test/same.html';
+    )JS", "cross-origin-window-proxy-navigate-same.js");
+    require(evaluate_until_equals(
+            engine,
+            "__restrictedProxy.frame.contentDocument?.querySelector('#same')?.textContent",
+            "cross-origin-window-proxy-same-commit.js",
+            R"("same")",
+            2'500) == R"("same")",
+        "restricted Location assignment did not commit the same-origin document");
+    require(evaluate(engine, R"JS((() => {
+      const {frame,proxy,location}=__restrictedProxy;
+      let staleLocationDenied=false;
+      try{ void location.href; }
+      catch(error){ staleLocationDenied=error?.name==='SecurityError'; }
+      return frame.contentWindow===proxy && frame.contentDocument!==null
+        && proxy.document===frame.contentDocument && proxy.__sameSecret==='same'
+        && staleLocationDenied;
+    })())JS", "cross-origin-window-proxy-same-result.js") == "true",
+        "same-origin commit did not preserve proxy identity or retire restricted references");
+
+    execute(engine, R"JS(
+      __restrictedProxy.frame.src='https://other-window-proxy.test/cross.html';
+    )JS", "cross-origin-window-proxy-renavigate.js");
+    require(evaluate_until_equals(
+            engine,
+            "__restrictedProxy.frame.contentDocument === null",
+            "cross-origin-window-proxy-renavigate-commit.js",
+            "true",
+            2'500) == "true",
+        "second cross-origin navigation did not restore restricted access");
+    require(evaluate(engine, R"JS((() => {
+      const {frame,proxy}=__restrictedProxy;
+      let staleRealmDenied=false;
+      try{ void proxy.__sameSecret; }
+      catch(error){ staleRealmDenied=error?.name==='SecurityError'; }
+      frame.remove();
+      let detachedDenied=false;
+      try{ void proxy.document; }
+      catch(error){ detachedDenied=error?.name==='SecurityError'; }
+      proxy.postMessage('discarded','*');
+      return frame.contentWindow===null && proxy.closed===true
+        && staleRealmDenied && detachedDenied;
+    })())JS", "cross-origin-window-proxy-retirement.js") == "true",
+        "cross-origin re-navigation or detached proxy retirement diverged");
     webscene_engine_destroy(engine);
 }
 
@@ -1042,10 +1183,14 @@ void test_nested_window_find_selection() {
               cross.setAttribute('sandbox', 'allow-same-origin allow-scripts');
               cross.src = 'https://cross-origin-find.test/fake.html';
               document.body.appendChild(cross);
-              state.failClosed = opaque.contentWindow === null
-                && opaque.contentDocument === null
-                && cross.contentWindow === null
-                && cross.contentDocument === null;
+              const opaqueProxy = opaque.contentWindow;
+              const crossProxy = cross.contentWindow;
+              let opaqueDenied = false;
+              try { void opaqueProxy.document; }
+              catch (error) { opaqueDenied = error?.name === 'SecurityError'; }
+              state.failClosed = opaqueProxy !== null
+                && opaque.contentDocument === null && opaqueDenied
+                && crossProxy !== null && cross.contentDocument !== null;
               opaque.remove(); cross.remove();
               state.complete = true;
             } catch (error) { state.error = String(error && error.stack || error); state.complete = true; }
@@ -1341,8 +1486,11 @@ void test_nested_window_focus_ownership() {
       document.body.appendChild(cross);
       const result={
         detached:document.activeElement===document.body && !doc.hasFocus(),
-        failClosed:opaque.contentWindow===null && opaque.contentDocument===null
-          && cross.contentWindow===null && cross.contentDocument===null
+        failClosed:(()=>{const opaqueProxy=opaque.contentWindow;
+          let denied=false;try{void opaqueProxy.document;}
+          catch(error){denied=error?.name==='SecurityError';}
+          return opaqueProxy!==null && opaque.contentDocument===null && denied
+            && cross.contentWindow!==null && cross.contentDocument!==null;})()
       };
       opaque.remove(); cross.remove();
       return result;

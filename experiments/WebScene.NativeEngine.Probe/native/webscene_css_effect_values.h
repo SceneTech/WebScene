@@ -21,6 +21,40 @@ inline std::string ascii_lower(std::string_view value)
     return result;
 }
 
+inline std::vector<std::string> split_css_image_layers(std::string_view value)
+{
+    std::vector<std::string> result;
+    size_t start = 0U;
+    size_t depth = 0U;
+    char quote = '\0';
+    for (size_t index = 0U; index <= value.size(); ++index) {
+        const auto character = index < value.size() ? value[index] : ',';
+        if (quote != '\0') {
+            if (character == '\\' && index + 1U < value.size()) ++index;
+            else if (character == quote) quote = '\0';
+            continue;
+        }
+        if (character == '\'' || character == '"') quote = character;
+        else if (character == '(') ++depth;
+        else if (character == ')' && depth > 0U) --depth;
+        else if (character == ',' && depth == 0U) {
+            auto layer = value.substr(start, index - start);
+            while (!layer.empty()
+                && std::isspace(static_cast<unsigned char>(layer.front()))) {
+                layer.remove_prefix(1U);
+            }
+            while (!layer.empty()
+                && std::isspace(static_cast<unsigned char>(layer.back()))) {
+                layer.remove_suffix(1U);
+            }
+            if (layer.empty()) return {};
+            result.emplace_back(layer);
+            start = index + 1U;
+        }
+    }
+    return result;
+}
+
 inline bool is_effect_property(std::string_view name) noexcept
 {
     return name == "mask-image" || name == "mask-size" || name == "mask-position"

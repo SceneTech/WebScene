@@ -774,6 +774,12 @@
             self->notify_custom_element_attribute(*node, name, old_value, value);
             return;
         }
+        if (name == "id"
+            && node->id_attribute == value
+            && node->attributes.contains("id")) {
+            self->notify_custom_element_attribute(*node, name, old_value, value);
+            return;
+        }
         node->attributes[name] = value;
         if (name == "src" && node->tag == "iframe") {
             self->begin_iframe_navigation(*node);

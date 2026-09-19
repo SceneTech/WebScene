@@ -1635,6 +1635,87 @@ void test_custom_highlight_registry_contract(webscene_engine* engine)
         "Custom Highlight registry contract regressed: " + result);
 }
 
+void test_custom_highlight_retained_paint_contract(webscene_engine* engine)
+{
+    resize(engine, 640, 240, 7431U);
+    const auto result = evaluate(engine, R"JS(
+        (() => {
+          document.body.innerHTML = `
+            <style>
+              :root { --find-background: #123456; }
+              ::highlight(chat-find-other-match) {
+                background-color: var(--find-background);
+                color: #abcdef;
+              }
+              ::highlight(chat-find-current-match) {
+                background-color: #cc3300;
+                color: #102030;
+              }
+            </style>
+            <p id="highlight-paint" style="font:16px Arial;margin:0">alpha beta</p>`;
+          const text = document.getElementById('highlight-paint').firstChild;
+          const broad = new Range();
+          broad.setStart(text, 1);
+          broad.setEnd(text, 9);
+          const current = new Range();
+          current.setStart(text, 2);
+          current.setEnd(text, 5);
+          const otherHighlight = new Highlight(broad);
+          otherHighlight.priority = 1;
+          const currentHighlight = new Highlight(current);
+          currentHighlight.priority = 10;
+          CSS.highlights.set('chat-find-other-match', otherHighlight);
+          CSS.highlights.set('chat-find-current-match', currentHighlight);
+          return JSON.stringify({
+            names: [...CSS.highlights.keys()],
+            priorities: [otherHighlight.priority, currentHighlight.priority]
+          });
+        })()
+    )JS", "native-custom-highlight-retained-paint.js");
+    require(
+        result == R"({"names":["chat-find-other-match","chat-find-current-match"],"priorities":[1,10]})",
+        "Custom Highlight paint setup regressed: " + result);
+
+    webscene_engine_request_scene_checkpoint(engine);
+    auto broad_background = false;
+    auto current_background = false;
+    auto broad_foreground = false;
+    auto current_foreground = false;
+    auto broad_background_index = uint32_t{};
+    auto current_background_index = uint32_t{};
+    for (auto attempt = 0; attempt < 100; ++attempt) {
+        const auto* scene = webscene_engine_acquire_latest_scene(engine);
+        if (scene != nullptr) {
+            for (uint32_t index = 0; index < scene->header.command_count; ++index) {
+                const auto& command = scene->commands[index];
+                if (command.kind == 2U && command.rgba == 0x123456FFU) {
+                    broad_background = command.width > 0.0F;
+                    broad_background_index = index;
+                }
+                if (command.kind == 2U && command.rgba == 0xCC3300FFU) {
+                    current_background = command.width > 0.0F;
+                    current_background_index = index;
+                }
+                if (command.kind == 3U && command.rgba == 0xABCDEFFFU)
+                    broad_foreground = command.width > 0.0F;
+                if (command.kind == 3U && command.rgba == 0x102030FFU)
+                    current_foreground = command.width > 0.0F;
+            }
+            webscene_scene_acknowledge(scene);
+            webscene_scene_release(scene);
+        }
+        if (broad_background && current_background
+            && broad_foreground && current_foreground) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    require(broad_background && current_background,
+        "Custom Highlight backgrounds were absent from the retained scene");
+    require(broad_foreground && current_foreground,
+        "Custom Highlight foreground ranges were absent from the retained scene");
+    require(broad_background_index < current_background_index,
+        "higher-priority Custom Highlight did not paint after the lower priority");
+}
+
 void test_custom_element_mutation_reactions_are_pay_for_use(webscene_engine* engine)
 {
     const auto result = evaluate(engine, R"JS(

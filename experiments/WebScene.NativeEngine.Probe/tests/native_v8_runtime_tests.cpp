@@ -1396,6 +1396,7 @@ int main()
     test_contextual_fragment_exposes_parent_node_members(engine);
     test_live_range_boundary_contract(engine);
     test_custom_highlight_registry_contract(engine);
+    test_custom_highlight_retained_paint_contract(engine);
     test_custom_element_mutation_reactions_are_pay_for_use(engine);
     test_autonomous_custom_element_lifecycle(engine);
     test_shadow_dom_composed_runtime_geometry(engine);

@@ -39,6 +39,32 @@ inline int split_pseudo_element_selector(const std::string& selector, std::strin
         return split_suffix(":after", 2);
     }
 
+inline bool split_custom_highlight_selector(
+    std::string_view selector,
+    std::string& origin,
+    std::string& name)
+{
+    constexpr auto prefix = std::string_view{"::highlight("};
+    const auto marker = selector.rfind(prefix);
+    if (marker == std::string_view::npos || !selector.ends_with(')')) return false;
+    const auto raw_name = trim_value(
+        selector.substr(marker + prefix.size(), selector.size() - marker - prefix.size() - 1U));
+    if (raw_name.empty()) return false;
+    const auto valid_start = [](unsigned char value) {
+        return std::isalpha(value) != 0 || value == '_' || value == '-';
+    };
+    const auto valid_rest = [&](unsigned char value) {
+        return valid_start(value) || std::isdigit(value) != 0;
+    };
+    if (!valid_start(static_cast<unsigned char>(raw_name.front()))
+        || !std::all_of(raw_name.begin() + 1U, raw_name.end(), [&](char value) {
+            return valid_rest(static_cast<unsigned char>(value));
+        })) return false;
+    origin = trim_value(selector.substr(0U, marker));
+    name = raw_name;
+    return true;
+}
+
 template<typename Decision,typename Resolved>
 void apply_details_content_declaration(
     dom_node& node,

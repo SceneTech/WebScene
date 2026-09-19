@@ -1311,6 +1311,13 @@
   ],
   "candidate": [
     {
+      "path": "contracts/css-custom-highlight-paint-code-oss.html",
+      "type": "testharness",
+      "capabilities": ["css-highlight-pseudo-global-rule", "css-highlight-color-background", "css-highlight-custom-properties", "css-highlight-cross-text-range", "css-highlight-priority-order", "css-highlight-retained-paint"],
+      "evidence": ["css-highlight-api", "vscode-oss-645f29c-chat-find-paint-ledger", "vscode-oss-645f29c-markdown-diff-paint-ledger"],
+      "reason": "Implementation-first WebScene #746 top layer for #740 and native GitHub stack #745. Native companion coverage checks variable-backed background rectangles, foreground text commands, live range intersection, and lower-to-higher priority publication without DOM or visual-tree nodes and without idle frame demand."
+    },
+    {
       "path": "contracts/css-custom-highlight-registry-code-oss.html",
       "type": "testharness",
       "capabilities": ["highlight-ordered-setlike", "highlight-priority", "css-highlights-maplike", "highlight-document-root-isolation", "highlight-bounded-lifecycle"],

@@ -14,6 +14,15 @@ non-Vulkan or incomplete identities. SDK verification covers the installed
 header, bridge sources, export allowlist and cache inputs. AppScene includes no
 Dawn private header.
 
+The first graphics SDK build exposed one deterministic compatibility defect:
+Dawn compiles native objects with `-fno-exceptions`, while the initial registry
+used an exception handler around `unordered_map` insertion. Issue #649 replaces
+that insertion with a mutex-protected intrusive list whose nodes use
+`new(std::nothrow)`. Allocation failure leaves the device unregistered, so the
+query continues to reject it as foreign before dereference. The registry itself
+uses destructor-free static storage to preserve the original teardown rule.
+No exception syntax remains in the bridge.
+
 `bind_dawn_linux_external_device` is the factory consumption point. It copies
 the `wgpu::Device` into the lifetime anchor and requires the same shared atomic
 loss flag used by the host's Dawn device-lost callback. Allocation, begin,

@@ -18,7 +18,8 @@ class DawnExportTests(unittest.TestCase):
         for rid, text in [
             ("osx-arm64", "00001000 T _wgpuCreateInstance\n00001010 T _wgpuGetProcAddress\n"),
             ("linux-x64", "00001000 T wgpuCreateInstance\n00001010 T wgpuGetProcAddress\n"
-             "00001020 T websceneDawnQueryVulkanDeviceV1\n"),
+             "00001020 T websceneDawnQueryVulkanDeviceV1\n"
+             "00001030 T websceneDawnQueryVulkanDeviceV2\n"),
             ("win-x64", "  1  0 00001000 wgpuCreateInstance\n  2  1 00001010 wgpuGetProcAddress\n")]:
             with self.subTest(rid=rid):
                 self.assertEqual(self.inspect(text, rid)["status"], "passed")
@@ -30,6 +31,8 @@ class DawnExportTests(unittest.TestCase):
     def test_linux_bridge_is_required_and_exact(self):
         for text in [
             "1000 T wgpuCreateInstance\n1010 T wgpuGetProcAddress\n",
+            "1000 T wgpuCreateInstance\n1010 T wgpuGetProcAddress\n"
+            "1020 T websceneDawnQueryVulkanDeviceV1\n",
             "1000 T wgpuCreateInstance\n1010 T wgpuGetProcAddress\n"
             "1020 T websceneDawnQueryVulkanDeviceV2\n",
         ]:

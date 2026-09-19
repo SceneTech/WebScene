@@ -18,7 +18,8 @@ a definition that opted into form association.
 stores the submission value as restoration state; an explicit state is stored
 separately and never submitted. `null` omits the element. A string or `File`
 uses the host's nonempty `name`, while a `FormData` contributes its own names,
-values, file identities, duplicates, and order.
+values, file identities, duplicates, and order from the entry-list snapshot
+taken by `setFormValue()`.
 
 ## Ownership, lifecycle, and entry ordering
 

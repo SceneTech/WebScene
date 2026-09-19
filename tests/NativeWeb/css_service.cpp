@@ -675,7 +675,23 @@ int main(int argc,char** argv) {
     webscene_native::css::finish_keyframes(parsed_keyframes,"spin",std::move(rotation_definition));
     if(parsed_keyframes["spin"].rotation_stops.size()!=2 ||
        parsed_keyframes["spin"].rotation_stops[0].degrees!=0 ||
-       parsed_keyframes["spin"].rotation_stops[1].degrees!=180) return 70;
+       parsed_keyframes["spin"].rotation_stops[1].degrees!=180 ||
+       parsed_keyframes["spin"].translation_stops.size()!=2 ||
+       parsed_keyframes["spin"].scale_stops.size()!=2) return 70;
+    webscene_native::css::css_opacity_keyframes transform_definition;
+    webscene_native::css::append_keyframe(transform_definition,"from",{{"transform",
+        "translate(0, 25%) scale(1, 2) rotate(0)",false}});
+    webscene_native::css::append_keyframe(transform_definition,"to",{{"transform",
+        "translate(40px, 50%) scale(2, .5) rotate(1turn)",false}});
+    webscene_native::css::finish_keyframes(parsed_keyframes,"motion",std::move(transform_definition));
+    const auto& motion=parsed_keyframes["motion"];
+    if(motion.translation_stops.size()!=2 || motion.scale_stops.size()!=2 ||
+       motion.rotation_stops.size()!=2 ||
+       motion.translation_stops[1].x.unit!=webscene_native::length_unit::pixels ||
+       motion.translation_stops[1].x.value!=40 ||
+       motion.translation_stops[1].y.unit!=webscene_native::length_unit::percent ||
+       motion.translation_stops[1].y.value!=50 || motion.scale_stops[1].x!=2 ||
+       motion.scale_stops[1].y!=.5f || motion.rotation_stops[1].degrees!=360) return 70;
     webscene_native::css::rule_payload_cache payload_cache;
     std::mutex payload_mutex;
     const auto payload_for=[&](const std::string& selector,const std::string& color) {

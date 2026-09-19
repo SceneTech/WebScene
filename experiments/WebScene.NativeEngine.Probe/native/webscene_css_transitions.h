@@ -1,5 +1,6 @@
 #pragma once
 #include "webscene_css_box_values.h"
+#include <cctype>
 #include <cstdlib>
 #include <charconv>
 #include <cmath>
@@ -24,6 +25,178 @@ inline std::optional<float> css_time_ms(std::string_view text) {
 }
 inline bool is_css_time(std::string_view value) { return css_time_ms(value).has_value(); }
 inline float parse_css_time_ms(std::string value) { return css_time_ms(value).value_or(0); }
+
+struct parsed_keyframe_transform final {
+    css_length translate_x{0, length_unit::pixels};
+    css_length translate_y{0, length_unit::pixels};
+    float scale_x{1};
+    float scale_y{1};
+    float rotate_degrees{0};
+};
+
+inline std::optional<float> finite_css_number(std::string_view text)
+{
+    text = trim_css_view(text);
+    if (text.empty() || text.size() > 64U) return std::nullopt;
+    const std::string value{text};
+    char* end = nullptr;
+    const auto number = std::strtof(value.c_str(), &end);
+    if (end != value.c_str() + value.size() || !std::isfinite(number)) {
+        return std::nullopt;
+    }
+    return number;
+}
+
+inline std::optional<css_length> keyframe_translation_length(std::string_view text)
+{
+    text = trim_css_view(text);
+    if (text.empty() || text.size() > 64U) return std::nullopt;
+    auto lower = ascii_lower(std::string(text));
+    if (lower.ends_with('%')) {
+        const auto number = finite_css_number(
+            std::string_view(lower).substr(0U, lower.size() - 1U));
+        return number.has_value()
+            ? std::optional<css_length>{css_length{*number, length_unit::percent}}
+            : std::nullopt;
+    }
+    if (lower.ends_with("px")) {
+        const auto number = finite_css_number(
+            std::string_view(lower).substr(0U, lower.size() - 2U));
+        return number.has_value()
+            ? std::optional<css_length>{css_length{*number, length_unit::pixels}}
+            : std::nullopt;
+    }
+    const auto zero = finite_css_number(lower);
+    return zero.has_value() && *zero == 0.0F
+        ? std::optional<css_length>{css_length{0, length_unit::pixels}}
+        : std::nullopt;
+}
+
+inline std::optional<float> keyframe_rotation_angle(std::string_view text)
+{
+    text = trim_css_view(text);
+    if (text.empty() || text.size() > 64U) return std::nullopt;
+    auto lower = ascii_lower(std::string(text));
+    auto multiplier = 1.0F;
+    if (lower.ends_with("deg")) lower.resize(lower.size() - 3U);
+    else if (lower.ends_with("turn")) {
+        lower.resize(lower.size() - 4U);
+        multiplier = 360.0F;
+    } else if (lower.ends_with("rad")) {
+        lower.resize(lower.size() - 3U);
+        multiplier = 57.29577951308232F;
+    } else {
+        const auto zero = finite_css_number(lower);
+        return zero.has_value() && *zero == 0.0F ? zero : std::nullopt;
+    }
+    const auto number = finite_css_number(lower);
+    if (!number.has_value() || !std::isfinite(*number * multiplier)) {
+        return std::nullopt;
+    }
+    return *number * multiplier;
+}
+
+inline std::optional<parsed_keyframe_transform> parse_keyframe_transform(
+    std::string value)
+{
+    value = ascii_lower(trim_value(std::move(value)));
+    if (value == "none") return parsed_keyframe_transform{};
+    if (value.empty() || value.size() > 1024U) return std::nullopt;
+    parsed_keyframe_transform result;
+    bool translated_x = false;
+    bool translated_y = false;
+    bool scaled_x = false;
+    bool scaled_y = false;
+    bool rotated = false;
+    size_t cursor = 0U;
+    size_t function_count = 0U;
+    while (cursor < value.size()) {
+        while (cursor < value.size()
+            && std::isspace(static_cast<unsigned char>(value[cursor]))) ++cursor;
+        if (cursor == value.size()) break;
+        const auto name_begin = cursor;
+        while (cursor < value.size()
+            && std::isalpha(static_cast<unsigned char>(value[cursor]))) ++cursor;
+        if (cursor == name_begin || cursor >= value.size() || value[cursor] != '(') {
+            return std::nullopt;
+        }
+        const auto name = value.substr(name_begin, cursor - name_begin);
+        const auto argument_begin = ++cursor;
+        auto depth = 1U;
+        while (cursor < value.size() && depth != 0U) {
+            if (value[cursor] == '(') ++depth;
+            else if (value[cursor] == ')') --depth;
+            ++cursor;
+        }
+        if (depth != 0U || ++function_count > 5U) return std::nullopt;
+        const auto argument_end = cursor - 1U;
+        if (value.find('(', argument_begin) < argument_end) return std::nullopt;
+        auto arguments = split_css_component_list(
+            std::string_view(value).substr(
+                argument_begin, argument_end - argument_begin), ',');
+        if (arguments.size() == 1U) {
+            auto first = trim_value(arguments.front());
+            const auto separator = first.find_first_of(" \t\r\n");
+            if (separator != std::string::npos) {
+                auto second_begin = first.find_first_not_of(" \t\r\n", separator);
+                if (second_begin == std::string::npos
+                    || first.find_first_of(" \t\r\n", second_begin)
+                        != std::string::npos) return std::nullopt;
+                arguments = {
+                    first.substr(0U, separator), first.substr(second_begin)};
+            }
+        }
+        const auto translation = [&](size_t index) {
+            return index < arguments.size()
+                ? keyframe_translation_length(arguments[index]) : std::nullopt;
+        };
+        const auto scale = [&](size_t index) {
+            return index < arguments.size()
+                ? finite_css_number(arguments[index]) : std::nullopt;
+        };
+        if (name == "translate" && (arguments.size() == 1U || arguments.size() == 2U)
+            && !translated_x && !translated_y) {
+            const auto x = translation(0U);
+            const auto y = arguments.size() == 2U
+                ? translation(1U)
+                : std::optional<css_length>{css_length{0, length_unit::pixels}};
+            if (!x.has_value() || !y.has_value()) return std::nullopt;
+            result.translate_x = *x; result.translate_y = *y;
+            translated_x = translated_y = true;
+        } else if (name == "translatex" && arguments.size() == 1U && !translated_x) {
+            const auto x = translation(0U);
+            if (!x.has_value()) return std::nullopt;
+            result.translate_x = *x; translated_x = true;
+        } else if (name == "translatey" && arguments.size() == 1U && !translated_y) {
+            const auto y = translation(0U);
+            if (!y.has_value()) return std::nullopt;
+            result.translate_y = *y; translated_y = true;
+        } else if (name == "scale" && (arguments.size() == 1U || arguments.size() == 2U)
+            && !scaled_x && !scaled_y) {
+            const auto x = scale(0U);
+            const auto y = arguments.size() == 2U ? scale(1U) : x;
+            if (!x.has_value() || !y.has_value()) return std::nullopt;
+            result.scale_x = *x; result.scale_y = *y;
+            scaled_x = scaled_y = true;
+        } else if (name == "scalex" && arguments.size() == 1U && !scaled_x) {
+            const auto x = scale(0U);
+            if (!x.has_value()) return std::nullopt;
+            result.scale_x = *x; scaled_x = true;
+        } else if (name == "scaley" && arguments.size() == 1U && !scaled_y) {
+            const auto y = scale(0U);
+            if (!y.has_value()) return std::nullopt;
+            result.scale_y = *y; scaled_y = true;
+        } else if (name == "rotate" && arguments.size() == 1U && !rotated) {
+            const auto angle = keyframe_rotation_angle(arguments.front());
+            if (!angle.has_value()) return std::nullopt;
+            result.rotate_degrees = *angle; rotated = true;
+        } else {
+            return std::nullopt;
+        }
+    }
+    return function_count == 0U
+        ? std::nullopt : std::optional<parsed_keyframe_transform>{result};
+}
 
 inline void parse_transition_timing(
         const std::string& value,
@@ -424,11 +597,15 @@ inline void configure_keyframes(node_style& style,
             const auto definition = definitions.find(normalized_name);
             if (normalized_name != "none" && definition != definitions.end()) {
                 track.opacity_keyframes = definition->second.opacity_stops;
+                track.translation_keyframes = definition->second.translation_stops;
+                track.scale_keyframes = definition->second.scale_stops;
                 track.rotation_keyframes = definition->second.rotation_stops;
                 track.filter_keyframes = definition->second.filter_stops;
             }
             const auto has_supported_effect =
                 track.opacity_keyframes.size() >= 2U
+                    || track.translation_keyframes.size() >= 2U
+                    || track.scale_keyframes.size() >= 2U
                     || track.rotation_keyframes.size() >= 2U
                     || track.filter_keyframes.size() >= 2U;
             if (has_supported_effect) {
@@ -442,6 +619,15 @@ inline void configure_keyframes(node_style& style,
                     << track.x1 << ',' << track.y1 << ',' << track.x2 << ',' << track.y2;
                 for (const auto& stop : track.opacity_keyframes)
                     signature << "|o" << stop.offset << ':' << stop.opacity;
+                for (const auto& stop : track.translation_keyframes) {
+                    signature << "|t" << stop.offset << ':'
+                        << stop.x.value << ',' << static_cast<unsigned>(stop.x.unit)
+                        << ',' << stop.x.pixel_offset << ':'
+                        << stop.y.value << ',' << static_cast<unsigned>(stop.y.unit)
+                        << ',' << stop.y.pixel_offset;
+                }
+                for (const auto& stop : track.scale_keyframes)
+                    signature << "|s" << stop.offset << ':' << stop.x << ',' << stop.y;
                 for (const auto& stop : track.rotation_keyframes)
                     signature << "|r" << stop.offset << ':' << stop.degrees;
                 for (const auto& stop : track.filter_keyframes)
@@ -469,26 +655,9 @@ inline void append_keyframe(
             declarations.begin(), declarations.end(), [](const auto& declaration) {
                 return declaration.name == "filter";
             });
-        const auto rotation_degrees = [&]() -> std::optional<float> {
-            if (transform == declarations.end()) return std::nullopt;
-            auto value = ascii_lower(trim_value(transform->value));
-            const auto rotate = value.find("rotate(");
-            if (rotate == std::string::npos) return std::nullopt;
-            const auto close = value.find(')', rotate + 7U);
-            if (close == std::string::npos) return std::nullopt;
-            auto angle = trim_value(value.substr(rotate + 7U, close - rotate - 7U));
-            auto multiplier = 1.0F;
-            if (angle.ends_with("turn")) {
-                angle.resize(angle.size() - 4U);
-                multiplier = 360.0F;
-            } else if (angle.ends_with("deg")) {
-                angle.resize(angle.size() - 3U);
-            } else if (angle.ends_with("rad")) {
-                angle.resize(angle.size() - 3U);
-                multiplier = 57.29577951308232F;
-            } else return std::nullopt;
-            return std::strtof(angle.c_str(), nullptr) * multiplier;
-        }();
+        const auto transform_value = transform == declarations.end()
+            ? std::optional<parsed_keyframe_transform>{}
+            : parse_keyframe_transform(transform->value);
         for (auto component : split_css_component_list(selector, ',')) {
             component = ascii_lower(trim_value(std::move(component)));
             float offset = -1;
@@ -504,8 +673,13 @@ inline void append_keyframe(
                     offset,
                     std::clamp(std::strtof(opacity->value.c_str(), nullptr), 0.0F, 1.0F)});
             }
-            if (rotation_degrees.has_value()) {
-                definition.rotation_stops.push_back({offset, *rotation_degrees});
+            if (transform_value.has_value()) {
+                definition.translation_stops.push_back({
+                    offset, transform_value->translate_x, transform_value->translate_y});
+                definition.scale_stops.push_back({
+                    offset, transform_value->scale_x, transform_value->scale_y});
+                definition.rotation_stops.push_back({
+                    offset, transform_value->rotate_degrees});
             }
             if (filter != declarations.end()) {
                 definition.filter_stops.push_back({offset, filter->value});
@@ -535,13 +709,28 @@ inline void finish_keyframes(
             stops = std::move(unique);
         };
         normalize(definition.opacity_stops);
+        normalize(definition.translation_stops);
+        normalize(definition.scale_stops);
         normalize(definition.rotation_stops);
         normalize(definition.filter_stops);
         if (definition.rotation_stops.size() == 1U
             && definition.rotation_stops.front().offset > 0) {
             definition.rotation_stops.insert(definition.rotation_stops.begin(), {0, 0});
         }
+        if (definition.translation_stops.size() == 1U
+            && definition.translation_stops.front().offset > 0) {
+            definition.translation_stops.insert(
+                definition.translation_stops.begin(),
+                {0, {0, length_unit::pixels}, {0, length_unit::pixels}});
+        }
+        if (definition.scale_stops.size() == 1U
+            && definition.scale_stops.front().offset > 0) {
+            definition.scale_stops.insert(
+                definition.scale_stops.begin(), {0, 1, 1});
+        }
         if (definition.opacity_stops.size() >= 2U
+            || definition.translation_stops.size() >= 2U
+            || definition.scale_stops.size() >= 2U
             || definition.rotation_stops.size() >= 2U
             || definition.filter_stops.size() >= 2U) {
             definitions[ascii_lower(trim_value(std::move(name)))] =

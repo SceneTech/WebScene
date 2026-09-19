@@ -256,6 +256,7 @@
 
         pointer_capture_target = nullptr;
         pointer_down_target = nullptr;
+        middle_paste_target_id = 0U;
         active_pointer_target = nullptr;
         scrollbar_drag_target = nullptr;
         scrollbar_drag_vertical = false;

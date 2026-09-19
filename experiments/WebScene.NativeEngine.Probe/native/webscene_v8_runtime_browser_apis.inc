@@ -2460,6 +2460,24 @@
         const auto content_type = info.Length() == 0
             ? std::string{"text/plain"}
             : to_utf8(info.GetIsolate(), info[0]);
+        const auto flags = info.Length() > 1
+            ? info[1]->Uint32Value(local_context).FromMaybe(
+                std::numeric_limits<uint32_t>::max())
+            : 0U;
+        const auto primary =
+            (flags & WEBSCENE_HOST_REQUEST_CLIPBOARD_PRIMARY_V1) != 0U;
+        dom_node* primary_target = nullptr;
+        if (primary && info.Length() > 2 && info[2]->IsObject()) {
+            primary_target = unwrap_node(info[2].As<v8::Object>());
+        }
+        if ((flags & ~WEBSCENE_HOST_REQUEST_CLIPBOARD_PRIMARY_V1) != 0U
+            || (primary && (content_type != "text/plain"
+                || !self->is_writable_text_control(primary_target)
+                || !self->is_connected(*primary_target)
+                || self->context_for_node(*primary_target) != local_context))) {
+            reject("The requested clipboard selection is unsupported", "NotSupportedError");
+            return;
+        }
         if (content_type != "text/plain" && content_type != "*/*") {
             reject("The requested clipboard type is unsupported", "NotSupportedError");
             return;
@@ -2473,9 +2491,11 @@
         auto request = std::make_unique<native_host_request>();
         request->view.request_id = request_id;
         request->view.kind = WEBSCENE_HOST_REQUEST_CLIPBOARD_READ_V1;
+        request->view.flags = flags;
         request->content_type = content_type;
         host_promise_target target;
-        target.operation = "readClipboard";
+        target.operation = primary ? "readPrimarySelection" : "readClipboard";
+        target.target_node_id = primary ? primary_target->id : 0U;
         target.context.Reset(info.GetIsolate(), local_context);
         target.resolver.Reset(info.GetIsolate(), resolver);
         self->host_promise_targets.emplace(request_id, std::move(target));
@@ -2483,6 +2503,23 @@
             self->host_promise_targets.erase(request_id);
             reject("The host request queue is full", "QuotaExceededError");
         }
+    }
+
+    static void clipboard_paste_target_live(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        const auto target_id = self != nullptr && info.Length() > 0
+            ? info[0]->Uint32Value(info.GetIsolate()->GetCurrentContext()).FromMaybe(0U)
+            : 0U;
+        auto* target = self != nullptr && target_id != 0U
+            ? self->document.find_by_native_id(target_id) : nullptr;
+        const auto live = self != nullptr
+            && self->is_writable_text_control(target)
+            && self->is_connected(*target)
+            && self->context_for_node(*target)
+                == info.GetIsolate()->GetCurrentContext();
+        info.GetReturnValue().Set(v8::Boolean::New(info.GetIsolate(), live));
     }
 
     static void revoke_object_url(const v8::FunctionCallbackInfo<v8::Value>& info) {

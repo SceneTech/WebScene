@@ -118,6 +118,24 @@
             perform_microtask_checkpoint();
             return;
         }
+        if (target.operation == "readPrimarySelection") {
+            auto* requested = document.find_by_native_id(target.target_node_id);
+            if (!is_writable_text_control(requested)
+                || !is_connected(*requested)
+                || context_for_node(*requested) != local_context) {
+                auto error = v8::Exception::Error(js_string(
+                    isolate, "The PRIMARY paste target is no longer live"));
+                if (error->IsObject()) {
+                    error.As<v8::Object>()->Set(
+                        local_context,
+                        js_string(isolate, "name"),
+                        js_string(isolate, "AbortError")).Check();
+                }
+                resolver->Reject(local_context, error).Check();
+                perform_microtask_checkpoint();
+                return;
+            }
+        }
         if (target.operation == "enterFullscreen"
             || target.operation == "exitFullscreen") {
             const bool enter = target.operation == "enterFullscreen";
@@ -184,6 +202,13 @@
             local_context,
             js_string(isolate, "bytes"),
             v8::Uint8Array::New(buffer, 0, completion.bytes.size())).Check();
+        if (target.operation == "readPrimarySelection") {
+            value->Set(
+                local_context,
+                js_string(isolate, "_primaryTargetNodeId"),
+                v8::Integer::NewFromUnsigned(
+                    isolate, target.target_node_id)).Check();
+        }
         resolver->Resolve(local_context, value).Check();
         perform_microtask_checkpoint();
     }
@@ -204,5 +229,45 @@
             resolver->Reject(local_context, error).Check();
         }
         host_promise_targets.clear();
+        perform_microtask_checkpoint();
+    }
+
+    void cancel_native_host_promises_for_context(
+        v8::Local<v8::Context> retired_context,
+        const char* message)
+    {
+        std::vector<std::pair<uint64_t, host_promise_target>> retired;
+        for (auto iterator = host_promise_targets.begin();
+             iterator != host_promise_targets.end();) {
+            if (iterator->second.context.Get(isolate) != retired_context) {
+                ++iterator;
+                continue;
+            }
+            retired.emplace_back(iterator->first, std::move(iterator->second));
+            iterator = host_promise_targets.erase(iterator);
+        }
+        if (retired.empty()) return;
+        {
+            std::lock_guard lock(host_request_mutex);
+            std::erase_if(typed_host_requests, [&](const auto& request) {
+                return request != nullptr && std::any_of(
+                    retired.begin(), retired.end(), [&](const auto& entry) {
+                        return entry.first == request->view.request_id;
+                    });
+            });
+        }
+        for (auto& [_, target] : retired) {
+            auto resolver = target.resolver.Get(isolate);
+            if (resolver.IsEmpty()) continue;
+            v8::Context::Scope context_scope(retired_context);
+            auto error = v8::Exception::Error(js_string(isolate, message));
+            if (error->IsObject()) {
+                error.As<v8::Object>()->Set(
+                    retired_context,
+                    js_string(isolate, "name"),
+                    js_string(isolate, "AbortError")).Check();
+            }
+            resolver->Reject(retired_context, error).Check();
+        }
         perform_microtask_checkpoint();
     }

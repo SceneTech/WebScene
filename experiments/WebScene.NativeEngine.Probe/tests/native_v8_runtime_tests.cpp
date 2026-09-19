@@ -446,6 +446,7 @@ int main()
         if (selected == "async-save-publication") { test_async_save_acknowledgement_publishes_without_pointer_input(); return 0; }
         if (selected == "youtube-embed") { test_youtube_embed_fallback(); return 0; }
         if (selected == "table-cell-copy") { test_table_cell_click_copies_text_to_host(); return 0; }
+        if (selected == "primary-middle-paste") { test_primary_selection_middle_paste(nullptr); return 0; }
         if (selected == "resource-failure-diagnostics") { test_resource_failure_diagnostics(); return 0; }
         if (selected == "response-header-cookie") {
             test_response_header_cookie_contracts();
@@ -1528,6 +1529,7 @@ int main()
     test_clipboard_write_text_host_handoff(engine);
     test_clipboard_read_host_completion(engine);
     test_native_clipboard_shortcut_events(engine);
+    test_primary_selection_middle_paste(engine);
     test_native_image_clipboard_maximum_payload(engine);
     test_native_legacy_clipboard_completion_stress(engine);
     test_native_pending_legacy_clipboard_shutdown(engine);

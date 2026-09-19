@@ -3660,6 +3660,9 @@
             if (node.tag == "input" || node.tag == "textarea") {
                 forms::ensure_text_value(node);
                 const auto previous_value = node.form_control().value;
+                const auto previous_checkedness = node.tag == "input"
+                    ? std::optional<bool>{forms::input_checked(node)}
+                    : std::nullopt;
                 if (node.tag == "textarea") {
                     reset_textarea_value(node);
                 } else {
@@ -3677,6 +3680,9 @@
                 if (self->is_connected(node)) {
                     self->recascade_form_value_selector_transition(
                         node, previous_value, node.form_control().value, false);
+                    if(previous_checkedness)
+                        self->recascade_form_checkedness_selector_transition(
+                            node,*previous_checkedness,forms::input_checked(node));
                 } else {
                     node.mutable_form_control().user_validity_interacted = false;
                 }

@@ -1,0 +1,41 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Required checkbox validity follows live checkedness</title>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<style>
+.probe {padding-left:11px}
+.probe:invalid {padding-left:47px}
+</style>
+<form id="owner"><input id="control" class="probe" type="checkbox" value="payload" required></form>
+<script>
+test(()=>{
+  const owner=document.getElementById('owner');
+  const control=document.getElementById('control');
+  const snapshot=()=>[
+    control.checked,control.hasAttribute('checked'),
+    control.matches(':valid'),control.matches(':invalid'),
+    getComputedStyle(control).paddingLeft];
+
+  assert_array_equals(snapshot(),[false,false,false,true,'47px'],
+    'a required unchecked checkbox is invalid without consulting its submission value');
+  control.setAttribute('checked','');
+  assert_array_equals(snapshot(),[true,true,true,false,'11px'],
+    'the checked content attribute supplies the initial checkedness');
+  control.checked=false;
+  assert_array_equals(snapshot(),[false,true,false,true,'47px'],
+    'the checked IDL property changes live checkedness without rewriting the attribute');
+  control.removeAttribute('checked');
+  control.setAttribute('checked','');
+  assert_array_equals(snapshot(),[false,true,false,true,'47px'],
+    'content writes do not replace initialized live checkedness');
+  owner.reset();
+  assert_array_equals(snapshot(),[true,true,true,false,'11px'],
+    'reset restores checkedness from the current content default');
+  control.checked=false;
+  owner.removeAttribute('id');
+  owner.reset();
+  assert_array_equals(snapshot(),[true,true,true,false,'11px'],
+    'ancestor ownership does not depend on an id');
+},':valid and :invalid use required checkbox checkedness across IDL, content, and reset transitions');
+</script>

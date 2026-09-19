@@ -76,7 +76,8 @@ inline std::vector<css_compound_dependencies> compile_invalidation_plan(
                 output.child_list_sensitive = true;
                 add(output.child_list, inherited_route);
             } else if (pseudo.name == "checked") {
-                for (const auto* name : {"checked", "selected", "type"})
+                for (const auto* name : {
+                        "checked", "selected", "type", "$live-form-checkedness"})
                     add(output.attributes[name], route);
             } else if (pseudo.name == "default") {
                 // Authored defaults update the subject directly. Submit-button
@@ -114,10 +115,15 @@ inline std::vector<css_compound_dependencies> compile_invalidation_plan(
                 if (pseudo.name == "required" || pseudo.name == "optional") {
                     add(output.attributes["type"], route);
                 } else {
-                    // Non-text controls retain their existing authored-value
-                    // dependency while text controls also observe live value.
+                    // Text controls observe live value. Required checkboxes
+                    // additionally consume their live checkedness below; the
+                    // remaining non-text controls retain the authored-value
+                    // dependency until their constraint slices land.
                     add(output.attributes["value"], route);
                     add(output.attributes["$live-form-value"], route);
+                    add(output.attributes["type"], route);
+                    add(output.attributes["checked"], route);
+                    add(output.attributes["$live-form-checkedness"], route);
                     // A non-dirty textarea derives its live value from its
                     // text children. Reuse the structural route machinery.
                     output.child_list_sensitive = true;

@@ -91,6 +91,24 @@ void test_live_form_state_selectors_and_scaling()
     require(user_validity_lifecycle == R"JSON([[false,true,false,true,"5px","61px"],[true,false,true,false,"43px","7px"],[false,true,false,true],[false,true,false,true,"5px","61px"],[false,true,false,false,"5px","7px"]])JSON",
         "live user-validity lifecycle diverged: " + user_validity_lifecycle);
 
+    const auto checkbox_validity = evaluate(engine, R"JS((() => {
+      const form=document.getElementById('form'),checkbox=document.createElement('input');
+      checkbox.type='checkbox';checkbox.setAttribute('value','payload');checkbox.required=true;
+      checkbox.className='probe';form.appendChild(checkbox);
+      const snapshot=()=>[checkbox.checked,checkbox.hasAttribute('checked'),
+        checkbox.matches(':valid'),checkbox.matches(':invalid'),
+        getComputedStyle(checkbox).paddingLeft];
+      const states=[snapshot()];
+      checkbox.setAttribute('checked','');states.push(snapshot());
+      checkbox.checked=false;states.push(snapshot());
+      checkbox.removeAttribute('checked');checkbox.setAttribute('checked','');states.push(snapshot());
+      form.reset();states.push(snapshot());
+      checkbox.checked=false;form.removeAttribute('id');form.reset();states.push(snapshot());
+      return states;
+    })())JS", "required-checkbox-validity.js");
+    require(checkbox_validity == R"JSON([[false,false,false,true,"47px"],[true,true,true,false,"19px"],[false,true,false,true,"47px"],[false,true,false,true,"47px"],[true,true,true,false,"19px"],[true,true,true,false,"19px"]])JSON",
+        "required checkbox validity did not follow live checkedness: " + checkbox_validity);
+
     const auto setup = evaluate(engine, R"JS((() => {
       document.body.innerHTML='<style>.scale:invalid{width:2px}.scale:placeholder-shown{height:3px}'+
         Array.from({length:1024},(_,i)=>'.noise-'+i+':hover{width:7px}').join('')+'</style>'+

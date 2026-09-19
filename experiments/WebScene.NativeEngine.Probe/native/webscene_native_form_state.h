@@ -243,6 +243,22 @@ inline bool required_applies(const dom_node& node)
             && !equals("image");
     }
 
+inline bool input_type_is(const dom_node& node,std::string_view expected)
+    {
+        if(node.tag!="input") return false;
+        const auto authored=node.attributes.find("type");
+        const auto type=authored==node.attributes.end()
+            ? std::string_view{"text"}:std::string_view{authored->second};
+        return form_keyword_equals(type,expected);
+    }
+
+inline bool input_checked(const dom_node& node)
+    {
+        return node.form_control().checkedness_initialized
+            ? node.form_control().checkedness
+            : node.attributes.contains("checked");
+    }
+
 inline bool is_text_control(const dom_node* node)
     {
         return supports_text_selection(node)
@@ -301,10 +317,12 @@ inline simple_validity_state validity_state(const dom_node& node) {
     if (!form_control || node.tag == "fieldset" || node.tag == "optgroup"
         || node.tag == "option") return simple_validity_state::not_applicable;
     if (node.attributes.contains("required")) {
-        const auto empty = supports_text_selection(&node)
-            ? text_value_empty(node)
-            : !node.attributes.contains("value")
-                || node.attributes.at("value").empty();
+        const auto empty = input_type_is(node,"checkbox")
+            ? !input_checked(node)
+            : supports_text_selection(&node)
+                ? text_value_empty(node)
+                : !node.attributes.contains("value")
+                    || node.attributes.at("value").empty();
         if (empty) return simple_validity_state::invalid;
     }
     return simple_validity_state::valid;

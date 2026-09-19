@@ -1311,6 +1311,13 @@
   ],
   "candidate": [
     {
+      "path": "contracts/css-checkbox-required-validity.html",
+      "type": "testharness",
+      "capabilities": ["checkbox-required-validity", "live-checkedness-validity-invalidation"],
+      "evidence": ["wpt-constraint-validation-derived", "native-source-companion-contract"],
+      "reason": "Implementation-first candidate for WebScene #257. A required checkbox now derives :valid/:invalid from live checkedness rather than the submission value. The focused contract distinguishes the checked IDL property from the checked content default, covers reset through the current ancestor owner, and uses a compiled subject-routed dependency for programmatic/native checkedness changes. Direct browser/native execution remains validation debt; radio-group and select constraints remain outside this slice."
+    },
+    {
       "path": "contracts/css-user-validity-state.html",
       "type": "testharness",
       "capabilities": ["user-valid-selector", "user-invalid-selector", "live-user-validity-invalidation"],

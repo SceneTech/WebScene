@@ -18,6 +18,10 @@ ROOT = Path(__file__).resolve().parents[2]
 LOCK_PATH = Path(__file__).with_name("dependencies.lock.json")
 LOCK = json.loads(LOCK_PATH.read_text())
 WINDOWS_RUNTIME_PIN_PATH = Path(__file__).with_name("windows-runtime.json")
+DAWN_NATIVE_DEVICE_HEADER = (ROOT / "experiments/WebScene.NativeEngine.Probe/native/graphics/"
+                             "webscene/dawn_native_device.h")
+DAWN_NATIVE_DEVICE_SOURCE = Path(__file__).with_name("dawn_native_device.cpp")
+DAWN_NATIVE_DEVICE_INTERNAL = Path(__file__).with_name("dawn_native_device_internal.h")
 WINDOWS_DEVELOPER_ENVIRONMENT_KEYS = {
     "COMMANDPROMPTTYPE", "DEVENVDIR", "EXTENSIONSDKDIR", "EXTERNAL_INCLUDE",
     "FRAMEWORK40VERSION", "FRAMEWORKDIR", "FRAMEWORKDIR64", "FRAMEWORKVERSION",
@@ -187,6 +191,49 @@ def seal(component, source, sdk, rid, settings, tools, env=None):
     (sdk / "webscene-graphics-package.json").write_text(json.dumps(manifest, indent=2) + "\n")
 
 
+@contextmanager
+def patched_dawn_native_device_bridge(source):
+    """Temporarily connect the pinned Dawn device registry to WebScene's bridge."""
+    instance = source / "src/dawn/native/Instance.cpp"
+    original = instance.read_bytes()
+    include = b'#include "src/dawn/native/Device.h"\n'
+    include_patch = (include + b'#if defined(WEBSCENE_DAWN_NATIVE_DEVICE_BRIDGE)\n'
+                     b'#include "dawn_native_device_internal.h"\n'
+                     b'#endif\n')
+    methods = b'''void InstanceBase::AddDevice(DeviceBase* device) {
+    mDevicesList.Use([&](auto deviceList) { deviceList->insert(device); });
+}
+
+void InstanceBase::RemoveDevice(DeviceBase* device) {
+    mDevicesList.Use([&](auto deviceList) { deviceList->erase(device); });
+}
+'''
+    methods_patch = b'''void InstanceBase::AddDevice(DeviceBase* device) {
+    mDevicesList.Use([&](auto deviceList) { deviceList->insert(device); });
+#if defined(WEBSCENE_DAWN_NATIVE_DEVICE_BRIDGE)
+    webscene::dawn_bridge::register_device(device);
+#endif
+}
+
+void InstanceBase::RemoveDevice(DeviceBase* device) {
+#if defined(WEBSCENE_DAWN_NATIVE_DEVICE_BRIDGE)
+    webscene::dawn_bridge::unregister_device(device);
+#endif
+    mDevicesList.Use([&](auto deviceList) { deviceList->erase(device); });
+}
+'''
+    if original.count(include) != 1 or original.count(methods) != 1:
+        raise ValueError(
+            "Pinned Dawn Instance device registry changed unexpectedly; "
+            "review the exact native-device bridge against the new source")
+    patched = original.replace(include, include_patch).replace(methods, methods_patch)
+    try:
+        instance.write_bytes(patched)
+        yield
+    finally:
+        instance.write_bytes(original)
+
+
 def dawn(args):
     source = args.sources / "dawn"
     checkout("dawn", source)
@@ -204,13 +251,24 @@ def dawn(args):
          f"-DCMAKE_INSTALL_PREFIX={sdk}", f"-DCMAKE_PROJECT_Dawn_INCLUDE={symbol_policy}",
          "-DCMAKE_SHARED_LINKER_FLAGS="] + [f"-D{k}={v}" for k, v in settings.items()])
     repair_dawn_dependencies(source)
-    run(["cmake", "--build", output, "--parallel", args.jobs])
+    bridge = (patched_dawn_native_device_bridge(source)
+              if args.rid.startswith("linux-") else nullcontext())
+    with bridge:
+        run(["cmake", "--build", output, "--parallel", args.jobs])
     # Old installed headers/libraries must not survive a dependency roll.
     if sdk.exists():
         remove_sdk(sdk)
     run(["cmake", "--install", output])
     sdk.joinpath("build-info").mkdir()
     shutil.copy2(symbol_policy, sdk / "build-info/DawnSymbolBoundary.cmake")
+    if args.rid.startswith("linux-"):
+        sdk.joinpath("include/webscene").mkdir()
+        shutil.copy2(DAWN_NATIVE_DEVICE_HEADER, sdk / "include/webscene/dawn_native_device.h")
+        bridge_info = sdk / "build-info/webscene-dawn-native-device"
+        bridge_info.mkdir()
+        for path in (DAWN_NATIVE_DEVICE_HEADER, DAWN_NATIVE_DEVICE_SOURCE,
+                     DAWN_NATIVE_DEVICE_INTERNAL):
+            shutil.copy2(path, bridge_info / path.name)
     binary = sdk / {"win-x64": "bin/webgpu_dawn.dll", "osx-arm64": "lib/libwebgpu_dawn.dylib",
                     "linux-x64": "lib/libwebgpu_dawn.so"}[args.rid]
     (sdk / "build-info/exports.json").write_text(json.dumps(inspect_exports(binary, args.rid), indent=2) + "\n")

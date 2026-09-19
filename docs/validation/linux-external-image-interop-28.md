@@ -68,23 +68,25 @@ provider seam around the pinned public Dawn ABI:
   `linux_external_image_provider`. Failed or partial handoffs publish nothing
   and RAII closes every already-exported FD.
 
-The installed Dawn C ABI exposes only Vulkan `driverVersion` in
-`AdapterPropertiesVk`. The pinned `dawn/native/VulkanBackend.h` adds only
-`GetInstance` and `GetInstanceProcAddr`; it exposes no `VkDevice`,
-`VkPhysicalDevice`, `VkQueue`, queue family or device/driver UUID, and Dawn's
-adapter creates its own `VkDevice` rather than wrapping one supplied by a host.
-The implementations that expose these objects live under Dawn's private
-`src/dawn/native/vulkan` tree and are not an SDK contract. WebScene therefore
-does not infer device identity from the Vulkan instance, adapter properties or
-matching UUIDs.
+The pinned public Dawn API still has no supported `VkDevice`,
+`VkPhysicalDevice`, `VkQueue` or queue-family accessor. The WebScene-owned
+Linux Dawn build now adds one narrow, versioned C ABI query at that private/public
+boundary. Dawn registers devices on its authoritative `InstanceBase` add/remove
+path. The query rejects tokens absent from that live registry before
+dereferencing them, rejects lost and non-Vulkan devices, and returns the exact
+public adapter/device tokens, borrowed native tuple, queue family and Vulkan
+device/driver UUIDs. The SDK ships only `webscene/dawn_native_device.h`; no Dawn
+private header crosses into AppScene.
 
 The SDK now exposes `dawn_linux_external_device_factory`. An AppScene host with
 an exact-device Dawn integration creates the WebGPU instance/adapter/device and
 native allocator atomically, and returns one
 `dawn_linux_external_device_lifetime` shared by the allocator and every
-allocation. That lifetime carries the exact public `WGPUAdapter`/`WGPUDevice` tokens,
+allocation. `bind_dawn_linux_external_device` populates it from the exact Dawn
+device and retains a copied `wgpu::Device`. That lifetime carries the exact public `WGPUAdapter`/`WGPUDevice` tokens,
 opaque identities for the native device/physical-device/queue, device/driver
-UUIDs, Dawn queue family and a host-owned lifetime anchor for that tuple.
+UUIDs, Dawn queue family, a host-owned lifetime anchor for that tuple and the
+same atomic device-loss state installed in the factory callback.
 Provider creation rejects a copied lifetime object, mismatched device token,
 UUID or queue family.
 
@@ -125,14 +127,12 @@ FD/residency plateau, and proof of zero CPU readback/upload in ordinary frames.
 
 ## Remaining concrete blocker
 
-Implement `dawn_linux_external_device_factory` in AppScene against a supported
-exact-device Dawn integration. The current pinned public Dawn library cannot do
-this by itself, so the host needs a narrowly supported Dawn SDK hook (or an
-equivalent host-owned Dawn build) that returns the exact native device,
-physical-device, queue and queue family for the created `WGPUDevice`. The host
-then allocates/exports opaque-FD or DMA-BUF storage on those handles, adopts it
-through `owned_dawn_linux_external_allocation`, and negotiates hardware support
-per format, modifier, handle type and synchronization route. Real Linux Vulkan
+Implement the AppScene factory's real Vulkan allocator against the exact native
+tuple returned by `bind_dawn_linux_external_device`. It must allocate and export
+opaque-FD or DMA-BUF storage on those handles, retain every `VkImage` and
+`VkDeviceMemory`, adopt it through `owned_dawn_linux_external_allocation`, and
+negotiate hardware support per format, modifier, handle type and synchronization
+route. Real Linux Vulkan
 hardware/driver execution is still required for pixels, negative identity and
 layout cases, device loss, FD/residency plateau and zero-readback evidence.
 Unsupported routes remain explicit and cannot fall back to CPU presentation

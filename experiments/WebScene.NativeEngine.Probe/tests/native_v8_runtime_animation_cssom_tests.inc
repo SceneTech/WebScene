@@ -1634,7 +1634,7 @@ void test_finite_rotation_keyframe_dispatches_animation_end(
         })()
     )JS", "step-timing-spinner-metadata.js");
     require(
-        step_metadata == R"(["codicon-spin","1000ms","steps(4, end)","infinite"])" ,
+        step_metadata == R"JSON(["codicon-spin","1000ms","steps(4, end)","infinite"])JSON" ,
         "steps() was mistaken for the animation name: " + step_metadata);
 
     const auto step_angle = R"JS(

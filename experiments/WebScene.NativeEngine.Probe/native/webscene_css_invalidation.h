@@ -90,7 +90,8 @@ inline std::vector<css_compound_dependencies> compile_invalidation_plan(
                 output.child_list_sensitive = true;
                 output.child_list.scope |= invalidation_fallback;
             } else if (pseudo.name == "indeterminate") {
-                for (const auto* name : {"$live-form-indeterminate", "checked", "type", "name"})
+                for (const auto* name : {"$live-form-indeterminate", "checked", "type", "name",
+                        "$live-form-radio-group-checkedness"})
                     add(output.attributes[name], route);
                 output.child_list_sensitive = true;
                 add(output.child_list, route);
@@ -124,6 +125,7 @@ inline std::vector<css_compound_dependencies> compile_invalidation_plan(
                     add(output.attributes["type"], route);
                     add(output.attributes["checked"], route);
                     add(output.attributes["$live-form-checkedness"], route);
+                    add(output.attributes["$live-form-radio-group-checkedness"], route);
                     // A non-dirty textarea derives its live value from its
                     // text children. Reuse the structural route machinery.
                     output.child_list_sensitive = true;

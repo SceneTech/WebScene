@@ -259,6 +259,99 @@ inline bool input_checked(const dom_node& node)
             : node.attributes.contains("checked");
     }
 
+inline const dom_node* tree_root(
+    const native_document& document,const dom_node& node)
+    {
+        const dom_node* root=&node;
+        while(const auto* parent=document.dom_parent(*root)) {
+            // A frame document is represented below its owning iframe in the
+            // native tree, but it remains a distinct DOM tree.
+            if(parent->tag=="iframe") break;
+            root=parent;
+        }
+        return root;
+    }
+
+inline const dom_node* form_owner(
+    const native_document& document,const dom_node& control)
+    {
+        const auto explicit_owner=control.attributes.find("form");
+        if(explicit_owner!=control.attributes.end()) {
+            if(explicit_owner->second.empty()) return nullptr;
+            const auto* root=tree_root(document,control);
+            const auto find=[&](const auto& recurse,const dom_node& current)
+                ->const dom_node* {
+                if(current.tag=="form"
+                    && current.id_attribute==explicit_owner->second) return &current;
+                for(const auto* child:current.children) {
+                    if(child==nullptr || child->tag=="iframe"
+                        || document.is_shadow_root(*child)) continue;
+                    if(const auto* matched=recurse(recurse,*child)) return matched;
+                }
+                return nullptr;
+            };
+            return find(find,*root);
+        }
+        for(auto* ancestor=document.dom_parent(control);ancestor!=nullptr;
+            ancestor=document.dom_parent(*ancestor)) {
+            if(ancestor->tag=="iframe") break;
+            if(ancestor->tag=="form") return ancestor;
+        }
+        return nullptr;
+    }
+
+inline bool same_radio_group(
+    const native_document& document,
+    const dom_node& reference,
+    const dom_node& candidate)
+    {
+        if(!input_type_is(reference,"radio") || !input_type_is(candidate,"radio"))
+            return false;
+        const auto reference_name=reference.attributes.find("name");
+        const auto candidate_name=candidate.attributes.find("name");
+        return reference_name!=reference.attributes.end()
+            && !reference_name->second.empty()
+            && candidate_name!=candidate.attributes.end()
+            && candidate_name->second==reference_name->second
+            && tree_root(document,reference)==tree_root(document,candidate)
+            && form_owner(document,reference)==form_owner(document,candidate);
+    }
+
+inline std::vector<const dom_node*> radio_group_members(
+    const native_document& document,const dom_node& radio)
+    {
+        if(!input_type_is(radio,"radio")) return {};
+        const auto name=radio.attributes.find("name");
+        if(name==radio.attributes.end() || name->second.empty()) return {&radio};
+        std::vector<const dom_node*> result;
+        const auto* root=tree_root(document,radio);
+        const auto collect=[&](const auto& recurse,const dom_node& current)->void {
+            if(same_radio_group(document,radio,current)) result.push_back(&current);
+            for(const auto* child:current.children) {
+                if(child==nullptr || child->tag=="iframe"
+                    || document.is_shadow_root(*child)) continue;
+                recurse(recurse,*child);
+            }
+        };
+        collect(collect,*root);
+        return result;
+    }
+
+inline bool radio_group_value_missing(
+    const native_document& document,const dom_node& radio)
+    {
+        const auto members=radio_group_members(document,radio);
+        const auto required=std::any_of(
+            members.begin(),members.end(),[](const auto* member) {
+                return member!=nullptr && member->attributes.contains("required");
+            });
+        const auto checked=std::any_of(
+            members.begin(),members.end(),[](const auto* member) {
+                return member!=nullptr && input_checked(*member);
+            });
+        return required && !checked;
+    }
+
 inline bool is_text_control(const dom_node* node)
     {
         return supports_text_selection(node)
@@ -310,12 +403,17 @@ inline bool text_value_empty(const dom_node& node) {
     return attribute==node.attributes.end() || attribute->second.empty();
 }
 
-inline simple_validity_state validity_state(const dom_node& node) {
+inline simple_validity_state validity_state(
+    const native_document& document,const dom_node& node) {
     const auto form_control = node.tag == "button" || node.tag == "input"
         || node.tag == "select" || node.tag == "textarea"
         || node.tag == "option" || node.tag == "optgroup" || node.tag == "fieldset";
     if (!form_control || node.tag == "fieldset" || node.tag == "optgroup"
         || node.tag == "option") return simple_validity_state::not_applicable;
+    if(input_type_is(node,"radio")) {
+        return radio_group_value_missing(document,node)
+            ? simple_validity_state::invalid:simple_validity_state::valid;
+    }
     if (node.attributes.contains("required")) {
         const auto empty = input_type_is(node,"checkbox")
             ? !input_checked(node)

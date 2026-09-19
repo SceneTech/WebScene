@@ -109,6 +109,42 @@ void test_live_form_state_selectors_and_scaling()
     require(checkbox_validity == R"JSON([[false,false,false,true,"47px"],[true,true,true,false,"19px"],[false,true,false,true,"47px"],[false,true,false,true,"47px"],[true,true,true,false,"19px"],[true,true,true,false,"19px"]])JSON",
         "required checkbox validity did not follow live checkedness: " + checkbox_validity);
 
+    const auto radio_validity = evaluate(engine, R"JS((() => {
+      const owner=document.createElement('form');owner.id='radio-owner';
+      owner.innerHTML='<input id="radio-a" class="probe" type="radio" name="plan" required>'+
+        '<input id="radio-b" class="probe" type="radio" name="plan">';
+      const external=document.createElement('input');external.id='radio-external';
+      external.className='probe';external.type='radio';external.name='plan';
+      external.setAttribute('form','radio-owner');
+      const other=document.createElement('form');
+      other.innerHTML='<input id="radio-other" type="radio" name="plan" required checked>';
+      document.body.append(owner,external,other);
+      const a=document.getElementById('radio-a'),b=document.getElementById('radio-b');
+      const isolated=document.getElementById('radio-other');
+      const snapshot=()=>[a.checked,b.checked,external.checked,
+        a.matches(':invalid'),b.matches(':invalid'),external.matches(':invalid'),
+        [a,b,external].map(node=>getComputedStyle(node).paddingLeft).join(','),
+        isolated.matches(':valid')];
+      const states=[snapshot()];
+      b.checked=true;states.push(snapshot());
+      external.checked=true;states.push(snapshot());
+      b.click();states.push(snapshot());
+      a.addEventListener('click',event=>event.preventDefault(),{once:true});
+      a.click();states.push(snapshot());
+
+      const host=document.createElement('div');document.body.appendChild(host);
+      const shadow=host.attachShadow({mode:'open'});
+      const shadowRadio=document.createElement('input');shadowRadio.type='radio';
+      shadowRadio.name='plan';shadowRadio.required=true;shadow.appendChild(shadowRadio);
+      const shadowWasInvalid=shadowRadio.matches(':invalid');
+      shadowRadio.checked=true;
+      return [states,[shadowWasInvalid,shadowRadio.matches(':valid'),
+        b.checked,b.matches(':valid')]];
+    })())JS", "required-radio-group-validity.js");
+    require(radio_validity == R"JSON([[[false,false,false,true,true,true,"47px,47px,47px",true],[false,true,false,false,false,false,"19px,19px,19px",true],[false,false,true,false,false,false,"19px,19px,19px",true],[false,true,false,false,false,false,"19px,19px,19px",true],[false,true,false,false,false,false,"19px,19px,19px",true]],[true,true,true,true]])JSON",
+        "required radio validity did not follow group ownership and activation: "
+            + radio_validity);
+
     const auto setup = evaluate(engine, R"JS((() => {
       document.body.innerHTML='<style>.scale:invalid{width:2px}.scale:placeholder-shown{height:3px}'+
         Array.from({length:1024},(_,i)=>'.noise-'+i+':hover{width:7px}').join('')+'</style>'+

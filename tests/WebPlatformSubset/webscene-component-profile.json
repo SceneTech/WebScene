@@ -1318,6 +1318,13 @@
       "reason": "Implementation-first candidate for WebScene #257. A required checkbox now derives :valid/:invalid from live checkedness rather than the submission value. The focused contract distinguishes the checked IDL property from the checked content default, covers reset through the current ancestor owner, and uses a compiled subject-routed dependency for programmatic/native checkedness changes. Direct browser/native execution remains validation debt; radio-group and select constraints remain outside this slice."
     },
     {
+      "path": "contracts/css-radio-required-group-validity.html",
+      "type": "testharness",
+      "capabilities": ["radio-required-group-validity", "radio-group-checkedness-invalidation"],
+      "evidence": ["wpt-constraint-validation-derived", "native-source-companion-contract"],
+      "reason": "Implementation-first candidate for WebScene #257. Required radio value-missing state aggregates requiredness and live checkedness for same-tree, same-name radios with the same form owner. The focused contract partitions another form and a shadow tree, includes an external form-associated member, and covers IDL, activation, and cancelled-activation transitions through compiled group-routed invalidation. Direct browser/native execution remains validation debt; dynamic membership and the wider constraint-validation API remain outside this slice."
+    },
+    {
       "path": "contracts/css-user-validity-state.html",
       "type": "testharness",
       "capabilities": ["user-valid-selector", "user-invalid-selector", "live-user-validity-invalidation"],

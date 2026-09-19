@@ -1,0 +1,65 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Required radio validity follows group checkedness and ownership</title>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<style>
+.probe {padding-left:11px}
+.probe:invalid {padding-left:47px}
+</style>
+<form id="owner">
+  <input id="a" class="probe" type="radio" name="plan" required>
+  <input id="b" class="probe" type="radio" name="plan">
+</form>
+<input id="external" class="probe" type="radio" name="plan" form="owner">
+<form><input id="other" type="radio" name="plan" required checked></form>
+<div id="host"></div>
+<script>
+const a=document.getElementById('a');
+const b=document.getElementById('b');
+const external=document.getElementById('external');
+const other=document.getElementById('other');
+const group=[a,b,external];
+const snapshot=()=>group.map(node=>[
+  node.checked,node.matches(':valid'),node.matches(':invalid'),
+  getComputedStyle(node).paddingLeft]);
+
+test(()=>{
+  assert_array_equals(snapshot().flat(),[
+    false,false,true,'47px',false,false,true,'47px',false,false,true,'47px']);
+  assert_true(other.matches(':valid'),
+    'a checked radio with another form owner does not satisfy this group');
+
+  b.checked=true;
+  assert_array_equals(snapshot().flat(),[
+    false,true,false,'11px',true,true,false,'11px',false,true,false,'11px']);
+
+  external.checked=true;
+  assert_array_equals(snapshot().flat(),[
+    false,true,false,'11px',false,true,false,'11px',true,true,false,'11px']);
+},'requiredness and checkedness aggregate across same-tree, same-name radios with the same form owner');
+
+test(()=>{
+  b.click();
+  assert_array_equals(snapshot().flat(),[
+    false,true,false,'11px',true,true,false,'11px',false,true,false,'11px']);
+
+  a.addEventListener('click',event=>event.preventDefault(),{once:true});
+  a.click();
+  assert_array_equals(snapshot().flat(),[
+    false,true,false,'11px',true,true,false,'11px',false,true,false,'11px'],
+    'cancelled activation restores the previously checked member and group validity');
+},'radio activation and cancelled activation update every group member validity selector');
+
+test(()=>{
+  const shadow=document.getElementById('host').attachShadow({mode:'open'});
+  const radio=document.createElement('input');
+  radio.type='radio';radio.name='plan';radio.required=true;
+  shadow.appendChild(radio);
+  assert_true(radio.matches(':invalid'));
+  radio.checked=true;
+  assert_true(radio.matches(':valid'));
+  assert_true(b.checked,'a same-name radio in another tree does not clear the light-tree group');
+  assert_true(b.matches(':valid'));
+},'same-name radios in different trees have independent checkedness and validity');
+</script>

@@ -2469,8 +2469,57 @@
     {
         document.mark_dirty();
         if(previous_checkedness==current_checkedness) return;
+        std::vector<size_t> changed_rule_storage;
+        const auto append_rules=[&](std::string_view dependency) {
+            const auto indexed=css_invalidation_rules_by_attribute.find(
+                std::string(dependency));
+            if(indexed!=css_invalidation_rules_by_attribute.end())
+                changed_rule_storage.insert(changed_rule_storage.end(),
+                    indexed->second.begin(),indexed->second.end());
+        };
+        append_rules("$live-form-checkedness");
+        append_rules("$live-form-radio-group-checkedness");
+        std::ranges::sort(changed_rule_storage);
+        changed_rule_storage.erase(
+            std::unique(changed_rule_storage.begin(),changed_rule_storage.end()),
+            changed_rule_storage.end());
+        const auto changed_rules=std::span<const size_t>{
+            changed_rule_storage.data(),changed_rule_storage.size()};
+        recascade_selector_transition(
+            subject,
+            changed_rules,
+            [](const css::css_compound_dependencies& dependencies) {
+                css::css_invalidation_targets result;
+                for(const auto* dependency : {
+                        "$live-form-checkedness",
+                        "$live-form-radio-group-checkedness"}) {
+                    const auto found=dependencies.attributes.find(dependency);
+                    if(found!=dependencies.attributes.end()) result.include(found->second);
+                }
+                return result;
+            },
+            [&] {
+                auto& control=subject.mutable_form_control();
+                control.checkedness_initialized=true;
+                control.checkedness=previous_checkedness;
+            },
+            [&] {
+                auto& control=subject.mutable_form_control();
+                control.checkedness_initialized=true;
+                control.checkedness=current_checkedness;
+            });
+    }
+
+    void recascade_radio_group_checkedness_selector_transition(
+        dom_node& subject,
+        dom_node& changed_radio,
+        bool previous_checkedness,
+        bool current_checkedness)
+    {
+        document.mark_dirty();
+        if(previous_checkedness==current_checkedness) return;
         const auto indexed=css_invalidation_rules_by_attribute.find(
-            "$live-form-checkedness");
+            "$live-form-radio-group-checkedness");
         const std::span<const size_t> changed_rules=indexed==
                 css_invalidation_rules_by_attribute.end()
             ? std::span<const size_t>{}
@@ -2481,17 +2530,17 @@
             [](const css::css_compound_dependencies& dependencies) {
                 css::css_invalidation_targets result;
                 const auto found=dependencies.attributes.find(
-                    "$live-form-checkedness");
+                    "$live-form-radio-group-checkedness");
                 if(found!=dependencies.attributes.end()) result.include(found->second);
                 return result;
             },
             [&] {
-                auto& control=subject.mutable_form_control();
+                auto& control=changed_radio.mutable_form_control();
                 control.checkedness_initialized=true;
                 control.checkedness=previous_checkedness;
             },
             [&] {
-                auto& control=subject.mutable_form_control();
+                auto& control=changed_radio.mutable_form_control();
                 control.checkedness_initialized=true;
                 control.checkedness=current_checkedness;
             });

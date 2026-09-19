@@ -1,6 +1,7 @@
 #pragma once
 #include "webscene_css_state.h"
 #include "webscene_selector_parser.h"
+#include <algorithm>
 #include <cctype>
 
 namespace webscene_native::css {
@@ -200,6 +201,34 @@ inline size_t find_css_attribute_close(
         }
         return std::string_view::npos;
     }
+
+// Anchor every relative arm before compiling :has(). Commas within strings,
+// attributes and nested functions do not separate the outer relative list.
+inline std::string anchor_relative_selector_list(std::string_view text)
+{
+    std::string result = ":scope ";
+    int brackets = 0, parentheses = 0;
+    char quote = 0;
+    for (size_t i = 0; i < text.size(); ++i) {
+        const auto c = text[i];
+        if (c == '\\') {
+            const auto end = skip_css_escape_sequence(text, i);
+            result.append(text.substr(i, end - i));
+            i = end - 1U;
+            continue;
+        }
+        result.push_back(c);
+        if (quote != 0) { if (c == quote) quote = 0; continue; }
+        if (c == '\'' || c == '"') { quote = c; continue; }
+        if (c == '[') ++brackets;
+        else if (c == ']') --brackets;
+        else if (c == '(') ++parentheses;
+        else if (c == ')') --parentheses;
+        else if (c == ',' && brackets == 0 && parentheses == 0)
+            result += ":scope ";
+    }
+    return result;
+}
 
 inline std::optional<compiled_css_attribute> compile_css_attribute_condition(
     std::string_view condition,
@@ -408,15 +437,33 @@ inline compiled_css_compound compile_css_compound_selector(
     }
 
 
+inline bool compiled_selector_is_valid(const compiled_css_selector& selector)
+{
+    return !selector.compounds.empty()
+        && selector.compiled_compounds.size() == selector.compounds.size()
+        && std::all_of(
+            selector.compiled_compounds.begin(),
+            selector.compiled_compounds.end(),
+            [](const auto& compound) { return compound.valid; });
+}
+
 // Reuse Servo parsing/specificity and the runtime's native compound preparation.
-inline compiled_css_selector_list compile_selector_list(
+// One shared budget bounds the complete recursively compiled selector tree.
+inline compiled_css_selector_list compile_selector_list_impl(
     std::string_view text,
-    const selector_namespace_context* namespaces = nullptr) {
+    const selector_namespace_context* namespaces,
+    size_t functional_depth,
+    size_t& selector_budget) {
     compiled_css_selector_list result;
+    constexpr size_t maximum_functional_depth = 32U;
+    if (functional_depth > maximum_functional_depth || selector_budget == 0U)
+        return result;
     const auto parsed = namespaces == nullptr
         ? parse_selector_syntax(text)
         : parse_selector_syntax(text, *namespaces);
     if(!parsed) return result;
+    if (parsed.selectors.size() > selector_budget) return result;
+    selector_budget -= parsed.selectors.size();
     for(const auto& source:parsed.selectors) {
         compiled_css_selector selector;
         selector.compounds=source.compounds;
@@ -426,9 +473,32 @@ inline compiled_css_selector_list compile_selector_list(
             compound_index < selector.compounds.size(); ++compound_index) {
             const auto* attributes = compound_index < source.attributes.size()
                 ? &source.attributes[compound_index] : nullptr;
-            selector.compiled_compounds.push_back(
-                compile_css_compound_selector(
-                    selector.compounds[compound_index], namespaces, attributes));
+            auto compiled = compile_css_compound_selector(
+                selector.compounds[compound_index], namespaces, attributes);
+            for (auto& pseudo : compiled.pseudos) {
+                const auto functional = pseudo.name == "is" || pseudo.name == "where"
+                    || pseudo.name == "not" || pseudo.name == "has";
+                if (!functional || pseudo.argument.empty()) continue;
+                if (functional_depth == maximum_functional_depth) {
+                    compiled.valid = false;
+                    continue;
+                }
+                const auto nested_source = pseudo.name == "has"
+                    ? anchor_relative_selector_list(pseudo.argument)
+                    : pseudo.argument;
+                auto nested = std::make_shared<compiled_css_selector_list>(
+                    compile_selector_list_impl(
+                        nested_source,
+                        namespaces,
+                        functional_depth + 1U,
+                        selector_budget));
+                pseudo.compiled_argument_valid = std::any_of(
+                    nested->selectors.begin(), nested->selectors.end(),
+                    compiled_selector_is_valid);
+                pseudo.compiled_argument = std::move(nested);
+                if (!pseudo.compiled_argument_valid) compiled.valid = false;
+            }
+            selector.compiled_compounds.push_back(std::move(compiled));
         }
         selector.ancestor_requirements.resize(selector.compiled_compounds.size());
         for(size_t i=1;i<selector.compiled_compounds.size()
@@ -449,6 +519,13 @@ inline compiled_css_selector_list compile_selector_list(
         result.selectors.push_back(std::move(selector));
     }
     return result;
+}
+
+inline compiled_css_selector_list compile_selector_list(
+    std::string_view text,
+    const selector_namespace_context* namespaces = nullptr) {
+    auto selector_budget = size_t{4096U};
+    return compile_selector_list_impl(text, namespaces, 0U, selector_budget);
 }
 inline compiled_css_selector compile_selector(
     std::string_view text,

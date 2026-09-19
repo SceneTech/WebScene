@@ -322,6 +322,118 @@ void test_namespace_qualified_attribute_selectors_and_lifecycle()
     webscene_engine_destroy(engine);
 }
 
+void test_functional_selector_namespace_context_and_lifecycle()
+{
+    auto* engine = webscene_engine_create(64);
+    require(engine != nullptr, "functional namespace selector engine creation failed");
+    const auto result = evaluate(engine, R"JS(
+      (() => {
+        const first = 'urn:webscene:functional:first';
+        const second = 'urn:webscene:functional:second';
+        const host = document.createElement('div');
+        host.className = 'functional-namespace-host';
+        const firstCircle = document.createElementNS(first, 'circle');
+        firstCircle.setAttributeNS(first, 'p:state', 'ready');
+        host.appendChild(firstCircle);
+        document.body.appendChild(host);
+
+        const owner = document.createElement('style');
+        owner.textContent = `
+          @namespace p url("${first}");
+          .functional-namespace-host:has(> p|circle[p|state]:is(p|circle)) { width: 41px; }
+          p|circle:is(p|circle) { margin-left: 43px; }
+          p|circle:where(*|circle):not(|circle) { margin-top: 44px; }
+          p|circle:is(missing|circle, p|circle) { padding-left: 45px; }
+          p|circle:is(missing|circle) { padding-right: 999px; }
+        `;
+        document.head.appendChild(owner);
+        const defaults = document.createElement('style');
+        defaults.textContent = `@namespace url("${first}");
+          circle:is(:where(circle)) { margin-right: 46px; }`;
+        document.head.appendChild(defaults);
+        const hostStyle = () => getComputedStyle(host);
+        const circleStyle = () => getComputedStyle(firstCircle);
+        const nested = hostStyle().width === '41px'
+          && circleStyle().marginLeft === '43px'
+          && circleStyle().marginTop === '44px'
+          && circleStyle().paddingLeft === '45px'
+          && circleStyle().paddingRight !== '999px'
+          && circleStyle().marginRight === '46px';
+
+        firstCircle.removeAttributeNS(first, 'state');
+        const attributeInvalidated = hostStyle().width !== '41px';
+        firstCircle.setAttributeNS(first, 'q:state', 'ready');
+        const attributeRestored = hostStyle().width === '41px';
+        host.removeChild(firstCircle);
+        const childInvalidated = hostStyle().width !== '41px';
+        host.appendChild(firstCircle);
+        const childRestored = hostStyle().width === '41px';
+
+        const secondOwner = document.createElement('style');
+        secondOwner.textContent = `@namespace p url("${second}");
+          .functional-namespace-host:has(> p|circle) { height: 42px; }`;
+        document.head.appendChild(secondOwner);
+        const cacheSeparatedBefore = hostStyle().height !== '42px';
+        const secondCircle = document.createElementNS(second, 'circle');
+        host.appendChild(secondCircle);
+        const cacheSeparatedAfter = hostStyle().height === '42px';
+        owner.textContent = `@namespace p url("${second}");
+          .functional-namespace-host:is(.functional-namespace-host):has(> p|circle) {
+            width: 47px;
+          }`;
+        const ownerReplacement = hostStyle().width === '47px';
+
+        const adopted = new CSSStyleSheet();
+        adopted.replaceSync(`@namespace p url("${first}");
+          .functional-namespace-host:has(> p|circle) { border-left-width: 48px;
+            border-left-style: solid; }`);
+        document.adoptedStyleSheets.push(adopted);
+        const adoptedApplied = hostStyle().borderLeftWidth === '48px';
+        document.adoptedStyleSheets.pop();
+        const adoptedRemoved = hostStyle().borderLeftWidth !== '48px';
+
+        const started = performance.now();
+        for (let index = 0; index < 256; ++index) {
+          if (index & 1) host.appendChild(secondCircle);
+          else host.removeChild(secondCircle);
+          void hostStyle().width;
+        }
+        if (!secondCircle.parentNode) host.appendChild(secondCircle);
+        for (let index = 0; index < 32; ++index) {
+          document.adoptedStyleSheets.push(adopted);
+          void hostStyle().borderLeftWidth;
+          document.adoptedStyleSheets.pop();
+        }
+        const elapsed = performance.now() - started;
+        return JSON.stringify({
+          nested, attributeInvalidated, attributeRestored,
+          childInvalidated, childRestored, cacheSeparatedBefore,
+          cacheSeparatedAfter, ownerReplacement, adoptedApplied,
+          adoptedRemoved, elapsed
+        });
+      })()
+    )JS", "functional-namespace-selector-context.js");
+    for (const auto* field : {
+        "nested", "attributeInvalidated", "attributeRestored",
+        "childInvalidated", "childRestored", "cacheSeparatedBefore",
+        "cacheSeparatedAfter", "ownerReplacement", "adoptedApplied",
+        "adoptedRemoved"}) {
+        require(result.find(std::string{"\""} + field + "\":true")
+                != std::string::npos,
+            "functional namespace selector contract failed: " + result);
+    }
+    const auto elapsed_marker = result.find("\"elapsed\":");
+    require(elapsed_marker != std::string::npos,
+        "functional namespace selector performance evidence missing: " + result);
+    const auto elapsed = std::stod(result.substr(elapsed_marker + 10U));
+    std::cout << "Functional namespace selector gate: 256 invalidations and 32 lifecycle cycles in "
+        << elapsed << " ms\n";
+    require(elapsed < 2000.0,
+        "functional namespace selector mutation/lifecycle gate exceeded 2000ms: "
+            + std::to_string(elapsed));
+    webscene_engine_destroy(engine);
+}
+
 void test_compact_go_to_fixed_grid_tracks_preserve_trailing_space(
     webscene_engine* engine)
 {

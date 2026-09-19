@@ -1,0 +1,122 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>CSS namespace context in functional selector lists</title>
+<body>
+<script>
+  const state = window.__webSceneWptState = {
+    complete: false, harness: null, results: [], errors: [], diagnostics: []
+  };
+  const record = (name, error) => state.results.push({
+    name, status: error ? "FAIL" : "PASS",
+    message: error ? String(error && error.message || error) : null,
+    stack: error && error.stack ? String(error.stack) : null
+  });
+  const check = (condition, detail) => condition ? null : new Error(JSON.stringify(detail));
+  try {
+    const first = 'urn:webscene:wpt:functional:first';
+    const second = 'urn:webscene:wpt:functional:second';
+    const host = document.createElement('div');
+    host.className = 'functional-namespace-host';
+    const firstCircle = document.createElementNS(first, 'circle');
+    firstCircle.setAttributeNS(first, 'p:state', 'ready');
+    host.appendChild(firstCircle);
+    document.body.appendChild(host);
+
+    const owner = document.createElement('style');
+    owner.textContent = `
+      @namespace p url("${first}");
+      .functional-namespace-host:has(> p|circle[p|state]:is(p|circle)) { width: 41px; }
+      p|circle:is(p|circle) { margin-left: 43px; }
+      p|circle:where(*|circle):not(|circle) { margin-top: 44px; }
+      p|circle:is(missing|circle, p|circle) { padding-left: 45px; }
+      p|circle:is(missing|circle) { padding-right: 999px; }
+    `;
+    document.head.appendChild(owner);
+    const defaults = document.createElement('style');
+    defaults.textContent = `@namespace url("${first}");
+      circle:is(:where(circle)) { margin-right: 46px; }`;
+    document.head.appendChild(defaults);
+    const hostStyle = () => getComputedStyle(host);
+    const circleStyle = () => getComputedStyle(firstCircle);
+    const nestedSnapshot = {
+      width: hostStyle().width,
+      marginLeft: circleStyle().marginLeft,
+      marginTop: circleStyle().marginTop,
+      paddingLeft: circleStyle().paddingLeft,
+      paddingRight: circleStyle().paddingRight,
+      marginRight: circleStyle().marginRight
+    };
+    record('functional lists retain prefixed, default, any, empty, and unknown namespace semantics', check(
+      nestedSnapshot.width === '41px'
+        && nestedSnapshot.marginLeft === '43px'
+        && nestedSnapshot.marginTop === '44px'
+        && nestedSnapshot.paddingLeft === '45px'
+        && nestedSnapshot.paddingRight !== '999px'
+        && nestedSnapshot.marginRight === '46px',
+      nestedSnapshot));
+
+    firstCircle.removeAttributeNS(first, 'state');
+    const attributeRemoved = hostStyle().width;
+    firstCircle.setAttributeNS(first, 'q:state', 'ready');
+    const attributeRestored = hostStyle().width;
+    host.removeChild(firstCircle);
+    const childRemoved = hostStyle().width;
+    host.appendChild(firstCircle);
+    const childRestored = hostStyle().width;
+    record(':has() namespace dependencies invalidate attribute and child mutations', check(
+      attributeRemoved !== '41px' && attributeRestored === '41px'
+        && childRemoved !== '41px' && childRestored === '41px',
+      { attributeRemoved, attributeRestored, childRemoved, childRestored }));
+
+    const secondOwner = document.createElement('style');
+    secondOwner.textContent = `@namespace p url("${second}");
+      .functional-namespace-host:has(> p|circle) { height: 42px; }`;
+    document.head.appendChild(secondOwner);
+    const beforeSecond = hostStyle().height;
+    const secondCircle = document.createElementNS(second, 'circle');
+    host.appendChild(secondCircle);
+    const afterSecond = hostStyle().height;
+    owner.textContent = `@namespace p url("${second}");
+      .functional-namespace-host:is(.functional-namespace-host):has(> p|circle) {
+        width: 47px;
+      }`;
+    const replacementWidth = hostStyle().width;
+    record('functional cache identity follows owner namespace replacement', check(
+      beforeSecond !== '42px' && afterSecond === '42px'
+        && replacementWidth === '47px',
+      { beforeSecond, afterSecond, replacementWidth }));
+
+    const adopted = new CSSStyleSheet();
+    adopted.replaceSync(`@namespace p url("${first}");
+      .functional-namespace-host:has(> p|circle) {
+        border-left-width: 48px; border-left-style: solid;
+      }`);
+    document.adoptedStyleSheets.push(adopted);
+    const adoptedWidth = hostStyle().borderLeftWidth;
+    document.adoptedStyleSheets.pop();
+    const removedWidth = hostStyle().borderLeftWidth;
+    const started = performance.now();
+    for (let index = 0; index < 128; ++index) {
+      document.adoptedStyleSheets.push(adopted);
+      void hostStyle().borderLeftWidth;
+      document.adoptedStyleSheets.pop();
+    }
+    const elapsed = performance.now() - started;
+    record('adopted functional namespace payloads survive bounded lifecycle churn', check(
+      adoptedWidth === '48px' && removedWidth !== '48px' && elapsed < 2000,
+      { adoptedWidth, removedWidth, elapsed }));
+    state.diagnostics.push(JSON.stringify({ nestedSnapshot, elapsed }));
+  } catch (error) {
+    record('functional namespace selector setup', error);
+  }
+  const failure = state.results.find(result => result.status !== 'PASS');
+  state.harness = failure
+    ? { status: 1, message: failure.message, stack: failure.stack }
+    : { status: 0, message: null, stack: null };
+  state.complete = true;
+  const evidence = document.createElement('pre');
+  evidence.id = 'css-functional-namespace-selector-context-evidence';
+  evidence.hidden = true;
+  evidence.textContent = JSON.stringify(state);
+  document.body.appendChild(evidence);
+</script>

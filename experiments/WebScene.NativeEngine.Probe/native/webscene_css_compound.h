@@ -357,19 +357,30 @@ inline bool compound_matches(const Host& host,const dom_node& node,
                 if (!css::interaction_matches(document,node,name,
                     host.selector_interaction_state(),host.is_text_control(&node))) return false;
             } else if (name == "not") {
-                if (css_selector_list_any(argument, [&](std::string_view item) {
-                        return host.css_selector_matches(node, item, scope_root);
-                    })) return false;
+                if (pseudo.compiled_argument != nullptr) {
+                    if (!pseudo.compiled_argument_valid
+                        || host.css_compiled_selector_list_matches(
+                            node, *pseudo.compiled_argument, scope_root)) return false;
+                } else if (css_selector_list_any(argument, [&](std::string_view item) {
+                    return host.css_selector_matches(node, item, scope_root);
+                })) return false;
             } else if (name == "is" || name == "where") {
-                if (!css_selector_list_any(argument, [&](std::string_view item) {
-                        return host.css_selector_matches(node, item, scope_root);
-                    })) return false;
+                if (pseudo.compiled_argument != nullptr) {
+                    if (!pseudo.compiled_argument_valid
+                        || !host.css_compiled_selector_list_matches(
+                            node, *pseudo.compiled_argument, scope_root)) return false;
+                } else if (!css_selector_list_any(argument, [&](std::string_view item) {
+                    return host.css_selector_matches(node, item, scope_root);
+                })) return false;
             } else if (name == "has") {
-                const auto any = css_selector_list_any(argument,
-                    [&](std::string_view relative) {
+                const auto any = pseudo.compiled_argument != nullptr
+                    ? pseudo.compiled_argument_valid
+                        && host.css_compiled_relative_selector_list_matches(
+                            node, *pseudo.compiled_argument)
+                    : css_selector_list_any(argument, [&](std::string_view relative) {
                         return !relative.empty()
                             && host.css_relative_selector_matches(node, relative);
-                });
+                    });
                 if (!any) return false;
             } else {
                 // Stateful and vendor pseudo-classes are not active unless the

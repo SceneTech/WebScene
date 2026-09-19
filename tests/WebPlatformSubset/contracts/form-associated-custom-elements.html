@@ -73,10 +73,12 @@ test(()=>{
   value.append('custom-first','one');
   value.append('custom-second','two');
   control.internals.setFormValue(value,'private-restore-state');
+  value.append('late-mutation','excluded');
   let data=new FormData(form);
   assert_array_equals([...data.keys()],
     ['before','custom-first','custom-second','after']);
   assert_equals(data.get('custom-first'),'one');
+  assert_false(data.has('late-mutation'));
   assert_false(data.has('host-name'));
 
   const file=new File(['body'],'entry.txt',{type:'text/plain'});

@@ -3355,8 +3355,14 @@ struct v8_dom_runtime::implementation final {
                   }
                   const convert = candidate => {
                     if (candidate === null
-                        || candidate instanceof globalThis.FormData
                         || candidate instanceof globalThis.File) return candidate;
+                    if (candidate instanceof globalThis.FormData) {
+                      const copy = new globalThis.FormData();
+                      for (const [name, entry, filename] of candidate._entries) {
+                        copy.append(name, entry, filename);
+                      }
+                      return copy;
+                    }
                     return String(candidate);
                   };
                   const record = attachedInternals.get(element);

@@ -4,6 +4,10 @@
         v8::Global<v8::Module> module;
     };
     std::vector<module_entry> module_map;
+    bool worker_script_fetch_policy_active{false};
+    std::string worker_script_fetch_origin;
+    uint32_t worker_script_fetch_credentials{
+        WEBSCENE_FETCH_CREDENTIALS_SAME_ORIGIN};
 
     std::string module_url(v8::Local<v8::Module> module) {
         for (auto& entry : module_map)
@@ -56,18 +60,36 @@
             if (entry.url == url && entry.realm.Get(isolate) == realm)
                 return entry.module.Get(isolate);
         std::string source, resolved;
-        const resource_request_context request_context{
-            WEBSCENE_RESOURCE_INITIATOR_SUBRESOURCE,
-            current_security_origin(),
-            base.empty() ? current_base_address() : base,
-            WEBSCENE_FETCH_MODE_CORS,
-            WEBSCENE_REQUEST_DESTINATION_SCRIPT,
-            "GET", {}, {}, WEBSCENE_FETCH_CREDENTIALS_SAME_ORIGIN, {}};
-        if (!load_text_resource(
-                url, {}, WEBSCENE_RESOURCE_SCRIPT, source, resolved,
-                nullptr, request_context)) {
+        std::string load_error;
+        const auto loaded = worker_script_fetch_policy_active
+            ? load_worker_script_resource(
+                url,
+                base.empty() ? current_base_address() : base,
+                WEBSCENE_FETCH_MODE_CORS,
+                source,
+                resolved,
+                load_error)
+            : load_text_resource(
+                url,
+                {},
+                WEBSCENE_RESOURCE_SCRIPT,
+                source,
+                resolved,
+                nullptr,
+                resource_request_context{
+                    WEBSCENE_RESOURCE_INITIATOR_SUBRESOURCE,
+                    current_security_origin(),
+                    base.empty() ? current_base_address() : base,
+                    WEBSCENE_FETCH_MODE_CORS,
+                    WEBSCENE_REQUEST_DESTINATION_SCRIPT,
+                    "GET",
+                    {},
+                    {},
+                    WEBSCENE_FETCH_CREDENTIALS_SAME_ORIGIN,
+                    {}});
+        if (!loaded) {
             isolate->ThrowException(v8::Exception::TypeError(js_dom_string(isolate,
-                "Unable to load module: " + url)));
+                load_error.empty() ? "Unable to load module: " + url : load_error)));
             return {};
         }
         return compile_module(realm, source, resolved);

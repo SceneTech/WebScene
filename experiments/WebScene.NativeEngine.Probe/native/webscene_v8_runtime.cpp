@@ -777,6 +777,12 @@ struct v8_dom_runtime::implementation final {
             js_string(isolate, "reportValidity"),
             v8::FunctionTemplate::New(isolate, validate_control));
         element->PrototypeTemplate()->Set(
+            js_string(isolate, "submit"),
+            v8::FunctionTemplate::New(isolate, form_submit));
+        element->PrototypeTemplate()->Set(
+            js_string(isolate, "requestSubmit"),
+            v8::FunctionTemplate::New(isolate, form_request_submit));
+        element->PrototypeTemplate()->Set(
             js_string(isolate, "reset"),
             v8::FunctionTemplate::New(isolate, form_reset));
         element_template.Reset(isolate, element);
@@ -4372,6 +4378,9 @@ struct v8_dom_runtime::implementation final {
                       this.append(name, value);
                     }
                   }
+                  const event = new Event('formdata');
+                  Object.defineProperty(event, 'formData', { value: this, enumerable: true });
+                  form.dispatchEvent(event);
                 }
               }
               append(name, value, filename = undefined) {

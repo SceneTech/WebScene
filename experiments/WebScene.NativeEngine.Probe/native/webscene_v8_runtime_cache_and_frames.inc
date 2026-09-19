@@ -1776,6 +1776,9 @@
                         this.append(name, value);
                       }
                     }
+                    const event = new Event('formdata');
+                    Object.defineProperty(event, 'formData', { value: this, enumerable: true });
+                    form.dispatchEvent(event);
                   }
                 }
                 append(name, value, filename = undefined) {

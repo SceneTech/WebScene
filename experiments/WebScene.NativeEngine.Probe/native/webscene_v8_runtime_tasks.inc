@@ -2345,6 +2345,25 @@
         return match == controls.end() ? nullptr : *match;
     }
 
+    bool construct_form_data(dom_node& form,dom_node* submitter)
+    {
+        auto local_context=context_for_node(form);
+        v8::Context::Scope context_scope(local_context);
+        v8::Local<v8::Value> constructor_value;
+        if(!local_context->Global()->Get(
+                local_context,js_string(isolate,"FormData"))
+                .ToLocal(&constructor_value)
+            || !constructor_value->IsFunction()) return true;
+        v8::Local<v8::Value> arguments[]={
+            wrap_node(form),
+            submitter==nullptr
+                ? v8::Local<v8::Value>(v8::Null(isolate))
+                : v8::Local<v8::Value>(wrap_node(*submitter))};
+        v8::Local<v8::Object> form_data;
+        return constructor_value.As<v8::Function>()->NewInstance(
+            local_context,2,arguments).ToLocal(&form_data);
+    }
+
     bool dispatch_form_submit(
         const webscene_input_event& input,
         dom_node& form,
@@ -2367,13 +2386,10 @@
             || (submitter!=nullptr
                 && submitter->attributes.contains("formnovalidate"));
         if(!skip_validation && !validate_form_constraints(form)) return true;
-        bool submit_prevented = false;
-        return dispatch_input_event_type(
-            input,
-            "submit",
-            form,
-            &submit_prevented,
-            submitter);
+        bool submit_prevented=false;
+        if(!dispatch_input_event_type(
+                input,"submit",form,&submit_prevented,submitter)) return false;
+        return submit_prevented || construct_form_data(form,submitter);
     }
 
     bool perform_implicit_submission(

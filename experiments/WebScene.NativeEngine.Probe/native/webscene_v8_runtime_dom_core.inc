@@ -2222,6 +2222,8 @@
                         ? html_text_area_element_template.Get(isolate)
                     : node.tag == "form"
                         ? html_form_element_template.Get(isolate)
+                    : node.tag == "fieldset"
+                        ? html_field_set_element_template.Get(isolate)
                     : node.tag == "select"
                         ? html_select_element_template.Get(isolate)
                     : node.tag == "option"

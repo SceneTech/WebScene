@@ -1374,6 +1374,13 @@
       "reason": "Implementation-first candidate for WebScene #257. Form and fieldset :valid/:invalid state aggregates current owned or descendant validation candidates; HTMLFormElement checkValidity()/reportValidity() dispatch invalid for each failing owned candidate; submit activation marks owned input/select/textarea user validity before validation, blocks submit when invalid, and honors novalidate/formnovalidate without suppressing that interaction transition. Aggregate selector matching reads live state without adding a competing structural invalidation route, so descendant-driven ancestor computed-style recascade remains outside this slice. Interactive validation UI and the remaining control-type gaps are deferred. Per task direction this authored contract is unexecuted."
     },
     {
+      "path": "contracts/form-submit-request-submit.html",
+      "type": "testharness",
+      "capabilities": ["form-submit-methods", "request-submit-validation", "submitter-validation", "formdata-event-ordering", "fieldset-constraint-validation-idl"],
+      "evidence": ["wpt-form-submission-derived", "native-source-companion-contract"],
+      "reason": "Implementation-first candidate for WebScene #257. HTMLFormElement requestSubmit() validates submitter type and ownership, then preserves the #606 user-validity and constraint-validation route before an explicit-submitter submit event. Uncanceled submission and legacy submit() construct the supported entry list and synchronously dispatch formdata; canceled submit prevents construction, while legacy submit bypasses validation, user-validity transitions, and submit. Fieldsets receive their dedicated HTMLFieldSetElement validity IDL while remaining barred from constraint validation. Structural ancestor invalidation, interactive validation UI, navigation/encoding transport, and complete FormDataEvent/file/custom-element support remain outside this slice. Per task direction this authored contract is unexecuted."
+    },
+    {
       "path": "contracts/css-grid-auto-fill-minmax-custom-property.html",
       "type": "testharness",
       "capabilities": ["css-grid", "auto-fill-tracks", "minmax", "custom-property-track-minimum", "responsive-track-count"],

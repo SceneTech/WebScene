@@ -257,11 +257,13 @@
             result |= WEBSCENE_SEMANTIC_ACTION_SUPPORT_TOGGLE_V1;
         }
         if (node.tag == "input" && (type == "range" || type == "number")
-            && !node.attributes.contains("readonly")
-            && lower_html_name(std::string(semantic_attribute(node, "step")))
-                != "any") {
-            result |= WEBSCENE_SEMANTIC_ACTION_SUPPORT_INCREMENT_V1
-                | WEBSCENE_SEMANTIC_ACTION_SUPPORT_DECREMENT_V1;
+            && !node.attributes.contains("readonly")) {
+            result |= WEBSCENE_SEMANTIC_ACTION_SUPPORT_SET_VALUE_V1;
+            if (lower_html_name(std::string(
+                    semantic_attribute(node, "step"))) != "any") {
+                result |= WEBSCENE_SEMANTIC_ACTION_SUPPORT_INCREMENT_V1
+                    | WEBSCENE_SEMANTIC_ACTION_SUPPORT_DECREMENT_V1;
+            }
         }
         if (semantic_text_selection_control(node)) {
             result |= WEBSCENE_SEMANTIC_ACTION_SUPPORT_SET_SELECTION_V1;
@@ -1249,8 +1251,23 @@
                 break;
             case WEBSCENE_SEMANTIC_ACTION_SET_VALUE_V1: {
                 forms::ensure_text_value(*node);
+                const auto numeric_kind = forms::numeric_kind(*node);
+                auto next_value = request.value;
+                if (numeric_kind == forms::numeric_input_kind::number
+                    || numeric_kind == forms::numeric_input_kind::range) {
+                    if (!forms::numeric_value(numeric_kind, request.value)) {
+                        succeeded = false;
+                        break;
+                    }
+                    next_value = forms::sanitize_programmatic_numeric_value(
+                        *node, std::move(next_value));
+                    if (next_value.empty()) {
+                        succeeded = false;
+                        break;
+                    }
+                }
                 const auto previous = node->form_control().value;
-                node->mutable_form_control().value = request.value;
+                node->mutable_form_control().value = std::move(next_value);
                 node->mutable_form_control().value_initialized = true;
                 node->mutable_form_control().dirty_value = true;
                 const auto caret = node->form_control().value.size();
@@ -1264,6 +1281,11 @@
                 recascade_form_value_selector_transition(
                     *node, previous, node->form_control().value, true, true);
                 succeeded = dispatch_input_event_type(synthetic, "input", *node);
+                if (succeeded
+                    && numeric_kind != forms::numeric_input_kind::none) {
+                    succeeded = dispatch_input_event_type(
+                        synthetic, "change", *node);
+                }
                 break;
             }
             case WEBSCENE_SEMANTIC_ACTION_SET_SELECTION_V1: {

@@ -860,6 +860,9 @@
         self->recascade_radio_group_selector_state_changes(radio_group_state);
         if(node->tag=="option" && (name=="selected" || name=="value"))
             self->recascade_containing_select_validity(*node);
+        if(validation_constraint_attribute(name))
+            self->dismiss_validation_message_after_constraint_mutation(*node);
+        else self->reconcile_validation_message_eligibility(*node);
         self->notify_custom_element_attribute(*node, name, old_value, value);
     }
 
@@ -920,6 +923,11 @@
         if((!namespace_uri || namespace_uri->empty()) && node->tag=="option"
             && (name=="selected" || name=="value"))
             self->recascade_containing_select_validity(*node);
+        if(!namespace_uri || namespace_uri->empty()) {
+            if(validation_constraint_attribute(name))
+                self->dismiss_validation_message_after_constraint_mutation(*node);
+            else self->reconcile_validation_message_eligibility(*node);
+        }
         self->notify_custom_element_attribute(
             *node, name, old_value, value, namespace_uri);
     }
@@ -976,6 +984,9 @@
         self->recascade_radio_group_selector_state_changes(radio_group_state);
         if(node->tag=="option" && (name=="selected" || name=="value"))
             self->recascade_containing_select_validity(*node);
+        if(validation_constraint_attribute(name))
+            self->dismiss_validation_message_after_constraint_mutation(*node);
+        else self->reconcile_validation_message_eligibility(*node);
         self->notify_custom_element_attribute(
             *node, name, old_value, std::nullopt);
     }
@@ -1077,6 +1088,11 @@
         if((!namespace_uri || namespace_uri->empty()) && node->tag=="option"
             && (name=="selected" || name=="value"))
             self->recascade_containing_select_validity(*node);
+        if(!namespace_uri || namespace_uri->empty()) {
+            if(validation_constraint_attribute(name))
+                self->dismiss_validation_message_after_constraint_mutation(*node);
+            else self->reconcile_validation_message_eligibility(*node);
+        }
         self->notify_custom_element_attribute(
             *node, name, old_value, std::nullopt, namespace_uri);
     }
@@ -1144,6 +1160,9 @@
         self->recascade_radio_group_selector_state_changes(radio_group_state);
         if(node->tag=="option" && (name=="selected" || name=="value"))
             self->recascade_containing_select_validity(*node);
+        if(validation_constraint_attribute(name))
+            self->dismiss_validation_message_after_constraint_mutation(*node);
+        else self->reconcile_validation_message_eligibility(*node);
         // Queue invalidation before author callbacks: they may synchronously
         // read styles or replace this attribute with another value.
         self->notify_custom_element_attribute(*node, name, old_value,

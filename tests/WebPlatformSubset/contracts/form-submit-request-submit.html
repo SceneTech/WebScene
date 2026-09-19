@@ -1,0 +1,96 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Form submit methods preserve validation and event ordering</title>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<script>
+test(()=>{
+  assert_own_property(HTMLFormElement.prototype,'submit');
+  assert_own_property(HTMLFormElement.prototype,'requestSubmit');
+  assert_equals(HTMLFormElement.prototype.submit.length,0);
+  assert_equals(HTMLFormElement.prototype.requestSubmit.length,0);
+
+  const fieldset=document.createElement('fieldset');
+  assert_true(fieldset instanceof HTMLFieldSetElement);
+  for(const name of ['validity','validationMessage','willValidate',
+    'setCustomValidity','checkValidity','reportValidity'])
+    assert_own_property(HTMLFieldSetElement.prototype,name);
+  assert_false(fieldset.willValidate);
+  assert_true(fieldset.validity.valid);
+  fieldset.setCustomValidity('fieldset custom error');
+  assert_true(fieldset.validity.customError);
+  assert_false(fieldset.validity.valid);
+  assert_equals(fieldset.validationMessage,'');
+  assert_true(fieldset.checkValidity());
+  assert_true(fieldset.reportValidity());
+},'form submission and fieldset constraint-validation IDL is browser-shaped');
+
+test(()=>{
+  const form=document.createElement('form');
+  const required=document.createElement('input');required.name='required';required.required=true;
+  const submitter=document.createElement('button');submitter.name='commit';submitter.value='yes';
+  form.append(required,submitter);document.body.appendChild(form);
+  const order=[];
+  let invalidEvents=0,submitEvent=null,formDataEvent=null;
+  required.addEventListener('invalid',()=>{invalidEvents++;order.push('invalid');});
+  form.addEventListener('submit',event=>{submitEvent=event;order.push('submit');event.preventDefault();},{once:true});
+  form.addEventListener('formdata',event=>{formDataEvent=event;order.push('formdata');});
+
+  form.requestSubmit(submitter);
+  assert_equals(invalidEvents,1);
+  assert_array_equals(order,['invalid']);
+  assert_true(required.matches(':user-invalid'));
+
+  required.value='ready';
+  form.requestSubmit(submitter);
+  assert_array_equals(order,['invalid','submit']);
+  assert_equals(submitEvent.submitter,submitter);
+  assert_equals(formDataEvent,null,'a canceled submit does not construct the entry list');
+
+  form.addEventListener('submit',event=>{submitEvent=event;order.push('submit');},{once:true});
+  form.requestSubmit(submitter);
+  assert_array_equals(order,['invalid','submit','submit','formdata']);
+  assert_equals(submitEvent.submitter,submitter);
+  assert_equals(formDataEvent.formData.get('required'),'ready');
+  assert_equals(formDataEvent.formData.get('commit'),'yes');
+  assert_false(formDataEvent.bubbles);
+  assert_false(formDataEvent.cancelable);
+},'requestSubmit keeps #606 validation before submit and formdata after an uncanceled submit');
+
+test(()=>{
+  const form=document.createElement('form');form.id='request-owner';
+  const own=document.createElement('button');own.name='chosen';own.value='own';
+  const ordinary=document.createElement('button');ordinary.type='button';
+  const foreignForm=document.createElement('form');
+  const foreign=document.createElement('button');foreignForm.appendChild(foreign);
+  form.append(own,ordinary);document.body.append(form,foreignForm);
+
+  assert_throws_js(TypeError,()=>form.requestSubmit(ordinary));
+  assert_throws_dom('NotFoundError',()=>form.requestSubmit(foreign));
+
+  let submitter='unset';
+  form.addEventListener('submit',event=>{submitter=event.submitter;event.preventDefault();},{once:true});
+  form.requestSubmit();
+  assert_equals(submitter,null);
+},'requestSubmit validates submitter type and form ownership before submission');
+
+test(()=>{
+  const form=document.createElement('form');
+  const required=document.createElement('input');required.required=true;required.name='required';
+  form.appendChild(required);document.body.appendChild(form);
+  const order=[];let data=null;
+  form.addEventListener('invalid',()=>order.push('invalid'));
+  form.addEventListener('submit',()=>order.push('submit'));
+  form.addEventListener('formdata',event=>{order.push('formdata');data=event.formData;});
+
+  form.submit();
+  assert_array_equals(order,['formdata']);
+  assert_equals(data.get('required'),'');
+  assert_false(required.matches(':user-invalid'));
+
+  order.length=0;data=null;
+  const direct=new FormData(form);
+  assert_array_equals(order,['formdata']);
+  assert_equals(data,direct);
+},'legacy submit bypasses validation and submit while entry-list construction fires formdata');
+</script>

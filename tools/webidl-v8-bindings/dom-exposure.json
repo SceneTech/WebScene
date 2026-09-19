@@ -464,6 +464,25 @@
       ],
       "methods": [
         { "name": "checkValidity", "callback": "validate_control", "length": 0 },
+        { "name": "reportValidity", "callback": "validate_control", "length": 0 },
+        { "name": "submit", "callback": "form_submit", "length": 0 },
+        { "name": "requestSubmit", "callback": "form_request_submit", "length": 0 }
+      ],
+      "constants": []
+    },
+    {
+      "name": "HTMLFieldSetElement",
+      "template": "html_field_set_element_template",
+      "constructor": "illegal_dom_constructor",
+      "parent": "HTMLElement",
+      "attributes": [
+        { "name": "validity", "getter": "get_validity" },
+        { "name": "validationMessage", "getter": "get_validation_message" },
+        { "name": "willValidate", "getter": "get_will_validate" }
+      ],
+      "methods": [
+        { "name": "setCustomValidity", "callback": "set_custom_validity", "length": 1 },
+        { "name": "checkValidity", "callback": "validate_control", "length": 0 },
         { "name": "reportValidity", "callback": "validate_control", "length": 0 }
       ],
       "constants": []

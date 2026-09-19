@@ -3345,10 +3345,11 @@
             : js_string(info.GetIsolate(), node->mutable_form_control().value.c_str()));
     }
 
-    static bool is_constraint_validation_control(const dom_node* node)
+    static bool is_constraint_validation_element(const dom_node* node)
     {
         return node!=nullptr && (node->tag=="button" || node->tag=="input"
-            || node->tag=="select" || node->tag=="textarea");
+            || node->tag=="select" || node->tag=="textarea"
+            || node->tag=="fieldset");
     }
 
     static void get_validity_state_flag(
@@ -3357,7 +3358,7 @@
     {
         auto* self=current(info.GetIsolate());
         auto* node=unwrap_node(info.Holder());
-        if(self==nullptr || !is_constraint_validation_control(node)) return;
+        if(self==nullptr || !is_constraint_validation_element(node)) return;
         const auto state=forms::constraint_validity_state(self->document,*node);
         const auto name=to_utf8(info.GetIsolate(),property);
         const auto value=name=="valueMissing"?state.value_missing
@@ -3381,7 +3382,7 @@
     {
         auto* self=current(info.GetIsolate());
         auto* node=unwrap_node(info.Holder());
-        if(self==nullptr || !is_constraint_validation_control(node)) return;
+        if(self==nullptr || !is_constraint_validation_element(node)) return;
         auto local_context=info.GetIsolate()->GetCurrentContext();
 #if defined(WEBSCENE_NATIVE_ENGINE_GENERATED_DOM_BINDINGS)
         auto cache_key=v8::Private::ForApi(
@@ -3426,7 +3427,7 @@
     {
         auto* self=current(info.GetIsolate());
         auto* node=unwrap_node(info.Holder());
-        if(self==nullptr || !is_constraint_validation_control(node)) return;
+        if(self==nullptr || !is_constraint_validation_element(node)) return;
         const auto message=forms::validation_message(self->document,*node);
         info.GetReturnValue().Set(js_dom_string(info.GetIsolate(),message));
     }
@@ -3439,7 +3440,7 @@
         auto* node=unwrap_node(info.Holder());
         info.GetReturnValue().Set(v8::Boolean::New(
             info.GetIsolate(),self!=nullptr
-                && is_constraint_validation_control(node)
+                && is_constraint_validation_element(node)
                 && forms::will_validate(self->document,*node)));
     }
 
@@ -3448,7 +3449,7 @@
     {
         auto* self=current(info.GetIsolate());
         auto* node=unwrap_node(info.This());
-        if(self==nullptr || !is_constraint_validation_control(node)) return;
+        if(self==nullptr || !is_constraint_validation_element(node)) return;
         if(info.Length()<1) {
             info.GetIsolate()->ThrowException(v8::Exception::TypeError(
                 js_string(info.GetIsolate(),"setCustomValidity requires a message")));
@@ -3515,7 +3516,7 @@
                 info.GetIsolate(),self->validate_form_constraints(*node)));
             return;
         }
-        if(self==nullptr || !is_constraint_validation_control(node)) {
+        if(self==nullptr || !is_constraint_validation_element(node)) {
             info.GetReturnValue().Set(v8::True(info.GetIsolate()));
             return;
         }
@@ -3524,6 +3525,50 @@
             || forms::constraint_validity_state(self->document,*node).valid();
         if(!valid) static_cast<void>(self->dispatch_invalid_event(*node));
         info.GetReturnValue().Set(v8::Boolean::New(info.GetIsolate(),valid));
+    }
+
+    static bool is_form_submitter(const dom_node* node)
+    {
+        if(node==nullptr) return false;
+        const auto authored=node->attributes.find("type");
+        const auto type=authored==node->attributes.end()
+            ? std::string{}:lower_html_name(authored->second);
+        if(node->tag=="button") return type.empty() || type=="submit";
+        return node->tag=="input" && (type=="submit" || type=="image");
+    }
+
+    static void form_submit(const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* self=current(info.GetIsolate());
+        auto* form=unwrap_node(info.This());
+        if(self==nullptr || form==nullptr || form->tag!="form") return;
+        static_cast<void>(self->construct_form_data(*form,nullptr));
+    }
+
+    static void form_request_submit(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* self=current(info.GetIsolate());
+        auto* form=unwrap_node(info.This());
+        if(self==nullptr || form==nullptr || form->tag!="form") return;
+        dom_node* submitter=nullptr;
+        if(info.Length()>0 && !info[0]->IsNullOrUndefined()) {
+            submitter=unwrap_node(info[0]);
+            if(!is_form_submitter(submitter)) {
+                info.GetIsolate()->ThrowException(v8::Exception::TypeError(
+                    js_string(info.GetIsolate(),
+                        "requestSubmit submitter must be a submit button")));
+                return;
+            }
+            if(self->form_owner(*submitter)!=form) {
+                throw_dom_exception(
+                    info,"Submitter belongs to another form","NotFoundError");
+                return;
+            }
+        }
+        webscene_input_event synthetic{};
+        static_cast<void>(self->dispatch_form_submit(
+            synthetic,*form,submitter));
     }
 
     static void get_form_owner(

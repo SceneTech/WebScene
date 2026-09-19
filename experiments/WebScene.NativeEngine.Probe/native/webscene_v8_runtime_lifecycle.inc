@@ -415,6 +415,7 @@
         html_input_element_template.Reset();
         html_text_area_element_template.Reset();
         html_form_element_template.Reset();
+        html_field_set_element_template.Reset();
         html_select_element_template.Reset();
         html_option_element_template.Reset();
         html_meta_element_template.Reset();

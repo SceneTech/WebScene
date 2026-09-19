@@ -2653,9 +2653,9 @@
     {
       "path": "contracts/service-worker-range-cache-broker.html",
       "type": "contract",
-      "capabilities": ["service-worker-request-headers", "service-worker-range-response", "service-worker-conditional-response", "service-worker-aggregate-body-budget"],
+      "capabilities": ["service-worker-request-headers", "csrf-request-header-preservation", "service-worker-range-response", "service-worker-conditional-response", "service-worker-aggregate-body-budget"],
       "evidence": ["fetch-request-headers-derived", "service-workers-fetch-event-derived", "chromium-153-direct-neutral-contract", "vscode-oss-webview-range-cache-broker"],
-      "reason": "Candidate range/cache broker slice for WebScene #266. It preserves bounded page-authored Request headers through controlled FetchEvent dispatch so the unchanged Code OSS broker can observe Range and cache validators, while retaining status, MIME, ETag, Last-Modified, Content-Range, HEAD, and method-rejection semantics. The native companion gate adds a 64 MiB aggregate queued response-body budget over the existing 32-fetch cap, 100 warm 64 KiB requests at p95 <= 100 ms, 32 concurrent 1 MiB responses, malformed-header closure, <= 8 MiB retained V8 heap, and bounded peak RSS. Host message streaming, local-resource admission, localhost mapping, abort/timeout, and exact unchanged Markdown remain cumulative work.",
+      "reason": "Candidate range/cache broker slice for WebScene #266. It preserves bounded page-authored Request headers, including CSRF tokens, through controlled FetchEvent dispatch so application authentication and the unchanged Code OSS broker can observe custom headers, Range, and cache validators, while retaining status, MIME, ETag, Last-Modified, Content-Range, HEAD, and method-rejection semantics. The native companion gates expose the same bounded header list to v5 host resource callbacks and add a 64 MiB aggregate queued response-body budget over the existing 32-fetch cap, 100 warm 64 KiB requests at p95 <= 100 ms, 32 concurrent 1 MiB responses, malformed-header closure, <= 8 MiB retained V8 heap, and bounded peak RSS. Host message streaming, local-resource admission, localhost mapping, abort/timeout, and exact unchanged Markdown remain cumulative work.",
       "nativeNavigation": true
     },
     {

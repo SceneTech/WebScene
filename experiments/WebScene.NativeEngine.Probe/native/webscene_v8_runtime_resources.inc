@@ -1280,7 +1280,7 @@
         connected_resource_task& resource,
         const service_worker_fetch_result* controlled)
     {
-        if (resource.node == nullptr || !document.is_connected(*resource.node)
+        if (resource.node == nullptr || !is_connected(*resource.node)
             || resource.document_generation
                 != document_generation.load(std::memory_order_acquire)) {
             return;

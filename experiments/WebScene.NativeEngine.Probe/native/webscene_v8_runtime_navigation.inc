@@ -1,3 +1,17 @@
+    void report_document_script_error(const std::string& error)
+    {
+        if (diagnostics == nullptr
+            || !diagnostics->enabled(WEBSCENE_DIAGNOSTIC_LEGACY_CONSOLE)) {
+            return;
+        }
+        std::lock_guard lock(console_message_mutex);
+        constexpr size_t maximum_console_messages = 1024U;
+        if (console_messages.size() >= maximum_console_messages) {
+            console_messages.pop_front();
+        }
+        console_messages.push_back("error\n" + error);
+    }
+
 #if defined(WEBSCENE_NATIVE_ENGINE_ENABLE_GRAPHICS)
     void retire_document_graphics()
     {
@@ -712,15 +726,6 @@
         // own image subtrees separately.
         enqueue_connected_image_resources_subtree(html_element, local_context);
 
-        const auto report_document_script_error = [&](const std::string& error) {
-            if (diagnostics == nullptr || !diagnostics->enabled(WEBSCENE_DIAGNOSTIC_LEGACY_CONSOLE)) return;
-            std::lock_guard lock(console_message_mutex);
-            constexpr size_t maximum_console_messages = 1024U;
-            if (console_messages.size() >= maximum_console_messages) {
-                console_messages.pop_front();
-            }
-            console_messages.push_back("error\n" + error);
-        };
         const auto execute_group = [&](bool defer) {
             for (const auto& script : scripts) {
                 if (script.defer != defer) continue;

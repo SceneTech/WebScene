@@ -62,7 +62,7 @@
                 return candidate;
         }
         if (hit == nullptr) return nullptr;
-        auto* root = css_cascade_root_for_node(hit);
+        auto* root = css_cascade_root_for_node(*hit);
         const auto root_id = root == nullptr ? document.body().id : root->id;
         if (const auto known = window_selections.find(root_id);
             known != window_selections.end() && validate_selection(known->second)
@@ -74,7 +74,7 @@
 
     std::string outbound_selection_text(dom_node& source)
     {
-        auto* root = css_cascade_root_for_node(&source);
+        auto* root = css_cascade_root_for_node(source);
         const auto root_id = root == nullptr ? document.body().id : root->id;
         const auto known = window_selections.find(root_id);
         if (known == window_selections.end() || !validate_selection(known->second)
@@ -202,7 +202,7 @@
             const auto href = source.attributes.find("href");
             if (href != source.attributes.end()) {
                 auto uri = resolve_resource_url(
-                    href->second, effective_document_base(css_cascade_root_for_node(&source)));
+                    href->second, effective_document_base(css_cascade_root_for_node(source)));
                 if (!uri.empty() && !add_outbound_item(*request,
                         WEBSCENE_OUTBOUND_DRAG_ITEM_URI_V1,
                         "text/uri-list", std::move(uri))) {
@@ -214,7 +214,7 @@
             auto uri = source.replaced_image().resolved_source;
             if (uri.empty()) uri = resolve_resource_url(
                 source.attributes["src"],
-                effective_document_base(css_cascade_root_for_node(&source)));
+                effective_document_base(css_cascade_root_for_node(source)));
             std::string name;
             if (const auto alt = source.attributes.find("alt");
                 alt != source.attributes.end()) name = alt->second;

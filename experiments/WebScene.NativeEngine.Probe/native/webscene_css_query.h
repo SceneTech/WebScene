@@ -60,6 +60,12 @@ public:
         const auto prepared=prepare(text);
         return matches(node,*prepared,scope);
     }
+    bool css_compiled_selector_list_matches(
+        const dom_node& node,
+        const compiled_css_selector_list& selectors,
+        const dom_node* scope=nullptr) const {
+        return matches(node, selectors, scope);
+    }
     bool css_relative_selector_matches(
         const dom_node& scope, std::string_view relative) const {
         auto anchored = std::string(":scope ");
@@ -67,6 +73,16 @@ public:
         const auto prepared = prepare(anchored);
         return relative_selector_list_matches(
             scope, *prepared,
+            [&](const dom_node& candidate, const compiled_css_selector& selector,
+                const dom_node* root) {
+                return matches_prepared(candidate, selector, root);
+            });
+    }
+    bool css_compiled_relative_selector_list_matches(
+        const dom_node& scope,
+        const compiled_css_selector_list& selectors) const {
+        return relative_selector_list_matches(
+            scope, selectors,
             [&](const dom_node& candidate, const compiled_css_selector& selector,
                 const dom_node* root) {
                 return matches_prepared(candidate, selector, root);

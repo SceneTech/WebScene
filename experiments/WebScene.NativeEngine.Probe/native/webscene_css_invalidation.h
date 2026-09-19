@@ -5,34 +5,6 @@
 
 namespace webscene_native::css {
 
-// Anchor every relative arm before passing it to the ordinary selector parser.
-// Commas within strings, attributes and functional arguments are not separators.
-inline std::string anchor_relative_selector_list(std::string_view text)
-{
-    std::string result = ":scope ";
-    int brackets = 0, parentheses = 0;
-    char quote = 0;
-    for (size_t i = 0; i < text.size(); ++i) {
-        const auto c = text[i];
-        if (c == '\\') {
-            const auto end = skip_css_escape_sequence(text, i);
-            result.append(text.substr(i, end - i));
-            i = end - 1U;
-            continue;
-        }
-        result.push_back(c);
-        if (quote != 0) { if (c == quote) quote = 0; continue; }
-        if (c == '\'' || c == '"') { quote = c; continue; }
-        if (c == '[') ++brackets;
-        else if (c == ']') --brackets;
-        else if (c == '(') ++parentheses;
-        else if (c == ')') --parentheses;
-        else if (c == ',' && brackets == 0 && parentheses == 0)
-            result += ":scope ";
-    }
-    return result;
-}
-
 // This compiler consumes parsed compounds, including escaped identifiers and
 // recursively parsed selector-list arguments. Matching a mutation must never
 // rediscover these dependencies by scanning selector text.
@@ -156,14 +128,13 @@ inline std::vector<css_compound_dependencies> compile_invalidation_plan(
                 output.child_list_sensitive = true;
                 add(output.child_list, route);
             }
-            if (pseudo.argument.empty()) continue;
             const bool has = pseudo.name == "has";
             const bool selector_list = has || pseudo.name == "is"
                 || pseudo.name == "where" || pseudo.name == "not";
-            if (!selector_list) continue;
-            auto nested = compile_selector_list(has
-                ? anchor_relative_selector_list(pseudo.argument) : pseudo.argument);
-            for (const auto& arm : nested.selectors) {
+            if (!selector_list || !pseudo.compiled_argument_valid
+                || pseudo.compiled_argument == nullptr) continue;
+            for (const auto& arm : pseudo.compiled_argument->selectors) {
+                if (!compiled_selector_is_valid(arm)) continue;
                 if (std::any_of(arm.combinators.begin(), arm.combinators.end(),
                         [](char value) { return value == '+' || value == '~'; }))
                     output.child_list_sensitive = true;

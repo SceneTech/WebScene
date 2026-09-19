@@ -12,6 +12,7 @@
 #include <vector>
 
 namespace webscene_native::css {
+struct compiled_css_selector_list;
 // Native stylesheet/cascade storage shared by runtime adapters and build tools.
 // No JavaScript handles, V8 headers or parser ownership belong in this model.
     struct css_declaration final {
@@ -35,6 +36,10 @@ namespace webscene_native::css {
 struct compiled_css_pseudo final {
     std::string name;
     std::string argument;
+    // Functional selector lists are compiled with their stylesheet's immutable
+    // namespace context. :has() stores the list after relative arms are anchored.
+    std::shared_ptr<const compiled_css_selector_list> compiled_argument;
+    bool compiled_argument_valid{false};
 };
 
 struct compiled_css_attribute final {

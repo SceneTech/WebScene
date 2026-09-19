@@ -378,6 +378,10 @@ int main()
             test_namespace_qualified_attribute_selectors_and_lifecycle();
             return 0;
         }
+        if (selected == "functional-namespace-selectors") {
+            test_functional_selector_namespace_context_and_lifecycle();
+            return 0;
+        }
         if (selected == "all-unset") {
             auto* focused_engine=webscene_engine_create(0);
             require(focused_engine != nullptr,"reset test engine creation failed");
@@ -1278,6 +1282,7 @@ int main()
     test_canvas_text_metrics_use_host_font_axes();
     test_recursive_functional_selector_survives_cache_eviction();
     test_namespace_qualified_attribute_selectors_and_lifecycle();
+    test_functional_selector_namespace_context_and_lifecycle();
     test_indexeddb_runtime_contract();
     auto* engine = webscene_engine_create(64);
     require(engine != nullptr, "engine creation failed");

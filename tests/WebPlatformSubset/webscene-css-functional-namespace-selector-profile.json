@@ -1,0 +1,23 @@
+{
+  "profile": "webscene-css-functional-namespace-selector-1",
+  "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+  "runtime": "v8",
+  "viewport": { "width": 800, "height": 600, "deviceScaleFactor": 1 },
+  "required": [
+    {
+      "path": "contracts/css-functional-namespace-selector-context.html",
+      "type": "contract",
+      "capabilities": [
+        "css-functional-selector-namespace-context",
+        "css-functional-selector-default-any-empty-namespaces",
+        "css-has-relative-namespace-invalidation",
+        "css-functional-namespace-cache-and-owner-replacement",
+        "css-functional-namespace-adopted-stylesheet-lifecycle"
+      ],
+      "evidence": ["css-functional-namespace-selector-context-520"],
+      "reason": "CSS Namespaces and Selectors regression for namespace context inside :is(), :where(), :not(), nested functions, and relative :has(), including invalidation and stylesheet lifecycle."
+    }
+  ],
+  "harnessBlocked": [],
+  "excluded": []
+}

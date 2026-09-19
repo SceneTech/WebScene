@@ -204,6 +204,88 @@ void require_attribute_namespace_resolution()
         "empty and any attribute namespace constraints changed semantics");
 }
 
+void require_functional_namespace_propagation()
+{
+    using namespace webscene_native;
+    using namespace webscene_native::css;
+    selector_namespace_context first;
+    first.prefixes.emplace("p", "urn:webscene:functional:first");
+    first.default_namespace = "urn:webscene:functional:default";
+    first.has_default_namespace = true;
+
+    const auto selector = compile_selector(
+        ".subject:is(p|circle, *|circle, |circle):where(circle):not(p|rect)",
+        &first);
+    require(compiled_selector_is_valid(selector),
+        "functional namespace selector failed top-level compilation");
+    const auto& pseudos = selector.compiled_compounds[0].pseudos;
+    require(pseudos.size() == 3U
+        && std::all_of(pseudos.begin(), pseudos.end(), [](const auto& pseudo) {
+            return pseudo.compiled_argument_valid
+                && pseudo.compiled_argument != nullptr;
+        }),
+        "functional selector lists were not retained as compiled payloads");
+    const auto& alternatives = pseudos[0].compiled_argument->selectors;
+    require(alternatives.size() == 3U
+        && alternatives[0].compiled_compounds[0].namespace_uri
+            == "urn:webscene:functional:first"
+        && !alternatives[1].compiled_compounds[0].namespace_uri.has_value()
+        && alternatives[2].compiled_compounds[0].namespace_uri == std::string{},
+        "prefixed, any, and empty namespaces changed inside :is()");
+    require(pseudos[1].compiled_argument->selectors[0]
+            .compiled_compounds[0].namespace_uri
+            == "urn:webscene:functional:default",
+        "default namespace did not propagate into :where()");
+
+    const auto relational = compile_selector(
+        ".host:has(> p|circle[p|state]:is(p|circle))", &first);
+    require(compiled_selector_is_valid(relational),
+        "namespace context did not propagate through :has()");
+    const auto& has = relational.compiled_compounds[0].pseudos[0];
+    require(has.compiled_argument_valid && has.compiled_argument != nullptr
+        && has.compiled_argument->selectors.size() == 1U
+        && has.compiled_argument->selectors[0].compiled_compounds.back().namespace_uri
+            == "urn:webscene:functional:first"
+        && has.compiled_argument->selectors[0].compiled_compounds.back()
+            .attributes[0].namespace_uri == "urn:webscene:functional:first",
+        "relative functional payload lost type or attribute namespace identity");
+    const auto dependencies = compile_invalidation_plan(relational);
+    require(dependencies[0].attributes.at("state").routes
+            == std::vector<css_invalidation_route>{{css_invalidation_step::parent}},
+        "namespace-bound :has() invalidation did not retain its relative route");
+
+    const auto unknown_only = compile_selector(
+        ".subject:is(missing|circle)", &first);
+    require(!compiled_selector_is_valid(unknown_only),
+        "an unknown-prefix-only functional list must fail closed");
+    const auto mixed = compile_selector(
+        ".subject:is(missing|circle, p|circle)", &first);
+    require(compiled_selector_is_valid(mixed),
+        "a valid forgiving-list arm was lost beside an unknown prefix");
+
+    selector_namespace_context second = first;
+    second.prefixes["p"] = "urn:webscene:functional:second";
+    const auto first_cached = compile_selector(".subject:is(p|circle)", &first);
+    const auto second_cached = compile_selector(".subject:is(p|circle)", &second);
+    require(first_cached.compiled_compounds[0].pseudos[0]
+            .compiled_argument->selectors[0].compiled_compounds[0].namespace_uri
+            == "urn:webscene:functional:first"
+        && second_cached.compiled_compounds[0].pseudos[0]
+            .compiled_argument->selectors[0].compiled_compounds[0].namespace_uri
+            == "urn:webscene:functional:second",
+        "nested selector cache identity crossed namespace contexts");
+    require(compile_selector("div:is(#winner, p|circle)", &first).specificity
+            == 0x010001U,
+        "namespace propagation changed functional specificity");
+
+    auto over_depth = std::string{".subject"};
+    for (size_t depth = 0U; depth < 40U; ++depth) over_depth += ":is(";
+    over_depth += "p|circle";
+    for (size_t depth = 0U; depth < 40U; ++depth) over_depth += ')';
+    require(!compiled_selector_is_valid(compile_selector(over_depth, &first)),
+        "functional namespace compilation exceeded its recursion bound");
+}
+
 void test_compiled_css_invalidation_plans()
 {
     using namespace webscene_native::css;
@@ -315,6 +397,7 @@ int main()
     require_nested_has_selector_list_tokenization();
     require_namespace_resolution();
     require_attribute_namespace_resolution();
+    require_functional_namespace_propagation();
     test_compiled_css_invalidation_plans();
     std::cout << "selector parser tests passed\n";
     return 0;

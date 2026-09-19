@@ -2127,6 +2127,14 @@
             scope_root);
     }
 
+    bool css_compiled_selector_list_matches(
+        const dom_node& node,
+        const compiled_css_selector_list& selectors,
+        const dom_node* scope_root = nullptr) const
+    {
+        return compiled_css_selector_list_matches(node, selectors, scope_root);
+    }
+
     bool css_relative_selector_matches(
         const dom_node& scope,
         std::string_view relative) const
@@ -2136,6 +2144,22 @@
         const auto prepared = cached_css_selector_list(anchored);
         return css::relative_selector_list_matches(
             scope, *prepared,
+            [this](const dom_node& candidate,
+                   const compiled_css_selector& selector,
+                   const dom_node* root) {
+                return !selector.compounds.empty()
+                    && compiled_css_selector_matches(
+                        candidate, selector,
+                        selector.compounds.size() - 1U, root);
+            });
+    }
+
+    bool css_compiled_relative_selector_list_matches(
+        const dom_node& scope,
+        const compiled_css_selector_list& selectors) const
+    {
+        return css::relative_selector_list_matches(
+            scope, selectors,
             [this](const dom_node& candidate,
                    const compiled_css_selector& selector,
                    const dom_node* root) {

@@ -51,12 +51,32 @@ Those APIs import externally allocated memory and export synchronization from
 external memory.
 
 For that reason, generic `dawn_canvas_images` deliberately remains an
-unsupported provider. A concrete Linux producer must allocate exportable
-Vulkan images and memory, import those allocations into Dawn, preserve the
-device UUID and Vulkan create info, run `BeginAccess`/`EndAccess`, and publish
-the returned layout and fence state through `linux_external_image_provider`.
-Until that allocator exists, acquisition returns
-`WEBSCENE_GPU_LINUX_SHARED_UNSUPPORTED_PROVIDER_V3`.
+unsupported provider. `dawn_linux_external_provider` now supplies the exact
+provider seam around the pinned public Dawn ABI:
+
+- it proves Vulkan backend and enabled DMA-BUF/opaque-FD plus SyncFD/opaque
+  semaphore features before asking a native allocator for storage;
+- the allocator and every allocation must carry the exact `WGPUDevice` token
+  captured beside Dawn device creation, so allocations cannot cross devices;
+- DMA-BUF planes or opaque-FD memory plus retained `VkImageCreateInfo` are
+  imported directly. Ordinary Dawn textures and CPU copies are never accepted;
+- producer waits, Vulkan old/new layouts and initialized state feed
+  `BeginAccess`; `EndAccess` must return initialized contents, layouts and an
+  equal fence/value count;
+- returned fences are exported to owned SyncFD/opaque-semaphore FDs, checked
+  against binary/timeline ordering rules and published through the existing v3
+  `linux_external_image_provider`. Failed or partial handoffs publish nothing
+  and RAII closes every already-exported FD.
+
+The installed Dawn C ABI exposes only Vulkan `driverVersion` in
+`AdapterPropertiesVk`. It exposes no `VkDevice`, `VkPhysicalDevice`, queue
+family or device/driver UUID. Consequently WebScene cannot construct or
+independently verify a Vulkan allocator from this SDK surface. Capability
+inspection returns `native_device_provider_required` even when all import
+features exist. The host that creates Dawn's native Vulkan device must install
+an allocator bound to that exact device token and populate the UUID, create
+info, modifier and queue-family fields. Without it, acquisition continues to
+return `WEBSCENE_GPU_LINUX_SHARED_UNSUPPORTED_PROVIDER_V3`.
 
 ANGLE Vulkan/GL interop remains independently unimplemented. No GL/EGL route is
 advertised by this contract.
@@ -64,7 +84,8 @@ advertised by this contract.
 ## Authored gates
 
 - C11 ABI size/offset contracts cover all exported views.
-- The provider contract covers exact metadata, memory/layout/queue validation,
+- The provider contract covers exact Dawn-device binding, binary/timeline fence
+  rules, layout ownership rotation, metadata, memory/layout/queue validation,
   producer readiness, timeline rules, FD duplication, closure and rollback.
 - Dense Linux linking exports all `webscene_gpu_linux_*_v3` symbols through the
   existing version script; macOS export lists include the additive symbols for
@@ -82,8 +103,11 @@ FD/residency plateau, and proof of zero CPU readback/upload in ordinary frames.
 
 ## Remaining concrete blocker
 
-Implement the external Vulkan allocation provider described above using the
-pinned Dawn/Vulkan profile. Hardware support must be negotiated per format,
-modifier, handle type and synchronization route. Unsupported routes remain a
-specific failure and cannot fall back to CPU presentation under the GPU-image
-capability.
+Implement the host-side Vulkan allocation object behind
+`dawn_linux_external_allocator`. This requires either a Dawn SDK addition that
+exposes a supported native Vulkan device/physical-device/queue identity, or
+device creation owned by a Linux host component that can bind those native
+handles and the public `WGPUDevice` token atomically. Then negotiate hardware
+support per format, modifier, handle type and synchronization route and run the
+authored contract on a real Vulkan device. Unsupported routes remain explicit
+and cannot fall back to CPU presentation under the GPU-image capability.

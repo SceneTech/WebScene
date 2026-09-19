@@ -2,6 +2,9 @@
 #include "native_webgpu_device.h"
 #include "native_webgpu_canvas_context.h"
 #include "platform_webgpu_canvas.h"
+#if defined(__linux__)
+#include "dawn_linux_external_provider.h"
+#endif
 #if defined(__linux__) || defined(WEBSCENE_NATIVE_WEBGPU_OFFSCREEN)
 #include "native_webgpu_offscreen_surface.h"
 namespace webscene::graphics {

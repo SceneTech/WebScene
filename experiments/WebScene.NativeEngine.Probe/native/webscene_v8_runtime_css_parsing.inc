@@ -848,6 +848,7 @@
                 if (pseudo_element) {
                     const auto supported = name == "before" || name == "after"
                         || name == "selection" || name == "placeholder"
+                        || name == "details-content"
                         || name == "backdrop" || name == "-webkit-scrollbar"
                         || name == "-webkit-scrollbar-thumb"
                         || name == "-webkit-scrollbar-track"

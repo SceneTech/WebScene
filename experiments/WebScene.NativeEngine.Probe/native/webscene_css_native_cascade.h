@@ -75,6 +75,13 @@ bool apply_native_cascade(native_document& document,dom_node& node,
                         variables,result,[](bool) {});
                     observe(declaration,result);
                 }
+                else if(kind==9) {
+                    property_result result;
+                    apply_details_content_declaration(
+                        node,node.style.mutable_details_content_pseudo(),declaration,
+                        variables,result,[](bool) {});
+                    observe(declaration,result);
+                }
                 else if(kind>=3) apply_scrollbar_declaration(node,kind,declaration,variables);
                 else {
                     auto& pseudo=kind==1?node.style.mutable_before_pseudo():node.style.mutable_after_pseudo();

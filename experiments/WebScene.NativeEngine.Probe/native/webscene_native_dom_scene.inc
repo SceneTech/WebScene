@@ -3175,6 +3175,41 @@ void native_document::append_scene(
                 || (left.z_index == right.z_index
                     && left.source_order < right.source_order);
         });
+    const auto& details_content = node.style.details_content_pseudo();
+    const auto paints_details_content = node.tag == "details"
+        && details_content.present
+        && !details_content_is_suppressed(node)
+        && details_content.layout.width > 0
+        && details_content.layout.height > 0;
+    if (paints_details_content) {
+        const auto border_width = resolve_length(
+            node,
+            details_content.border_inline_start_width,
+            details_content.layout.width,
+            0);
+        if (border_width > 0.0F && details_content.opacity > 0.001F) {
+            auto border_color = details_content.border_inline_start_current_color
+                ? resolved_foreground(node)
+                : details_content.border_inline_start_rgba;
+            const auto alpha = static_cast<uint32_t>(std::clamp(
+                std::lround(static_cast<float>(border_color & 0xFFU)
+                    * details_content.opacity),
+                0L,
+                255L));
+            border_color = (border_color & 0xFFFFFF00U) | alpha;
+            commands.push_back(webscene_scene_command{
+                2U,
+                0U,
+                resolved_right_to_left(node)
+                    ? details_content.layout.x + details_content.layout.width - border_width
+                    : details_content.layout.x,
+                details_content.layout.y,
+                border_width,
+                details_content.layout.height,
+                with_opacity(border_color),
+                node.id});
+        }
+    }
     for (const auto& entry : ordered_paint) {
         if (entry.child != nullptr) {
             if (pseudo_only) continue;
@@ -3193,6 +3228,25 @@ void native_document::append_scene(
                 // repainting the z-index:auto ancestors' own content.
                 continue;
             }
+            const auto details_content_child = paints_details_content
+                && is_details_content_child(node, *entry.child);
+            if (details_content_child && details_content.opacity <= 0.001F) continue;
+            const auto details_opacity_group = details_content_child
+                && details_content.opacity < 0.999F;
+            if (details_opacity_group) {
+                commands.push_back(webscene_scene_command{
+                    30U,
+                    0U,
+                    entry.child->layout.x,
+                    entry.child->layout.y,
+                    entry.child->layout.width,
+                    entry.child->layout.height,
+                    static_cast<uint32_t>(std::clamp(
+                        std::lround(details_content.opacity * 255.0F),
+                        0L,
+                        255L)),
+                    node.id});
+            }
             append_scene(
                 *entry.child,
                 commands,
@@ -3203,6 +3257,16 @@ void native_document::append_scene(
                 true,
                 paint_target,
                 paint_pseudo_target, ordered_canvas, false, capture_gpu_outputs);
+            if (details_opacity_group) {
+                commands.push_back(webscene_scene_command{
+                    31U, 0U,
+                    entry.child->layout.x,
+                    entry.child->layout.y,
+                    entry.child->layout.width,
+                    entry.child->layout.height,
+                    0U,
+                    node.id});
+            }
         } else if (entry.pseudo != nullptr) {
             if (!pseudo_only && entry.z_index > 0) continue;
             append_pseudo(*entry.pseudo);

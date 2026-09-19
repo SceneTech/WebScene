@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cstdint>
 #include <functional>
 #include <limits>
@@ -578,9 +579,23 @@ struct node_style final {
             bool foreground_specified{false};
         };
 
+        struct details_content_element final {
+            css_length margin_inline_start{};
+            css_length padding_inline_start{};
+            css_length border_inline_start_width{};
+            layout_rect layout{};
+            float opacity{1};
+            uint32_t border_inline_start_rgba{0};
+            bool present{false};
+            bool block_size_zero{false};
+            bool overflow_hidden{false};
+            bool border_inline_start_current_color{true};
+        };
+
         pseudo_element before;
         pseudo_element after;
         placeholder_element placeholder;
+        details_content_element details_content;
     };
 
     const pseudo_element& before_pseudo() const noexcept
@@ -617,6 +632,18 @@ struct node_style final {
     {
         ensure_unique_pseudo_elements();
         return pseudo_elements->placeholder;
+    }
+
+    const pseudo_element_pair::details_content_element& details_content_pseudo() const noexcept
+    {
+        static const pseudo_element_pair::details_content_element empty;
+        return pseudo_elements == nullptr ? empty : pseudo_elements->details_content;
+    }
+
+    pseudo_element_pair::details_content_element& mutable_details_content_pseudo()
+    {
+        ensure_unique_pseudo_elements();
+        return pseudo_elements->details_content;
     }
 
     void clear_pseudo_elements() noexcept
@@ -2023,6 +2050,46 @@ struct dom_node final {
 display_mode blockified_display(const dom_node& node) noexcept;
 const dom_node& css_document_element(const dom_node& node) noexcept;
 float document_root_font_size(const dom_node& node) noexcept;
+
+inline const dom_node* first_details_summary(const dom_node& details) noexcept
+{
+    if (details.tag != "details") return nullptr;
+    for (const auto* child : details.children) {
+        if (child != nullptr && child->kind == dom_node_kind::element
+            && child->tag == "summary") return child;
+    }
+    return nullptr;
+}
+
+inline bool is_details_content_child(
+    const dom_node& details,
+    const dom_node& child) noexcept
+{
+    return details.tag == "details" && &child != first_details_summary(details);
+}
+
+inline bool details_content_is_suppressed(const dom_node& details) noexcept
+{
+    if (details.tag != "details") return false;
+    if (!details.attributes.contains("open")) return true;
+    const auto& content = details.style.details_content_pseudo();
+    return content.present && content.block_size_zero && content.overflow_hidden;
+}
+
+inline bool resolved_right_to_left(const dom_node& node) noexcept
+{
+    for (auto* current = &node; current != nullptr; current = current->parent) {
+        const auto direction = current->attributes.find("dir");
+        if (direction == current->attributes.end()) continue;
+        auto value = direction->second;
+        std::transform(value.begin(), value.end(), value.begin(), [](unsigned char character) {
+            return static_cast<char>(std::tolower(character));
+        });
+        if (value == "rtl") return true;
+        if (value == "ltr") return false;
+    }
+    return false;
+}
 
 class native_document final {
 public:

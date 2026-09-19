@@ -2376,6 +2376,55 @@
         if (tracked->second.empty()) local_link_selector_subjects.erase(tracked);
     }
 
+    void recascade_target_entry_transition(
+        dom_node* root,
+        const selector_target_cache_entry& previous,
+        const selector_target_cache_entry& current)
+    {
+        if(root==nullptr)root=&document.body();
+        if(previous.target==current.target
+            &&previous.inclusive_chain==current.inclusive_chain)return;
+        const auto indexed=css_invalidation_rules_by_attribute.find(
+            "$target-document");
+        if(indexed==css_invalidation_rules_by_attribute.end()
+            ||indexed->second.empty())return;
+        style_recascade_batch_scope recascade_batch(*this);
+        std::unordered_set<dom_node*> replayed;
+        const auto replay=[&](dom_node* subject) {
+            if(subject==nullptr||!is_connected(*subject)
+                ||!replayed.insert(subject).second)return;
+            recascade_selector_transition(
+                *subject,indexed->second,
+                [](const css::css_compound_dependencies& dependencies) {
+                    css::css_invalidation_targets result;
+                    const auto found=dependencies.attributes.find(
+                        "$target-document");
+                    if(found!=dependencies.attributes.end())
+                        result.include(found->second);
+                    return result;
+                },
+                [] {},[] {},false,true);
+        };
+        // The old target may already have a new parent or no parent. Its cached
+        // chain is the only mutation-local record of the branch that lost state.
+        for(auto* subject:previous.inclusive_chain)replay(subject);
+        // The new target is connected, so prepared ancestor/combinator routes
+        // can derive its entire current impact from the target anchor.
+        replay(current.target);
+    }
+
+    void recascade_target_document_transition(
+        dom_node* root,std::string_view previous_hash,std::string_view current_hash)
+    {
+        if(root==nullptr)root=&document.body();
+        if(previous_hash==current_hash)return;
+        selector_target_for_hash(*root,previous_hash);
+        const auto previous=selector_target_caches.at(root);
+        selector_target_for_hash(*root,current_hash);
+        const auto current=selector_target_caches.at(root);
+        recascade_target_entry_transition(root,previous,current);
+    }
+
     bool queue_attribute_selector_transition(
         dom_node& subject,
         std::string_view name,
@@ -2419,6 +2468,7 @@
         const std::optional<std::string>& current_value)
     {
         if (queue_attribute_selector_transition(subject, name, previous_value, current_value)) return;
+        style_recascade_batch_scope style_batch(*this);
         webscene_frame_trace::scope invalidation_trace(
             frame_trace,
             "attribute-invalidation-start",
@@ -2429,6 +2479,17 @@
             indexed == css_invalidation_rules_by_attribute.end()
             ? std::span<const size_t>{}
             : std::span<const size_t>{indexed->second};
+        const bool refresh_target_cache=name=="id";
+        auto* target_root=refresh_target_cache
+            ?css_cascade_root_for_node(subject):nullptr;
+        std::optional<selector_target_cache_entry> previous_target;
+        if(target_root!=nullptr) {
+            const auto hash=url_fragment(navigation_address_for_root(target_root));
+            if(const auto known=selector_target_caches.find(target_root);
+                known!=selector_target_caches.end()&&known->second.hash==hash)
+                previous_target=known->second;
+            selector_target_caches.erase(target_root);
+        }
         const auto trace_invalidation =
             std::getenv("WEBSCENE_TRACE_RECASCADE_ROOTS") != nullptr;
         const auto invalidation_started = trace_invalidation
@@ -2450,6 +2511,7 @@
                     subject.attributes.erase(std::string(name));
                 }
                 if (name == "id") subject.id_attribute = previous_value.value_or(std::string{});
+                if(target_root!=nullptr)selector_target_caches.erase(target_root);
             },
             [&] {
                 if (current_value.has_value()) {
@@ -2458,7 +2520,15 @@
                     subject.attributes.erase(std::string(name));
                 }
                 if (name == "id") subject.id_attribute = current_value.value_or(std::string{});
+                if(target_root!=nullptr)selector_target_caches.erase(target_root);
             });
+        if(target_root!=nullptr&&previous_target.has_value()) {
+            const auto hash=url_fragment(navigation_address_for_root(target_root));
+            selector_target_for_hash(*target_root,hash);
+            const auto current_target=selector_target_caches.at(target_root);
+            recascade_target_entry_transition(
+                target_root,*previous_target,current_target);
+        }
         if (trace_invalidation) {
             const auto elapsed = std::chrono::duration<double, std::milli>(
                 std::chrono::steady_clock::now() - invalidation_started).count();
@@ -3827,6 +3897,15 @@
         }
         auto* previous_root = const_cast<dom_node*>(active_css_cascade_root);
         auto* root = css_cascade_root_for_node(parent);
+        std::optional<selector_target_cache_entry> previous_target;
+        if(root!=nullptr) {
+            const auto hash=url_fragment(navigation_address_for_root(root));
+            if(const auto known=selector_target_caches.find(root);
+                known!=selector_target_caches.end()&&known->second.hash==hash)
+                previous_target=known->second;
+            selector_target_caches.erase(root);
+        }
+        style_recascade_batch_scope style_batch(*this);
         if (root != nullptr) activate_css_cascade(root);
         const auto rules = child_list_rule_candidates(parent, root);
         if (!rules.empty()) {
@@ -3843,6 +3922,13 @@
         if (rules.empty()) recascade_connected_node(parent);
         recascade_containing_select_validity(parent);
         recascade_form_structural_dependencies(parent, inserted, removed);
+        if(root!=nullptr&&previous_target.has_value()) {
+            const auto hash=url_fragment(navigation_address_for_root(root));
+            selector_target_for_hash(*root,hash);
+            const auto current_target=selector_target_caches.at(root);
+            recascade_target_entry_transition(
+                root,*previous_target,current_target);
+        }
     }
 
     void recascade_completed_child_list(dom_node& parent,

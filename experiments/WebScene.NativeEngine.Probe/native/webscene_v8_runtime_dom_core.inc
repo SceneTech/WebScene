@@ -1423,6 +1423,7 @@
                 frame_base_addresses.erase(frame_root);
                 document_base_caches.erase(frame_root);
                 local_link_selector_subjects.erase(frame_root);
+                selector_target_caches.erase(frame_root);
                 if (active_css_cascade_root == frame_root) {
                     activate_css_cascade(&document.body());
                 }
@@ -2001,6 +2002,9 @@
             return nodes.contains(const_cast<dom_node*>(entry.first));
         });
         std::erase_if(local_link_selector_subjects, [&](const auto& entry) {
+            return nodes.contains(const_cast<dom_node*>(entry.first));
+        });
+        std::erase_if(selector_target_caches, [&](const auto& entry) {
             return nodes.contains(const_cast<dom_node*>(entry.first));
         });
         if (nodes.contains(const_cast<dom_node*>(active_css_cascade_root))) {
@@ -6552,6 +6556,46 @@
         }
     }
 
+    static void get_location_hash(
+        v8::Local<v8::Name>,
+        const v8::PropertyCallbackInfo<v8::Value>& info)
+    {
+        auto local_context=info.GetIsolate()->GetCurrentContext();
+        v8::Local<v8::Value> href_value;
+        if(!info.Holder()->GetPrivate(
+                local_context,location_href_key(info.GetIsolate()))
+                .ToLocal(&href_value))return;
+        const auto href=to_utf8(info.GetIsolate(),href_value);
+        const auto fragment=href.find('#');
+        info.GetReturnValue().Set(js_dom_string(
+            info.GetIsolate(),fragment==std::string::npos
+                ?std::string_view{}:std::string_view(href).substr(fragment)));
+    }
+
+    static void set_location_hash(
+        v8::Local<v8::Name>,v8::Local<v8::Value> value,
+        const v8::PropertyCallbackInfo<void>& info)
+    {
+        auto* self=current(info.GetIsolate());
+        if(self==nullptr)return;
+        auto local_context=info.GetIsolate()->GetCurrentContext();
+        auto* root=static_cast<dom_node*>(
+            local_context->GetAlignedPointerFromEmbedderData(
+                1,v8::kEmbedderDataTypeTagDefault));
+        if(root==nullptr)return;
+        auto previous=self->navigation_address_for_root(root);
+        auto fragment=to_utf8(info.GetIsolate(),value);
+        constexpr size_t maximum_fragment_bytes=8192U;
+        if(fragment.size()>maximum_fragment_bytes)return;
+        if(!fragment.empty()&&!fragment.starts_with('#'))fragment.insert(0U,1U,'#');
+        auto resolved=previous.substr(0U,previous.find('#'))+fragment;
+        if(resolved==previous)return;
+        if(!self->apply_same_document_history_url(local_context,resolved))return;
+        self->dispatch_same_document_history_event(
+            local_context,"hashchange",v8::Null(info.GetIsolate()),
+            previous,resolved);
+    }
+
     static v8::Local<v8::Private> history_state_key(v8::Isolate* isolate)
     {
         return v8::Private::ForApi(
@@ -6691,6 +6735,7 @@
             local_context->GetAlignedPointerFromEmbedderData(
                 1, v8::kEmbedderDataTypeTagDefault));
         if (root == nullptr) return false;
+        const auto previous_hash=url_fragment(navigation_address_for_root(root));
         if (context.IsEmpty() || local_context == context.Get(isolate)) {
             document_base_address = resolved;
             top_level_location_address = resolved;
@@ -6704,6 +6749,8 @@
         cache.dirty = true;
         set_context_location(local_context, local_context->Global(), resolved);
         recascade_local_link_document_transition(root);
+        recascade_target_document_transition(
+            root,previous_hash,url_fragment(resolved));
         return true;
     }
 

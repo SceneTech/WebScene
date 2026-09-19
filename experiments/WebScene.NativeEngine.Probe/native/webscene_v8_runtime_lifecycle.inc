@@ -379,6 +379,7 @@
         frame_base_addresses.clear();
         document_base_caches.clear();
         local_link_selector_subjects.clear();
+        selector_target_caches.clear();
         provisional_frame_bodies.clear();
         canvas_contexts.clear();
         canvas_states.clear();

@@ -7094,6 +7094,14 @@ struct v8_dom_runtime::implementation final {
         if (!anchor->attributes.contains("download")
             && same_document_fragment
             && (activation_flags & WEBSCENE_HOST_REQUEST_EXTERNAL_NEW_CONTEXT_V1) == 0U) {
+            const auto previous_address=navigation_address_for_root(document_root);
+            if(previous_address!=resolved) {
+                auto local_context=isolate->GetCurrentContext();
+                if(!apply_same_document_history_url(local_context,resolved))return false;
+                dispatch_same_document_history_event(
+                    local_context,"hashchange",v8::Null(isolate),
+                    previous_address,resolved);
+            }
             const auto fragment_id = resolved.substr(fragment + 1U);
             auto decoded_fragment = std::string{};
             decoded_fragment.reserve(fragment_id.size());

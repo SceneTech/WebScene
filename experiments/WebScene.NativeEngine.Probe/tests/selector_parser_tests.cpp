@@ -399,6 +399,27 @@ void test_compiled_css_invalidation_plans()
     require(local_link_relational[0].attributes.at("$local-link-document").routes
             ==std::vector<css_invalidation_route>{{css_invalidation_step::parent}},
         "nested local-link must retain its reverse relational document route");
+    const auto target_within=compile(".branch:target-within");
+    for(const auto* dependency:{"id","$target-document"})
+        require((target_within[0].attributes.at(dependency).scope
+                &(invalidation_subject|invalidation_ancestors))
+                ==(invalidation_subject|invalidation_ancestors),
+            "target-within must route target identity to its inclusive ancestor chain");
+    require(target_within[0].child_list_sensitive
+        &&(target_within[0].child_list.scope
+            &(invalidation_subject|invalidation_ancestors))
+            ==(invalidation_subject|invalidation_ancestors),
+        "target-within must route tree transitions to the changed parent chain");
+    const auto target_sibling=compile(".branch:target-within + .marker");
+    const auto& target_routes=target_sibling[0].attributes.at(
+        "$target-document").routes;
+    require(std::find(target_routes.begin(),target_routes.end(),
+            css_invalidation_route{css_invalidation_step::next_sibling})
+            !=target_routes.end()
+        &&std::find(target_routes.begin(),target_routes.end(),
+            css_invalidation_route{css_invalidation_step::ancestors,
+                css_invalidation_step::next_sibling})!=target_routes.end(),
+        "target-within must retain inclusive following-sibling routes");
 
     std::vector<css_child_list_bucket> buckets;
     const auto index = [&](size_t id, std::string_view text) {
@@ -464,6 +485,18 @@ void require_local_link_matching()
         "stylesheet metadata must not become a local hyperlink");
 }
 
+void require_target_identifier_matching()
+{
+    using namespace webscene_native;
+    dom_node target;
+    target.id_attribute="section one";
+    require(css::target_matches(target,"#section%20one"),
+        "target identifiers must decode percent-encoded URL fragments");
+    require(!css::target_matches(target,"#section%20two")
+        &&!css::target_matches(target,"#"),
+        "target identifiers must reject a different or empty fragment");
+}
+
 } // namespace
 
 int main()
@@ -478,6 +511,7 @@ int main()
     require_functional_namespace_propagation();
     test_compiled_css_invalidation_plans();
     require_local_link_matching();
+    require_target_identifier_matching();
     std::cout << "selector parser tests passed\n";
     return 0;
 }

@@ -776,7 +776,7 @@ struct v8_dom_runtime::implementation final {
             v8::FunctionTemplate::New(isolate, validate_control));
         element->PrototypeTemplate()->Set(
             js_string(isolate, "reportValidity"),
-            v8::FunctionTemplate::New(isolate, validate_control));
+            v8::FunctionTemplate::New(isolate, report_control));
         element->PrototypeTemplate()->Set(
             js_string(isolate, "submit"),
             v8::FunctionTemplate::New(isolate, form_submit));
@@ -3479,7 +3479,7 @@ struct v8_dom_runtime::implementation final {
                   record.validationMessage = validationMessage;
                   record.validationAnchor = anchor;
                   setElementInternalsValidity(
-                    element, validityFlags, validationMessage);
+                    element, validityFlags, validationMessage, anchor);
                 },
                 writable: true,
                 configurable: true
@@ -3494,8 +3494,9 @@ struct v8_dom_runtime::implementation final {
               },
               reportValidity: {
                 value() {
-                  const {element} = associatedInternalsRecord(this);
-                  return Boolean(validateElementInternals(element));
+                  const {element, validationAnchor} = associatedInternalsRecord(this);
+                  return Boolean(validateElementInternals(
+                    element, true, validationAnchor));
                 },
                 writable: true,
                 configurable: true

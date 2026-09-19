@@ -999,3 +999,51 @@ void native_document::clear()
     body_->style.background_rgba = 0x131722FFU;
     mark_dirty();
 }
+
+void native_document::show_validation_message(
+    const dom_node& target, const dom_node& anchor, std::string message)
+{
+    constexpr size_t maximum_message_bytes = 1024U;
+    for (auto& character : message) {
+        if (character == '\t' || character == '\r' || character == '\n') character = ' ';
+    }
+    if (message.size() > maximum_message_bytes) {
+        message.resize(maximum_message_bytes);
+        auto lead = message.size() - 1U;
+        while (lead > 0U
+            && (static_cast<unsigned char>(message[lead]) & 0xc0U) == 0x80U) {
+            --lead;
+        }
+        const auto first = static_cast<unsigned char>(message[lead]);
+        const auto expected = (first & 0x80U) == 0U ? 1U
+            : (first & 0xe0U) == 0xc0U ? 2U
+            : (first & 0xf0U) == 0xe0U ? 3U
+            : (first & 0xf8U) == 0xf0U ? 4U : 1U;
+        if (message.size() - lead < expected) message.resize(lead);
+    }
+    if (message.empty()) return;
+    if (!auxiliary_nodes_) auxiliary_nodes_ = std::make_unique<auxiliary_nodes>();
+    auxiliary_nodes_->validation_message = validation_message_state{
+        target.id, anchor.id, std::move(message)};
+    mark_scene_changed();
+}
+
+bool native_document::clear_validation_message() noexcept
+{
+    if (!auxiliary_nodes_ || !auxiliary_nodes_->validation_message) return false;
+    auxiliary_nodes_->validation_message.reset();
+    mark_scene_changed();
+    return true;
+}
+
+uint32_t native_document::validation_message_target_id() const noexcept
+{
+    return auxiliary_nodes_ && auxiliary_nodes_->validation_message
+        ? auxiliary_nodes_->validation_message->target_id : 0U;
+}
+
+uint32_t native_document::validation_message_anchor_id() const noexcept
+{
+    return auxiliary_nodes_ && auxiliary_nodes_->validation_message
+        ? auxiliary_nodes_->validation_message->anchor_id : 0U;
+}

@@ -1462,6 +1462,12 @@ typedef size_t (*webscene_validation_message_format_callback_v1)(
     char* destination,
     size_t destination_capacity);
 
+enum {
+    WEBSCENE_VALIDATION_MESSAGE_TIMEOUT_DISABLED_V1 = 0U,
+    WEBSCENE_VALIDATION_MESSAGE_TIMEOUT_MINIMUM_MS_V1 = 1000U,
+    WEBSCENE_VALIDATION_MESSAGE_TIMEOUT_MAXIMUM_MS_V1 = 60000U
+};
+
 /*
  * Asynchronous notification emitted after an immutable scene has been
  * published. Consumers use this edge to schedule a compositor paint; they
@@ -1590,6 +1596,10 @@ typedef struct webscene_engine_options {
     webscene_validation_message_format_callback_v1
         validation_message_format_callback_v1;
     void* validation_message_format_user_data_v1;
+    /* Optional engine-native visual validation-message timeout. Zero keeps the
+     * event-driven default. Nonzero values must be within the published v1
+     * bounds and never delay or repeat the semantic announcement. */
+    uint32_t validation_message_timeout_milliseconds_v1;
 } webscene_engine_options;
 
 /*

@@ -425,7 +425,8 @@ public:
         file_grant_create_directory_request_sink_v2
             file_grant_create_directory_request_sink = {},
         file_grant_remove_request_sink_v2 file_grant_remove_request_sink = {},
-        validation_message_formatter validation_message_formatter = {});
+        validation_message_formatter validation_message_formatter = {},
+        uint32_t validation_message_timeout_milliseconds = 0U);
     ~v8_dom_runtime();
 
     v8_dom_runtime(const v8_dom_runtime&) = delete;

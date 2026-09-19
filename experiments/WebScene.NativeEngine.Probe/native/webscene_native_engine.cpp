@@ -1214,6 +1214,7 @@ private:
     webscene_validation_message_format_callback_v1
         validation_message_format_callback_v1_{nullptr};
     void* validation_message_format_user_data_v1_{nullptr};
+    uint32_t validation_message_timeout_milliseconds_v1_{0U};
     webscene_scene_published_callback scene_published_callback_{nullptr};
     void* scene_published_user_data_{nullptr};
     webscene_host_request_available_callback
@@ -1802,6 +1803,21 @@ webscene_engine* webscene_engine_create_with_options(const webscene_engine_optio
             + sizeof(void*);
         const auto has_validation_message_formatter = options->struct_size
             >= validation_message_formatter_options_size;
+        constexpr auto validation_message_timeout_options_size =
+            offsetof(
+                webscene_engine_options,
+                validation_message_timeout_milliseconds_v1)
+            + sizeof(uint32_t);
+        const auto has_validation_message_timeout = options->struct_size
+            >= validation_message_timeout_options_size;
+        const auto validation_message_timeout = has_validation_message_timeout
+            ? options->validation_message_timeout_milliseconds_v1 : 0U;
+        if (validation_message_timeout != 0U
+            && (validation_message_timeout
+                    < WEBSCENE_VALIDATION_MESSAGE_TIMEOUT_MINIMUM_MS_V1
+                || validation_message_timeout
+                    > WEBSCENE_VALIDATION_MESSAGE_TIMEOUT_MAXIMUM_MS_V1))
+            return nullptr;
         if (has_storage_options && options->storage_directory != nullptr
             && options->storage_directory_length > 0U) {
             storage_directory.assign(
@@ -1861,7 +1877,8 @@ webscene_engine* webscene_engine_create_with_options(const webscene_engine_optio
                 : nullptr,
             has_validation_message_formatter
                 ? options->validation_message_format_user_data_v1
-                : nullptr);
+                : nullptr,
+            validation_message_timeout);
     } catch (...) {
         return nullptr;
     }

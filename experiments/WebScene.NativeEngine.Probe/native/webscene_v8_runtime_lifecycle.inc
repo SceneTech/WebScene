@@ -34,12 +34,15 @@
         v8_dom_runtime::file_grant_remove_request_sink_v2
             file_grant_remove_request_sink_value,
         v8_dom_runtime::validation_message_formatter
-            validation_message_formatter_value)
+            validation_message_formatter_value,
+        uint32_t validation_message_timeout_milliseconds_value)
         : document(document_value)
         , viewport_provider(std::move(viewport_provider_value))
         , load_resource_callback(std::move(resource_loader_value))
         , validation_message_formatter_callback(
             std::move(validation_message_formatter_value))
+        , validation_message_timeout(
+            validation_message_timeout_milliseconds_value)
         , storage_directory(std::move(storage_directory_value))
         , storage_partition_key(std::move(storage_partition_key_value))
         , storage_quota_bytes(storage_quota_bytes_value)
@@ -160,6 +163,7 @@
 
     ~implementation()
     {
+        dismiss_validation_message();
         for (auto& digest : pending_digests) digest.stop.request_stop();
         for (auto& cipher : pending_ciphers) cipher.stop.request_stop();
         stop_message_ports();

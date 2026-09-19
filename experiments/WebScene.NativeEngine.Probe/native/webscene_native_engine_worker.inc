@@ -566,7 +566,8 @@
                 std::string result(output.data(),written);
                 return webscene_native::file_panel_valid_utf8_v2(result)
                     ? std::move(result):std::string{};
-            });
+            },
+            validation_message_timeout_milliseconds_v1_);
         runtime_->set_work_metrics_enabled(
             runtime_work_metrics_enabled_.load(std::memory_order_acquire));
         if (stylesheet_consumed_callback_ != nullptr) {

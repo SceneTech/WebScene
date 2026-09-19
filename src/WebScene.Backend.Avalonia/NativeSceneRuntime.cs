@@ -349,7 +349,8 @@ public static unsafe partial class NativeWebSceneApi
         string? persistentStorageDirectory = null,
         string? persistentStoragePartitionKey = null,
         ulong persistentStorageQuotaBytes = 0,
-        WebSceneValidationMessageFormatter? validationMessageFormatter = null)
+        WebSceneValidationMessageFormatter? validationMessageFormatter = null,
+        uint validationMessageTimeoutMilliseconds = 0)
     {
         ArgumentNullException.ThrowIfNull(resourceLoader);
         ArgumentNullException.ThrowIfNull(scenePublished);
@@ -427,7 +428,9 @@ public static unsafe partial class NativeWebSceneApi
                     ValidationMessageFormatCallbackV1 = validationMessageFormatter is null
                         ? IntPtr.Zero : ValidationMessageFormatV1Address,
                     ValidationMessageFormatUserDataV1 = validationMessageFormatter is null
-                        ? IntPtr.Zero : GCHandle.ToIntPtr(bridgeHandle)
+                        ? IntPtr.Zero : GCHandle.ToIntPtr(bridgeHandle),
+                    ValidationMessageTimeoutMillisecondsV1 =
+                        validationMessageTimeoutMilliseconds
                 };
                 var engine = EngineCreateWithOptions(in options);
                 if (engine == IntPtr.Zero) return IntPtr.Zero;
@@ -583,6 +586,14 @@ public static unsafe partial class NativeWebSceneApi
             throw new ArgumentException(
                 "The WebScene document source must be an absolute URI.",
                 nameof(options));
+        }
+        if (options.ValidationMessageTimeout is { } validationTimeout
+            && (validationTimeout < TimeSpan.FromSeconds(1)
+                || validationTimeout > TimeSpan.FromSeconds(60)))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(options.ValidationMessageTimeout),
+                "ValidationMessageTimeout must be null or between 1 and 60 seconds.");
         }
         ArgumentNullException.ThrowIfNull(options.DocumentStartScripts);
         var scripts = new WebSceneDocumentScript[options.DocumentStartScripts.Count];

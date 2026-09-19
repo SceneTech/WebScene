@@ -596,6 +596,22 @@
         if (!valid_priority) return;
         if (name.starts_with("--")) {
             if (!valid_custom_property_name(name)) return;
+            if (!value.empty()) {
+                const auto& authored = node->authored_style();
+                const auto existing = authored.declarations.find(name);
+                if (existing != authored.declarations.end()
+                    && existing->second == value
+                    && authored.important_declarations.contains(name) == important) {
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+                    if (self->resize_profile_active) {
+                        ++self->last_resize_redundant_style_writes;
+                    }
+#endif
+                    self->notify_custom_element_attribute(
+                        *node, "style", old_value, node->attributes.at("style"));
+                    return;
+                }
+            }
             if (value.empty()) {
                 if (!has_inline_style_declaration(*node, name)) {
 #if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)

@@ -246,7 +246,15 @@
       "candidate": ["interpolate-size allow-keywords", "::details-content zero-to-auto block-size transition", "pseudo opacity transition", "discrete content-visibility deferral", "open and close interruption", "host-clock completion"],
       "productEvidence": ["unchanged Code OSS completed-response disclosure", "unchanged Code OSS checkpoint file-changes disclosure"],
       "coverage": ["contracts/css-details-content-keyword-transition.html", "test_details_content_keyword_size_transition", "docs/validation/css-details-content-keyword-transition-754.md"],
-      "gap": "Implementation-first candidate for WebScene #754. The retained pseudo wrapper interpolates used intrinsic block size and opacity on the host clock, clips content while opening and closing, avoids per-frame cascade, and releases frame demand on completion. Border-image gradients, implicit summaries, name-group exclusivity, and programmatic-open toggle task coalescing remain in the broader details backlog."
+      "gap": "Implementation-first candidate for WebScene #754. The retained pseudo wrapper interpolates used intrinsic block size and opacity on the host clock, clips content while opening and closing, avoids per-frame cascade, and releases frame demand on completion. The exact Code OSS border image is covered by #756; implicit summaries, name-group exclusivity, and programmatic-open toggle task coalescing remain in the broader details backlog."
+    },
+    {
+      "family": "details-content-border-image",
+      "required": [],
+      "candidate": ["vertical linear-gradient border-image", "unit border-image slice", "custom-property color and terminal inset", "logical inline-start placement", "pseudo opacity composition"],
+      "productEvidence": ["unchanged Code OSS completed-response disclosure"],
+      "coverage": ["contracts/css-details-content-border-image.html", "test_details_content_pseudo_static_open_close_layout", "docs/validation/css-details-content-border-image-756.md"],
+      "gap": "Implementation-first candidate for WebScene #756. The exact Code OSS vertical gradient is retained as a bounded existing gradient resource on the details-content inline-start border. Other border-image source, slice, width, outset, repeat, and fill grammars remain unsupported."
     },
     {
       "family": "live-range-boundaries",

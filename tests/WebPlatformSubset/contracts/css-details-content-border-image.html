@@ -1,0 +1,20 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Details content paints a vertical border-image cutoff</title>
+<link rel="match" href="css-details-content-border-image-ref.html">
+<style>
+  html, body { margin: 0; background: white; }
+  details { width: 120px; }
+  summary { display: none; }
+  details::details-content {
+    margin-inline-start: 4px;
+    padding-inline-start: 8px;
+    border-inline-start: 2px solid #2468ac;
+    border-image: linear-gradient(
+      to bottom,
+      #2468ac 0 calc(100% - 8px),
+      transparent calc(100% - 8px)) 1;
+  }
+  .content { height: 40px; background: #eee; }
+</style>
+<details open><summary>Summary</summary><div class="content"></div></details>

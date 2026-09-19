@@ -606,6 +606,7 @@ struct node_style final {
             float opacity{1};
             animation_data transitions{};
             uint32_t border_inline_start_rgba{0};
+            std::string border_image_value;
             bool present{false};
             bool block_size_zero{false};
             bool overflow_hidden{false};

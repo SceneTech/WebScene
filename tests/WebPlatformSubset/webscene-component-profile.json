@@ -1353,6 +1353,14 @@
       "reason": "Implementation-first WebScene #754 slice for unchanged Code OSS disclosure animations. Native companion coverage requires midpoint zero/auto geometry, retained close paint, opacity interpolation, host-clock completion, and no lingering animation-frame demand."
     },
     {
+      "path": "contracts/css-details-content-border-image.html",
+      "type": "reftest",
+      "reference": "contracts/css-details-content-border-image-ref.html",
+      "capabilities": ["details-content-border-image-gradient", "logical-inline-start-border-image", "details-content-border-opacity"],
+      "evidence": ["css-backgrounds-3-border-image", "native-retained-gradient-resource", "vscode-oss-645f29c-completed-response-border-ledger"],
+      "reason": "Implementation-first WebScene #756 slice for the unchanged Code OSS completed-response disclosure. The native scene must publish the resolved vertical gradient on only the logical inline-start border while preserving pseudo layout, opacity, and keyword-size clipping."
+    },
+    {
       "path": "contracts/css-placeholder-pseudo-paint.html",
       "type": "testharness",
       "capabilities": ["placeholder-pseudo-color", "placeholder-pseudo-opacity", "placeholder-pseudo-mutation", "placeholder-value-suppression"],

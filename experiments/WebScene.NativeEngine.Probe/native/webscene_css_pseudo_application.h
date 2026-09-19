@@ -158,7 +158,35 @@ void apply_details_content_declaration(
             ? "supported" : "unsupported";
         decision.semantic_slice = "discrete details-content visibility";
     } else if (declaration.name == "border-image") {
-        decision.semantic_slice = "static details-content paint and layout";
+        const auto prefix = std::string_view{"linear-gradient("};
+        if (!lower.starts_with(prefix)) {
+            decision.semantic_slice =
+                "single vertical linear-gradient with unit slice";
+            return;
+        }
+        auto depth = 0U;
+        auto close = std::string::npos;
+        for (size_t index = prefix.size() - 1U; index < value.size(); ++index) {
+            if (value[index] == '(') ++depth;
+            else if (value[index] == ')' && depth != 0U && --depth == 0U) {
+                close = index;
+                break;
+            }
+        }
+        const auto suffix = close == std::string::npos
+            ? std::string{} : trim_value(std::string_view{value}.substr(close + 1U));
+        const auto image = close == std::string::npos
+            ? std::string{} : trim_value(std::string_view{value}.substr(0U, close + 1U));
+        const auto image_lower = ascii_lower(image);
+        if (suffix != "1" || !image_lower.starts_with("linear-gradient(to bottom,")) {
+            decision.semantic_slice =
+                "single vertical linear-gradient with unit slice";
+            return;
+        }
+        details_content.border_image_value = image;
+        decision.classification = "supported";
+        decision.semantic_slice =
+            "retained details-content inline-start border gradient";
     }
 }
 

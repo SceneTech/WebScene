@@ -97,7 +97,7 @@ void test_details_content_pseudo_static_open_close_layout(webscene_engine* engin
     execute(engine,R"JS(
       document.body.innerHTML=`
         <style>
-          :root { --details-space:12px; --details-border:#2468ac; }
+          :root { --details-space:12px; --details-tail:8px; --details-border:#2468ac; }
           #details-probe { width:300px; }
           #details-probe::details-content {
             block-size:0;
@@ -107,6 +107,9 @@ void test_details_content_pseudo_static_open_close_layout(webscene_engine* engin
             margin-inline-start:6px;
             padding-inline-start:var(--details-space);
             border-inline-start:1px solid var(--details-border);
+            border-image:linear-gradient(to bottom,
+              var(--details-border) 0 calc(100% - var(--details-tail)),
+              transparent calc(100% - var(--details-tail))) 1;
           }
           #details-probe[open]::details-content {
             block-size:auto;
@@ -162,11 +165,19 @@ void test_details_content_pseudo_static_open_close_layout(webscene_engine* engin
         if(scene) {
             for(uint32_t i=0;i<scene->header.command_count;++i) {
                 const auto& command=scene->commands[i];
-                if(command.kind==2U && command.rgba==0x2468ACFFU
+                if(command.kind==21U && command.flags<scene->string_count
                     && std::abs(command.width-1.0F)<0.01F
                     && command.x>200.0F) {
+                    const auto& descriptor=scene->strings[command.flags];
+                    const auto resource=std::string(
+                        scene->string_bytes+descriptor.byte_offset,
+                        descriptor.byte_length);
+                    if(resource.starts_with("webscene-bg-v2\tlinear-gradient(to bottom,")
+                        && resource.find("calc(100% - 8px)")!=std::string::npos
+                        && resource.ends_with("\tno-repeat\t0% 0%\t100% 100%")) {
                     found_border=true;
                     break;
+                    }
                 }
             }
             webscene_scene_acknowledge(scene);webscene_scene_release(scene);

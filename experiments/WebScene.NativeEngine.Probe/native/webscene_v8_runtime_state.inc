@@ -64,6 +64,7 @@
 #endif
 #if defined(WEBSCENE_NATIVE_ENGINE_GENERATED_DOM_BINDINGS)
     v8::Global<v8::FunctionTemplate> event_target_template;
+    v8::Global<v8::FunctionTemplate> validity_state_template;
     v8::Global<v8::FunctionTemplate> node_template;
     v8::Global<v8::FunctionTemplate> attr_template;
     v8::Global<v8::FunctionTemplate> character_data_template;
@@ -81,6 +82,9 @@
     v8::Global<v8::FunctionTemplate> html_iframe_element_template;
     v8::Global<v8::FunctionTemplate> html_table_cell_element_template;
     v8::Global<v8::FunctionTemplate> html_dialog_element_template;
+    v8::Global<v8::FunctionTemplate> html_button_element_template;
+    v8::Global<v8::FunctionTemplate> html_input_element_template;
+    v8::Global<v8::FunctionTemplate> html_text_area_element_template;
     v8::Global<v8::FunctionTemplate> html_form_element_template;
     v8::Global<v8::FunctionTemplate> html_select_element_template;
     v8::Global<v8::FunctionTemplate> html_option_element_template;

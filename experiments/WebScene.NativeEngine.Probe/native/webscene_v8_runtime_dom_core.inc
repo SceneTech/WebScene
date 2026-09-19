@@ -1791,7 +1791,9 @@
         }
         document.remove_all_children(parent);
         for (auto* child : children) {
-            if (child != nullptr) weaken_detached_subtree_wrappers(*child);
+            if (child == nullptr) continue;
+            update_live_form_collection_structure(parent, nullptr, child);
+            weaken_detached_subtree_wrappers(*child);
         }
         synchronize_textarea_value_from_children(parent);
         if (stylesheets_changed) recascade_after_stylesheet_change();
@@ -1943,6 +1945,25 @@
         std::erase_if(custom_states, [&](const auto& entry) {
             return node_ids.contains(entry.first);
         });
+        for (auto* node : nodes) remove_live_form_control(*node);
+        std::erase_if(live_form_controls, [&](const auto& entry) {
+            return nodes.contains(entry.first);
+        });
+        std::erase_if(live_form_owner_by_control, [&](const auto& entry) {
+            return nodes.contains(entry.first) || nodes.contains(entry.second);
+        });
+        const auto erase_released_index_nodes = [&](auto& index) {
+            std::erase_if(index, [&](auto& entry) {
+                std::erase_if(entry.second, [&](const auto* node) {
+                    return nodes.contains(const_cast<dom_node*>(node));
+                });
+                return entry.second.empty();
+            });
+        };
+        erase_released_index_nodes(explicit_form_validity_dependents);
+        erase_released_index_nodes(form_validity_owners_by_id);
+        erase_released_index_nodes(label_targets_by_id);
+        erase_released_index_nodes(explicit_labels_by_for);
         std::erase_if(detached_documents, [&](const auto& entry) {
             return node_ids.contains(static_cast<uint32_t>(entry.first));
         });
@@ -3893,6 +3914,428 @@
         info.GetReturnValue().Set(match == nullptr
             ? v8::Local<v8::Value>(v8::Null(info.GetIsolate()))
             : v8::Local<v8::Value>(self->wrap_node(*match)));
+    }
+
+    const std::vector<dom_node*>& form_control_collection_nodes(dom_node& form)
+    {
+        static const std::vector<dom_node*> empty;
+        ensure_explicit_form_validity_dependents();
+        const auto known = live_form_controls.find(&form);
+        return known == live_form_controls.end() ? empty : known->second;
+    }
+
+    std::vector<dom_node*> form_control_named_nodes(
+        dom_node& form, std::string_view name)
+    {
+        std::vector<dom_node*> result;
+        if (name.empty()) return result;
+        for (auto* node : form_control_collection_nodes(form)) {
+            if (node == nullptr) continue;
+            const auto authored_name = node->attributes.find("name");
+            if (node->id_attribute == name
+                || (authored_name != node->attributes.end()
+                    && authored_name->second == name)) result.push_back(node);
+        }
+        return result;
+    }
+
+    static dom_node* form_controls_collection_form(v8::Local<v8::Object> object)
+    {
+        return object->InternalFieldCount() < 1
+            ? nullptr
+            : static_cast<dom_node*>(object->GetAlignedPointerFromInternalField(
+                0, v8::kEmbedderDataTypeTagDefault));
+    }
+
+    static void html_form_controls_collection_constructor(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        if (info.IsConstructCall() && info.Length() == 2
+            && info[0]->IsExternal() && info[1]->IsObject()) {
+            info.This()->SetAlignedPointerInInternalField(
+                0,
+                info[0].As<v8::External>()->Value(
+                    v8::kExternalPointerTypeTagDefault),
+                v8::kEmbedderDataTypeTagDefault);
+            info.This()->SetInternalField(1, info[1]);
+            info.GetReturnValue().Set(info.This());
+            return;
+        }
+        info.GetIsolate()->ThrowException(v8::Exception::TypeError(
+            js_string(info.GetIsolate(), "Illegal constructor")));
+    }
+
+    static void get_form_controls_collection_length(
+        v8::Local<v8::Name>,
+        const v8::PropertyCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        auto* form = form_controls_collection_form(info.Holder());
+        if (self == nullptr || form == nullptr) return;
+        info.GetReturnValue().Set(v8::Integer::NewFromUnsigned(
+            info.GetIsolate(),
+            static_cast<uint32_t>(
+                self->form_control_collection_nodes(*form).size())));
+    }
+
+    static v8::Intercepted form_controls_collection_indexed_getter(
+        uint32_t index,
+        const v8::PropertyCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        auto* form = form_controls_collection_form(info.Holder());
+        if (self == nullptr || form == nullptr) return v8::Intercepted::kNo;
+        const auto& nodes = self->form_control_collection_nodes(*form);
+        if (index >= nodes.size()) return v8::Intercepted::kNo;
+        info.GetReturnValue().Set(self->wrap_node(*nodes[index]));
+        return v8::Intercepted::kYes;
+    }
+
+    static std::string radio_node_list_name(v8::Local<v8::Object> object)
+    {
+        if (object->InternalFieldCount() < 3
+            || !object->GetInternalField(2)->IsValue()) return {};
+        return to_utf8(
+            v8::Isolate::GetCurrent(),
+            object->GetInternalField(2).As<v8::Value>());
+    }
+
+    v8::Local<v8::Object> create_radio_node_list(
+        dom_node& form, std::string_view name)
+    {
+        auto context = isolate->GetCurrentContext();
+        auto constructor = ensure_radio_node_list_template()
+            ->GetFunction(context).ToLocalChecked();
+        v8::Local<v8::Value> arguments[]{
+            v8::External::New(
+                isolate, &form, v8::kExternalPointerTypeTagDefault),
+            wrap_node(form),
+            js_dom_string(isolate, name)};
+        return constructor->NewInstance(context, 3, arguments).ToLocalChecked();
+    }
+
+    v8::Local<v8::Value> form_control_named_value(
+        dom_node& form, std::string_view name)
+    {
+        auto matches = form_control_named_nodes(form, name);
+        if (matches.empty()) return v8::Null(isolate);
+        if (matches.size() == 1U) return wrap_node(*matches.front());
+        return create_radio_node_list(form, name);
+    }
+
+    static v8::Intercepted form_controls_collection_named_getter(
+        v8::Local<v8::Name> property,
+        const v8::PropertyCallbackInfo<v8::Value>& info)
+    {
+        if (!property->IsString()) return v8::Intercepted::kNo;
+        auto* self = current(info.GetIsolate());
+        auto* form = form_controls_collection_form(info.Holder());
+        if (self == nullptr || form == nullptr) return v8::Intercepted::kNo;
+        const auto name = to_utf8(info.GetIsolate(), property.As<v8::Value>());
+        const auto matches = self->form_control_named_nodes(*form, name);
+        if (matches.empty()) return v8::Intercepted::kNo;
+        info.GetReturnValue().Set(matches.size() == 1U
+            ? v8::Local<v8::Value>(self->wrap_node(*matches.front()))
+            : v8::Local<v8::Value>(self->create_radio_node_list(*form, name)));
+        return v8::Intercepted::kYes;
+    }
+
+    static void form_controls_collection_named_enumerator(
+        const v8::PropertyCallbackInfo<v8::Array>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        auto* form = form_controls_collection_form(info.Holder());
+        std::vector<std::string> names;
+        std::unordered_set<std::string> seen;
+        if (self != nullptr && form != nullptr) {
+            for (auto* node : self->form_control_collection_nodes(*form)) {
+                if (node == nullptr) continue;
+                if (!node->id_attribute.empty()
+                    && seen.insert(node->id_attribute).second)
+                    names.push_back(node->id_attribute);
+                const auto name = node->attributes.find("name");
+                if (name != node->attributes.end() && !name->second.empty()
+                    && seen.insert(name->second).second)
+                    names.push_back(name->second);
+            }
+        }
+        auto result = v8::Array::New(
+            info.GetIsolate(), static_cast<int>(names.size()));
+        auto context = info.GetIsolate()->GetCurrentContext();
+        for (uint32_t index = 0; index < names.size(); ++index)
+            result->Set(context, index,
+                js_dom_string(info.GetIsolate(), names[index])).Check();
+        info.GetReturnValue().Set(result);
+    }
+
+    static void form_controls_collection_item(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        auto* form = form_controls_collection_form(info.This());
+        if (self == nullptr || form == nullptr) return;
+        const auto index = info.Length() > 0
+            ? info[0]->Uint32Value(
+                info.GetIsolate()->GetCurrentContext()).FromMaybe(0U)
+            : 0U;
+        const auto& nodes = self->form_control_collection_nodes(*form);
+        info.GetReturnValue().Set(index < nodes.size()
+            ? v8::Local<v8::Value>(self->wrap_node(*nodes[index]))
+            : v8::Local<v8::Value>(v8::Null(info.GetIsolate())));
+    }
+
+    static void form_controls_collection_named_item(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        auto* form = form_controls_collection_form(info.This());
+        if (self == nullptr || form == nullptr) return;
+        const auto name = info.Length() > 0
+            ? to_utf8(info.GetIsolate(), info[0]) : std::string{};
+        info.GetReturnValue().Set(self->form_control_named_value(*form, name));
+    }
+
+    v8::Local<v8::FunctionTemplate> ensure_html_form_controls_collection_template()
+    {
+        if (!html_form_controls_collection_template.IsEmpty())
+            return html_form_controls_collection_template.Get(isolate);
+        auto collection = v8::FunctionTemplate::New(
+            isolate, html_form_controls_collection_constructor);
+        collection->SetClassName(
+            js_string(isolate, "HTMLFormControlsCollection"));
+        collection->Inherit(ensure_html_collection_template());
+        collection->InstanceTemplate()->SetInternalFieldCount(2);
+        collection->InstanceTemplate()->SetNativeDataProperty(
+            js_string(isolate, "length"), get_form_controls_collection_length);
+        collection->InstanceTemplate()->SetHandler(
+            v8::IndexedPropertyHandlerConfiguration(
+                form_controls_collection_indexed_getter));
+        collection->InstanceTemplate()->SetHandler(
+            v8::NamedPropertyHandlerConfiguration(
+                form_controls_collection_named_getter,
+                nullptr, nullptr, nullptr,
+                form_controls_collection_named_enumerator,
+                {}, v8::PropertyHandlerFlags::kNonMasking));
+        collection->PrototypeTemplate()->Set(
+            js_string(isolate, "item"),
+            v8::FunctionTemplate::New(
+                isolate, form_controls_collection_item,
+                v8::Local<v8::Value>(), v8::Local<v8::Signature>(), 1,
+                v8::ConstructorBehavior::kThrow));
+        collection->PrototypeTemplate()->Set(
+            js_string(isolate, "namedItem"),
+            v8::FunctionTemplate::New(
+                isolate, form_controls_collection_named_item,
+                v8::Local<v8::Value>(), v8::Local<v8::Signature>(), 1,
+                v8::ConstructorBehavior::kThrow));
+        collection->PrototypeTemplate()->Set(
+            v8::Symbol::GetToStringTag(isolate),
+            js_string(isolate, "HTMLFormControlsCollection"),
+            static_cast<v8::PropertyAttribute>(
+                v8::PropertyAttribute::ReadOnly
+                | v8::PropertyAttribute::DontEnum));
+        html_form_controls_collection_template.Reset(isolate, collection);
+        return collection;
+    }
+
+    static void get_html_form_controls_collection_constructor(
+        v8::Local<v8::Name>,
+        const v8::PropertyCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        if (self == nullptr) return;
+        info.GetReturnValue().Set(
+            self->ensure_html_form_controls_collection_template()
+                ->GetFunction(info.GetIsolate()->GetCurrentContext())
+                .ToLocalChecked());
+    }
+
+    static void radio_node_list_constructor(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        if (info.IsConstructCall() && info.Length() == 3
+            && info[0]->IsExternal() && info[1]->IsObject()
+            && info[2]->IsString()) {
+            info.This()->SetAlignedPointerInInternalField(
+                0,
+                info[0].As<v8::External>()->Value(
+                    v8::kExternalPointerTypeTagDefault),
+                v8::kEmbedderDataTypeTagDefault);
+            info.This()->SetInternalField(1, info[1]);
+            info.This()->SetInternalField(2, info[2]);
+            info.GetReturnValue().Set(info.This());
+            return;
+        }
+        info.GetIsolate()->ThrowException(v8::Exception::TypeError(
+            js_string(info.GetIsolate(), "Illegal constructor")));
+    }
+
+    std::vector<dom_node*> radio_node_list_nodes(v8::Local<v8::Object> object)
+    {
+        auto* form = form_controls_collection_form(object);
+        return form == nullptr ? std::vector<dom_node*>{}
+            : form_control_named_nodes(*form, radio_node_list_name(object));
+    }
+
+    static void get_radio_node_list_length(
+        v8::Local<v8::Name>,
+        const v8::PropertyCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        if (self == nullptr) return;
+        info.GetReturnValue().Set(v8::Integer::NewFromUnsigned(
+            info.GetIsolate(),
+            static_cast<uint32_t>(
+                self->radio_node_list_nodes(info.Holder()).size())));
+    }
+
+    static v8::Intercepted radio_node_list_indexed_getter(
+        uint32_t index,
+        const v8::PropertyCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        if (self == nullptr) return v8::Intercepted::kNo;
+        const auto nodes = self->radio_node_list_nodes(info.Holder());
+        if (index >= nodes.size()) return v8::Intercepted::kNo;
+        info.GetReturnValue().Set(self->wrap_node(*nodes[index]));
+        return v8::Intercepted::kYes;
+    }
+
+    static void radio_node_list_item(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        if (self == nullptr) return;
+        const auto nodes = self->radio_node_list_nodes(info.This());
+        const auto index = info.Length() > 0
+            ? info[0]->Uint32Value(
+                info.GetIsolate()->GetCurrentContext()).FromMaybe(0U)
+            : 0U;
+        info.GetReturnValue().Set(index < nodes.size()
+            ? v8::Local<v8::Value>(self->wrap_node(*nodes[index]))
+            : v8::Local<v8::Value>(v8::Null(info.GetIsolate())));
+    }
+
+    static void radio_node_list_iterator(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        if (self == nullptr) return;
+        const auto nodes = self->radio_node_list_nodes(info.This());
+        auto context = info.GetIsolate()->GetCurrentContext();
+        auto values = v8::Array::New(
+            info.GetIsolate(), static_cast<int>(nodes.size()));
+        for (uint32_t index = 0; index < nodes.size(); ++index)
+            values->Set(context, index, self->wrap_node(*nodes[index])).Check();
+        v8::Local<v8::Value> iterator;
+        if (!values->Get(context, v8::Symbol::GetIterator(info.GetIsolate()))
+                .ToLocal(&iterator) || !iterator->IsFunction()) return;
+        v8::Local<v8::Value> result;
+        if (iterator.As<v8::Function>()->Call(context, values, 0, nullptr)
+                .ToLocal(&result)) info.GetReturnValue().Set(result);
+    }
+
+    static void get_radio_node_list_value(
+        v8::Local<v8::Name>,
+        const v8::PropertyCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        if (self == nullptr) return;
+        for (auto* node : self->radio_node_list_nodes(info.Holder())) {
+            if (node == nullptr || !forms::input_type_is(*node, "radio")
+                || !forms::input_checked(*node)) continue;
+            auto value = forms::text_control_value(*node);
+            if (!node->attributes.contains("value")) value = "on";
+            info.GetReturnValue().Set(js_dom_string(info.GetIsolate(), value));
+            return;
+        }
+        info.GetReturnValue().Set(js_string(info.GetIsolate(), ""));
+    }
+
+    static void set_radio_node_list_value(
+        v8::Local<v8::Name>,
+        v8::Local<v8::Value> value,
+        const v8::PropertyCallbackInfo<void>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        if (self == nullptr) return;
+        const auto expected = to_wtf8(info.GetIsolate(), value);
+        for (auto* node : self->radio_node_list_nodes(info.Holder())) {
+            if (node == nullptr || !forms::input_type_is(*node, "radio")) continue;
+            auto candidate = forms::text_control_value(*node);
+            if (!node->attributes.contains("value")) candidate = "on";
+            if (candidate != expected) continue;
+            for (auto* member : self->radio_group_members(*node))
+                if (member != node) self->set_native_checkedness(*member, false);
+            self->set_native_checkedness(*node, true);
+            return;
+        }
+    }
+
+    v8::Local<v8::FunctionTemplate> ensure_radio_node_list_template()
+    {
+        if (!radio_node_list_template.IsEmpty())
+            return radio_node_list_template.Get(isolate);
+        auto list = v8::FunctionTemplate::New(isolate, radio_node_list_constructor);
+        list->SetClassName(js_string(isolate, "RadioNodeList"));
+        list->Inherit(ensure_node_list_template());
+        list->InstanceTemplate()->SetInternalFieldCount(3);
+        list->InstanceTemplate()->SetNativeDataProperty(
+            js_string(isolate, "length"), get_radio_node_list_length);
+        list->InstanceTemplate()->SetNativeDataProperty(
+            js_string(isolate, "value"),
+            get_radio_node_list_value, set_radio_node_list_value);
+        list->InstanceTemplate()->SetHandler(
+            v8::IndexedPropertyHandlerConfiguration(
+                radio_node_list_indexed_getter));
+        list->PrototypeTemplate()->Set(
+            js_string(isolate, "item"),
+            v8::FunctionTemplate::New(
+                isolate, radio_node_list_item,
+                v8::Local<v8::Value>(), v8::Local<v8::Signature>(), 1,
+                v8::ConstructorBehavior::kThrow));
+        list->PrototypeTemplate()->Set(
+            v8::Symbol::GetIterator(isolate),
+            v8::FunctionTemplate::New(
+                isolate, radio_node_list_iterator,
+                v8::Local<v8::Value>(), v8::Local<v8::Signature>(), 0,
+                v8::ConstructorBehavior::kThrow));
+        list->PrototypeTemplate()->Set(
+            v8::Symbol::GetToStringTag(isolate),
+            js_string(isolate, "RadioNodeList"),
+            static_cast<v8::PropertyAttribute>(
+                v8::PropertyAttribute::ReadOnly
+                | v8::PropertyAttribute::DontEnum));
+        radio_node_list_template.Reset(isolate, list);
+        return list;
+    }
+
+    static void get_radio_node_list_constructor(
+        v8::Local<v8::Name>,
+        const v8::PropertyCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        if (self == nullptr) return;
+        info.GetReturnValue().Set(self->ensure_radio_node_list_template()
+            ->GetFunction(info.GetIsolate()->GetCurrentContext()).ToLocalChecked());
+    }
+
+    static v8::Intercepted form_named_getter(
+        v8::Local<v8::Name> property,
+        const v8::PropertyCallbackInfo<v8::Value>& info)
+    {
+        if (!property->IsString()) return v8::Intercepted::kNo;
+        auto* self = current(info.GetIsolate());
+        auto* form = unwrap_node(info.Holder());
+        if (self == nullptr || form == nullptr || form->tag != "form")
+            return v8::Intercepted::kNo;
+        const auto name = to_utf8(info.GetIsolate(), property.As<v8::Value>());
+        const auto matches = self->form_control_named_nodes(*form, name);
+        if (matches.empty()) return v8::Intercepted::kNo;
+        info.GetReturnValue().Set(matches.size() == 1U
+            ? v8::Local<v8::Value>(self->wrap_node(*matches.front()))
+            : v8::Local<v8::Value>(self->create_radio_node_list(*form, name)));
+        return v8::Intercepted::kYes;
     }
 
     static void get_body(

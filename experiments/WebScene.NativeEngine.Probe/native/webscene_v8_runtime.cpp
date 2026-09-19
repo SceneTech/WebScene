@@ -427,6 +427,11 @@ struct v8_dom_runtime::implementation final {
         element->InstanceTemplate()->SetInternalFieldCount(1);
         element->InstanceTemplate()->SetHandler(
             v8::IndexedPropertyHandlerConfiguration(form_or_select_indexed_getter));
+        element->InstanceTemplate()->SetHandler(
+            v8::NamedPropertyHandlerConfiguration(
+                form_named_getter, nullptr, nullptr, nullptr,
+                form_controls_collection_named_enumerator, {},
+                v8::PropertyHandlerFlags::kNonMasking));
         element->InstanceTemplate()->SetNativeDataProperty(js_string(isolate, "style"), get_style);
         element->InstanceTemplate()->SetNativeDataProperty(js_string(isolate, "id"), get_id, set_id);
         element->InstanceTemplate()->SetNativeDataProperty(js_string(isolate, "className"), get_class_name, set_class_name);
@@ -4584,6 +4589,14 @@ struct v8_dom_runtime::implementation final {
             local_context,
             js_string(isolate, "HTMLCollection"),
             get_html_collection_constructor).Check();
+        global->SetLazyDataProperty(
+            local_context,
+            js_string(isolate, "HTMLFormControlsCollection"),
+            get_html_form_controls_collection_constructor).Check();
+        global->SetLazyDataProperty(
+            local_context,
+            js_string(isolate, "RadioNodeList"),
+            get_radio_node_list_constructor).Check();
         global->SetLazyDataProperty(
             local_context,
             js_string(isolate, "NodeList"),

@@ -409,6 +409,9 @@
         frame_document_template.Reset();
         frame_window_template.Reset();
         html_collection_template.Reset();
+        html_form_controls_collection_template.Reset();
+        radio_node_list_template.Reset();
+        node_list_template.Reset();
         dom_token_list_template.Reset();
         document_template.Reset();
         element_template.Reset();

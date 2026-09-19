@@ -495,6 +495,8 @@
       "constructor": "illegal_dom_constructor",
       "parent": "HTMLElement",
       "indexedGetter": "form_or_select_indexed_getter",
+      "namedGetter": "form_named_getter",
+      "namedEnumerator": "form_controls_collection_named_enumerator",
       "attributes": [
         { "name": "length", "getter": "get_form_or_select_length" }
       ],

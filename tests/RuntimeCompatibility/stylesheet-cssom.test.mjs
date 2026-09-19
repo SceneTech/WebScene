@@ -36,7 +36,7 @@ function setup() {
     get textContent() { return this.source; }
     set textContent(value) { this.source = String(value); this.writes.push(this.source); }
   }
-  const realm = createContext({ HTMLStyleElement, DOMException });
+  const realm = createContext({ HTMLStyleElement, DOMException, URL });
   runInContext(script, realm);
   return {
     realm,

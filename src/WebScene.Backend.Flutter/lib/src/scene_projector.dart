@@ -4,6 +4,7 @@ import 'dart:ffi';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/painting.dart';
 import 'package:flutter_svg/flutter_svg.dart';
@@ -51,12 +52,16 @@ final class WebSceneSceneProjector extends ChangeNotifier {
   final Map<int, _RetainedLayer> _layers = {};
   final Map<String, _SvgPictureEntry> _svgPictures = {};
   final Map<String, _SvgMaskGeometry?> _svgMaskGeometry = {};
+  final Map<String, _RasterMaskEntry> _rasterMaskImages = {};
+  int _rasterMaskDecodedBytes = 0;
   final List<_DomSvgPlacement> _domSvgPlacements = [];
   final List<_DomBackdropEffect> _domBackdropEffects = [];
   ui.Picture? _backdrop;
   ui.Picture? _overlay;
   int _revision = 0;
+  int _resourceEpoch = 0;
   bool _disposed = false;
+  VoidCallback? onNeedsSceneCheckpoint;
   double viewportWidth = 0;
   double viewportHeight = 0;
 
@@ -74,8 +79,26 @@ final class WebSceneSceneProjector extends ChangeNotifier {
       _svgPictures.values.where((entry) => entry.error != null).length;
 
   @visibleForTesting
+  int get cachedRasterMaskCount =>
+      _rasterMaskImages.values.where((entry) => entry.image != null).length;
+
+  @visibleForTesting
+  int get failedRasterMaskCount =>
+      _rasterMaskImages.values.where((entry) => entry.error != null).length;
+
+  @visibleForTesting
+  int get rasterMaskDecodedBytes => _rasterMaskDecodedBytes;
+
+  @visibleForTesting
   Future<void> waitForPendingSvgLoads() => Future.wait(
         _svgPictures.values
+            .map((entry) => entry.pending)
+            .whereType<Future<void>>(),
+      );
+
+  @visibleForTesting
+  Future<void> waitForPendingRasterMaskLoads() => Future.wait(
+        _rasterMaskImages.values
             .map((entry) => entry.pending)
             .whereType<Future<void>>(),
       );
@@ -209,6 +232,7 @@ final class WebSceneSceneProjector extends ChangeNotifier {
   }
 
   void reset() {
+    _resourceEpoch++;
     _backdrop?.dispose();
     _overlay?.dispose();
     _backdrop = null;
@@ -234,6 +258,11 @@ final class WebSceneSceneProjector extends ChangeNotifier {
       entry.picture?.dispose();
     }
     _svgPictures.clear();
+    for (final entry in _rasterMaskImages.values) {
+      entry.image?.dispose();
+    }
+    _rasterMaskImages.clear();
+    _rasterMaskDecodedBytes = 0;
     super.dispose();
   }
 
@@ -313,7 +342,9 @@ final class WebSceneSceneProjector extends ChangeNotifier {
         case 5 when foreground:
           _drawDomSvgPath(canvas, scene, command, stroke: command.kind == 5);
         case 6 when foreground:
-          _retainDomSvg(scene, command);
+          if (!_drawDomRasterBackground(canvas, scene, command)) {
+            _retainDomSvg(scene, command);
+          }
         case 7 when !foreground:
         case 10 when foreground:
           canvas.drawRRect(
@@ -446,6 +477,43 @@ final class WebSceneSceneProjector extends ChangeNotifier {
       ),
     );
     _ensureSvgPicture(markup);
+  }
+
+  bool _drawDomRasterBackground(
+    ui.Canvas canvas,
+    WebSceneSceneView scene,
+    WebSceneSceneCommand command,
+  ) {
+    const prefix = 'webscene-bg-svg-v1\t';
+    var resource = _domString(scene, command.flags);
+    if (!resource.startsWith(prefix)) return false;
+    resource = resource.substring(prefix.length);
+    final fields = <String>[];
+    for (var index = 0; index < 4; index++) {
+      final separator = resource.indexOf('\t');
+      if (separator < 0) return false;
+      fields.add(resource.substring(0, separator));
+      resource = resource.substring(separator + 1);
+    }
+    if (!resource.startsWith('webscene-raster-v2\t')) return false;
+    final layer = _DomMaskLayer(
+      'url()',
+      fields[1].trim().toLowerCase(),
+      fields[2],
+      fields[3],
+      'match-source',
+      'add',
+      fields[0],
+      resource,
+    );
+    canvas.save();
+    try {
+      canvas.clipRRect(_domRRect(command), doAntiAlias: true);
+      _drawDomRasterMask(canvas, command, layer, ui.BlendMode.srcOver);
+    } finally {
+      canvas.restore();
+    }
+    return true;
   }
 
   void _ensureSvgPicture(String markup) {
@@ -1135,13 +1203,23 @@ final class WebSceneSceneProjector extends ChangeNotifier {
               ? ui.BlendMode.srcOver
               : ui.BlendMode.xor;
           if (layer.image.trimLeft().toLowerCase().startsWith('url(')) {
-            _drawDomSvgMask(
-              canvas,
-              command,
-              'webscene-mask-svg-v1\t${layer.viewBox}\t${layer.repeat}'
-              '\t${layer.position}\t${layer.size}\t${layer.markup}',
-              blendMode: blendMode,
-            );
+            if (layer.markup.startsWith('webscene-raster-v2\t')) {
+              if (!_drawDomRasterMask(canvas, command, layer, blendMode)) {
+                canvas.drawColor(
+                  const ui.Color(0x00000000),
+                  ui.BlendMode.src,
+                );
+                break;
+              }
+            } else {
+              _drawDomSvgMask(
+                canvas,
+                command,
+                'webscene-mask-svg-v1\t${layer.viewBox}\t${layer.repeat}'
+                '\t${layer.position}\t${layer.size}\t${layer.markup}',
+                blendMode: blendMode,
+              );
+            }
           } else {
             _drawDomLinearMask(
               canvas,
@@ -1158,6 +1236,179 @@ final class WebSceneSceneProjector extends ChangeNotifier {
       }
     } finally {
       canvas.restore();
+    }
+  }
+
+  bool _drawDomRasterMask(
+    ui.Canvas canvas,
+    WebSceneSceneCommand command,
+    _DomMaskLayer layer,
+    ui.BlendMode blendMode,
+  ) {
+    final resource = _decodeRasterMaskResource(layer.markup);
+    if (resource == null) return false;
+    final viewBox = _numbers(layer.viewBox);
+    if (viewBox.length != 4 || viewBox[0] != 0 || viewBox[1] != 0
+        || viewBox[2] != resource.width || viewBox[3] != resource.height) {
+      return false;
+    }
+    final image = _rasterMaskImage(resource);
+    if (image == null) return false;
+    final resolvedSize = _resolveSvgMaskSize(
+      layer.size,
+      command.width,
+      command.height,
+      resource.width,
+      resource.height,
+    );
+    final tileWidth = resolvedSize.$1;
+    final tileHeight = resolvedSize.$2;
+    if (!tileWidth.isFinite || !tileHeight.isFinite
+        || tileWidth <= 0 || tileHeight <= 0) return false;
+    final resolvedPosition = _resolveMaskPosition(
+      layer.position,
+      command.width,
+      command.height,
+      tileWidth,
+      tileHeight,
+    );
+    var firstX = command.x + resolvedPosition.$1;
+    var firstY = command.y + resolvedPosition.$2;
+    final repeatX = layer.repeat != 'no-repeat' && layer.repeat != 'repeat-y';
+    final repeatY = layer.repeat != 'no-repeat' && layer.repeat != 'repeat-x';
+    if (repeatX) {
+      while (firstX > command.x) firstX -= tileWidth;
+      while (firstX + tileWidth <= command.x) firstX += tileWidth;
+    }
+    if (repeatY) {
+      while (firstY > command.y) firstY -= tileHeight;
+      while (firstY + tileHeight <= command.y) firstY += tileHeight;
+    }
+    final columns = repeatX ? (command.width / tileWidth).ceil() + 2 : 1;
+    final rows = repeatY ? (command.height / tileHeight).ceil() + 2 : 1;
+    if (columns > 4096 || rows > 4096 || columns * rows > 4096) return false;
+    final bounds = ui.Rect.fromLTWH(
+      command.x,
+      command.y,
+      command.width,
+      command.height,
+    );
+    final source = ui.Rect.fromLTWH(
+      0,
+      0,
+      resource.width.toDouble(),
+      resource.height.toDouble(),
+    );
+    final paint = ui.Paint()
+      ..isAntiAlias = false
+      ..filterQuality = ui.FilterQuality.medium
+      ..blendMode = blendMode;
+    canvas.save();
+    try {
+      canvas.clipRect(bounds, doAntiAlias: false);
+      final endX = repeatX ? command.x + command.width : firstX + tileWidth;
+      final endY = repeatY ? command.y + command.height : firstY + tileHeight;
+      for (var y = firstY; y < endY; y += tileHeight) {
+        for (var x = firstX; x < endX; x += tileWidth) {
+          canvas.drawImageRect(
+            image,
+            source,
+            ui.Rect.fromLTWH(x, y, tileWidth, tileHeight),
+            paint,
+          );
+          if (!repeatX) break;
+        }
+        if (!repeatY) break;
+      }
+    } finally {
+      canvas.restore();
+    }
+    return true;
+  }
+
+  _RasterMaskResource? _decodeRasterMaskResource(String value) {
+    const prefix = 'webscene-raster-v2\t';
+    if (!value.startsWith(prefix)) return null;
+    final fields = value.substring(prefix.length).split('\t');
+    if (fields.length != 4) return null;
+    final width = int.tryParse(fields[0]);
+    final height = int.tryParse(fields[1]);
+    final identity = fields[2];
+    if (width == null || height == null || width < 1 || height < 1
+        || width > 16384 || height > 16384
+        || width * height > 16 * 1024 * 1024
+        || !RegExp(r'^[0-9a-f]{64}$').hasMatch(identity)
+        || fields[3].isEmpty) return null;
+    return _RasterMaskResource(width, height, identity, fields[3]);
+  }
+
+  ui.Image? _rasterMaskImage(_RasterMaskResource resource) {
+    final existing = _rasterMaskImages[resource.identity];
+    if (existing != null) {
+      if (existing.width != resource.width
+          || existing.height != resource.height) return null;
+      existing.requestedEpoch = _resourceEpoch;
+      return existing.image;
+    }
+    final decodedBytes = resource.width * resource.height * 4;
+    if (_rasterMaskImages.length >= 256
+        || _rasterMaskDecodedBytes > 64 * 1024 * 1024 - decodedBytes) {
+      for (final entry in _rasterMaskImages.values) {
+        entry.image?.dispose();
+      }
+      _rasterMaskImages.clear();
+      _rasterMaskDecodedBytes = 0;
+    }
+    final entry = _RasterMaskEntry(
+      resource.width,
+      resource.height,
+      _resourceEpoch,
+    );
+    _rasterMaskImages[resource.identity] = entry;
+    _rasterMaskDecodedBytes += decodedBytes;
+    entry.pending = _loadRasterMask(resource, entry);
+    return null;
+  }
+
+  Future<void> _loadRasterMask(
+    _RasterMaskResource resource,
+    _RasterMaskEntry entry,
+  ) async {
+    ui.Codec? codec;
+    try {
+      final encoded = base64Decode(resource.payload);
+      if (encoded.isEmpty || encoded.length > 2621440) {
+        throw const FormatException('Raster mask exceeds the encoded size limit');
+      }
+      if (sha256.convert(encoded).toString() != resource.identity) {
+        throw const FormatException('Raster mask identity does not match');
+      }
+      final png = encoded.length >= 8
+          && const [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]
+              .indexed.every((value) => encoded[value.$1] == value.$2);
+      final webp = encoded.length >= 12
+          && ascii.decode(encoded.sublist(0, 4)) == 'RIFF'
+          && ascii.decode(encoded.sublist(8, 12)) == 'WEBP';
+      if (!png && !webp) throw const FormatException('Unsupported raster mask');
+      codec = await ui.instantiateImageCodec(encoded);
+      final frame = await codec.getNextFrame();
+      if (frame.image.width != resource.width
+          || frame.image.height != resource.height) {
+        frame.image.dispose();
+        throw const FormatException('Raster mask dimensions do not match');
+      }
+      if (_disposed || !identical(_rasterMaskImages[resource.identity], entry)) {
+        frame.image.dispose();
+        return;
+      }
+      entry.image = frame.image;
+      if (entry.requestedEpoch == _resourceEpoch) {
+        onNeedsSceneCheckpoint?.call();
+      }
+    } catch (error) {
+      entry.error = error;
+    } finally {
+      codec?.dispose();
     }
   }
 
@@ -2345,6 +2596,35 @@ final class _DomMaskLayer {
   final String composite;
   final String viewBox;
   final String markup;
+}
+
+final class _RasterMaskResource {
+  const _RasterMaskResource(
+    this.width,
+    this.height,
+    this.identity,
+    this.payload,
+  );
+
+  final int width;
+  final int height;
+  final String identity;
+  final String payload;
+}
+
+final class _RasterMaskEntry {
+  _RasterMaskEntry(
+    this.width,
+    this.height,
+    this.requestedEpoch,
+  );
+
+  final int width;
+  final int height;
+  int requestedEpoch;
+  Future<void>? pending;
+  ui.Image? image;
+  Object? error;
 }
 
 final class _SvgMaskGeometry {

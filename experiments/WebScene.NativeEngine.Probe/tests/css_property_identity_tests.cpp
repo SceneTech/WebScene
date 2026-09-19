@@ -97,10 +97,10 @@ int main()
     static_assert(static_cast<uint16_t>(css_property_id::unknown) == 0U);
     static_assert(static_cast<uint16_t>(css_property_id::custom) == 1U);
     static_assert(static_cast<uint16_t>(css_property_id::contain_intrinsic_size) == 145U);
-    static_assert(native_typed_property_identity_catalog.size() == 201U);
-    static_assert(native_storage_only_property_catalog.size() == 54U);
-    static_assert(cssom_supported_property_catalog.size() == 230U);
-    static_assert(cssom_style_template_property_accessor_count == 418U);
+    static_assert(native_typed_property_identity_catalog.size() == 202U);
+    static_assert(native_storage_only_property_catalog.size() == 62U);
+    static_assert(cssom_supported_property_catalog.size() == 239U);
+    static_assert(cssom_style_template_property_accessor_count == 435U);
 
     for (const auto& entry : native_typed_property_identity_catalog) {
         require(property_id(entry.name) == entry.id, "typed name maps to its generated id", entry.name);
@@ -196,7 +196,7 @@ int main()
             "generated simple grammar dispatch agrees with specified-value implementation");
     }
 #if !defined(WEBSCENE_TEST_LEGACY_SPECIFIED_VALUE)
-    static_assert(specified_property_samples.size() == 144U);
+    static_assert(specified_property_samples.size() == 145U);
     std::array<bool, 146U> sampled{};
     for (const auto& sample : specified_property_samples) {
         const auto property = property_id(sample.name);

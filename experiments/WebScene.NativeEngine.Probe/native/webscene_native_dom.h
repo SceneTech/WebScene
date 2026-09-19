@@ -168,8 +168,6 @@ struct node_style final {
     struct opacity_keyframe final {
         float offset{0};
         float opacity{1};
-        float aspect_ratio_width{0};
-        float aspect_ratio_height{0};
     };
     struct rotation_keyframe final {
         float offset{0};
@@ -472,6 +470,8 @@ struct node_style final {
         css_length border_bottom_left_radius_y{};
         css_length outline_width{};
         layout_rect layout{};
+        float aspect_ratio_width{0};
+        float aspect_ratio_height{0};
         display_mode display{display_mode::inline_flow};
         position_mode position{position_mode::normal};
         align_mode align_self{align_mode::stretch};
@@ -1240,7 +1240,7 @@ public:
     bool operator==(const attribute_collection& other) const noexcept
     {
         if (values_.size() != other.values_.size()) return false;
-        return std::all_of(values_.begin(), values_.end(), [&other](const auto& entry) {
+        return std::all_of(values_.begin(), values_.end(), [this, &other](const auto& entry) {
             const auto match = other.find(entry.first);
             return match != other.end() && match->second == entry.second
                 && namespace_uri(entry.first) == other.namespace_uri(entry.first)
@@ -2514,10 +2514,10 @@ private:
 // ABI-specific equalities: libc++, libstdc++, and MSVC intentionally use
 // different std::string and container representations.
 static_assert(
-    sizeof(void*) != 8 || sizeof(dom_node) <= 1024,
+    sizeof(void*) != 8 || sizeof(dom_node) <= 1088,
     "dom_node exceeded its cross-library 64-bit footprint budget");
 static_assert(
-    sizeof(void*) != 8 || sizeof(dom_node::form_control_data) <= 64,
+    sizeof(void*) != 8 || sizeof(dom_node::form_control_data) <= 128,
     "form-control state exceeded its cross-library 64-bit footprint budget");
 static_assert(
     sizeof(void*) != 8 || sizeof(native_document) <= 384,

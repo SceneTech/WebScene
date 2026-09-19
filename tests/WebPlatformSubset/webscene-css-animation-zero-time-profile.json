@@ -1,0 +1,31 @@
+{
+  "profile": "webscene-css-animation-zero-time-1",
+  "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+  "runtime": "v8",
+  "viewport": {
+    "width": 800,
+    "height": 600,
+    "deviceScaleFactor": 1
+  },
+  "required": [
+    {
+      "path": "contracts/css-animation-zero-time.html",
+      "type": "contract",
+      "capabilities": [
+        "zero-duration-animation",
+        "zero-iteration-count",
+        "zero-active-duration",
+        "direction-aware-zero-time-fill",
+        "positive-and-negative-delay-phases",
+        "paused-delay-resume",
+        "ordered-exactly-once-animation-end",
+        "same-update-settlement",
+        "zero-sustained-frame-demand"
+      ],
+      "evidence": ["css-animation-zero-time-674-242"],
+      "reason": "WPT-aligned bounded reduction for zero active duration, directed fill boundaries, delayed and paused phase changes, ordered completion, CSSOM mutation, cleanup, and settled scheduling."
+    }
+  ],
+  "harnessBlocked": [],
+  "excluded": []
+}

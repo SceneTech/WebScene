@@ -427,11 +427,11 @@ inline void configure_keyframes(node_style& style,
                 track.rotation_keyframes = definition->second.rotation_stops;
                 track.filter_keyframes = definition->second.filter_stops;
             }
-            const auto runnable = track.duration_ms > 0 && track.iterations != 0
-                && (track.opacity_keyframes.size() >= 2U
+            const auto has_supported_effect =
+                track.opacity_keyframes.size() >= 2U
                     || track.rotation_keyframes.size() >= 2U
-                    || track.filter_keyframes.size() >= 2U);
-            if (runnable) {
+                    || track.filter_keyframes.size() >= 2U;
+            if (has_supported_effect) {
                 std::ostringstream signature;
                 signature << normalized_name << '|' << track.duration_ms << '|'
                     << track.delay_ms << '|' << track.iterations << '|'

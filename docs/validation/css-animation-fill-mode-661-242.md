@@ -39,9 +39,10 @@ clear the override through the established runtime lifecycle.
 - Existing keyframe-stop and compatible filter-list limits are unchanged.
 - No timer, queue, visual-tree node, selector pass, or per-frame allocation is
   added. Host timestamps and visibility/clip frame-demand gates are preserved.
-- `animation-play-state`, zero-duration and zero-iteration fill, multiple
-  animations, translate/scale keyframes, pseudo-element animation, and the Web
-  Animations API remain deferred.
+- Translate/scale keyframes, pseudo-element animation, animation
+  start/iteration/cancel events, and the Web Animations API remain deferred.
+  Play state, multiple lists, and zero-time fill are covered by #665, #672,
+  and #674.
 - Unchanged Code OSS uses `both` for delayed Quick Input, action-widget, and Chat
   entry animations. This slice prevents their supported opacity before-phase
   flash. Their translate/scale keyframes remain outside the rotate-only bound.

@@ -48,8 +48,9 @@ detach, and frame demand. The dedicated browser contract provides a WPT-aligned
 observable reduction for coordination, ordering, serialization, and cleanup.
 
 Additive/accumulate composition, `animation-composition`, Web Animations API
-objects, more than eight live tracks, zero-duration event expansion, additional
-animated properties, transition/animation compositing changes, and ABI or
-AppScene changes remain deferred. Under the fast implementation policy, only
+objects, more than eight live tracks, animation start/iteration/cancel event
+expansion, additional animated properties, transition/animation compositing
+changes, and ABI or AppScene changes remain deferred. Zero-duration/count end
+semantics are covered by #674. Under the fast implementation policy, only
 `git diff --check` is executed. Native, browser, package, and unchanged Code OSS
 acceptance remain unexecuted.

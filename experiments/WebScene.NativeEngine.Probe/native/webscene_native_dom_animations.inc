@@ -30,12 +30,34 @@ float terminal_keyframe_progress(
     node_style::animation_data::direction_kind direction) noexcept
 {
     const auto count = std::max(0.0, static_cast<double>(iterations));
+    if (count == 0.0) {
+        // A zero-count effect never enters its first iteration. Both backwards
+        // and forwards fill therefore use the start of that first iteration.
+        return directed_keyframe_progress(0.0F, 0.0, direction);
+    }
+    if (!std::isfinite(count)) {
+        // Zero-duration infinite effects have zero active duration. Web
+        // Animations resolves their after-phase simple progress to one; an
+        // infinite alternate iteration index is treated as forwards.
+        return direction == node_style::animation_data::direction_kind::reverse
+            ? 0.0F : 1.0F;
+    }
     const auto whole = std::floor(count);
     const auto fractional = count - whole;
     const auto progress = fractional > 0.0
         ? static_cast<float>(fractional) : 1.0F;
     const auto iteration = fractional > 0.0 ? whole : std::max(0.0, whole - 1.0);
     return directed_keyframe_progress(progress, iteration, direction);
+}
+
+float keyframe_active_duration_ms(
+    const node_style::animation_data::keyframe_animation& animation) noexcept
+{
+    if (animation.duration_ms <= 0 || animation.iterations <= 0) return 0;
+    if (!std::isfinite(animation.iterations)) {
+        return std::numeric_limits<float>::infinity();
+    }
+    return animation.duration_ms * animation.iterations;
 }
 
 bool fills_before(node_style::animation_data::fill_kind fill) noexcept
@@ -251,10 +273,28 @@ void native_document::update_style_animations(dom_node& node)
     const auto& configured_keyframes = node.style.animations().keyframe_animations;
     auto keyframe_set_changed = animation.keyframe_animations.size()
         != configured_keyframes.size();
+    auto keyframe_phase_changed = keyframe_set_changed;
     for (size_t index = 0U;
          !keyframe_set_changed && index < configured_keyframes.size(); ++index) {
         keyframe_set_changed = animation.keyframe_animations[index].signature
             != configured_keyframes[index].signature;
+    }
+    for (size_t index = 0U;
+         !keyframe_phase_changed && index < configured_keyframes.size(); ++index) {
+        const auto desired_pause = !configured_keyframes[index].signature.empty()
+            && configured_keyframes[index].play_state
+                == node_style::animation_data::play_kind::paused;
+        keyframe_phase_changed =
+            animation.keyframe_animations[index].fill_mode
+                != configured_keyframes[index].fill_mode
+            || animation.keyframe_animations[index].paused != desired_pause;
+    }
+    if (keyframe_phase_changed) {
+        // Permit the host to settle a zero-length phase change again at the
+        // current timestamp; the ordinary duplicate-frame guard still applies
+        // once the updated state has been sampled.
+        last_animation_advance_timestamp_ms_ =
+            std::numeric_limits<double>::quiet_NaN();
     }
     if (keyframe_set_changed && animation_events_) {
         std::erase_if(*animation_events_, [&](const auto& event) {
@@ -1083,18 +1123,19 @@ bool native_document::advance_animations() noexcept
                             0.0F, 0.0, configured.direction);
                     }
                 } else {
-                    const auto duration = std::max(0.001F, configured.duration_ms);
-                    const auto finite = std::isfinite(configured.iterations);
-                    const auto total_duration = finite
-                        ? duration * std::max(0.0F, configured.iterations)
-                        : 0.0F;
-                    if (finite && elapsed_ms >= total_duration) {
+                    const auto active_duration =
+                        keyframe_active_duration_ms(configured);
+                    const auto instantaneous = active_duration == 0;
+                    if (instantaneous || elapsed_ms >= active_duration) {
                         contributes = fills_after(configured.fill_mode);
                         if (contributes) {
                             progress = terminal_keyframe_progress(
                                 configured.iterations, configured.direction);
                         }
-                        if (!runtime.paused) {
+                        // A paused positive delay remains in its before phase.
+                        // Once the zero-length active interval is reached,
+                        // however, there is no interval left to hold.
+                        if (!runtime.paused || instantaneous) {
                             runtime.active = false;
                             runtime.filled = contributes;
                             completed = true;
@@ -1103,7 +1144,8 @@ bool native_document::advance_animations() noexcept
                         contributes = true;
                         runtime.filled = false;
                         progress = active_keyframe_progress(
-                            elapsed_ms, duration, configured.direction);
+                            elapsed_ms, configured.duration_ms,
+                            configured.direction);
                     }
                 }
             }
@@ -1210,7 +1252,7 @@ bool native_document::advance_animations() noexcept
                     node.id,
                     "animationend",
                     runtime.name,
-                    configured.duration_ms * configured.iterations / 1000.0F});
+                    keyframe_active_duration_ms(configured) / 1000.0F});
                 runtime.end_event_sent = true;
             }
         }

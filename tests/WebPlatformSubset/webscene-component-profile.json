@@ -1311,6 +1311,13 @@
   ],
   "candidate": [
     {
+      "path": "contracts/css-placeholder-pseudo-paint.html",
+      "type": "testharness",
+      "capabilities": ["placeholder-pseudo-color", "placeholder-pseudo-opacity", "placeholder-pseudo-mutation", "placeholder-value-suppression"],
+      "evidence": ["css-pseudo-elements-4-placeholder", "native-retained-scene-contract", "vscode-oss-645f29c-placeholder-ledger"],
+      "reason": "Implementation-first WebScene #237 slice for the twelve standard ::placeholder selectors in unchanged Code OSS core CSS. Native companion coverage requires custom-property color and fractional opacity to reach retained text paint, class mutation to recascade, live values to suppress placeholder paint, and empty-value restoration without layout or frame demand. Direct browser/native profile execution remains validation debt; additional placeholder properties and vendor aliases remain outside this bounded candidate."
+    },
+    {
       "path": "contracts/css-checkbox-required-validity.html",
       "type": "testharness",
       "capabilities": ["checkbox-required-validity", "live-checkedness-validity-invalidation"],

@@ -124,10 +124,13 @@ void compare_selector(const webscene_native::css::compiled_css_selector& a,
   require(a.compiled_compounds.size()==b.compiled_compounds.size());
   for(size_t i=0;i<a.compiled_compounds.size();++i) {
     const auto& x=a.compiled_compounds[i];const auto& y=b.compiled_compounds[i];
-    require(x.tag==y.tag && x.identities==y.identities && x.attributes==y.attributes &&
+    require(x.tag==y.tag && x.namespace_uri==y.namespace_uri &&
+        x.identities==y.identities && x.attributes==y.attributes &&
         x.valid==y.valid && x.pseudo_element==y.pseudo_element && x.pseudos.size()==y.pseudos.size());
     for(size_t j=0;j<x.pseudos.size();++j)
-      require(x.pseudos[j].name==y.pseudos[j].name && x.pseudos[j].argument==y.pseudos[j].argument);
+      require(x.pseudos[j].name==y.pseudos[j].name &&
+          x.pseudos[j].argument==y.pseudos[j].argument &&
+          x.pseudos[j].compiled_argument_valid==y.pseudos[j].compiled_argument_valid);
   }
 }
 

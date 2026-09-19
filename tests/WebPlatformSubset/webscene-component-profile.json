@@ -1875,6 +1875,13 @@
       "reason": "Product-neutral reduction of lazy-loaded artwork that fades from opacity zero and relies on animation-fill-mode: forwards. The final keyframe must remain painted after a finite animation completes instead of reverting to the authored hidden opacity."
     },
     {
+      "path": "contracts/css-animation-direction.html",
+      "type": "contract",
+      "capabilities": ["animation-direction-longhand", "animation-direction-shorthand", "normal-reverse-alternate", "negative-animation-delay", "fractional-iteration-terminal-progress", "bounded-host-frame-sampling"],
+      "evidence": ["css-animation-direction-659-242"],
+      "reason": "WPT-aligned single-animation reduction for normal, reverse, alternate, and alternate-reverse cycle mapping. It covers longhand and shorthand metadata, negative delay, even/odd iteration parity, bounded host-frame samples, and direction-aware fractional forwards fill."
+    },
+    {
       "path": "contracts/css-filter-keyframes-temporal.html",
       "type": "contract",
       "capabilities": ["keyframes-filter", "filter-identity-interpolation", "compound-filter-order", "host-frame-clock", "bounded-frame-samples", "finite-filter-fill", "animationend-event", "filter-lifecycle-cleanup"],

@@ -254,6 +254,7 @@ inline void apply_animation_shorthand(node_style& style, const std::string& valu
         auto delay = std::string("0s");
         auto timing = std::string("ease");
         auto iterations = std::string("1");
+        auto direction = std::string("normal");
         auto fill_mode = std::string("none");
         auto saw_time = false;
         const auto first = split_css_component_list(value, ',');
@@ -273,11 +274,12 @@ inline void apply_animation_shorthand(node_style& style, const std::string& valu
                 iterations = lower;
             } else if (lower == "forwards" || lower == "both") {
                 fill_mode = lower;
-            } else if (lower != "normal" && lower != "none"
+            } else if (lower == "normal" || lower == "reverse"
+                || lower == "alternate" || lower == "alternate-reverse") {
+                direction = lower;
+            } else if (lower != "none"
                 && lower != "backwards"
-                && lower != "running" && lower != "paused"
-                && lower != "alternate" && lower != "alternate-reverse"
-                && lower != "reverse") {
+                && lower != "running" && lower != "paused") {
                 name = token;
             }
         }
@@ -287,6 +289,7 @@ inline void apply_animation_shorthand(node_style& style, const std::string& valu
         animations.animation_delay_value = delay;
         animations.animation_timing_function_value = timing;
         animations.animation_iteration_count_value = iterations;
+        animations.animation_direction_value = direction;
         animations.animation_fill_mode_value = fill_mode;
     }
 
@@ -313,6 +316,8 @@ inline void configure_keyframes(node_style& style,
             animations.animation_timing_function_value, ',');
         const auto iteration_counts = split_css_component_list(
             animations.animation_iteration_count_value, ',');
+        const auto directions = split_css_component_list(
+            animations.animation_direction_value, ',');
         animations.opacity_keyframe_duration_ms = durations.empty()
             ? 0 : std::max(0.0F, parse_css_time_ms(durations.front()));
         animations.opacity_keyframe_delay_ms = delays.empty()
@@ -322,6 +327,15 @@ inline void configure_keyframes(node_style& style,
         animations.opacity_keyframe_iterations = iteration == "infinite"
             ? std::numeric_limits<float>::infinity()
             : std::max(0.0F, std::strtof(iteration.c_str(), nullptr));
+        const auto direction = directions.empty()
+            ? std::string("normal") : ascii_lower(trim_value(directions.front()));
+        animations.keyframe_direction = direction == "reverse"
+            ? node_style::animation_data::direction_kind::reverse
+            : direction == "alternate"
+                ? node_style::animation_data::direction_kind::alternate
+                : direction == "alternate-reverse"
+                    ? node_style::animation_data::direction_kind::alternate_reverse
+                    : node_style::animation_data::direction_kind::normal;
         const auto fill_mode = ascii_lower(trim_value(animations.animation_fill_mode_value));
         animations.opacity_keyframe_fill_forwards =
             fill_mode == "forwards" || fill_mode == "both";
@@ -346,6 +360,7 @@ inline void configure_keyframes(node_style& style,
         signature << name << '|' << animations.opacity_keyframe_duration_ms << '|'
             << animations.opacity_keyframe_delay_ms << '|'
             << animations.opacity_keyframe_iterations << '|'
+            << static_cast<unsigned>(animations.keyframe_direction) << '|'
             << animations.opacity_keyframe_fill_forwards << '|'
             << static_cast<unsigned>(animations.opacity_keyframe_timing_kind) << ','
             << animations.opacity_keyframe_step_count << ','

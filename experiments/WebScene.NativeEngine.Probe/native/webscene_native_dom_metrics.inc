@@ -158,7 +158,9 @@ native_document::allocation_metrics native_document::read_allocation_metrics() c
                 + animation->filter_animation_target.capacity()
                     * sizeof(retained_filter_function)
                 + animation->keyframe_animations.capacity()
-                    * sizeof(dom_node::animation_runtime_data::keyframe_animation_runtime);
+                    * sizeof(dom_node::animation_runtime_data::keyframe_animation_runtime)
+                + animation->web_animations.capacity()
+                    * sizeof(dom_node::animation_runtime_data::web_animation);
             for (const auto& track : animation->keyframe_animations) {
                 result.animation_runtime_storage_bytes +=
                     track.name.capacity() + track.signature.capacity() + 2U
@@ -172,6 +174,21 @@ native_document::allocation_metrics native_document::read_allocation_metrics() c
                     result.animation_runtime_storage_bytes += stop.functions.capacity()
                         * sizeof(retained_filter_function);
                 }
+            }
+            for (const auto& record : animation->web_animations) {
+                const auto& effect = record.effect;
+                const auto& track = record.runtime;
+                result.animation_runtime_storage_bytes +=
+                    effect.name.capacity() + effect.signature.capacity() + 2U
+                    + effect.opacity_keyframes.capacity()
+                        * sizeof(node_style::opacity_keyframe)
+                    + effect.translation_keyframes.capacity()
+                        * sizeof(node_style::translation_keyframe)
+                    + effect.scale_keyframes.capacity()
+                        * sizeof(node_style::scale_keyframe)
+                    + effect.rotation_keyframes.capacity()
+                        * sizeof(node_style::rotation_keyframe)
+                    + track.name.capacity() + track.signature.capacity() + 2U;
             }
             const auto count_pseudo_runtime = [&](const auto& pseudo) {
                 result.animation_runtime_storage_bytes +=

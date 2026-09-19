@@ -27,6 +27,7 @@
 #include "webscene_profile_storage.h"
 #include "webscene_indexeddb_compatibility.h"
 #include "webscene_stylesheet_cssom_compatibility.h"
+#include "webscene_web_animations_compatibility.h"
 #include "webscene_secure_random.h"
 #include "webscene_crypto_provider.h"
 
@@ -5018,6 +5019,7 @@ struct v8_dom_runtime::implementation final {
         install_fetch_globals(local_context);
         install_intersection_observer_polyfill(local_context);
         install_web_api_compatibility(local_context);
+        install_web_animations_api(local_context);
 #if defined(WEBSCENE_NATIVE_ENGINE_ENABLE_MEDIA)
         install_media_globals(local_context);
 #endif
@@ -7181,6 +7183,7 @@ struct v8_dom_runtime::implementation final {
 #include "webscene_v8_runtime_tasks.inc"
 #include "webscene_v8_runtime_resources.inc"
 #include "webscene_v8_runtime_dom_core.inc"
+#include "webscene_v8_runtime_web_animations.inc"
 #include "webscene_v8_runtime_diagnostics.inc"
 #include "webscene_v8_runtime_dom_properties.inc"
 #include "webscene_v8_runtime_canvas.inc"

@@ -403,6 +403,7 @@
     custom_element_reaction_scope* active_custom_element_reaction_scope{nullptr};
     std::vector<std::string> loaded_resource_names;
     uint32_t next_timer_id{1};
+    uint32_t next_web_animation_id{1};
     uint32_t active_timer_id{0};
     bool active_timer_cancelled{false};
     bool prefer_timer_task{true};

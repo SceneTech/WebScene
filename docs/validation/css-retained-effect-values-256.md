@@ -12,6 +12,20 @@ This gate covers the first product-neutral slice of issue #256:
 Retained-scene mask, clip, filter, and backdrop painting is outside this slice
 and remains separately qualified by later issue #256 work.
 
+## Radial and multiple mask extension — 19 September 2026
+
+Issue #505 adds circle/ellipse radial gradients and up to sixteen ordered mask
+layers. The `webscene-mask-v2` ABI uses UTF-8 byte-length-prefixed fields for
+each layer's image, repeat, position, size, mode, view box, and SVG markup.
+Linear, radial, and policy-loaded SVG `add` layers are unioned on one temporary
+surface bounded to the element paint box, then destination-in is applied once.
+Unsupported image functions, excessive layers, malformed resources, luminance
+mode, and non-add composites fail closed; #506 owns the remaining composites.
+
+Native, portable WPT, Avalonia, and Flutter regression contracts are authored
+but have not been executed under the current fast-merge directive. No build,
+pixel, performance, memory, lifecycle, or package result is claimed.
+
 ## Backdrop command extension — 19 September 2026
 
 Issue #503 extends this contract with a bounded kind-48 retained command. The

@@ -290,6 +290,56 @@ inline std::optional<parsed_mask_shorthand> parse_single_mask_shorthand(
     return result;
 }
 
+inline std::optional<parsed_mask_shorthand> parse_mask_shorthand(
+    std::string_view authored)
+{
+    std::vector<std::string_view> layers;
+    size_t start = 0U;
+    size_t depth = 0U;
+    char quote = 0;
+    for (size_t index = 0U; index <= authored.size(); ++index) {
+        const auto character = index < authored.size() ? authored[index] : ',';
+        if (quote != 0) {
+            if (character == '\\' && index + 1U < authored.size()) ++index;
+            else if (character == quote) quote = 0;
+        } else if (character == '\'' || character == '"') {
+            quote = character;
+        } else if (character == '(') {
+            ++depth;
+        } else if (character == ')' && depth > 0U) {
+            --depth;
+        } else if (character == ',' && depth == 0U) {
+            layers.push_back(authored.substr(start, index - start));
+            start = index + 1U;
+        }
+    }
+    if (quote != 0 || depth != 0U || layers.empty() || layers.size() > 16U) {
+        return std::nullopt;
+    }
+    parsed_mask_shorthand result;
+    result.image.clear();
+    result.position.clear();
+    result.size.clear();
+    result.repeat.clear();
+    result.composite.clear();
+    result.mode.clear();
+    const auto append = [](std::string& destination, const std::string& value) {
+        if (!destination.empty()) destination += ", ";
+        destination += value;
+    };
+    for (const auto layer : layers) {
+        const auto parsed = parse_single_mask_shorthand(layer);
+        if (!parsed.has_value()) return std::nullopt;
+        append(result.image, parsed->image);
+        append(result.position, parsed->position);
+        append(result.size, parsed->size);
+        append(result.repeat, parsed->repeat);
+        append(result.composite, parsed->composite);
+        append(result.mode, parsed->mode);
+    }
+    return result;
+}
+
 inline std::optional<std::string> normalize_effect_value(
     std::string_view name,
     std::string_view input)

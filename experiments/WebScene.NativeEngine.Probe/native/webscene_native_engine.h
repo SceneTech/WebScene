@@ -164,10 +164,14 @@ typedef struct webscene_scene_header {
 // stroke_width carries
 // the bounded non-negative multiplier or CSS blur standard deviation.
 // A zero flag retains the opacity-group alpha stored in the low byte of rgba.
-// DOM kind 47 applies an indexed webscene-bg-v2 linear gradient or
-// webscene-mask-svg-v1 tiled SVG resource to the current isolated layer using
-// destination-in before kind 31 restores it. webscene-mask-invalid-v1 clears
-// the isolated layer for failed or unsupported authored masks.
+// DOM kind 47 applies an indexed webscene-bg-v2 linear gradient,
+// webscene-mask-svg-v1 tiled SVG resource, or webscene-mask-v2 bounded ordered
+// layer list to the current isolated layer using destination-in before kind 31
+// restores it. v2 carries at most 16 length-prefixed linear/radial/SVG layers
+// with repeat, position, size, and mode identities; consumers union add layers
+// on one bounded temporary surface and apply alpha once. Lengths are UTF-8 byte
+// counts. webscene-mask-invalid-v1 clears the isolated layer for failed or
+// unsupported authored masks.
 // DOM kind 48 applies one bounded backdrop effect before the element's own
 // background and descendants. flags indexes a webscene-backdrop-v1 resource
 // containing the authored blur/saturate sequence; rgba is the paint phase,

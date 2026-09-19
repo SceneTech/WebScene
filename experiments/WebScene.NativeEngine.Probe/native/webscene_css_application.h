@@ -20,7 +20,7 @@ void apply_resolved_declaration(native_document& document,dom_node& node,
 {
     const auto& name=declaration.name;
     if (name == "mask") {
-        const auto parsed = parse_single_mask_shorthand(value);
+        const auto parsed = parse_mask_shorthand(value);
         if (!parsed.has_value()) {
             decision.classification = "unsupported";
             decision.semantic_slice = "single mask layer without geometry-box syntax";

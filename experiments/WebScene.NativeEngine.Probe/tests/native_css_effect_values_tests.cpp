@@ -66,6 +66,7 @@ struct clip_scene_counts final {
     bool path_clip_metadata{};
     bool url_clip_metadata{};
     bool compound_backdrop_ordered{};
+    bool multilayer_mask_metadata{};
 };
 
 clip_scene_counts wait_for_inset_clip_scene(
@@ -183,6 +184,21 @@ clip_scene_counts wait_for_inset_clip_scene(
                         ++latest.functional_blur_begins;
                     } else if (command.kind == 47U) {
                         ++latest.linear_mask_commands;
+                        if (command.flags < scene->string_count) {
+                            const auto& resource = scene->strings[command.flags];
+                            if (resource.byte_offset <= scene->string_byte_count
+                                && resource.byte_length
+                                    <= scene->string_byte_count - resource.byte_offset) {
+                                const auto data = std::string_view(
+                                    scene->string_bytes + resource.byte_offset,
+                                    resource.byte_length);
+                                latest.multilayer_mask_metadata =
+                                    latest.multilayer_mask_metadata
+                                    || data.starts_with("webscene-mask-v2\t2\t")
+                                        && data.find("radial-gradient(") != std::string_view::npos
+                                        && data.find("linear-gradient(") != std::string_view::npos;
+                            }
+                        }
                     } else if (command.kind == 48U) {
                         ++latest.backdrop_filter_commands;
                         if (command.flags < scene->string_count) {
@@ -325,6 +341,10 @@ int main()
           #functional-blur { filter: blur(max(4px, calc(8px * 0.25))); }
           #compound-filter { filter: blur(2px) saturate(1.08) contrast(1.5) grayscale(0.25); }
           #compound-backdrop { -webkit-backdrop-filter: blur(8px) saturate(1.08); }
+          #radial-multi-mask {
+            mask: radial-gradient(circle at center, black 0%, transparent 75%) no-repeat center / 8px 2px,
+              linear-gradient(to right, transparent, black) no-repeat 0px 0px / 8px 2px;
+          }
           #effects > span:last-child { filter: blur(2px); }
         `;
         document.head.appendChild(rules);
@@ -339,6 +359,7 @@ int main()
         host.children[4093].id = 'functional-blur';
         host.children[4094].id = 'compound-filter';
         host.children[4092].id = 'compound-backdrop';
+        host.children[4091].id = 'radial-multi-mask';
         document.body.appendChild(host);
         const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
         svg.style.display = 'none';
@@ -381,6 +402,10 @@ int main()
         if (getComputedStyle(document.getElementById('compound-backdrop'))
               .getPropertyValue('backdrop-filter') !== 'blur(8px) saturate(1.08)') {
           throw new Error('prefixed compound backdrop filter did not canonicalize');
+        }
+        if (!getComputedStyle(document.getElementById('radial-multi-mask'))
+              .getPropertyValue('mask-image').includes('radial-gradient(')) {
+          throw new Error('radial multi-layer mask shorthand did not expand');
         }
         if (getComputedStyle(document.getElementById('ellipse-clip')).getPropertyValue('clip-path')
             !== 'ellipse(25% 50% at 50% 50%)') {
@@ -474,6 +499,8 @@ int main()
         "retained scene did not resolve the functional blur radius");
     require(initial_clip_scene.linear_mask_commands == 4096U,
         "retained scene did not emit all linear-gradient mask commands");
+    require(initial_clip_scene.multilayer_mask_metadata,
+        "retained scene did not publish bounded radial/multiple mask metadata");
     require(initial_clip_scene.backdrop_filter_commands == 4096U
             && initial_clip_scene.compound_backdrop_ordered,
         "retained scene did not emit bounded authored-order backdrop filters");

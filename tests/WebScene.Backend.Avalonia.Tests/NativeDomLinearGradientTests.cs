@@ -7,6 +7,46 @@ namespace WebScene.Backend.Avalonia.Tests;
 public sealed class NativeDomLinearGradientTests
 {
     [Fact]
+    public void RadialCircleResolvesAuthoredCenterRadiusAndStops()
+    {
+        var command = new SceneCommand
+        {
+            X = 10,
+            Y = 20,
+            Width = 80,
+            Height = 40
+        };
+
+        var parsed = NativeCanvasSceneRenderer.TryParseDomRadialGradient(
+            "radial-gradient(circle 12px at 25% 75%, black 0%, transparent 100%)",
+            command,
+            out var gradient);
+
+        Assert.True(parsed);
+        Assert.Equal(new SKPoint(30, 50), gradient.Center);
+        Assert.Equal(12, gradient.RadiusX);
+        Assert.Equal(12, gradient.RadiusY);
+        Assert.Equal(new float[] { 0, 1 }, gradient.Positions);
+    }
+
+    [Fact]
+    public void RadialEllipseUsesIndependentFarthestSideRadii()
+    {
+        var command = new SceneCommand { Width = 120, Height = 40 };
+
+        var parsed = NativeCanvasSceneRenderer.TryParseDomRadialGradient(
+            "radial-gradient(ellipse farthest-side at 25% 50%, white, transparent)",
+            command,
+            out var gradient);
+
+        Assert.True(parsed);
+        Assert.Equal(new SKPoint(30, 20), gradient.Center);
+        Assert.Equal(90, gradient.RadiusX);
+        Assert.Equal(20, gradient.RadiusY);
+        Assert.Equal(new float[] { 0, 1 }, gradient.Positions);
+    }
+
+    [Fact]
     public void DiagonalHardStopPreservesBothColorsAtTheSharedPosition()
     {
         var command = new SceneCommand

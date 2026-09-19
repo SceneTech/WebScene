@@ -68,6 +68,32 @@ inline std::optional<std::string> first_css_url(const std::string& value)
         return first_decoded_css_url(value);
     }
 
+inline std::vector<std::string> split_css_image_layers(std::string_view value)
+    {
+        std::vector<std::string> result;
+        size_t start = 0U;
+        size_t depth = 0U;
+        char quote = '\0';
+        for (size_t index = 0U; index <= value.size(); ++index) {
+            const auto character = index < value.size() ? value[index] : ',';
+            if (quote != '\0') {
+                if (character == '\\' && index + 1U < value.size()) ++index;
+                else if (character == quote) quote = '\0';
+                continue;
+            }
+            if (character == '\'' || character == '"') quote = character;
+            else if (character == '(') ++depth;
+            else if (character == ')' && depth > 0U) --depth;
+            else if (character == ',' && depth == 0U) {
+                auto layer = trim_value(value.substr(start, index - start));
+                if (layer.empty()) return {};
+                result.push_back(std::move(layer));
+                start = index + 1U;
+            }
+        }
+        return result;
+    }
+
 inline void apply_background_position(node_style& style, const std::string& value)
     {
         auto& background = style.mutable_background_image();
@@ -103,6 +129,14 @@ bool apply_paint_value(dom_node& node,const std::string& name,const std::string&
             effects.erase("-webscene-mask-markup");
             effects.erase("-webscene-mask-view-box");
             effects.erase("-webscene-mask-resolved-url");
+            effects.erase("-webscene-mask-layer-count");
+            for (auto iterator = effects.begin(); iterator != effects.end();) {
+                if (iterator->first.starts_with("-webscene-mask-layer-")) {
+                    iterator = effects.erase(iterator);
+                } else {
+                    ++iterator;
+                }
+            }
             const auto normalized = normalize_effect_value(name, value);
             if (!normalized.has_value()) {
                 decision.classification = "unsupported";
@@ -110,34 +144,75 @@ bool apply_paint_value(dom_node& node,const std::string& name,const std::string&
                 return true;
             }
             effects[name] = *normalized;
-            const auto url = first_css_url(*normalized);
-            if (!url.has_value()) {
+            if (ascii_lower(trim_value(*normalized)) == "none") {
+                decision.classification = "supported";
+                decision.semantic_slice = "no mask";
+                return true;
+            }
+            const auto layers = split_css_image_layers(*normalized);
+            if (layers.empty() || layers.size() > 16U) {
+                decision.classification = "unsupported";
+                decision.semantic_slice = "one to sixteen bounded mask image layers";
+                return true;
+            }
+            auto url_count = 0U;
+            for (size_t index = 0U; index < layers.size(); ++index) {
+                const auto lower = ascii_lower(layers[index]);
+                const auto gradient = lower.starts_with("linear-gradient(")
+                    || lower.starts_with("radial-gradient(");
+                if (gradient) continue;
+                if (!lower.starts_with("url(")) {
+                    decision.classification = "unsupported";
+                    decision.semantic_slice =
+                        "linear/radial gradients and URL-backed SVG mask layers";
+                    return true;
+                }
+                const auto url = first_css_url(layers[index]);
+                if (!url.has_value()) {
+                    decision.classification = "unsupported";
+                    decision.semantic_slice = "invalid mask URL";
+                    return true;
+                }
+                std::string markup;
+                std::string resolved_url;
+                std::string view_box;
+                if (!load_svg(*url, markup, resolved_url, view_box)) {
+                    decision.classification = "unsupported";
+                    decision.semantic_slice = "URL-backed SVG mask resource load failed";
+                    return true;
+                }
+                if (view_box.empty()) {
+                    decision.classification = "unsupported";
+                    decision.semantic_slice =
+                        "SVG masks with an explicit viewBox or numeric width and height";
+                    return true;
+                }
+                const auto prefix = "-webscene-mask-layer-" + std::to_string(index);
+                effects[prefix + "-resolved-url"] = std::move(resolved_url);
+                effects[prefix + "-markup"] = std::move(markup);
+                effects[prefix + "-view-box"] = std::move(view_box);
+                ++url_count;
+            }
+            effects["-webscene-mask-layer-count"] = std::to_string(layers.size());
+            if (layers.size() == 1U && url_count == 1U) {
+                effects["-webscene-mask-resolved-url"] =
+                    effects["-webscene-mask-layer-0-resolved-url"];
+                effects["-webscene-mask-markup"] =
+                    effects["-webscene-mask-layer-0-markup"];
+                effects["-webscene-mask-view-box"] =
+                    effects["-webscene-mask-layer-0-view-box"];
+                effects[name] = "url(\""
+                    + effects["-webscene-mask-resolved-url"] + "\")";
+            }
+            if (url_count == 0U) {
                 decision.classification = "partially-supported";
                 decision.semantic_slice =
-                    "syntax and computed value; retained-scene paint is separately qualified";
+                    "one to sixteen retained linear/radial alpha mask layers";
                 return true;
             }
-            std::string markup;
-            std::string resolved_url;
-            std::string view_box;
-            if (!load_svg(*url, markup, resolved_url, view_box)) {
-                decision.classification = "unsupported";
-                decision.semantic_slice = "URL-backed SVG mask resource load failed";
-                return true;
-            }
-            if (view_box.empty()) {
-                decision.classification = "unsupported";
-                decision.semantic_slice =
-                    "SVG masks with an explicit viewBox or numeric width and height";
-                return true;
-            }
-            effects[name] = "url(\"" + resolved_url + "\")";
-            effects["-webscene-mask-resolved-url"] = std::move(resolved_url);
-            effects["-webscene-mask-markup"] = std::move(markup);
-            effects["-webscene-mask-view-box"] = std::move(view_box);
             decision.classification = "partially-supported";
             decision.semantic_slice =
-                "single URL-backed SVG alpha mask with explicit viewBox or numeric dimensions";
+                "one to sixteen mixed gradient/URL-backed SVG alpha mask layers";
         } else if (name == "box-shadow" && !is_inline(inline_box_shadow)) {
             auto complete = true;
             if (!apply_box_shadow_value(node.style, value, complete)) {

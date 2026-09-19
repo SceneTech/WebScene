@@ -1177,7 +1177,7 @@ void test_identical_selector_attribute_writes_do_not_schedule_transitions()
           customElements.define('id-noop-probe', IdNoopProbe);
           const style = document.createElement('style');
           style.textContent = `
-            #code-oss-row-id[data-index="17"][aria-posinset="18"] {
+            #code-oss-row-id[data-index="17"][aria-posinset="18"][tabindex="0"] {
               display: block;
               width: 120px;
               height: 24px;
@@ -1188,23 +1188,36 @@ void test_identical_selector_attribute_writes_do_not_schedule_transitions()
           target.id = 'code-oss-row-id';
           target.setAttribute('data-index', '17');
           target.setAttribute('aria-posinset', '18');
+          target.tabIndex = 0;
           document.body.appendChild(target);
           globalThis.__idNoopTarget = target;
         })()
     )JS", "id-noop-setup.js");
     require(
-        evaluate(engine, "__idNoopTarget.offsetWidth", "id-noop-ready.js") == "120",
+        evaluate(engine, R"JS((() => {
+          const normalization = document.createElement('button');
+          normalization.setAttribute('tabindex', '00');
+          normalization.tabIndex = 0;
+          return [
+            __idNoopTarget.offsetWidth,
+            __idNoopTarget.tabIndex,
+            __idNoopTarget.getAttribute('tabindex'),
+            normalization.getAttribute('tabindex')
+          ];
+        })())JS", "id-noop-ready.js") == R"([120,0,"0","0"])",
         "id no-op fixture did not complete initial layout");
     acknowledge_latest_scene("id no-op setup scene could not be acknowledged");
 
 #if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
     std::this_thread::sleep_for(std::chrono::milliseconds(275));
     execute_and_wait_for_wrapper_retention_scene(engine,
-        "document.body.style.backgroundColor='rgb(1,2,3)'",
+        "document.body.setAttribute('data-noop-diagnostic', 'before')",
         "id-noop-diagnostic-before.js");
     acknowledge_latest_scene("id no-op baseline diagnostic scene could not be acknowledged");
     const auto transitions_before = runtime_counter_diagnostic(
         engine, "attribute-transition-schedule-requests");
+    const auto recascades_before = runtime_counter_diagnostic(
+        engine, "style-recascade-schedule-requests");
 #endif
 
     std::this_thread::sleep_for(std::chrono::milliseconds(25));
@@ -1221,6 +1234,7 @@ void test_identical_selector_attribute_writes_do_not_schedule_transitions()
           target.setAttribute('id', 'code-oss-row-id');
           target.setAttribute('data-index', '17');
         }
+        target.tabIndex = 0;
       }
       return [
         target.attributeNotifications - notificationsBefore,
@@ -1228,11 +1242,13 @@ void test_identical_selector_attribute_writes_do_not_schedule_transitions()
         target.getAttribute('id'),
         target.getAttribute('data-index'),
         target.getAttribute('aria-posinset'),
+        target.tabIndex,
+        target.getAttribute('tabindex'),
         target.lastAttributeChange
       ];
     })())JS", "id-noop-connected.js");
     require(
-        connected == R"JSON([8192,"code-oss-row-id","code-oss-row-id","17","18",["aria-posinset","18","18"]])JSON",
+        connected == R"JSON([8192,"code-oss-row-id","code-oss-row-id","17","18",0,"0",["aria-posinset","18","18"]])JSON",
         "identical connected selector-attribute writes changed reflection or reaction semantics: "
             + connected);
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -1246,7 +1262,7 @@ void test_identical_selector_attribute_writes_do_not_schedule_transitions()
 #if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
     std::this_thread::sleep_for(std::chrono::milliseconds(275));
     execute_and_wait_for_wrapper_retention_scene(engine,
-        "document.body.style.backgroundColor='rgb(3,2,1)'",
+        "document.body.setAttribute('data-noop-diagnostic', 'after')",
         "id-noop-diagnostic-after.js");
     acknowledge_latest_scene("id no-op result diagnostic scene could not be acknowledged");
     require(
@@ -1254,6 +1270,11 @@ void test_identical_selector_attribute_writes_do_not_schedule_transitions()
             engine, "attribute-transition-schedule-requests")
                 == transitions_before,
         "identical selector-attribute writes entered the transition planner");
+    require(
+        runtime_counter_diagnostic(
+            engine, "style-recascade-schedule-requests")
+                == recascades_before,
+        "identical tabIndex writes scheduled subtree recascades");
 #endif
 
     execute_and_wait(engine,
@@ -1275,6 +1296,7 @@ void test_identical_selector_attribute_writes_do_not_schedule_transitions()
           target.setAttribute('id', 'code-oss-row-id');
           target.setAttribute('data-index', '17');
         }
+        target.tabIndex = 0;
       }
       return [target.attributeNotifications - notificationsBefore, target.isConnected];
     })())JS", "id-noop-detached.js");
@@ -1305,12 +1327,14 @@ void test_identical_selector_attribute_writes_do_not_schedule_transitions()
           attribute: __idNoopTarget.getAttribute('id'),
           dataIndex: __idNoopTarget.getAttribute('data-index'),
           ariaPosition: __idNoopTarget.getAttribute('aria-posinset'),
+          tabIndex: __idNoopTarget.tabIndex,
+          tabIndexAttribute: __idNoopTarget.getAttribute('tabindex'),
           width: __idNoopTarget.offsetWidth,
           connected: __idNoopTarget.isConnected,
           indexed: document.getElementById('code-oss-row-id') === __idNoopTarget,
           notifications: __idNoopTarget.attributeNotifications
         }))())JS", "id-noop-reattach-result.js")
-            == R"JSON({"reflected":"code-oss-row-id","attribute":"code-oss-row-id","dataIndex":"17","ariaPosition":"18","width":120,"connected":true,"indexed":true,"notifications":16387})JSON",
+            == R"JSON({"reflected":"code-oss-row-id","attribute":"code-oss-row-id","dataIndex":"17","ariaPosition":"18","tabIndex":0,"tabIndexAttribute":"0","width":120,"connected":true,"indexed":true,"notifications":16387})JSON",
         "selector-attribute no-op state did not survive detach and reconnect");
     webscene_engine_get_metrics(engine, &reattached);
     require(

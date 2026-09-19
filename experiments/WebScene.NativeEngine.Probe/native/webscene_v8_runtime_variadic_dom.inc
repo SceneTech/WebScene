@@ -35,6 +35,14 @@
         const bool sibling = placement == variadic_insertion::before || placement == variadic_insertion::after || replace_self;
         auto* parent = sibling ? receiver->parent : receiver;
         if (parent == nullptr || (arguments.empty() && !replace_all && !replace_self)) return;
+        // Clearing an already empty ParentNode has no removal steps, mutation
+        // record, focus change, or custom-element reactions. Avoid routing
+        // that exact state through child-list recascade and scene publication.
+        if (replace_all && arguments.empty()
+            && parent->children.empty()
+            && parent->text_content.empty()) {
+            return;
+        }
 
         // Find a sibling which will survive conversion, even if the receiver
         // itself or surrounding siblings occur in the argument list.

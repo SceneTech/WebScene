@@ -42,7 +42,7 @@ html,body{margin:0} .target{position:absolute;top:8px;width:40px;height:30px}
     }
   }
   state.ready = true;
-</script>)HTML"}};
+</script>)HTML"}}};
     webscene_engine_options options{};
     options.struct_size = sizeof(options);
     options.resource_load_callback = load_test_resource;

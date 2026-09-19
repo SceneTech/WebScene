@@ -1847,7 +1847,7 @@ void test_nested_context_menu_handoff() {
     });
     state.ready = true;
   </script>
-</body>)HTML"}};
+</body>)HTML"}}};
   webscene_engine_options options{};
   options.struct_size = sizeof(options);
   options.resource_load_callback = load_test_resource;
@@ -1998,7 +1998,7 @@ globalThis.__codeAux=event=>{
 addEventListener('click',__codeClick);
 addEventListener('auxclick',__codeAux);
 state.ready=true;
-</script></body>)HTML"}};
+</script></body>)HTML"}}};
   webscene_engine_options options{};
   options.struct_size = sizeof(options);
   options.resource_load_callback = load_test_resource;
@@ -2185,7 +2185,7 @@ addEventListener('keydown',event=>{
 });
 addEventListener('keyup',event=>parent.__nestedKeyboard.events.push({type:event.type,key:event.key,code:event.code,keyCode:event.keyCode,shiftKey:event.shiftKey,ctrlKey:event.ctrlKey,metaKey:event.metaKey,repeat:event.repeat,isTrusted:event.isTrusted,target:event.target.tagName,prevented:event.defaultPrevented}));
 parent.__nestedKeyboard.ready=true;
-</script></body>)HTML"}};
+</script></body>)HTML"}}};
   webscene_engine_options options{};
   options.struct_size = sizeof(options);
   options.resource_load_callback = load_test_resource;

@@ -661,6 +661,7 @@
     uint64_t input_callback_invocation_count{0};
     dom_node* pointer_capture_target{nullptr};
     dom_node* pointer_down_target{nullptr};
+    uint32_t middle_paste_target_id{0U};
     bool outbound_drag_threshold_crossed{false};
     dom_node* active_pointer_target{nullptr};
     dom_node* scrollbar_drag_target{nullptr};

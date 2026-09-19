@@ -2312,6 +2312,13 @@
 
     static bool is_text_control(const dom_node* node) { return forms::is_text_control(node); }
 
+    bool is_writable_text_control(const dom_node* node) const
+    {
+        return is_text_control(node)
+            && !node->attributes.contains("readonly")
+            && !document.is_inert(*node);
+    }
+
     dom_node* form_owner(dom_node& control)
     {
         return const_cast<dom_node*>(forms::form_owner(document,control));
@@ -2748,7 +2755,10 @@
         webscene_native::forms::ensure_text_value(node);
     }
 
-    bool dispatch_clipboard_shortcut(dom_node& target, const char* type)
+    bool dispatch_clipboard_shortcut(
+        dom_node& target,
+        const char* type,
+        uint32_t read_flags = 0U)
     {
         auto local_context = context_for_node(target);
         auto global = local_context->Global();
@@ -2761,10 +2771,11 @@
         }
         v8::Local<v8::Value> arguments[] = {
             js_string(isolate, type),
-            wrap_node(target)};
+            wrap_node(target),
+            v8::Integer::NewFromUnsigned(isolate, read_flags)};
         v8::Local<v8::Value> result;
         if (!helper.As<v8::Function>()->Call(
-                local_context, global, 2, arguments).ToLocal(&result)) {
+                local_context, global, 3, arguments).ToLocal(&result)) {
             return false;
         }
         perform_microtask_checkpoint();
@@ -3954,6 +3965,7 @@
                     "active-pointer-down");
             }
             pointer_down_target = target;
+            middle_paste_target_id = 0U;
             outbound_drag_threshold_crossed = false;
             pointer_down_x = input.x;
             pointer_down_y = input.y;
@@ -4021,10 +4033,12 @@
         }
         bool wheel_default_prevented = false;
         bool pointer_focus_default_prevented = false;
+        bool mouse_up_default_prevented = false;
         for (size_t index = 0; index < type_count; ++index) {
             bool event_default_prevented = false;
             const auto observe_default = input.kind == WEBSCENE_INPUT_WHEEL
-                || input.kind == WEBSCENE_INPUT_POINTER_DOWN;
+                || input.kind == WEBSCENE_INPUT_POINTER_DOWN
+                || input.kind == WEBSCENE_INPUT_POINTER_UP;
             if (!dispatch_input_event_type(
                     input,
                     types[index],
@@ -4039,6 +4053,10 @@
             } else if (input.kind == WEBSCENE_INPUT_POINTER_DOWN) {
                 pointer_focus_default_prevented = pointer_focus_default_prevented
                     || event_default_prevented;
+            } else if (input.kind == WEBSCENE_INPUT_POINTER_UP) {
+                if (std::string_view{types[index]} == "mouseup") {
+                    mouse_up_default_prevented = event_default_prevented;
+                }
             }
         }
         if (!maybe_begin_outbound_drag(input)) {
@@ -4137,7 +4155,7 @@
             }
         }
         if (input.kind == WEBSCENE_INPUT_POINTER_DOWN
-            && changed_button == 0
+            && (changed_button == 0 || changed_button == 1)
             && !pointer_focus_default_prevented) {
             auto* focus_target = nearest_pointer_focusable(target);
             focus_visible = false;
@@ -4147,6 +4165,10 @@
                     + describe_reported_exception(try_catch, local_context);
                 return false;
             }
+        }
+        if (input.kind == WEBSCENE_INPUT_POINTER_DOWN
+            && changed_button == 1 && is_writable_text_control(active_element)) {
+            middle_paste_target_id = active_element->id;
         }
         if (context_menu_target != nullptr
             && !dispatch_input_event_type(input, "contextmenu", *context_menu_target)) {
@@ -4215,19 +4237,36 @@
                     + describe_reported_exception(try_catch, local_context);
                 return false;
             }
-            if (changed_button == 1 && !auxiliary_click_default_prevented) {
+            if (changed_button == 1 && !mouse_up_default_prevented
+                && !auxiliary_click_default_prevented) {
                 auto activation_flags =
                     WEBSCENE_HOST_REQUEST_EXTERNAL_NEW_CONTEXT_V1;
                 if ((input.flags & WEBSCENE_INPUT_POINTER_MODIFIER_SHIFT) == 0U) {
                     activation_flags |=
                         WEBSCENE_HOST_REQUEST_EXTERNAL_BACKGROUND_V1;
                 }
+                bool navigation_matched = false;
                 if (!queue_external_navigation(
                         *auxiliary_click_target,
-                        activation_flags)) {
+                        activation_flags,
+                        &navigation_matched)) {
                     last_error =
                         "Native auxiliary external navigation host request could not be queued";
                     return false;
+                }
+                if (!navigation_matched && middle_paste_target_id != 0U) {
+                    auto* paste_target = document.find_by_native_id(
+                        middle_paste_target_id);
+                    if (is_writable_text_control(paste_target)
+                        && is_connected(*paste_target)
+                        && !dispatch_clipboard_shortcut(
+                            *paste_target,
+                            "paste",
+                            WEBSCENE_HOST_REQUEST_CLIPBOARD_PRIMARY_V1)) {
+                        last_error =
+                            "Native PRIMARY selection paste could not be queued";
+                        return false;
+                    }
                 }
             }
         }
@@ -4279,6 +4318,7 @@
         if (input.kind == WEBSCENE_INPUT_POINTER_UP) {
             pointer_capture_target = nullptr;
             pointer_down_target = nullptr;
+            middle_paste_target_id = 0U;
             outbound_drag_threshold_crossed = false;
             if (pointer_outside) return leave_host();
         }

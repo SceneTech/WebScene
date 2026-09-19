@@ -1,0 +1,78 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Text control validity follows live pattern, type, and validation candidacy</title>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<style>
+.probe {padding-left:11px}
+.probe:invalid {padding-left:47px}
+</style>
+<script>
+const state=control=>[control.matches(':valid'),control.matches(':invalid'),
+  getComputedStyle(control).paddingLeft];
+
+test(()=>{
+  const input=document.createElement('input');input.className='probe';
+  input.pattern='[A-Z]{2}';input.value='AA';document.body.appendChild(input);
+  assert_array_equals(state(input),[true,false,'11px']);
+  input.value='Aa';
+  assert_array_equals(state(input),[false,true,'47px']);
+  input.pattern='[A-Za-z]{2}';
+  assert_array_equals(state(input),[true,false,'11px']);
+  input.pattern='(';
+  assert_array_equals(state(input),[true,false,'11px'],
+    'an invalid pattern is ignored');
+  input.pattern='[A-Z]+';
+  input.value='ABC123';
+  assert_array_equals(state(input),[false,true,'47px'],
+    'pattern matching covers the complete value');
+  input.value='';
+  assert_array_equals(state(input),[true,false,'11px'],
+    'an empty value does not suffer pattern mismatch');
+},'pattern mismatch follows the live value and dynamic pattern attribute');
+
+test(()=>{
+  const input=document.createElement('input');input.className='probe';
+  document.body.appendChild(input);input.type='email';input.value='bad';
+  assert_array_equals(state(input),[false,true,'47px']);
+  input.value='test@example.com';
+  assert_array_equals(state(input),[true,false,'11px']);
+  input.multiple=true;input.value='first@example.com,second@example.com';
+  assert_array_equals(state(input),[true,false,'11px']);
+  input.value='first@example.com;second@example.com';
+  assert_array_equals(state(input),[false,true,'47px']);
+  input.multiple=false;input.type='url';input.value='relative/path';
+  assert_array_equals(state(input),[false,true,'47px']);
+  input.value='https://example.test/path';
+  assert_array_equals(state(input),[true,false,'11px']);
+},'email and URL type mismatch follows live value, type, and multiple state');
+
+test(()=>{
+  const fieldset=document.createElement('fieldset');
+  fieldset.innerHTML='<legend><input class="probe" pattern="[A-Z]+" value="bad"></legend>'+
+    '<input class="probe" pattern="[A-Z]+" value="bad">';
+  document.body.appendChild(fieldset);
+  const legendInput=fieldset.firstElementChild.firstElementChild;
+  const input=fieldset.lastElementChild;
+  assert_array_equals(state(input),[false,true,'47px']);
+  input.readOnly=true;
+  assert_array_equals(state(input),[false,false,'11px']);
+  input.readOnly=false;fieldset.disabled=true;
+  assert_array_equals(state(input),[false,false,'11px']);
+  assert_array_equals(state(legendInput),[false,true,'47px'],
+    'the first legend is outside inherited fieldset disabledness');
+  fieldset.disabled=false;
+  assert_array_equals(state(input),[false,true,'47px']);
+},'readonly and effective disabledness bar text controls from constraint validation');
+
+test(()=>{
+  const input=document.createElement('input');input.className='probe';
+  input.minLength=3;input.maxLength=4;document.body.appendChild(input);
+  input.value='x';
+  assert_array_equals(state(input),[true,false,'11px'],
+    'a programmatic value write does not create too-short state');
+  input.value='abcde';
+  assert_array_equals(state(input),[true,false,'11px'],
+    'a programmatic value write does not create too-long state');
+},'minlength and maxlength require a user-edited dirty value');
+</script>

@@ -2815,7 +2815,7 @@
             target->mutable_form_control().caret_visible = true;
             caret_blink_epoch_ms = last_animation_frame_timestamp_ms;
             recascade_form_value_selector_transition(
-                *target, previous_value, target->form_control().value, true);
+                *target, previous_value, target->form_control().value, true, true);
             return dispatch_input_event_type(input, "input", *target);
         }
 
@@ -3067,7 +3067,7 @@
                 target->mutable_form_control().selection_direction = text_selection_direction::none;
                 target->mutable_form_control().selection_explicitly_set = true;
                 recascade_form_value_selector_transition(
-                    *target, previous_value, target->form_control().value, true);
+                    *target, previous_value, target->form_control().value, true, true);
                 if (!dispatch_input_event_type(input, "input", *target)) return false;
             }
         }

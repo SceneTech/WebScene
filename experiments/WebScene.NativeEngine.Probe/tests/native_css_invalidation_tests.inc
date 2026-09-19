@@ -235,6 +235,60 @@ void test_live_form_state_selectors_and_scaling()
         "required select validity did not follow selectedness and placeholder rules: "
             + select_validity);
 
+    const auto text_constraint_validity = evaluate(engine, R"JS((() => {
+      const form=document.getElementById('form');
+      const state=node=>[node.matches(':valid'),node.matches(':invalid'),
+        getComputedStyle(node).paddingLeft];
+      const pattern=document.createElement('input');pattern.className='probe';
+      pattern.pattern='[A-Z]{2}';pattern.value='AA';form.appendChild(pattern);
+      const patternStates=[state(pattern)];pattern.value='Aa';patternStates.push(state(pattern));
+      pattern.pattern='[A-Za-z]{2}';patternStates.push(state(pattern));
+      pattern.pattern='(';patternStates.push(state(pattern));
+      const typed=document.createElement('input');typed.className='probe';
+      typed.type='email';typed.value='bad';form.appendChild(typed);
+      const typeStates=[state(typed)];typed.value='test@example.com';typeStates.push(state(typed));
+      typed.multiple=true;typed.value='first@example.com,second@example.com';
+      typeStates.push(state(typed));typed.value='first@example.com;second@example.com';
+      typeStates.push(state(typed));typed.multiple=false;typed.type='url';
+      typed.value='relative/path';typeStates.push(state(typed));
+      typed.value='https://example.test/path';typeStates.push(state(typed));
+      pattern.pattern='[A-Z]+';pattern.value='bad';const barred=[state(pattern)];
+      pattern.readOnly=true;barred.push(state(pattern));pattern.readOnly=false;
+      pattern.disabled=true;barred.push(state(pattern));pattern.disabled=false;
+      barred.push(state(pattern));
+      const short=document.createElement('input');short.id='length-short';
+      short.className='probe';short.minLength=3;short.value='x';form.appendChild(short);
+      const long=document.createElement('input');long.id='length-long';
+      long.className='probe';long.maxLength=3;long.value='abc';form.appendChild(long);
+      short.focus();
+      return [patternStates,typeStates,barred,state(short),state(long)];
+    })())JS", "text-constraint-validity.js");
+    require(text_constraint_validity == R"JSON([[[true,false,"19px"],[false,true,"47px"],[true,false,"19px"],[true,false,"19px"]],[[false,true,"47px"],[true,false,"19px"],[true,false,"19px"],[false,true,"47px"],[false,true,"47px"],[true,false,"19px"]],[[false,true,"47px"],[false,false,"19px"],[false,false,"19px"],[false,true,"47px"]],[true,false,"19px"],[true,false,"19px"]])JSON",
+        "text constraint pattern/type/barred state diverged: "
+            + text_constraint_validity);
+    keyboard_input(engine, WEBSCENE_INPUT_TEXT, 'y', 3U);
+    wait_for_consumed_inputs(engine, 3U, "too-short native edit was not consumed");
+    require(evaluate(engine,
+            "[document.getElementById('length-short').value,document.getElementById('length-short').matches(':invalid'),getComputedStyle(document.getElementById('length-short')).paddingLeft]",
+            "text-constraint-too-short.js") == R"(["xy",true,"47px"])",
+        "native user edit did not establish too-short state");
+    keyboard_input(engine, WEBSCENE_INPUT_TEXT, 'z', 4U);
+    wait_for_consumed_inputs(engine, 4U, "minimum-length native edit was not consumed");
+    require(evaluate(engine,
+            "[document.getElementById('length-short').value,document.getElementById('length-short').matches(':valid'),getComputedStyle(document.getElementById('length-short')).paddingLeft]",
+            "text-constraint-minimum-length.js") == R"(["xyz",true,"19px"])",
+        "native user edit did not clear too-short state");
+    require(evaluate(engine,
+            "document.getElementById('length-long').focus();true",
+            "text-constraint-focus-maximum.js") == "true",
+        "maximum-length fixture could not be focused");
+    keyboard_input(engine, WEBSCENE_INPUT_TEXT, 'd', 5U);
+    wait_for_consumed_inputs(engine, 5U, "too-long native edit was not consumed");
+    require(evaluate(engine,
+            "[document.getElementById('length-long').value,document.getElementById('length-long').matches(':invalid'),getComputedStyle(document.getElementById('length-long')).paddingLeft]",
+            "text-constraint-too-long.js") == R"(["abcd",true,"47px"])",
+        "native user edit did not establish too-long state");
+
     const auto setup = evaluate(engine, R"JS((() => {
       document.body.innerHTML='<style>.scale:invalid{width:2px}.scale:placeholder-shown{height:3px}'+
         Array.from({length:1024},(_,i)=>'.noise-'+i+':hover{width:7px}').join('')+'</style>'+

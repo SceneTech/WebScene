@@ -2,6 +2,7 @@
 #include "webscene_native_dom.h"
 #include <charconv>
 #include <cmath>
+#include <regex>
 
 namespace webscene_native::forms {
 enum class numeric_range_state : uint8_t {
@@ -14,6 +15,21 @@ enum class simple_validity_state : uint8_t {
     not_applicable,
     valid,
     invalid,
+};
+
+struct text_constraint_validity final {
+    bool applicable{false};
+    bool type_mismatch{false};
+    bool pattern_mismatch{false};
+    bool too_long{false};
+    bool too_short{false};
+
+    bool valid() const noexcept {
+        return applicable && !type_mismatch && !pattern_mismatch
+            && !too_long && !too_short;
+    }
+
+    bool operator==(const text_constraint_validity&) const = default;
 };
 
 inline bool form_keyword_equals(std::string_view value,std::string_view expected)
@@ -457,13 +473,239 @@ inline bool text_value_empty(const dom_node& node) {
     return attribute==node.attributes.end() || attribute->second.empty();
 }
 
+inline bool is_effectively_disabled(
+    const native_document& document,const dom_node& node) {
+    if(node.attributes.contains("disabled")) return true;
+    if(node.tag!="button" && node.tag!="input"
+        && node.tag!="select" && node.tag!="textarea") return false;
+    for(auto* fieldset=document.dom_parent(node);fieldset!=nullptr;
+        fieldset=document.dom_parent(*fieldset)) {
+        if(fieldset->tag!="fieldset"
+            || !fieldset->attributes.contains("disabled")) continue;
+        const dom_node* first_legend=nullptr;
+        for(const auto* child:fieldset->children) {
+            if(child!=nullptr && child->tag=="legend") {
+                first_legend=child;
+                break;
+            }
+        }
+        auto inside_first_legend=false;
+        for(auto* ancestor=&node;ancestor!=fieldset;
+            ancestor=document.dom_parent(*ancestor)) {
+            if(ancestor==first_legend) {
+                inside_first_legend=true;
+                break;
+            }
+        }
+        if(!inside_first_legend) return true;
+    }
+    return false;
+}
+
+inline bool will_validate(
+    const native_document& document,const dom_node& node) {
+    if(node.tag!="button" && node.tag!="input"
+        && node.tag!="select" && node.tag!="textarea") return false;
+    if(is_effectively_disabled(document,node)
+        || ((node.tag=="input" || node.tag=="textarea")
+            && node.attributes.contains("readonly"))) return false;
+    for(auto* ancestor=document.dom_parent(node);ancestor!=nullptr;
+        ancestor=document.dom_parent(*ancestor))
+        if(ancestor->tag=="datalist") return false;
+    if(node.tag=="input") {
+        return !input_type_is(node,"hidden")
+            && !input_type_is(node,"button")
+            && !input_type_is(node,"reset");
+    }
+    if(node.tag=="button") {
+        const auto authored=node.attributes.find("type");
+        const auto type=authored==node.attributes.end()
+            ? std::string_view{"submit"}:std::string_view{authored->second};
+        return !form_keyword_equals(type,"button")
+            && !form_keyword_equals(type,"reset");
+    }
+    return true;
+}
+
+inline bool text_constraint_applies(const dom_node& node) {
+    if(node.tag=="textarea") return true;
+    if(node.tag!="input") return false;
+    const auto authored=node.attributes.find("type");
+    const auto type=authored==node.attributes.end()
+        ? std::string_view{"text"}:std::string_view{authored->second};
+    return form_keyword_equals(type,"text") || form_keyword_equals(type,"search")
+        || form_keyword_equals(type,"tel") || form_keyword_equals(type,"url")
+        || form_keyword_equals(type,"email") || form_keyword_equals(type,"password")
+        || (!form_keyword_equals(type,"hidden") && !form_keyword_equals(type,"number")
+            && !form_keyword_equals(type,"range") && !form_keyword_equals(type,"color")
+            && !form_keyword_equals(type,"checkbox") && !form_keyword_equals(type,"radio")
+            && !form_keyword_equals(type,"button") && !form_keyword_equals(type,"submit")
+            && !form_keyword_equals(type,"reset") && !form_keyword_equals(type,"file")
+            && !form_keyword_equals(type,"image") && !form_keyword_equals(type,"date")
+            && !form_keyword_equals(type,"month") && !form_keyword_equals(type,"week")
+            && !form_keyword_equals(type,"time") && !form_keyword_equals(type,"datetime-local"));
+}
+
+inline std::string text_control_value(const dom_node& node) {
+    if(node.form_control().value_initialized) return node.form_control().value;
+    if(node.tag!="textarea") {
+        const auto authored=node.attributes.find("value");
+        return authored==node.attributes.end()?std::string{}:authored->second;
+    }
+    std::string result;
+    const auto append=[&](const auto& recurse,const dom_node& current)->void {
+        if(current.kind==dom_node_kind::text) result+=current.text_content;
+        for(const auto* child:current.children) if(child) recurse(recurse,*child);
+    };
+    append(append,node);
+    return result;
+}
+
+inline std::string_view trim_ascii_whitespace(std::string_view value) {
+    const auto whitespace=[](char character) {
+        return character==' ' || character=='\t' || character=='\n'
+            || character=='\r' || character=='\f';
+    };
+    while(!value.empty() && whitespace(value.front())) value.remove_prefix(1U);
+    while(!value.empty() && whitespace(value.back())) value.remove_suffix(1U);
+    return value;
+}
+
+inline bool valid_email_address(std::string_view value) {
+    static const std::regex address(
+        R"(^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$)",
+        std::regex::ECMAScript);
+    return std::regex_match(value.begin(),value.end(),address);
+}
+
+inline bool email_type_mismatch(const dom_node& node,std::string_view value) {
+    value=trim_ascii_whitespace(value);
+    if(value.empty()) return false;
+    if(!node.attributes.contains("multiple")) return !valid_email_address(value);
+    while(true) {
+        const auto comma=value.find(',');
+        const auto item=trim_ascii_whitespace(value.substr(0,comma));
+        if(item.empty() || !valid_email_address(item)) return true;
+        if(comma==std::string_view::npos) return false;
+        value.remove_prefix(comma+1U);
+    }
+}
+
+inline bool url_type_mismatch(std::string_view value) {
+    value=trim_ascii_whitespace(value);
+    if(value.empty()) return false;
+    if(!((value.front()>='A' && value.front()<='Z')
+        || (value.front()>='a' && value.front()<='z'))) return true;
+    size_t colon=1U;
+    while(colon<value.size() && value[colon]!=':') {
+        const auto character=value[colon];
+        if(!((character>='A' && character<='Z')
+            || (character>='a' && character<='z')
+            || (character>='0' && character<='9')
+            || character=='+' || character=='-' || character=='.')) return true;
+        ++colon;
+    }
+    if(colon==value.size()) return true;
+    for(const auto character:value)
+        if(static_cast<unsigned char>(character)<=0x20U || character==0x7f) return true;
+    const auto scheme=value.substr(0,colon);
+    if(form_keyword_equals(scheme,"http") || form_keyword_equals(scheme,"https")
+        || form_keyword_equals(scheme,"ftp") || form_keyword_equals(scheme,"ws")
+        || form_keyword_equals(scheme,"wss")) {
+        if(value.substr(colon+1U,2U)!="//") return true;
+        const auto host=value.substr(colon+3U);
+        return host.empty() || host.front()=='/' || host.front()=='?' || host.front()=='#';
+    }
+    return false;
+}
+
+inline std::optional<size_t> nonnegative_integer_attribute(
+    const dom_node& node,std::string_view name) {
+    const auto authored=node.attributes.find(std::string(name));
+    if(authored==node.attributes.end() || authored->second.empty()) return std::nullopt;
+    size_t result{};
+    const auto parsed=std::from_chars(authored->second.data(),
+        authored->second.data()+authored->second.size(),result);
+    return parsed.ec==std::errc{}
+            && parsed.ptr==authored->second.data()+authored->second.size()
+        ? std::optional<size_t>{result}:std::nullopt;
+}
+
+inline size_t utf16_length(std::string_view value) {
+    size_t result=0U;
+    for(size_t index=0U;index<value.size();) {
+        const auto first=static_cast<unsigned char>(value[index]);
+        size_t bytes=1U;
+        if((first&0xe0U)==0xc0U) bytes=2U;
+        else if((first&0xf0U)==0xe0U) bytes=3U;
+        else if((first&0xf8U)==0xf0U) bytes=4U;
+        result+=bytes==4U?2U:1U;
+        index+=std::min(bytes,value.size()-index);
+    }
+    return result;
+}
+
+inline bool pattern_mismatch(const dom_node& node,std::string_view value) {
+    const auto authored=node.attributes.find("pattern");
+    if(authored==node.attributes.end() || value.empty()) return false;
+    try {
+        const std::regex pattern(
+            "^(?:"+authored->second+")$",std::regex::ECMAScript);
+        if(input_type_is(node,"email") && node.attributes.contains("multiple")) {
+            while(true) {
+                const auto comma=value.find(',');
+                if(!std::regex_match(value.begin(),value.begin()
+                        +static_cast<std::ptrdiff_t>(comma==std::string_view::npos
+                            ? value.size():comma),pattern)) return true;
+                if(comma==std::string_view::npos) return false;
+                value.remove_prefix(comma+1U);
+            }
+        }
+        return !std::regex_match(value.begin(),value.end(),pattern);
+    } catch(const std::regex_error&) {
+        return false;
+    }
+}
+
+inline text_constraint_validity text_validity_state(
+    const native_document& document,
+    const dom_node& node,
+    std::optional<std::string_view> live_value=std::nullopt,
+    std::optional<bool> user_edited=std::nullopt) {
+    text_constraint_validity result;
+    result.applicable=will_validate(document,node) && text_constraint_applies(node);
+    if(!result.applicable) return result;
+    const auto owned_value=live_value?std::string{}:text_control_value(node);
+    const auto value=live_value.value_or(owned_value);
+    result.type_mismatch=input_type_is(node,"email")
+        ? email_type_mismatch(node,value)
+        : input_type_is(node,"url") && url_type_mismatch(value);
+    result.pattern_mismatch=pattern_mismatch(node,value);
+    const auto edited=user_edited.value_or(node.form_control().value_changed_by_user);
+    // User-edited provenance implies the dirty-value state. Keeping the bit
+    // distinct lets reset compare the old user value after it has already
+    // restored the dirty flag to false.
+    if(edited && !value.empty()) {
+        const auto length=utf16_length(value);
+        if(const auto maximum=nonnegative_integer_attribute(node,"maxlength"))
+            result.too_long=length>*maximum;
+        if(const auto minimum=nonnegative_integer_attribute(node,"minlength"))
+            result.too_short=length<*minimum;
+    }
+    return result;
+}
+
 inline simple_validity_state validity_state(
     const native_document& document,const dom_node& node) {
     const auto form_control = node.tag == "button" || node.tag == "input"
         || node.tag == "select" || node.tag == "textarea"
         || node.tag == "option" || node.tag == "optgroup" || node.tag == "fieldset";
     if (!form_control || node.tag == "fieldset" || node.tag == "optgroup"
-        || node.tag == "option") return simple_validity_state::not_applicable;
+        || node.tag == "option" || !will_validate(document,node))
+        return simple_validity_state::not_applicable;
+    const auto text_validity=text_validity_state(document,node);
+    if(text_validity.applicable && !text_validity.valid())
+        return simple_validity_state::invalid;
     if(input_type_is(node,"radio")) {
         return radio_group_value_missing(document,node)
             ? simple_validity_state::invalid:simple_validity_state::valid;

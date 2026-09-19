@@ -2406,18 +2406,31 @@
         dom_node& subject,
         std::string previous_value,
         std::string current_value,
-        std::optional<bool> user_validity_interacted = std::nullopt)
+        std::optional<bool> user_validity_interacted = std::nullopt,
+        std::optional<bool> value_changed_by_user = std::nullopt)
     {
         document.mark_dirty();
         const auto empty_state_changed=previous_value.empty()!=current_value.empty();
         const auto previous_range=forms::range_state(subject,previous_value);
         const auto current_range=forms::range_state(subject,current_value);
         const auto range_state_changed=previous_range!=current_range;
+        const auto previous_value_changed_by_user=
+            subject.form_control().value_changed_by_user;
+        const auto current_value_changed_by_user=value_changed_by_user.value_or(
+            previous_value_changed_by_user);
+        const auto previous_text_validity=forms::text_validity_state(
+            document,subject,previous_value,previous_value_changed_by_user);
+        const auto current_text_validity=forms::text_validity_state(
+            document,subject,current_value,current_value_changed_by_user);
+        const auto text_validity_changed=previous_text_validity!=current_text_validity;
         const auto previous_user_validity=subject.form_control().user_validity_interacted;
         const auto current_user_validity=user_validity_interacted.value_or(previous_user_validity);
         const auto user_validity_changed=previous_user_validity!=current_user_validity;
-        subject.mutable_form_control().user_validity_interacted=current_user_validity;
-        if(!empty_state_changed && !range_state_changed && !user_validity_changed) return;
+        auto& subject_control=subject.mutable_form_control();
+        subject_control.user_validity_interacted=current_user_validity;
+        subject_control.value_changed_by_user=current_value_changed_by_user;
+        if(!empty_state_changed && !range_state_changed && !text_validity_changed
+            && !user_validity_changed) return;
         webscene_frame_trace::scope invalidation_trace(
             frame_trace,
             "form-state-invalidation-start",
@@ -2431,7 +2444,8 @@
                 changed_rule_storage.insert(changed_rule_storage.end(),
                     indexed->second.begin(),indexed->second.end());
         };
-        if(empty_state_changed) append_rules("$live-form-value");
+        if(empty_state_changed || text_validity_changed)
+            append_rules("$live-form-value");
         if(range_state_changed) append_rules("$live-form-range");
         if(user_validity_changed) append_rules("$live-form-user-validity");
         std::ranges::sort(changed_rule_storage);
@@ -2449,7 +2463,8 @@
                     const auto found=dependencies.attributes.find(std::string(dependency));
                     if(found!=dependencies.attributes.end()) result.include(found->second);
                 };
-                if(empty_state_changed) include("$live-form-value");
+                if(empty_state_changed || text_validity_changed)
+                    include("$live-form-value");
                 if(range_state_changed) include("$live-form-range");
                 if(user_validity_changed) include("$live-form-user-validity");
                 return result;
@@ -2457,11 +2472,13 @@
             [&] {
                 auto& control=subject.mutable_form_control();
                 control.value=previous_value;
+                control.value_changed_by_user=previous_value_changed_by_user;
                 control.user_validity_interacted=previous_user_validity;
             },
             [&] {
                 auto& control=subject.mutable_form_control();
                 control.value=current_value;
+                control.value_changed_by_user=current_value_changed_by_user;
                 control.user_validity_interacted=current_user_validity;
             });
     }

@@ -3541,6 +3541,88 @@
         else self->document.mark_dirty();
     }
 
+    static void mutate_custom_state(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        auto* node = info.Length() > 0 && info[0]->IsObject()
+            ? unwrap_node(info[0].As<v8::Object>()) : nullptr;
+        const auto operation = info.Length() > 1
+            ? info[1]->Int32Value(info.GetIsolate()->GetCurrentContext()).FromMaybe(-1)
+            : -1;
+        if (self == nullptr || node == nullptr || node->kind != dom_node_kind::element
+            || operation < 0 || operation > 2) {
+            info.GetReturnValue().Set(v8::Integer::New(info.GetIsolate(), 0));
+            return;
+        }
+        const auto known = self->custom_states.find(node->id);
+        if (operation == 2) {
+            if (known == self->custom_states.end()) {
+                info.GetReturnValue().Set(v8::Integer::New(info.GetIsolate(), 1));
+                return;
+            }
+            const auto states = known->second;
+            style_recascade_batch_scope style_batch(*self);
+            for (const auto& state : states)
+                self->recascade_custom_state_selector_transition(
+                    *node, state, true, false);
+            info.GetReturnValue().Set(v8::Integer::New(info.GetIsolate(), 2));
+            return;
+        }
+        if (info.Length() < 4) {
+            info.GetReturnValue().Set(v8::Integer::New(info.GetIsolate(), -1));
+            return;
+        }
+        const auto state = to_wtf8(info.GetIsolate(), info[2]);
+        const auto serialized = to_wtf8(info.GetIsolate(), info[3]);
+        if (state.empty()
+            || state.size() > maximum_custom_state_token_bytes
+            || serialized.empty()
+            || serialized.size() > maximum_custom_state_token_bytes * 8U) {
+            info.GetReturnValue().Set(v8::Integer::New(info.GetIsolate(), -1));
+            return;
+        }
+        const auto prepared = css::compile_selector(":state(" + serialized + ")");
+        const auto valid = css::compiled_selector_is_valid(prepared)
+            && prepared.compiled_compounds.size() == 1U
+            && prepared.compiled_compounds.front().pseudos.size() == 1U
+            && prepared.compiled_compounds.front().pseudos.front().name == "state"
+            && prepared.compiled_compounds.front().pseudos.front().argument == state;
+        if (!valid) {
+            info.GetReturnValue().Set(v8::Integer::New(info.GetIsolate(), -1));
+            return;
+        }
+        const auto present = known != self->custom_states.end()
+            && std::find(known->second.begin(), known->second.end(), state)
+                != known->second.end();
+        if (operation == 1) {
+            if (!present) {
+                info.GetReturnValue().Set(v8::Integer::New(info.GetIsolate(), 1));
+                return;
+            }
+            self->recascade_custom_state_selector_transition(
+                *node, state, true, false);
+            info.GetReturnValue().Set(v8::Integer::New(info.GetIsolate(), 2));
+            return;
+        }
+        if (present) {
+            info.GetReturnValue().Set(v8::Integer::New(info.GetIsolate(), 1));
+            return;
+        }
+        auto total_bytes = size_t{0U};
+        if (known != self->custom_states.end())
+            for (const auto& entry : known->second) total_bytes += entry.size();
+        if ((known != self->custom_states.end()
+                && known->second.size() >= maximum_custom_states_per_element)
+            || state.size() > maximum_custom_state_bytes_per_element
+                - std::min(total_bytes, maximum_custom_state_bytes_per_element)) {
+            info.GetReturnValue().Set(v8::Integer::New(info.GetIsolate(), -2));
+            return;
+        }
+        self->recascade_custom_state_selector_transition(*node, state, false, true);
+        info.GetReturnValue().Set(v8::Integer::New(info.GetIsolate(), 2));
+    }
+
     static void set_element_internals_validity(
         const v8::FunctionCallbackInfo<v8::Value>& info)
     {

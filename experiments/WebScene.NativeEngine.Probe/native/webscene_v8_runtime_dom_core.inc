@@ -1940,6 +1940,9 @@
         erase_wrappers(stylesheet_wrappers);
         erase_wrappers(computed_style_wrappers);
         erase_wrappers(canvas_contexts);
+        std::erase_if(custom_states, [&](const auto& entry) {
+            return node_ids.contains(entry.first);
+        });
         std::erase_if(detached_documents, [&](const auto& entry) {
             return node_ids.contains(static_cast<uint32_t>(entry.first));
         });

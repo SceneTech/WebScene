@@ -424,6 +424,12 @@ inline compiled_css_compound compile_css_compound_selector(
                         selector.substr(argument_start, cursor - argument_start));
                     ++cursor;
                 }
+                if (name == "state") {
+                    auto argument_cursor = size_t{0U};
+                    auto decoded = read_css_identifier(argument, argument_cursor);
+                    if (decoded.empty() || argument_cursor != argument.size()) return result;
+                    argument = std::move(decoded);
+                }
                 result.pseudos.push_back(
                     compiled_css_pseudo{std::move(name), std::move(argument)});
             } else {

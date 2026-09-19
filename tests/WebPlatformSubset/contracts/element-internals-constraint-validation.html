@@ -1,0 +1,162 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>ElementInternals constraint validation and restoration</title>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<script>
+test(()=>{
+  assert_equals(ElementInternals.prototype.setValidity.length,1);
+  assert_equals(ElementInternals.prototype.checkValidity.length,0);
+  assert_equals(ElementInternals.prototype.reportValidity.length,0);
+  for(const name of ['validity','validationMessage','willValidate']) {
+    assert_own_property(ElementInternals.prototype,name);
+  }
+
+  class UnassociatedValidityControl extends HTMLElement {
+    constructor() {
+      super();
+      this.internals=this.attachInternals();
+    }
+  }
+  customElements.define(
+    'unassociated-validity-control',UnassociatedValidityControl);
+  const internals=new UnassociatedValidityControl().internals;
+  for(const operation of [
+    ()=>internals.validity,
+    ()=>internals.validationMessage,
+    ()=>internals.willValidate,
+    ()=>internals.setValidity({}),
+    ()=>internals.checkValidity(),
+    ()=>internals.reportValidity()
+  ]) assert_throws_dom('NotSupportedError',operation);
+},'ElementInternals exposes the constraint-validation surface with form-associated admission');
+
+test(()=>{
+  class InternalsValidityControl extends HTMLElement {
+    static formAssociated=true;
+    constructor() {
+      super();
+      this.internals=this.attachInternals();
+    }
+  }
+  customElements.define('internals-validity-control',InternalsValidityControl);
+  const form=document.createElement('form');
+  const fieldset=document.createElement('fieldset');
+  const control=new InternalsValidityControl();
+  const anchor=document.createElement('span');
+  control.appendChild(anchor);
+  fieldset.appendChild(control);
+  form.appendChild(fieldset);
+  document.body.appendChild(form);
+
+  const retained=control.internals.validity;
+  assert_true(retained instanceof ValidityState);
+  assert_equals(retained,control.internals.validity);
+  assert_true(retained.valid);
+  assert_true(control.internals.willValidate);
+  assert_true(control.matches(':valid'));
+  assert_true(form.matches(':valid'));
+  assert_true(fieldset.matches(':valid'));
+  assert_throws_js(TypeError,()=>control.internals.setValidity());
+  assert_throws_js(TypeError,()=>
+    control.internals.setValidity({valueMissing:true}));
+  assert_throws_dom('NotFoundError',()=>
+    control.internals.setValidity({customError:true},'outside',form));
+
+  control.internals.setValidity({
+    valueMissing:true,
+    typeMismatch:true,
+    patternMismatch:true,
+    tooLong:true,
+    tooShort:true,
+    rangeUnderflow:true,
+    rangeOverflow:true,
+    stepMismatch:true,
+    badInput:true,
+    customError:true
+  },'custom validation message',anchor);
+  for(const name of [
+    'valueMissing','typeMismatch','patternMismatch','tooLong','tooShort',
+    'rangeUnderflow','rangeOverflow','stepMismatch','badInput','customError'
+  ]) assert_true(retained[name],name);
+  assert_false(retained.valid);
+  assert_equals(control.internals.validationMessage,'custom validation message');
+  assert_true(control.matches(':invalid'));
+  assert_true(form.matches(':invalid'));
+  assert_true(fieldset.matches(':invalid'));
+
+  const invalid=[];
+  control.addEventListener('invalid',event=>invalid.push([
+    event.bubbles,event.cancelable,event.target
+  ]));
+  assert_false(control.internals.checkValidity());
+  assert_false(control.internals.reportValidity());
+  assert_false(form.checkValidity());
+  assert_array_equals(invalid.map(entry=>entry[0]),[false,false,false]);
+  assert_array_equals(invalid.map(entry=>entry[1]),[true,true,true]);
+  assert_true(invalid.every(entry=>entry[2]===control));
+
+  control.setAttribute('disabled','');
+  assert_false(control.internals.willValidate);
+  assert_true(retained.customError);
+  assert_equals(control.internals.validationMessage,'');
+  assert_true(control.internals.checkValidity());
+  assert_false(control.matches(':valid'));
+  assert_false(control.matches(':invalid'));
+  control.removeAttribute('disabled');
+
+  control.internals.setValidity({});
+  assert_true(retained.valid);
+  assert_equals(control.internals.validationMessage,'');
+  assert_true(control.matches(':valid'));
+  assert_true(form.matches(':valid'));
+  assert_true(fieldset.matches(':valid'));
+  form.remove();
+},'setValidity drives a live ValidityState, candidate behavior, selectors, aggregation, and invalid events');
+
+test(()=>{
+  const restored=[];
+  class RestoredValidityControl extends HTMLElement {
+    static formAssociated=true;
+    constructor() {
+      super();
+      this.internals=this.attachInternals();
+    }
+    formResetCallback() {
+      this.internals.setValidity({});
+    }
+    formStateRestoreCallback(state,mode) {
+      restored.push([state,mode,this]);
+    }
+  }
+  customElements.define('restored-validity-control',RestoredValidityControl);
+  const form=document.createElement('form');
+  const control=new RestoredValidityControl();
+  control.setAttribute('name','custom');
+  control.internals.setFormValue('submitted','retained-state');
+  control.internals.setValidity({customError:true},'invalid');
+  form.appendChild(control);
+  document.body.appendChild(form);
+
+  let submitted=0;
+  form.addEventListener('submit',event=>{
+    ++submitted;
+    event.preventDefault();
+  });
+  form.requestSubmit();
+  assert_equals(submitted,0);
+  assert_true(control.matches(':user-invalid'));
+  form.reset();
+  assert_false(control.matches(':user-valid'));
+  assert_false(control.matches(':user-invalid'));
+  assert_true(control.internals.validity.valid);
+
+  assert_true(__webSceneRestoreFormAssociatedState(control));
+  assert_array_equals(restored[0],['retained-state','restore',control]);
+  assert_true(__webSceneRestoreFormAssociatedState(control,'autocomplete'));
+  assert_array_equals(restored[1],['retained-state','autocomplete',control]);
+  assert_throws_js(TypeError,()=>
+    __webSceneRestoreFormAssociatedState(control,'unsupported'));
+  form.remove();
+},'submit attempts include custom user-validity, reset clears it, and the host restoration trigger delivers retained state');
+</script>

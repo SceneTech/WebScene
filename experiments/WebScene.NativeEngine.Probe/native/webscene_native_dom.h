@@ -1378,6 +1378,7 @@ struct dom_node final {
     struct form_control_data final {
         std::string value;
         std::string custom_validation_message;
+        uint16_t element_internals_validity_flags{0};
         size_t selection_start{0};
         size_t selection_end{0};
         uint8_t selection_start_utf16_suboffset{0};
@@ -1394,6 +1395,7 @@ struct dom_node final {
         bool dirty_value{false};
         bool value_changed_by_user{false};
         bool user_validity_interacted{false};
+        bool form_associated_custom_element{false};
         bool input_focused{false};
         bool caret_visible{false};
     };

@@ -1,0 +1,41 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Placeholder pseudo-element retains bounded authored paint</title>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<style>
+  :root { --placeholder-tone: rgb(36, 104, 172); }
+  #probe::placeholder {
+    color: var(--placeholder-tone);
+    opacity: .5;
+  }
+  #probe.alternate::placeholder {
+    color: rgb(17, 34, 51);
+    opacity: 1;
+  }
+</style>
+<input id="probe" placeholder="Search workspace">
+<script>
+  const probe = document.getElementById('probe');
+  const placeholderStyle = () => getComputedStyle(probe, '::placeholder');
+
+  test(() => {
+    assert_equals(placeholderStyle().color, 'rgb(36, 104, 172)');
+    assert_equals(placeholderStyle().opacity, '0.5');
+  }, 'placeholder color resolves a custom property independently of control text');
+
+  test(() => {
+    probe.className = 'alternate';
+    assert_equals(placeholderStyle().color, 'rgb(17, 34, 51)');
+    assert_equals(placeholderStyle().opacity, '1');
+    probe.className = '';
+    assert_equals(placeholderStyle().color, 'rgb(36, 104, 172)');
+  }, 'class mutation recascades the placeholder pseudo-element');
+
+  test(() => {
+    probe.value = 'typed';
+    assert_equals(probe.placeholder, 'Search workspace');
+    probe.value = '';
+    assert_equals(placeholderStyle().opacity, '0.5');
+  }, 'live values suppress placeholder paint without destroying its computed style');
+</script>

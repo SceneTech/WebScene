@@ -370,6 +370,12 @@ int main()
             test_modal_backdrop_scene(focused_engine);
             webscene_engine_destroy(focused_engine);return 0;
         }
+        if(selected=="placeholder-pseudo") {
+            auto* focused_engine=webscene_engine_create(0);
+            require(focused_engine!=nullptr,"placeholder pseudo engine creation failed");
+            test_placeholder_pseudo_color_and_opacity_reach_scene(focused_engine);
+            webscene_engine_destroy(focused_engine);return 0;
+        }
         if (selected == "fragment-attach") {
             auto* focused_engine = webscene_engine_create(0);
             require(focused_engine != nullptr, "fragment attach engine creation failed");
@@ -1361,6 +1367,7 @@ int main()
     test_dimension_custom_property_inheritance(engine);
     test_geometry_variable_positions(engine);
     test_modal_backdrop_scene(engine);
+    test_placeholder_pseudo_color_and_opacity_reach_scene(engine);
     test_responsive_positioned_sizing(engine);
     test_compact_go_to_fixed_grid_tracks_preserve_trailing_space(engine);
     test_named_grid_template_areas_layout_cssom_and_mutation(engine);

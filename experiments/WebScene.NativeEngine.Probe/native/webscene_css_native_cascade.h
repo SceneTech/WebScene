@@ -68,6 +68,13 @@ bool apply_native_cascade(native_document& document,dom_node& node,
                     const auto result=apply_backdrop_declaration(node,declaration,variables,backdrop_important);
                     observe(declaration,result);
                 }
+                else if(kind==8) {
+                    property_result result;
+                    apply_placeholder_declaration(
+                        node,node.style.mutable_placeholder_pseudo(),declaration,
+                        variables,result,[](bool) {});
+                    observe(declaration,result);
+                }
                 else if(kind>=3) apply_scrollbar_declaration(node,kind,declaration,variables);
                 else {
                     auto& pseudo=kind==1?node.style.mutable_before_pseudo():node.style.mutable_after_pseudo();

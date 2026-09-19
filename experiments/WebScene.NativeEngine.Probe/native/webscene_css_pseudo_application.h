@@ -28,6 +28,7 @@ inline int split_pseudo_element_selector(const std::string& selector, std::strin
         };
         if (const auto kind = split_suffix("::before", 1); kind != 0) return kind;
         if (const auto kind = split_suffix("::after", 2); kind != 0) return kind;
+        if (const auto kind = split_suffix("::placeholder", 8); kind != 0) return kind;
         if (const auto kind = split_suffix("::backdrop", 7); kind != 0) return kind;
         if (const auto kind = split_suffix("::-webkit-scrollbar-thumb", 4); kind != 0) return kind;
         if (const auto kind = split_suffix("::-webkit-scrollbar-track", 5); kind != 0) return kind;
@@ -36,6 +37,66 @@ inline int split_pseudo_element_selector(const std::string& selector, std::strin
         if (const auto kind = split_suffix(":before", 1); kind != 0) return kind;
         return split_suffix(":after", 2);
     }
+
+template<typename Decision,typename Resolved>
+void apply_placeholder_declaration(
+    dom_node& node,
+    node_style::pseudo_element_pair::placeholder_element& placeholder,
+    const css_declaration& declaration,
+    const std::unordered_map<std::string,std::string>& variables,
+    Decision& decision,
+    Resolved&& on_resolved)
+{
+    decision.classification = "unsupported";
+    const auto contains_variable = declaration.value.find("var(") != std::string::npos;
+    auto resolved_value = std::string{};
+    const auto& value = contains_variable
+        ? (resolved_value = resolve_value(node,declaration.value,variables))
+        : declaration.value;
+    if (value.empty() && contains_variable) {
+        decision.classification = "invalid-authoring";
+        decision.semantic_slice = "unresolved custom property at computed-value time";
+        return;
+    }
+    on_resolved(contains_variable);
+    const auto lower = ascii_lower(trim_value(value));
+    if (declaration.name == "color") {
+        if (lower == "currentcolor" || lower == "inherit" || lower == "unset") {
+            placeholder.foreground_specified = false;
+            placeholder.foreground_rgba = 0U;
+            decision.classification = "supported";
+        } else {
+            const auto color = native_document::parse_color(value);
+            if (is_explicit_color_token(value,color)) {
+                placeholder.foreground_specified = true;
+                placeholder.foreground_rgba = color;
+                decision.classification = "supported";
+            } else {
+                decision.classification = "invalid-authoring";
+            }
+        }
+    } else if (declaration.name == "opacity") {
+        if (lower == "initial" || lower == "unset" || lower == "revert") {
+            placeholder.opacity = 1;
+            decision.classification = "supported";
+            return;
+        }
+        if (lower == "inherit") {
+            placeholder.opacity = std::clamp(node.style.opacity, 0.0F, 1.0F);
+            decision.classification = "supported";
+            return;
+        }
+        char* end = nullptr;
+        const auto parsed = std::strtof(lower.c_str(), &end);
+        if (end != lower.c_str() && end == lower.c_str() + lower.size()
+            && std::isfinite(parsed)) {
+            placeholder.opacity = std::clamp(parsed, 0.0F, 1.0F);
+            decision.classification = "supported";
+        } else {
+            decision.classification = "invalid-authoring";
+        }
+    }
+}
 inline void apply_scrollbar_declaration(
         dom_node& node,
         int pseudo_kind,

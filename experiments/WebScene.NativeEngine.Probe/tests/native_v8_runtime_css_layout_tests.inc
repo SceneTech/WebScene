@@ -36,6 +36,61 @@ void test_modal_backdrop_scene(webscene_engine* engine)
     execute(engine,"document.body.innerHTML='';","backdrop-cleanup.js");
 }
 
+void test_placeholder_pseudo_color_and_opacity_reach_scene(webscene_engine* engine)
+{
+    resize(engine,320,120,1);
+    execute(engine,R"JS(
+      document.body.innerHTML=`
+        <style>
+          :root { --placeholder-tone:#2468ac; }
+          #placeholder-probe::placeholder {
+            color:var(--placeholder-tone);
+            opacity:.5;
+          }
+          #placeholder-probe.alternate::placeholder {
+            color:#112233;
+            opacity:1;
+          }
+        </style>
+        <input id="placeholder-probe" placeholder="Search workspace">
+      `;
+      globalThis.placeholderProbe=document.getElementById('placeholder-probe');
+    )JS","placeholder-pseudo-setup.js");
+    uint64_t revision=0;
+    const auto expect_color=[&](uint32_t expected,bool present) {
+        webscene_engine_request_scene_checkpoint(engine);
+        for(int attempt=0;attempt<100;++attempt) {
+            const auto* scene=webscene_engine_acquire_latest_scene(engine);
+            bool matched=false;
+            if(scene) {
+                if(scene->header.revision>revision) {
+                    unsigned count=0;
+                    for(uint32_t i=0;i<scene->header.command_count;++i) {
+                        const auto& command=scene->commands[i];
+                        if(command.kind==3U && command.rgba==expected)++count;
+                    }
+                    matched=count==(present?1U:0U);
+                    if(matched)revision=scene->header.revision;
+                }
+                webscene_scene_acknowledge(scene);webscene_scene_release(scene);
+            }
+            if(matched)return;
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        fail("placeholder pseudo color/opacity did not reach retained scene");
+    };
+    expect_color(0x2468AC80U,true);
+    execute(engine,"placeholderProbe.className='alternate';","placeholder-pseudo-class.js");
+    expect_color(0x112233FFU,true);
+    execute(engine,"placeholderProbe.value='typed';","placeholder-pseudo-value.js");
+    expect_color(0x112233FFU,false);
+    execute(engine,
+        "placeholderProbe.value='';placeholderProbe.className='';",
+        "placeholder-pseudo-restore.js");
+    expect_color(0x2468AC80U,true);
+    execute(engine,"document.body.innerHTML='';","placeholder-pseudo-cleanup.js");
+}
+
 void test_responsive_positioned_sizing(webscene_engine* engine)
 {
     resize(engine, 1280, 720, 1);

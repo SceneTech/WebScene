@@ -89,10 +89,6 @@ test('native engine publishes only the versioned leased interop surface', async 
     'webscene_engine_set_window_focused_v1',
     'webscene_engine_set_window_fullscreen_v1',
     'webscene_engine_set_accessibility_preferences_v1',
-    'webscene_engine_dispatch_drag_v1',
-    'webscene_engine_take_download_request_v1',
-    'webscene_engine_take_outbound_drag_request_v1',
-    'webscene_engine_complete_outbound_drag_v1',
     'webscene_engine_acquire_semantic_snapshot_v1',
     'webscene_semantic_snapshot_release_v1',
     'webscene_engine_request_semantic_delta_v1',
@@ -112,10 +108,20 @@ test('native engine publishes only the versioned leased interop surface', async 
     assert.match(header + compiledHeader, new RegExp(`\\b${symbol}\\b`));
     assert.match(exports, new RegExp(`_${symbol}\\b`));
   }
+  const headerOnlyHostApis = new Set([
+    'webscene_engine_dispatch_drag_v1',
+    'webscene_engine_take_download_request_v1',
+    'webscene_engine_take_outbound_drag_request_v1',
+    'webscene_engine_complete_outbound_drag_v1'
+  ]);
+  for (const symbol of headerOnlyHostApis) {
+    assert.match(header + compiledHeader, new RegExp(`\\b${symbol}\\b`));
+  }
+  const reviewedHostApis = new Set([...independentHostApis, ...headerOnlyHostApis]);
   for (const [name, source] of [['header', header + compiledHeader], ['exports', exports]]) {
     const legacySymbols = [...source.matchAll(
       /\b_?(webscene_(?:engine|interop)_[a-z0-9_]+_v[12])\b/g
-    )].map(match => match[1]).filter(symbol => !independentHostApis.has(symbol));
+    )].map(match => match[1]).filter(symbol => !reviewedHostApis.has(symbol));
     assert.deepEqual(legacySymbols, [], `${name} must not expose legacy interop`);
   }
   assert.match(

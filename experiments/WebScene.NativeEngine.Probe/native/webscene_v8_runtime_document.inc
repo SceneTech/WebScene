@@ -780,6 +780,12 @@
             self->notify_custom_element_attribute(*node, name, old_value, value);
             return;
         }
+        if ((name.starts_with("data-") || name.starts_with("aria-"))
+            && previous != node->attributes.end()
+            && previous->second == value) {
+            self->notify_custom_element_attribute(*node, name, old_value, value);
+            return;
+        }
         node->attributes[name] = value;
         if (name == "src" && node->tag == "iframe") {
             self->begin_iframe_navigation(*node);

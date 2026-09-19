@@ -676,7 +676,9 @@ int main(int argc,char** argv) {
     std::mutex payload_mutex;
     const auto payload_for=[&](const std::string& selector,const std::string& color) {
         return webscene_native::css::intern_rule_payload(payload_mutex,payload_cache,
-            webscene_native::css::compile_selector,selector,{{"color",color,false}},{});
+            [](std::string_view value) {
+                return webscene_native::css::compile_selector(value, nullptr);
+            },selector,{{"color",color,false}},{});
     };
     auto red_payload=payload_for(".base","red");
     if(red_payload!=payload_for(".base","red") || red_payload==payload_for(".base","blue") ||

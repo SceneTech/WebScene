@@ -1259,8 +1259,7 @@
                 current_context->GetAlignedPointerFromEmbedderData(
                     1,
                     v8::kEmbedderDataTypeTagDefault));
-            if (root != nullptr) return effective_document_base(
-                const_cast<dom_node*>(root));
+            if (root != nullptr) return effective_document_base(root);
         }
         return effective_document_base(&document.body());
     }
@@ -1833,6 +1832,7 @@
     void register_detached_subtree(dom_node& root)
     {
         if (&root == &document.body() || root.parent != nullptr) return;
+        document.cancel_web_animations(root, true);
         // Detached leaves are the common text/topology case. A leaf cannot
         // contain an existing root and, after unlinking, cannot still be
         // contained by one. Index it directly so repeated split/normalize

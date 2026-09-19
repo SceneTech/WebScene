@@ -71,6 +71,17 @@ bool fills_after(node_style::animation_data::fill_kind fill) noexcept
     return fill == node_style::animation_data::fill_kind::forwards
         || fill == node_style::animation_data::fill_kind::both;
 }
+
+void discard_web_animation_events(
+    std::unique_ptr<std::vector<native_document::web_animation_event_record>>& events,
+    uint32_t animation_id)
+{
+    if (!events) return;
+    std::erase_if(*events, [animation_id](const auto& event) {
+        return event.animation_id == animation_id;
+    });
+    if (events->empty()) events.reset();
+}
 } // namespace
 
 void native_document::signal_animation_frame(double timestamp_ms) noexcept
@@ -78,6 +89,213 @@ void native_document::signal_animation_frame(double timestamp_ms) noexcept
     if (std::isfinite(timestamp_ms) && timestamp_ms >= animation_frame_timestamp_ms_) {
         animation_frame_timestamp_ms_ = timestamp_ms;
     }
+}
+
+bool native_document::create_web_animation(
+    dom_node& node,
+    uint32_t id,
+    node_style::animation_data::keyframe_animation effect)
+{
+    auto& animation = node.mutable_animation_runtime();
+    const auto css_track_count = std::count_if(
+        node.style.animations().keyframe_animations.begin(),
+        node.style.animations().keyframe_animations.end(),
+        [](const auto& track) { return !track.signature.empty(); });
+    if (id == 0U
+        || (web_animation_nodes_
+            && web_animation_nodes_->size() >= maximum_live_web_animations)
+        || (web_animation_nodes_ && web_animation_nodes_->contains(id))
+        || css_track_count + animation.web_animations.size()
+            >= node_style::animation_data::max_keyframe_animation_tracks
+        || std::any_of(
+            animation.web_animations.begin(), animation.web_animations.end(),
+            [id](const auto& candidate) { return candidate.id == id; })) {
+        return false;
+    }
+
+    dom_node::animation_runtime_data::web_animation record;
+    record.id = id;
+    record.effect = std::move(effect);
+    record.effect.name.clear();
+    record.effect.signature = "waapi:" + std::to_string(id);
+    record.runtime.name.clear();
+    record.runtime.signature = record.effect.signature;
+    record.runtime.started_ms = animation_frame_timestamp_ms_;
+    record.runtime.fill_mode = record.effect.fill_mode;
+    record.runtime.active = true;
+    record.runtime.painted_opacity = node.style.opacity;
+    record.runtime.painted_translation_x = node.style.transform_translate_x;
+    record.runtime.painted_translation_y = node.style.transform_translate_y;
+    record.runtime.painted_scale_x = node.style.transform_scale_x;
+    record.runtime.painted_scale_y = node.style.transform_scale_y;
+    record.runtime.painted_rotation_degrees = node.style.transform_rotate_degrees;
+    animation.web_animations.push_back(std::move(record));
+    if (!web_animation_nodes_) {
+        web_animation_nodes_ =
+            std::make_unique<std::unordered_map<uint32_t, uint32_t>>();
+    }
+    web_animation_nodes_->emplace(id, node.id);
+    active_animation_demand_cache_valid_ = false;
+    last_animation_advance_timestamp_ms_ =
+        std::numeric_limits<double>::quiet_NaN();
+    static_cast<void>(advance_animations());
+    mark_dirty();
+    return true;
+}
+
+bool native_document::control_web_animation(
+    uint32_t id,
+    web_animation_command command,
+    double seek_time_ms)
+{
+    if (!web_animation_nodes_) return false;
+    const auto owner = web_animation_nodes_->find(id);
+    if (owner == web_animation_nodes_->end()) return false;
+    auto* node = find_by_native_id(owner->second);
+    if (node == nullptr || node->animation_runtime() == nullptr) return false;
+    auto* animation = node->animation_runtime();
+    auto found = std::find_if(
+        animation->web_animations.begin(), animation->web_animations.end(),
+        [id](const auto& candidate) { return candidate.id == id; });
+    if (found == animation->web_animations.end()) return false;
+    auto& record = *found;
+    auto& runtime = record.runtime;
+    switch (command) {
+        case web_animation_command::play:
+            if (record.finished) {
+                discard_web_animation_events(web_animation_events_, id);
+                runtime.started_ms = animation_frame_timestamp_ms_;
+                runtime.active = true;
+                runtime.filled = false;
+                runtime.end_event_sent = false;
+                record.finished = false;
+            } else if (runtime.paused) {
+                runtime.started_ms += std::max(
+                    0.0, animation_frame_timestamp_ms_ - runtime.paused_at_ms);
+            }
+            runtime.paused = false;
+            break;
+        case web_animation_command::pause:
+            if (!runtime.paused && !record.finished) {
+                runtime.paused = true;
+                runtime.paused_at_ms = animation_frame_timestamp_ms_;
+            }
+            break;
+        case web_animation_command::cancel:
+            discard_web_animation_events(web_animation_events_, id);
+            if (!web_animation_events_) {
+                web_animation_events_ =
+                    std::make_unique<std::vector<web_animation_event_record>>();
+            }
+            web_animation_events_->push_back({node->id, id, true});
+            animation->web_animations.erase(found);
+            web_animation_nodes_->erase(id);
+            break;
+        case web_animation_command::finish: {
+            const auto active_duration = keyframe_active_duration_ms(record.effect);
+            if (!std::isfinite(active_duration)) return false;
+            runtime.started_ms = animation_frame_timestamp_ms_
+                - record.effect.delay_ms - active_duration;
+            runtime.paused = false;
+            runtime.active = true;
+            record.finished = false;
+            break;
+        }
+        case web_animation_command::seek:
+            if (!std::isfinite(seek_time_ms)) return false;
+            discard_web_animation_events(web_animation_events_, id);
+            runtime.started_ms = (runtime.paused
+                    ? runtime.paused_at_ms : animation_frame_timestamp_ms_)
+                - seek_time_ms;
+            runtime.active = true;
+            runtime.filled = false;
+            runtime.end_event_sent = false;
+            record.finished = false;
+            break;
+    }
+    active_animation_demand_cache_valid_ = false;
+    last_animation_advance_timestamp_ms_ =
+        std::numeric_limits<double>::quiet_NaN();
+    static_cast<void>(advance_animations());
+    mark_dirty();
+    return true;
+}
+
+std::optional<native_document::web_animation_state>
+native_document::web_animation_status(uint32_t id) const
+{
+    if (!web_animation_nodes_) return std::nullopt;
+    const auto owner = web_animation_nodes_->find(id);
+    if (owner == web_animation_nodes_->end()
+        || owner->second == 0U || owner->second > native_id_index_.size()) {
+        return std::nullopt;
+    }
+    const auto* node = native_id_index_[owner->second - 1U];
+    if (node == nullptr || node->animation_runtime() == nullptr) {
+        return std::nullopt;
+    }
+    const auto* animation = node->animation_runtime();
+    const auto found = std::find_if(
+        animation->web_animations.begin(), animation->web_animations.end(),
+        [id](const auto& candidate) { return candidate.id == id; });
+    if (found == animation->web_animations.end()) return std::nullopt;
+    const auto timestamp = found->runtime.paused
+        ? found->runtime.paused_at_ms : animation_frame_timestamp_ms_;
+    const auto current_time = found->finished
+        ? static_cast<double>(found->effect.delay_ms)
+            + keyframe_active_duration_ms(found->effect)
+        : timestamp - found->runtime.started_ms;
+    return web_animation_state{
+        current_time,
+        found->runtime.paused,
+        found->finished};
+}
+
+std::vector<uint32_t> native_document::web_animation_ids(
+    const dom_node& node) const
+{
+    std::vector<uint32_t> result;
+    const auto* animation = node.animation_runtime();
+    if (animation == nullptr) return result;
+    result.reserve(animation->web_animations.size());
+    for (const auto& record : animation->web_animations) result.push_back(record.id);
+    return result;
+}
+
+void native_document::cancel_web_animations(
+    dom_node& root,
+    bool include_descendants)
+{
+    auto canceled = false;
+    const auto cancel_node = [&](dom_node& node) {
+        auto* animation = node.animation_runtime();
+        if (animation == nullptr || animation->web_animations.empty()) return;
+        for (const auto& record : animation->web_animations) {
+            discard_web_animation_events(web_animation_events_, record.id);
+            if (!web_animation_events_) {
+                web_animation_events_ = std::make_unique<
+                    std::vector<web_animation_event_record>>();
+            }
+            web_animation_events_->push_back({node.id, record.id, true});
+            if (web_animation_nodes_) web_animation_nodes_->erase(record.id);
+        }
+        animation->web_animations.clear();
+        canceled = true;
+    };
+    const auto visit = [&](const auto& self, dom_node& node) -> void {
+        cancel_node(node);
+        if (!include_descendants) return;
+        for (auto* child : node.children) {
+            if (child != nullptr) self(self, *child);
+        }
+    };
+    visit(visit, root);
+    if (!canceled) return;
+    active_animation_demand_cache_valid_ = false;
+    last_animation_advance_timestamp_ms_ =
+        std::numeric_limits<double>::quiet_NaN();
+    static_cast<void>(advance_animations());
+    mark_dirty();
 }
 
 void native_document::update_style_animations(dom_node& node)
@@ -277,6 +495,30 @@ void native_document::update_style_animations(dom_node& node)
         animation.top_animation_start_event_sent);
 
     const auto& configured_keyframes = node.style.animations().keyframe_animations;
+    const auto css_track_count = static_cast<size_t>(std::count_if(
+        configured_keyframes.begin(), configured_keyframes.end(),
+        [](const auto& track) { return !track.signature.empty(); }));
+    const auto web_capacity =
+        node_style::animation_data::max_keyframe_animation_tracks
+        - std::min(css_track_count,
+            node_style::animation_data::max_keyframe_animation_tracks);
+    if (animation.web_animations.size() > web_capacity) {
+        for (size_t index = web_capacity;
+             index < animation.web_animations.size(); ++index) {
+            discard_web_animation_events(
+                web_animation_events_, animation.web_animations[index].id);
+            if (!web_animation_events_) {
+                web_animation_events_ = std::make_unique<
+                    std::vector<web_animation_event_record>>();
+            }
+            web_animation_events_->push_back(
+                {node.id, animation.web_animations[index].id, true});
+            if (web_animation_nodes_) {
+                web_animation_nodes_->erase(animation.web_animations[index].id);
+            }
+        }
+        animation.web_animations.resize(web_capacity);
+    }
     auto keyframe_set_changed = animation.keyframe_animations.size()
         != configured_keyframes.size();
     auto keyframe_phase_changed = keyframe_set_changed;
@@ -1458,6 +1700,174 @@ bool native_document::advance_animations() noexcept
                 runtime.end_event_sent = true;
             }
         }
+        // Script-created animations share the host timestamp and retained
+        // property sampler. They compose after CSS animations in creation
+        // order, matching replace composition without another scheduler.
+        for (auto& record : animation.web_animations) {
+            auto& runtime = record.runtime;
+            const auto& configured = record.effect;
+            auto contributes = false;
+            auto progress = 0.0F;
+            auto completed = false;
+            if (!runtime.active) {
+                contributes = runtime.filled;
+            } else {
+                const auto timestamp_ms = runtime.paused
+                    ? runtime.paused_at_ms : animation_frame_timestamp_ms_;
+                const auto elapsed_ms = static_cast<float>(
+                    timestamp_ms - runtime.started_ms - configured.delay_ms);
+                if (elapsed_ms < 0) {
+                    contributes = fills_before(configured.fill_mode);
+                    if (contributes) {
+                        progress = directed_keyframe_progress(
+                            0.0F, 0.0, configured.direction);
+                    }
+                } else {
+                    const auto active_duration =
+                        keyframe_active_duration_ms(configured);
+                    const auto instantaneous = active_duration == 0;
+                    if (instantaneous || elapsed_ms >= active_duration) {
+                        contributes = fills_after(configured.fill_mode);
+                        if (contributes) {
+                            progress = terminal_keyframe_progress(
+                                configured.iterations, configured.direction);
+                        }
+                        if (!runtime.paused || instantaneous) {
+                            runtime.active = false;
+                            runtime.filled = contributes;
+                            record.finished = true;
+                            completed = true;
+                        }
+                    } else {
+                        contributes = true;
+                        runtime.filled = false;
+                        progress = active_keyframe_progress(
+                            elapsed_ms, configured.duration_ms,
+                            configured.direction);
+                    }
+                }
+            }
+            const auto eased_segment = [&](float segment_progress) {
+                return timing_value(
+                    segment_progress,
+                    configured.x1, configured.y1,
+                    configured.x2, configured.y2,
+                    configured.timing_kind,
+                    configured.step_count,
+                    configured.step_position);
+            };
+            if (contributes && configured.opacity_keyframes.size() >= 2U) {
+                const auto& stops = configured.opacity_keyframes;
+                auto right = std::lower_bound(
+                    stops.begin(), stops.end(), progress,
+                    [](const auto& stop, float value) {
+                        return stop.offset < value;
+                    });
+                if (right == stops.begin()) runtime.painted_opacity = right->opacity;
+                else if (right == stops.end()) {
+                    runtime.painted_opacity = stops.back().opacity;
+                } else {
+                    const auto& from = *(right - 1);
+                    const auto local = std::clamp(
+                        (progress - from.offset)
+                            / std::max(0.0001F, right->offset - from.offset),
+                        0.0F, 1.0F);
+                    const auto eased = eased_segment(local);
+                    runtime.painted_opacity = from.opacity
+                        + (right->opacity - from.opacity) * eased;
+                }
+                winning_opacity = runtime.painted_opacity;
+                animation.keyframe_opacity_override = true;
+            }
+            if (contributes && configured.translation_keyframes.size() >= 2U) {
+                const auto& stops = configured.translation_keyframes;
+                auto right = std::lower_bound(
+                    stops.begin(), stops.end(), progress,
+                    [](const auto& stop, float value) {
+                        return stop.offset < value;
+                    });
+                if (right == stops.begin()) {
+                    runtime.painted_translation_x = right->x;
+                    runtime.painted_translation_y = right->y;
+                } else if (right == stops.end()) {
+                    runtime.painted_translation_x = stops.back().x;
+                    runtime.painted_translation_y = stops.back().y;
+                } else {
+                    const auto& from = *(right - 1);
+                    const auto eased = eased_segment(std::clamp(
+                        (progress - from.offset)
+                            / std::max(0.0001F, right->offset - from.offset),
+                        0.0F, 1.0F));
+                    runtime.painted_translation_x = interpolate_length(
+                        from.x, right->x, eased);
+                    runtime.painted_translation_y = interpolate_length(
+                        from.y, right->y, eased);
+                }
+                winning_translation_x = runtime.painted_translation_x;
+                winning_translation_y = runtime.painted_translation_y;
+                animation.keyframe_translation_override = true;
+            }
+            if (contributes && configured.scale_keyframes.size() >= 2U) {
+                const auto& stops = configured.scale_keyframes;
+                auto right = std::lower_bound(
+                    stops.begin(), stops.end(), progress,
+                    [](const auto& stop, float value) {
+                        return stop.offset < value;
+                    });
+                if (right == stops.begin()) {
+                    runtime.painted_scale_x = right->x;
+                    runtime.painted_scale_y = right->y;
+                } else if (right == stops.end()) {
+                    runtime.painted_scale_x = stops.back().x;
+                    runtime.painted_scale_y = stops.back().y;
+                } else {
+                    const auto& from = *(right - 1);
+                    const auto eased = eased_segment(std::clamp(
+                        (progress - from.offset)
+                            / std::max(0.0001F, right->offset - from.offset),
+                        0.0F, 1.0F));
+                    runtime.painted_scale_x = from.x
+                        + (right->x - from.x) * eased;
+                    runtime.painted_scale_y = from.y
+                        + (right->y - from.y) * eased;
+                }
+                winning_scale_x = runtime.painted_scale_x;
+                winning_scale_y = runtime.painted_scale_y;
+                animation.keyframe_scale_override = true;
+            }
+            if (contributes && configured.rotation_keyframes.size() >= 2U) {
+                const auto& stops = configured.rotation_keyframes;
+                auto right = std::lower_bound(
+                    stops.begin(), stops.end(), progress,
+                    [](const auto& stop, float value) {
+                        return stop.offset < value;
+                    });
+                if (right == stops.begin()) {
+                    runtime.painted_rotation_degrees = right->degrees;
+                } else if (right == stops.end()) {
+                    runtime.painted_rotation_degrees = stops.back().degrees;
+                } else {
+                    const auto& from = *(right - 1);
+                    const auto eased = eased_segment(std::clamp(
+                        (progress - from.offset)
+                            / std::max(0.0001F, right->offset - from.offset),
+                        0.0F, 1.0F));
+                    runtime.painted_rotation_degrees = from.degrees
+                        + (right->degrees - from.degrees) * eased;
+                }
+                winning_rotation = runtime.painted_rotation_degrees;
+                animation.keyframe_rotation_override = true;
+            }
+            advanced = advanced || (contributes && keyframe_paint_visible);
+            if (completed && !runtime.end_event_sent) {
+                if (!web_animation_events_) {
+                    web_animation_events_ = std::make_unique<
+                        std::vector<web_animation_event_record>>();
+                }
+                web_animation_events_->push_back({node.id, record.id, false});
+                runtime.end_event_sent = true;
+            }
+        }
         if (animation.keyframe_opacity_override) {
             animation.painted_opacity = winning_opacity;
         } else if (previous_opacity_override) {
@@ -1779,6 +2189,11 @@ bool native_document::has_active_animations() const noexcept
             animation->keyframe_animations.end(), [](const auto& track) {
                 return track.active && !track.paused;
             });
+        const auto web_animation_active = std::any_of(
+            animation->web_animations.begin(),
+            animation->web_animations.end(), [](const auto& track) {
+                return track.runtime.active && !track.runtime.paused;
+            });
         const auto pseudo_active = [](const auto& pseudo) {
             return std::any_of(
                 pseudo.keyframe_animations.begin(),
@@ -1794,7 +2209,8 @@ bool native_document::has_active_animations() const noexcept
                 && !node->style.after_pseudo().display_none
                 && pseudo_active(animation->after_pseudo));
         return transition_active
-            || ((keyframe_active || generated_pseudo_active)
+            || ((keyframe_active || web_animation_active
+                    || generated_pseudo_active)
                 && intersects_visible_paint_area(*node));
     });
     active_animation_demand_cache_valid_ = true;
@@ -1815,5 +2231,14 @@ native_document::take_animation_events()
     if (!animation_events_) return {};
     auto events = std::move(*animation_events_);
     animation_events_.reset();
+    return events;
+}
+
+std::vector<native_document::web_animation_event_record>
+native_document::take_web_animation_events()
+{
+    if (!web_animation_events_) return {};
+    auto events = std::move(*web_animation_events_);
+    web_animation_events_.reset();
     return events;
 }

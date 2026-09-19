@@ -628,6 +628,14 @@ size_t native_document::erase_detached_subtrees(
         });
         if (animation_events_->empty()) animation_events_.reset();
     }
+    if (web_animation_nodes_) {
+        std::erase_if(*web_animation_nodes_, [&](const auto& entry) {
+            return entry.second == 0U
+                || entry.second > native_id_index_.size()
+                || native_id_index_[entry.second - 1U] == nullptr;
+        });
+        if (web_animation_nodes_->empty()) web_animation_nodes_.reset();
+    }
     if (shadow_dom_storage_ != nullptr) {
         for (const auto* node : removed) {
             shadow_dom_storage_->node_data.erase(node->id);
@@ -672,6 +680,15 @@ std::vector<dom_node*> native_document::query_selector_all(
     const std::string& selector)
 {
     std::vector<dom_node*> result;
+    collect_matches(root, selector, result);
+    return result;
+}
+
+std::vector<const dom_node*> native_document::query_selector_all(
+    const dom_node& root,
+    const std::string& selector) const
+{
+    std::vector<const dom_node*> result;
     collect_matches(root, selector, result);
     return result;
 }
@@ -973,6 +990,8 @@ void native_document::clear()
     node_pool_.release();
     transition_events_.clear();
     animation_events_.reset();
+    web_animation_events_.reset();
+    web_animation_nodes_.reset();
     last_animation_advance_timestamp_ms_ =
         std::numeric_limits<double>::quiet_NaN();
     next_node_id_ = 1;

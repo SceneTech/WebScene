@@ -6524,6 +6524,13 @@
                 throw_hierarchy_request(info.GetIsolate(), "appendChild");
                 return;
             }
+            // The DOM insertion algorithm returns when a DocumentFragment has
+            // no children. There are no range, observer, adoption, lifecycle,
+            // focus, or selection effects to route through visual scheduling.
+            if (child->children.empty()) {
+                info.GetReturnValue().Set(info[0]);
+                return;
+            }
             auto children = std::move(child->children);
             const auto changes_base = std::any_of(
                 children.begin(), children.end(), [&](const auto* candidate) {

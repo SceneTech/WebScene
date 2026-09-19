@@ -79,7 +79,7 @@ void native_document::build_scene(
             constexpr float font_size = 13.0F;
             constexpr float line_height = 18.0F;
             constexpr float bubble_height = line_height + padding * 2.0F;
-            const auto text_width = measure_text_width(state.message, font_size);
+            const auto text_width = measure_text_width(state.message, *anchor);
             const auto bubble_width = std::clamp(
                 text_width + padding * 2.0F,
                 std::min(160.0F, viewport_width_),

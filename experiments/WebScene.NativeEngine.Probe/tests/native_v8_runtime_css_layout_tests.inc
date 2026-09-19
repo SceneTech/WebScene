@@ -1518,6 +1518,57 @@ void test_contextual_fragment_exposes_parent_node_members(webscene_engine* engin
         "DocumentFragment ParentNode members or child identity regressed: " + result);
 }
 
+void test_live_range_boundary_contract(webscene_engine* engine)
+{
+    const auto result = evaluate(engine, R"JS(
+        (() => {
+          document.body.innerHTML = `
+            <div id="range-root"><span id="range-a">alpha</span><i id="range-start"></i><span id="range-b">beta</span><i id="range-end"></i></div>`;
+          const root = document.getElementById('range-root');
+          const a = document.getElementById('range-a').firstChild;
+          const b = document.getElementById('range-b').firstChild;
+          const range = document.createRange();
+          range.setStart(a, 1);
+          range.setEnd(b, 3);
+          const cross = [
+            range instanceof Range,
+            range.startContainer === a,
+            range.startOffset,
+            range.endContainer === b,
+            range.endOffset,
+            range.commonAncestorContainer === root,
+            range.collapsed
+          ];
+          const markers = new Range();
+          markers.setStartAfter(document.getElementById('range-start'));
+          markers.setEndBefore(document.getElementById('range-end'));
+          const marker = [
+            markers.startContainer === root,
+            markers.startOffset,
+            markers.endContainer === root,
+            markers.endOffset
+          ];
+          const contents = new Range();
+          contents.selectNodeContents(a);
+          const selected = [contents.startOffset, contents.endOffset, contents.collapsed];
+          range.setStart(b, 4);
+          const collapsedForward = range.startContainer === b
+            && range.endContainer === b && range.startOffset === 4
+            && range.endOffset === 4 && range.collapsed;
+          range.setEnd(a, 1);
+          const collapsedBackward = range.startContainer === a
+            && range.endContainer === a && range.startOffset === 1
+            && range.endOffset === 1 && range.collapsed;
+          let invalid = '';
+          try { range.setStart(a, 99); } catch (error) { invalid = error.name; }
+          return JSON.stringify({cross, marker, selected, collapsedForward, collapsedBackward, invalid});
+        })()
+    )JS", "native-live-range-boundaries.js");
+    require(
+        result == R"({"cross":[true,true,1,true,3,true,false],"marker":[true,2,true,3],"selected":[0,5,false],"collapsedForward":true,"collapsedBackward":true,"invalid":"IndexSizeError"})",
+        "live Range boundary contract regressed: " + result);
+}
+
 void test_custom_element_mutation_reactions_are_pay_for_use(webscene_engine* engine)
 {
     const auto result = evaluate(engine, R"JS(

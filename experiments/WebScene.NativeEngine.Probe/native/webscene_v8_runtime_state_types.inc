@@ -18,6 +18,18 @@
       v8::Global<v8::Object> object;
     };
 
+    struct range_binding final {
+      implementation* owner{nullptr};
+      uint64_t document_generation{0U};
+      uint32_t root_id{0U};
+      uint32_t start_node_id{0U};
+      uint32_t end_node_id{0U};
+      size_t start_offset{0U};
+      size_t end_offset{0U};
+      v8::Global<v8::Object> wrapper;
+      bool released{false};
+    };
+
     struct timer_task final {
         uint32_t id;
         bool animation_frame;

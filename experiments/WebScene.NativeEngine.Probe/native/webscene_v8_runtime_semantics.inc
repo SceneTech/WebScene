@@ -411,7 +411,18 @@
             }
         };
         visit(document.body(), 0U, 0U, false, false);
-        if (scan_truncated) return {};
+        if (scan_truncated) {
+            semantic_live_capture_data_v1 capture;
+            capture.top_document_generation = top_generation;
+            if (pending_validation_announcement) {
+                if (capture.events.size()
+                    < WEBSCENE_SEMANTIC_LIVE_MAXIMUM_PENDING_EVENTS_V1)
+                    capture.events.push_back(
+                        std::move(*pending_validation_announcement));
+                pending_validation_announcement.reset();
+            }
+            return capture;
+        }
 
         std::vector<semantic_live_event_data_v1> events;
         events.reserve(std::min(current.size(), static_cast<size_t>(32U)));
@@ -563,6 +574,12 @@
             capture.live_region_semantic_ids.begin(),
             capture.live_region_semantic_ids.end());
         capture.events = std::move(events);
+        if (pending_validation_announcement) {
+            if (capture.events.size()
+                < WEBSCENE_SEMANTIC_LIVE_MAXIMUM_PENDING_EVENTS_V1)
+                capture.events.push_back(std::move(*pending_validation_announcement));
+            pending_validation_announcement.reset();
+        }
         return capture;
     }
 
@@ -570,6 +587,7 @@
     {
         semantic_live_regions.clear();
         semantic_live_suppress_initial_alerts = suppress_initial_alerts;
+        pending_validation_announcement.reset();
     }
 
     std::shared_ptr<const semantic_snapshot_data_v1> build_semantic_snapshot_v1(

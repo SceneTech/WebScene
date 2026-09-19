@@ -59,6 +59,59 @@ void native_document::build_scene(
         append_scene(*modal, commands, strings, string_bytes, hidden,
             false, false, nullptr, nullptr, ordered_canvas, true, capture_gpu_outputs);
     }
+    // Interactive constraint feedback is engine-owned and therefore never
+    // enters the author DOM. Emit one retained overlay after all author and
+    // modal content. Its geometry is recomputed only when a scene is already
+    // being published, so scrolling/layout naturally repositions it without
+    // animation-frame demand or another cascade pass.
+    if (auxiliary_nodes_ && auxiliary_nodes_->validation_message) {
+        const auto& state = *auxiliary_nodes_->validation_message;
+        const auto* anchor = state.anchor_id == 0U
+                || state.anchor_id > native_id_index_.size()
+            ? nullptr : native_id_index_[state.anchor_id - 1U];
+        const auto* target = state.target_id == 0U
+                || state.target_id > native_id_index_.size()
+            ? nullptr : native_id_index_[state.target_id - 1U];
+        if (anchor != nullptr && target != nullptr
+            && is_connected(*anchor) && is_connected(*target)
+            && viewport_width_ > 0.0F && viewport_height_ > 0.0F) {
+            constexpr float padding = 9.0F;
+            constexpr float font_size = 13.0F;
+            constexpr float line_height = 18.0F;
+            constexpr float bubble_height = line_height + padding * 2.0F;
+            const auto text_width = measure_text_width(state.message, font_size);
+            const auto bubble_width = std::clamp(
+                text_width + padding * 2.0F,
+                std::min(160.0F, viewport_width_),
+                std::min(360.0F, viewport_width_));
+            const auto x = std::clamp(
+                anchor->layout.x, 0.0F, std::max(0.0F, viewport_width_ - bubble_width));
+            const auto below = anchor->layout.y + anchor->layout.height + 6.0F;
+            const auto above = anchor->layout.y - bubble_height - 6.0F;
+            const auto y = below + bubble_height <= viewport_height_
+                ? below : std::max(0.0F, above);
+            commands.push_back(webscene_scene_command{
+                10U, 0U, x, y, bubble_width, bubble_height,
+                0x202124F2U, anchor->id, 5, 5, 5, 5, 0});
+            commands.push_back(webscene_scene_command{
+                11U, 0U, x, y, bubble_width, bubble_height,
+                0xFFFFFFFFU, anchor->id, 5, 5, 5, 5, 1});
+            commands.push_back(webscene_scene_command{
+                12U, 0U, x + padding, y + padding,
+                std::max(0.0F, bubble_width - padding * 2.0F), line_height,
+                0U, anchor->id});
+            const auto resource = std::to_string(font_size) + '\t'
+                + std::to_string(line_height) + "\t600\tstart\tsans-serif\tauto\t"
+                + state.message;
+            commands.push_back(webscene_scene_command{
+                3U, append_scene_string(resource, strings, string_bytes),
+                x + padding, y + padding,
+                std::max(0.0F, bubble_width - padding * 2.0F), line_height,
+                0xFFFFFFFFU, anchor->id, 0, 0, 0, 0, 0});
+            commands.push_back(webscene_scene_command{
+                13U, 0U, 0, 0, 0, 0, 0U, anchor->id});
+        }
+    }
 }
 
 void native_document::publish_gpu_canvas_image(dom_node& node,

@@ -38,8 +38,9 @@ DOM layer.
 
 ## Deferred surface
 
-`reportValidity()` deliberately adds no native validation bubble or focus
-movement. Selector reads and subject recascade are live, but this slice adds no
+WebScene #708 adds interactive `reportValidity()` focus and feedback and uses
+the retained validation anchor for both direct and form-level reports.
+Selector reads and subject recascade are live, but this slice adds no
 descendant-driven structural recascade for a form or fieldset whose aggregate
 validity changed. Label association, ARIA reflection, `CustomStateSet`,
 `HTMLFormElement.elements` integration, and a persisted session-history or

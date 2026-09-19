@@ -3465,6 +3465,8 @@
         node->mutable_form_control().custom_validation_message=std::move(message);
         const auto selector_state_after=forms::validity_state(
             self->document,*node);
+        if(self->document.validation_message_target_id()==node->id)
+            self->dismiss_validation_message();
         if(selector_state_before==selector_state_after) return;
         if(self->is_connected(*node))
             self->recascade_dynamic_state_subject(*node,"setCustomValidity");
@@ -3487,6 +3489,7 @@
         if(!enabled) {
             control.element_internals_validity_flags=0U;
             control.custom_validation_message.clear();
+            control.validation_anchor_id=0U;
             control.user_validity_interacted=false;
         }
         const auto selector_state_after=forms::validity_state(
@@ -3515,8 +3518,16 @@
             :0U;
         control.custom_validation_message=info.Length()>2
             ? to_utf8(info.GetIsolate(),info[2]):std::string{};
+        control.validation_anchor_id=0U;
+        if(info.Length()>3 && info[3]->IsObject()) {
+            if(auto* anchor=unwrap_node(info[3].As<v8::Object>());
+                anchor!=nullptr && self->subtree_contains(*node,anchor))
+                control.validation_anchor_id=anchor->id;
+        }
         const auto selector_state_after=forms::validity_state(
             self->document,*node);
+        if(self->document.validation_message_target_id()==node->id)
+            self->dismiss_validation_message();
         if(selector_state_before==selector_state_after) return;
         if(self->is_connected(*node))
             self->recascade_connected_subtree(
@@ -3596,8 +3607,63 @@
         }
         const auto valid=!forms::will_validate(self->document,*node)
             || forms::constraint_validity_state(self->document,*node).valid();
-        if(!valid) static_cast<void>(self->dispatch_invalid_event(*node));
+        const auto interactive=info.Length()>1
+            && info[1]->BooleanValue(info.GetIsolate());
+        dom_node* anchor=node;
+        if(interactive && info.Length()>2 && info[2]->IsObject()) {
+            if(auto* candidate=unwrap_node(info[2].As<v8::Object>());
+                candidate!=nullptr && self->is_connected(*candidate)
+                && self->subtree_contains(*node,candidate)) anchor=candidate;
+        }
+        if(interactive) self->dismiss_validation_message();
+        if(!valid) {
+            const auto uncanceled=self->dispatch_invalid_event(*node);
+            if(interactive && uncanceled)
+                self->present_validation_message(*node,*anchor);
+        }
         info.GetReturnValue().Set(v8::Boolean::New(info.GetIsolate(),valid));
+    }
+
+    void dismiss_validation_message()
+    {
+        if(document.clear_validation_message()) pending_validation_announcement.reset();
+    }
+
+    bool present_validation_message(dom_node& target, dom_node& anchor)
+    {
+        if(!is_connected(target) || !is_connected(anchor)
+            || !is_programmatically_focusable(&anchor)) return false;
+        auto message=forms::validation_message(document,target);
+        if(message.empty()) return false;
+        webscene_input_event synthetic{};
+        if(!set_active_element(&anchor,synthetic)) return false;
+        document.show_validation_message(target,anchor,message);
+        semantic_live_event_data_v1 event;
+        event.top_document_generation=document_generation.load(
+            std::memory_order_acquire);
+        event.frame_owner_dom_node_id=focus_document_owner(&anchor);
+        if(event.frame_owner_dom_node_id!=0U) {
+            const auto generation=frame_navigation_generations.find(
+                event.frame_owner_dom_node_id);
+            if(generation!=frame_navigation_generations.end())
+                event.frame_generation=generation->second;
+        }
+        event.dom_node_id=target.id;
+        event.semantic_id=semantic_identity(
+            event.top_document_generation,event.frame_generation,
+            event.frame_owner_dom_node_id,target.id);
+        event.role=WEBSCENE_SEMANTIC_LIVE_REGION_ALERT_V1;
+        event.politeness=WEBSCENE_SEMANTIC_LIVE_ASSERTIVE_V1;
+        event.flags=WEBSCENE_SEMANTIC_LIVE_ATOMIC_V1
+            | WEBSCENE_SEMANTIC_LIVE_RELEVANT_ADDITIONS_V1;
+        event.text=std::move(message);
+        if(event.text.size()>1024U) {
+            event.text.resize(1024U);
+            semantic_live_trim_incomplete_utf8(event.text);
+            event.flags|=WEBSCENE_SEMANTIC_LIVE_TEXT_TRUNCATED_V1;
+        }
+        pending_validation_announcement=std::move(event);
+        return true;
     }
 
     bool dispatch_invalid_event(dom_node& node)
@@ -3623,7 +3689,7 @@
             && !result->IsFalse();
     }
 
-    bool validate_form_constraints(dom_node& form)
+    bool validate_form_constraints(dom_node& form, bool interactive=false)
     {
         std::vector<dom_node*> invalid_controls;
         for(const auto* candidate:forms::form_validation_controls(document,form)) {
@@ -3631,8 +3697,25 @@
                 && !forms::constraint_validity_state(document,*candidate).valid())
                 invalid_controls.push_back(const_cast<dom_node*>(candidate));
         }
-        for(auto* control:invalid_controls)
-            static_cast<void>(dispatch_invalid_event(*control));
+        if(interactive) dismiss_validation_message();
+        for(auto*& control:invalid_controls) {
+            const auto uncanceled=dispatch_invalid_event(*control);
+            if(!uncanceled) control=nullptr;
+        }
+        if(interactive) {
+            for(auto* control:invalid_controls) {
+                if(control==nullptr || !is_connected(*control)) continue;
+                auto* anchor=control;
+                if(control->form_control().validation_anchor_id!=0U) {
+                    if(auto* stored=document.find_by_native_id(
+                            control->form_control().validation_anchor_id);
+                        stored!=nullptr && is_connected(*stored)
+                        && subtree_contains(*control,stored)) anchor=stored;
+                }
+                if(is_programmatically_focusable(anchor)
+                    && present_validation_message(*control,*anchor)) break;
+            }
+        }
         return invalid_controls.empty();
     }
 
@@ -3654,6 +3737,29 @@
         const auto valid=!candidate
             || forms::constraint_validity_state(self->document,*node).valid();
         if(!valid) static_cast<void>(self->dispatch_invalid_event(*node));
+        info.GetReturnValue().Set(v8::Boolean::New(info.GetIsolate(),valid));
+    }
+
+    static void report_control(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* self=current(info.GetIsolate());
+        auto* node=unwrap_node(info.This());
+        if(self!=nullptr && node!=nullptr && node->tag=="form") {
+            info.GetReturnValue().Set(v8::Boolean::New(
+                info.GetIsolate(),self->validate_form_constraints(*node,true)));
+            return;
+        }
+        if(self==nullptr || !is_constraint_validation_element(node)) {
+            info.GetReturnValue().Set(v8::True(info.GetIsolate()));
+            return;
+        }
+        self->dismiss_validation_message();
+        const auto candidate=forms::will_validate(self->document,*node);
+        const auto valid=!candidate
+            || forms::constraint_validity_state(self->document,*node).valid();
+        if(!valid && self->dispatch_invalid_event(*node))
+            static_cast<void>(self->present_validation_message(*node,*node));
         info.GetReturnValue().Set(v8::Boolean::New(info.GetIsolate(),valid));
     }
 

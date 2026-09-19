@@ -1772,6 +1772,11 @@
         dom_node* submitter = nullptr,
         std::optional<bool> trusted = std::nullopt)
     {
+        const auto type_view = std::string_view(type);
+        if ((type_view == "input" || type_view == "change")
+            && document.validation_message_target_id() == target.id) {
+            dismiss_validation_message();
+        }
         webscene_frame_trace::scope trace(frame_trace, "event-start", "event-end", input.sequence);
         const auto previous_context = isolate->GetCurrentContext();
         auto local_context = context_for_node(target);
@@ -1796,7 +1801,6 @@
         ++event_dispatch_target_counts[type][target.id];
 #endif
         const auto callback_count_before = input_callback_invocation_count;
-        const auto type_view = std::string_view(type);
         const auto drag_event = type_view == "dragstart" || type_view == "dragend"
             || type_view == "dragenter"
             || type_view == "dragover" || type_view == "dragleave"
@@ -2600,6 +2604,11 @@
 
     bool set_active_element(dom_node* next, const webscene_input_event& input)
     {
+      const auto validation_target=document.validation_message_target_id();
+      const auto validation_anchor=document.validation_message_anchor_id();
+      if(validation_target!=0U && (next==nullptr
+          || (next->id!=validation_target && next->id!=validation_anchor)))
+        dismiss_validation_message();
       const auto next_owner = next == nullptr ? focused_document_owner_id
                                               : focus_document_owner(next);
       if (active_element == next && focused_document_owner_id == next_owner)
@@ -2707,6 +2716,13 @@
 
     bool blur_active_element_before_detach(dom_node& detached_root)
     {
+        const auto validation_target=document.find_by_native_id(
+            document.validation_message_target_id());
+        const auto validation_anchor=document.find_by_native_id(
+            document.validation_message_anchor_id());
+        if(subtree_contains(detached_root,validation_target)
+            || subtree_contains(detached_root,validation_anchor))
+            dismiss_validation_message();
         document.unregister_modal_subtree(detached_root);
         auto *focused_owner =
             focused_document_owner_id == 0U

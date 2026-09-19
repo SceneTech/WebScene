@@ -13,8 +13,9 @@ and form/fieldset elements never match `:user-valid` or `:user-invalid`.
 `HTMLFormElement.checkValidity()` and `reportValidity()` statically validate all
 owned candidates in tree order. Every invalid candidate receives the existing
 cancelable, non-bubbling `invalid` event, and either method returns false when
-any candidate was invalid. `reportValidity()` deliberately adds no native
-validation UI in this slice.
+any candidate was invalid. WebScene #708 subsequently adds bounded interactive
+feedback to `reportValidity()` while leaving submit-attempt validation on this
+noninteractive path.
 
 Submit-button and implicit submission now set user validity on each owned
 input, select, and textarea before validation. A failing validation dispatches

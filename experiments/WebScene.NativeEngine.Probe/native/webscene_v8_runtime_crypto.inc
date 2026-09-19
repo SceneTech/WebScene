@@ -78,7 +78,11 @@
 
     static bool base64url_decode(std::string_view input, secure_bytes& output)
     {
-        if (input.size() % 4U == 1U) return false;
+        if (input.size() % 4U == 1U
+            || input.size()
+                > (std::numeric_limits<std::size_t>::max() - 2U) / 3U) {
+            return false;
+        }
         auto decode = [](char character) -> int {
             if (character >= 'A' && character <= 'Z') return character - 'A';
             if (character >= 'a' && character <= 'z') return character - 'a' + 26;
@@ -87,8 +91,13 @@
             if (character == '_') return 63;
             return -1;
         };
-        std::vector<std::uint8_t> decoded;
-        decoded.reserve(input.size() * 3U / 4U + 2U);
+        // JWK `k` is key material even when the encoding is malformed. Keep
+        // partially decoded bytes in the zeroizing container so every early
+        // return scrubs the prefix already consumed from attacker-controlled
+        // input.
+        secure_bytes decoded(input.size() * 3U / 4U + 2U);
+        auto decoded_bytes = decoded.mutable_view();
+        std::size_t decoded_size = 0U;
         std::uint32_t bits = 0U;
         unsigned available = 0U;
         for (const auto character : input) {
@@ -98,14 +107,21 @@
             available += 6U;
             if (available >= 8U) {
                 available -= 8U;
-                decoded.push_back(static_cast<std::uint8_t>(bits >> available));
+                decoded_bytes[decoded_size++] =
+                    static_cast<std::uint8_t>(bits >> available);
                 bits &= available == 0U ? 0U : (1U << available) - 1U;
             }
         }
         if (available != 0U && bits != 0U) return false;
-        output = secure_bytes(decoded);
-        crypto_zeroize(decoded);
+        output = secure_bytes(decoded.view().first(decoded_size));
         return true;
+    }
+
+    static void zeroize_crypto_text(std::string& value) noexcept
+    {
+        if (value.empty()) return;
+        crypto_zeroize(std::span<std::uint8_t>{
+            reinterpret_cast<std::uint8_t*>(value.data()), value.size()});
     }
 
     static bool read_usages(
@@ -626,8 +642,21 @@
             if (!jwk->Get(local_context, js_string(isolate, "kty")).ToLocal(&kty)
                 || to_utf8(isolate, kty) != "oct"
                 || !jwk->Get(local_context, js_string(isolate, "k")).ToLocal(&encoded)
-                || !encoded->IsString()
-                || !base64url_decode(to_utf8(isolate, encoded), material)) {
+                || !encoded->IsString()) {
+                dom_reject("Invalid HMAC JSON Web Key", "DataError");
+                return;
+            }
+            constexpr auto maximum_hmac_jwk_text_bytes =
+                (maximum_cipher_input_bytes * 4U + 2U) / 3U;
+            if (encoded.As<v8::String>()->Utf8Length(isolate)
+                > maximum_hmac_jwk_text_bytes) {
+                dom_reject("HMAC JWK keyData exceeds the 16 MiB runtime bound", "DataError");
+                return;
+            }
+            auto encoded_text = to_utf8(isolate, encoded);
+            const auto decoded = base64url_decode(encoded_text, material);
+            zeroize_crypto_text(encoded_text);
+            if (!decoded) {
                 dom_reject("Invalid HMAC JSON Web Key", "DataError");
                 return;
             }
@@ -748,8 +777,20 @@
             if (!jwk->Get(local_context, js_string(isolate, "kty")).ToLocal(&kty)
                 || to_utf8(isolate, kty) != "oct"
                 || !jwk->Get(local_context, js_string(isolate, "k")).ToLocal(&encoded)
-                || !encoded->IsString()
-                || !base64url_decode(to_utf8(isolate, encoded), material)) {
+                || !encoded->IsString()) {
+                reject("Invalid AES JSON Web Key", "DataError");
+                return;
+            }
+            // Unpadded Base64URL for the largest accepted 256-bit AES key is
+            // 43 bytes. Reject before allocating a native UTF-8 copy.
+            if (encoded.As<v8::String>()->Utf8Length(isolate) > 43U) {
+                reject("AES JWK keyData exceeds 256 bits", "DataError");
+                return;
+            }
+            auto encoded_text = to_utf8(isolate, encoded);
+            const auto decoded = base64url_decode(encoded_text, material);
+            zeroize_crypto_text(encoded_text);
+            if (!decoded) {
                 reject("Invalid AES JSON Web Key", "DataError");
                 return;
             }
@@ -852,10 +893,12 @@
         if (format == "jwk") {
             auto jwk = v8::Object::New(isolate);
             jwk->Set(local_context, js_string(isolate, "kty"), js_string(isolate, "oct")).Check();
-            const auto encoded = base64url_encode(copy.view());
+            auto encoded = base64url_encode(copy.view());
             copy.clear();
+            const auto encoded_value = js_string(isolate, encoded.c_str());
+            zeroize_crypto_text(encoded);
             jwk->Set(local_context, js_string(isolate, "k"),
-                js_string(isolate, encoded.c_str())).Check();
+                encoded_value).Check();
             const auto alg = metadata->algorithm == "HMAC"
                 ? (metadata->hash == "SHA-1" ? std::string{"HS1"} : std::string{"HS256"})
                 : "A" + std::to_string(metadata->length_bits)

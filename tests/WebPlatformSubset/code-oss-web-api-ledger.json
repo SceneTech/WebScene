@@ -141,7 +141,7 @@
       ],
       "evidence": [],
       "limits": [],
-      "reason": "Random generation is available while the reachable subtle-crypto surface remains incomplete.",
+      "reason": "The vetted-provider runtime surface is complete; configured unchanged-package MCP secret-input and browser connection-secret persistence/reopen evidence remains missing across the release RIDs. Stock Code OSS omits proprietary VSDA assets, and bundled Copilot HMAC executes in its Node extension host.",
       "platforms": [
         "linux-x64",
         "macos-arm64",

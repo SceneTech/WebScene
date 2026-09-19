@@ -13,6 +13,11 @@ const finish=()=>{const s=__webSceneWptState;s.harness={status:s.results.some(r=
  record('RFC 4231 HMAC-SHA-256 vector',hex(await crypto.subtle.sign('HMAC',key,data))==='b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7');
  const jwk=await crypto.subtle.exportKey('jwk',key);
  record('HMAC JWK metadata',jwk.kty==='oct'&&jwk.alg==='HS256'&&jwk.k==='CwsLCwsLCwsLCwsLCwsLCwsLCws');
+ let malformed='';try{await crypto.subtle.importKey('jwk',{
+   kty:'oct',k:'CwsLCwsLCwsLCwsLCwsLCwsLCws!',alg:'HS256',ext:true,key_ops:['sign']
+ },{name:'HMAC',hash:'SHA-256'},true,['sign']);}catch(error){malformed=error.name;}
+ record('HMAC rejects malformed Base64URL after a decoded key prefix',
+   malformed==='DataError',`Received ${malformed}`);
  const copied=new Uint8Array(1024);copied.fill(0x5a);const pending=crypto.subtle.sign('HMAC',key,copied);copied.fill(0);
  record('HMAC copies input during the call',hex(await pending)===hex(await crypto.subtle.sign('HMAC',key,new Uint8Array(1024).fill(0x5a))));
  let empty='';try{await crypto.subtle.importKey('raw',new Uint8Array(),{name:'HMAC',hash:'SHA-256'},false,['sign']);}catch(error){empty=error.name;}

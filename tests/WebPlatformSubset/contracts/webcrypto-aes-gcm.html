@@ -34,6 +34,11 @@ const finish=()=>{const state=__webSceneWptState;state.harness={status:state.res
   const oneWay=await crypto.subtle.importKey('raw',raw,'AES-GCM',false,['encrypt']);
   let usage='';try{await crypto.subtle.decrypt({name:'AES-GCM',iv},oneWay,encrypted);}catch(error){usage=error.name;}
   record('AES-GCM enforces key usages',usage==='InvalidAccessError',`Received ${usage}`);
+  let malformed='';try{await crypto.subtle.importKey('jwk',{
+    kty:'oct',k:'AAAAAAAAAAAAAAAAAAAAAA!',alg:'A128GCM',ext:true,key_ops:['encrypt']
+  },'AES-GCM',true,['encrypt']);}catch(error){malformed=error.name;}
+  record('AES-GCM rejects malformed Base64URL after a decoded key prefix',
+    malformed==='DataError',`Received ${malformed}`);
   const copied=new Uint8Array(1024);copied.fill(0x5a);
   const pending=crypto.subtle.encrypt({name:'AES-GCM',iv},key,copied);copied.fill(0);
   record('AES-GCM copies input during the call',(await pending).byteLength===1040);

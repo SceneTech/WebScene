@@ -22,10 +22,14 @@ and the cumulative top runtime contract.
 
 Opaque key bytes live only in `secure_bytes`. Destruction, replacement, realm
 shutdown, and explicit clearing call `mbedtls_platform_zeroize`; copy operations
-are disabled. The key store checks realm ownership and allowed usages before it
-exposes bytes to a provider callback. Digest input is copied before asynchronous
-work and uses the same zeroizing storage. Provider contexts are freed on every
-success, error, and cancellation path.
+are disabled. Partially decoded JWK material remains in `secure_bytes`, and the
+temporary Base64URL text used for JWK import or export is explicitly zeroized
+after conversion on success and rejection paths. AES and HMAC imports reject
+oversized Base64URL text before allocating a native UTF-8 copy. The key store
+checks realm ownership and allowed usages before it exposes bytes to a provider
+callback. Digest input is copied before asynchronous work and uses the same
+zeroizing storage. Provider contexts are freed on every success, error, and
+cancellation path.
 
 Digest work is chunked so a realm shutdown stop request is observed between
 provider updates. The JavaScript layer bounds each input at 16 MiB, aggregate

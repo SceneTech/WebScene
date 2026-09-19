@@ -1,0 +1,76 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Numeric constraint validity follows live number and range values</title>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<style>
+.probe {padding-left:11px}
+.probe:invalid {padding-left:47px}
+</style>
+<script>
+const state=control=>[control.value,control.valueAsNumber,
+  control.matches(':valid'),control.matches(':invalid'),
+  control.matches(':in-range'),control.matches(':out-of-range'),
+  getComputedStyle(control).paddingLeft];
+
+test(()=>{
+  const input=document.createElement('input');input.className='probe';
+  input.type='number';input.min='2';input.max='8';input.step='2';
+  input.value='4';document.body.appendChild(input);
+  assert_array_equals(state(input),['4',4,true,false,true,false,'11px']);
+  input.value='1';
+  assert_array_equals(state(input),['1',1,false,true,false,true,'47px'],
+    'range underflow contributes invalidity');
+  input.value='3';
+  assert_array_equals(state(input),['3',3,false,true,true,false,'47px'],
+    'an in-range value can still suffer step mismatch');
+  input.step='any';
+  assert_array_equals(state(input),['3',3,true,false,true,false,'11px']);
+  input.step='2';input.min='4';
+  assert_array_equals(state(input),['3',3,false,true,false,true,'47px'],
+    'min mutation changes both the bound and step base');
+  input.valueAsNumber=6;
+  assert_array_equals(state(input),['6',6,true,false,true,false,'11px']);
+  input.max='5';
+  assert_array_equals(state(input),['6',6,false,true,false,true,'47px'],
+    'max mutation establishes range overflow');
+},'number validity follows live value, valueAsNumber, bounds, and step');
+
+test(()=>{
+  const input=document.createElement('input');input.type='number';
+  input.min='0.5';input.value='1';document.body.appendChild(input);
+  assert_true(input.matches(':invalid'),'number default step is one');
+  input.value='1.5';
+  assert_true(input.matches(':valid'));
+  input.removeAttribute('min');input.setAttribute('value','0.25');input.value='1.25';
+  assert_true(input.matches(':valid'),'the value content attribute supplies the step base');
+  input.value='not-a-number';
+  assert_equals(input.value,'','programmatic invalid number text is sanitized');
+  assert_true(Number.isNaN(input.valueAsNumber));
+},'number parsing, default step, and authored-value step base follow HTML rules');
+
+test(()=>{
+  const input=document.createElement('input');input.className='probe';
+  input.type='range';input.min='0';input.max='10';input.step='2';
+  input.value='3';document.body.appendChild(input);
+  assert_array_equals(state(input),['4',4,true,false,true,false,'11px'],
+    'a range value is rounded toward the positive direction on a tie');
+  input.valueAsNumber=11;
+  assert_array_equals(state(input),['10',10,true,false,true,false,'11px']);
+  input.value='bad';
+  assert_array_equals(state(input),['6',6,true,false,true,false,'11px'],
+    'invalid range text falls back to the stepped midpoint');
+},'range uses its default-value, clamping, and stepping rules');
+
+test(()=>{
+  const input=document.createElement('input');input.className='probe';
+  input.type='number';input.min='0';input.value='-1';document.body.appendChild(input);
+  assert_array_equals(state(input),['-1',-1,false,true,false,true,'47px']);
+  input.readOnly=true;
+  assert_false(input.willValidate);
+  assert_array_equals(state(input),['-1',-1,false,false,false,true,'11px']);
+  input.readOnly=false;input.disabled=true;
+  assert_false(input.willValidate);
+  assert_array_equals(state(input),['-1',-1,false,false,false,true,'11px']);
+},'readonly and disabled numeric controls are barred from constraint validation');
+</script>

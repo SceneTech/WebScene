@@ -732,7 +732,8 @@
         if (!previous_live_value.has_value()
             || node.form_control().dirty_value) return;
         auto& control = node.mutable_form_control();
-        control.value = current_default_value.value_or(std::string{});
+        control.value = forms::sanitize_programmatic_numeric_value(
+            node,current_default_value.value_or(std::string{}));
         control.value_initialized = true;
         control.selection_start = control.value.size();
         control.selection_end = control.value.size();

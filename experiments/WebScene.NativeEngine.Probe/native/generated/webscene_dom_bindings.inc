@@ -1476,6 +1476,29 @@ static void generated_HTMLElement_value_set(
     set_form_value(info.Data().As<v8::Name>(), value, info);
 }
 
+static void generated_HTMLElement_valueAsNumber_get(
+    v8::Local<v8::Name>,
+    const v8::PropertyCallbackInfo<v8::Value>& info)
+{
+    if (!generated_dom_receiver_is(info.GetIsolate(), info.Holder(), generated_dom_interface::HTMLElement)) {
+        throw_generated_illegal_invocation(info.GetIsolate());
+        return;
+    }
+    get_value_as_number(info.Data().As<v8::Name>(), info);
+}
+
+static void generated_HTMLElement_valueAsNumber_set(
+    v8::Local<v8::Name>,
+    v8::Local<v8::Value> value,
+    const v8::PropertyCallbackInfo<void>& info)
+{
+    if (!generated_dom_receiver_is(info.GetIsolate(), info.Holder(), generated_dom_interface::HTMLElement)) {
+        throw_generated_illegal_invocation(info.GetIsolate());
+        return;
+    }
+    set_value_as_number(info.Data().As<v8::Name>(), value, info);
+}
+
 static void generated_HTMLElement_defaultValue_get(
     v8::Local<v8::Name>,
     const v8::PropertyCallbackInfo<v8::Value>& info)
@@ -1557,6 +1580,29 @@ static void generated_HTMLElement_max_get(
 }
 
 static void generated_HTMLElement_max_set(
+    v8::Local<v8::Name>,
+    v8::Local<v8::Value> value,
+    const v8::PropertyCallbackInfo<void>& info)
+{
+    if (!generated_dom_receiver_is(info.GetIsolate(), info.Holder(), generated_dom_interface::HTMLElement)) {
+        throw_generated_illegal_invocation(info.GetIsolate());
+        return;
+    }
+    set_reflected_string_attribute(info.Data().As<v8::Name>(), value, info);
+}
+
+static void generated_HTMLElement_step_get(
+    v8::Local<v8::Name>,
+    const v8::PropertyCallbackInfo<v8::Value>& info)
+{
+    if (!generated_dom_receiver_is(info.GetIsolate(), info.Holder(), generated_dom_interface::HTMLElement)) {
+        throw_generated_illegal_invocation(info.GetIsolate());
+        return;
+    }
+    get_reflected_string_attribute(info.Data().As<v8::Name>(), info);
+}
+
+static void generated_HTMLElement_step_set(
     v8::Local<v8::Name>,
     v8::Local<v8::Value> value,
     const v8::PropertyCallbackInfo<void>& info)
@@ -4041,6 +4087,21 @@ void install_generated_dom_templates(v8::Local<v8::Context>)
             generated_HTMLElement_signature, 0),
         v8::FunctionTemplate::New(isolate, generated_dom_prototype_attribute_set, generated_HTMLElement_value_symbol, generated_HTMLElement_signature, 1),
         v8::PropertyAttribute::None);
+    auto generated_HTMLElement_valueAsNumber_symbol = v8::Symbol::New(
+        isolate, js_string(isolate, "WebScene.HTMLElement.valueAsNumber"));
+    generated_HTMLElement_template->InstanceTemplate()->SetNativeDataProperty(
+        generated_HTMLElement_valueAsNumber_symbol,
+        generated_HTMLElement_valueAsNumber_get,
+        generated_HTMLElement_valueAsNumber_set,
+        js_string(isolate, "valueAsNumber"),
+        v8::PropertyAttribute::None);
+    generated_HTMLElement_template->PrototypeTemplate()->SetAccessorProperty(
+        js_string(isolate, "valueAsNumber"),
+        v8::FunctionTemplate::New(
+            isolate, generated_dom_prototype_attribute_get, generated_HTMLElement_valueAsNumber_symbol,
+            generated_HTMLElement_signature, 0),
+        v8::FunctionTemplate::New(isolate, generated_dom_prototype_attribute_set, generated_HTMLElement_valueAsNumber_symbol, generated_HTMLElement_signature, 1),
+        v8::PropertyAttribute::None);
     auto generated_HTMLElement_defaultValue_symbol = v8::Symbol::New(
         isolate, js_string(isolate, "WebScene.HTMLElement.defaultValue"));
     generated_HTMLElement_template->InstanceTemplate()->SetNativeDataProperty(
@@ -4100,6 +4161,21 @@ void install_generated_dom_templates(v8::Local<v8::Context>)
             isolate, generated_dom_prototype_attribute_get, generated_HTMLElement_max_symbol,
             generated_HTMLElement_signature, 0),
         v8::FunctionTemplate::New(isolate, generated_dom_prototype_attribute_set, generated_HTMLElement_max_symbol, generated_HTMLElement_signature, 1),
+        v8::PropertyAttribute::None);
+    auto generated_HTMLElement_step_symbol = v8::Symbol::New(
+        isolate, js_string(isolate, "WebScene.HTMLElement.step"));
+    generated_HTMLElement_template->InstanceTemplate()->SetNativeDataProperty(
+        generated_HTMLElement_step_symbol,
+        generated_HTMLElement_step_get,
+        generated_HTMLElement_step_set,
+        js_string(isolate, "step"),
+        v8::PropertyAttribute::None);
+    generated_HTMLElement_template->PrototypeTemplate()->SetAccessorProperty(
+        js_string(isolate, "step"),
+        v8::FunctionTemplate::New(
+            isolate, generated_dom_prototype_attribute_get, generated_HTMLElement_step_symbol,
+            generated_HTMLElement_signature, 0),
+        v8::FunctionTemplate::New(isolate, generated_dom_prototype_attribute_set, generated_HTMLElement_step_symbol, generated_HTMLElement_signature, 1),
         v8::PropertyAttribute::None);
     auto generated_HTMLElement_readOnly_symbol = v8::Symbol::New(
         isolate, js_string(isolate, "WebScene.HTMLElement.readOnly"));

@@ -289,6 +289,48 @@ void test_live_form_state_selectors_and_scaling()
             "text-constraint-too-long.js") == R"(["abcd",true,"47px"])",
         "native user edit did not establish too-long state");
 
+    const auto numeric_constraint_validity = evaluate(engine, R"JS((() => {
+      const form=document.getElementById('form');
+      const state=node=>[node.value,node.valueAsNumber,node.matches(':valid'),
+        node.matches(':invalid'),node.matches(':in-range'),node.matches(':out-of-range'),
+        getComputedStyle(node).paddingLeft];
+      const number=document.createElement('input');number.className='probe';
+      number.type='number';number.min='2';number.max='8';number.step='2';
+      number.value='4';form.appendChild(number);
+      const numberStates=[state(number)];
+      number.value='1';numberStates.push(state(number));
+      number.value='3';numberStates.push(state(number));
+      number.step='any';numberStates.push(state(number));
+      number.step='2';number.min='4';numberStates.push(state(number));
+      number.valueAsNumber=6;numberStates.push(state(number));
+      number.max='5';numberStates.push(state(number));
+      number.readOnly=true;numberStates.push(state(number));
+      const range=document.createElement('input');range.className='probe';
+      range.type='range';range.min='0';range.max='10';range.step='2';
+      range.value='3';form.appendChild(range);
+      const rangeStates=[state(range)];
+      range.valueAsNumber=11;rangeStates.push(state(range));
+      range.value='bad';rangeStates.push(state(range));
+      const bad=document.createElement('input');bad.id='numeric-bad';
+      bad.className='probe';bad.type='number';bad.min='0';form.appendChild(bad);bad.focus();
+      return [numberStates,rangeStates,state(bad)];
+    })())JS", "numeric-constraint-validity.js");
+    require(numeric_constraint_validity == R"JSON([[["4",4,true,false,true,false,"19px"],["1",1,false,true,false,true,"47px"],["3",3,false,true,true,false,"47px"],["3",3,true,false,true,false,"19px"],["3",3,false,true,false,true,"47px"],["6",6,true,false,true,false,"19px"],["6",6,false,true,false,true,"47px"],["6",6,false,false,false,true,"19px"]],[["4",4,true,false,true,false,"19px"],["10",10,true,false,true,false,"19px"],["6",6,true,false,true,false,"19px"]],["",null,true,false,false,false,"19px"]])JSON",
+        "numeric constraint value, bounds, step, or validation gating diverged: "
+            + numeric_constraint_validity);
+    keyboard_input(engine, WEBSCENE_INPUT_TEXT, '-', 6U);
+    wait_for_consumed_inputs(engine, 6U, "bad numeric native edit was not consumed");
+    require(evaluate(engine,
+            "(()=>{const n=document.getElementById('numeric-bad');return [n.value,n.valueAsNumber,n.matches(':invalid'),getComputedStyle(n).paddingLeft]})()",
+            "numeric-constraint-bad-input.js") == R"(["-",null,true,"47px"])",
+        "native numeric edit did not establish bad-input state");
+    keyboard_input(engine, WEBSCENE_INPUT_TEXT, '5', 7U);
+    wait_for_consumed_inputs(engine, 7U, "numeric underflow edit was not consumed");
+    require(evaluate(engine,
+            "[document.getElementById('numeric-bad').value,document.getElementById('numeric-bad').valueAsNumber,document.getElementById('numeric-bad').matches(':invalid'),document.getElementById('numeric-bad').matches(':out-of-range')]",
+            "numeric-constraint-underflow.js") == R"(["-5",-5,true,true])",
+        "native numeric edit did not transition from bad input to range underflow");
+
     const auto setup = evaluate(engine, R"JS((() => {
       document.body.innerHTML='<style>.scale:invalid{width:2px}.scale:placeholder-shown{height:3px}'+
         Array.from({length:1024},(_,i)=>'.noise-'+i+':hover{width:7px}').join('')+'</style>'+

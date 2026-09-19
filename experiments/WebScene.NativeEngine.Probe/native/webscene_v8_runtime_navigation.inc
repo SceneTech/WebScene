@@ -660,6 +660,7 @@
         if (!execute_document_start_scripts(local_context, false)) return false;
         css_rules.clear();
         opacity_keyframes.clear();
+        registered_custom_properties.clear();
         css_rules_by_class.clear();
         css_rules_by_id.clear();
         css_rules_by_tag.clear();

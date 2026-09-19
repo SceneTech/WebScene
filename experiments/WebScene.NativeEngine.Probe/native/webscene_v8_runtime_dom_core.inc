@@ -791,6 +791,8 @@
         state.stylesheet_owner_id = active_stylesheet_owner_id;
         state.stylesheet_shadow_scope_root_id = active_stylesheet_shadow_scope_root_id;
         state.opacity_keyframes = std::move(opacity_keyframes);
+        state.registered_custom_properties =
+            std::move(registered_custom_properties);
         state.rules_by_class = std::move(css_rules_by_class);
         state.rules_by_id = std::move(css_rules_by_id);
         state.rules_by_tag = std::move(css_rules_by_tag);
@@ -828,6 +830,8 @@
         active_stylesheet_shadow_scope_root_id =
             state.stylesheet_shadow_scope_root_id;
         opacity_keyframes = std::move(state.opacity_keyframes);
+        registered_custom_properties =
+            std::move(state.registered_custom_properties);
         css_rules_by_class = std::move(state.rules_by_class);
         css_rules_by_id = std::move(state.rules_by_id);
         css_rules_by_tag = std::move(state.rules_by_tag);

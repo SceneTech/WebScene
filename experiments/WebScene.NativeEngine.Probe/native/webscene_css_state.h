@@ -252,11 +252,28 @@ struct compiled_css_selector final {
     };
 
     struct css_opacity_keyframes final {
+        struct custom_property_stop final {
+            float offset{0};
+            std::string value;
+        };
         std::vector<node_style::opacity_keyframe> opacity_stops;
         std::vector<node_style::translation_keyframe> translation_stops;
         std::vector<node_style::scale_keyframe> scale_stops;
         std::vector<node_style::rotation_keyframe> rotation_stops;
         std::vector<node_style::filter_keyframe> filter_stops;
+        std::unordered_map<std::string, std::vector<custom_property_stop>>
+            custom_property_stops;
+    };
+
+    enum class registered_property_syntax : uint8_t { angle, percentage };
+
+    struct registered_custom_property final {
+        std::string name;
+        registered_property_syntax syntax{registered_property_syntax::angle};
+        std::string initial_value;
+        float initial_number{0};
+        bool inherits{false};
+        uint32_t stylesheet_owner_id{0};
     };
 
     struct css_inheritance_candidate_rule final {
@@ -310,6 +327,8 @@ struct compiled_css_selector final {
         std::vector<hover_selector_dependency> active_dependencies;
         std::unordered_map<std::string, std::string> variables;
         std::unordered_set<std::string> important_variables;
+        std::unordered_map<std::string, registered_custom_property>
+            registered_custom_properties;
         std::unordered_map<std::string, uint32_t> cascade_layer_orders;
         std::unordered_map<uint32_t, std::vector<std::string>>
             stylesheet_layer_names;

@@ -2751,6 +2751,13 @@
       "evidence": ["wpt-service-workers-fetch-event", "chromium-153-direct-product-fixture", "vscode-oss-645f29c-unchanged-service-worker"],
       "reason": "Cumulative connected-resource acceptance for WebScene #266/#308. The unchanged VS Code 645f29c webview Service Worker performs CacheStorage empty-match, client load-resource messaging, and bounded chunk streaming for prelude script, extension stylesheet, element SVG, and stylesheet CSS url() SVG while the fixture renders content from the copied current vscode-demo README. The native companion gate covers controller-first CSS image routing, unhandled host fallback, handled failure closure, stale-style response rejection, teardown, 100 warm cycles at p95 <= 100 ms, <= 8 MiB retained V8 heap, <= 64 MiB post-warm RSS growth, and <= 256 MiB absolute high-water growth.",
       "nativeNavigation": true
+    },
+    {
+      "path": "contracts/css-registered-custom-property-animation.html",
+      "type": "testharness",
+      "capabilities": ["css-property-rule", "registered-angle-property", "registered-percentage-property", "typed-custom-property-keyframes", "non-inheriting-initial-value", "dependent-gradient-token-update"],
+      "evidence": ["native-parser-contract", "v8-free-native-cascade-contract", "focused-live-runtime-contract", "unchanged-code-oss-645f29c-inventory"],
+      "reason": "Implementation-first WebScene #748 contract for the bounded <angle>/<percentage> @property slice used by unchanged Code OSS. It checks CSSPropertyRule reflection, inherits:false initial values, a deterministic paused midpoint, and the dependent gradient token. Browser/native execution and exact product pixels remain qualification debt; conic-gradient and border-image raster consumers are separate paint work."
     }
   ],
   "harnessBlocked": [],

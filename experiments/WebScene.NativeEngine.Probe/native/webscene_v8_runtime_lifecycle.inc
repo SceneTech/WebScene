@@ -1219,6 +1219,12 @@
                 for (auto& stop : keyframes.filter_stops) {
                     stop.value.shrink_to_fit();
                 }
+                for (auto& [property, stops]
+                     : keyframes.custom_property_stops) {
+                    static_cast<void>(property);
+                    stops.shrink_to_fit();
+                    for (auto& stop : stops) stop.value.shrink_to_fit();
+                }
             }
             const auto compact_index = [](auto& index) {
                 for (auto& [key, values] : index) {
@@ -1250,6 +1256,12 @@
                     keyframes.filter_stops.shrink_to_fit();
                     for (auto& stop : keyframes.filter_stops) {
                         stop.value.shrink_to_fit();
+                    }
+                    for (auto& [property, stops]
+                         : keyframes.custom_property_stops) {
+                        static_cast<void>(property);
+                        stops.shrink_to_fit();
+                        for (auto& stop : stops) stop.value.shrink_to_fit();
                     }
                 }
                 compact_index(cascade.rules_by_class);

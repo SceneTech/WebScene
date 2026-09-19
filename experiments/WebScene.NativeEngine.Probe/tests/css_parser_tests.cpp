@@ -101,6 +101,27 @@ void invalid_utf8_is_rejected()
     require(!parsed, "invalid UTF-8 should fail explicitly");
 }
 
+void property_descriptors_stream_as_declarations()
+{
+    const auto parsed = parse_css_syntax_stylesheet(R"CSS(
+        @property --progress {
+            syntax: '<percentage>';
+            inherits: false;
+            initial-value: 0%;
+        }
+    )CSS");
+    require(static_cast<bool>(parsed), parsed.error);
+    require(parsed.rules.size() == 1U && parsed.rules[0].name == "property",
+        "@property remains a document-level at-rule");
+    require(parsed.rules[0].declaration_count == 3U
+        && parsed.declarations.size() == 3U,
+        "@property descriptors stream through declaration callbacks");
+    require(parsed.declarations[0].name == "syntax"
+        && parsed.declarations[1].name == "inherits"
+        && parsed.declarations[2].name == "initial-value",
+        "@property descriptor names preserve source order");
+}
+
 class direct_sink final : public css_syntax_sink {
 public:
     bool begin_rule(
@@ -190,6 +211,7 @@ int main()
     declaration_syntax();
     stylesheet_structure();
     invalid_utf8_is_rejected();
+    property_descriptors_stream_as_declarations();
     direct_streaming_sink();
     nested_style_rule_stream();
     std::cout << "CSS parser tests passed\n";

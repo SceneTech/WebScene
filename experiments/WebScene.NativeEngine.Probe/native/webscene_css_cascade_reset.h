@@ -9,7 +9,8 @@ namespace webscene_native::css {
 // Clear previously cascaded fields before matching a new rule set. Authored
 // inline metadata remains owned by the node and is preserved/reseeded here.
 inline void reset_cascaded_style(dom_node& node,
-    const std::unordered_map<std::string,std::string>& variables)
+    const std::unordered_map<std::string,std::string>& variables,
+    const std::unordered_map<std::string, registered_custom_property>* registrations = nullptr)
 {
         node.style.important_property_mask = 0;
         node.style.important_margin_sides = 0;
@@ -232,7 +233,7 @@ inline void reset_cascaded_style(dom_node& node,
             node.style.word_spacing = 0;
             node.style.word_spacing_specified = false;
         }
-        css::seed_inline_custom_properties(node);
+        css::seed_inline_custom_properties(node, registrations);
         node.style.clear_pseudo_elements();
         // Recompute stylesheet visibility from the current class/selector set.
         // React reuses toolbar nodes while replacing their responsive classes;

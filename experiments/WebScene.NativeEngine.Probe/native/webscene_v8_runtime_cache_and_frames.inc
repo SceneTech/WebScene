@@ -2774,6 +2774,7 @@
         activate_css_cascade(&frame_body);
         css_rules.clear();
         opacity_keyframes.clear();
+        registered_custom_properties.clear();
         css_rules_by_class.clear();
         css_rules_by_id.clear();
         css_rules_by_tag.clear();

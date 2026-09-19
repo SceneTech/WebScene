@@ -47,6 +47,8 @@ struct stylesheet_test_host {
     std::vector<rule> rules;
     std::vector<std::string> unsupported;
     std::vector<std::string> layers;
+    std::vector<webscene_native::css::registered_custom_property>
+        registered_custom_properties;
     bool inventory_media_query(const std::string&) { return true; }
     uint32_t register_cascade_layer(const std::string& name) {
         if(!name.empty()) {
@@ -56,6 +58,10 @@ struct stylesheet_test_host {
         }
         layers.push_back(name);
         return static_cast<uint32_t>(layers.size());
+    }
+    void register_custom_property(
+        const webscene_native::css::registered_custom_property& property) {
+        registered_custom_properties.push_back(property);
     }
     void record_feature(std::string_view, const std::string& name,
         std::string_view classification, const std::string&, std::string_view) {
@@ -1355,5 +1361,85 @@ int main(int argc,char** argv) {
     session.set_environment({1000,600,false});
     if(session_flush()) return 164;
     if(!session.remove(1) || !session_flush() || tree_child.style.width.value==100) return 165;
+    auto invalid_typed_sheet=webscene_native::css::prepare_stylesheet(R"CSS(
+        @property --wrong-unit {
+          syntax: '<angle>';
+          inherits: false;
+          initial-value: 10%;
+        }
+        @property --missing-inherits {
+          syntax: '<percentage>';
+          initial-value: 0%;
+        }
+        @property wrong-name {
+          syntax: '<percentage>';
+          inherits: false;
+          initial-value: 0%;
+        }
+    )CSS","asset://app/invalid-typed.css",[](const auto&) {return true;});
+    if(!invalid_typed_sheet
+        || !invalid_typed_sheet->registered_custom_properties.empty()) return 184;
+    auto typed_sheet=webscene_native::css::prepare_stylesheet(R"CSS(
+        @property --progress {
+          syntax: '<percentage>';
+          inherits: false;
+          initial-value: 0%;
+        }
+        @keyframes typed-progress {
+          from { --progress: 0%; }
+          to { --progress: 100%; }
+        }
+        .typed {
+          background-image: linear-gradient(90deg, red var(--progress), blue);
+          animation: typed-progress 1000ms linear 1 forwards;
+        }
+    )CSS","asset://app/typed.css",[](const auto&) {return true;});
+    if(!typed_sheet || typed_sheet->registered_custom_properties.size()!=1U
+        || typed_sheet->registered_custom_properties[0].name!="--progress"
+        || typed_sheet->keyframes["typed-progress"]
+            .custom_property_stops["--progress"].size()!=2U) {
+        std::cerr<<"typed preparation registrations="
+            <<(typed_sheet?typed_sheet->registered_custom_properties.size():0U)
+            <<" keyframes="<<(typed_sheet?typed_sheet->keyframes.size():0U)
+            <<" diagnostics="<<(typed_sheet?typed_sheet->diagnostics.size():0U)<<'\n';
+        if(typed_sheet) for(const auto& diagnostic:typed_sheet->diagnostics)
+            std::cerr<<diagnostic.feature<<':'<<diagnostic.classification<<':'
+                <<diagnostic.detail<<'\n';
+        return 179;
+    }
+    webscene_native::native_document typed_document;
+    std::vector<webscene_native::dom_node*> unrelated_nodes;
+    unrelated_nodes.reserve(256U);
+    for(size_t index=0;index<256U;++index) {
+        auto& unrelated=typed_document.create_element("div");
+        unrelated.class_name="unrelated";
+        typed_document.append_child(typed_document.body(),unrelated);
+        unrelated_nodes.push_back(&unrelated);
+    }
+    auto& typed_node=typed_document.create_element("div");
+    typed_node.class_name="typed";
+    typed_document.append_child(typed_document.body(),typed_node);
+    webscene_native::css::query_host typed_query(typed_document);
+    webscene_native::css::stylesheet_owner typed_sheets;
+    typed_sheets.replace(748,std::move(*typed_sheet));
+    webscene_native::css::apply_native_document_cascade(
+        typed_document,typed_sheets,typed_query,
+        [](const auto&,auto&,auto&,auto&) {return false;},
+        [](const auto&,const auto&) {});
+    if(typed_node.style.custom_properties().values.at("--progress")!="0%"
+        || typed_sheets.state().registered_custom_properties.size()!=1U) return 180;
+    if(std::any_of(unrelated_nodes.begin(),unrelated_nodes.end(),[](const auto* node) {
+        return node->style.custom_property_data_identity()!=nullptr;
+    })) return 183;
+    typed_document.signal_animation_frame(0);
+    typed_document.advance_animations();
+    typed_document.signal_animation_frame(500);
+    typed_document.advance_animations();
+    const auto sampled=typed_node.style.custom_properties().values.at("--progress");
+    if(sampled!="50%"
+        || typed_node.style.background_image().image_value.find("50%")
+            ==std::string::npos) return 181;
+    if(!typed_sheets.remove(748)
+        || !typed_sheets.state().registered_custom_properties.empty()) return 182;
     std::cout<<"V8-free shared CSS declaration service passed\n";
 }

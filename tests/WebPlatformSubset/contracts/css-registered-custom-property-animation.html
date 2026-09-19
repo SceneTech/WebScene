@@ -1,0 +1,58 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Registered custom properties interpolate into retained paint</title>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<style id="registered-sheet">
+  @property --progress {
+    syntax: '<percentage>';
+    inherits: false;
+    initial-value: 0%;
+  }
+  @property --angle {
+    syntax: '<angle>';
+    inherits: false;
+    initial-value: 135deg;
+  }
+  @keyframes registered-progress {
+    from { --progress: 0%; --angle: 135deg; }
+    to { --progress: 100%; --angle: 495deg; }
+  }
+  #target {
+    width: 80px;
+    height: 40px;
+    background-image: linear-gradient(90deg, red var(--progress), blue);
+    animation: registered-progress 1s linear -.5s both paused;
+  }
+</style>
+<div id="target"><span id="child"></span></div>
+<script>
+  test(() => {
+    const rules = document.getElementById('registered-sheet').sheet.cssRules;
+    assert_true(rules[0] instanceof CSSPropertyRule);
+    assert_equals(rules[0].constructor.name, 'CSSPropertyRule');
+    assert_equals(rules[0].name, '--progress');
+    assert_equals(rules[0].syntax, '<percentage>');
+    assert_false(rules[0].inherits);
+    assert_equals(rules[0].initialValue, '0%');
+    assert_equals(rules[1].syntax, '<angle>');
+  }, '@property rules expose browser-shaped CSSOM identity and descriptors');
+
+  test(() => {
+    const target = document.getElementById('target');
+    const style = getComputedStyle(target);
+    assert_equals(style.getPropertyValue('--progress'), '50%');
+    assert_equals(style.getPropertyValue('--angle'), '315deg');
+    assert_true(style.backgroundImage.includes('50%'));
+    assert_equals(
+      getComputedStyle(document.getElementById('child')).getPropertyValue('--progress'),
+      '0%', 'inherits:false supplies the registered initial value');
+  }, 'typed percentage and angle keyframes reach computed paint at the midpoint');
+
+  test(() => {
+    const child = document.getElementById('child');
+    child.style.setProperty('--progress', 'invalid');
+    assert_equals(child.style.getPropertyValue('--progress'), 'invalid');
+    assert_equals(getComputedStyle(child).getPropertyValue('--progress'), '0%');
+  }, 'invalid registered values remain authored but compute to the initial value');
+</script>

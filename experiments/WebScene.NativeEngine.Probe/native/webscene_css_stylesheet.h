@@ -31,6 +31,11 @@ std::optional<prepared_stylesheet> prepare_stylesheet(std::string_view text,
             output.cascade_layers.push_back(name);
             return static_cast<uint32_t>(output.cascade_layers.size());
         }
+        void register_custom_property(const registered_custom_property& property) {
+            if (output.registered_custom_properties.size() < 64U) {
+                output.registered_custom_properties.push_back(property);
+            }
+        }
         void record_feature(std::string_view, const std::string& feature,
             std::string_view classification, const std::string& detail, std::string_view) {
             // Font bytes/registration are handled by a resource host, which this

@@ -51,6 +51,10 @@ class stylesheet_owner {
             }
             for(const auto& [name,definition]:entry.sheet.keyframes)
                 state_.opacity_keyframes[name]=definition;
+            for(auto property:entry.sheet.registered_custom_properties) {
+                property.stylesheet_owner_id=entry.id;
+                state_.registered_custom_properties[property.name]=std::move(property);
+            }
         }
     }
 public:

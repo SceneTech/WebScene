@@ -1140,6 +1140,10 @@
             else if (authored != authored_style.end()) value = authored->second;
         } else if (name.starts_with("--")) {
             const std::string* known_value = nullptr;
+            const auto registration = self->registered_custom_properties.find(name);
+            const auto inherits = registration
+                    == self->registered_custom_properties.end()
+                || registration->second.inherits;
             for (auto* current_node = node; current_node != nullptr;
                  current_node = current_node->parent) {
                 const auto& custom = current_node->style.custom_properties().values;
@@ -1148,13 +1152,16 @@
                     known_value = &known->second;
                     break;
                 }
+                if (!inherits) break;
             }
-            if (known_value == nullptr) {
-                auto* self = current(info.GetIsolate());
+            if (known_value == nullptr && inherits) {
                 const auto known = self->css_variables.find(name);
                 if (known != self->css_variables.end()) known_value = &known->second;
             }
-            value = known_value == nullptr ? "" : *known_value;
+            if (known_value != nullptr) value = *known_value;
+            else if (registration != self->registered_custom_properties.end()) {
+                value = registration->second.initial_value;
+            }
         } else {
             const auto format_length = [](const css_length& length) {
                 if (length.unit == length_unit::automatic) return std::string {};

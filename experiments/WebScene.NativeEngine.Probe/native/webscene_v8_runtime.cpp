@@ -3178,6 +3178,18 @@ struct v8_dom_runtime::implementation final {
             const installCustomElementsPlatform = () => {
             if (globalThis.__webSceneCustomElementsNotifySubtree) return;
             const activateCustomElements = globalThis.__webSceneActivateCustomElements;
+            const registerFormAssociatedCustomElement =
+              globalThis.__webSceneRegisterFormAssociatedCustomElement;
+            const setElementInternalsValidity =
+              globalThis.__webSceneSetElementInternalsValidity;
+            const elementInternalsWillValidate =
+              globalThis.__webSceneElementInternalsWillValidate;
+            const elementInternalsValidity =
+              globalThis.__webSceneElementInternalsValidity;
+            const setElementInternalsUserValidity =
+              globalThis.__webSceneSetElementInternalsUserValidity;
+            const validateElementInternals =
+              globalThis.__webSceneValidateElementInternals;
             const NativeHTMLElement = globalThis.HTMLElement;
             const nativeCreateElement = document.createElement;
             const definitions = new Map();
@@ -3322,6 +3334,48 @@ struct v8_dom_runtime::implementation final {
               }
             };
 
+            const validityFlagNames = [
+              'valueMissing', 'typeMismatch', 'patternMismatch', 'tooLong',
+              'tooShort', 'rangeUnderflow', 'rangeOverflow', 'stepMismatch',
+              'badInput', 'customError'
+            ];
+            const associatedInternalsRecord = internals => {
+              const element = internalsTargets.get(internals);
+              if (!element) throw new TypeError('Illegal invocation');
+              const state = elementStates.get(element);
+              if (!state?.definition.formAssociated) {
+                throw new DOMException(
+                  'The custom element is not form-associated',
+                  'NotSupportedError');
+              }
+              return {element, record: attachedInternals.get(element)};
+            };
+            const validityObjectFor = (element, record) => {
+              if (record.validity) return record.validity;
+              const nativeValidity = elementInternalsValidity(element);
+              if (nativeValidity && typeof nativeValidity === 'object') {
+                record.validity = nativeValidity;
+                return nativeValidity;
+              }
+              const validity = Object.create(globalThis.ValidityState.prototype);
+              const descriptors = {};
+              validityFlagNames.forEach((name, index) => {
+                descriptors[name] = {
+                  get: () => (record.validityFlags & (1 << index)) !== 0,
+                  enumerable: true,
+                  configurable: true
+                };
+              });
+              descriptors.valid = {
+                get: () => record.validityFlags === 0,
+                enumerable: true,
+                configurable: true
+              };
+              Object.defineProperties(validity, descriptors);
+              record.validity = validity;
+              return validity;
+            };
+
             function WebSceneElementInternals() {
               throw new TypeError('Illegal constructor');
             }
@@ -3340,16 +3394,35 @@ struct v8_dom_runtime::implementation final {
                 enumerable: true,
                 configurable: true
               },
+              validity: {
+                get() {
+                  const {element, record} = associatedInternalsRecord(this);
+                  return validityObjectFor(element, record);
+                },
+                enumerable: true,
+                configurable: true
+              },
+              validationMessage: {
+                get() {
+                  const {element, record} = associatedInternalsRecord(this);
+                  return record.validityFlags !== 0
+                      && elementInternalsWillValidate(element)
+                    ? record.validationMessage : '';
+                },
+                enumerable: true,
+                configurable: true
+              },
+              willValidate: {
+                get() {
+                  const {element} = associatedInternalsRecord(this);
+                  return Boolean(elementInternalsWillValidate(element));
+                },
+                enumerable: true,
+                configurable: true
+              },
               setFormValue: {
                 value(value, state = value) {
-                  const element = internalsTargets.get(this);
-                  if (!element) throw new TypeError('Illegal invocation');
-                  const elementState = elementStates.get(element);
-                  if (!elementState?.definition.formAssociated) {
-                    throw new DOMException(
-                      'The custom element is not form-associated',
-                      'NotSupportedError');
-                  }
+                  const {record} = associatedInternalsRecord(this);
                   if (arguments.length < 1) {
                     throw new TypeError('setFormValue requires a value');
                   }
@@ -3365,9 +3438,60 @@ struct v8_dom_runtime::implementation final {
                     }
                     return String(candidate);
                   };
-                  const record = attachedInternals.get(element);
                   record.submissionValue = convert(value);
                   record.state = convert(state);
+                },
+                writable: true,
+                configurable: true
+              },
+              setValidity: {
+                value(flags, message = '', anchor = null) {
+                  const {element, record} = associatedInternalsRecord(this);
+                  if (arguments.length < 1) {
+                    throw new TypeError('setValidity requires validity flags');
+                  }
+                  const source = flags == null ? {} : Object(flags);
+                  let validityFlags = 0;
+                  validityFlagNames.forEach((name, index) => {
+                    if (Boolean(source[name])) validityFlags |= 1 << index;
+                  });
+                  const validationMessage = String(message);
+                  if (validityFlags !== 0 && validationMessage === '') {
+                    throw new TypeError(
+                      'A nonempty message is required when the element is invalid');
+                  }
+                  if (anchor !== null) {
+                    if (!anchor || typeof anchor !== 'object'
+                        || anchor.nodeType !== 1) {
+                      throw new TypeError('The validation anchor must be an Element');
+                    }
+                    if (anchor === element || !element.contains(anchor)) {
+                      throw new DOMException(
+                        'The validation anchor is not a descendant of the custom element',
+                        'NotFoundError');
+                    }
+                  }
+                  record.validityFlags = validityFlags;
+                  record.validationMessage = validationMessage;
+                  record.validationAnchor = anchor;
+                  setElementInternalsValidity(
+                    element, validityFlags, validationMessage);
+                },
+                writable: true,
+                configurable: true
+              },
+              checkValidity: {
+                value() {
+                  const {element} = associatedInternalsRecord(this);
+                  return Boolean(validateElementInternals(element));
+                },
+                writable: true,
+                configurable: true
+              },
+              reportValidity: {
+                value() {
+                  const {element} = associatedInternalsRecord(this);
+                  return Boolean(validateElementInternals(element));
                 },
                 writable: true,
                 configurable: true
@@ -3392,6 +3516,9 @@ struct v8_dom_runtime::implementation final {
                 }
                 current.constructed = true;
                 Object.setPrototypeOf(current.element, current.definition.prototype);
+                if (current.definition.formAssociated) {
+                  registerFormAssociatedCustomElement(current.element, true);
+                }
                 return current.element;
               }
               const definition = constructorDefinitions.get(new.target);
@@ -3403,6 +3530,9 @@ struct v8_dom_runtime::implementation final {
                 definition, state: 'custom', connected: false,
                 formOwner: null, formDisabled: false
               });
+              if (definition.formAssociated) {
+                registerFormAssociatedCustomElement(element, true);
+              }
               return element;
             }
             Object.setPrototypeOf(WebSceneHTMLElement, NativeHTMLElement);
@@ -3445,9 +3575,14 @@ struct v8_dom_runtime::implementation final {
                 }
                 const internals = Object.create(WebSceneElementInternals.prototype);
                 attachedInternals.set(this, {
-                  object: internals, submissionValue: null, state: null
+                  object: internals, submissionValue: null, state: null,
+                  validityFlags: 0, validationMessage: '',
+                  validationAnchor: null, validity: null
                 });
                 internalsTargets.set(internals, this);
+                if (state.definition.formAssociated) {
+                  registerFormAssociatedCustomElement(this, true);
+                }
                 return internals;
               },
               writable: true,
@@ -3478,6 +3613,9 @@ struct v8_dom_runtime::implementation final {
                 }
                 state.state = 'custom';
               } catch (error) {
+                if (definition.formAssociated) {
+                  registerFormAssociatedCustomElement(element, false);
+                }
                 Object.setPrototypeOf(element, NativeHTMLElement.prototype);
                 reportReactionError(error);
                 return undefined;
@@ -3712,11 +3850,31 @@ struct v8_dom_runtime::implementation final {
                   if (state?.state === 'custom'
                       && state.definition.formAssociated
                       && state.formOwner === form) {
+                    setElementInternalsUserValidity(element, false);
                     enqueueReaction(
                       element, state.definition.formResetCallback, []);
                   }
                 }
               } finally { endReactions(); }
+            };
+            const restoreFormAssociatedState = (element, mode = 'restore') => {
+              const state = elementStates.get(element);
+              if (!state || state.state !== 'custom'
+                  || !state.definition.formAssociated) return false;
+              const record = attachedInternals.get(element);
+              if (!record || record.state === null
+                  || record.state === undefined) return false;
+              const normalizedMode = String(mode);
+              if (normalizedMode !== 'restore'
+                  && normalizedMode !== 'autocomplete') {
+                throw new TypeError(
+                  "The restoration mode must be 'restore' or 'autocomplete'");
+              }
+              enqueueReaction(
+                element,
+                state.definition.formStateRestoreCallback,
+                [record.state, normalizedMode]);
+              return true;
             };
             Object.defineProperties(globalThis, {
               __webSceneCustomElementsBeginReactions: {
@@ -3736,6 +3894,9 @@ struct v8_dom_runtime::implementation final {
               },
               __webSceneResetFormAssociatedElements: {
                 value: resetFormAssociatedElements, configurable: true
+              },
+              __webSceneRestoreFormAssociatedState: {
+                value: restoreFormAssociatedState, configurable: true
               }
             });
             Object.defineProperty(globalThis, 'customElements', {
@@ -3792,6 +3953,32 @@ struct v8_dom_runtime::implementation final {
     void install_custom_elements_platform(v8::Local<v8::Context> local_context)
     {
         auto global = local_context->Global();
+        const auto install_native_bridge=[&](
+            const char* name,v8::FunctionCallback callback) {
+            global->DefineOwnProperty(
+                local_context,
+                js_string(isolate,name),
+                v8::Function::New(local_context,callback).ToLocalChecked(),
+                v8::PropertyAttribute::DontEnum).Check();
+        };
+        install_native_bridge(
+            "__webSceneRegisterFormAssociatedCustomElement",
+            register_form_associated_custom_element);
+        install_native_bridge(
+            "__webSceneSetElementInternalsValidity",
+            set_element_internals_validity);
+        install_native_bridge(
+            "__webSceneElementInternalsWillValidate",
+            get_element_internals_will_validate);
+        install_native_bridge(
+            "__webSceneElementInternalsValidity",
+            get_element_internals_validity);
+        install_native_bridge(
+            "__webSceneSetElementInternalsUserValidity",
+            set_element_internals_user_validity);
+        install_native_bridge(
+            "__webSceneValidateElementInternals",
+            validate_element_internals);
         global->DefineOwnProperty(
             local_context,
             js_string(isolate, "__webSceneActivateCustomElements"),

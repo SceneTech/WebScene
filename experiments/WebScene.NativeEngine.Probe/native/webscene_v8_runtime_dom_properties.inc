@@ -3349,7 +3349,8 @@
     {
         return node!=nullptr && (node->tag=="button" || node->tag=="input"
             || node->tag=="select" || node->tag=="textarea"
-            || node->tag=="fieldset");
+            || node->tag=="fieldset"
+            || node->form_control().form_associated_custom_element);
     }
 
     static void get_validity_state_flag(
@@ -3468,6 +3469,135 @@
         if(self->is_connected(*node))
             self->recascade_dynamic_state_subject(*node,"setCustomValidity");
         else self->document.mark_dirty();
+    }
+
+    static void register_form_associated_custom_element(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* self=current(info.GetIsolate());
+        auto* node=info.Length()>0 && info[0]->IsObject()
+            ? unwrap_node(info[0].As<v8::Object>()):nullptr;
+        if(self==nullptr || node==nullptr) return;
+        const auto enabled=info.Length()>1 && info[1]->BooleanValue(info.GetIsolate());
+        if(node->form_control().form_associated_custom_element==enabled) return;
+        const auto selector_state_before=forms::validity_state(
+            self->document,*node);
+        auto& control=node->mutable_form_control();
+        control.form_associated_custom_element=enabled;
+        if(!enabled) {
+            control.element_internals_validity_flags=0U;
+            control.custom_validation_message.clear();
+            control.user_validity_interacted=false;
+        }
+        const auto selector_state_after=forms::validity_state(
+            self->document,*node);
+        if(selector_state_before==selector_state_after) return;
+        if(self->is_connected(*node))
+            self->recascade_connected_subtree(
+                *node,"ElementInternals.formAssociated");
+        else self->document.mark_dirty();
+    }
+
+    static void set_element_internals_validity(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* self=current(info.GetIsolate());
+        auto* node=info.Length()>0 && info[0]->IsObject()
+            ? unwrap_node(info[0].As<v8::Object>()):nullptr;
+        if(self==nullptr || node==nullptr
+            || !node->form_control().form_associated_custom_element) return;
+        const auto selector_state_before=forms::validity_state(
+            self->document,*node);
+        auto& control=node->mutable_form_control();
+        control.element_internals_validity_flags=info.Length()>1
+            ? info[1]->Uint32Value(info.GetIsolate()->GetCurrentContext())
+                .FromMaybe(0U)&0x03ffU
+            :0U;
+        control.custom_validation_message=info.Length()>2
+            ? to_utf8(info.GetIsolate(),info[2]):std::string{};
+        const auto selector_state_after=forms::validity_state(
+            self->document,*node);
+        if(selector_state_before==selector_state_after) return;
+        if(self->is_connected(*node))
+            self->recascade_connected_subtree(
+                *node,"ElementInternals.setValidity");
+        else self->document.mark_dirty();
+    }
+
+    static void get_element_internals_will_validate(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* self=current(info.GetIsolate());
+        auto* node=info.Length()>0 && info[0]->IsObject()
+            ? unwrap_node(info[0].As<v8::Object>()):nullptr;
+        info.GetReturnValue().Set(v8::Boolean::New(
+            info.GetIsolate(),self!=nullptr && node!=nullptr
+                && node->form_control().form_associated_custom_element
+                && forms::will_validate(self->document,*node)));
+    }
+
+    static void get_element_internals_validity(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* self=current(info.GetIsolate());
+        auto* node=info.Length()>0 && info[0]->IsObject()
+            ? unwrap_node(info[0].As<v8::Object>()):nullptr;
+        if(self==nullptr || node==nullptr
+            || !node->form_control().form_associated_custom_element) return;
+#if defined(WEBSCENE_NATIVE_ENGINE_GENERATED_DOM_BINDINGS)
+        auto local_context=info.GetIsolate()->GetCurrentContext();
+        auto holder=info[0].As<v8::Object>();
+        auto cache_key=v8::Private::ForApi(
+            info.GetIsolate(),js_string(info.GetIsolate(),"WebScene.validity"));
+        v8::Local<v8::Value> cached;
+        if(holder->GetPrivate(local_context,cache_key).ToLocal(&cached)
+            && cached->IsObject()) {
+            info.GetReturnValue().Set(cached);
+            return;
+        }
+        auto result=self->validity_state_template.Get(info.GetIsolate())
+            ->InstanceTemplate()->NewInstance(local_context).ToLocalChecked();
+        result->SetAlignedPointerInInternalField(
+            0,node,v8::kEmbedderDataTypeTagDefault);
+        result->SetInternalField(1,v8::Undefined(info.GetIsolate()));
+        holder->SetPrivate(local_context,cache_key,result).Check();
+        info.GetReturnValue().Set(result);
+#endif
+    }
+
+    static void set_element_internals_user_validity(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* self=current(info.GetIsolate());
+        auto* node=info.Length()>0 && info[0]->IsObject()
+            ? unwrap_node(info[0].As<v8::Object>()):nullptr;
+        if(self==nullptr || node==nullptr
+            || !node->form_control().form_associated_custom_element) return;
+        const auto interacted=info.Length()>1
+            && info[1]->BooleanValue(info.GetIsolate());
+        if(node->form_control().user_validity_interacted==interacted) return;
+        const auto value=forms::text_control_value(*node);
+        if(self->is_connected(*node))
+            self->recascade_form_value_selector_transition(
+                *node,value,value,interacted,std::nullopt);
+        else node->mutable_form_control().user_validity_interacted=interacted;
+    }
+
+    static void validate_element_internals(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* self=current(info.GetIsolate());
+        auto* node=info.Length()>0 && info[0]->IsObject()
+            ? unwrap_node(info[0].As<v8::Object>()):nullptr;
+        if(self==nullptr || node==nullptr
+            || !node->form_control().form_associated_custom_element) {
+            info.GetReturnValue().Set(v8::True(info.GetIsolate()));
+            return;
+        }
+        const auto valid=!forms::will_validate(self->document,*node)
+            || forms::constraint_validity_state(self->document,*node).valid();
+        if(!valid) static_cast<void>(self->dispatch_invalid_event(*node));
+        info.GetReturnValue().Set(v8::Boolean::New(info.GetIsolate(),valid));
     }
 
     bool dispatch_invalid_event(dom_node& node)

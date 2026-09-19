@@ -911,7 +911,8 @@ inline bool is_effectively_disabled(
     const native_document& document,const dom_node& node) {
     if(node.attributes.contains("disabled")) return true;
     if(node.tag!="button" && node.tag!="input"
-        && node.tag!="select" && node.tag!="textarea") return false;
+        && node.tag!="select" && node.tag!="textarea"
+        && !node.form_control().form_associated_custom_element) return false;
     for(auto* fieldset=document.dom_parent(node);fieldset!=nullptr;
         fieldset=document.dom_parent(*fieldset)) {
         if(fieldset->tag!="fieldset"
@@ -938,14 +939,18 @@ inline bool is_effectively_disabled(
 
 inline bool will_validate(
     const native_document& document,const dom_node& node) {
+    const auto form_associated_custom=
+        node.form_control().form_associated_custom_element;
     if(node.tag!="button" && node.tag!="input"
-        && node.tag!="select" && node.tag!="textarea") return false;
+        && node.tag!="select" && node.tag!="textarea"
+        && !form_associated_custom) return false;
     if(is_effectively_disabled(document,node)
         || ((node.tag=="input" || node.tag=="textarea")
             && node.attributes.contains("readonly"))) return false;
     for(auto* ancestor=document.dom_parent(node);ancestor!=nullptr;
         ancestor=document.dom_parent(*ancestor))
         if(ancestor->tag=="datalist") return false;
+    if(form_associated_custom) return true;
     if(node.tag=="input") {
         return !input_type_is(node,"hidden")
             && !input_type_is(node,"button")
@@ -963,7 +968,8 @@ inline bool will_validate(
 
 inline bool is_constraint_validation_control(const dom_node& node) {
     return node.tag=="button" || node.tag=="input"
-        || node.tag=="select" || node.tag=="textarea";
+        || node.tag=="select" || node.tag=="textarea"
+        || node.form_control().form_associated_custom_element;
 }
 
 inline numeric_constraint_validity numeric_validity_state(
@@ -1175,6 +1181,20 @@ inline text_constraint_validity text_validity_state(
 inline constraint_validity constraint_validity_state(
     const native_document& document,const dom_node& node) {
     constraint_validity result;
+    if(node.form_control().form_associated_custom_element) {
+        const auto flags=node.form_control().element_internals_validity_flags;
+        result.value_missing=(flags&(1U<<0U))!=0U;
+        result.type_mismatch=(flags&(1U<<1U))!=0U;
+        result.pattern_mismatch=(flags&(1U<<2U))!=0U;
+        result.too_long=(flags&(1U<<3U))!=0U;
+        result.too_short=(flags&(1U<<4U))!=0U;
+        result.range_underflow=(flags&(1U<<5U))!=0U;
+        result.range_overflow=(flags&(1U<<6U))!=0U;
+        result.step_mismatch=(flags&(1U<<7U))!=0U;
+        result.bad_input=(flags&(1U<<8U))!=0U;
+        result.custom_error=(flags&(1U<<9U))!=0U;
+        return result;
+    }
     result.custom_error=!node.form_control().custom_validation_message.empty();
     if(!will_validate(document,node)) return result;
     const auto text_validity=text_validity_state(document,node);
@@ -1207,6 +1227,8 @@ inline std::string validation_message(
     const native_document& document,const dom_node& node) {
     if(!will_validate(document,node)) return {};
     const auto state=constraint_validity_state(document,node);
+    if(node.form_control().form_associated_custom_element)
+        return state.valid()?std::string{}:node.form_control().custom_validation_message;
     if(state.custom_error) return node.form_control().custom_validation_message;
     if(state.value_missing) return "Please fill out this field.";
     if(state.type_mismatch) return "Please enter a valid value.";
@@ -1271,7 +1293,8 @@ inline simple_validity_state validity_state(
     if(node.tag=="fieldset") return fieldset_has_invalid_descendant(document,node)
         ? simple_validity_state::invalid:simple_validity_state::valid;
     const auto form_control = node.tag == "button" || node.tag == "input"
-        || node.tag == "select" || node.tag == "textarea";
+        || node.tag == "select" || node.tag == "textarea"
+        || node.form_control().form_associated_custom_element;
     if(!form_control || !will_validate(document,node))
         return simple_validity_state::not_applicable;
     return constraint_validity_state(document,node).valid()

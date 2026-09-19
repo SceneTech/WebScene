@@ -35,11 +35,11 @@ node-owned hold with the established animation runtime lifecycle.
 - Resume uses the existing visibility and paint-area gates. Opacity, rotation,
   and filters remain paint-only and do not add selector, cascade, layout, scene
   node, queue, or per-frame allocation work.
-- The runtime still configures one animation and the first coordinated-list item.
+- The runtime now configures up to eight coordinated tracks through #672.
   Existing duration, iteration, keyframe-stop, and filter-list bounds remain.
-- Zero-duration/zero-count behavior, multiple animations, translate/scale,
-  pseudo-elements, additional animation events, and Web Animations playback APIs
-  remain deferred.
+- Translate/scale, pseudo-elements, animation start/iteration/cancel events, and
+  Web Animations playback APIs remain deferred. Zero-duration/count end
+  semantics are covered by #674.
 
 ## Evidence
 

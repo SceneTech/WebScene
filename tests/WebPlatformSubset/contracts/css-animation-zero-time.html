@@ -1,0 +1,109 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Zero-duration and zero-count CSS animations settle without sustained frames</title>
+<style>
+  @keyframes zero-fade { from { opacity: 0; transform: rotate(0);
+      filter: brightness(.5); }
+    to { opacity: 1; transform: rotate(180deg);
+      filter: brightness(1.5); } }
+  #delayed { animation: zero-fade 0s linear 300ms 2 reverse both; }
+  #zero-count { animation: zero-fade 1s linear 0s 0 reverse both; }
+  #fraction { animation: zero-fade 0s linear 0s 1.5 alternate both; }
+  #unfilled { opacity: .3; animation: zero-fade 0s linear; }
+  #negative { opacity: .3; animation: zero-fade 0s linear -100ms 1 reverse both; }
+  #ordered { animation: zero-fade 0s linear both,
+    zero-fade 0s linear reverse both; }
+  #paused { animation: zero-fade 0s linear 300ms 1 normal both paused; }
+</style>
+<div id="delayed"></div><div id="zero-count"></div>
+<div id="fraction"></div><div id="unfilled"></div><div id="negative"></div>
+<div id="ordered"></div><div id="paused"></div>
+<script>
+  const state = window.__webSceneWptState = {
+    complete: false, harness: null, results: [], errors: [], diagnostics: []
+  };
+  const ends = [];
+  for (const node of document.querySelectorAll("div")) {
+    node.addEventListener("animationend", event => ends.push({
+      id: node.id, name: event.animationName, elapsed: event.elapsedTime
+    }));
+  }
+  let settled = false;
+  const finish = (error, diagnostics = []) => {
+    if (settled) return;
+    settled = true;
+    state.diagnostics = diagnostics;
+    state.results.push({
+      name: "zero-time animation phases fill and completion are bounded",
+      status: error ? "FAIL" : "PASS",
+      message: error ? String(error && error.message || error) : null,
+      stack: error && error.stack ? String(error.stack) : null
+    });
+    state.harness = error
+      ? { status: 1, message: state.results[0].message, stack: state.results[0].stack }
+      : { status: 0, message: null, stack: null };
+    state.complete = true;
+  };
+  const opacity = id => Number(getComputedStyle(document.getElementById(id)).opacity);
+  const close = (left, right) => Math.abs(left - right) < .035;
+  const timeout = setTimeout(
+    () => finish(new Error("zero-time animation deadline exceeded")), 1500);
+
+  requestAnimationFrame(() => {
+    try {
+      const ordered = ends.filter(event => event.id === "ordered");
+      const zeroCountStyle = getComputedStyle(document.getElementById("zero-count"));
+      const matrix = zeroCountStyle.transform.slice(7, -1).split(",").map(Number);
+      const angle = Math.abs(Math.atan2(matrix[1], matrix[0]) * 180 / Math.PI);
+      if (!close(opacity("delayed"), 1)
+          || !close(opacity("zero-count"), 1)
+          || !close(opacity("fraction"), .5)
+          || !close(opacity("unfilled"), .3)
+          || !close(opacity("negative"), 0)
+          || !close(opacity("paused"), 0)
+          || !close(angle, 180)
+          || zeroCountStyle.filter !== "brightness(1.5)"
+          || ordered.length !== 2
+          || ends.some(event => event.elapsed !== 0)
+          || getComputedStyle(document.getElementById("zero-count"))
+            .animationIterationCount !== "0"
+          || !getComputedStyle(document.getElementById("fraction"))
+            .animation.includes("0s")) {
+        throw new Error("initial zero-time phase, fill, event, or CSSOM differs");
+      }
+      setTimeout(() => requestAnimationFrame(() => {
+        try {
+          if (!close(opacity("delayed"), 0)
+              || ends.filter(event => event.id === "delayed").length !== 1
+              || ends.some(event => event.id === "paused")) {
+            throw new Error("positive delay did not settle once at its boundary");
+          }
+          const paused = document.getElementById("paused");
+          paused.style.animationPlayState = "running";
+          setTimeout(() => requestAnimationFrame(() => {
+            try {
+              if (!close(opacity("paused"), 1)
+                  || ends.filter(event => event.id === "paused").length !== 1) {
+                throw new Error("resumed paused delay did not settle once");
+              }
+              const fraction = document.getElementById("fraction");
+              fraction.style.animationIterationCount = "0";
+              document.getElementById("ordered").style.animation = "none";
+              document.getElementById("zero-count").remove();
+              requestAnimationFrame(() => {
+                try {
+                  if (!close(opacity("fraction"), 0)
+                      || !close(opacity("ordered"), 1)) {
+                    throw new Error("zero-count mutation/removal retained stale paint");
+                  }
+                  clearTimeout(timeout);
+                  finish(null, [JSON.stringify({ ends })]);
+                } catch (error) { clearTimeout(timeout); finish(error); }
+              });
+            } catch (error) { clearTimeout(timeout); finish(error); }
+          }), 350);
+        } catch (error) { clearTimeout(timeout); finish(error); }
+      }), 350);
+    } catch (error) { clearTimeout(timeout); finish(error); }
+  });
+</script>

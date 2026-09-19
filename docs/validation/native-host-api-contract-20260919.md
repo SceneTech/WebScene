@@ -12,10 +12,12 @@ as retired JavaScript invocation symbols:
 
 These APIs exchange drag and download host requests. They do not expose the
 retired JSON JavaScript invocation transport. Follow-up run `35430597424`
-proved that they are deliberately header-only rather than package exports. The
-contract now checks them in the public header, keeps exported host services
-required in the export manifest, and uses the union only for the broad
-fail-closed scan of unreviewed v1/v2 engine and interop symbols.
+showed the first contract fix had not reconciled the export surface, and
+architecture run `35430888338` established the authoritative rule: every
+non-instrumentation `WEBSCENE_API` declaration must appear in the macOS export
+manifest. All six drag/download functions are now exported and classified as
+independently versioned host services while the broad fail-closed scan for
+unreviewed v1/v2 engine and interop symbols remains.
 
 Only `git diff --check` was run for this fast CI-recovery slice. Current-main
 CI remains the authoritative execution gate.

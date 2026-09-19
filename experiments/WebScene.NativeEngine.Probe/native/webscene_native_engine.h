@@ -1044,6 +1044,112 @@ WEBSCENE_API uint8_t webscene_gpu_d3d12_get_producer_fence_v3(
     const void* shared_owner,uint32_t index,webscene_gpu_dxgi_fence_view_v3* result);
 WEBSCENE_API void webscene_gpu_d3d12_release_shared_v3(void* shared_owner);
 
+/* Linux external-memory image export. Acquisition duplicates every plane and
+ * producer-wait FD with close-on-exec into shared_owner. FDs returned by the
+ * view functions are borrowed from that owner and remain valid until release.
+ * Importing APIs must create their own references before shared_owner is
+ * released. No call here waits, transitions an image, or completes GPU use.
+ *
+ * Callers first begin an ordinary image consumer. On success they import the
+ * described memory, enqueue every wait in its ordering domain, transition from
+ * producer_layout/queue_family to consumer_layout/queue_family, and release
+ * shared_owner. They complete the image consumer only after the consuming GPU
+ * queue has retired every read. Failed import still requires shared-owner
+ * release and consumer completion without submitting a read.
+ */
+#define WEBSCENE_GPU_LINUX_SHARED_ABI_VERSION 3U
+enum {
+    WEBSCENE_GPU_LINUX_MEMORY_OPAQUE_FD_V3 = 1U,
+    WEBSCENE_GPU_LINUX_MEMORY_DMA_BUF_V3 = 2U,
+    WEBSCENE_GPU_LINUX_SYNC_FD_V3 = 1U,
+    WEBSCENE_GPU_LINUX_SYNC_VK_SEMAPHORE_OPAQUE_FD_V3 = 2U,
+    WEBSCENE_GPU_LINUX_QUEUE_EXCLUSIVE_V3 = 1U,
+    WEBSCENE_GPU_LINUX_QUEUE_CONCURRENT_V3 = 2U,
+    WEBSCENE_GPU_LINUX_SYNC_TIMELINE_V3 = 1U << 0U
+};
+enum {
+    WEBSCENE_GPU_LINUX_CAP_OPAQUE_FD_V3 = UINT64_C(1) << 0U,
+    WEBSCENE_GPU_LINUX_CAP_DMA_BUF_V3 = UINT64_C(1) << 1U,
+    WEBSCENE_GPU_LINUX_CAP_SYNC_FD_V3 = UINT64_C(1) << 2U,
+    WEBSCENE_GPU_LINUX_CAP_VK_SEMAPHORE_OPAQUE_FD_V3 = UINT64_C(1) << 3U,
+    WEBSCENE_GPU_LINUX_CAP_TIMELINE_SEMAPHORE_V3 = UINT64_C(1) << 4U,
+    WEBSCENE_GPU_LINUX_CAP_DEVICE_UUID_V3 = UINT64_C(1) << 5U,
+    WEBSCENE_GPU_LINUX_CAP_EXPLICIT_LAYOUT_V3 = UINT64_C(1) << 6U,
+    WEBSCENE_GPU_LINUX_CAP_QUEUE_FAMILY_OWNERSHIP_V3 = UINT64_C(1) << 7U,
+    WEBSCENE_GPU_LINUX_CAP_DEDICATED_ALLOCATION_V3 = UINT64_C(1) << 8U,
+    WEBSCENE_GPU_LINUX_CAP_PRODUCER_COMPLETE_V3 = UINT64_C(1) << 9U,
+    WEBSCENE_GPU_LINUX_CAP_EXPLICIT_RETIREMENT_V3 = UINT64_C(1) << 10U
+};
+typedef enum webscene_gpu_linux_shared_status_v3 {
+    WEBSCENE_GPU_LINUX_SHARED_SUCCESS_V3 = 0,
+    WEBSCENE_GPU_LINUX_SHARED_INVALID_ARGUMENT_V3 = 1,
+    WEBSCENE_GPU_LINUX_SHARED_UNSUPPORTED_PROVIDER_V3 = 2,
+    WEBSCENE_GPU_LINUX_SHARED_INVALID_DESCRIPTOR_V3 = 3,
+    WEBSCENE_GPU_LINUX_SHARED_FD_DUPLICATION_FAILED_V3 = 4,
+    WEBSCENE_GPU_LINUX_SHARED_OUT_OF_MEMORY_V3 = 5,
+    WEBSCENE_GPU_LINUX_SHARED_INTERNAL_ERROR_V3 = 6
+} webscene_gpu_linux_shared_status_v3;
+typedef struct webscene_gpu_linux_shared_image_view_v3 {
+    uint32_t struct_size, version;
+    uint64_t capabilities;
+    uint64_t allocation_size;
+    uint64_t drm_modifier;
+    uint64_t allocation;
+    uint64_t allocation_generation;
+    uint64_t content_serial;
+    uint64_t producer_timeline;
+    uint64_t producer_value;
+    uint32_t width, height;
+    uint32_t format, alpha, color_space, orientation;
+    uint32_t memory_handle_type;
+    uint32_t queue_sharing;
+    uint32_t drm_format;
+    uint32_t memory_type_index;
+    uint32_t vk_format;
+    uint32_t vk_image_type;
+    uint32_t vk_tiling;
+    uint32_t vk_usage;
+    uint32_t vk_create_flags;
+    uint32_t vk_sharing_mode;
+    int32_t vk_initial_layout;
+    uint32_t vk_queue_family_index_count;
+    uint32_t sample_count;
+    uint32_t mip_level_count;
+    uint32_t array_layer_count;
+    int32_t producer_layout;
+    int32_t consumer_layout;
+    uint32_t producer_queue_family;
+    uint32_t consumer_queue_family;
+    uint32_t vk_queue_family_indices[4];
+    uint8_t device_uuid[16];
+    uint8_t driver_uuid[16];
+    uint32_t plane_count;
+    uint32_t producer_wait_count;
+} webscene_gpu_linux_shared_image_view_v3;
+typedef struct webscene_gpu_linux_plane_view_v3 {
+    uint32_t struct_size, version;
+    int32_t borrowed_fd;
+    uint32_t stride;
+    uint64_t offset;
+} webscene_gpu_linux_plane_view_v3;
+typedef struct webscene_gpu_linux_sync_view_v3 {
+    uint32_t struct_size, version;
+    uint32_t handle_type;
+    uint32_t flags;
+    int32_t borrowed_fd;
+    uint32_t reserved;
+    uint64_t ordering_domain;
+    uint64_t signaled_value;
+} webscene_gpu_linux_sync_view_v3;
+WEBSCENE_API webscene_gpu_linux_shared_status_v3 webscene_gpu_linux_acquire_shared_v3(
+    const webscene_gpu_image_consumer_v3* consumer,void** shared_owner,
+    webscene_gpu_linux_shared_image_view_v3* result);
+WEBSCENE_API uint8_t webscene_gpu_linux_get_plane_v3(
+    const void* shared_owner,uint32_t index,webscene_gpu_linux_plane_view_v3* result);
+WEBSCENE_API uint8_t webscene_gpu_linux_get_producer_wait_v3(
+    const void* shared_owner,uint32_t index,webscene_gpu_linux_sync_view_v3* result);
+WEBSCENE_API void webscene_gpu_linux_release_shared_v3(void* shared_owner);
+
 /* Optional native producer synchronization. Borrowed event ownership follows the
  * consumer; callers must encode every dependency before reading an early image.
  * A successful zero count means no attached dependencies, not GPU completion.

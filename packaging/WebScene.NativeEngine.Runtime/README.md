@@ -12,7 +12,7 @@ as transitive MSBuild properties so a stale or incompatible V8 monolith cannot
 silently enter a release.
 The manifest also records the accepted `html5ever`, `cssparser`, Servo-selector,
 generated-WebIDL, and bootstrap-snapshot selections. Schema version 2 hashes every native
-and snapshot asset, plus the Windows C ABI header and import library when present.
+and snapshot asset, the public C ABI header on every RID, and the Windows import library.
 Transitive build targets copy the snapshot beside the library for both build and
 publish outputs and fail if any required asset is absent.
 Release linkage also dead-strips unreachable native sections and restricts the
@@ -36,8 +36,9 @@ network stack.
 Applications must target the same `RuntimeIdentifier`; mixing runtime packages and
 RIDs is rejected during the build.
 
-The Windows packages also contain the public native C ABI header, the MSVC import
-library, and a relocatable CMake package. Point `CMAKE_PREFIX_PATH` at the restored
+Every package contains the public native C ABI header under
+`build/native/include`. Windows packages also contain the MSVC import library and
+a relocatable CMake package. Point `CMAKE_PREFIX_PATH` at the restored
 NuGet package's `build/native` directory, then consume the native engine through
 its imported target:
 

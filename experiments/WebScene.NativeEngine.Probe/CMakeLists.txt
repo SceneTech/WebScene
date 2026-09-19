@@ -240,6 +240,14 @@ if(BUILD_TESTING)
     target_compile_features(webscene_graphics_dxgi_contract_tests PRIVATE cxx_std_20)
     target_include_directories(webscene_graphics_dxgi_contract_tests PRIVATE native)
     add_test(NAME webscene_graphics_dxgi_contract_tests COMMAND webscene_graphics_dxgi_contract_tests)
+    add_executable(webscene_graphics_linux_external_image_contract_tests
+        tests/graphics_linux_external_image_contract_tests.cpp)
+    target_compile_features(webscene_graphics_linux_external_image_contract_tests PRIVATE cxx_std_20)
+    target_include_directories(webscene_graphics_linux_external_image_contract_tests PRIVATE native)
+    add_test(NAME webscene_graphics_linux_external_image_contract_tests
+        COMMAND webscene_graphics_linux_external_image_contract_tests)
+    set_tests_properties(webscene_graphics_linux_external_image_contract_tests PROPERTIES
+        LABELS "graphics;linux;abi;lifecycle;security" TIMEOUT 10)
     add_executable(webscene_graphics_resource_tests tests/graphics_resource_tests.cpp)
     target_compile_features(webscene_graphics_resource_tests PRIVATE cxx_std_20)
     target_include_directories(webscene_graphics_resource_tests PRIVATE native)
@@ -294,7 +302,8 @@ add_library(webscene_native_engine ${webscene_runtime_kind}
     native/webscene_native_engine.cpp
     native/webscene_secure_random.cpp
     native/webscene_indexeddb_storage.cpp
-    native/webscene_profile_storage.cpp)
+    native/webscene_profile_storage.cpp
+    native/graphics/linux_gpu_interop.cpp)
 if(TARGET webscene_core)
     target_link_libraries(webscene_native_engine PRIVATE webscene_core)
 else()
@@ -305,6 +314,10 @@ endif()
 target_compile_features(webscene_native_engine PRIVATE cxx_std_20)
 target_compile_definitions(webscene_native_engine PRIVATE WEBSCENE_NATIVE_ENGINE_BUILD)
 target_include_directories(webscene_native_engine PUBLIC native)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_compile_definitions(webscene_native_engine INTERFACE
+        WEBSCENE_GPU_LINUX_SHARED_ABI_VERSION=3)
+endif()
 
 if(WIN32)
     target_link_libraries(webscene_native_engine PRIVATE bcrypt)

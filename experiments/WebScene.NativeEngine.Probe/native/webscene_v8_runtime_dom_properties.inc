@@ -513,6 +513,17 @@
             self->commit_character_data(*node, std::move(text));
             return;
         }
+        // Empty string replacement on an already empty Element or
+        // DocumentFragment has no removed/added nodes and therefore no range,
+        // observer, lifecycle, focus, or selection effects. Style elements
+        // retain the existing path because CSSOM mutations can leave authored
+        // rule state even when their DOM child list is empty.
+        const auto string_replace_all = node->kind == dom_node_kind::element
+            || node->kind == dom_node_kind::document_fragment;
+        if (string_replace_all && node->tag != "style" && text.empty()
+            && node->children.empty() && node->text_content.empty()) {
+            return;
+        }
         if (!self->blur_active_descendant_before_replacing_children(*node)) return;
         if (node->tag == "style") {
             self->erase_pending_stylesheet_replacement(node->id);

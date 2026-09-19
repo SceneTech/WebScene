@@ -1762,6 +1762,397 @@ void test_empty_fragment_append_skips_panel_visual_work()
     webscene_engine_destroy(engine);
 }
 
+void test_empty_text_content_clear_skips_panel_visual_work()
+{
+    auto* engine = webscene_engine_create(0);
+    require(engine != nullptr, "empty text clear engine creation failed");
+
+    const auto acknowledge_latest_scene = [engine](const char* failure) {
+        for (auto attempt = 0; attempt < 100; ++attempt) {
+            const auto* scene = webscene_engine_acquire_latest_scene(engine);
+            if (scene != nullptr) {
+                require(webscene_scene_acknowledge(scene) != 0, failure);
+                webscene_scene_release(scene);
+                return;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        fail(failure);
+    };
+    const auto wait_for_publication = [engine](
+        uint64_t previous, const char* failure) {
+        webscene_engine_metrics result{};
+        for (auto attempt = 0; attempt < 100; ++attempt) {
+            webscene_engine_get_metrics(engine, &result);
+            if (result.published_scenes > previous) return result;
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        fail(failure);
+        return result;
+    };
+    acknowledge_latest_scene("empty text initial scene could not be acknowledged");
+    webscene_engine_memory_metrics initial_memory{sizeof(initial_memory)};
+    require(webscene_engine_get_memory_metrics(engine, &initial_memory) != 0,
+        "empty text initial memory metrics were unavailable");
+
+    execute_and_wait(engine, R"JS(
+      (() => {
+        globalThis.__emptyTextRowConnected = 0;
+        globalThis.__emptyTextRowDisconnected = 0;
+        globalThis.__emptyTextChildConnected = 0;
+        globalThis.__emptyTextChildDisconnected = 0;
+        globalThis.__emptyTextConversions = 0;
+        class EmptyTextRow extends HTMLElement {
+          connectedCallback() { ++globalThis.__emptyTextRowConnected; }
+          disconnectedCallback() { ++globalThis.__emptyTextRowDisconnected; }
+        }
+        class EmptyTextChild extends HTMLElement {
+          connectedCallback() { ++globalThis.__emptyTextChildConnected; }
+          disconnectedCallback() { ++globalThis.__emptyTextChildDisconnected; }
+        }
+        customElements.define('empty-text-row', EmptyTextRow);
+        customElements.define('empty-text-child', EmptyTextChild);
+        const style = document.createElement('style');
+        style.textContent = `
+          #empty-text-panel { display:block; width:240px; }
+          #empty-text-panel > empty-text-row { display:block; height:20px; }
+          .empty-text-label { display:block; }
+          .empty-text-label:empty { width:120px; }
+          #empty-text-host > empty-text-child { display:block; height:2px; }
+          #empty-text-host > empty-text-child:last-child { width:120px; }
+        `;
+        document.head.appendChild(style);
+        const surface = document.createElement('main');
+        const panel = document.createElement('section');
+        panel.id = 'empty-text-panel';
+        surface.appendChild(panel);
+        document.body.appendChild(surface);
+        const rows = [];
+        const labels = [];
+        const rowBatch = document.createDocumentFragment();
+        for (let index = 0; index < 128; ++index) {
+          const row = document.createElement('empty-text-row');
+          const label = document.createElement('span');
+          label.className = 'empty-text-label';
+          row.dataset.index = String(index);
+          row.appendChild(label);
+          rows.push(row);
+          labels.push(label);
+          rowBatch.appendChild(row);
+        }
+        const input = document.createElement('input');
+        input.value = 'abcdef';
+        rows[0].appendChild(input);
+        panel.appendChild(rowBatch);
+        const host = document.createElement('div');
+        host.id = 'empty-text-host';
+        panel.appendChild(host);
+        const children = [];
+        const childBatch = document.createDocumentFragment();
+        for (let index = 0; index < 256; ++index) {
+          const child = document.createElement('empty-text-child');
+          child.dataset.index = String(index);
+          children.push(child);
+          childBatch.appendChild(child);
+        }
+        host.appendChild(childBatch);
+        input.focus();
+        input.setSelectionRange(1, 4);
+        globalThis.__emptyTextStyle = style;
+        globalThis.__emptyTextSurface = surface;
+        globalThis.__emptyTextPanel = panel;
+        globalThis.__emptyTextRows = rows;
+        globalThis.__emptyTextLabels = labels;
+        globalThis.__emptyTextInput = input;
+        globalThis.__emptyTextHost = host;
+        globalThis.__emptyTextChildren = children;
+        globalThis.__emptyTextValue = {
+          toString() {
+            ++globalThis.__emptyTextConversions;
+            return '';
+          }
+        };
+      })()
+    )JS", "empty-text-panel-setup.js");
+    require(
+        evaluate(engine, R"JS((() => [
+          __emptyTextRowConnected,
+          __emptyTextRowDisconnected,
+          __emptyTextChildConnected,
+          __emptyTextChildDisconnected,
+          __emptyTextPanel.children.length,
+          __emptyTextHost.children.length,
+          document.activeElement === __emptyTextInput,
+          __emptyTextInput.selectionStart,
+          __emptyTextInput.selectionEnd,
+          getComputedStyle(__emptyTextHost.lastElementChild).width
+        ]))())JS", "empty-text-panel-ready.js")
+            == R"([128,0,256,0,129,256,true,1,4,"120px"])",
+        "empty text panel fixture did not complete lifecycle or layout");
+    acknowledge_latest_scene("empty text setup scene could not be acknowledged");
+
+    webscene_engine_metrics clear_before{};
+    webscene_engine_get_metrics(engine, &clear_before);
+    execute_and_wait(engine,
+        "__emptyTextHost.textContent = ''",
+        "populated-text-host-clear.js");
+    const auto cleared = wait_for_publication(
+        clear_before.published_scenes,
+        "populated text host clear did not publish a scene");
+    require(
+        evaluate(engine, R"JS((() => [
+          __emptyTextHost.childNodes.length,
+          __emptyTextChildConnected,
+          __emptyTextChildDisconnected,
+          __emptyTextChildren.every(child => !child.isConnected),
+          __emptyTextRowConnected,
+          __emptyTextRowDisconnected,
+          document.activeElement === __emptyTextInput,
+          __emptyTextInput.selectionStart,
+          __emptyTextInput.selectionEnd
+        ]))())JS", "populated-text-host-clear-result.js")
+            == "[0,256,256,true,128,0,true,1,4]",
+        "populated text host clear skipped lifecycle, focus, or selection semantics");
+    require(
+        cleared.layout_passes == clear_before.layout_passes + 1U
+            && cleared.published_scenes == clear_before.published_scenes + 1U,
+        "populated text host clear escaped one layout/publication");
+    acknowledge_latest_scene("populated text host clear scene could not be acknowledged");
+
+    require(
+        evaluate(engine, R"JS((() => {
+          __emptyTextLabels[0].textContent = {
+            toString() {
+              ++globalThis.__emptyTextConversions;
+              __emptyTextLabels[0].textContent = 'nested';
+              return '';
+            }
+          };
+          return [
+            __emptyTextConversions,
+            __emptyTextLabels[0].textContent,
+            __emptyTextLabels[0].childNodes.length
+          ];
+        })())JS", "empty-text-reentrant-conversion.js")
+            == R"([1,"",0])",
+        "empty text clear returned before reentrant WebIDL conversion completed");
+    acknowledge_latest_scene("empty text conversion scene could not be acknowledged");
+
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+    std::this_thread::sleep_for(std::chrono::milliseconds(275));
+    execute_and_wait_for_wrapper_retention_scene(engine,
+        "document.body.setAttribute('data-empty-text-diagnostic', 'before')",
+        "empty-text-diagnostic-before.js");
+    acknowledge_latest_scene("empty text baseline diagnostic scene could not be acknowledged");
+    const auto recascades_before = runtime_counter_diagnostic(
+        engine, "style-recascade-schedule-requests");
+#endif
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    webscene_engine_metrics connected_before{};
+    webscene_engine_get_metrics(engine, &connected_before);
+    webscene_engine_memory_metrics memory_before{sizeof(memory_before)};
+    require(webscene_engine_get_memory_metrics(engine, &memory_before) != 0,
+        "empty text memory baseline was unavailable");
+    const auto connected = evaluate(engine, R"JS((() => {
+      for (let index = 0; index < 4096; ++index) {
+        __emptyTextLabels[index % __emptyTextLabels.length].textContent =
+          __emptyTextValue;
+      }
+      return [
+        __emptyTextConversions,
+        __emptyTextLabels.every(label =>
+          label.childNodes.length === 0 && label.textContent === ''),
+        __emptyTextRows.every((row, index) =>
+          row === __emptyTextPanel.children[index]),
+        __emptyTextRowConnected,
+        __emptyTextRowDisconnected,
+        __emptyTextChildConnected,
+        __emptyTextChildDisconnected,
+        document.activeElement === __emptyTextInput,
+        __emptyTextInput.selectionStart,
+        __emptyTextInput.selectionEnd,
+        getComputedStyle(__emptyTextLabels[127]).width
+      ];
+    })())JS", "empty-text-connected-churn.js");
+    require(
+        connected == R"([4097,true,true,128,0,256,256,true,1,4,"120px"])",
+        "connected empty text clears changed conversion, DOM, lifecycle, focus, selection, or style: "
+            + connected);
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    webscene_engine_metrics connected_after{};
+    webscene_engine_get_metrics(engine, &connected_after);
+    require(
+        connected_after.layout_passes == connected_before.layout_passes
+            && connected_after.published_scenes == connected_before.published_scenes,
+        "connected empty text clears scheduled layout or publication");
+    webscene_engine_memory_metrics connected_memory{sizeof(connected_memory)};
+    require(webscene_engine_get_memory_metrics(engine, &connected_memory) != 0
+            && connected_memory.native_dom_node_count
+                == memory_before.native_dom_node_count,
+        "connected empty text clears allocated native DOM nodes");
+
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+    std::this_thread::sleep_for(std::chrono::milliseconds(275));
+    execute_and_wait_for_wrapper_retention_scene(engine,
+        "document.body.setAttribute('data-empty-text-diagnostic', 'after')",
+        "empty-text-diagnostic-after.js");
+    acknowledge_latest_scene("empty text result diagnostic scene could not be acknowledged");
+    require(
+        runtime_counter_diagnostic(
+            engine, "style-recascade-schedule-requests")
+                == recascades_before,
+        "connected empty text clears scheduled style recascades");
+#endif
+
+    webscene_engine_metrics detach_before{};
+    webscene_engine_get_metrics(engine, &detach_before);
+    execute_and_wait(engine,
+        "__emptyTextPanel.remove()",
+        "empty-text-panel-detach.js");
+    const auto detached_scene = wait_for_publication(
+        detach_before.published_scenes,
+        "empty text panel detach did not publish a scene");
+    require(
+        detached_scene.layout_passes == detach_before.layout_passes + 1U
+            && detached_scene.published_scenes == detach_before.published_scenes + 1U,
+        "empty text panel detach escaped one layout/publication");
+    acknowledge_latest_scene("empty text panel detach scene could not be acknowledged");
+    std::this_thread::sleep_for(std::chrono::milliseconds(25));
+
+    webscene_engine_metrics detached_before{};
+    webscene_engine_get_metrics(engine, &detached_before);
+    const auto detached = evaluate(engine, R"JS((() => {
+      for (let index = 0; index < 4096; ++index) {
+        __emptyTextLabels[index % __emptyTextLabels.length].textContent =
+          __emptyTextValue;
+      }
+      return [
+        __emptyTextConversions,
+        __emptyTextLabels.every(label => label.childNodes.length === 0),
+        __emptyTextRows.every((row, index) =>
+          row === __emptyTextPanel.children[index]),
+        __emptyTextRowConnected,
+        __emptyTextRowDisconnected,
+        __emptyTextChildConnected,
+        __emptyTextChildDisconnected,
+        __emptyTextPanel.isConnected
+      ];
+    })())JS", "empty-text-detached-churn.js");
+    require(
+        detached == "[8193,true,true,128,128,256,256,false]",
+        "detached empty text clears changed conversion, DOM, or lifecycle state: "
+            + detached);
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    webscene_engine_metrics detached_after{};
+    webscene_engine_get_metrics(engine, &detached_after);
+    require(
+        detached_after.layout_passes == detached_before.layout_passes
+            && detached_after.published_scenes == detached_before.published_scenes,
+        "detached empty text clears scheduled visual work");
+
+    webscene_engine_metrics reattach_before{};
+    webscene_engine_get_metrics(engine, &reattach_before);
+    execute_and_wait(engine,
+        "__emptyTextSurface.appendChild(__emptyTextPanel)",
+        "empty-text-panel-reattach.js");
+    const auto reattached = wait_for_publication(
+        reattach_before.published_scenes,
+        "empty text panel reattach did not publish a scene");
+    require(
+        evaluate(engine, R"JS((() => [
+          __emptyTextRowConnected,
+          __emptyTextRowDisconnected,
+          __emptyTextChildConnected,
+          __emptyTextChildDisconnected,
+          __emptyTextPanel.children.length,
+          __emptyTextPanel.isConnected,
+          __emptyTextInput.selectionStart,
+          __emptyTextInput.selectionEnd
+        ]))())JS", "empty-text-panel-reattach-result.js")
+            == "[256,128,256,256,129,true,1,4]",
+        "empty text panel reattach changed lifecycle, identity, or selection");
+    require(
+        reattached.layout_passes == reattach_before.layout_passes + 1U
+            && reattached.published_scenes == reattach_before.published_scenes + 1U,
+        "empty text panel reattach escaped one layout/publication");
+    acknowledge_latest_scene("empty text panel reattach scene could not be acknowledged");
+
+    webscene_engine_metrics restore_before{};
+    webscene_engine_get_metrics(engine, &restore_before);
+    execute_and_wait(engine,
+        "__emptyTextHost.append(...__emptyTextChildren)",
+        "empty-text-children-restore.js");
+    const auto restored = wait_for_publication(
+        restore_before.published_scenes,
+        "empty text children restore did not publish a scene");
+    require(
+        evaluate(engine, R"JS((() => [
+          __emptyTextHost.children.length,
+          __emptyTextChildren.every((child, index) =>
+            child === __emptyTextHost.children[index]),
+          __emptyTextChildConnected,
+          __emptyTextChildDisconnected,
+          getComputedStyle(__emptyTextHost.lastElementChild).width
+        ]))())JS", "empty-text-children-restore-result.js")
+            == R"([256,true,512,256,"120px"])",
+        "empty text children restore changed lifecycle, identity, or style");
+    require(
+        restored.layout_passes == restore_before.layout_passes + 1U
+            && restored.published_scenes == restore_before.published_scenes + 1U,
+        "empty text children restore escaped one layout/publication");
+    acknowledge_latest_scene("empty text children restore scene could not be acknowledged");
+
+    execute_and_wait(engine, R"JS(
+      __emptyTextSurface.remove();
+      __emptyTextStyle.remove();
+      delete globalThis.__emptyTextValue;
+      delete globalThis.__emptyTextChildren;
+      delete globalThis.__emptyTextHost;
+      delete globalThis.__emptyTextInput;
+      delete globalThis.__emptyTextLabels;
+      delete globalThis.__emptyTextRows;
+      delete globalThis.__emptyTextPanel;
+      delete globalThis.__emptyTextSurface;
+      delete globalThis.__emptyTextStyle;
+      delete globalThis.__emptyTextConversions;
+      delete globalThis.__emptyTextChildDisconnected;
+      delete globalThis.__emptyTextChildConnected;
+      delete globalThis.__emptyTextRowDisconnected;
+      delete globalThis.__emptyTextRowConnected;
+    )JS", "empty-text-panel-cleanup.js");
+    acknowledge_latest_scene("empty text cleanup scene could not be acknowledged");
+    webscene_engine_metrics cleanup_metrics{};
+    webscene_engine_get_metrics(engine, &cleanup_metrics);
+    require(webscene_engine_request_low_memory(engine) != 0,
+        "empty text low-memory request was rejected");
+    webscene_engine_memory_metrics memory_after{sizeof(memory_after)};
+    for (auto attempt = 0; attempt < 250; ++attempt) {
+        require(webscene_engine_get_memory_metrics(engine, &memory_after) != 0,
+            "empty text final memory metrics were unavailable");
+        if (memory_after.low_memory_notifications
+                > initial_memory.low_memory_notifications
+            && memory_after.native_dom_node_count
+                <= initial_memory.native_dom_node_count + 8U) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    webscene_engine_metrics collected_metrics{};
+    webscene_engine_get_metrics(engine, &collected_metrics);
+    require(
+        memory_after.low_memory_notifications
+                > initial_memory.low_memory_notifications
+            && memory_after.native_dom_node_count
+                <= initial_memory.native_dom_node_count + 8U,
+        "empty text churn retained detached native DOM nodes");
+    require(
+        collected_metrics.layout_passes == cleanup_metrics.layout_passes
+            && collected_metrics.published_scenes == cleanup_metrics.published_scenes,
+        "empty text low-memory collection scheduled visual work");
+    webscene_engine_destroy(engine);
+}
+
 void test_identical_selector_attribute_writes_do_not_schedule_transitions()
 {
     auto* engine = webscene_engine_create(0);
@@ -2442,6 +2833,7 @@ void test_resize_event_coalesces_attribute_selector_recascades(
     )JS", "native-resize-attribute-batching-cleanup.js");
     test_empty_panel_replace_children_skips_visual_work();
     test_empty_fragment_append_skips_panel_visual_work();
+    test_empty_text_content_clear_skips_panel_visual_work();
     test_identical_selector_attribute_writes_do_not_schedule_transitions();
 }
 

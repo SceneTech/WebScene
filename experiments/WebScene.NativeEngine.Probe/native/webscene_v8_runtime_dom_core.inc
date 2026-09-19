@@ -5279,7 +5279,13 @@
                     form_control_changed = checkable_activation.changed;
                 }
             }
-            if (!default_prevented) self->queue_external_navigation(*node);
+            if (!default_prevented && self->is_submit_button(node)) {
+                if(auto* form=self->form_owner(*node);form!=nullptr)
+                    static_cast<void>(self->dispatch_form_submit(
+                        synthetic,*form,node));
+            } else if (!default_prevented) {
+                self->queue_external_navigation(*node);
+            }
             if (form_control_changed && self->is_connected(*node)) {
                 self->dispatch_input_event_type(
                     synthetic, "input", *node, nullptr, nullptr, false);

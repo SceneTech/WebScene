@@ -2350,6 +2350,23 @@
         dom_node& form,
         dom_node* submitter)
     {
+        const auto controls=forms::form_validation_controls(document,form);
+        for(const auto* candidate:controls) {
+            if(candidate==nullptr || (candidate->tag!="input"
+                && candidate->tag!="select" && candidate->tag!="textarea"))
+                continue;
+            auto& control=*const_cast<dom_node*>(candidate);
+            if(control.form_control().user_validity_interacted) continue;
+            const auto value=forms::text_control_value(control);
+            if(is_connected(control))
+                recascade_form_value_selector_transition(
+                    control,value,value,true,std::nullopt);
+            else control.mutable_form_control().user_validity_interacted=true;
+        }
+        const auto skip_validation=form.attributes.contains("novalidate")
+            || (submitter!=nullptr
+                && submitter->attributes.contains("formnovalidate"));
+        if(!skip_validation && !validate_form_constraints(form)) return true;
         bool submit_prevented = false;
         return dispatch_input_event_type(
             input,
@@ -4143,6 +4160,13 @@
                 && !activate_label_control_after_click
                 && select_popup_is_candidate(*activated_form_control)) {
                 static_cast<void>(open_select_popup(*activated_form_control));
+            }
+            if (!click_default_prevented && is_submit_button(click_target)) {
+                if(auto* form=form_owner(*click_target);form!=nullptr
+                    && !dispatch_form_submit(input,*form,click_target)) {
+                    last_error="Native form submission dispatch failed";
+                    return false;
+                }
             }
             auto activation_flags = uint32_t{0U};
             const auto new_context_modifier =

@@ -462,7 +462,10 @@
       "attributes": [
         { "name": "length", "getter": "get_form_or_select_length" }
       ],
-      "methods": [],
+      "methods": [
+        { "name": "checkValidity", "callback": "validate_control", "length": 0 },
+        { "name": "reportValidity", "callback": "validate_control", "length": 0 }
+      ],
       "constants": []
     },
     {

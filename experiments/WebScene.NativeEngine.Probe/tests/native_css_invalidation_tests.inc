@@ -434,6 +434,56 @@ void test_live_form_state_selectors_and_scaling()
         "constraint-validation IDL or control behavior diverged: "
             + constraint_validation_idl);
 
+    const auto form_submission_validation = evaluate(engine, R"JS((() => {
+      const form=document.createElement('form');form.id='native-aggregate';
+      const fieldset=document.createElement('fieldset');
+      const inside=document.createElement('input');inside.required=true;
+      const barred=document.createElement('input');barred.required=true;
+      barred.disabled=true;fieldset.append(inside,barred);form.appendChild(fieldset);
+      const outside=document.createElement('input');outside.required=true;
+      outside.setAttribute('form',form.id);document.body.append(form,outside);
+      const aggregate=[[form.matches(':invalid'),fieldset.matches(':invalid')]];
+      inside.value='inside-ready';aggregate.push([
+        form.matches(':invalid'),fieldset.matches(':valid')]);
+      outside.value='outside-ready';aggregate.push([form.matches(':valid')]);
+
+      const checked=document.createElement('form');
+      const first=document.createElement('input');first.required=true;
+      const second=document.createElement('input');second.required=true;
+      checked.append(first,second);document.body.appendChild(checked);
+      const invalid=[];first.addEventListener('invalid',()=>invalid.push('first'));
+      second.addEventListener('invalid',event=>{
+        invalid.push('second');event.preventDefault();
+      });
+      const staticValidation=[checked.checkValidity(),invalid.slice(),
+        first.matches(':user-invalid')];
+      invalid.length=0;staticValidation.push(checked.reportValidity(),invalid.slice());
+
+      const submitted=document.createElement('form');
+      const required=document.createElement('input');required.required=true;
+      const optional=document.createElement('input');
+      const submit=document.createElement('button');
+      const skip=document.createElement('button');skip.setAttribute('formnovalidate','');
+      submitted.append(required,optional,submit,skip);document.body.appendChild(submitted);
+      let invalidCount=0,submitCount=0;
+      required.addEventListener('invalid',()=>invalidCount++);
+      submitted.addEventListener('submit',event=>{submitCount++;event.preventDefault();});
+      submit.click();
+      const attempts=[[invalidCount,submitCount,required.matches(':user-invalid'),
+        optional.matches(':user-valid'),submitted.matches(':user-invalid')]];
+      required.value='ready';submit.click();
+      attempts.push([invalidCount,submitCount,required.matches(':user-valid')]);
+      submitted.reset();submitted.setAttribute('novalidate','');submit.click();
+      attempts.push([invalidCount,submitCount,required.matches(':user-invalid')]);
+      submitted.reset();submitted.removeAttribute('novalidate');skip.click();
+      attempts.push([invalidCount,submitCount,required.matches(':user-invalid')]);
+      return [Object.prototype.hasOwnProperty.call(
+        HTMLFormElement.prototype,'checkValidity'),aggregate,staticValidation,attempts];
+    })())JS", "form-submission-validation.js");
+    require(form_submission_validation == R"JSON([true,[[true,true],[true,true],[true]],[false,["first","second"],false,false,["first","second"]],[[1,0,true,true,false],[1,1,true],[1,2,true],[1,3,true]]])JSON",
+        "form aggregation or submission validation diverged: "
+            + form_submission_validation);
+
     const auto setup = evaluate(engine, R"JS((() => {
       document.body.innerHTML='<style>.scale:invalid{width:2px}.scale:placeholder-shown{height:3px}'+
         Array.from({length:1024},(_,i)=>'.noise-'+i+':hover{width:7px}').join('')+'</style>'+

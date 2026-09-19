@@ -951,7 +951,12 @@
                 form_control_changed = checkable_activation.changed;
             }
         }
-        if (!default_prevented) queue_external_navigation(node);
+        if (!default_prevented && is_submit_button(&node)) {
+            if(auto* form=form_owner(node);form!=nullptr
+                && !dispatch_form_submit(synthetic,*form,&node)) return false;
+        } else if (!default_prevented) {
+            queue_external_navigation(node);
+        }
         if (form_control_changed && is_connected(node)) {
             if (!dispatch_input_event_type(
                     synthetic, "input", node, nullptr, nullptr, false)

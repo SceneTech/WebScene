@@ -1,5 +1,6 @@
 #pragma once
 #include "webscene_native_dom.h"
+#include <array>
 #include <charconv>
 #include <cmath>
 #include <regex>
@@ -32,6 +33,21 @@ struct text_constraint_validity final {
     bool operator==(const text_constraint_validity&) const = default;
 };
 
+struct numeric_constraint_validity final {
+    bool applicable{false};
+    bool bad_input{false};
+    bool range_underflow{false};
+    bool range_overflow{false};
+    bool step_mismatch{false};
+
+    bool valid() const noexcept {
+        return applicable && !bad_input && !range_underflow
+            && !range_overflow && !step_mismatch;
+    }
+
+    bool operator==(const numeric_constraint_validity&) const = default;
+};
+
 inline bool form_keyword_equals(std::string_view value,std::string_view expected)
     {
         if(value.size()!=expected.size()) return false;
@@ -46,6 +62,37 @@ inline bool form_keyword_equals(std::string_view value,std::string_view expected
 inline std::optional<double> finite_number(std::string_view text)
     {
         if(text.empty()) return std::nullopt;
+        size_t cursor=0U;
+        if(text[cursor]=='-') {
+            if(++cursor==text.size()) return std::nullopt;
+        } else if(text[cursor]=='+') {
+            return std::nullopt;
+        }
+        auto integer_digits=false;
+        while(cursor<text.size() && text[cursor]>='0' && text[cursor]<='9') {
+            integer_digits=true;
+            ++cursor;
+        }
+        auto fractional_digits=false;
+        if(cursor<text.size() && text[cursor]=='.') {
+            ++cursor;
+            while(cursor<text.size() && text[cursor]>='0' && text[cursor]<='9') {
+                fractional_digits=true;
+                ++cursor;
+            }
+            if(!fractional_digits) return std::nullopt;
+        }
+        if(!integer_digits && !fractional_digits) return std::nullopt;
+        if(cursor<text.size() && (text[cursor]=='e' || text[cursor]=='E')) {
+            ++cursor;
+            if(cursor<text.size() && (text[cursor]=='+' || text[cursor]=='-'))
+                ++cursor;
+            const auto exponent_begin=cursor;
+            while(cursor<text.size() && text[cursor]>='0' && text[cursor]<='9')
+                ++cursor;
+            if(cursor==exponent_begin) return std::nullopt;
+        }
+        if(cursor!=text.size()) return std::nullopt;
         double result{};
         const auto parsed=std::from_chars(text.data(),text.data()+text.size(),result);
         if(parsed.ec!=std::errc{} || parsed.ptr!=text.data()+text.size()
@@ -53,37 +100,135 @@ inline std::optional<double> finite_number(std::string_view text)
         return result;
     }
 
+enum class numeric_input_kind : uint8_t {
+    none,
+    number,
+    range,
+};
+
+struct numeric_type_parameters final {
+    numeric_input_kind kind{numeric_input_kind::none};
+    std::optional<double> minimum;
+    std::optional<double> maximum;
+    double step{1.0};
+    double step_base{0.0};
+    bool step_any{false};
+};
+
+inline numeric_input_kind numeric_kind(const dom_node& node) {
+    if(node.tag!="input") return numeric_input_kind::none;
+    const auto authored=node.attributes.find("type");
+    const auto type=authored==node.attributes.end()
+        ? std::string_view{"text"}:std::string_view{authored->second};
+    if(form_keyword_equals(type,"number")) return numeric_input_kind::number;
+    if(form_keyword_equals(type,"range")) return numeric_input_kind::range;
+    return numeric_input_kind::none;
+}
+
+inline std::optional<double> numeric_attribute(
+    const dom_node& node,std::string_view name) {
+    const auto authored=node.attributes.find(std::string(name));
+    return authored==node.attributes.end()
+        ? std::nullopt:finite_number(authored->second);
+}
+
+inline numeric_type_parameters numeric_parameters(const dom_node& node) {
+    numeric_type_parameters result;
+    result.kind=numeric_kind(node);
+    if(result.kind==numeric_input_kind::none) return result;
+    result.minimum=numeric_attribute(node,"min");
+    result.maximum=numeric_attribute(node,"max");
+    if(result.kind==numeric_input_kind::range) {
+        if(!result.minimum) result.minimum=0.0;
+        if(!result.maximum) result.maximum=100.0;
+        if(*result.maximum<*result.minimum) result.maximum=result.minimum;
+    }
+    const auto authored_step=node.attributes.find("step");
+    result.step_any=authored_step!=node.attributes.end()
+        && form_keyword_equals(authored_step->second,"any");
+    if(!result.step_any && authored_step!=node.attributes.end()) {
+        const auto parsed=finite_number(authored_step->second);
+        if(parsed && *parsed>0.0) result.step=*parsed;
+    }
+    if(result.minimum) result.step_base=*result.minimum;
+    else if(const auto authored_value=numeric_attribute(node,"value"))
+        result.step_base=*authored_value;
+    return result;
+}
+
+inline bool numeric_step_mismatch(
+    double value,const numeric_type_parameters& parameters) {
+    if(parameters.step_any) return false;
+    const auto steps=(value-parameters.step_base)/parameters.step;
+    return std::abs(steps-std::round(steps))>1e-7;
+}
+
+inline std::optional<std::string> format_finite_number(double value) {
+    if(!std::isfinite(value)) return std::nullopt;
+    std::array<char,64U> buffer{};
+    const auto formatted=std::to_chars(
+        buffer.data(),buffer.data()+buffer.size(),value,std::chars_format::general);
+    if(formatted.ec!=std::errc{}) return std::nullopt;
+    return std::string(buffer.data(),formatted.ptr);
+}
+
+inline double range_default_value(const numeric_type_parameters& parameters) {
+    return *parameters.minimum+(*parameters.maximum-*parameters.minimum)*0.5;
+}
+
+inline double sanitize_range_number(
+    double value,const numeric_type_parameters& parameters) {
+    value=std::clamp(value,*parameters.minimum,*parameters.maximum);
+    if(!numeric_step_mismatch(value,parameters)) return value;
+    const auto steps=(value-parameters.step_base)/parameters.step;
+    value=parameters.step_base+std::floor(steps+0.5)*parameters.step;
+    if(value<*parameters.minimum)
+        value=parameters.step_base+std::ceil(
+            (*parameters.minimum-parameters.step_base)/parameters.step)
+            *parameters.step;
+    if(value>*parameters.maximum)
+        value=parameters.step_base+std::floor(
+            (*parameters.maximum-parameters.step_base)/parameters.step)
+            *parameters.step;
+    return std::clamp(value,*parameters.minimum,*parameters.maximum);
+}
+
+inline std::string sanitize_programmatic_numeric_value(
+    const dom_node& node,std::string value) {
+    const auto parameters=numeric_parameters(node);
+    if(parameters.kind==numeric_input_kind::none) return value;
+    if(parameters.kind==numeric_input_kind::number && value.empty()) return value;
+    const auto parsed=finite_number(value);
+    if(parameters.kind==numeric_input_kind::number)
+        return parsed?std::move(value):std::string{};
+    const auto number=sanitize_range_number(
+        parsed.value_or(range_default_value(parameters)),parameters);
+    return format_finite_number(number).value_or(std::string{});
+}
+
 inline numeric_range_state range_state(
     const dom_node& node,std::optional<std::string_view> live_value=std::nullopt)
     {
         if(node.tag!="input") return numeric_range_state::not_applicable;
-        const auto authored_type=node.attributes.find("type");
-        const auto type=authored_type==node.attributes.end()
-            ? std::string_view{"text"}:std::string_view{authored_type->second};
-        const auto range=form_keyword_equals(type,"range");
-        if(!range && !form_keyword_equals(type,"number"))
+        const auto parameters=numeric_parameters(node);
+        if(parameters.kind==numeric_input_kind::none)
             return numeric_range_state::not_applicable;
-        const auto bound=[&](std::string_view name)->std::optional<double> {
-            const auto authored=node.attributes.find(std::string(name));
-            return authored==node.attributes.end()
-                ? std::nullopt:finite_number(authored->second);
-        };
-        auto minimum=bound("min");
-        auto maximum=bound("max");
-        if(range) {
-            if(!minimum) minimum=0.0;
-            if(!maximum) maximum=100.0;
-            if(*maximum<*minimum) maximum=*minimum;
-        }
+        std::string owned_value;
         std::string_view value;
         if(live_value) value=*live_value;
         else if(node.form_control().value_initialized) value=node.form_control().value;
-        else if(const auto authored=node.attributes.find("value");authored!=node.attributes.end())
-            value=authored->second;
+        else {
+            const auto authored=node.attributes.find("value");
+            owned_value=sanitize_programmatic_numeric_value(
+                node,authored==node.attributes.end()?std::string{}:authored->second);
+            value=owned_value;
+        }
         auto number=finite_number(value);
-        if(!number && range) number=*minimum+(*maximum-*minimum)*0.5;
+        if(!number && parameters.kind==numeric_input_kind::range)
+            number=range_default_value(parameters);
         if(!number) return numeric_range_state::not_applicable;
-        return (minimum && *number<*minimum) || (maximum && *number>*maximum)
+        return (parameters.minimum && *number<*parameters.minimum)
+                || (parameters.maximum && *number>*parameters.maximum)
             ? numeric_range_state::out_of_range:numeric_range_state::in_range;
     }
 
@@ -448,6 +593,8 @@ inline void ensure_text_value(dom_node& node) {
     } else {
         auto attribute=node.attributes.find("value");
         control.value=attribute==node.attributes.end()?std::string{}:attribute->second;
+        control.value=sanitize_programmatic_numeric_value(
+            node,std::move(control.value));
     }
     control.value_initialized=true;
     control.selection_start=control.selection_end=control.value.size();
@@ -470,6 +617,9 @@ inline bool text_value_empty(const dom_node& node) {
         return !has_text(has_text,node);
     }
     const auto attribute=node.attributes.find("value");
+    if(numeric_kind(node)!=numeric_input_kind::none)
+        return sanitize_programmatic_numeric_value(
+            node,attribute==node.attributes.end()?std::string{}:attribute->second).empty();
     return attribute==node.attributes.end() || attribute->second.empty();
 }
 
@@ -525,6 +675,36 @@ inline bool will_validate(
             && !form_keyword_equals(type,"reset");
     }
     return true;
+}
+
+inline numeric_constraint_validity numeric_validity_state(
+    const native_document& document,
+    const dom_node& node,
+    std::optional<std::string_view> live_value=std::nullopt) {
+    numeric_constraint_validity result;
+    const auto parameters=numeric_parameters(node);
+    result.applicable=will_validate(document,node)
+        && parameters.kind!=numeric_input_kind::none;
+    if(!result.applicable) return result;
+    std::string owned_value;
+    if(!live_value) {
+        if(node.form_control().value_initialized) owned_value=node.form_control().value;
+        else if(const auto authored=node.attributes.find("value");
+                authored!=node.attributes.end())
+            owned_value=sanitize_programmatic_numeric_value(node,authored->second);
+        else owned_value=sanitize_programmatic_numeric_value(node,std::string{});
+    }
+    const auto value=live_value.value_or(owned_value);
+    if(value.empty()) return result;
+    auto number=finite_number(value);
+    if(!number) {
+        if(parameters.kind==numeric_input_kind::number) result.bad_input=true;
+        return result;
+    }
+    result.range_underflow=parameters.minimum && *number<*parameters.minimum;
+    result.range_overflow=parameters.maximum && *number>*parameters.maximum;
+    result.step_mismatch=numeric_step_mismatch(*number,parameters);
+    return result;
 }
 
 inline bool text_constraint_applies(const dom_node& node) {
@@ -705,6 +885,9 @@ inline simple_validity_state validity_state(
         return simple_validity_state::not_applicable;
     const auto text_validity=text_validity_state(document,node);
     if(text_validity.applicable && !text_validity.valid())
+        return simple_validity_state::invalid;
+    const auto numeric_validity=numeric_validity_state(document,node);
+    if(numeric_validity.applicable && !numeric_validity.valid())
         return simple_validity_state::invalid;
     if(input_type_is(node,"radio")) {
         return radio_group_value_missing(document,node)

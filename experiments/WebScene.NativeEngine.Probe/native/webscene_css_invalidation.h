@@ -131,6 +131,9 @@ inline std::vector<css_compound_dependencies> compile_invalidation_plan(
                     add(output.attributes["pattern"], route);
                     add(output.attributes["minlength"], route);
                     add(output.attributes["maxlength"], route);
+                    add(output.attributes["min"], route);
+                    add(output.attributes["max"], route);
+                    add(output.attributes["step"], route);
                     add(output.attributes["readonly"], route);
                     // Disabled fieldsets bar descendant controls from
                     // constraint validation; the first legend exception is

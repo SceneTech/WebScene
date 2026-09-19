@@ -2676,10 +2676,25 @@
             self->radio_group_attribute_may_change_membership(*node,"type")
             ? self->capture_radio_group_selector_state()
             : std::vector<radio_group_selector_state>{};
+        std::optional<std::string> previous_live_value;
+        if(node->tag=="input") {
+            forms::ensure_text_value(*node);
+            previous_live_value=node->form_control().value;
+        }
         const auto text=to_utf8(info.GetIsolate(),value);
         node->attributes["type"]=text;
         self->recascade_attribute_selector_transition(
             *node,"type",old_value,text);
+        if(previous_live_value) {
+            auto sanitized=forms::sanitize_programmatic_numeric_value(
+                *node,node->form_control().value);
+            if(sanitized!=node->form_control().value) {
+                node->mutable_form_control().value=std::move(sanitized);
+                if(self->is_connected(*node))
+                    self->recascade_form_value_selector_transition(
+                        *node,*previous_live_value,node->form_control().value);
+            }
+        }
         self->recascade_radio_group_selector_state_changes(radio_group_state);
     }
 
@@ -3413,6 +3428,8 @@
             : forms::supports_text_selection(node)
                 ? to_wtf8(info.GetIsolate(), value)
                 : to_utf8(info.GetIsolate(), value);
+        node->mutable_form_control().value=forms::sanitize_programmatic_numeric_value(
+            *node,std::move(node->mutable_form_control().value));
         node->mutable_form_control().value_initialized = true;
         node->mutable_form_control().dirty_value = true;
         node->mutable_form_control().selection_start = std::min(node->mutable_form_control().selection_start, node->mutable_form_control().value.size());
@@ -3430,6 +3447,63 @@
             node->mutable_form_control().value_changed_by_user = false;
             self->document.mark_dirty();
         }
+    }
+
+    static void get_value_as_number(
+        v8::Local<v8::Name>,
+        const v8::PropertyCallbackInfo<v8::Value>& info)
+    {
+        auto* node=unwrap_node(info.Holder());
+        if(node==nullptr || forms::numeric_kind(*node)==forms::numeric_input_kind::none) {
+            info.GetReturnValue().Set(v8::Number::New(
+                info.GetIsolate(),std::numeric_limits<double>::quiet_NaN()));
+            return;
+        }
+        forms::ensure_text_value(*node);
+        const auto number=forms::finite_number(node->form_control().value);
+        info.GetReturnValue().Set(v8::Number::New(
+            info.GetIsolate(),number.value_or(
+                std::numeric_limits<double>::quiet_NaN())));
+    }
+
+    static void set_value_as_number(
+        v8::Local<v8::Name>,
+        v8::Local<v8::Value> value,
+        const v8::PropertyCallbackInfo<void>& info)
+    {
+        auto* self=current(info.GetIsolate());
+        auto* node=unwrap_node(info.Holder());
+        if(node==nullptr || forms::numeric_kind(*node)==forms::numeric_input_kind::none)
+            return;
+        const auto maybe_number=value->NumberValue(
+            info.GetIsolate()->GetCurrentContext());
+        if(maybe_number.IsNothing()) return;
+        const auto number=maybe_number.FromJust();
+        if(!std::isfinite(number) && !std::isnan(number)) {
+            info.GetIsolate()->ThrowException(v8::Exception::TypeError(
+                js_string(info.GetIsolate(),"valueAsNumber must be finite or NaN")));
+            return;
+        }
+        forms::ensure_text_value(*node);
+        const auto previous_value=node->form_control().value;
+        auto next_value=std::isnan(number)
+            ? std::string{}
+            : forms::format_finite_number(number).value_or(std::string{});
+        next_value=forms::sanitize_programmatic_numeric_value(
+            *node,std::move(next_value));
+        auto& control=node->mutable_form_control();
+        control.value=std::move(next_value);
+        control.value_initialized=true;
+        control.dirty_value=true;
+        control.value_changed_by_user=false;
+        control.selection_start=control.selection_end=control.value.size();
+        control.selection_start_utf16_suboffset=0U;
+        control.selection_end_utf16_suboffset=0U;
+        control.selection_direction=text_selection_direction::none;
+        if(self->is_connected(*node))
+            self->recascade_form_value_selector_transition(
+                *node,previous_value,control.value,std::nullopt,false);
+        else self->document.mark_dirty();
     }
 
     static void get_selection_start(
@@ -3730,9 +3804,11 @@
                     reset_textarea_value(node);
                 } else {
                     const auto authored = node.attributes.find("value");
-                    node.mutable_form_control().value = authored == node.attributes.end()
-                        ? std::string{}
-                        : authored->second;
+                    node.mutable_form_control().value =
+                        forms::sanitize_programmatic_numeric_value(
+                            node,authored == node.attributes.end()
+                                ? std::string{}
+                                : authored->second);
                     node.mutable_form_control().value_initialized = true;
                     node.mutable_form_control().dirty_value = false;
                 }

@@ -516,6 +516,8 @@ struct v8_dom_runtime::implementation final {
             js_string(isolate, "name"), get_reflected_string_attribute, set_reflected_string_attribute);
         element->InstanceTemplate()->SetNativeDataProperty(js_string(isolate, "value"), get_form_value, set_form_value);
         element->InstanceTemplate()->SetNativeDataProperty(
+            js_string(isolate, "valueAsNumber"), get_value_as_number, set_value_as_number);
+        element->InstanceTemplate()->SetNativeDataProperty(
             js_string(isolate, "defaultValue"), get_default_value, set_default_value);
         element->InstanceTemplate()->SetNativeDataProperty(
             js_string(isolate, "maxLength"), get_max_length, set_max_length);
@@ -523,6 +525,8 @@ struct v8_dom_runtime::implementation final {
             js_string(isolate, "min"), get_reflected_string_attribute, set_reflected_string_attribute);
         element->InstanceTemplate()->SetNativeDataProperty(
             js_string(isolate, "max"), get_reflected_string_attribute, set_reflected_string_attribute);
+        element->InstanceTemplate()->SetNativeDataProperty(
+            js_string(isolate, "step"), get_reflected_string_attribute, set_reflected_string_attribute);
         element->InstanceTemplate()->SetNativeDataProperty(
             js_string(isolate, "readOnly"), get_read_only, set_read_only);
         element->InstanceTemplate()->SetNativeDataProperty(js_string(isolate, "options"), get_select_options);

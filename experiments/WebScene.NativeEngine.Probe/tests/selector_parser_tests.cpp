@@ -365,6 +365,14 @@ void test_compiled_css_invalidation_plans()
     require(radio_relational[0].attributes.at(
             "$live-form-radio-group-checkedness").scope==invalidation_ancestors,
         "relational radio validity must retain its compiled ancestor route");
+    const auto numeric_validity=compile(".amount:invalid");
+    for(const auto* attribute:{"min","max","step"})
+        require(numeric_validity[0].attributes.at(attribute).scope==invalidation_subject,
+            "numeric validity attributes must retain a subject route");
+    const auto numeric_relational=compile(".field:has(.amount:invalid)");
+    for(const auto* attribute:{"min","max","step"})
+        require(numeric_relational[0].attributes.at(attribute).scope==invalidation_ancestors,
+            "relational numeric validity must retain its compiled ancestor route");
 
     std::vector<css_child_list_bucket> buckets;
     const auto index = [&](size_t id, std::string_view text) {

@@ -5,7 +5,6 @@
     {"id": "custom"},
     {"id": "all", "name": "all"},
     {"id": "content", "name": "content"},
-    {"id": "aspect_ratio", "name": "aspect-ratio"},
     {"id": "width", "name": "width"},
     {"id": "height", "name": "height"},
     {"id": "min_width", "name": "min-width"},
@@ -147,7 +146,8 @@
     {"id": "container_type", "name": "container-type"},
     {"id": "container_name", "name": "container-name"},
     {"id": "content_visibility", "name": "content-visibility"},
-    {"id": "contain_intrinsic_size", "name": "contain-intrinsic-size"}
+    {"id": "contain_intrinsic_size", "name": "contain-intrinsic-size"},
+    {"id": "aspect_ratio", "name": "aspect-ratio"}
   ],
   "nativeStorageOnlyProperties": [
     "accent-color", "align-content", "animation-direction", "animation-fill-mode", "animation-play-state",
@@ -214,7 +214,7 @@
     "font", "text_transform", "list_style", "list_style_position", "list_style_type"
   ],
   "managedKnownProperties": [
-    "align-content", "align-items", "align-self", "all", "aspect-ratio", "background", "background-color",
+    "align-content", "align-items", "align-self", "all", "background", "background-color",
     "background-image", "border", "border-bottom-color", "border-bottom-left-radius",
     "border-bottom-right-radius", "border-bottom-style", "border-bottom-width", "border-color",
     "border-left-color", "border-left-style", "border-left-width", "border-radius",
@@ -232,7 +232,7 @@
     "stroke-linecap", "stroke-linejoin", "stroke-width", "text-align", "text-indent", "text-transform",
     "top", "transform", "visibility", "white-space", "width", "word-spacing", "z-index",
     "outline", "outline-color", "outline-offset", "outline-style", "outline-width",
-    "grid-template-areas"
+    "grid-template-areas", "aspect-ratio"
   ],
   "supportedPropertyExtras": [
     "animation", "animation-delay", "animation-direction", "animation-duration", "animation-fill-mode",

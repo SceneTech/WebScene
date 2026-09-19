@@ -270,6 +270,10 @@ public static unsafe partial class NativeWebSceneApi
         Marshal.GetFunctionPointerForDelegate(ResourceLoadV3);
     private static readonly IntPtr ResourceLoadV4Address =
         Marshal.GetFunctionPointerForDelegate(ResourceLoadV4);
+    private static readonly ValidationMessageFormatCallbackV1 ValidationMessageFormatV1 =
+        FormatValidationMessageV1;
+    private static readonly IntPtr ValidationMessageFormatV1Address =
+        Marshal.GetFunctionPointerForDelegate(ValidationMessageFormatV1);
     private static readonly ScenePublishedCallback ScenePublished = NotifyScenePublished;
     private static readonly IntPtr ScenePublishedAddress =
         Marshal.GetFunctionPointerForDelegate(ScenePublished);
@@ -344,7 +348,8 @@ public static unsafe partial class NativeWebSceneApi
         Func<string, bool>? admitWebGpuDocument = null,
         string? persistentStorageDirectory = null,
         string? persistentStoragePartitionKey = null,
-        ulong persistentStorageQuotaBytes = 0)
+        ulong persistentStorageQuotaBytes = 0,
+        WebSceneValidationMessageFormatter? validationMessageFormatter = null)
     {
         ArgumentNullException.ThrowIfNull(resourceLoader);
         ArgumentNullException.ThrowIfNull(scenePublished);
@@ -364,7 +369,8 @@ public static unsafe partial class NativeWebSceneApi
                 hostRequestAvailable,
                 interopCallbackAvailable,
                 animationFrameRequested,
-                admitWebGpuDocument));
+                admitWebGpuDocument,
+                validationMessageFormatter));
         try
         {
             fixed (byte* directory = directoryBytes)
@@ -417,7 +423,11 @@ public static unsafe partial class NativeWebSceneApi
                     StoragePartitionKey = storagePartitionBytes.Length == 0
                         ? IntPtr.Zero : (IntPtr)storagePartition,
                     StoragePartitionKeyLength = (nuint)storagePartitionBytes.Length,
-                    StorageQuotaBytes = persistentStorageQuotaBytes
+                    StorageQuotaBytes = persistentStorageQuotaBytes,
+                    ValidationMessageFormatCallbackV1 = validationMessageFormatter is null
+                        ? IntPtr.Zero : ValidationMessageFormatV1Address,
+                    ValidationMessageFormatUserDataV1 = validationMessageFormatter is null
+                        ? IntPtr.Zero : GCHandle.ToIntPtr(bridgeHandle)
                 };
                 var engine = EngineCreateWithOptions(in options);
                 if (engine == IntPtr.Zero) return IntPtr.Zero;
@@ -652,6 +662,78 @@ public static unsafe partial class NativeWebSceneApi
         ref NativeResourceResponseV4 response,
         IntPtr destination,
         nuint destinationCapacity);
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate nuint ValidationMessageFormatCallbackV1(
+        IntPtr userData,
+        uint reason,
+        IntPtr arguments,
+        nuint argumentCount,
+        IntPtr destination,
+        nuint destinationCapacity);
+
+    [ThreadStatic]
+    private static bool s_formattingValidationMessage;
+
+    private static nuint FormatValidationMessageV1(
+        IntPtr userData,
+        uint reason,
+        IntPtr arguments,
+        nuint argumentCount,
+        IntPtr destination,
+        nuint destinationCapacity)
+    {
+        if (s_formattingValidationMessage || argumentCount > 4
+            || destination == IntPtr.Zero || destinationCapacity < 1)
+        {
+            return 0;
+        }
+        try
+        {
+            var bridge = (ResourceBridge?)GCHandle.FromIntPtr(userData).Target;
+            if (bridge is null) return 0;
+            var managedArguments = new WebSceneValidationMessageArgument[checked((int)argumentCount)];
+            nuint totalBytes = 0;
+            var stride = Marshal.SizeOf<NativeValidationMessageArgumentV1>();
+            for (var index = 0; index < managedArguments.Length; ++index)
+            {
+                var native = Marshal.PtrToStructure<NativeValidationMessageArgumentV1>(
+                    IntPtr.Add(arguments, checked(index * stride)));
+                totalBytes += native.ValueLength;
+                if (native.StructSize < stride || native.ValueLength > 256
+                    || totalBytes > 256
+                    || (native.ValueLength != 0 && native.ValueUtf8 == IntPtr.Zero))
+                {
+                    return 0;
+                }
+                managedArguments[index] = new(
+                    (WebSceneValidationMessageArgumentKind)native.Kind,
+                    native.ValueLength == 0
+                        ? string.Empty
+                        : Marshal.PtrToStringUTF8(
+                            native.ValueUtf8, checked((int)native.ValueLength)) ?? string.Empty);
+            }
+            s_formattingValidationMessage = true;
+            var formatted = bridge.FormatValidationMessage(
+                (WebSceneValidationMessageReason)reason, managedArguments);
+            if (string.IsNullOrEmpty(formatted)) return 0;
+            var byteCount = Encoding.UTF8.GetByteCount(formatted);
+            if (byteCount is < 1 or > 1024 || (nuint)byteCount > destinationCapacity)
+                return 0;
+            Encoding.UTF8.GetBytes(
+                formatted,
+                new Span<byte>((void*)destination, checked((int)destinationCapacity)));
+            return (nuint)byteCount;
+        }
+        catch
+        {
+            return 0;
+        }
+        finally
+        {
+            s_formattingValidationMessage = false;
+        }
+    }
 
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     private delegate uint WebGpuPolicyCallback(IntPtr userData, IntPtr url, nuint urlLength);
@@ -1079,10 +1161,16 @@ public static unsafe partial class NativeWebSceneApi
         Action? hostRequestAvailable,
         Action? interopCallbackAvailable,
         Action? animationFrameRequested,
-        Func<string, bool>? admitWebGpuDocument = null) : IDisposable
+        Func<string, bool>? admitWebGpuDocument = null,
+        WebSceneValidationMessageFormatter? validationMessageFormatter = null) : IDisposable
     {
         public bool AdmitWebGpuDocument(string url)
             => (OperatingSystem.IsMacOS() || OperatingSystem.IsWindows()) && admitWebGpuDocument?.Invoke(url) == true;
+
+        public string? FormatValidationMessage(
+            WebSceneValidationMessageReason reason,
+            IReadOnlyList<WebSceneValidationMessageArgument> arguments)
+            => validationMessageFormatter?.Invoke(reason, arguments);
 
         private const int EnvelopeHeaderSize = 2 + sizeof(uint) + sizeof(long) + sizeof(long);
         [ThreadStatic]

@@ -808,7 +808,8 @@ public sealed partial class UnoNativeWebSceneView : ContentControl, IAsyncDispos
                 interopCallbackAvailable: callbackSignal.Notify,
                 persistentStorageDirectory: options.PersistentStorageDirectory,
                 persistentStoragePartitionKey: options.PersistentStoragePartitionKey,
-                persistentStorageQuotaBytes: options.PersistentStorageQuotaBytes);
+                persistentStorageQuotaBytes: options.PersistentStorageQuotaBytes,
+                validationMessageFormatter: options.ValidationMessageFormatter);
             if (engine == IntPtr.Zero)
             {
                 throw new InvalidOperationException(

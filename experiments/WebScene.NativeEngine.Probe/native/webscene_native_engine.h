@@ -1411,6 +1411,57 @@ typedef size_t (*webscene_resource_load_callback_v5)(
     char* destination,
     size_t destination_capacity);
 
+/* Stable, product-neutral identifiers for native constraint-validation
+ * messages. Hosts may translate these identifiers without inspecting author
+ * content or browser-owned English text. */
+enum {
+    WEBSCENE_VALIDATION_MESSAGE_VALUE_MISSING_V1 = 1U,
+    WEBSCENE_VALIDATION_MESSAGE_TYPE_MISMATCH_V1 = 2U,
+    WEBSCENE_VALIDATION_MESSAGE_PATTERN_MISMATCH_V1 = 3U,
+    WEBSCENE_VALIDATION_MESSAGE_TOO_LONG_V1 = 4U,
+    WEBSCENE_VALIDATION_MESSAGE_TOO_SHORT_V1 = 5U,
+    WEBSCENE_VALIDATION_MESSAGE_RANGE_UNDERFLOW_V1 = 6U,
+    WEBSCENE_VALIDATION_MESSAGE_RANGE_OVERFLOW_V1 = 7U,
+    WEBSCENE_VALIDATION_MESSAGE_STEP_MISMATCH_V1 = 8U,
+    WEBSCENE_VALIDATION_MESSAGE_BAD_INPUT_V1 = 9U
+};
+
+enum {
+    WEBSCENE_VALIDATION_ARGUMENT_CONTROL_TYPE_V1 = 1U,
+    WEBSCENE_VALIDATION_ARGUMENT_PATTERN_V1 = 2U,
+    WEBSCENE_VALIDATION_ARGUMENT_MIN_LENGTH_V1 = 3U,
+    WEBSCENE_VALIDATION_ARGUMENT_MAX_LENGTH_V1 = 4U,
+    WEBSCENE_VALIDATION_ARGUMENT_MINIMUM_V1 = 5U,
+    WEBSCENE_VALIDATION_ARGUMENT_MAXIMUM_V1 = 6U,
+    WEBSCENE_VALIDATION_ARGUMENT_STEP_V1 = 7U,
+    WEBSCENE_VALIDATION_MESSAGE_MAX_ARGUMENTS_V1 = 4U,
+    WEBSCENE_VALIDATION_MESSAGE_MAX_ARGUMENT_BYTES_V1 = 256U,
+    WEBSCENE_VALIDATION_MESSAGE_MAX_OUTPUT_BYTES_V1 = 1024U
+};
+
+typedef struct webscene_validation_message_argument_v1 {
+    uint32_t struct_size;
+    uint32_t kind;
+    const char* value_utf8;
+    size_t value_length;
+} webscene_validation_message_argument_v1;
+
+/* Formats one built-in validation message. The engine invokes this callback
+ * synchronously on its owner worker, at most once per requested message, and
+ * never for custom validity text or from frame production. Arguments and the
+ * destination are borrowed for the call. Return the bytes written (1..1024),
+ * or zero to select the bounded English fallback. Oversized or invalid UTF-8
+ * output also selects that fallback. The callback must not block, throw, or
+ * reenter the engine. Its function and user data must remain valid until
+ * webscene_engine_destroy returns. */
+typedef size_t (*webscene_validation_message_format_callback_v1)(
+    void* user_data,
+    uint32_t reason,
+    const webscene_validation_message_argument_v1* arguments,
+    size_t argument_count,
+    char* destination,
+    size_t destination_capacity);
+
 /*
  * Asynchronous notification emitted after an immutable scene has been
  * published. Consumers use this edge to schedule a compositor paint; they
@@ -1536,6 +1587,9 @@ typedef struct webscene_engine_options {
     uint64_t storage_quota_bytes;
     webscene_resource_load_callback_v5 resource_load_callback_v5;
     void* resource_load_v5_user_data;
+    webscene_validation_message_format_callback_v1
+        validation_message_format_callback_v1;
+    void* validation_message_format_user_data_v1;
 } webscene_engine_options;
 
 /*

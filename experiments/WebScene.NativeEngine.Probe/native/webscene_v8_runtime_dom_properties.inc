@@ -3434,7 +3434,7 @@
         auto* self=current(info.GetIsolate());
         auto* node=unwrap_node(info.Holder());
         if(self==nullptr || !is_constraint_validation_element(node)) return;
-        const auto message=forms::validation_message(self->document,*node);
+        const auto message=self->validation_message_for(*node);
         info.GetReturnValue().Set(js_dom_string(info.GetIsolate(),message));
     }
 
@@ -3693,7 +3693,7 @@
     {
         if(!is_connected(target) || !is_connected(anchor)
             || !is_programmatically_focusable(&anchor)) return false;
-        auto message=forms::validation_message(document,target);
+        auto message=validation_message_for(target);
         if(message.empty()) return false;
         webscene_input_event synthetic{};
         if(!set_active_element(&anchor,synthetic)) return false;
@@ -3724,6 +3724,70 @@
         }
         pending_validation_announcement=std::move(event);
         return true;
+    }
+
+    std::string validation_message_for(const dom_node& node)
+    {
+        return forms::validation_message(document,node,[&](
+                forms::validation_message_key key) -> std::string {
+            if(!validation_message_formatter_callback
+                || formatting_validation_message) return {};
+            std::array<validation_message_argument,1U> argument_storage;
+            size_t argument_count=0U;
+            const auto append_attribute=[&](uint32_t kind,std::string_view name) {
+                const auto found=node.attributes.find(std::string(name));
+                if(found==node.attributes.end() || found->second.empty()) return;
+                auto value=found->second;
+                constexpr size_t maximum_argument_bytes=256U;
+                if(value.size()>maximum_argument_bytes) {
+                    auto boundary=maximum_argument_bytes;
+                    while(boundary>0U
+                        && (static_cast<unsigned char>(value[boundary])&0xc0U)==0x80U)
+                        --boundary;
+                    value.resize(boundary);
+                }
+                argument_storage[argument_count++]={kind,std::move(value)};
+            };
+            switch(key) {
+            case forms::validation_message_key::value_missing:
+            case forms::validation_message_key::type_mismatch:
+            case forms::validation_message_key::bad_input:
+                append_attribute(WEBSCENE_VALIDATION_ARGUMENT_CONTROL_TYPE_V1,"type");
+                break;
+            case forms::validation_message_key::pattern_mismatch:
+                append_attribute(WEBSCENE_VALIDATION_ARGUMENT_PATTERN_V1,"pattern");
+                break;
+            case forms::validation_message_key::too_long:
+                append_attribute(WEBSCENE_VALIDATION_ARGUMENT_MAX_LENGTH_V1,"maxlength");
+                break;
+            case forms::validation_message_key::too_short:
+                append_attribute(WEBSCENE_VALIDATION_ARGUMENT_MIN_LENGTH_V1,"minlength");
+                break;
+            case forms::validation_message_key::range_underflow:
+                append_attribute(WEBSCENE_VALIDATION_ARGUMENT_MINIMUM_V1,"min");
+                break;
+            case forms::validation_message_key::range_overflow:
+                append_attribute(WEBSCENE_VALIDATION_ARGUMENT_MAXIMUM_V1,"max");
+                break;
+            case forms::validation_message_key::step_mismatch:
+                append_attribute(WEBSCENE_VALIDATION_ARGUMENT_STEP_V1,"step");
+                break;
+            case forms::validation_message_key::none:
+                return {};
+            }
+            formatting_validation_message=true;
+            try {
+                auto formatted=validation_message_formatter_callback(
+                    static_cast<uint32_t>(key),
+                    std::span<const validation_message_argument>(
+                        argument_storage.data(),argument_count));
+                formatting_validation_message=false;
+                return formatted;
+            } catch(...) {
+                formatting_validation_message=false;
+                return {};
+            }
+        });
     }
 
     bool dispatch_invalid_event(dom_node& node)

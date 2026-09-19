@@ -1,0 +1,40 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Generated pseudo animations retain paint and dispatch on their originating element</title>
+<style>
+  html, body { margin: 0; background: white; }
+  @keyframes pseudo-midpoint {
+    from { opacity: .2; transform: translateX(0) scale(1); }
+    to { opacity: .8; transform: translateX(20px) scale(2); }
+  }
+  @keyframes pseudo-complete { from { opacity: .2; } to { opacity: .8; } }
+  #paint, #events { position: absolute; left: 100px; top: 80px;
+    width: 40px; height: 30px; }
+  #paint::before, #paint::after, #events::before { content: "";
+    position: absolute; inset: 0; background: rgb(20, 104, 212); }
+  #paint::before { animation: pseudo-midpoint 1s linear -.5s both paused; }
+  #paint::after { left: 100px;
+    animation: pseudo-midpoint 1s linear -.5s both paused; }
+  #events { left: 360px; }
+  #events::before { animation: pseudo-complete 1ms linear; }
+</style>
+<div id="paint"></div><div id="events"></div>
+<script>
+  const close = (left, right) => Math.abs(left - right) < .01;
+  const before = getComputedStyle(paint, '::before');
+  const after = getComputedStyle(paint, '::after');
+  const matrix = before.transform.slice(7, -1).split(',').map(Number);
+  const midpoint = close(Number(before.opacity), .5)
+    && close(Number(after.opacity), .5)
+    && matrix.length === 6 && close(matrix[0], 1.5)
+    && close(matrix[3], 1.5) && close(matrix[4], 10);
+  let completions = 0;
+  events.addEventListener('animationend', event => {
+    ++completions;
+    document.documentElement.dataset.contract = midpoint
+      && completions === 1
+      && event.animationName === 'pseudo-complete'
+      && event.pseudoElement === '::before'
+      && event.target === events ? 'pass' : 'fail';
+  });
+</script>

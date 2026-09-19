@@ -420,7 +420,9 @@ inline bool apply_compiled_single_transition_shorthand(
         return true;
     }
 
-inline void apply_animation_shorthand(node_style& style, const std::string& value)
+inline void apply_animation_shorthand(
+    node_style::animation_data& animations,
+    const std::string& value)
     {
         std::vector<std::string> names, durations, delays, timings, iterations;
         std::vector<std::string> directions, fill_modes, play_states;
@@ -477,7 +479,6 @@ inline void apply_animation_shorthand(node_style& style, const std::string& valu
             }
             return result;
         };
-        auto& animations = style.mutable_animations();
         animations.animation_name_value = names.empty() ? "none" : join(names);
         animations.animation_duration_value = durations.empty() ? "0s" : join(durations);
         animations.animation_delay_value = delays.empty() ? "0s" : join(delays);
@@ -487,6 +488,31 @@ inline void apply_animation_shorthand(node_style& style, const std::string& valu
         animations.animation_fill_mode_value = fill_modes.empty() ? "none" : join(fill_modes);
         animations.animation_play_state_value = play_states.empty() ? "running" : join(play_states);
     }
+
+inline void apply_animation_shorthand(node_style& style, const std::string& value)
+{
+    apply_animation_shorthand(style.mutable_animations(), value);
+}
+
+inline bool apply_animation_property(
+    node_style::animation_data& animations,
+    std::string_view name,
+    const std::string& value)
+{
+    if (name == "animation") apply_animation_shorthand(animations, value);
+    else if (name == "animation-name") animations.animation_name_value = value;
+    else if (name == "animation-duration") animations.animation_duration_value = value;
+    else if (name == "animation-delay") animations.animation_delay_value = value;
+    else if (name == "animation-timing-function") {
+        animations.animation_timing_function_value = value;
+    } else if (name == "animation-iteration-count") {
+        animations.animation_iteration_count_value = value;
+    } else if (name == "animation-direction") animations.animation_direction_value = value;
+    else if (name == "animation-fill-mode") animations.animation_fill_mode_value = value;
+    else if (name == "animation-play-state") animations.animation_play_state_value = value;
+    else return false;
+    return true;
+}
 
 inline std::string serialize_animation_shorthand(
     const node_style::animation_data& animations)
@@ -523,11 +549,9 @@ inline std::string serialize_animation_shorthand(
         return result;
     }
 
-inline void configure_keyframes(node_style& style,
+inline void configure_keyframes(node_style::animation_data& animations,
     const std::unordered_map<std::string,css_opacity_keyframes>& definitions)
     {
-        if (!style.has_animation_data()) return;
-        auto& animations = style.mutable_animations();
         animations.keyframe_animations.clear();
         const auto names = split_css_component_list(animations.animation_name_value, ',');
         if (names.empty()) return;
@@ -637,6 +661,13 @@ inline void configure_keyframes(node_style& style,
             animations.keyframe_animations.push_back(std::move(track));
         }
     }
+
+inline void configure_keyframes(node_style& style,
+    const std::unordered_map<std::string,css_opacity_keyframes>& definitions)
+{
+    if (!style.has_animation_data()) return;
+    configure_keyframes(style.mutable_animations(), definitions);
+}
 
 inline void append_keyframe(
         css_opacity_keyframes& definition,

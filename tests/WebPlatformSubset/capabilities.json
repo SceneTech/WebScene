@@ -249,6 +249,14 @@
       "gap": "Implementation-first WebScene #741 stack base for #740. Range bindings are bounded, generation-scoped, weakly reclaimed, and perform no layout, selector, visual-tree, or frame work. Highlight registry/pseudo paint, complete mutation boundary adjustment, and the broader DOM Range surface remain open."
     },
     {
+      "family": "css-custom-highlight-registry",
+      "required": [],
+      "candidate": ["Highlight constructor", "Highlight ordered setlike", "Highlight priority", "CSS.highlights maplike", "document-local registry isolation", "bounded weak lifecycle"],
+      "productEvidence": ["unchanged Code OSS chat find owner merge/clear", "unchanged Markdown inner-diff registry replacement"],
+      "coverage": ["contracts/css-custom-highlight-registry-code-oss.html", "test_custom_highlight_registry_contract"],
+      "gap": "Implementation-first WebScene #743 middle stack layer for #740. The registry retains registered Highlight/Range wrappers with bounded document-local ownership and dirties only registered mutations. Functional ::highlight() cascade and retained pixels remain the top stack layer."
+    },
+    {
       "family": "list-formatting",
       "required": ["list-item marker paint", "ordered counters", "outside marker geometry", "inside marker first-line participation", "marker-before-block-child anonymous line"],
       "candidate": ["list-style shorthand on generic list-item boxes", "filled square marker rasterization", "inside marker with forced continuation-line reset"],

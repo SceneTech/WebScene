@@ -30,6 +30,29 @@
       bool released{false};
     };
 
+    struct highlight_binding final {
+      implementation* owner{nullptr};
+      uint64_t document_generation{0U};
+      uint32_t root_id{0U};
+      int32_t priority{0};
+      uint32_t registration_count{0U};
+      std::vector<range_binding*> ranges;
+      std::vector<v8::Global<v8::Object>> range_wrappers;
+      v8::Global<v8::Object> wrapper;
+      bool released{false};
+    };
+
+    struct highlight_registry_entry final {
+      highlight_binding* highlight{nullptr};
+      v8::Global<v8::Object> wrapper;
+    };
+
+    struct highlight_registry_state final {
+      std::vector<std::string> order;
+      std::unordered_map<std::string, highlight_registry_entry> entries;
+      v8::Global<v8::Object> wrapper;
+    };
+
     struct timer_task final {
         uint32_t id;
         bool animation_frame;

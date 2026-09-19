@@ -1311,6 +1311,13 @@
   ],
   "candidate": [
     {
+      "path": "contracts/css-custom-highlight-registry-code-oss.html",
+      "type": "testharness",
+      "capabilities": ["highlight-ordered-setlike", "highlight-priority", "css-highlights-maplike", "highlight-document-root-isolation", "highlight-bounded-lifecycle"],
+      "evidence": ["css-highlight-api", "vscode-oss-645f29c-chat-find-registry-ledger", "vscode-oss-645f29c-markdown-diff-registry-ledger"],
+      "reason": "Implementation-first WebScene #743 middle stack layer for #740. Native companion coverage requires Code OSS add/clear/priority behavior, registry replacement/deletion/insertion order, iteration, type/root enforcement, bounded strong/weak ownership, navigation cleanup, and no unregistered frame demand. Functional pseudo cascade and paint remain the top layer."
+    },
+    {
       "path": "contracts/dom-range-boundaries-code-oss.html",
       "type": "testharness",
       "capabilities": ["range-constructor", "document-create-range", "range-utf16-boundaries", "range-marker-sibling-boundaries", "range-crossed-endpoint-collapse", "range-generation-lifecycle"],

@@ -2462,6 +2462,41 @@
             });
     }
 
+    void recascade_form_checkedness_selector_transition(
+        dom_node& subject,
+        bool previous_checkedness,
+        bool current_checkedness)
+    {
+        document.mark_dirty();
+        if(previous_checkedness==current_checkedness) return;
+        const auto indexed=css_invalidation_rules_by_attribute.find(
+            "$live-form-checkedness");
+        const std::span<const size_t> changed_rules=indexed==
+                css_invalidation_rules_by_attribute.end()
+            ? std::span<const size_t>{}
+            : std::span<const size_t>{indexed->second};
+        recascade_selector_transition(
+            subject,
+            changed_rules,
+            [](const css::css_compound_dependencies& dependencies) {
+                css::css_invalidation_targets result;
+                const auto found=dependencies.attributes.find(
+                    "$live-form-checkedness");
+                if(found!=dependencies.attributes.end()) result.include(found->second);
+                return result;
+            },
+            [&] {
+                auto& control=subject.mutable_form_control();
+                control.checkedness_initialized=true;
+                control.checkedness=previous_checkedness;
+            },
+            [&] {
+                auto& control=subject.mutable_form_control();
+                control.checkedness_initialized=true;
+                control.checkedness=current_checkedness;
+            });
+    }
+
     void recascade_class_selector_transition(
         dom_node& subject,
         const std::optional<std::string>& previous_value,

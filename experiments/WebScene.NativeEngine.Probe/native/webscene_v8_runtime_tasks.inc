@@ -3337,9 +3337,7 @@
 
     bool native_checkedness(const dom_node& target) const
     {
-        return target.form_control().checkedness_initialized
-            ? target.form_control().checkedness
-            : target.attributes.contains("checked");
+        return forms::input_checked(target);
     }
 
     std::vector<dom_node*> radio_group_members(dom_node& target)
@@ -3371,10 +3369,15 @@
         target.mutable_form_control().checkedness = checked;
         if (previous != checked) {
             if (is_connected(target)) {
-                auto group=radio_group_members(target);
-                if(group.empty()) group.push_back(&target);
-                for(auto* member:group)
-                    recascade_dynamic_state_subject(*member,"native-checkedness");
+                recascade_form_checkedness_selector_transition(
+                    target,previous,checked);
+                // A radio's :indeterminate state is shared by its group. The
+                // required-radio validity rule is a later slice, but preserve
+                // the existing group refresh for that already-supported pseudo.
+                for(auto* member:radio_group_members(target))
+                    if(member!=&target)
+                        recascade_dynamic_state_subject(
+                            *member,"native-radio-group-checkedness");
             } else {
                 document.mark_dirty();
             }

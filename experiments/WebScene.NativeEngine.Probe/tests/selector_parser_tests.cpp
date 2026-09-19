@@ -1,6 +1,7 @@
 #include "webscene_selector_parser.h"
 #include "webscene_css_invalidation.h"
 #include "webscene_css_matching.h"
+#include "webscene_css_compound.h"
 
 #include <cstdlib>
 #include <iostream>
@@ -384,6 +385,20 @@ void test_compiled_css_invalidation_plans()
     require(link_relational[0].attributes.at("href").routes
             ==std::vector<css_invalidation_route>{{css_invalidation_step::parent}},
         "nested any-link must retain its reverse relational href route");
+    const auto local_link_subject=compile("a:local-link");
+    require(local_link_subject[0].attributes.at("href").scope
+            ==invalidation_subject
+        && local_link_subject[0].attributes.at("$local-link-document").scope
+            ==invalidation_subject,
+        "local-link must retain both href and document URL subject routes");
+    const auto local_link_sibling=compile("a:local-link + .marker");
+    require(local_link_sibling[0].attributes.at("$local-link-document").routes
+            ==std::vector<css_invalidation_route>{{css_invalidation_step::next_sibling}},
+        "local-link document changes must retain the following-sibling route");
+    const auto local_link_relational=compile(".shell:has(> a:local-link)");
+    require(local_link_relational[0].attributes.at("$local-link-document").routes
+            ==std::vector<css_invalidation_route>{{css_invalidation_step::parent}},
+        "nested local-link must retain its reverse relational document route");
 
     std::vector<css_child_list_bucket> buckets;
     const auto index = [&](size_t id, std::string_view text) {
@@ -413,6 +428,42 @@ void test_compiled_css_invalidation_plans()
         "relational subjects must index both parent and ancestor routes without duplicates");
 }
 
+void require_local_link_matching()
+{
+    using namespace webscene_native;
+    dom_node anchor;
+    anchor.tag = "a";
+    anchor.attributes["href"] = "guide.html?mode=full#chapter";
+    require(css::local_link_matches(
+            anchor,
+            "https://example.test/docs/index.html",
+            "https://example.test/docs/guide.html?mode=full#current"),
+        "local-link must ignore fragments after resolving a relative URL");
+    require(!css::local_link_matches(
+            anchor,
+            "https://example.test/docs/index.html",
+            "https://example.test/docs/guide.html?mode=other"),
+        "local-link must preserve query differences");
+    anchor.attributes["href"] = "#chapter";
+    require(css::local_link_matches(
+            anchor,
+            "https://example.test/docs/index.html?mode=full#old",
+            "https://example.test/docs/index.html?mode=full#current"),
+        "fragment-only local links must retain the base path and query");
+    anchor.attributes["href"].clear();
+    require(css::local_link_matches(
+            anchor,
+            "https://example.test/docs/index.html#base",
+            "https://example.test/docs/index.html#current"),
+        "an empty hyperlink must resolve to the effective document base");
+    anchor.tag = "link";
+    require(!css::local_link_matches(
+            anchor,
+            "https://example.test/docs/index.html",
+            "https://example.test/docs/index.html"),
+        "stylesheet metadata must not become a local hyperlink");
+}
+
 } // namespace
 
 int main()
@@ -426,6 +477,7 @@ int main()
     require_attribute_namespace_resolution();
     require_functional_namespace_propagation();
     test_compiled_css_invalidation_plans();
+    require_local_link_matching();
     std::cout << "selector parser tests passed\n";
     return 0;
 }

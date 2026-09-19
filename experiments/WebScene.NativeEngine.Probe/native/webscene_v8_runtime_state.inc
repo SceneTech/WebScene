@@ -230,6 +230,11 @@
         bool dirty{true};
     };
     std::unordered_map<const dom_node*, document_base_cache> document_base_caches;
+    // Nodes are enrolled only when a compiled :local-link compound evaluates
+    // them. Effective-base and same-document URL changes can then replay the
+    // selector's prepared routes without walking an unrelated DOM subtree.
+    std::unordered_map<const dom_node*, std::unordered_set<uint32_t>>
+        local_link_selector_subjects;
     session_storage_state outer_session_storage;
     session_storage_state outer_local_storage;
     std::string outer_storage_origin;

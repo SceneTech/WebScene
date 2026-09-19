@@ -854,7 +854,7 @@
                         "root", "first-child", "last-child", "only-child",
                         "first-of-type", "last-of-type", "only-of-type", "empty",
                         "enabled", "disabled", "checked", "hover", "focus", "focus-visible",
-                        "link", "any-link"};
+                        "link", "any-link", "local-link"};
                     if (name == "not" || name == "is" || name == "where") {
                         record_selector_feature(
                             "selector:pseudo-class:" + name,
@@ -1842,6 +1842,29 @@
                 }
                 auto hash = to_utf8(isolate, hash_value);
                 return hash;
+    }
+    bool selector_local_link_matches(const dom_node& node) const
+    {
+        // Compound matching exposes a const host. Resolving the effective
+        // document base only refreshes the existing derived URL cache.
+        auto& self = const_cast<implementation&>(*this);
+        auto* root = self.css_cascade_root_for_node(
+            const_cast<dom_node&>(node));
+        if (root == nullptr) return false;
+        if (!css::is_hyperlink_source(node)) {
+            if (const auto tracked = self.local_link_selector_subjects.find(root);
+                tracked != self.local_link_selector_subjects.end()) {
+                tracked->second.erase(node.id);
+                if (tracked->second.empty())
+                    self.local_link_selector_subjects.erase(tracked);
+            }
+            return false;
+        }
+        self.local_link_selector_subjects[root].insert(node.id);
+        return css::local_link_matches(
+            node,
+            self.effective_document_base(root),
+            self.navigation_address_for_root(root));
     }
     bool custom_state_matches(const dom_node& node, std::string_view state) const
     {

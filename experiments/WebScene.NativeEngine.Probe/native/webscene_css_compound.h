@@ -1,5 +1,6 @@
 #pragma once
 #include "webscene_css_matching.h"
+#include "webscene_native_resource_url.h"
 #include <atomic>
 
 namespace webscene_native::css {
@@ -9,6 +10,52 @@ inline std::atomic<uint64_t> selector_sibling_scans{0U};
 inline std::atomic<uint64_t> selector_sibling_vector_materializations{0U};
 inline std::atomic<uint64_t> selector_sibling_pointer_copies{0U};
 #endif
+
+inline bool is_hyperlink_source(const dom_node& node)
+{
+    constexpr std::string_view svg_namespace = "http://www.w3.org/2000/svg";
+    const auto namespace_uri = node.namespace_uri();
+    return node.attributes.contains("href")
+        && ((node.tag == "a"
+                && (namespace_uri == dom_node::html_namespace_uri
+                    || namespace_uri == svg_namespace))
+            || (node.tag == "area"
+                && namespace_uri == dom_node::html_namespace_uri));
+}
+
+inline bool local_link_matches(
+    const dom_node& node,
+    std::string_view effective_base,
+    std::string_view document_url)
+{
+    constexpr size_t maximum_url_bytes = 8192U;
+    if (!is_hyperlink_source(node)
+        || effective_base.empty() || document_url.empty()
+        || effective_base.size() > maximum_url_bytes
+        || document_url.size() > maximum_url_bytes) return false;
+    const auto href = node.attributes.find("href");
+    if (href == node.attributes.end() || href->second.size() > maximum_url_bytes)
+        return false;
+    std::string target;
+    if (href->second.empty()) {
+        target = effective_base;
+    } else if (href->second.front() == '#') {
+        target = effective_base.substr(0U, effective_base.find('#'));
+        target += href->second;
+    } else if (href->second.front() == '?') {
+        target = effective_base.substr(0U, effective_base.find_first_of("?#"));
+        target += href->second;
+    } else {
+        target = resources::resolve_url(href->second, std::string(effective_base));
+    }
+    if (target.empty() || target.size() > maximum_url_bytes) return false;
+    const auto without_fragment = [](std::string_view value) {
+        const auto fragment = value.find('#');
+        return value.substr(0U, fragment);
+    };
+    return without_fragment(target) == without_fragment(document_url);
+}
+
 // The host supplies document state, recursive queries, class-token caching and
 // a plain URL hash. Compound evaluation itself has no V8 dependency.
 template<typename Host>
@@ -338,16 +385,15 @@ inline bool compound_matches(const Host& host,const dom_node& node,
                 const auto hash=host.selector_target_hash();
                 if (!hash || !css::target_matches(node,*hash)) return false;
             } else if (name == "link" || name == "any-link") {
-                constexpr std::string_view svg_namespace =
-                    "http://www.w3.org/2000/svg";
-                const auto namespace_uri = node.namespace_uri();
-                const auto hyperlink = node.attributes.contains("href")
-                    && ((node.tag == "a"
-                            && (namespace_uri == dom_node::html_namespace_uri
-                                || namespace_uri == svg_namespace))
-                        || (node.tag == "area"
-                            && namespace_uri == dom_node::html_namespace_uri));
-                if (!hyperlink) return false;
+                if (!css::is_hyperlink_source(node)) return false;
+            } else if (name == "local-link") {
+                // The path-depth functional form remains outside this slice.
+                if (!argument.empty()) return false;
+                if constexpr (requires { host.selector_local_link_matches(node); }) {
+                    if (!host.selector_local_link_matches(node)) return false;
+                } else {
+                    return false;
+                }
             } else if (name == "visited") {
                 // WebScene does not retain browsing history. Fail closed rather
                 // than expose host navigation state through selector matching.

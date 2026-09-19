@@ -1,0 +1,90 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Link pseudo classes match href presence and invalidate routed subjects</title>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<style>
+  .candidate { width:11px; }
+  .candidate:any-link { width:41px; }
+  .candidate:is(:link) { height:43px; }
+  .adjacent { width:13px; }
+  .candidate:link + .adjacent { width:47px; }
+  .consumer { height:17px; }
+  .shell:has(> :any-link) .consumer { height:53px; }
+  .fallback { padding-left:3px; }
+  .fallback:not(:any-link) { padding-left:59px; }
+</style>
+<div class="shell" id="shell">
+  <a class="candidate fallback" id="candidate">candidate</a>
+  <span class="adjacent" id="adjacent"></span>
+  <span class="consumer" id="consumer"></span>
+</div>
+<link id="metadata-link" href="data:text/css,">
+<map name="link-map"><area id="area"></map>
+<script>
+  const candidate = document.getElementById('candidate');
+  const adjacent = document.getElementById('adjacent');
+  const consumer = document.getElementById('consumer');
+  const area = document.getElementById('area');
+
+  const snapshot = () => ({
+    anyLink: candidate.matches(':any-link'),
+    link: candidate.matches(':link'),
+    visited: candidate.matches(':visited'),
+    width: getComputedStyle(candidate).width,
+    height: getComputedStyle(candidate).height,
+    padding: getComputedStyle(candidate).paddingLeft,
+    adjacent: getComputedStyle(adjacent).width,
+    consumer: getComputedStyle(consumer).height,
+    query: document.querySelectorAll(':any-link').length,
+  });
+
+  test(() => {
+    assert_object_equals(snapshot(), {
+      anyLink:false, link:false, visited:false, width:'11px', height:'auto',
+      padding:'59px', adjacent:'13px', consumer:'17px', query:0,
+    });
+    assert_false(document.getElementById('metadata-link').matches(':any-link'),
+      'a link element is stylesheet metadata, not a hyperlink anchor');
+  }, 'link pseudo classes require href on a hyperlink anchor');
+
+  test(() => {
+    candidate.setAttribute('href', '');
+    assert_object_equals(snapshot(), {
+      anyLink:true, link:true, visited:false, width:'41px', height:'43px',
+      padding:'3px', adjacent:'47px', consumer:'53px', query:1,
+    });
+    assert_equals(document.querySelector(':link.candidate'), candidate);
+    candidate.setAttribute('href', '#next');
+    assert_true(candidate.matches(':link'), 'changing an existing href stays linked');
+    assert_equals(getComputedStyle(candidate).width, '41px');
+  }, 'href addition routes subject, functional, sibling, and relational invalidation');
+
+  test(() => {
+    candidate.removeAttribute('href');
+    assert_object_equals(snapshot(), {
+      anyLink:false, link:false, visited:false, width:'11px', height:'auto',
+      padding:'59px', adjacent:'13px', consumer:'17px', query:0,
+    });
+  }, 'href removal clears link state through the same targeted routes');
+
+  test(() => {
+    assert_false(area.matches(':any-link'));
+    area.setAttribute('href', '/area-target');
+    assert_true(area.matches(':any-link'));
+    assert_true(area.matches(':link'));
+    assert_false(area.matches(':visited'));
+    area.removeAttribute('href');
+    assert_false(area.matches(':any-link'));
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    const svgAnchor = document.createElementNS(svg.namespaceURI, 'a');
+    svg.appendChild(svgAnchor);
+    document.body.appendChild(svg);
+    assert_false(svgAnchor.matches(':any-link'));
+    svgAnchor.setAttribute('href', '#svg-target');
+    assert_true(svgAnchor.matches(':any-link'));
+    assert_true(svgAnchor.matches(':link'));
+    assert_false(svgAnchor.matches(':visited'));
+    svg.remove();
+  }, 'HTML area and SVG anchor href presence share unvisited link matching');
+</script>

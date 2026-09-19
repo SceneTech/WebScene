@@ -12,8 +12,9 @@ as transitive MSBuild properties so a stale or incompatible V8 monolith cannot
 silently enter a release.
 The manifest also records the accepted `html5ever`, `cssparser`, Servo-selector,
 generated-WebIDL, and bootstrap-snapshot selections. Schema version 2 hashes every native
-and snapshot asset. Transitive build targets copy the snapshot beside the library for
-both build and publish outputs and fail if any required asset is absent.
+and snapshot asset, plus the Windows C ABI header and import library when present.
+Transitive build targets copy the snapshot beside the library for both build and
+publish outputs and fail if any required asset is absent.
 Release linkage also dead-strips unreachable native sections and restricts the
 dynamic export table to WebScene's public C ABI. Developer builds retain ordinary
 symbols unless `WEBSCENE_NATIVE_ENGINE_DENSE_LINK=ON` is selected explicitly.
@@ -34,6 +35,22 @@ with the pinned IXWebSocket transport; it does not call back into a managed
 network stack.
 Applications must target the same `RuntimeIdentifier`; mixing runtime packages and
 RIDs is rejected during the build.
+
+The Windows packages also contain the public native C ABI header, the MSVC import
+library, and a relocatable CMake package. Point `CMAKE_PREFIX_PATH` at the restored
+NuGet package's `build/native` directory, then consume the native engine through
+its imported target:
+
+```cmake
+find_package(WebScene CONFIG REQUIRED)
+target_link_libraries(my_native_host PRIVATE WebScene::Runtime)
+```
+
+`WebSceneConfig.cmake` rejects a non-Windows consumer, a target architecture that
+does not match the package RID, an ABI other than 3, inconsistent manifest
+metadata, missing artifacts, and runtime/header/import-library hash mismatches.
+The imported target exposes `webscene_native_engine.h`; its DLL remains in
+`WebScene_RUNTIME_DIRECTORY` for the application's install or deployment rule.
 
 Install the package matching the application's deployment RID:
 

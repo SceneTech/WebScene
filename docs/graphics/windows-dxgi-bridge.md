@@ -288,9 +288,12 @@ compilation and device execution were intentionally not performed for this sourc
 change, so successful Dawn import, fence ordering, adapter rejection, device loss
 and leak-free repeated retirement remain qualification work.
 
-The installed CMake SDK still has macOS and Linux profiles only, while the Windows
-runtime package carries a DLL rather than a C/C++ development import library and
-headers. A Windows `WebSceneConfig.cmake` target would therefore advertise an
-artifact the package does not contain. Native hosts can resolve these ABI 3
-exports from the RID runtime DLL; adding a compiled CMake target belongs with a
-future Windows development SDK package.
+The Windows RID runtime package now carries `webscene_native_engine.h`, the MSVC
+`webscene_native_engine.lib` generated with the DLL, and a relocatable
+`WebSceneConfig.cmake`. Its `WebScene::Runtime` imported target points at the
+packaged DLL and import library and exposes the public include directory. Package
+metadata records the exact RID, architecture, ABI and hashes; configuration fails
+before creating the target when those values conflict with the consuming build or
+when any required artifact is absent or corrupt. This packages the reusable ABI
+surface only and does not claim a completed AppScene presenter or Windows GPU
+qualification.

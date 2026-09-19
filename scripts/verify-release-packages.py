@@ -158,6 +158,80 @@ def validate_graphics_runtime(archive: zipfile.ZipFile, rid: str) -> None:
         raise RuntimeError("macOS Metal runtime must not ship ANGLE")
 
 
+def validate_windows_cpp_sdk(
+    archive: zipfile.ZipFile,
+    manifest: dict[str, object],
+    runtime_identifier: str,
+) -> None:
+    if not runtime_identifier.startswith("win-"):
+        return
+    architecture = {"win-x64": "x64", "win-arm64": "arm64"}.get(runtime_identifier)
+    if architecture is None:
+        raise RuntimeError(f"{runtime_identifier}: unsupported Windows C/C++ SDK RID")
+    required = {
+        "build/native/include/webscene_native_engine.h",
+        "build/native/lib/webscene_native_engine.lib",
+        "build/native/lib/cmake/WebScene/WebSceneConfig.cmake",
+        "build/native/lib/cmake/WebScene/WebSceneWindowsConfig.cmake",
+        "build/native/lib/cmake/WebScene/WebSceneWindowsMetadata.cmake",
+    }
+    missing = sorted(required - set(archive.namelist()))
+    if missing:
+        raise RuntimeError(
+            f"{runtime_identifier}: incomplete Windows C/C++ SDK: {', '.join(missing)}"
+        )
+    for asset, hash_name in (
+        ("build/native/include/webscene_native_engine.h", "cHeaderSha256"),
+        ("build/native/lib/webscene_native_engine.lib", "importLibrarySha256"),
+    ):
+        expected_hash = manifest.get(hash_name)
+        actual_hash = hashlib.sha256(archive.read(asset)).hexdigest()
+        if not isinstance(expected_hash, str) or actual_hash != expected_hash.lower():
+            raise RuntimeError(
+                f"{runtime_identifier}: {asset} does not match manifest {hash_name}"
+            )
+    public_header = archive.read(
+        "build/native/include/webscene_native_engine.h"
+    ).decode("utf-8")
+    for symbol in (
+        "webscene_gpu_d3d12_acquire_shared_v3",
+        "webscene_gpu_d3d12_get_producer_fence_v3",
+        "webscene_gpu_d3d12_release_shared_v3",
+    ):
+        if symbol not in public_header:
+            raise RuntimeError(
+                f"{runtime_identifier}: packaged public header omits {symbol}"
+            )
+    metadata = archive.read(
+        "build/native/lib/cmake/WebScene/WebSceneWindowsMetadata.cmake"
+    ).decode("utf-8").lstrip("\ufeff").replace("\r\n", "\n")
+    expected_metadata = (
+        f'set(WebScene_PACKAGE_RID "{runtime_identifier}")\n'
+        f'set(WebScene_PACKAGE_ARCHITECTURE "{architecture}")\n'
+        'set(WebScene_PACKAGE_ABI_VERSION "3")\n'
+    )
+    if metadata != expected_metadata:
+        raise RuntimeError(
+            f"{runtime_identifier}: Windows CMake metadata is incomplete or inconsistent"
+        )
+    config = archive.read(
+        "build/native/lib/cmake/WebScene/WebSceneWindowsConfig.cmake"
+    ).decode("utf-8")
+    for contract in (
+        "WebScene_PACKAGE_RID",
+        "WebScene_PACKAGE_ARCHITECTURE",
+        "WebScene_PACKAGE_ABI_VERSION",
+        "IMPORTED_LOCATION",
+        "IMPORTED_IMPLIB",
+        "INTERFACE_INCLUDE_DIRECTORIES",
+        "file(SHA256",
+    ):
+        if contract not in config:
+            raise RuntimeError(
+                f"{runtime_identifier}: Windows CMake config omits {contract}"
+            )
+
+
 def validate_native_runtime(
     package: pathlib.Path,
     runtime_identifier: str,
@@ -171,6 +245,7 @@ def validate_native_runtime(
         if manifest_name not in archive.namelist():
             raise RuntimeError(f"{package}: missing {manifest_name}")
         manifest = json.loads(archive.read(manifest_name))
+        validate_windows_cpp_sdk(archive, manifest, runtime_identifier)
         native_readme = archive.read("README.md").decode("utf-8")
         for published_rid in sorted(DEFAULT_NATIVE_RIDS):
             expected_package_id = f"WebScene.NativeEngine.Runtime.{published_rid}"
@@ -215,6 +290,16 @@ def validate_native_runtime(
         "thinLto": False,
         "certificationTelemetry": False,
     }
+    if runtime_identifier.startswith("win-"):
+        expected.update(
+            {
+                "architecture": {"win-x64": "x64", "win-arm64": "arm64"}[
+                    runtime_identifier
+                ],
+                "importLibraryFileName": "webscene_native_engine.lib",
+                "cHeaderFileName": "webscene_native_engine.h",
+            }
+        )
     for name, value in expected.items():
         if manifest.get(name) != value:
             raise RuntimeError(

@@ -31,6 +31,15 @@ struct webscene_selector_namespace final {
     webscene_selector_byte_slice namespace_url;
 };
 
+struct webscene_selector_attribute_view final {
+    webscene_selector_byte_slice local_name;
+    webscene_selector_byte_slice namespace_url;
+    webscene_selector_byte_slice value;
+    uint8_t namespace_kind;
+    uint8_t operator_kind;
+    uint8_t case_sensitivity;
+};
+
 uint32_t webscene_selector_parser_abi_version();
 webscene_selector_parse_result webscene_selector_parse(webscene_selector_byte_slice);
 webscene_selector_parse_result webscene_selector_parse_with_namespaces(
@@ -42,6 +51,10 @@ webscene_selector_parse_result webscene_selector_parse_with_namespaces(
 uint8_t webscene_selector_at(const void*, size_t, webscene_selector_view*);
 uint8_t webscene_selector_compound_at(
     const void*, size_t, size_t, webscene_selector_byte_slice*);
+size_t webscene_selector_compound_attribute_count(
+    const void*, size_t, size_t);
+uint8_t webscene_selector_compound_attribute_at(
+    const void*, size_t, size_t, size_t, webscene_selector_attribute_view*);
 uint8_t webscene_selector_combinator_at(
     const void*, size_t, size_t, uint8_t*);
 void webscene_selector_free(void*);

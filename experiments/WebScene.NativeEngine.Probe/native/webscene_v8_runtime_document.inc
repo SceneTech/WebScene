@@ -706,6 +706,16 @@
             : std::move(raw_name);
     }
 
+    static std::pair<std::string, std::string> split_qualified_attribute_name(
+        std::string qualified_name)
+    {
+        const auto colon = qualified_name.find(':');
+        auto local_name = colon == std::string::npos
+            ? qualified_name
+            : qualified_name.substr(colon + 1U);
+        return {std::move(qualified_name), std::move(local_name)};
+    }
+
     static std::optional<std::string> input_live_value_before_attribute_change(
         dom_node& node, std::string_view name)
     {
@@ -837,13 +847,15 @@
         auto* node = unwrap_node(info.This());
         if (node == nullptr) return;
         const auto raw_name = to_utf8(info.GetIsolate(), info[1]);
-        const auto name = normalized_dom_attribute_name(*node, raw_name);
+        auto [qualified_name, name] = split_qualified_attribute_name(
+            normalized_dom_attribute_name(*node, raw_name));
         const std::optional<std::string> namespace_uri =
             info[0]->IsNullOrUndefined()
                 ? std::nullopt
                 : std::optional<std::string>(to_wtf8(info.GetIsolate(), info[0]));
         const auto value = to_wtf8(info.GetIsolate(), info[2]);
-        const auto previous = node->attributes.find(name);
+        const auto previous = node->attributes.find_expanded(
+            namespace_uri.value_or(std::string{}), name);
         const std::optional<std::string> old_value = previous == node->attributes.end()
             ? std::nullopt
             : std::optional<std::string>(previous->second);
@@ -851,18 +863,23 @@
             ? input_live_value_before_attribute_change(*node, name)
             : std::nullopt;
         self->record_html_attribute_feature(name, "setAttributeNS");
-        node->attributes[name] = value;
+        node->attributes.set_namespaced(
+            std::move(qualified_name), name,
+            namespace_uri.value_or(std::string{}), value);
         if ((!namespace_uri || namespace_uri->empty())
             && node->tag == "base" && name == "href") {
             self->invalidate_document_base(*node);
         }
         if ((!namespace_uri || namespace_uri->empty()) && (name == "width" || name == "height")) reset_canvas_backing_store(*self, *node);
-        if (name == "id") node->id_attribute = value;
-        else if (name == "class") node->class_name = value;
+        if ((!namespace_uri || namespace_uri->empty()) && name == "id") {
+            node->id_attribute = value;
+        } else if ((!namespace_uri || namespace_uri->empty()) && name == "class") {
+            node->class_name = value;
+        }
         if (self->attribute_requires_recascade(name)) {
-            if (name == "class") {
+            if ((!namespace_uri || namespace_uri->empty()) && name == "class") {
                 self->recascade_class_selector_transition(*node, old_value, value);
-            } else if (name == "id") {
+            } else if ((!namespace_uri || namespace_uri->empty()) && name == "id") {
                 self->recascade_attribute_selector_transition(*node, name, old_value, value);
             } else {
                 self->recascade_connected_subtree(*node, "style.removeProperty-custom");
@@ -949,7 +966,10 @@
         if (node == nullptr || info.Length() < 2) return;
         const auto raw_name = to_utf8(info.GetIsolate(), info[1]);
         const auto name = normalized_dom_attribute_name(*node, raw_name);
-        const auto match = node->attributes.find(name);
+        const auto namespace_uri = info[0]->IsNullOrUndefined()
+            ? std::string{}
+            : to_wtf8(info.GetIsolate(), info[0]);
+        const auto match = node->attributes.find_expanded(namespace_uri, name);
         if (match == node->attributes.end()) {
             info.GetReturnValue().Set(v8::Null(info.GetIsolate()));
         } else {
@@ -969,32 +989,38 @@
                 ? std::nullopt
                 : std::optional<std::string>(to_wtf8(info.GetIsolate(), info[0]));
         self->record_html_attribute_feature(name, "removeAttributeNS");
-        const auto match = node->attributes.find(name);
+        const auto match = node->attributes.find_expanded(
+            namespace_uri.value_or(std::string{}), name);
         if (match == node->attributes.end()) return;
+        const auto qualified_name = match->first;
         const auto old_value = std::optional<std::string>(match->second);
         const auto previous_live_value = (!namespace_uri || namespace_uri->empty())
             ? input_live_value_before_attribute_change(*node, name)
             : std::nullopt;
-        self->detach_attr(*node, name, *old_value);
-        node->attributes.erase(name);
+        self->detach_attr(*node, qualified_name, *old_value);
+        node->attributes.erase(qualified_name);
         if ((!namespace_uri || namespace_uri->empty())
             && node->tag == "base" && name == "href") {
             self->invalidate_document_base(*node);
         }
         if ((!namespace_uri || namespace_uri->empty()) && (name == "width" || name == "height")) reset_canvas_backing_store(*self, *node);
-        if (name == "id") node->id_attribute.clear();
-        else if (name == "class") node->class_name.clear();
-        else if (name == "src" && node->tag == "img") node->clear_replaced_image();
-        else if (name == "style") {
+        if ((!namespace_uri || namespace_uri->empty()) && name == "id") {
+            node->id_attribute.clear();
+        } else if ((!namespace_uri || namespace_uri->empty()) && name == "class") {
+            node->class_name.clear();
+        } else if ((!namespace_uri || namespace_uri->empty())
+            && name == "src" && node->tag == "img") node->clear_replaced_image();
+        else if ((!namespace_uri || namespace_uri->empty()) && name == "style") {
             node->clear_authored_style();
             node->style.inline_property_mask = 0U;
             node->style.important_property_mask = 0U;
         }
         if (self->attribute_requires_recascade(name)) {
-            if (name == "class") {
+            if ((!namespace_uri || namespace_uri->empty()) && name == "class") {
                 self->recascade_class_selector_transition(*node, old_value, std::nullopt);
-            } else if (name == "style" || name == "dir"
-                || name == "lang") {
+            } else if ((!namespace_uri || namespace_uri->empty())
+                && (name == "style" || name == "dir"
+                    || name == "lang")) {
                 self->recascade_connected_subtree(*node, "removeAttributeNS");
             } else {
                 self->recascade_attribute_selector_transition(

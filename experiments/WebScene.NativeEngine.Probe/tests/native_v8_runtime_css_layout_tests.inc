@@ -215,6 +215,113 @@ void test_recursive_functional_selector_survives_cache_eviction()
     webscene_engine_destroy(engine);
 }
 
+void test_namespace_qualified_attribute_selectors_and_lifecycle()
+{
+    auto* engine = webscene_engine_create(64);
+    require(engine != nullptr, "attribute namespace selector engine creation failed");
+    const auto result = evaluate(engine, R"JS(
+      (() => {
+        const first = 'urn:webscene:attribute:first';
+        const second = 'urn:webscene:attribute:second';
+        const node = document.createElement('div');
+        node.setAttribute('name', 'plain');
+        node.setAttributeNS(first, 'p:name', 'VALUE');
+        node.setAttributeNS(first, 'p:words', 'alpha Beta gamma');
+        node.setAttributeNS(first, 'p:lang', 'en-US');
+        node.setAttributeNS(first, 'p:prefix', 'AbCd');
+        node.setAttributeNS(first, 'p:suffix', 'wXyZ');
+        node.setAttributeNS(first, 'p:contains', 'mIdDlE');
+        node.setAttributeNS(first, 'p:exact', 'MiXeD');
+        document.body.appendChild(node);
+
+        const owner = document.createElement('style');
+        owner.textContent = `
+          @namespace p url("${first}");
+          [p|name="value" i] { width: 21px; }
+          [*|name] { padding-top: 22px; }
+          [|name] { height: 23px; }
+          [p|words~="beta" i] { margin-left: 24px; }
+          [p|lang|="EN" i] { margin-top: 25px; }
+          [p|prefix^="ab" i] { margin-right: 26px; }
+          [p|suffix$="YZ" i] { margin-bottom: 27px; }
+          [p|contains*="IDDLE" i] { padding-left: 28px; }
+          [p|exact="mixed" s] { padding-right: 999px; }
+          [missing|name] { width: 999px; }
+        `;
+        document.head.appendChild(owner);
+        const style = () => getComputedStyle(node);
+        const operators = style().width === '21px'
+          && style().paddingTop === '22px' && style().height === '23px'
+          && style().marginLeft === '24px' && style().marginTop === '25px'
+          && style().marginRight === '26px' && style().marginBottom === '27px'
+          && style().paddingLeft === '28px' && style().paddingRight !== '999px';
+
+        node.setAttributeNS(first, 'q:name', 'miss');
+        const mutationRemoved = style().width !== '21px';
+        node.setAttributeNS(first, 'q:name', 'VALUE');
+        const mutationRestored = style().width === '21px'
+          && node.getAttributeNS(first, 'name') === 'VALUE';
+
+        const secondOwner = document.createElement('style');
+        secondOwner.textContent = `@namespace p url("${second}");
+          [p|name] { max-width: 31px; }`;
+        document.head.appendChild(secondOwner);
+        const cacheSeparatedBefore = style().maxWidth !== '31px';
+        node.setAttributeNS(second, 's:name', 'other');
+        const cacheSeparatedAfter = style().maxWidth === '31px';
+
+        owner.textContent = `@namespace p url("${second}");
+          [p|name] { width: 32px; }`;
+        const ownerReplacement = style().width === '32px';
+
+        const adopted = new CSSStyleSheet();
+        adopted.replaceSync(`@namespace p url("${first}");
+          [p|name] { border-left-width: 33px; border-left-style: solid; }`);
+        document.adoptedStyleSheets.push(adopted);
+        const adoptedApplied = style().borderLeftWidth === '33px';
+        document.adoptedStyleSheets.pop();
+        const adoptedRemoved = style().borderLeftWidth !== '33px';
+
+        const started = performance.now();
+        for (let index = 0; index < 256; ++index) {
+          node.setAttributeNS(first, 'p:name', index & 1 ? 'VALUE' : 'miss');
+          void style().width;
+        }
+        node.setAttributeNS(first, 'p:name', 'VALUE');
+        for (let index = 0; index < 32; ++index) {
+          document.adoptedStyleSheets.push(adopted);
+          void style().borderLeftWidth;
+          document.adoptedStyleSheets.pop();
+        }
+        const elapsed = performance.now() - started;
+        return JSON.stringify({
+          operators, mutationRemoved, mutationRestored,
+          cacheSeparatedBefore, cacheSeparatedAfter, ownerReplacement,
+          adoptedApplied, adoptedRemoved, elapsed
+        });
+      })()
+    )JS", "namespace-qualified-attribute-selectors.js");
+    require(result.find("\"operators\":true") != std::string::npos
+        && result.find("\"mutationRemoved\":true") != std::string::npos
+        && result.find("\"mutationRestored\":true") != std::string::npos
+        && result.find("\"cacheSeparatedBefore\":true") != std::string::npos
+        && result.find("\"cacheSeparatedAfter\":true") != std::string::npos
+        && result.find("\"ownerReplacement\":true") != std::string::npos
+        && result.find("\"adoptedApplied\":true") != std::string::npos
+        && result.find("\"adoptedRemoved\":true") != std::string::npos,
+        "namespace-qualified attribute selector contract failed: " + result);
+    const auto elapsed_marker = result.find("\"elapsed\":");
+    require(elapsed_marker != std::string::npos,
+        "attribute namespace selector performance evidence missing: " + result);
+    const auto elapsed = std::stod(result.substr(elapsed_marker + 10U));
+    std::cout << "Attribute namespace selector gate: 256 mutations and 32 lifecycle cycles in "
+        << elapsed << " ms\n";
+    require(elapsed < 2000.0,
+        "attribute namespace selector mutation/lifecycle gate exceeded 2000ms: "
+            + std::to_string(elapsed));
+    webscene_engine_destroy(engine);
+}
+
 void test_compact_go_to_fixed_grid_tracks_preserve_trailing_space(
     webscene_engine* engine)
 {

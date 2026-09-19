@@ -7921,7 +7921,8 @@ v8_dom_runtime::memory_metrics v8_dom_runtime::read_memory_metrics() const noexc
                         string_bytes(compound.tag)
                         + compound.identities.capacity()
                             * sizeof(std::pair<char, std::string>)
-                        + compound.attributes.capacity() * sizeof(std::string)
+                        + compound.attributes.capacity()
+                            * sizeof(implementation::compiled_css_attribute)
                         + compound.pseudos.capacity()
                             * sizeof(implementation::compiled_css_pseudo);
                     for (const auto& [marker, identity] : compound.identities) {
@@ -7931,7 +7932,9 @@ v8_dom_runtime::memory_metrics v8_dom_runtime::read_memory_metrics() const noexc
                     }
                     for (const auto& attribute : compound.attributes) {
                         result.process_shared_css_rule_storage_bytes +=
-                            string_bytes(attribute);
+                            string_bytes(attribute.local_name)
+                            + string_bytes(attribute.namespace_uri.value_or(std::string{}))
+                            + string_bytes(attribute.value);
                     }
                     for (const auto& pseudo : compound.pseudos) {
                         result.process_shared_css_rule_storage_bytes +=
@@ -8061,7 +8064,8 @@ v8_dom_runtime::memory_metrics v8_dom_runtime::read_memory_metrics() const noexc
                     string_bytes(compound.tag)
                     + compound.identities.capacity()
                         * sizeof(std::pair<char, std::string>)
-                    + compound.attributes.capacity() * sizeof(std::string)
+                    + compound.attributes.capacity()
+                        * sizeof(implementation::compiled_css_attribute)
                     + compound.pseudos.capacity()
                         * sizeof(implementation::compiled_css_pseudo);
                 for (const auto& [marker, identity] : compound.identities) {
@@ -8069,7 +8073,10 @@ v8_dom_runtime::memory_metrics v8_dom_runtime::read_memory_metrics() const noexc
                     result.native_css_index_storage_bytes += string_bytes(identity);
                 }
                 for (const auto& attribute : compound.attributes) {
-                    result.native_css_index_storage_bytes += string_bytes(attribute);
+                    result.native_css_index_storage_bytes +=
+                        string_bytes(attribute.local_name)
+                        + string_bytes(attribute.namespace_uri.value_or(std::string{}))
+                        + string_bytes(attribute.value);
                 }
                 for (const auto& pseudo : compound.pseudos) {
                     result.native_css_index_storage_bytes +=

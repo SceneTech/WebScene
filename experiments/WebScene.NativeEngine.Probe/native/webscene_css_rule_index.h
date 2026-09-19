@@ -42,9 +42,10 @@ inline void index_selector_subject(size_t index, std::string_view selector,
                     return;
                 }
                 for (const auto& attribute : compound.attributes) {
-                    size_t cursor = 0;
-                    const auto name = read_css_identifier(trim_css_view(attribute), cursor);
-                    if (!name.empty()) { append_name(css_rules_by_attribute, name); return; }
+                    if (!attribute.local_name.empty()) {
+                        append_name(css_rules_by_attribute, attribute.local_name);
+                        return;
+                    }
                 }
             }
         }

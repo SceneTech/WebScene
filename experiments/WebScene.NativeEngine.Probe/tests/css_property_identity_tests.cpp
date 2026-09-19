@@ -196,7 +196,7 @@ int main()
             "generated simple grammar dispatch agrees with specified-value implementation");
     }
 #if !defined(WEBSCENE_TEST_LEGACY_SPECIFIED_VALUE)
-    static_assert(specified_property_samples.size() == 145U);
+    static_assert(specified_property_samples.size() == 148U);
     std::array<bool, 146U> sampled{};
     for (const auto& sample : specified_property_samples) {
         const auto property = property_id(sample.name);

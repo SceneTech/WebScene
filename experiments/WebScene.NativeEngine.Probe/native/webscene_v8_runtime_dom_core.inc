@@ -2825,6 +2825,7 @@
                     || (target != nullptr && subtree_contains(frame, target));
             });
         }
+        discard_primary_selection_publication_for_frame(frame.id);
         {
             std::lock_guard lock(document_generation_mutex);
             ++frame_navigation_generations.try_emplace(frame.id, 0U)
@@ -2894,6 +2895,7 @@
 
     void retire_iframe_navigation(uint32_t frame_id)
     {
+        discard_primary_selection_publication_for_frame(frame_id);
         {
             std::lock_guard lock(document_generation_mutex);
             frame_navigation_generations.erase(frame_id);
@@ -5404,6 +5406,7 @@
         control.selection_end_utf16_suboffset = end_offset.utf16_suboffset;
         control.selection_direction = text_selection_direction::none;
         control.selection_explicitly_set = true;
+        self->mark_primary_selection_publication_dirty(node);
         if(self->is_connected(*node)) {
             self->recascade_form_value_selector_transition(
                 *node,previous_value,control.value,std::nullopt,false);

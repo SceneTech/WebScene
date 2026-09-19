@@ -1,0 +1,8 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Nested history B</title>
+<main id="page">b</main>
+<script>
+  addEventListener("popstate", event =>
+    parent.__webSceneCrossDocumentPopstate("b", event.state, document));
+</script>

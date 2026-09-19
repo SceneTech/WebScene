@@ -36,6 +36,8 @@
     std::unordered_set<uint32_t> hidden_frame_document_roots;
     std::unordered_map<uint32_t, nested_history_state> nested_history_states;
     std::unordered_set<uint32_t> frame_reload_navigations;
+    std::unordered_set<uint32_t> frame_history_traversals;
+    std::unordered_set<uint32_t> frame_history_replace_navigations;
     std::unordered_map<uint32_t, std::optional<std::string>>
         frame_reload_reflected_sources;
     std::vector<std::shared_future<std::shared_ptr<const prepared_frame>>>

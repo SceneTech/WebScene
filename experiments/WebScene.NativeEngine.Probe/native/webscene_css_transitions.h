@@ -249,52 +249,105 @@ inline bool apply_compiled_single_transition_shorthand(
 
 inline void apply_animation_shorthand(node_style& style, const std::string& value)
     {
-        auto name = std::string("none");
-        auto duration = std::string("0s");
-        auto delay = std::string("0s");
-        auto timing = std::string("ease");
-        auto iterations = std::string("1");
-        auto direction = std::string("normal");
-        auto fill_mode = std::string("none");
-        auto play_state = std::string("running");
-        auto saw_time = false;
-        const auto first = split_css_component_list(value, ',');
-        for (const auto& token : split_value_tokens(
-                 first.empty() ? std::string_view{} : std::string_view(first.front()))) {
-            const auto lower = ascii_lower(token);
-            if (is_css_time(lower)) {
-                if (!saw_time) duration = lower;
-                else delay = lower;
-                saw_time = true;
-            } else if (is_animation_timing_function(lower)) {
-                timing = lower;
-            } else if (lower == "infinite"
-                || std::all_of(lower.begin(), lower.end(), [](unsigned char character) {
-                    return std::isdigit(character) || character == '.';
-                })) {
-                iterations = lower;
-            } else if (lower == "forwards" || lower == "backwards"
-                || lower == "both") {
-                fill_mode = lower;
-            } else if (lower == "normal" || lower == "reverse"
-                || lower == "alternate" || lower == "alternate-reverse") {
-                direction = lower;
-            } else if (lower == "running" || lower == "paused") {
-                play_state = lower;
-            } else if (lower != "none"
-                && lower != "backwards") {
-                name = token;
+        std::vector<std::string> names, durations, delays, timings, iterations;
+        std::vector<std::string> directions, fill_modes, play_states;
+        const auto items = split_css_component_list(value, ',');
+        for (const auto& item : items) {
+            auto name = std::string("none");
+            auto duration = std::string("0s");
+            auto delay = std::string("0s");
+            auto timing = std::string("ease");
+            auto iteration = std::string("1");
+            auto direction = std::string("normal");
+            auto fill_mode = std::string("none");
+            auto play_state = std::string("running");
+            auto saw_time = false;
+            for (const auto& token : split_value_tokens(item)) {
+                const auto lower = ascii_lower(token);
+                if (is_css_time(lower)) {
+                    if (!saw_time) duration = lower;
+                    else delay = lower;
+                    saw_time = true;
+                } else if (is_animation_timing_function(lower)) {
+                    timing = lower;
+                } else if (lower == "infinite"
+                    || std::all_of(lower.begin(), lower.end(), [](unsigned char character) {
+                        return std::isdigit(character) || character == '.';
+                    })) {
+                    iteration = lower;
+                } else if (lower == "forwards" || lower == "backwards"
+                    || lower == "both") {
+                    fill_mode = lower;
+                } else if (lower == "normal" || lower == "reverse"
+                    || lower == "alternate" || lower == "alternate-reverse") {
+                    direction = lower;
+                } else if (lower == "running" || lower == "paused") {
+                    play_state = lower;
+                } else if (lower != "none") {
+                    name = token;
+                }
             }
+            names.push_back(std::move(name));
+            durations.push_back(std::move(duration));
+            delays.push_back(std::move(delay));
+            timings.push_back(std::move(timing));
+            iterations.push_back(std::move(iteration));
+            directions.push_back(std::move(direction));
+            fill_modes.push_back(std::move(fill_mode));
+            play_states.push_back(std::move(play_state));
         }
+        const auto join = [](const std::vector<std::string>& list) {
+            auto result = std::string{};
+            for (const auto& entry : list) {
+                if (!result.empty()) result += ", ";
+                result += entry;
+            }
+            return result;
+        };
         auto& animations = style.mutable_animations();
-        animations.animation_name_value = name;
-        animations.animation_duration_value = duration;
-        animations.animation_delay_value = delay;
-        animations.animation_timing_function_value = timing;
-        animations.animation_iteration_count_value = iterations;
-        animations.animation_direction_value = direction;
-        animations.animation_fill_mode_value = fill_mode;
-        animations.animation_play_state_value = play_state;
+        animations.animation_name_value = names.empty() ? "none" : join(names);
+        animations.animation_duration_value = durations.empty() ? "0s" : join(durations);
+        animations.animation_delay_value = delays.empty() ? "0s" : join(delays);
+        animations.animation_timing_function_value = timings.empty() ? "ease" : join(timings);
+        animations.animation_iteration_count_value = iterations.empty() ? "1" : join(iterations);
+        animations.animation_direction_value = directions.empty() ? "normal" : join(directions);
+        animations.animation_fill_mode_value = fill_modes.empty() ? "none" : join(fill_modes);
+        animations.animation_play_state_value = play_states.empty() ? "running" : join(play_states);
+    }
+
+inline std::string serialize_animation_shorthand(
+    const node_style::animation_data& animations)
+    {
+        const auto names = split_css_component_list(animations.animation_name_value, ',');
+        if (names.empty()) return "none 0s ease 0s 1 normal none running";
+        const auto durations = split_css_component_list(animations.animation_duration_value, ',');
+        const auto timings = split_css_component_list(
+            animations.animation_timing_function_value, ',');
+        const auto delays = split_css_component_list(animations.animation_delay_value, ',');
+        const auto iterations = split_css_component_list(
+            animations.animation_iteration_count_value, ',');
+        const auto directions = split_css_component_list(
+            animations.animation_direction_value, ',');
+        const auto fills = split_css_component_list(animations.animation_fill_mode_value, ',');
+        const auto plays = split_css_component_list(animations.animation_play_state_value, ',');
+        const auto coordinated = [](const auto& list, size_t index,
+                                    std::string_view initial) {
+            return list.empty() ? std::string(initial)
+                : trim_value(list[index % list.size()]);
+        };
+        auto result = std::string{};
+        for (size_t index = 0U; index < names.size(); ++index) {
+            if (!result.empty()) result += ", ";
+            result += trim_value(names[index]) + " "
+                + coordinated(durations, index, "0s") + " "
+                + coordinated(timings, index, "ease") + " "
+                + coordinated(delays, index, "0s") + " "
+                + coordinated(iterations, index, "1") + " "
+                + coordinated(directions, index, "normal") + " "
+                + coordinated(fills, index, "none") + " "
+                + coordinated(plays, index, "running");
+        }
+        return result;
     }
 
 inline void configure_keyframes(node_style& style,
@@ -302,25 +355,9 @@ inline void configure_keyframes(node_style& style,
     {
         if (!style.has_animation_data()) return;
         auto& animations = style.mutable_animations();
-        animations.opacity_keyframes.clear();
-        animations.opacity_keyframe_animation_signature.clear();
-        animations.rotation_keyframes.clear();
-        animations.rotation_keyframe_animation_signature.clear();
-        animations.filter_keyframes.clear();
-        animations.filter_keyframe_animation_signature.clear();
-        const auto play_states = split_css_component_list(
-            animations.animation_play_state_value, ',');
-        const auto play_state = play_states.empty()
-            ? std::string("running") : ascii_lower(trim_value(play_states.front()));
-        animations.keyframe_play_state = play_state == "paused"
-            ? node_style::animation_data::play_kind::paused
-            : node_style::animation_data::play_kind::running;
-        if (animations.animation_name_value == "none") return;
+        animations.keyframe_animations.clear();
         const auto names = split_css_component_list(animations.animation_name_value, ',');
         if (names.empty()) return;
-        const auto name = ascii_lower(trim_value(names.front()));
-        const auto definition = definitions.find(name);
-        if (name == "none" || definition == definitions.end()) return;
         const auto durations = split_css_component_list(animations.animation_duration_value, ',');
         const auto delays = split_css_component_list(animations.animation_delay_value, ',');
         const auto timings = split_css_component_list(
@@ -331,84 +368,87 @@ inline void configure_keyframes(node_style& style,
             animations.animation_direction_value, ',');
         const auto fill_modes = split_css_component_list(
             animations.animation_fill_mode_value, ',');
-        animations.opacity_keyframe_duration_ms = durations.empty()
-            ? 0 : std::max(0.0F, parse_css_time_ms(durations.front()));
-        animations.opacity_keyframe_delay_ms = delays.empty()
-            ? 0 : parse_css_time_ms(delays.front());
-        const auto iteration = iteration_counts.empty()
-            ? std::string("1") : ascii_lower(trim_value(iteration_counts.front()));
-        animations.opacity_keyframe_iterations = iteration == "infinite"
-            ? std::numeric_limits<float>::infinity()
-            : std::max(0.0F, std::strtof(iteration.c_str(), nullptr));
-        const auto direction = directions.empty()
-            ? std::string("normal") : ascii_lower(trim_value(directions.front()));
-        animations.keyframe_direction = direction == "reverse"
-            ? node_style::animation_data::direction_kind::reverse
-            : direction == "alternate"
-                ? node_style::animation_data::direction_kind::alternate
-                : direction == "alternate-reverse"
-                    ? node_style::animation_data::direction_kind::alternate_reverse
-                    : node_style::animation_data::direction_kind::normal;
-        const auto fill_mode = fill_modes.empty()
-            ? std::string("none") : ascii_lower(trim_value(fill_modes.front()));
-        animations.keyframe_fill_mode = fill_mode == "forwards"
-            ? node_style::animation_data::fill_kind::forwards
-            : fill_mode == "backwards"
-                ? node_style::animation_data::fill_kind::backwards
-                : fill_mode == "both"
-                    ? node_style::animation_data::fill_kind::both
-                    : node_style::animation_data::fill_kind::none;
-        node_style::transition_timing animation_timing;
-        if (!timings.empty()) parse_animation_timing(timings.front(), animation_timing);
-        animations.opacity_keyframe_x1 = animation_timing.x1;
-        animations.opacity_keyframe_y1 = animation_timing.y1;
-        animations.opacity_keyframe_x2 = animation_timing.x2;
-        animations.opacity_keyframe_y2 = animation_timing.y2;
-        animations.opacity_keyframe_step_count = animation_timing.step_count;
-        animations.opacity_keyframe_timing_kind = animation_timing.kind;
-        animations.opacity_keyframe_step_position = animation_timing.steps_position;
-        animations.opacity_keyframes = definition->second.opacity_stops;
-        animations.rotation_keyframes = definition->second.rotation_stops;
-        animations.filter_keyframes = definition->second.filter_stops;
-        if (animations.opacity_keyframe_duration_ms <= 0
-            || animations.opacity_keyframe_iterations == 0
-            || (animations.opacity_keyframes.size() < 2U
-                && animations.rotation_keyframes.size() < 2U
-                && animations.filter_keyframes.size() < 2U)) return;
-        std::ostringstream signature;
-        signature << name << '|' << animations.opacity_keyframe_duration_ms << '|'
-            << animations.opacity_keyframe_delay_ms << '|'
-            << animations.opacity_keyframe_iterations << '|'
-            << static_cast<unsigned>(animations.keyframe_direction) << '|'
-            << static_cast<unsigned>(animations.opacity_keyframe_timing_kind) << ','
-            << animations.opacity_keyframe_step_count << ','
-            << static_cast<unsigned>(animations.opacity_keyframe_step_position) << '|'
-            << animations.opacity_keyframe_x1 << ',' << animations.opacity_keyframe_y1 << ','
-            << animations.opacity_keyframe_x2 << ',' << animations.opacity_keyframe_y2;
-        const auto base_signature = signature.str();
-        if (animations.opacity_keyframes.size() >= 2U) {
-            signature.str(base_signature);
-            signature.clear();
-            for (const auto& stop : animations.opacity_keyframes) {
-                signature << '|' << stop.offset << ':' << stop.opacity;
+        const auto play_states = split_css_component_list(
+            animations.animation_play_state_value, ',');
+        const auto coordinated = [](const auto& list, size_t index,
+                                    std::string_view initial) {
+            return list.empty() ? std::string(initial)
+                : ascii_lower(trim_value(list[index % list.size()]));
+        };
+        const auto count = std::min(
+            names.size(), node_style::animation_data::max_keyframe_animation_tracks);
+        animations.keyframe_animations.reserve(count);
+        for (size_t index = 0U; index < count; ++index) {
+            node_style::animation_data::keyframe_animation track;
+            track.name = trim_value(names[index]);
+            const auto normalized_name = ascii_lower(track.name);
+            track.duration_ms = std::max(0.0F, parse_css_time_ms(
+                coordinated(durations, index, "0s")));
+            track.delay_ms = parse_css_time_ms(coordinated(delays, index, "0s"));
+            const auto iteration = coordinated(iteration_counts, index, "1");
+            if (iteration == "infinite") {
+                track.iterations = std::numeric_limits<float>::infinity();
+            } else {
+                char* parsed_end = nullptr;
+                const auto parsed = std::strtof(iteration.c_str(), &parsed_end);
+                track.iterations = parsed_end == iteration.c_str() + iteration.size()
+                        && std::isfinite(parsed)
+                    ? std::max(0.0F, parsed) : 1.0F;
             }
-            animations.opacity_keyframe_animation_signature = signature.str();
-        }
-        if (animations.rotation_keyframes.size() >= 2U) {
-            signature.str(base_signature);
-            signature.clear();
-            for (const auto& stop : animations.rotation_keyframes) {
-                signature << '|' << stop.offset << ':' << stop.degrees;
+            const auto direction = coordinated(directions, index, "normal");
+            track.direction = direction == "reverse"
+                ? node_style::animation_data::direction_kind::reverse
+                : direction == "alternate"
+                    ? node_style::animation_data::direction_kind::alternate
+                    : direction == "alternate-reverse"
+                        ? node_style::animation_data::direction_kind::alternate_reverse
+                        : node_style::animation_data::direction_kind::normal;
+            const auto fill_mode = coordinated(fill_modes, index, "none");
+            track.fill_mode = fill_mode == "forwards"
+                ? node_style::animation_data::fill_kind::forwards
+                : fill_mode == "backwards"
+                    ? node_style::animation_data::fill_kind::backwards
+                    : fill_mode == "both"
+                        ? node_style::animation_data::fill_kind::both
+                        : node_style::animation_data::fill_kind::none;
+            track.play_state = coordinated(play_states, index, "running") == "paused"
+                ? node_style::animation_data::play_kind::paused
+                : node_style::animation_data::play_kind::running;
+            node_style::transition_timing timing;
+            parse_animation_timing(coordinated(timings, index, "ease"), timing);
+            track.x1 = timing.x1; track.y1 = timing.y1;
+            track.x2 = timing.x2; track.y2 = timing.y2;
+            track.step_count = timing.step_count;
+            track.timing_kind = timing.kind;
+            track.step_position = timing.steps_position;
+            const auto definition = definitions.find(normalized_name);
+            if (normalized_name != "none" && definition != definitions.end()) {
+                track.opacity_keyframes = definition->second.opacity_stops;
+                track.rotation_keyframes = definition->second.rotation_stops;
+                track.filter_keyframes = definition->second.filter_stops;
             }
-            animations.rotation_keyframe_animation_signature = signature.str();
-        }
-        if (animations.filter_keyframes.size() >= 2U) {
-            signature.str(base_signature);
-            signature.clear();
-            for (const auto& stop : animations.filter_keyframes) {
-                signature << '|' << stop.offset << ':' << stop.value;
+            const auto runnable = track.duration_ms > 0 && track.iterations != 0
+                && (track.opacity_keyframes.size() >= 2U
+                    || track.rotation_keyframes.size() >= 2U
+                    || track.filter_keyframes.size() >= 2U);
+            if (runnable) {
+                std::ostringstream signature;
+                signature << normalized_name << '|' << track.duration_ms << '|'
+                    << track.delay_ms << '|' << track.iterations << '|'
+                    << static_cast<unsigned>(track.direction) << '|'
+                    << static_cast<unsigned>(track.timing_kind) << ','
+                    << track.step_count << ','
+                    << static_cast<unsigned>(track.step_position) << '|'
+                    << track.x1 << ',' << track.y1 << ',' << track.x2 << ',' << track.y2;
+                for (const auto& stop : track.opacity_keyframes)
+                    signature << "|o" << stop.offset << ':' << stop.opacity;
+                for (const auto& stop : track.rotation_keyframes)
+                    signature << "|r" << stop.offset << ':' << stop.degrees;
+                for (const auto& stop : track.filter_keyframes)
+                    signature << "|f" << stop.offset << ':' << stop.value;
+                track.signature = signature.str();
             }
-            animations.filter_keyframe_animation_signature = signature.str();
+            animations.keyframe_animations.push_back(std::move(track));
         }
     }
 

@@ -965,6 +965,103 @@ void test_animation_play_state_holds_and_resumes_host_time(
         engine, false, "detached play-state animations retained host-frame demand");
 }
 
+void test_multiple_animation_lists_coordinate_bounded_tracks(
+    webscene_engine* engine)
+{
+    animation_frame_and_wait(engine, 10000.0, 7120U);
+    execute_and_wait(engine, R"JS(
+        (() => {
+          document.body.innerHTML = `
+            <style>
+              @keyframes list-low { from { opacity: 0; } to { opacity: .4; } }
+              @keyframes list-high { from { opacity: .6; transform: rotate(0); }
+                to { opacity: 1; transform: rotate(180deg); } }
+              @keyframes cap-1 { from { opacity: .1; } to { opacity: .1; } }
+              @keyframes cap-2 { from { opacity: .2; } to { opacity: .2; } }
+              @keyframes cap-3 { from { opacity: .3; } to { opacity: .3; } }
+              @keyframes cap-4 { from { opacity: .4; } to { opacity: .4; } }
+              @keyframes cap-5 { from { opacity: .5; } to { opacity: .5; } }
+              @keyframes cap-6 { from { opacity: .6; } to { opacity: .6; } }
+              @keyframes cap-7 { from { opacity: .7; } to { opacity: .7; } }
+              @keyframes cap-8 { from { opacity: .8; } to { opacity: .8; } }
+              @keyframes cap-9 { from { opacity: .9; } to { opacity: .9; } }
+              #coordinated {
+                animation-name: list-low, list-high;
+                animation-duration: 1000ms;
+                animation-timing-function: linear;
+                animation-delay: 0ms, 500ms;
+                animation-iteration-count: 1;
+                animation-direction: normal, reverse;
+                animation-fill-mode: both;
+                animation-play-state: running, paused;
+              }
+              #ordered { animation: list-low 100ms linear both,
+                list-high 100ms linear both; }
+              #capped { animation-name: cap-1, cap-2, cap-3, cap-4, cap-5,
+                  cap-6, cap-7, cap-8, cap-9;
+                animation-duration: 1s; animation-fill-mode: backwards;
+                animation-play-state: paused; }
+            </style>
+            <div id="coordinated"></div><div id="ordered"></div>
+            <div id="capped"></div>`;
+          globalThis.__listEnds = [];
+          document.getElementById('ordered').addEventListener(
+            'animationend', event => __listEnds.push(event.animationName));
+          void document.body.offsetHeight;
+        })()
+    )JS", "animation-list-setup.js");
+
+    animation_frame_and_wait(engine, 10250.0, 7121U);
+    const auto coordinated = evaluate(engine, R"JS(
+        (() => {
+          const node = document.getElementById('coordinated');
+          const style = getComputedStyle(node);
+          const capped = Number(getComputedStyle(
+            document.getElementById('capped')).opacity);
+          return style.animationName === 'list-low, list-high'
+            && style.animationDuration === '1000ms'
+            && style.animationDelay === '0ms, 500ms'
+            && style.animationPlayState === 'running, paused'
+            && style.animation.split(',').length === 2
+            && Math.abs(Number(style.opacity) - 1) < .001
+            && Math.abs(capped - .8) < .001;
+        })()
+    )JS", "animation-list-coordination.js");
+    require(coordinated == "true",
+        "animation lists did not repeat, serialize, compose, or honor the track cap");
+
+    animation_frame_and_wait(engine, 10500.0, 7122U);
+    const auto ordered = evaluate(engine,
+        "JSON.stringify(__listEnds)", "animation-list-end-order.js");
+    require(ordered == R"JSON(["list-low","list-high"])JSON",
+        "same-frame animationend records were not dispatched in list order: " + ordered);
+    wait_for_animation_frame_demand(
+        engine, true, "running coordinated animation lost host-frame demand");
+
+    execute_and_wait(engine, R"JS(
+        (() => {
+          const node = document.getElementById('coordinated');
+          node.style.animationName = 'list-low';
+          return node.style.animationName;
+        })()
+    )JS", "animation-list-remove-track.js");
+    animation_frame_and_wait(engine, 10750.0, 7123U);
+    const auto removed = evaluate(engine, R"JS(
+        (() => {
+          const node = document.getElementById('coordinated');
+          return getComputedStyle(node).animationName === 'list-low'
+            && Number(getComputedStyle(node).opacity) < .4;
+        })()
+    )JS", "animation-list-remove-track-result.js");
+    require(removed == "true", "removed animation left a later retained override");
+
+    execute_and_wait(engine,
+        "document.body.innerHTML = '<div>animation lists detached</div>'",
+        "animation-list-detach.js");
+    wait_for_animation_frame_demand(
+        engine, false, "detached animation lists retained host-frame demand");
+}
+
 void test_filter_keyframes_use_host_clock_and_retained_paint(
     webscene_engine* engine)
 {

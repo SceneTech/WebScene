@@ -147,12 +147,14 @@
     void configure_style_keyframe_animation(dom_node& node)
     {
         css::configure_keyframes(node.style,opacity_keyframes);
-        if (!node.style.animations().opacity_keyframe_animation_signature.empty())
-            record_composition("css-opacity-keyframe-animation",node.id);
-        if (!node.style.animations().rotation_keyframe_animation_signature.empty())
-            record_composition("css-rotation-keyframe-animation",node.id);
-        if (!node.style.animations().filter_keyframe_animation_signature.empty())
-            record_composition("css-filter-keyframe-animation",node.id);
+        for (const auto& track : node.style.animations().keyframe_animations) {
+            if (track.opacity_keyframes.size() >= 2U)
+                record_composition("css-opacity-keyframe-animation",node.id);
+            if (track.rotation_keyframes.size() >= 2U)
+                record_composition("css-rotation-keyframe-animation",node.id);
+            if (track.filter_keyframes.size() >= 2U)
+                record_composition("css-filter-keyframe-animation",node.id);
+        }
     }
 
     void recompute_cascaded_line_height(dom_node& node,const std::vector<const css_rule*>& rules)

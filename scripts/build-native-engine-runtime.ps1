@@ -270,6 +270,14 @@ if ($LASTEXITCODE -ne 0) { throw "Native WebScene engine tests failed." }
 
 $nativePath = Join-Path $buildDir "Release/webscene_native_engine.dll"
 if (-not (Test-Path $nativePath)) { throw "Native engine build did not produce '$nativePath'." }
+$importLibraryPath = Join-Path $buildDir "Release/webscene_native_engine.lib"
+if (-not (Test-Path $importLibraryPath)) {
+    throw "Native engine build did not produce its C/C++ import library '$importLibraryPath'."
+}
+$cHeaderPath = Join-Path $repoRoot "experiments/WebScene.NativeEngine.Probe/native/webscene_native_engine.h"
+if (-not (Test-Path $cHeaderPath)) {
+    throw "Native engine public C ABI header is missing: '$cHeaderPath'."
+}
 $miniaudioLicense = Join-Path $buildDir "webscene-miniaudio-LICENSE"
 if (-not (Test-Path $miniaudioLicense)) { throw "Miniaudio license is missing from the media-enabled native build." }
 $ixWebSocketLicense = Join-Path $buildDir "_deps/webscene_ixwebsocket-src/LICENSE.txt"
@@ -285,7 +293,10 @@ $packArguments = @(
     "pack", (Join-Path $repoRoot "packaging/WebScene.NativeEngine.Runtime/WebScene.NativeEngine.Runtime.csproj"),
     "-c", "Release", "-o", $Output,
     "-p:WebSceneNativeEngineRid=$Rid",
+    "-p:WebSceneNativeEngineArchitecture=$cpu",
     "-p:WebSceneNativeEnginePath=$nativePath",
+    "-p:WebSceneNativeEngineImportLibraryPath=$importLibraryPath",
+    "-p:WebSceneNativeEngineCHeaderPath=$cHeaderPath",
     "-p:WebSceneNativeEngineIcuDataPath=$icuData",
     "-p:WebSceneNativeEngineMedia=true",
     "-p:WebSceneNativeEngineMiniaudioLicensePath=$miniaudioLicense",
@@ -334,6 +345,18 @@ $packageZip = Join-Path $buildDir "package-smoke.zip"
 Copy-Item $packagePath $packageZip -Force
 Expand-Archive -Path $packageZip -DestinationPath $packageSmokeDir -Force
 $packageNativePath = Join-Path $packageSmokeDir "runtimes/$Rid/native/webscene_native_engine.dll"
+$packageCppAssets = @(
+    "build/native/include/webscene_native_engine.h",
+    "build/native/lib/webscene_native_engine.lib",
+    "build/native/lib/cmake/WebScene/WebSceneConfig.cmake",
+    "build/native/lib/cmake/WebScene/WebSceneWindowsConfig.cmake",
+    "build/native/lib/cmake/WebScene/WebSceneWindowsMetadata.cmake"
+)
+$packageCppAssets | ForEach-Object {
+    if (-not (Test-Path (Join-Path $packageSmokeDir $_))) {
+        throw "The Windows C/C++ package surface is missing '$_'."
+    }
+}
 
 $previousFontInstancing = $env:WEBSCENE_VARIABLE_FONT_INSTANCING
 $env:WEBSCENE_VARIABLE_FONT_INSTANCING = '1'

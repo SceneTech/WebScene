@@ -15,6 +15,76 @@ inline constexpr uint32_t maximum_semantic_relationships_v1 = 64U * 1024U;
 inline constexpr uint32_t maximum_semantic_string_bytes_v1 = 4U * 1024U * 1024U;
 inline constexpr size_t maximum_semantic_text_bytes_v1 = 64U * 1024U;
 
+struct semantic_live_event_data_v1 final {
+    uint64_t sequence{};
+    uint64_t top_document_generation{};
+    uint64_t frame_generation{};
+    uint64_t semantic_id{};
+    uint32_t frame_owner_dom_node_id{};
+    uint32_t dom_node_id{};
+    uint32_t role{};
+    uint32_t politeness{};
+    uint32_t flags{};
+    std::string text;
+};
+
+struct semantic_live_capture_data_v1 final {
+    bool complete{};
+    uint64_t top_document_generation{};
+    std::vector<uint64_t> live_region_semantic_ids;
+    std::vector<semantic_live_event_data_v1> events;
+};
+
+struct semantic_live_fragment_v1 final {
+    uint32_t dom_node_id{};
+    std::string text;
+};
+
+struct semantic_live_region_state_v1 final {
+    uint64_t top_document_generation{};
+    uint64_t frame_generation{};
+    uint64_t semantic_id{};
+    uint32_t frame_owner_dom_node_id{};
+    uint32_t dom_node_id{};
+    uint32_t role{};
+    uint32_t politeness{};
+    uint32_t relevant{};
+    bool atomic{};
+    bool busy{};
+    bool text_truncated{};
+    std::vector<semantic_live_fragment_v1> fragments;
+    std::string text;
+    uint64_t last_event_fingerprint{};
+};
+
+struct semantic_live_batch_data_v1 final {
+    uint64_t batch_generation{};
+    uint32_t flags{};
+    uint32_t dropped_event_count{};
+    std::vector<webscene_semantic_live_event_v1> events;
+    std::string strings;
+
+    void append(semantic_live_event_data_v1 event)
+    {
+        webscene_semantic_live_event_v1 view{};
+        view.struct_size = sizeof(view);
+        view.version = 1U;
+        view.sequence = event.sequence;
+        view.top_document_generation = event.top_document_generation;
+        view.frame_generation = event.frame_generation;
+        view.semantic_id = event.semantic_id;
+        view.frame_owner_dom_node_id = event.frame_owner_dom_node_id;
+        view.dom_node_id = event.dom_node_id;
+        view.role = event.role;
+        view.politeness = event.politeness;
+        view.flags = event.flags;
+        view.text.offset = static_cast<uint32_t>(strings.size());
+        view.text.length = static_cast<uint32_t>(event.text.size());
+        strings.append(event.text);
+        events.push_back(view);
+    }
+};
+
 struct semantic_action_target_v1 final {
     uint64_t semantic_id{};
     uint64_t top_document_generation{};

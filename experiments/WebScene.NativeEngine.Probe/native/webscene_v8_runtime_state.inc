@@ -34,6 +34,9 @@
         retired_frame_preparations;
     std::mutex document_generation_mutex;
     std::atomic<uint64_t> document_generation{1U};
+    std::unordered_map<uint64_t, semantic_live_region_state_v1>
+        semantic_live_regions;
+    bool semantic_live_suppress_initial_alerts{false};
     std::shared_ptr<shared_isolate_state> shared_isolate;
     std::shared_ptr<v8::ArrayBuffer::Allocator> allocator;
     v8::Isolate* isolate{nullptr};

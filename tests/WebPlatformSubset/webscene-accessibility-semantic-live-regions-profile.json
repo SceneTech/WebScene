@@ -1,0 +1,30 @@
+{
+  "profile": "webscene-accessibility-semantic-live-regions-1",
+  "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+  "runtime": "v8",
+  "viewport": {
+    "width": 800,
+    "height": 600,
+    "deviceScaleFactor": 1
+  },
+  "required": [
+    {
+      "path": "contracts/accessibility-semantic-live-regions-source.html",
+      "type": "contract",
+      "capabilities": [
+        "semantic-live-polite-and-assertive-source",
+        "semantic-live-status-alert-log-source",
+        "semantic-live-atomic-relevant-busy-source",
+        "semantic-live-terminal-problems-tasks-chat-source",
+        "semantic-live-hidden-and-detached-retirement"
+      ],
+      "evidence": [
+        "webscene-generation-aware-semantic-live-region-abi",
+        "appscene-native-live-announcement-boundary"
+      ],
+      "reason": "Browser/native source contract for bounded semantic live-region events consumed by AppScene native peers. Platform announcement objects and delivery remain in AppScene #185."
+    }
+  ],
+  "harnessBlocked": [],
+  "excluded": []
+}

@@ -32,17 +32,21 @@ enum class dawn_linux_external_status : uint32_t {
     fence_export_failed,
     invalid_device_factory,
     native_device_query_failed,
-    device_lost
+    device_lost,
+    xlib_presentation_unavailable
 };
 
 struct dawn_linux_external_device_lifetime {
     WGPUAdapter dawn_adapter_token{};
     WGPUDevice dawn_device_token{};
     // Opaque borrowed identities for the exact Vulkan tuple. They are never
-    // called or cast by WebScene; native_owner controls their typed lifetime.
+    // destroyed by WebScene; native_owner controls their typed lifetime.
+    const void* vk_instance{};
     const void* vk_physical_device{};
     const void* vk_device{};
     const void* vk_queue{};
+    webscene_dawn_vk_get_instance_proc_addr_v2 vk_get_instance_proc_addr{};
+    webscene_dawn_vulkan_instance_capabilities_v2 instance_capabilities{};
     std::array<uint8_t,16> device_uuid{};
     std::array<uint8_t,16> driver_uuid{};
     uint32_t dawn_queue_family{UINT32_MAX};
@@ -69,26 +73,35 @@ inline dawn_linux_external_status bind_dawn_linux_external_device(
         return dawn_linux_external_status::invalid_argument;
     if(device_lost->load(std::memory_order_acquire))
         return dawn_linux_external_status::device_lost;
-    webscene_dawn_native_device_v1 native{};
+    webscene_dawn_native_device_v2 native{};
     native.struct_size=sizeof(native);
-    native.version=WEBSCENE_DAWN_NATIVE_DEVICE_ABI_VERSION;
-    const auto status=websceneDawnQueryVulkanDeviceV1(device.Get(),&native);
-    if(status==WEBSCENE_DAWN_NATIVE_DEVICE_LOST_V1)
+    native.version=WEBSCENE_DAWN_NATIVE_DEVICE_ABI_VERSION_V2;
+    const auto status=websceneDawnQueryVulkanDeviceV2(device.Get(),&native);
+    if(status==WEBSCENE_DAWN_NATIVE_DEVICE_LOST_V2)
         return dawn_linux_external_status::device_lost;
-    if(status==WEBSCENE_DAWN_NATIVE_DEVICE_NOT_VULKAN_V1)
+    if(status==WEBSCENE_DAWN_NATIVE_DEVICE_NOT_VULKAN_V2)
         return dawn_linux_external_status::not_vulkan;
-    if(status!=WEBSCENE_DAWN_NATIVE_DEVICE_SUCCESS_V1)
+    if(status==WEBSCENE_DAWN_NATIVE_DEVICE_XLIB_PRESENTATION_UNAVAILABLE_V2)
+        return dawn_linux_external_status::xlib_presentation_unavailable;
+    if(status!=WEBSCENE_DAWN_NATIVE_DEVICE_SUCCESS_V2)
         return dawn_linux_external_status::native_device_query_failed;
     if(native.adapter!=adapter.Get()||native.device!=device.Get()||
-        !native.vk_physical_device||!native.vk_device||!native.vk_queue||
-        native.queue_family==UINT32_MAX)
+        !native.vk_instance||!native.vk_physical_device||!native.vk_device||
+        !native.vk_queue||!native.vk_get_instance_proc_addr||
+        native.queue_family==UINT32_MAX||
+        (native.instance_capabilities&
+            WEBSCENE_DAWN_VULKAN_XLIB_PRESENTATION_REQUIRED_V2)!=
+            WEBSCENE_DAWN_VULKAN_XLIB_PRESENTATION_REQUIRED_V2)
         return dawn_linux_external_status::native_device_query_failed;
     auto lifetime=std::make_shared<dawn_linux_external_device_lifetime>();
     lifetime->dawn_adapter_token=native.adapter;
     lifetime->dawn_device_token=native.device;
+    lifetime->vk_instance=native.vk_instance;
     lifetime->vk_physical_device=native.vk_physical_device;
     lifetime->vk_device=native.vk_device;
     lifetime->vk_queue=native.vk_queue;
+    lifetime->vk_get_instance_proc_addr=native.vk_get_instance_proc_addr;
+    lifetime->instance_capabilities=native.instance_capabilities;
     for(size_t index=0;index<lifetime->device_uuid.size();++index) {
         lifetime->device_uuid[index]=native.device_uuid[index];
         lifetime->driver_uuid[index]=native.driver_uuid[index];
@@ -209,7 +222,11 @@ inline bool same_dawn_linux_external_identity(
         expected->dawn_adapter_token&&expected->dawn_device_token&&
         expected->dawn_adapter_token==actual->dawn_adapter_token&&
         expected->dawn_device_token==actual->dawn_device_token&&
-        expected->vk_physical_device&&expected->vk_device&&expected->vk_queue&&
+        expected->vk_instance&&expected->vk_physical_device&&expected->vk_device&&
+        expected->vk_queue&&expected->vk_get_instance_proc_addr&&
+        (expected->instance_capabilities&
+            WEBSCENE_DAWN_VULKAN_XLIB_PRESENTATION_REQUIRED_V2)==
+            WEBSCENE_DAWN_VULKAN_XLIB_PRESENTATION_REQUIRED_V2&&
         nonzero_uuid(expected->device_uuid)&&nonzero_uuid(expected->driver_uuid)&&
         expected->dawn_queue_family!=UINT32_MAX;
 }

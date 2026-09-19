@@ -6,8 +6,16 @@
 extern "C" {
 #endif
 
+#ifndef WEBSCENE_DAWN_NATIVE_DEVICE_ABI_VERSION_V1
+#define WEBSCENE_DAWN_NATIVE_DEVICE_ABI_VERSION_V1 1U
+#endif
+#ifndef WEBSCENE_DAWN_NATIVE_DEVICE_ABI_VERSION_V2
+#define WEBSCENE_DAWN_NATIVE_DEVICE_ABI_VERSION_V2 2U
+#endif
+/* The original name remains the v1 value for source compatibility. New code
+ * selects the explicit versioned constant matching the query it calls. */
 #ifndef WEBSCENE_DAWN_NATIVE_DEVICE_ABI_VERSION
-#define WEBSCENE_DAWN_NATIVE_DEVICE_ABI_VERSION 1U
+#define WEBSCENE_DAWN_NATIVE_DEVICE_ABI_VERSION WEBSCENE_DAWN_NATIVE_DEVICE_ABI_VERSION_V1
 #endif
 
 typedef uint32_t webscene_dawn_native_device_status_v1;
@@ -39,6 +47,53 @@ typedef struct webscene_dawn_native_device_v1 {
     uint8_t driver_uuid[16];
 } webscene_dawn_native_device_v1;
 
+typedef uint32_t webscene_dawn_native_device_status_v2;
+enum {
+    WEBSCENE_DAWN_NATIVE_DEVICE_SUCCESS_V2 = 0,
+    WEBSCENE_DAWN_NATIVE_DEVICE_INVALID_ARGUMENT_V2 = 1,
+    WEBSCENE_DAWN_NATIVE_DEVICE_INCOMPATIBLE_ABI_V2 = 2,
+    WEBSCENE_DAWN_NATIVE_DEVICE_FOREIGN_DEVICE_V2 = 3,
+    WEBSCENE_DAWN_NATIVE_DEVICE_NOT_VULKAN_V2 = 4,
+    WEBSCENE_DAWN_NATIVE_DEVICE_LOST_V2 = 5,
+    WEBSCENE_DAWN_NATIVE_DEVICE_INVALID_IDENTITY_V2 = 6,
+    WEBSCENE_DAWN_NATIVE_DEVICE_XLIB_PRESENTATION_UNAVAILABLE_V2 = 7
+};
+
+typedef void (*webscene_dawn_vk_proc_v2)(void);
+typedef webscene_dawn_vk_proc_v2 (*webscene_dawn_vk_get_instance_proc_addr_v2)(
+    void* vk_instance, const char* name);
+
+typedef uint32_t webscene_dawn_vulkan_instance_capabilities_v2;
+enum {
+    WEBSCENE_DAWN_VULKAN_SURFACE_EXTENSION_ENABLED_V2 = 1U << 0,
+    WEBSCENE_DAWN_VULKAN_XLIB_SURFACE_EXTENSION_ENABLED_V2 = 1U << 1,
+    WEBSCENE_DAWN_VULKAN_XLIB_PRESENTATION_PROCS_AVAILABLE_V2 = 1U << 2,
+    WEBSCENE_DAWN_VULKAN_XLIB_PRESENTATION_REQUIRED_V2 =
+        WEBSCENE_DAWN_VULKAN_SURFACE_EXTENSION_ENABLED_V2 |
+        WEBSCENE_DAWN_VULKAN_XLIB_SURFACE_EXTENSION_ENABLED_V2 |
+        WEBSCENE_DAWN_VULKAN_XLIB_PRESENTATION_PROCS_AVAILABLE_V2
+};
+
+/* V2 adds the VkInstance which owns the returned device and the exact resolver
+ * Dawn loaded for that instance. All Vulkan identities and the resolver are
+ * borrowed from the live WGPUDevice and become invalid when it is released.
+ * The resolver is ABI-compatible with PFN_vkGetInstanceProcAddr on Linux. */
+typedef struct webscene_dawn_native_device_v2 {
+    uint32_t struct_size;
+    uint32_t version;
+    WGPUAdapter adapter;
+    WGPUDevice device;
+    void* vk_instance;
+    void* vk_physical_device;
+    void* vk_device;
+    void* vk_queue;
+    webscene_dawn_vk_get_instance_proc_addr_v2 vk_get_instance_proc_addr;
+    uint32_t queue_family;
+    webscene_dawn_vulkan_instance_capabilities_v2 instance_capabilities;
+    uint8_t device_uuid[16];
+    uint8_t driver_uuid[16];
+} webscene_dawn_native_device_v2;
+
 #if defined(_WIN32)
 #define WEBSCENE_DAWN_NATIVE_DEVICE_EXPORT __declspec(dllimport)
 #elif defined(__GNUC__)
@@ -53,6 +108,15 @@ typedef struct webscene_dawn_native_device_v1 {
 WEBSCENE_DAWN_NATIVE_DEVICE_EXPORT webscene_dawn_native_device_status_v1
 websceneDawnQueryVulkanDeviceV1(
     WGPUDevice device, webscene_dawn_native_device_v1* result);
+
+/* result must carry sizeof(webscene_dawn_native_device_v2) and ABI version 2.
+ * Success guarantees all XLIB_PRESENTATION_REQUIRED capability bits. The host
+ * must still call vkGetPhysicalDeviceXlibPresentationSupportKHR with its exact
+ * Display and visual before creating a surface. Failure leaves result
+ * unchanged, and foreign tokens are rejected before private dereference. */
+WEBSCENE_DAWN_NATIVE_DEVICE_EXPORT webscene_dawn_native_device_status_v2
+websceneDawnQueryVulkanDeviceV2(
+    WGPUDevice device, webscene_dawn_native_device_v2* result);
 
 #undef WEBSCENE_DAWN_NATIVE_DEVICE_EXPORT
 

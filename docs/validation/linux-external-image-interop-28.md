@@ -78,6 +78,18 @@ public adapter/device tokens, borrowed native tuple, queue family and Vulkan
 device/driver UUIDs. The SDK ships only `webscene/dawn_native_device.h`; no Dawn
 private header crosses into AppScene.
 
+Issue #649 adds the v2 query without changing the v1 ABI. V2 also returns the
+same Dawn device's borrowed `VkInstance` and the exact
+`vkGetInstanceProcAddr` loaded by that Vulkan backend. It succeeds only when
+`VK_KHR_surface` and `VK_KHR_xlib_surface` were enabled and Dawn loaded the
+surface creation, destruction, capability and Xlib presentation-query
+procedures. `bind_dawn_linux_external_device` now consumes v2 and retains its
+`wgpu::Device`, keeping the complete borrowed instance/device/queue tuple alive.
+The X11 host must still call
+`vkGetPhysicalDeviceXlibPresentationSupportKHR` with its own display and visual;
+unsupported displays fail before surface creation and cannot select a second
+Vulkan instance or a CPU presentation route.
+
 The SDK now exposes `dawn_linux_external_device_factory`. An AppScene host with
 an exact-device Dawn integration creates the WebGPU instance/adapter/device and
 native allocator atomically, and returns one

@@ -4,10 +4,13 @@
 using namespace webscene::graphics;
 namespace {
 void require(bool value){if(!value)throw std::runtime_error("Dawn Linux external provider contract failed");}
+webscene_dawn_vk_proc_v2 fake_instance_resolver(void*,const char*){return nullptr;}
 }
 int main(){
     static_assert(WEBSCENE_DAWN_LINUX_EXTERNAL_FACTORY_VERSION==1);
     static_assert(WEBSCENE_DAWN_NATIVE_DEVICE_ABI_VERSION==1);
+    static_assert(WEBSCENE_DAWN_NATIVE_DEVICE_ABI_VERSION_V1==1);
+    static_assert(WEBSCENE_DAWN_NATIVE_DEVICE_ABI_VERSION_V2==2);
     webscene_dawn_native_device_v1 query{};
     query.struct_size=sizeof(query);
     query.version=WEBSCENE_DAWN_NATIVE_DEVICE_ABI_VERSION;
@@ -20,6 +23,22 @@ int main(){
     query.version=WEBSCENE_DAWN_NATIVE_DEVICE_ABI_VERSION+1;
     require(websceneDawnQueryVulkanDeviceV1(first,&query)==
         WEBSCENE_DAWN_NATIVE_DEVICE_INCOMPATIBLE_ABI_V1);
+    webscene_dawn_native_device_v2 query_v2{};
+    query_v2.struct_size=sizeof(query_v2);
+    query_v2.version=WEBSCENE_DAWN_NATIVE_DEVICE_ABI_VERSION_V2;
+    query_v2.vk_instance=reinterpret_cast<void*>(uintptr_t{9});
+    require(websceneDawnQueryVulkanDeviceV2(nullptr,&query_v2)==
+        WEBSCENE_DAWN_NATIVE_DEVICE_INVALID_ARGUMENT_V2);
+    require(websceneDawnQueryVulkanDeviceV2(first,&query_v2)==
+        WEBSCENE_DAWN_NATIVE_DEVICE_FOREIGN_DEVICE_V2);
+    require(query_v2.vk_instance==reinterpret_cast<void*>(uintptr_t{9}));
+    query_v2.struct_size=sizeof(query_v2)-1;
+    require(websceneDawnQueryVulkanDeviceV2(first,&query_v2)==
+        WEBSCENE_DAWN_NATIVE_DEVICE_INCOMPATIBLE_ABI_V2);
+    query_v2.struct_size=sizeof(query_v2);
+    query_v2.version=WEBSCENE_DAWN_NATIVE_DEVICE_ABI_VERSION_V1;
+    require(websceneDawnQueryVulkanDeviceV2(first,&query_v2)==
+        WEBSCENE_DAWN_NATIVE_DEVICE_INCOMPATIBLE_ABI_V2);
     require(valid_dawn_linux_external_binding(first,first,first));
     require(!valid_dawn_linux_external_binding(nullptr,first,first));
     require(!valid_dawn_linux_external_binding(first,second,first));
@@ -29,14 +48,25 @@ int main(){
     auto device=std::make_shared<dawn_linux_external_device_lifetime>();
     device->dawn_adapter_token=reinterpret_cast<WGPUAdapter>(uintptr_t{6});
     device->dawn_device_token=first;
+    device->vk_instance=reinterpret_cast<void*>(uintptr_t{7});
     device->vk_physical_device=reinterpret_cast<void*>(uintptr_t{3});
     device->vk_device=reinterpret_cast<void*>(uintptr_t{4});
     device->vk_queue=reinterpret_cast<void*>(uintptr_t{5});
+    device->vk_get_instance_proc_addr=&fake_instance_resolver;
+    device->instance_capabilities=WEBSCENE_DAWN_VULKAN_XLIB_PRESENTATION_REQUIRED_V2;
     device->device_uuid[0]=1;
     device->driver_uuid[0]=2;device->dawn_queue_family=4;
     device->device_lost=std::make_shared<std::atomic<bool>>(false);
     device->native_owner=native_owner;
     require(same_dawn_linux_external_identity(device,device));
+    const auto capabilities=device->instance_capabilities;
+    device->instance_capabilities=0;
+    require(!same_dawn_linux_external_identity(device,device));
+    device->instance_capabilities=capabilities;
+    const auto resolver=device->vk_get_instance_proc_addr;
+    device->vk_get_instance_proc_addr=nullptr;
+    require(!same_dawn_linux_external_identity(device,device));
+    device->vk_get_instance_proc_addr=resolver;
     auto copied=std::make_shared<dawn_linux_external_device_lifetime>(*device);
     require(!same_dawn_linux_external_identity(device,copied));
     device->device_lost->store(true,std::memory_order_release);

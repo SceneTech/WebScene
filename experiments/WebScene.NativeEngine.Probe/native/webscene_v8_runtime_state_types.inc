@@ -87,6 +87,18 @@
         std::vector<std::shared_ptr<file_grant_owner>> file_system_handles;
     };
 
+    struct history_entry_state final {
+        std::string url;
+        std::optional<clone_packet> state;
+    };
+
+    struct nested_history_state final {
+        std::vector<history_entry_state> entries;
+        size_t index{};
+        size_t state_bytes{};
+        bool traversing{false};
+    };
+
     using durable_file_grant_locator = std::array<std::uint8_t,
         WEBSCENE_FILE_GRANT_DURABLE_LOCATOR_BYTES_V2>;
 

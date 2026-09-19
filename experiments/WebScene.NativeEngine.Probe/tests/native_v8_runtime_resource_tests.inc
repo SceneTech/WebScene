@@ -124,6 +124,26 @@ void test_same_origin_iframe_navigation_document_replacement()
 {
     constexpr std::string_view address{
         "https://iframe-navigation.test/index.html"};
+    constexpr std::string_view history_reload_page = R"HTML(<!doctype html><body>
+      <main id="load"></main><script>
+      const load = Number(sessionStorage.getItem('nested-reload') || 0) + 1;
+      sessionStorage.setItem('nested-reload', String(load));
+      document.querySelector('#load').textContent = String(load);
+      if (load === 1) {
+        addEventListener('beforeunload', event =>
+          parent.__nestedHistoryLifecycle('beforeunload', event, document));
+        addEventListener('pagehide', event =>
+          parent.__nestedHistoryLifecycle('pagehide', event, document));
+        document.addEventListener('visibilitychange', event =>
+          parent.__nestedHistoryLifecycle('visibilitychange', event, document));
+        addEventListener('unload', event => {
+          history.forward();
+          location.reload();
+          setTimeout(() => parent.__nestedHistoryStaleTask(), 0);
+          parent.__nestedHistoryLifecycle('unload', event, document);
+        });
+      }
+      </script></body>)HTML";
     resource_server server{.content = {
         {std::string{address}, "<!doctype html><title>frame navigation</title><body></body>"},
         {"https://iframe-navigation.test/fake.html?id=markdown-preview",
@@ -155,6 +175,12 @@ void test_same_origin_iframe_navigation_document_replacement()
             "</script></body>"},
         {"https://iframe-navigation.test/fake.html?id=detach-reentrant",
             "<!doctype html><title>Unexpected detached navigation</title>"},
+        {"https://iframe-navigation.test/fake.html?id=history-reload",
+            std::string{history_reload_page}},
+        {"https://iframe-navigation.test/fake.html?id=history-reload#one",
+            std::string{history_reload_page}},
+        {"https://iframe-navigation.test/fake.html?id=history-reload#two",
+            std::string{history_reload_page}},
         {"https://cross-origin.test/fake.html",
             "<!doctype html><title>Cross origin</title><body>"
             "<script>parent.__crossOriginEscape=true;</script></body>"}
@@ -500,6 +526,114 @@ void test_same_origin_iframe_navigation_document_replacement()
     require(server.requests.load(std::memory_order_relaxed)
             == requests_before_detach_unload + 1,
         "reentrant detached-frame navigation admitted a resource request");
+    const auto requests_before_nested_history = server.requests.load(
+        std::memory_order_relaxed);
+    execute(engine, R"JS(
+      globalThis.__nestedHistory = {
+        complete:false, error:null, lifecycle:[], popstate:0, hashchange:0,
+        sameDocument:false, taskPreserved:false, reloadSynchronous:false,
+        reloadIdentity:false, historyRestored:false, staleTask:false
+      };
+      (() => {
+        const state = __nestedHistory;
+        const frame = document.createElement('iframe');
+        frame.setAttribute('sandbox', 'allow-same-origin allow-scripts');
+        frame.src = './fake.html?id=history-reload';
+        document.body.appendChild(frame);
+        const proxy = frame.contentWindow;
+        let outgoingDocument = null;
+        let loads = 0;
+        globalThis.__nestedHistoryLifecycle = (type, event, sourceDocument) => {
+          state.lifecycle.push(type);
+          if (sourceDocument !== outgoingDocument
+              || frame.contentWindow !== proxy
+              || frame.contentDocument !== outgoingDocument) {
+            state.error = `lost outgoing identity during ${type}`;
+          }
+          if (type === 'unload') {
+            state.reloadSynchronous = state.lifecycle.join(',')
+              === 'beforeunload,pagehide,visibilitychange,unload';
+          }
+        };
+        globalThis.__nestedHistoryStaleTask = () => { state.staleTask = true; };
+        proxy.addEventListener('DOMContentLoaded', event => {
+          try {
+            ++loads;
+            if (loads === 1) {
+              outgoingDocument = event.target;
+              const initialGenerationDocument = frame.contentDocument;
+              proxy.addEventListener('popstate', popEvent => {
+                ++state.popstate;
+                state.popStateValue = popEvent.state?.step;
+                proxy.history.back();
+              });
+              proxy.addEventListener('hashchange', hashEvent => {
+                ++state.hashchange;
+                state.hashUrls = [hashEvent.oldURL, hashEvent.newURL];
+                state.sameDocument = frame.contentWindow === proxy
+                  && frame.contentDocument === initialGenerationDocument
+                  && proxy.document === initialGenerationDocument
+                  && proxy.location.hash === '#one'
+                  && proxy.history.length === 2
+                  && proxy.history.state.step === 1
+                  && state.popstate === 1 && state.hashchange === 1
+                  && state.lifecycle.length === 0;
+                proxy.setTimeout(() => {
+                  state.taskPreserved = true;
+                  proxy.location.reload();
+                  state.reloadSynchronous = state.reloadSynchronous
+                    && state.lifecycle.join(',')
+                      === 'beforeunload,pagehide,visibilitychange,unload';
+                }, 0);
+              });
+              proxy.history.replaceState({step:1}, '', '#one');
+              proxy.history.pushState({step:2}, '', '#two');
+              proxy.history.back();
+              return;
+            }
+            state.reloadIdentity = frame.contentWindow === proxy
+              && frame.contentDocument === event.target
+              && event.target !== outgoingDocument
+              && event.target.querySelector('#load')?.textContent === '2'
+              && frame.getAttribute('src') === './fake.html?id=history-reload';
+            state.historyRestored = proxy.location.hash === '#one'
+              && proxy.history.length === 2
+              && proxy.history.state.step === 1
+              && state.popstate === 1 && state.hashchange === 1;
+            setTimeout(() => {
+              delete globalThis.__nestedHistoryLifecycle;
+              delete globalThis.__nestedHistoryStaleTask;
+              frame.remove();
+              state.complete = true;
+            }, 0);
+          } catch (error) {
+            state.error = String(error && error.stack || error);
+            frame.remove();
+            state.complete = true;
+          }
+        });
+      })();
+    )JS", "iframe-nested-history-reload.js");
+    require(evaluate_until_equals(engine, "__nestedHistory.complete",
+            "iframe-nested-history-reload-complete.js", "true", 3'000) == "true",
+        "nested history/reload contract timed out: "
+            + evaluate(engine, "JSON.stringify(__nestedHistory)",
+                "iframe-nested-history-reload-timeout-detail.js"));
+    require(evaluate(engine, R"JS((() => {
+      const s=__nestedHistory;
+      return s.error===null && s.sameDocument && s.taskPreserved
+        && s.reloadSynchronous && s.reloadIdentity && s.historyRestored
+        && !s.staleTask && s.popStateValue===1
+        && s.hashUrls[0].endsWith('#two') && s.hashUrls[1].endsWith('#one')
+        && s.lifecycle.join(',')
+          === 'beforeunload,pagehide,visibilitychange,unload';
+    })())JS", "iframe-nested-history-reload-result.js") == "true",
+        "nested history/reload lifecycle diverged: "
+            + evaluate(engine, "JSON.stringify(__nestedHistory)",
+                "iframe-nested-history-reload-result-detail.js"));
+    require(server.requests.load(std::memory_order_relaxed)
+            == requests_before_nested_history + 2,
+        "nested traversal or unload reentrancy admitted an extra resource request");
     execute(engine, R"JS(
       globalThis.__iframeLifecycleGate = {
         complete:false, error:null, cycles:0, maximumLiveFrames:0,

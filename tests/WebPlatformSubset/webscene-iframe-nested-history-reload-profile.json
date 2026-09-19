@@ -1,0 +1,41 @@
+{
+  "profile": "webscene-iframe-nested-history-reload-1",
+  "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+  "runtime": "v8",
+  "viewport": {
+    "width": 800,
+    "height": 600,
+    "deviceScaleFactor": 1
+  },
+  "required": [
+    {
+      "path": "contracts/iframe-nested-history-reload.html",
+      "type": "contract",
+      "capabilities": [
+        "nested-same-document-history-traversal",
+        "nested-popstate-hashchange-order",
+        "nested-explicit-reload-lifecycle",
+        "nested-reload-windowproxy-history-retention",
+        "nested-reload-task-retirement"
+      ],
+      "evidence": [
+        "wpt-traverse-the-history-1-2c705104",
+        "wpt-location-reload-post-1-2c705104",
+        "wpt-pagehide-unload-order-004-2c705104",
+        "native-iframe-nested-history-reload"
+      ],
+      "reason": "Pinned-WPT-derived contract for nested same-document traversal and explicit reload. The native companion fixes bounded entry/state storage, reentrancy, generation/resource retirement and stable owner-facing WindowProxy behavior."
+    }
+  ],
+  "harnessBlocked": [],
+  "excluded": [
+    {
+      "path": "html/browsers/history/the-history-interface/traverse_the_history_1.html",
+      "reason": "The upstream traversal test depends on hosted multi-document session history. This contract preserves its asynchronous traversal and popstate boundary for bounded same-document child entries."
+    },
+    {
+      "path": "html/browsers/history/the-location-interface/reload_post_1.html",
+      "reason": "The upstream test requires POST navigation and the WPT server. This contract isolates GET child reload, retained session state and outgoing realm retirement."
+    }
+  ]
+}

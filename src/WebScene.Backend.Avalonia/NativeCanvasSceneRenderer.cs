@@ -1577,7 +1577,7 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
                             if (!DrawDomRasterMask(
                                     canvas, layer, command, default, blendMode))
                             {
-                                canvas.Clear(SKColors.Transparent, SKBlendMode.Src);
+                                ClearFailedMaskLayer(canvas);
                                 break;
                             }
                         }
@@ -1617,6 +1617,9 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
             default,
             SKBlendMode.DstIn);
     }
+
+    internal static void ClearFailedMaskLayer(SKCanvas canvas)
+        => canvas.DrawColor(SKColors.Transparent, SKBlendMode.Src);
 
     private static bool TryDecodeDomMaskResource(
         string resource,

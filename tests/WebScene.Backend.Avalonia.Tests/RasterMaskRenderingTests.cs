@@ -110,6 +110,27 @@ public sealed class RasterMaskRenderingTests
     }
 
     [Fact]
+    public void FailedMaskClearUsesSourceAndRespectsCurrentClip()
+    {
+        var foreground = new SKColor(20, 80, 160, 255);
+        using var bitmap = new SKBitmap(
+            4, 2, SKColorType.Bgra8888, SKAlphaType.Premul);
+        using var canvas = new SKCanvas(bitmap);
+        canvas.Clear(foreground);
+        var restore = canvas.Save();
+        canvas.ClipRect(new SKRect(1, 0, 3, 2), antialias: false);
+
+        NativeCanvasSceneRenderer.ClearFailedMaskLayer(canvas);
+
+        canvas.RestoreToCount(restore);
+        canvas.Flush();
+        Assert.Equal(foreground, bitmap.GetPixel(0, 0));
+        Assert.Equal(SKColors.Transparent, bitmap.GetPixel(1, 0));
+        Assert.Equal(SKColors.Transparent, bitmap.GetPixel(2, 1));
+        Assert.Equal(foreground, bitmap.GetPixel(3, 1));
+    }
+
+    [Fact]
     public void EmbeddedRasterDataInsideSvgRemainsAnSvgResource()
     {
         var markup = $"<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 1 1\">"

@@ -158,6 +158,7 @@ struct node_style final {
         transition_timing top_transition{};
         transition_timing opacity_transition{};
         transition_timing color_transition{};
+        transition_timing background_color_transition{};
         std::string animation_name_value{"none"};
         std::string animation_duration_value{"0s"};
         std::string animation_delay_value{"0s"};
@@ -1449,6 +1450,19 @@ struct dom_node final {
         bool color_animation_initialized{false};
         bool color_animation_active{false};
         bool color_animation_start_event_sent{false};
+        uint32_t painted_background_rgba{0};
+        uint32_t background_color_animation_from_rgba{0};
+        uint32_t background_color_animation_target_rgba{0};
+        float background_color_animation_duration_ms{0};
+        float background_color_animation_delay_ms{0};
+        float background_color_animation_x1{0.25F};
+        float background_color_animation_y1{0.1F};
+        float background_color_animation_x2{0.25F};
+        float background_color_animation_y2{1.0F};
+        double background_color_animation_started_ms{0};
+        bool background_color_animation_initialized{false};
+        bool background_color_animation_active{false};
+        bool background_color_animation_start_event_sent{false};
     };
 
     uint32_t id{0};
@@ -1737,6 +1751,19 @@ struct dom_node final {
                 && animation_runtime_state->color_animation_initialized
             ? animation_runtime_state->painted_foreground_rgba
             : style.foreground_rgba;
+    }
+
+    uint32_t painted_background_value(uint32_t resolved_current_color) const noexcept
+    {
+        if (animation_runtime_state != nullptr
+            && animation_runtime_state->background_color_animation_initialized
+            && (animation_runtime_state->background_color_animation_active
+                || !style.background_current_color)) {
+            return animation_runtime_state->painted_background_rgba;
+        }
+        return style.background_current_color
+            ? resolved_current_color
+            : style.background_rgba;
     }
 
     bool rotation_keyframe_animation_active_value() const noexcept

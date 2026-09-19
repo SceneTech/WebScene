@@ -8,13 +8,20 @@ void test_opacity_and_color_transitions_use_host_clock_and_dispatch_events(
               #temporal-paint {
                 position: fixed; left: 10px; top: 10px; width: 40px; height: 20px;
                 opacity: .2; color: rgb(10, 20, 30);
-                transition-property: opacity, color;
-                transition-duration: 100ms, 200ms;
-                transition-delay: 20ms, 0ms;
-                transition-timing-function: linear, linear;
+                background-color: rgb(20, 40, 60);
+                transition-property: opacity, color, background;
+                transition-duration: 100ms, 200ms, 100ms;
+                transition-delay: 20ms, 0ms, 0ms;
+                transition-timing-function: linear, linear, linear;
               }
-              #temporal-paint.selected { opacity: 1; color: rgb(110, 120, 130); }
-              #temporal-paint.reversed { opacity: .2; color: rgb(10, 20, 30); }
+              #temporal-paint.selected {
+                opacity: 1; color: rgb(110, 120, 130);
+                background-color: rgb(220, 140, 100);
+              }
+              #temporal-paint.reversed {
+                opacity: .2; color: rgb(10, 20, 30);
+                background-color: rgb(20, 40, 60);
+              }
             </style>
             <div id="temporal-paint">paint</div>`;
           const target = document.getElementById('temporal-paint');
@@ -39,7 +46,7 @@ void test_opacity_and_color_transitions_use_host_clock_and_dispatch_events(
         })()
     )JS", "paint-transition-metadata.js");
     require(
-        metadata == R"(["opacity, color","0.1s, 0.2s","0.02s, 0s","linear, linear"])" ,
+        metadata == R"(["opacity, color, background","0.1s, 0.2s, 0.1s","0.02s, 0s, 0s","linear, linear, linear"])" ,
         "computed transition metadata was not observable: " + metadata);
 
     animation_frame_and_wait(engine, 50.0, 7012U);
@@ -49,6 +56,7 @@ void test_opacity_and_color_transitions_use_host_clock_and_dispatch_events(
           return {
             opacity: Math.round(Number(style.opacity) * 1000) / 1000,
             color: style.color,
+            background: style.backgroundColor,
             events: globalThis.__transitionEvents
           };
         })()
@@ -56,18 +64,23 @@ void test_opacity_and_color_transitions_use_host_clock_and_dispatch_events(
     require(
         midpoint.find(R"("opacity":0.44)") != std::string::npos
             && midpoint.find("\"color\":\"rgb(35, 45, 55)\"") != std::string::npos
+            && midpoint.find("\"background\":\"rgb(120, 90, 80)\"") != std::string::npos
             && midpoint.find("transitionrun:opacity") != std::string::npos
             && midpoint.find("transitionrun:color") != std::string::npos
+            && midpoint.find("transitionrun:background-color") != std::string::npos
             && midpoint.find("transitionstart:opacity") != std::string::npos
-            && midpoint.find("transitionstart:color") != std::string::npos,
-        "opacity/color midpoint or transition events were not host-clock driven: " + midpoint);
+            && midpoint.find("transitionstart:color") != std::string::npos
+            && midpoint.find("transitionstart:background-color") != std::string::npos,
+        "paint-property midpoint or transition events were not host-clock driven: "
+            + midpoint);
 
-    // Reverse while both properties are running. The old transitions must be
+    // Reverse while all properties are running. The old transitions must be
     // cancelled and the new transitions must start from the painted midpoint.
     execute_and_wait(engine,
         "(() => { const target = document.getElementById('temporal-paint');"
         " target.style.setProperty('opacity', '.2');"
-        " target.style.setProperty('color', 'rgb(10, 20, 30)'); })()",
+        " target.style.setProperty('color', 'rgb(10, 20, 30)');"
+        " target.style.setProperty('background-color', 'rgb(20, 40, 60)'); })()",
         "paint-transition-reverse.js");
     require(
         evaluate(engine,
@@ -78,31 +91,43 @@ void test_opacity_and_color_transitions_use_host_clock_and_dispatch_events(
     const auto reversed = evaluate(engine, R"JS(
         (() => {
           const style = getComputedStyle(document.getElementById('temporal-paint'));
-          return { opacity: Math.round(Number(style.opacity) * 1000) / 1000, color: style.color,
+          return { opacity: Math.round(Number(style.opacity) * 1000) / 1000,
+            color: style.color, background: style.backgroundColor,
             events: globalThis.__transitionEvents };
         })()
     )JS", "paint-transition-reversed-midpoint.js");
     require(
         reversed.find("transitioncancel:opacity") != std::string::npos
             && reversed.find("transitioncancel:color") != std::string::npos
+            && reversed.find("transitioncancel:background-color") != std::string::npos
             && reversed.find(R"("opacity":0.368)") != std::string::npos
-            && reversed.find("\"color\":\"rgb(29, 39, 49)\"") != std::string::npos,
+            && reversed.find("\"color\":\"rgb(29, 39, 49)\"") != std::string::npos
+            && reversed.find("\"background\":\"rgb(70, 65, 70)\"")
+                != std::string::npos,
         "transition cancellation/reversal did not retain the painted midpoint: " + reversed);
 
     animation_frame_and_wait(engine, 300.0, 7014U);
     const auto completed = evaluate(engine, R"JS(
         (() => {
           const style = getComputedStyle(document.getElementById('temporal-paint'));
-          return { opacity: Math.round(Number(style.opacity) * 1000) / 1000, color: style.color,
+          return { opacity: Math.round(Number(style.opacity) * 1000) / 1000,
+            color: style.color, background: style.backgroundColor,
             events: globalThis.__transitionEvents };
         })()
     )JS", "paint-transition-complete.js");
     require(
         completed.find(R"("opacity":0.2)") != std::string::npos
             && completed.find("\"color\":\"rgb(10, 20, 30)\"") != std::string::npos
+            && completed.find("\"background\":\"rgb(20, 40, 60)\"")
+                != std::string::npos
             && completed.find("transitionend:opacity") != std::string::npos
-            && completed.find("transitionend:color") != std::string::npos,
-        "opacity/color transitions did not publish their final state: " + completed);
+            && completed.find("transitionend:color") != std::string::npos
+            && completed.find("transitionend:background-color") != std::string::npos,
+        "paint-property transitions did not publish their final state: " + completed);
+    wait_for_animation_frame_demand(
+        engine,
+        false,
+        "completed paint transitions retained host-frame demand");
 }
 
 void test_inline_transition_longhands_survive_dynamic_parse_and_recascade(

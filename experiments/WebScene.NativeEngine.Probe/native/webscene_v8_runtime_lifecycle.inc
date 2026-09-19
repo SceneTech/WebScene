@@ -663,6 +663,9 @@
         if (node.style.animations().color_transition.duration_ms > 0) {
             record_composition("css-color-transition", node.id);
         }
+        if (node.style.animations().background_color_transition.duration_ms > 0) {
+            record_composition("css-background-color-transition", node.id);
+        }
         if (node.style.box_shadow_present && has_rounded_corner(node.style)) {
             auto clipped = has_nonvisible_overflow(node.style);
             // A shadow is also affected by clipping established on an ancestor.

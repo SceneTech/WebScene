@@ -70,6 +70,7 @@ inline void configure_style_transitions(node_style& style)
                 // the same computed value (CSS Logical Properties §4.1).
                 if (candidate == "inset-inline-start") candidate = "left";
                 else if (candidate == "inset-block-start") candidate = "top";
+                else if (candidate == "background") candidate = "background-color";
                 if (candidate != property && candidate != "all") continue;
                 if (!durations.empty()) {
                     result.duration_ms = std::max(
@@ -90,6 +91,7 @@ inline void configure_style_transitions(node_style& style)
         animations.top_transition = resolve("top");
         animations.opacity_transition = resolve("opacity");
         animations.color_transition = resolve("color");
+        animations.background_color_transition = resolve("background-color");
     }
 
 inline void apply_transition_shorthand(

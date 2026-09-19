@@ -1925,9 +1925,8 @@ void native_document::append_scene(
                 node.style.box_shadow_blur_radius});
         }
     }
-    const auto background_rgba = node.style.background_current_color
-        ? resolved_foreground(node)
-        : node.style.background_rgba;
+    const auto background_rgba =
+        node.painted_background_value(resolved_foreground(node));
     if (paint_self
         && (background_rgba & 0xFFU) != 0U
         && node.layout.width > 0

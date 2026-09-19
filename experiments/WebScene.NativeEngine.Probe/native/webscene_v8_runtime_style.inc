@@ -2055,7 +2055,7 @@
                 }
                 if ((background & 0xFFU) == 0U) background = 0xD1D4DCFFU;
             }
-            value = serialize_color(background);
+            value = serialize_color(node->painted_background_value(background));
         } else if (name == "borderTopWidth") {
             value = serialize_css_number(node->style.border_top_width.value) + "px";
         } else if (name == "borderTopStyle") {

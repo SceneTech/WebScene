@@ -115,6 +115,39 @@ void require_nested_has_selector_list_tokenization()
         "nested function or quoted attribute comma split an outer :has() arm");
 }
 
+void require_namespace_resolution()
+{
+    using namespace webscene_native;
+    using namespace webscene_native::css;
+    selector_namespace_context namespaces;
+    namespaces.prefixes.emplace(
+        "svg", "http://www.w3.org/2000/svg");
+    namespaces.default_namespace = "urn:webscene:default";
+    namespaces.has_default_namespace = true;
+
+    const auto prefixed = compile_selector("svg|circle", &namespaces);
+    require(prefixed.compiled_compounds.size() == 1U
+        && prefixed.compiled_compounds[0].tag == "circle"
+        && prefixed.compiled_compounds[0].namespace_uri
+            == "http://www.w3.org/2000/svg",
+        "declared namespace prefix was not retained by compiled matching");
+    const auto unprefixed = compile_selector("circle", &namespaces);
+    require(unprefixed.compiled_compounds.size() == 1U
+        && unprefixed.compiled_compounds[0].namespace_uri
+            == "urn:webscene:default",
+        "default namespace was not applied to an unprefixed type selector");
+    const auto any = compile_selector("*|circle", &namespaces);
+    require(any.compiled_compounds.size() == 1U
+        && !any.compiled_compounds[0].namespace_uri.has_value(),
+        "explicit any namespace must not constrain matching");
+    const auto empty = compile_selector("|circle", &namespaces);
+    require(empty.compiled_compounds.size() == 1U
+        && empty.compiled_compounds[0].namespace_uri == std::string{},
+        "explicit empty namespace was not retained");
+    require(compile_selector("missing|circle", &namespaces).compounds.empty(),
+        "undeclared namespace prefix must reject the selector");
+}
+
 void test_compiled_css_invalidation_plans()
 {
     using namespace webscene_native::css;
@@ -224,6 +257,7 @@ int main()
     require_validation();
     require_wtf8_domstring_round_trip();
     require_nested_has_selector_list_tokenization();
+    require_namespace_resolution();
     test_compiled_css_invalidation_plans();
     std::cout << "selector parser tests passed\n";
     return 0;

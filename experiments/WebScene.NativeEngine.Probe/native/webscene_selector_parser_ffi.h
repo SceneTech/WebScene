@@ -26,8 +26,19 @@ struct webscene_selector_view final {
     size_t combinator_count;
 };
 
+struct webscene_selector_namespace final {
+    webscene_selector_byte_slice prefix;
+    webscene_selector_byte_slice namespace_url;
+};
+
 uint32_t webscene_selector_parser_abi_version();
 webscene_selector_parse_result webscene_selector_parse(webscene_selector_byte_slice);
+webscene_selector_parse_result webscene_selector_parse_with_namespaces(
+    webscene_selector_byte_slice,
+    webscene_selector_byte_slice,
+    uint8_t,
+    const webscene_selector_namespace*,
+    size_t);
 uint8_t webscene_selector_at(const void*, size_t, webscene_selector_view*);
 uint8_t webscene_selector_compound_at(
     const void*, size_t, size_t, webscene_selector_byte_slice*);

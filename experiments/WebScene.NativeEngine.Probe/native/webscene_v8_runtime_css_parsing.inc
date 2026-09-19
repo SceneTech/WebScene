@@ -541,7 +541,8 @@
     static std::shared_ptr<const css_rule_payload> intern_css_rule_payload(
         std::string selector,
         const std::vector<css_declaration>& declarations,
-        const std::vector<std::string>& media_queries
+        const std::vector<std::string>& media_queries,
+        const selector_namespace_context* namespaces
 #if defined(WEBSCENE_NATIVE_ENGINE_SERVO_SELECTORS)
         , const selector_syntax_selector* parsed_selector = nullptr
 #endif
@@ -552,8 +553,11 @@
 #endif
         return css::intern_rule_payload(
             shared_css_rule_payload_mutex,shared_css_rule_payloads,
-            [](std::string_view value) { return compile_css_selector(std::string(value)); },
-            std::move(selector),declarations,media_queries);
+            [namespaces](std::string_view value) {
+                return compile_css_selector(value, namespaces);
+            },
+            std::move(selector), declarations, media_queries, 0U,
+            namespaces == nullptr ? std::string{} : namespaces->cache_key());
     }
 
     uint32_t register_cascade_layer(const std::string& name)
@@ -582,7 +586,8 @@
         std::string selector,
         const std::vector<css_declaration>& declarations,
         const std::vector<std::string>& media_queries,
-        uint32_t cascade_layer_order = 0U
+        uint32_t cascade_layer_order,
+        const selector_namespace_context* namespaces
 #if defined(WEBSCENE_NATIVE_ENGINE_SERVO_SELECTORS)
         , const selector_syntax_selector* parsed_selector = nullptr
 #endif
@@ -595,7 +600,8 @@
         rule.payload = intern_css_rule_payload(
             std::move(selector),
             declarations,
-            media_queries
+            media_queries,
+            namespaces
 #if defined(WEBSCENE_NATIVE_ENGINE_SERVO_SELECTORS)
             , parsed_selector
 #endif
@@ -1163,7 +1169,8 @@
         std::vector<css_declaration> declarations,
         const std::vector<std::string>& inherited_media,
         const std::string& stylesheet_address,
-        uint32_t cascade_layer_order = 0U)
+        uint32_t cascade_layer_order = 0U,
+        const selector_namespace_context& namespaces = {})
     {
 #if defined(WEBSCENE_NATIVE_ENGINE_SERVO_SELECTORS)
         css::prepare_style_rule(prelude,std::move(declarations),inherited_media,stylesheet_address,
@@ -1177,11 +1184,11 @@
                             start_resource_prefetch(*url,{},WEBSCENE_RESOURCE_IMAGE);
                 }
             },
-            [this, cascade_layer_order](const std::string& selector,const std::vector<css_declaration>& values,
+            [this, cascade_layer_order, &namespaces](const std::string& selector,const std::vector<css_declaration>& values,
                    const std::vector<std::string>& media) {
                 inventory_css_selector(selector);
-                append_css_rule(selector,values,media,cascade_layer_order);
-            });
+                append_css_rule(selector, values, media, cascade_layer_order, &namespaces);
+            }, &namespaces);
 #else
         for (auto& declaration : declarations) {
             declaration.value = resolve_css_resource_urls(
@@ -1205,7 +1212,8 @@
         // selector matching or leaks into the document tree.
         if (trim_css_view(prelude) == ":host") {
             inventory_css_selector(":host");
-            append_css_rule(":host", declarations, inherited_media, cascade_layer_order);
+            append_css_rule(
+                ":host", declarations, inherited_media, cascade_layer_order, &namespaces);
             return;
         }
         size_t selector_cursor = 0U;
@@ -1235,7 +1243,7 @@
                     inventory_css_selector(selector);
                     append_css_rule(
                         std::move(selector), declarations, inherited_media,
-                        cascade_layer_order);
+                        cascade_layer_order, &namespaces);
                 }
                 selector_cursor = index + 1U;
             }
@@ -1999,10 +2007,12 @@
         return last;
     }
 
-    static compiled_css_selector compile_css_selector(std::string_view selector)
+    static compiled_css_selector compile_css_selector(
+        std::string_view selector,
+        const selector_namespace_context* namespaces = nullptr)
     {
 #if defined(WEBSCENE_NATIVE_ENGINE_SERVO_SELECTORS)
-        return css::compile_selector(selector);
+        return css::compile_selector(selector, namespaces);
 #else
         std::vector<std::string> reversed_compounds;
         std::vector<char> reversed_combinators;
@@ -2026,18 +2036,19 @@
         result.compiled_compounds.reserve(result.compounds.size());
         for (const auto& compound : result.compounds) {
             result.compiled_compounds.push_back(
-                compile_css_compound_selector(compound));
+                compile_css_compound_selector(compound, namespaces));
         }
         return result;
 #endif
     }
 
     static compiled_css_selector_list compile_css_selector_list(
-        std::string_view selector)
+        std::string_view selector,
+        const selector_namespace_context* namespaces = nullptr)
     {
         compiled_css_selector_list result;
 #if defined(WEBSCENE_NATIVE_ENGINE_SERVO_SELECTORS)
-        return css::compile_selector_list(selector);
+        return css::compile_selector_list(selector, namespaces);
 #else
         size_t start = 0;
         int bracket_depth = 0;
@@ -2067,7 +2078,7 @@
             else if (!at_end && character == ')') --parenthesis_depth;
             else if (character == ',' && bracket_depth == 0 && parenthesis_depth == 0) {
                 result.selectors.push_back(compile_css_selector(
-                    selector.substr(start, index - start)));
+                    selector.substr(start, index - start), namespaces));
                 start = index + 1U;
             }
         }

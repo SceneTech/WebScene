@@ -42,6 +42,11 @@ inline bool compound_matches(const Host& host,const dom_node& node,
             return false;
         }
 
+        if (selector.namespace_uri.has_value()
+            && node.namespace_uri() != *selector.namespace_uri) {
+            return false;
+        }
+
         if (!selector.tag.empty()) {
             auto wanted_tag = selector.tag;
             if (!node.xml_mode) wanted_tag = ascii_lower(wanted_tag);

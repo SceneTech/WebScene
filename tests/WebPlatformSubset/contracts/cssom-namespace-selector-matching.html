@@ -1,0 +1,80 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Dynamic CSS namespace selector matching</title>
+<body>
+<script>
+  const state = window.__webSceneWptState = {
+    complete: false, harness: null, results: [], errors: [], diagnostics: []
+  };
+  const record = (name, error) => state.results.push({
+    name, status: error ? "FAIL" : "PASS",
+    message: error ? String(error && error.message || error) : null,
+    stack: error && error.stack ? String(error.stack) : null
+  });
+  const color = node => getComputedStyle(node).color;
+  try {
+    const style = document.createElement('style');
+    document.head.appendChild(style);
+    const sheet = style.sheet;
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    const svgCircle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    const htmlCircle = document.createElement('circle');
+    const nullCircle = document.createElementNS('', 'circle');
+    svg.appendChild(svgCircle);
+    document.body.append(svg, htmlCircle, nullCircle);
+
+    const initial = [color(svgCircle), color(htmlCircle), color(nullCircle)];
+    sheet.insertRule('@namespace svg url("http://www.w3.org/2000/svg");', 0);
+    const prefixed = sheet.insertRule('svg|circle { color: rgb(1, 2, 3); }', 1);
+    const afterPrefixed = [color(svgCircle), color(htmlCircle), color(nullCircle)];
+    sheet.deleteRule(prefixed);
+    const afterDelete = color(svgCircle);
+
+    sheet.insertRule('*|circle { color: rgb(4, 5, 6); }', sheet.cssRules.length);
+    const anyNamespace = [color(svgCircle), color(htmlCircle), color(nullCircle)];
+    sheet.insertRule('|circle { color: rgb(7, 8, 9); }', sheet.cssRules.length);
+    const noNamespace = [color(svgCircle), color(htmlCircle), color(nullCircle)];
+
+    const defaultSheet = new CSSStyleSheet();
+    defaultSheet.insertRule('@namespace url("http://www.w3.org/2000/svg");', 0);
+    defaultSheet.insertRule('circle { color: rgb(10, 11, 12); }', 1);
+    document.adoptedStyleSheets.push(defaultSheet);
+    const defaultNamespace = [color(svgCircle), color(htmlCircle), color(nullCircle)];
+    document.adoptedStyleSheets.pop();
+
+    record('prefixed namespace selectors match only the declared element namespace',
+      afterPrefixed[0] === 'rgb(1, 2, 3)'
+        && afterPrefixed[1] === initial[1]
+        && afterPrefixed[2] === initial[2]
+        ? null : new Error(JSON.stringify({ initial, afterPrefixed })));
+    record('deleting a dynamically inserted namespaced style rule recascades immediately',
+      afterDelete === initial[0]
+        ? null : new Error(JSON.stringify({ initial, afterDelete })));
+    record('explicit any and empty namespace selectors retain distinct matching',
+      anyNamespace.every(value => value === 'rgb(4, 5, 6)')
+        && noNamespace[0] === 'rgb(4, 5, 6)'
+        && noNamespace[1] === 'rgb(4, 5, 6)'
+        && noNamespace[2] === 'rgb(7, 8, 9)'
+        ? null : new Error(JSON.stringify({ anyNamespace, noNamespace })));
+    record('default namespaces constrain unprefixed type selectors on adopted sheets',
+      defaultNamespace[0] === 'rgb(10, 11, 12)'
+        && defaultNamespace[1] === 'rgb(4, 5, 6)'
+        && defaultNamespace[2] === 'rgb(7, 8, 9)'
+        ? null : new Error(JSON.stringify({ defaultNamespace })));
+    state.diagnostics.push(JSON.stringify({
+      initial, afterPrefixed, afterDelete, anyNamespace, noNamespace, defaultNamespace
+    }));
+  } catch (error) {
+    record('namespace selector setup', error);
+  }
+  const failure = state.results.find(result => result.status !== 'PASS');
+  state.harness = failure
+    ? { status: 1, message: failure.message, stack: failure.stack }
+    : { status: 0, message: null, stack: null };
+  state.complete = true;
+  const evidence = document.createElement('pre');
+  evidence.id = 'cssom-namespace-selector-matching-evidence';
+  evidence.hidden = true;
+  evidence.textContent = JSON.stringify(state);
+  document.body.appendChild(evidence);
+</script>

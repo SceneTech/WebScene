@@ -64,12 +64,13 @@ struct stylesheet_test_host {
     void append_parsed_css_style_rule(std::string selector,
         std::vector<webscene_native::css::css_declaration> declarations,
         const std::vector<std::string>& media,const std::string& address,
-        uint32_t = 0U) {
+        uint32_t = 0U,
+        const webscene_native::selector_namespace_context& namespaces = {}) {
         webscene_native::css::prepare_style_rule(selector,std::move(declarations),media,address,
             [](const auto&) {},
             [&](const auto& prepared_selector,const auto& values,const auto& conditions) {
                 rules.push_back({prepared_selector,values,conditions,address});
-            });
+            }, &namespaces);
     }
 
 };

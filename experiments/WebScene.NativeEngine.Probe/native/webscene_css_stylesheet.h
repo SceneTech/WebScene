@@ -45,14 +45,18 @@ std::optional<prepared_stylesheet> prepare_stylesheet(std::string_view text,
         void append_parsed_css_style_rule(std::string selector,
             std::vector<css_declaration> declarations,
             const std::vector<std::string>& media,const std::string& source,
-            uint32_t cascade_layer) {
+            uint32_t cascade_layer,
+            const selector_namespace_context& namespaces) {
             const auto previous_count=output.rules.size();
             prepare_style_rule(selector,std::move(declarations),media,source,
                 [](const css_declaration&) {},
                 [&](const std::string& prepared,const auto& values,const auto& conditions) {
                     output.rules.push_back(intern_rule_payload(cache_mutex,cache,
-                        compile_selector,prepared,values,conditions,cascade_layer));
-                });
+                        [&namespaces](std::string_view value) {
+                            return compile_selector(value, &namespaces);
+                        }, prepared, values, conditions, cascade_layer,
+                        namespaces.cache_key()));
+                }, &namespaces);
             if(previous_count==output.rules.size())
                 output.diagnostics.push_back({"selector:"+selector,"unsupported",
                     "selector parser rejected this rule"});

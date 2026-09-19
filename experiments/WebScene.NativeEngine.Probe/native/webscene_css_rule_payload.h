@@ -43,7 +43,8 @@ inline uint64_t rule_payload_hash(
         std::string_view selector,
         const std::vector<css_declaration>& declarations,
         const std::vector<std::string>& media_queries,
-        uint32_t cascade_layer_index = 0U)
+        uint32_t cascade_layer_index = 0U,
+        std::string_view selector_namespace_key = {})
     {
         auto hash = uint64_t{1469598103934665603ULL};
         const auto append = [&](std::string_view value) {
@@ -55,6 +56,7 @@ inline uint64_t rule_payload_hash(
             hash *= 1099511628211ULL;
         };
         append(selector);
+        append(selector_namespace_key);
         for (const auto& declaration : declarations) {
             append(declaration.name);
             append(declaration.value);
@@ -72,9 +74,11 @@ inline bool rule_payload_matches(
         std::string_view selector,
         const std::vector<css_declaration>& declarations,
         const std::vector<std::string>& media_queries,
-        uint32_t cascade_layer_index = 0U)
+        uint32_t cascade_layer_index = 0U,
+        std::string_view selector_namespace_key = {})
     {
         if (payload.selector != selector
+            || payload.selector_namespace_key != selector_namespace_key
             || payload.declarations.size() != declarations.size()
             || payload.media_queries != media_queries
             || payload.cascade_layer_index != cascade_layer_index) {
@@ -96,13 +100,15 @@ std::shared_ptr<const css_rule_payload> intern_rule_payload(
     std::mutex& mutex, rule_payload_cache& payloads, Compile&& compile,
     std::string selector, const std::vector<css_declaration>& declarations,
     const std::vector<std::string>& media_queries,
-    uint32_t cascade_layer_index = 0U)
+    uint32_t cascade_layer_index = 0U,
+    std::string selector_namespace_key = {})
 {
         const auto hash = rule_payload_hash(
             selector,
             declarations,
             media_queries,
-            cascade_layer_index);
+            cascade_layer_index,
+            selector_namespace_key);
         std::lock_guard lock(mutex);
         auto& candidates = payloads[hash];
         for (auto iterator = candidates.begin(); iterator != candidates.end();) {
@@ -116,13 +122,15 @@ std::shared_ptr<const css_rule_payload> intern_rule_payload(
                     selector,
                     declarations,
                     media_queries,
-                    cascade_layer_index)) {
+                    cascade_layer_index,
+                    selector_namespace_key)) {
                 return candidate;
             }
             ++iterator;
         }
         auto payload = std::make_shared<css_rule_payload>();
         payload->selector = std::move(selector);
+        payload->selector_namespace_key = std::move(selector_namespace_key);
         payload->compiled_selector = compile(payload->selector);
         std::string pseudo_origin;
         payload->pseudo_kind = static_cast<uint8_t>(

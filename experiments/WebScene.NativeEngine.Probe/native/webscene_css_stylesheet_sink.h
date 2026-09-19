@@ -147,6 +147,26 @@ public:
                 "css", "at-rule:@container", "supported",
                 "named and unnamed size conditions are evaluated against the nearest eligible ancestor",
                 "stylesheet-parser");
+        } else if (name == "namespace" && stack_.empty() && !has_block) {
+            const auto parsed = parse_namespace(prelude);
+            if (parsed.has_value()) {
+                const auto& [prefix, uri] = *parsed;
+                if (prefix.has_value()) {
+                    namespaces_.prefixes.insert_or_assign(*prefix, uri);
+                } else {
+                    namespaces_.default_namespace = uri;
+                    namespaces_.has_default_namespace = true;
+                }
+                owner_.record_feature(
+                    "css", "at-rule:@namespace", "supported",
+                    "namespace declarations constrain type and universal selectors",
+                    "stylesheet-parser");
+            } else {
+                owner_.record_feature(
+                    "css", "at-rule:@namespace", "unsupported",
+                    "invalid namespace declaration", "stylesheet-parser");
+            }
+            current.children_active = false;
         } else {
             owner_.record_feature(
                 "css", "at-rule:@" + name, "unsupported", {},
@@ -224,7 +244,8 @@ public:
                     std::move(rule.declarations),
                     rule.media_queries,
                     stylesheet_address_,
-                    rule.cascade_layer);
+                    rule.cascade_layer,
+                    namespaces_);
             }
         } else if (current.keyframes) {
             completed_keyframes_.emplace_back(
@@ -242,6 +263,43 @@ public:
     }
 
 private:
+    static std::optional<std::pair<std::optional<std::string>, std::string>>
+    parse_namespace(std::string_view prelude)
+    {
+        auto source = trim_css_view(prelude);
+        if (source.empty()) return std::nullopt;
+        std::optional<std::string> prefix;
+        if (source.front() != '\'' && source.front() != '"'
+            && !ascii_lower(source).starts_with("url(")) {
+            size_t cursor = 0U;
+            auto value = read_css_identifier(source, cursor);
+            if (value.empty() || cursor == source.size()
+                || !std::isspace(static_cast<unsigned char>(source[cursor]))) {
+                return std::nullopt;
+            }
+            prefix = std::move(value);
+            source = trim_css_view(source.substr(cursor));
+        }
+        std::string uri;
+        if (!source.empty() && (source.front() == '\'' || source.front() == '"')) {
+            const auto quote = source.front();
+            if (source.size() < 2U || source.back() != quote) return std::nullopt;
+            uri.assign(source.substr(1U, source.size() - 2U));
+        } else if (ascii_lower(source).starts_with("url(")) {
+            if (source.back() != ')') return std::nullopt;
+            source = trim_css_view(source.substr(4U, source.size() - 5U));
+            if (source.size() >= 2U
+                && (source.front() == '\'' || source.front() == '"')
+                && source.back() == source.front()) {
+                source = source.substr(1U, source.size() - 2U);
+            }
+            uri.assign(source);
+        } else {
+            return std::nullopt;
+        }
+        return std::pair{std::move(prefix), std::move(uri)};
+    }
+
     struct completed_style_rule final {
         std::string selector;
         std::vector<css_declaration> declarations;
@@ -370,6 +428,7 @@ private:
     Host& owner_;
     const std::string& stylesheet_address_;
     std::vector<frame> stack_;
+    selector_namespace_context namespaces_;
     std::vector<std::pair<std::string, css_opacity_keyframes>> completed_keyframes_;
     size_t next_rule_index_{0U};
 };

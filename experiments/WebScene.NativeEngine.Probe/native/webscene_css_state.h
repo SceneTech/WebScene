@@ -3,6 +3,7 @@
 #include "webscene_css_specified_ir.h"
 #include <array>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -38,6 +39,8 @@ struct compiled_css_pseudo final {
 
 struct compiled_css_compound final {
     std::string tag;
+    // Missing means any namespace. An empty value means explicitly no namespace.
+    std::optional<std::string> namespace_uri;
     std::vector<std::pair<char, std::string>> identities;
     std::vector<std::string> attributes;
     std::vector<compiled_css_pseudo> pseudos;
@@ -179,6 +182,7 @@ struct compiled_css_selector final {
 
     struct css_rule_payload final {
         std::string selector;
+        std::string selector_namespace_key;
         compiled_css_selector compiled_selector;
         compiled_css_selector compiled_pseudo_origin;
         // Immutable dependency plans, aligned with the originating selector's

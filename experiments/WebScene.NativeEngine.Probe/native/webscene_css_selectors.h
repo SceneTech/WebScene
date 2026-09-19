@@ -202,7 +202,8 @@ inline size_t find_css_attribute_close(
     }
 
 inline compiled_css_compound compile_css_compound_selector(
-        std::string_view selector)
+        std::string_view selector,
+        const selector_namespace_context* namespaces = nullptr)
     {
         compiled_css_compound result;
         selector = trim_css_view(selector);
@@ -211,11 +212,50 @@ inline compiled_css_compound compile_css_compound_selector(
         size_t cursor = 0U;
         if (selector.empty()) {
             // A bare structural pseudo-class has an implicit universal selector.
+        } else if (selector[cursor] == '|') {
+            result.namespace_uri = std::string{};
+            ++cursor;
+            if (cursor < selector.size() && selector[cursor] == '*') {
+                ++cursor;
+            } else {
+                result.tag = read_css_identifier(selector, cursor);
+                if (result.tag.empty()) return result;
+            }
         } else if (selector[cursor] == '*') {
             ++cursor;
+            if (cursor < selector.size() && selector[cursor] == '|') {
+                ++cursor;
+                if (cursor < selector.size() && selector[cursor] == '*') {
+                    ++cursor;
+                } else {
+                    result.tag = read_css_identifier(selector, cursor);
+                    if (result.tag.empty()) return result;
+                }
+            } else if (namespaces != nullptr && namespaces->has_default_namespace) {
+                result.namespace_uri = namespaces->default_namespace;
+            }
         } else if (std::isalpha(static_cast<unsigned char>(selector[cursor]))
+            || selector[cursor] == '_' || selector[cursor] == '-'
             || selector[cursor] == '\\') {
-            result.tag = read_css_identifier(selector, cursor);
+            auto first = read_css_identifier(selector, cursor);
+            if (cursor < selector.size() && selector[cursor] == '|') {
+                if (namespaces == nullptr) return result;
+                const auto found = namespaces->prefixes.find(first);
+                if (found == namespaces->prefixes.end()) return result;
+                result.namespace_uri = found->second;
+                ++cursor;
+                if (cursor < selector.size() && selector[cursor] == '*') {
+                    ++cursor;
+                } else {
+                    result.tag = read_css_identifier(selector, cursor);
+                    if (result.tag.empty()) return result;
+                }
+            } else {
+                result.tag = std::move(first);
+                if (namespaces != nullptr && namespaces->has_default_namespace) {
+                    result.namespace_uri = namespaces->default_namespace;
+                }
+            }
         }
         while (cursor < selector.size()) {
             const auto marker = selector[cursor++];
@@ -280,9 +320,13 @@ inline compiled_css_compound compile_css_compound_selector(
 
 
 // Reuse Servo parsing/specificity and the runtime's native compound preparation.
-inline compiled_css_selector_list compile_selector_list(std::string_view text) {
+inline compiled_css_selector_list compile_selector_list(
+    std::string_view text,
+    const selector_namespace_context* namespaces = nullptr) {
     compiled_css_selector_list result;
-    const auto parsed=parse_selector_syntax(text);
+    const auto parsed = namespaces == nullptr
+        ? parse_selector_syntax(text)
+        : parse_selector_syntax(text, *namespaces);
     if(!parsed) return result;
     for(const auto& source:parsed.selectors) {
         compiled_css_selector selector;
@@ -290,7 +334,8 @@ inline compiled_css_selector_list compile_selector_list(std::string_view text) {
         selector.combinators=source.combinators;
         selector.specificity=source.specificity;
         for(const auto& part:selector.compounds)
-            selector.compiled_compounds.push_back(compile_css_compound_selector(part));
+            selector.compiled_compounds.push_back(
+                compile_css_compound_selector(part, namespaces));
         selector.ancestor_requirements.resize(selector.compiled_compounds.size());
         for(size_t i=1;i<selector.compiled_compounds.size()
             && i<=selector.combinators.size();++i) {
@@ -311,8 +356,10 @@ inline compiled_css_selector_list compile_selector_list(std::string_view text) {
     }
     return result;
 }
-inline compiled_css_selector compile_selector(std::string_view text) {
-    auto result=compile_selector_list(text);
+inline compiled_css_selector compile_selector(
+    std::string_view text,
+    const selector_namespace_context* namespaces = nullptr) {
+    auto result=compile_selector_list(text, namespaces);
     if(result.selectors.size()!=1) return {};
     return std::move(result.selectors.front());
 }

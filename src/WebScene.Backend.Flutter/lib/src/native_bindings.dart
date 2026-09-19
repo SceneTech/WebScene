@@ -213,6 +213,29 @@ final class WebSceneSceneView extends Struct {
   external int reserved;
 }
 
+final class WebSceneFlutterValidationMessageV1 extends Struct {
+  @Uint32()
+  external int structSize;
+
+  @Uint32()
+  external int reason;
+
+  external Pointer<Uint8> messageUtf8;
+
+  @IntPtr()
+  external int messageLength;
+}
+
+final class WebSceneFlutterEngineOptionsV1 extends Struct {
+  @Uint32()
+  external int structSize;
+
+  @Uint32()
+  external int validationMessageCount;
+
+  external Pointer<WebSceneFlutterValidationMessageV1> validationMessages;
+}
+
 typedef _GetAbiNative = Uint32 Function();
 typedef _GetAbiDart = int Function();
 typedef _LoadUrlNative = Uint8 Function(Pointer<Void>, Pointer<Uint8>, IntPtr);
@@ -334,6 +357,10 @@ typedef _BridgeCreateNative = Pointer<Void> Function(
     Pointer<Utf8>, Pointer<Utf8>);
 typedef _BridgeCreateDart = Pointer<Void> Function(
     Pointer<Utf8>, Pointer<Utf8>);
+typedef _BridgeCreateV2Native = Pointer<Void> Function(
+    Pointer<Utf8>, Pointer<Utf8>, Pointer<WebSceneFlutterEngineOptionsV1>);
+typedef _BridgeCreateV2Dart = Pointer<Void> Function(
+    Pointer<Utf8>, Pointer<Utf8>, Pointer<WebSceneFlutterEngineOptionsV1>);
 typedef _BridgeDestroyNative = Void Function(Pointer<Void>);
 typedef _BridgeDestroyDart = void Function(Pointer<Void>);
 typedef _BridgeErrorNative = Pointer<Utf8> Function();
@@ -344,6 +371,8 @@ final class WebSceneBridgeApi {
       : create = library.lookupFunction<_BridgeCreateNative, _BridgeCreateDart>(
           'webscene_flutter_engine_create',
         ),
+        createV2 = library.lookupFunction<_BridgeCreateV2Native,
+            _BridgeCreateV2Dart>('webscene_flutter_engine_create_v2'),
         destroy =
             library.lookupFunction<_BridgeDestroyNative, _BridgeDestroyDart>(
           'webscene_flutter_engine_destroy',
@@ -354,6 +383,7 @@ final class WebSceneBridgeApi {
         );
 
   final _BridgeCreateDart create;
+  final _BridgeCreateV2Dart createV2;
   final _BridgeDestroyDart destroy;
   final _BridgeErrorDart lastError;
 }

@@ -3,15 +3,18 @@
 #import <dlfcn.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cstdint>
 #include <cstring>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 
 #include "webscene_native_engine.h"
+#include "webscene_flutter_bridge.h"
 
 namespace {
 
@@ -22,6 +25,10 @@ struct ResourceContext {
     std::mutex mutex;
     std::unordered_map<std::string, std::shared_ptr<std::string>> pending;
     std::atomic<uint64_t> successful_resource_requests{0};
+    std::array<std::string,
+        WEBSCENE_FLUTTER_VALIDATION_MESSAGE_COUNT_V1 + 1U>
+        validation_messages;
+    std::atomic_flag formatting_validation_message = ATOMIC_FLAG_INIT;
 
     ResourceContext()
     {
@@ -38,6 +45,137 @@ struct ResourceContext {
         [session invalidateAndCancel];
     }
 };
+
+bool valid_utf8(std::string_view value) noexcept
+{
+    size_t index = 0U;
+    while (index < value.size()) {
+        const auto first = static_cast<uint8_t>(value[index]);
+        size_t continuation_count = 0U;
+        uint32_t code_point = 0U;
+        if (first <= 0x7fU) {
+            ++index;
+            continue;
+        } else if ((first & 0xe0U) == 0xc0U) {
+            continuation_count = 1U;
+            code_point = first & 0x1fU;
+        } else if ((first & 0xf0U) == 0xe0U) {
+            continuation_count = 2U;
+            code_point = first & 0x0fU;
+        } else if ((first & 0xf8U) == 0xf0U) {
+            continuation_count = 3U;
+            code_point = first & 0x07U;
+        } else {
+            return false;
+        }
+        if (continuation_count > value.size() - index - 1U) return false;
+        for (size_t offset = 1U; offset <= continuation_count; ++offset) {
+            const auto continuation = static_cast<uint8_t>(value[index + offset]);
+            if ((continuation & 0xc0U) != 0x80U) return false;
+            code_point = (code_point << 6U) | (continuation & 0x3fU);
+        }
+        const auto minimum = continuation_count == 1U ? 0x80U
+            : continuation_count == 2U ? 0x800U : 0x10000U;
+        if (code_point < minimum || code_point > 0x10ffffU
+            || (code_point >= 0xd800U && code_point <= 0xdfffU)) return false;
+        index += continuation_count + 1U;
+    }
+    return true;
+}
+
+bool configure_validation_messages(
+    ResourceContext& context,
+    const webscene_flutter_engine_options_v1* options)
+{
+    if (options == nullptr) return true;
+    constexpr auto required_size =
+        offsetof(webscene_flutter_engine_options_v1, validation_messages)
+        + sizeof(options->validation_messages);
+    if (options->struct_size < required_size
+        || options->validation_message_count
+            > WEBSCENE_FLUTTER_VALIDATION_MESSAGE_COUNT_V1
+        || (options->validation_message_count != 0U
+            && options->validation_messages == nullptr)) {
+        last_error = "The Flutter validation catalog options are malformed.";
+        return false;
+    }
+    std::array<bool, WEBSCENE_FLUTTER_VALIDATION_MESSAGE_COUNT_V1 + 1U> seen{};
+    for (uint32_t index = 0U;
+        index < options->validation_message_count; ++index) {
+        const auto& entry = options->validation_messages[index];
+        constexpr auto entry_size =
+            offsetof(webscene_flutter_validation_message_v1, message_length)
+            + sizeof(entry.message_length);
+        if (entry.struct_size < entry_size || entry.reason == 0U
+            || entry.reason > WEBSCENE_FLUTTER_VALIDATION_MESSAGE_COUNT_V1
+            || seen[entry.reason] || entry.message_utf8 == nullptr
+            || entry.message_length == 0U
+            || entry.message_length
+                > WEBSCENE_FLUTTER_VALIDATION_MESSAGE_MAX_BYTES_V1
+            || !valid_utf8(std::string_view(
+                entry.message_utf8, entry.message_length))) {
+            last_error = "The Flutter validation catalog contains an invalid entry.";
+            return false;
+        }
+        seen[entry.reason] = true;
+        context.validation_messages[entry.reason].assign(
+            entry.message_utf8, entry.message_length);
+    }
+    return true;
+}
+
+size_t format_validation_message(
+    void* user_data,
+    uint32_t reason,
+    const webscene_validation_message_argument_v1* arguments,
+    size_t argument_count,
+    char* destination,
+    size_t destination_capacity)
+{
+    auto* context = static_cast<ResourceContext*>(user_data);
+    if (context == nullptr || reason == 0U
+        || reason > WEBSCENE_FLUTTER_VALIDATION_MESSAGE_COUNT_V1
+        || argument_count > WEBSCENE_VALIDATION_MESSAGE_MAX_ARGUMENTS_V1
+        || (argument_count != 0U && arguments == nullptr)
+        || destination == nullptr) return 0U;
+    if (context->formatting_validation_message.test_and_set(
+            std::memory_order_acquire)) return 0U;
+    struct flag_clear final {
+        std::atomic_flag& flag;
+        ~flag_clear() { flag.clear(std::memory_order_release); }
+    } clear{context->formatting_validation_message};
+    try {
+        constexpr auto maximum_total_argument_bytes =
+            WEBSCENE_VALIDATION_MESSAGE_MAX_ARGUMENTS_V1
+            * WEBSCENE_VALIDATION_MESSAGE_MAX_ARGUMENT_BYTES_V1;
+        size_t total_argument_bytes = 0U;
+        for (size_t index = 0U; index < argument_count; ++index) {
+            const auto& argument = arguments[index];
+            constexpr auto argument_size =
+                offsetof(webscene_validation_message_argument_v1, value_length)
+                + sizeof(argument.value_length);
+            if (argument.struct_size < argument_size
+                || argument.kind < WEBSCENE_VALIDATION_ARGUMENT_CONTROL_TYPE_V1
+                || argument.kind > WEBSCENE_VALIDATION_ARGUMENT_STEP_V1
+                || argument.value_length
+                    > WEBSCENE_VALIDATION_MESSAGE_MAX_ARGUMENT_BYTES_V1
+                || total_argument_bytes
+                    > maximum_total_argument_bytes - argument.value_length
+                || (argument.value_length != 0U
+                    && argument.value_utf8 == nullptr)
+                || !valid_utf8(std::string_view(
+                    argument.value_utf8 == nullptr ? "" : argument.value_utf8,
+                    argument.value_length))) return 0U;
+            total_argument_bytes += argument.value_length;
+        }
+        const auto& message = context->validation_messages[reason];
+        if (message.empty() || message.size() > destination_capacity) return 0U;
+        std::memcpy(destination, message.data(), message.size());
+        return message.size();
+    } catch (...) {
+        return 0U;
+    }
+}
 
 using get_abi_version_fn = uint32_t (*)(void);
 using prewarm_fn = uint8_t (*)(void);
@@ -425,9 +563,10 @@ uint8_t measure_text(
 }  // namespace
 
 extern "C" __attribute__((visibility("default")))
-webscene_engine* webscene_flutter_engine_create(
+webscene_engine* webscene_flutter_engine_create_v2(
     const char* runtime_path,
-    const char* cache_directory)
+    const char* cache_directory,
+    const webscene_flutter_engine_options_v1* flutter_options)
 {
     @autoreleasepool {
         last_error.clear();
@@ -438,6 +577,7 @@ webscene_engine* webscene_flutter_engine_create(
             return nullptr;
         }
         auto context = std::make_unique<ResourceContext>();
+        if (!configure_validation_messages(*context, flutter_options)) return nullptr;
         const size_t cache_length =
             cache_directory == nullptr ? 0 : std::strlen(cache_directory);
         webscene_engine_options options{};
@@ -449,6 +589,14 @@ webscene_engine* webscene_flutter_engine_create(
         options.resource_load_user_data = context.get();
         options.text_measure_callback = measure_text;
         options.text_measure_user_data = context.get();
+        const auto has_validation_messages = std::any_of(
+            context->validation_messages.begin() + 1,
+            context->validation_messages.end(),
+            [](const auto& message) { return !message.empty(); });
+        options.validation_message_format_callback_v1 = has_validation_messages
+            ? format_validation_message : nullptr;
+        options.validation_message_format_user_data_v1 = has_validation_messages
+            ? context.get() : nullptr;
         auto* engine = runtime.create(&options);
         if (engine == nullptr) {
             last_error = "WebScene engine creation failed.";
@@ -457,6 +605,15 @@ webscene_engine* webscene_flutter_engine_create(
         engines.emplace(engine, std::move(context));
         return engine;
     }
+}
+
+extern "C" __attribute__((visibility("default")))
+webscene_engine* webscene_flutter_engine_create(
+    const char* runtime_path,
+    const char* cache_directory)
+{
+    return webscene_flutter_engine_create_v2(
+        runtime_path, cache_directory, nullptr);
 }
 
 extern "C" __attribute__((visibility("default")))

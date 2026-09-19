@@ -599,7 +599,7 @@
         std::vector<std::unordered_map<std::string, const dom_node*>> all_id_nodes;
 
         const auto append_document = [&](uint32_t frame_owner, uint64_t frame_generation,
-                                         std::string_view origin) {
+                                         std::string_view origin) -> uint32_t {
             if (result->documents.size() == maximum_semantic_documents_v1) {
                 result->flags |= WEBSCENE_SEMANTIC_SNAPSHOT_TRUNCATED_DOCUMENTS_V1;
                 return WEBSCENE_SEMANTIC_NONE_INDEX_V1;
@@ -767,7 +767,7 @@
             const auto target = semantic_attribute(*capture.node, "for");
             if (!target.empty()) {
                 label_texts[capture.document_index].try_emplace(
-                    target,
+                    std::string{target},
                     subtree_text(*capture.node));
             }
         }

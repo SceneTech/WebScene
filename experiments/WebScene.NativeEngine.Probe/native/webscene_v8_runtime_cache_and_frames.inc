@@ -1529,7 +1529,7 @@
         // realm-local and route delivery through this frame's setTimeout so a
         // posted message is a serialized browser task rather than a nested V8
         // call. This mirrors the working managed V8 iframe implementation.
-        constexpr std::string_view message_channel_source = R"JS(
+        constexpr std::array<std::string_view, 3> message_channel_source_parts{R"JS(
             (() => {
               class MessagePort {
                 constructor() {
@@ -1735,8 +1735,8 @@
                     `${encode(name)}=${encode(value)}`).join('&');
                 }
               }
-        )JS";
-        constexpr std::string_view message_channel_source_suffix = R"JS(
+        )JS",
+        R"JS(
               class WebSceneFormData {
                 constructor(form = undefined, submitter = null) {
                   __webSceneRecordWebApi(
@@ -1945,7 +1945,8 @@
                     HierarchyRequestError: 3,
                     WrongDocumentError: 4,
                     InvalidCharacterError: 5,
-                    NoModificationAllowedError: 7,
+)JS",
+        R"JS(                    NoModificationAllowedError: 7,
                     NotFoundError: 8,
                     NotSupportedError: 9,
                     InUseAttributeError: 10,
@@ -2046,12 +2047,10 @@
                 }
               });
             })();
-        )JS";
-        std::string message_channel_bootstrap;
-        message_channel_bootstrap.reserve(
-            message_channel_source.size() + message_channel_source_suffix.size());
-        message_channel_bootstrap.append(message_channel_source);
-        message_channel_bootstrap.append(message_channel_source_suffix);
+        )JS"};
+        static_assert(embedded_source_parts_are_portable(message_channel_source_parts));
+        auto message_channel_bootstrap =
+            join_embedded_source_parts(message_channel_source_parts);
         auto message_channel_script = v8::Script::Compile(
             local_context,
             js_string(isolate, message_channel_bootstrap.c_str())).ToLocalChecked();

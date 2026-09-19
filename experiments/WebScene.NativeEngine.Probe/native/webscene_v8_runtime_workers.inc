@@ -47,6 +47,11 @@
     static constexpr size_t maximum_worker_queue_bytes = 16U * 1024U * 1024U;
     static constexpr size_t maximum_worker_errors = 16U;
     static constexpr size_t maximum_worker_error_length = 4096U;
+    static constexpr size_t maximum_worker_redirect_hops = 20U;
+    static constexpr size_t maximum_worker_redirect_url_bytes = 8U * 1024U;
+    static constexpr size_t maximum_worker_redirect_metadata_bytes = 64U * 1024U;
+    static constexpr size_t maximum_worker_response_headers = 64U;
+    static constexpr size_t maximum_worker_status_text_bytes = 1024U;
 
     bool worker_generation_is_current() const
     {
@@ -54,6 +59,141 @@
         std::lock_guard lock(worker_owner->mutex);
         return !worker_owner->stopped
             && worker_owner->generation == worker_owner_generation;
+    }
+
+    bool validate_worker_redirect_hops(
+        const std::string& requested_url,
+        const std::string& final_url,
+        uint32_t mode,
+        uint32_t credentials,
+        const std::string& origin,
+        const resource_response& response,
+        std::string& error) const
+    {
+        if (response.headers.size() > maximum_worker_response_headers
+            || response.status_text.size() > maximum_worker_status_text_bytes
+            || final_url.size() > maximum_worker_redirect_url_bytes) {
+            error = "Worker response metadata is invalid";
+            return false;
+        }
+        size_t metadata_bytes = response.status_text.size() + final_url.size();
+        for (const auto& [name, value] : response.headers) {
+            if (name.empty() || name.find('\0') != std::string::npos
+                || name.find_first_of("\r\n") != std::string::npos
+                || value.find('\0') != std::string::npos
+                || value.find_first_of("\r\n") != std::string::npos
+                || name.size()
+                    > maximum_worker_redirect_metadata_bytes - metadata_bytes
+                || value.size() > maximum_worker_redirect_metadata_bytes
+                    - metadata_bytes - name.size()) {
+                error = "Worker response metadata is invalid";
+                return false;
+            }
+            metadata_bytes += name.size() + value.size();
+        }
+        if (response.redirect_hops.empty()) {
+            if (final_url != requested_url) {
+                error = "Worker redirect chain metadata is required";
+                return false;
+            }
+            return true;
+        }
+        if (!response.has_http_metadata) {
+            error = "Worker redirect metadata requires an HTTP response";
+            return false;
+        }
+        if (response.redirect_hops.size() > maximum_worker_redirect_hops) {
+            error = "Worker redirect limit exceeded";
+            return false;
+        }
+        const auto valid_network_url = [](const std::string& url) {
+            const auto scheme = resource_scheme(url);
+            return (scheme == "http" || scheme == "https")
+                && !resource_origin(url).empty()
+                && std::none_of(
+                    url.begin(), url.end(), [](unsigned char value) {
+                        return value <= 0x20U || value == 0x7fU;
+                    });
+        };
+        const auto redirect_status = [](uint32_t status) {
+            return status == 301U || status == 302U || status == 303U
+                || status == 307U || status == 308U;
+        };
+        std::vector<std::string_view> visited{requested_url};
+        auto expected_source = std::string_view(requested_url);
+        for (const auto& hop : response.redirect_hops) {
+            if (hop.source_url.size() > maximum_worker_redirect_url_bytes
+                || hop.destination_url.size() > maximum_worker_redirect_url_bytes
+                || hop.cors_allow_origin.size() > maximum_worker_redirect_url_bytes) {
+                error = "Worker redirect metadata is invalid";
+                return false;
+            }
+            const auto hop_bytes = hop.source_url.size()
+                + hop.destination_url.size()
+                + hop.cors_allow_origin.size();
+            if (hop_bytes > maximum_worker_redirect_metadata_bytes
+                - metadata_bytes) {
+                error = "Worker redirect metadata is invalid";
+                return false;
+            }
+            metadata_bytes += hop_bytes;
+            if (hop.source_url != expected_source
+                || !redirect_status(hop.status)
+                || !valid_network_url(hop.source_url)
+                || !valid_network_url(hop.destination_url)) {
+                error = "Worker redirect metadata is invalid";
+                return false;
+            }
+            if (std::find(
+                    visited.begin(),
+                    visited.end(),
+                    std::string_view(hop.destination_url))
+                != visited.end()) {
+                error = "Worker redirect loop rejected";
+                return false;
+            }
+            if (resource_scheme(hop.source_url) == "https"
+                && resource_scheme(hop.destination_url) != "https") {
+                error = "Worker redirect downgrade rejected";
+                return false;
+            }
+            const auto source_origin = resource_origin(hop.source_url);
+            const auto destination_origin = resource_origin(
+                hop.destination_url);
+            if (mode == WEBSCENE_FETCH_MODE_SAME_ORIGIN
+                && (source_origin != origin
+                    || destination_origin != origin)) {
+                error = "Worker redirect violates same-origin policy";
+                return false;
+            }
+            if (hop.credentials_forwarded
+                && (credentials == WEBSCENE_FETCH_CREDENTIALS_OMIT
+                    || (credentials == WEBSCENE_FETCH_CREDENTIALS_SAME_ORIGIN
+                        && destination_origin != origin))) {
+                error = "Worker redirect forwarded disallowed credentials";
+                return false;
+            }
+            if (mode == WEBSCENE_FETCH_MODE_CORS
+                && source_origin != origin) {
+                const auto cors_allowed = hop.cors_allow_origin == origin
+                    || (hop.cors_allow_origin == "*"
+                        && credentials
+                            != WEBSCENE_FETCH_CREDENTIALS_INCLUDE);
+                if (!cors_allowed
+                    || (credentials == WEBSCENE_FETCH_CREDENTIALS_INCLUDE
+                        && !hop.cors_credentials_allowed)) {
+                    error = "Worker redirect response blocked by CORS";
+                    return false;
+                }
+            }
+            visited.push_back(hop.destination_url);
+            expected_source = hop.destination_url;
+        }
+        if (expected_source != final_url) {
+            error = "Worker redirect chain is incomplete";
+            return false;
+        }
+        return true;
     }
 
     bool load_worker_script_resource(
@@ -75,6 +215,11 @@
         const auto credentials = worker_script_fetch_policy_active
             ? worker_script_fetch_credentials
             : WEBSCENE_FETCH_CREDENTIALS_SAME_ORIGIN;
+        if (resource_scheme(origin) == "https"
+            && resource_scheme(requested_url) == "http") {
+            error = "Worker script security downgrade rejected";
+            return false;
+        }
         if (mode == WEBSCENE_FETCH_MODE_SAME_ORIGIN
             && resource_origin(requested_url) != origin) {
             error = "Worker script violates same-origin policy: " + requested_url;
@@ -138,13 +283,22 @@
             error = "Unable to load worker script: " + requested_url;
             return false;
         }
-        accept_response_cookies(requested_url, request_context, response);
         resolved_name = response.final_url.empty()
             ? requested_url
             : response.final_url;
         if (response.has_http_metadata
             && (response.status < 200U || response.status >= 300U)) {
             error = "Worker script response has an unsuccessful status";
+            return false;
+        }
+        if (!validate_worker_redirect_hops(
+                requested_url,
+                resolved_name,
+                mode,
+                credentials,
+                origin,
+                response,
+                error)) {
             return false;
         }
 
@@ -178,6 +332,7 @@
                 return false;
             }
         }
+        accept_response_cookies(requested_url, request_context, response);
         content = std::move(response.content);
         return true;
     }

@@ -1299,10 +1299,33 @@ typedef struct webscene_resource_header_v4 {
     size_t value_length;
 } webscene_resource_header_v4;
 
+enum {
+    WEBSCENE_RESOURCE_REDIRECT_CREDENTIALS_FORWARDED_V4 = 1U << 0U,
+    WEBSCENE_RESOURCE_REDIRECT_CORS_CREDENTIALS_V4 = 1U << 1U
+};
+
+/* One followed network redirect. Buffers are borrowed for the callback only.
+ * CREDENTIALS_FORWARDED describes the request to destination_url.
+ * cors_allow_origin and CORS_CREDENTIALS describe the response received from
+ * source_url. Response headers and credentials are not copied into the
+ * redirect ledger. */
+typedef struct webscene_resource_redirect_hop_v4 {
+    uint32_t struct_size;
+    uint32_t status;
+    uint32_t flags;
+    const char* source_url;
+    size_t source_url_length;
+    const char* destination_url;
+    size_t destination_url_length;
+    const char* cors_allow_origin;
+    size_t cors_allow_origin_length;
+} webscene_resource_redirect_hop_v4;
+
 /* Response metadata is borrowed only for the callback invocation. The engine
- * copies accepted fields before returning to the host. Header count and total
- * bytes are bounded; Set-Cookie is consumed by the cookie jar and is never
- * exposed through the JavaScript Headers object. */
+ * copies accepted fields before returning to the host. Header, redirect-hop,
+ * and total metadata counts are bounded; Set-Cookie is consumed by the cookie
+ * jar and is never exposed through the JavaScript Headers object. A callback
+ * must check struct_size before writing the optional redirect_hops tail. */
 typedef struct webscene_resource_response_v4 {
     uint32_t struct_size;
     uint32_t status;
@@ -1312,6 +1335,8 @@ typedef struct webscene_resource_response_v4 {
     size_t final_url_length;
     const webscene_resource_header_v4* headers;
     size_t header_count;
+    const webscene_resource_redirect_hop_v4* redirect_hops;
+    size_t redirect_hop_count;
 } webscene_resource_response_v4;
 
 typedef struct webscene_resource_request_context_v4 {

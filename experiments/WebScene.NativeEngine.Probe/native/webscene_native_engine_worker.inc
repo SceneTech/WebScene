@@ -238,16 +238,21 @@
                     constexpr size_t maximum_response_headers = 64U;
                     constexpr size_t maximum_response_metadata_bytes = 64U * 1024U;
                     constexpr size_t maximum_response_url_bytes = 8U * 1024U;
+                    constexpr size_t maximum_response_redirect_hops = 20U;
                     if (native_response.status < 100U || native_response.status > 599U
                         || native_response.status_text_length > 1024U
                         || native_response.final_url_length > maximum_response_url_bytes
                         || native_response.header_count > maximum_response_headers
+                        || native_response.redirect_hop_count
+                            > maximum_response_redirect_hops
                         || (native_response.status_text_length != 0U
                             && native_response.status_text == nullptr)
                         || (native_response.final_url_length != 0U
                             && native_response.final_url == nullptr)
                         || (native_response.header_count != 0U
-                            && native_response.headers == nullptr)) {
+                            && native_response.headers == nullptr)
+                        || (native_response.redirect_hop_count != 0U
+                            && native_response.redirect_hops == nullptr)) {
                         return failed("invalid-response-metadata");
                     }
                     response.status = native_response.status;
@@ -293,6 +298,73 @@
                         if (response.headers.back().first == "set-cookie") {
                             response.cacheable = false;
                         }
+                    }
+                    response.redirect_hops.reserve(
+                        native_response.redirect_hop_count);
+                    constexpr uint32_t known_redirect_flags =
+                        WEBSCENE_RESOURCE_REDIRECT_CREDENTIALS_FORWARDED_V4
+                        | WEBSCENE_RESOURCE_REDIRECT_CORS_CREDENTIALS_V4;
+                    for (size_t index = 0;
+                         index < native_response.redirect_hop_count;
+                         ++index) {
+                        const auto& hop = native_response.redirect_hops[index];
+                        if (hop.struct_size
+                                < sizeof(webscene_resource_redirect_hop_v4)
+                            || (hop.status != 301U && hop.status != 302U
+                                && hop.status != 303U && hop.status != 307U
+                                && hop.status != 308U)
+                            || (hop.flags & ~known_redirect_flags) != 0U
+                            || hop.source_url == nullptr
+                            || hop.source_url_length == 0U
+                            || hop.source_url_length
+                                > maximum_response_url_bytes
+                            || hop.destination_url == nullptr
+                            || hop.destination_url_length == 0U
+                            || hop.destination_url_length
+                                > maximum_response_url_bytes
+                            || hop.cors_allow_origin_length
+                                > maximum_response_url_bytes
+                            || (hop.cors_allow_origin_length != 0U
+                                && hop.cors_allow_origin == nullptr)) {
+                            return failed("invalid-redirect-metadata");
+                        }
+                        metadata_bytes += hop.source_url_length
+                            + hop.destination_url_length
+                            + hop.cors_allow_origin_length;
+                        if (metadata_bytes > maximum_response_metadata_bytes) {
+                            return failed("response-metadata-too-large");
+                        }
+                        webscene_native::v8_dom_runtime::resource_redirect_hop copied;
+                        copied.source_url.assign(
+                            hop.source_url, hop.source_url_length);
+                        copied.destination_url.assign(
+                            hop.destination_url, hop.destination_url_length);
+                        copied.cors_allow_origin.assign(
+                            hop.cors_allow_origin == nullptr
+                                ? ""
+                                : hop.cors_allow_origin,
+                            hop.cors_allow_origin_length);
+                        const auto invalid_url = [](const std::string& value) {
+                            return value.find_first_of(" \t\r\n")
+                                    != std::string::npos
+                                || value.find('\0') != std::string::npos;
+                        };
+                        if (invalid_url(copied.source_url)
+                            || invalid_url(copied.destination_url)
+                            || copied.cors_allow_origin.find_first_of("\r\n")
+                                != std::string::npos
+                            || copied.cors_allow_origin.find('\0')
+                                != std::string::npos) {
+                            return failed("invalid-redirect-metadata");
+                        }
+                        copied.status = hop.status;
+                        copied.credentials_forwarded = (hop.flags
+                            & WEBSCENE_RESOURCE_REDIRECT_CREDENTIALS_FORWARDED_V4)
+                            != 0U;
+                        copied.cors_credentials_allowed = (hop.flags
+                            & WEBSCENE_RESOURCE_REDIRECT_CORS_CREDENTIALS_V4)
+                            != 0U;
+                        response.redirect_hops.push_back(std::move(copied));
                     }
                 } else {
                     response.final_url = url;

@@ -50,8 +50,8 @@ measurement was executed for this change. Those gates remain acceptance work
 under #81 and #227. MessagePort reachability remains owned by #288, and general
 nested-document navigation and security remain owned by #267.
 
-The host resource API exposes the final response rather than each intermediate
-redirect response. It receives the worker fetch mode, origin, and credentials
-and therefore remains responsible for enforcing every redirect hop; the worker
-runtime independently validates the returned final URL and response. A future
-resource-contract revision would be needed for engine-side, per-hop CORS audit.
+Follow-up #704 extends the admitted-resource response with a bounded redirect
+ledger. Worker loads now require that ledger when the final URL differs and
+validate each hop before publishing the script. The provider remains
+responsible for performing transport and reporting its credential-forwarding
+decision truthfully.

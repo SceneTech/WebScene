@@ -1,5 +1,10 @@
 # Generated CSS property identity validation (2026-09-17)
 
+Follow-up additions must preserve the 105-property managed ID prefix and the
+146-entry native ID prefix recorded here. The 2026-09-19 contract repair appends
+`aspect-ratio` after those prefixes and is documented in
+`css-property-metadata-contract-20260919.md`.
+
 This stage of #235 removes the remaining independent managed and native
 CSSStyleDeclaration property lists. It builds on the effective-property registry
 merged in #309; it does not alter the selector timing, containment, or stylesheet

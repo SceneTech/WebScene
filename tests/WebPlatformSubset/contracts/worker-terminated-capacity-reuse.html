@@ -1,0 +1,62 @@
+<!doctype html>
+<title>Terminated Worker execution capacity reuse</title>
+<script>
+window.__webSceneWptState = {
+  complete:false, harness:null, results:[], errors:[], diagnostics:[]
+};
+window.record = (name, condition) => __webSceneWptState.results.push({
+  name, status:condition ? 'PASS' : 'FAIL',
+  message:condition ? null : 'Contract failed', stack:null
+});
+window.finish = () => {
+  const state = __webSceneWptState;
+  state.harness = {
+    status:state.results.some(result => result.status !== 'PASS') ? 1 : 0,
+    message:null, stack:null
+  };
+  state.complete = true;
+};
+
+try {
+  const url = URL.createObjectURL(new Blob([
+    'onmessage = event => postMessage(event.data + 1);'
+  ], {type:'text/javascript'}));
+  const retired = [];
+  let detachedMethodRejected = false;
+  for (let index = 0; index < 80; ++index) {
+    const worker = new Worker(url);
+    if (index === 0) {
+      const detachedTerminate = worker.terminate;
+      try { detachedTerminate(); }
+      catch (error) { detachedMethodRejected = error instanceof TypeError; }
+    }
+    worker.terminate();
+    retired.push(worker);
+  }
+  record('detached Worker methods do not retain native callback pointers',
+    detachedMethodRejected);
+  record('terminated Worker methods remain safe while wrappers are retained',
+    retired[0].postMessage('ignored') === undefined);
+  retired[0].terminate();
+  globalThis.__webSceneRetiredWorkers = retired;
+
+  const replacement = new Worker(url);
+  URL.revokeObjectURL(url);
+  replacement.onerror = event => {
+    __webSceneWptState.errors.push(event.message);
+    record('terminated workers release live execution capacity', false);
+    finish();
+  };
+  replacement.onmessage = event => {
+    record('terminated workers release live execution capacity',
+      event.data === 42);
+    replacement.terminate();
+    finish();
+  };
+  replacement.postMessage(41);
+} catch (error) {
+  __webSceneWptState.errors.push(String(error));
+  record('terminated workers release live execution capacity', false);
+  finish();
+}
+</script>

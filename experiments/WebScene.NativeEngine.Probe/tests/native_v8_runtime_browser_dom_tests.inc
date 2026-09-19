@@ -1788,6 +1788,135 @@ void test_native_mutable_stylesheet_cssom(webscene_engine* engine)
         "CSSSupportsRule mutation diverged from the browser contract: "
             + supports_result);
 
+    const auto container_result = evaluate(engine, R"JS((() => {
+      const exercise = (document, view, className) => {
+        const style = document.createElement('style');
+        const container = document.createElement('div');
+        const target = document.createElement('div');
+        container.style.containerType = 'inline-size';
+        container.style.containerName = className;
+        container.style.width = '320px';
+        target.className = className;
+        container.appendChild(target);
+        style.textContent = `@container ${className} (width > 300px) {
+          .${className} { display: grid; }
+        }`;
+        document.head.appendChild(style);
+        document.body.appendChild(container);
+        const sheet = style.sheet;
+        const group = sheet.cssRules[0];
+        const rules = group.cssRules;
+        const original = rules[0];
+        const conditions = group.conditions;
+        const authoredText = style.textContent;
+        const initial = [
+          group.constructor.name,
+          group instanceof view.CSSContainerRule,
+          group instanceof view.CSSConditionRule,
+          group instanceof view.CSSGroupingRule,
+          group instanceof view.CSSRule,
+          group.type,
+          group.conditionText,
+          group.containerName,
+          group.containerQuery,
+          group.conditions === conditions,
+          Object.isFrozen(conditions),
+          Object.isFrozen(conditions[0]),
+          conditions[0].name,
+          conditions[0].query,
+          group.cssRules === rules,
+          original.parentRule === group,
+          original.parentStyleSheet === sheet,
+          view.getComputedStyle(target).display
+        ];
+        const errors = [];
+        for (const invoke of [
+          () => group.insertRule(),
+          () => group.deleteRule(),
+          () => group.insertRule(`.${className} {}`, 99),
+          () => group.insertRule(`.${className} {} .other {}`, 0),
+          () => group.insertRule('@import url("x.css");', 0),
+          () => group.insertRule('@namespace x url("x");', 0)
+        ]) {
+          try { invoke(); errors.push('none'); }
+          catch (error) { errors.push(error.name); }
+        }
+        const insertedIndex = group.insertRule(
+          `.${className} { display: none; }`, rules.length);
+        const inserted = rules[insertedIndex];
+        const afterInsert = [insertedIndex, rules.length,
+          inserted.parentRule === group,
+          inserted.parentStyleSheet === sheet,
+          view.getComputedStyle(target).display,
+          group.cssText.includes('display: none'),
+          style.textContent === authoredText];
+        group.deleteRule(insertedIndex);
+        const afterDelete = [rules.length, inserted.parentRule,
+          inserted.parentStyleSheet, view.getComputedStyle(target).display];
+        const mediaIndex = sheet.insertRule(
+          `@media (min-width:1px) { @container ${className} (width > 300px) {
+            .${className} { display: inline-grid; }
+          } }`, sheet.cssRules.length);
+        const media = sheet.cssRules[mediaIndex];
+        const nested = media.cssRules[0];
+        nested.insertRule(`.${className} { display: block; }`, nested.cssRules.length);
+        const nestedState = [nested.constructor.name,
+          nested instanceof view.CSSContainerRule,
+          nested.parentRule === media,
+          nested.parentStyleSheet === sheet,
+          nested.cssRules.length,
+          view.getComputedStyle(target).display,
+          media.cssText.includes('display: block')];
+        const reflectionSheet = new view.CSSStyleSheet();
+        reflectionSheet.replaceSync(
+          '@container (width > 300px) {}'
+          + '@container Named {}'
+          + '@container (width > 300px), Named (width < 1000px) {}');
+        const reflected = Array.from(reflectionSheet.cssRules, item => [
+          item.containerName, item.containerQuery,
+          Array.from(item.conditions, condition => [condition.name, condition.query])
+        ]);
+        sheet.deleteRule(0);
+        group.insertRule(`.${className} { display: none; }`, group.cssRules.length);
+        const detached = [group.parentStyleSheet, group.cssRules.length,
+          group.cssText.includes('display: none'),
+          view.getComputedStyle(target).display,
+          style.textContent === authoredText];
+        style.remove();
+        container.remove();
+        return { initial, errors, afterInsert, afterDelete, nestedState,
+          reflected, detached };
+      };
+      const frame = document.createElement('iframe');
+      document.body.appendChild(frame);
+      const value = {
+        main: exercise(document, window, 'container-main'),
+        frame: exercise(frame.contentDocument, frame.contentWindow, 'container-frame')
+      };
+      frame.remove();
+      return value;
+    })())JS", "native-css-container-rule-mutation.js");
+    const auto container_expected = [](std::string_view name) {
+        return std::string{"{\"initial\":[\"CSSContainerRule\",true,true,true,true,0,\""}
+            + std::string{name} + " (width > 300px)\",\"" + std::string{name}
+            + "\",\"(width > 300px)\",true,true,true,\"" + std::string{name}
+            + "\",\"(width > 300px)\",true,true,true,\"grid\"],"
+              "\"errors\":[\"TypeError\",\"TypeError\",\"IndexSizeError\","
+              "\"SyntaxError\",\"HierarchyRequestError\",\"HierarchyRequestError\"],"
+              "\"afterInsert\":[1,2,true,true,\"none\",true,true],"
+              "\"afterDelete\":[1,null,null,\"grid\"],"
+              "\"nestedState\":[\"CSSContainerRule\",true,true,true,2,\"block\",true],"
+              "\"reflected\":[[\"\",\"(width > 300px)\",[[\"\",\"(width > 300px)\"]]],"
+              "[\"Named\",\"\",[[\"Named\",\"\"]]],[\"\",\"\",[[\"\","
+              "\"(width > 300px)\"],[\"Named\",\"(width < 1000px)\"]]]],"
+              "\"detached\":[null,2,true,\"block\",true]}";
+    };
+    require(
+        container_result == "{\"main\":" + container_expected("container-main")
+                + ",\"frame\":" + container_expected("container-frame") + "}",
+        "CSSContainerRule mutation diverged from the WPT-derived contract: "
+            + container_result);
+
     const auto layer_result = evaluate(engine, R"JS((() => {
       const exercise = (document, view, className) => {
         const style = document.createElement('style');

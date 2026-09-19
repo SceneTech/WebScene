@@ -1,0 +1,254 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>CSSContainerRule reflection and grouping mutation stay live</title>
+<body>
+<script>
+  const state = window.__webSceneWptState = {
+    complete: false, harness: null, results: [], errors: [], diagnostics: []
+  };
+
+  function record(name, error) {
+    state.results.push({
+      name,
+      status: error ? "FAIL" : "PASS",
+      message: error ? String(error && error.message || error) : null,
+      stack: error && error.stack ? String(error.stack) : null
+    });
+  }
+
+  function exercise(document, view, prefix) {
+    const style = document.createElement("style");
+    const container = document.createElement("div");
+    const target = document.createElement("div");
+    container.style.containerType = "inline-size";
+    container.style.containerName = prefix;
+    container.style.width = "320px";
+    target.className = prefix;
+    container.appendChild(target);
+    style.textContent = `@container ${prefix} (width > 300px) {
+      .${prefix} { display: grid; color: rgb(17, 23, 31); }
+    }`;
+    document.head.appendChild(style);
+    document.body.appendChild(container);
+
+    const sheet = style.sheet;
+    const group = sheet.cssRules[0];
+    const rules = group.cssRules;
+    const original = rules[0];
+    const authoredText = style.textContent;
+    const conditions = group.conditions;
+    const initial = {
+      constructor: group.constructor.name,
+      container: typeof view.CSSContainerRule === "function"
+        && group instanceof view.CSSContainerRule,
+      condition: typeof view.CSSConditionRule === "function"
+        && group instanceof view.CSSConditionRule,
+      grouping: typeof view.CSSGroupingRule === "function"
+        && group instanceof view.CSSGroupingRule,
+      rule: group instanceof view.CSSRule,
+      type: group.type,
+      conditionText: group.conditionText,
+      containerName: group.containerName,
+      containerQuery: group.containerQuery,
+      conditionsIdentity: group.conditions === conditions,
+      conditionsFrozen: Object.isFrozen(conditions)
+        && Object.isFrozen(conditions[0]),
+      conditionName: conditions[0] && conditions[0].name,
+      conditionQuery: conditions[0] && conditions[0].query,
+      rulesIdentity: group.cssRules === rules,
+      childParentRule: original.parentRule === group,
+      childParentSheet: original.parentStyleSheet === sheet,
+      display: view.getComputedStyle(target).display
+    };
+
+    let assignmentError = "";
+    try { group.conditionText = "(width < 1px)"; }
+    catch (error) { assignmentError = error.name; }
+    const readonly = {
+      conditionText: group.conditionText,
+      containerName: group.containerName,
+      containerQuery: group.containerQuery,
+      assignmentError,
+      display: view.getComputedStyle(target).display
+    };
+
+    const errors = {};
+    for (const [name, invoke] of Object.entries({
+      missingInsert: () => group.insertRule(),
+      missingDelete: () => group.deleteRule(),
+      range: () => group.insertRule(`.${prefix} {}`, 99),
+      multiple: () => group.insertRule(`.${prefix} {} .other {}`, 0),
+      imported: () => group.insertRule('@import url("x.css");', 0),
+      namespace: () => group.insertRule('@namespace x url("x");', 0)
+    })) {
+      try { invoke(); errors[name] = "none"; }
+      catch (error) { errors[name] = error.name; }
+    }
+
+    const index = group.insertRule(
+      `.${prefix} { display: none; }`, rules.length);
+    const inserted = rules[index];
+    const afterInsert = {
+      index,
+      length: rules.length,
+      identity: group.cssRules === rules,
+      childParentRule: inserted.parentRule === group,
+      childParentSheet: inserted.parentStyleSheet === sheet,
+      display: view.getComputedStyle(target).display,
+      serialized: group.cssText.includes("display: none"),
+      textStable: style.textContent === authoredText
+    };
+
+    group.deleteRule(index);
+    const afterDelete = {
+      length: rules.length,
+      parentRule: inserted.parentRule,
+      parentStyleSheet: inserted.parentStyleSheet,
+      display: view.getComputedStyle(target).display,
+      textStable: style.textContent === authoredText
+    };
+
+    const mediaIndex = sheet.insertRule(
+      `@media (min-width:1px) { @container ${prefix} (width > 300px) {
+        .${prefix} { display: inline-grid; }
+      } }`, sheet.cssRules.length);
+    const media = sheet.cssRules[mediaIndex];
+    const nested = media.cssRules[0];
+    const nestedIndex = nested.insertRule(
+      `.${prefix} { display: block; }`, nested.cssRules.length);
+    const nestedMutation = {
+      index: nestedIndex,
+      constructor: nested.constructor.name,
+      container: nested instanceof view.CSSContainerRule,
+      parentRule: nested.parentRule === media,
+      parentStyleSheet: nested.parentStyleSheet === sheet,
+      length: nested.cssRules.length,
+      display: view.getComputedStyle(target).display,
+      parentSerialized: media.cssText.includes("display: block"),
+      textStable: style.textContent === authoredText
+    };
+
+    const reflectionSheet = new view.CSSStyleSheet();
+    reflectionSheet.replaceSync(`
+      @container (width > 300px) {}
+      @container Named {}
+      @container (width > 300px), Named (width < 1000px) {}
+    `);
+    const reflected = Array.from(reflectionSheet.cssRules, rule => ({
+      name: rule.containerName,
+      query: rule.containerQuery,
+      conditions: Array.from(rule.conditions, item => [item.name, item.query])
+    }));
+
+    sheet.deleteRule(0);
+    group.insertRule(`.${prefix} { display: none; }`, group.cssRules.length);
+    const detached = {
+      parentStyleSheet: group.parentStyleSheet,
+      conditionText: group.conditionText,
+      length: group.cssRules.length,
+      serialized: group.cssText.includes("display: none"),
+      display: view.getComputedStyle(target).display,
+      textStable: style.textContent === authoredText
+    };
+
+    style.remove();
+    container.remove();
+    return { initial, readonly, errors, afterInsert, afterDelete,
+      nestedMutation, reflected, detached };
+  }
+
+  try {
+    const frame = document.createElement("iframe");
+    document.body.appendChild(frame);
+    const main = exercise(document, window, "container-main");
+    const nested = exercise(
+      frame.contentDocument, frame.contentWindow, "container-frame");
+    const both = predicate => predicate(main) && predicate(nested);
+
+    record("container rules expose conditional grouping identity and reflection",
+      both(value => value.initial.constructor === "CSSContainerRule"
+          && value.initial.container && value.initial.condition
+          && value.initial.grouping && value.initial.rule
+          && value.initial.type === 0
+          && value.initial.conditionText.endsWith("(width > 300px)")
+          && value.initial.containerName.startsWith("container-")
+          && value.initial.containerQuery === "(width > 300px)"
+          && value.initial.conditionsIdentity
+          && value.initial.conditionsFrozen
+          && value.initial.conditionName === value.initial.containerName
+          && value.initial.conditionQuery === value.initial.containerQuery
+          && value.initial.rulesIdentity && value.initial.childParentRule
+          && value.initial.childParentSheet && value.initial.display === "grid")
+        ? null : new Error(JSON.stringify({ main: main.initial, nested: nested.initial })));
+    record("container condition reflection is readonly",
+      both(value => value.readonly.conditionText.endsWith("(width > 300px)")
+          && value.readonly.containerName.startsWith("container-")
+          && value.readonly.containerQuery === "(width > 300px)"
+          && value.readonly.assignmentError === ""
+          && value.readonly.display === "grid")
+        ? null : new Error(JSON.stringify({ main: main.readonly, nested: nested.readonly })));
+    record("container grouping mutation reports browser exception names",
+      both(value => value.errors.missingInsert === "TypeError"
+          && value.errors.missingDelete === "TypeError"
+          && value.errors.range === "IndexSizeError"
+          && value.errors.multiple === "SyntaxError"
+          && value.errors.imported === "HierarchyRequestError"
+          && value.errors.namespace === "HierarchyRequestError")
+        ? null : new Error(JSON.stringify({ main: main.errors, nested: nested.errors })));
+    record("container insertRule and deleteRule publish synchronously",
+      both(value => value.afterInsert.index === 1
+          && value.afterInsert.length === 2 && value.afterInsert.identity
+          && value.afterInsert.childParentRule
+          && value.afterInsert.childParentSheet
+          && value.afterInsert.display === "none"
+          && value.afterInsert.serialized && value.afterInsert.textStable
+          && value.afterDelete.length === 1
+          && value.afterDelete.parentRule === null
+          && value.afterDelete.parentStyleSheet === null
+          && value.afterDelete.display === "grid"
+          && value.afterDelete.textStable)
+        ? null : new Error(JSON.stringify({ main, nested })));
+    record("container mutation reserializes through a media parent",
+      both(value => value.nestedMutation.index === 1
+          && value.nestedMutation.constructor === "CSSContainerRule"
+          && value.nestedMutation.container && value.nestedMutation.parentRule
+          && value.nestedMutation.parentStyleSheet
+          && value.nestedMutation.length === 2
+          && value.nestedMutation.display === "block"
+          && value.nestedMutation.parentSerialized
+          && value.nestedMutation.textStable)
+        ? null : new Error(JSON.stringify({
+            main: main.nestedMutation, nested: nested.nestedMutation
+          })));
+    record("WPT container name, query, and condition-list cases reflect",
+      both(value => JSON.stringify(value.reflected) === JSON.stringify([
+        { name: "", query: "(width > 300px)",
+          conditions: [["", "(width > 300px)"]] },
+        { name: "Named", query: "", conditions: [["Named", ""]] },
+        { name: "", query: "", conditions: [
+          ["", "(width > 300px)"], ["Named", "(width < 1000px)"]
+        ] }
+      ])) ? null : new Error(JSON.stringify({ main: main.reflected, nested: nested.reflected })));
+    record("detached container groups mutate without recascading",
+      both(value => value.detached.parentStyleSheet === null
+          && value.detached.conditionText.endsWith("(width > 300px)")
+          && value.detached.length === 2 && value.detached.serialized
+          && value.detached.display === "block" && value.detached.textStable)
+        ? null : new Error(JSON.stringify({ main: main.detached, nested: nested.detached })));
+    state.diagnostics.push(JSON.stringify({ main, nested }));
+    frame.remove();
+  } catch (error) {
+    record("CSSContainerRule mutation setup", error);
+  }
+
+  const failure = state.results.find(result => result.status !== "PASS");
+  state.harness = failure
+    ? { status: 1, message: failure.message, stack: failure.stack }
+    : { status: 0, message: null, stack: null };
+  state.complete = true;
+  const evidence = document.createElement("pre");
+  evidence.id = "cssom-container-rule-mutation-evidence";
+  evidence.hidden = true;
+  evidence.textContent = JSON.stringify(state);
+  document.body.appendChild(evidence);
+</script>

@@ -1,0 +1,144 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Form-associated custom-element internals and entry lists</title>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<script>
+test(()=>{
+  assert_throws_js(TypeError,()=>new ElementInternals());
+  assert_equals(typeof HTMLElement.prototype.attachInternals,'function');
+  assert_equals(HTMLElement.prototype.attachInternals.length,0);
+  assert_equals(ElementInternals.prototype.setFormValue.length,1);
+  assert_own_property(ElementInternals.prototype,'form');
+  assert_equals(Object.prototype.toString.call(
+    Object.create(ElementInternals.prototype)),'[object ElementInternals]');
+  assert_throws_dom('NotSupportedError',()=>
+    HTMLElement.prototype.attachInternals.call(document.createElement('div')));
+
+  class UnassociatedControl extends HTMLElement {
+    constructor() {
+      super();
+      this.internals=this.attachInternals();
+    }
+  }
+  customElements.define('unassociated-control',UnassociatedControl);
+  const control=new UnassociatedControl();
+  assert_equals(control.internals.form,null);
+  assert_throws_dom('NotSupportedError',()=>
+    control.internals.setFormValue('excluded'));
+  assert_throws_dom('NotSupportedError',()=>control.attachInternals());
+},'ElementInternals is branded and attachInternals admits autonomous custom elements once');
+
+test(()=>{
+  const callbacks=[];
+  class AssociatedControl extends HTMLElement {
+    static formAssociated=true;
+    constructor() {
+      super();
+      this.internals=this.attachInternals();
+      this.resetCount=0;
+    }
+    formAssociatedCallback(form) {
+      callbacks.push(['associated',this,form]);
+    }
+    formDisabledCallback(disabled) {
+      callbacks.push(['disabled',this,disabled]);
+    }
+    formResetCallback() {
+      ++this.resetCount;
+      this.internals.setFormValue('reset-value','reset-state');
+    }
+  }
+  customElements.define('associated-control',AssociatedControl);
+  AssociatedControl.formAssociated=false;
+
+  const form=document.createElement('form');
+  form.id='internals-owner';
+  const before=document.createElement('input');
+  before.name='before';
+  before.value='native-before';
+  const control=new AssociatedControl();
+  control.setAttribute('name','host-name');
+  const after=document.createElement('input');
+  after.name='after';
+  after.value='native-after';
+  form.append(before,control,after);
+  document.body.appendChild(form);
+
+  assert_equals(control.internals.form,form);
+  assert_true(callbacks.some(entry=>
+    entry[0]==='associated' && entry[1]===control && entry[2]===form));
+
+  const value=new FormData();
+  value.append('custom-first','one');
+  value.append('custom-second','two');
+  control.internals.setFormValue(value,'private-restore-state');
+  let data=new FormData(form);
+  assert_array_equals([...data.keys()],
+    ['before','custom-first','custom-second','after']);
+  assert_equals(data.get('custom-first'),'one');
+  assert_false(data.has('host-name'));
+
+  const file=new File(['body'],'entry.txt',{type:'text/plain'});
+  control.internals.setFormValue(file,file);
+  data=new FormData(form);
+  assert_equals(data.get('host-name'),file);
+
+  control.setAttribute('disabled','');
+  assert_true(callbacks.some(entry=>
+    entry[0]==='disabled' && entry[1]===control && entry[2]===true));
+  assert_false(new FormData(form).has('host-name'));
+  control.removeAttribute('disabled');
+  assert_true(callbacks.some(entry=>
+    entry[0]==='disabled' && entry[1]===control && entry[2]===false));
+
+  const fieldset=document.createElement('fieldset');
+  form.insertBefore(fieldset,after);
+  fieldset.appendChild(control);
+  fieldset.disabled=true;
+  assert_false(new FormData(form).has('host-name'));
+  fieldset.disabled=false;
+  assert_equals(new FormData(form).get('host-name'),file);
+
+  control.internals.setFormValue('before-reset','preserved-state');
+  form.reset();
+  assert_equals(control.resetCount,1);
+  assert_equals(new FormData(form).get('host-name'),'reset-value');
+
+  control.internals.setFormValue(null,'restore-only-state');
+  assert_false(new FormData(form).has('host-name'));
+  form.remove();
+},'static formAssociated admits lifecycle callbacks and ordered string, File, FormData, and null values');
+
+test(()=>{
+  const owners=[];
+  class ExternalAssociatedControl extends HTMLElement {
+    static get formAssociated() { return true; }
+    constructor() {
+      super();
+      this.internals=this.attachInternals();
+    }
+    formAssociatedCallback(form) { owners.push(form); }
+  }
+  customElements.define(
+    'external-associated-control',ExternalAssociatedControl);
+  const form=document.createElement('form');
+  form.id='external-owner';
+  const control=new ExternalAssociatedControl();
+  control.setAttribute('form','external-owner');
+  control.setAttribute('name','external');
+  control.internals.setFormValue('value','state');
+  document.body.append(form,control);
+
+  assert_equals(control.internals.form,form);
+  assert_equals(new FormData(form).get('external'),'value');
+  form.id='changed-owner';
+  assert_equals(control.internals.form,null);
+  assert_equals(owners[owners.length-1],null);
+  form.id='external-owner';
+  assert_equals(control.internals.form,form);
+  assert_equals(owners[owners.length-1],form);
+  form.remove();
+  control.remove();
+},'explicit form ownership follows form-id changes and contributes external entries');
+</script>

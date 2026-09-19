@@ -31,11 +31,10 @@ the event's final mutation point retain their prior ordering. The implementation
 only reads control state, file lists, and ancestor `dir` attributes. It adds no
 structural ancestor invalidation route and no interactive validation UI.
 
-Form-associated custom-element entries remain outside this slice. WebScene does
-not expose `HTMLElement.attachInternals()`, `ElementInternals`, the static
-`formAssociated` opt-in, or `setFormValue()`. Adding only an entry-list shortcut
-would create an API that applications cannot reach through the browser contract;
-those primitives need a separate lifecycle and form-ownership slice.
+Form-associated custom-element entries remain outside the #610 slice. The
+adjacent `form-associated-custom-elements-20260919.md` source contract now adds
+`HTMLElement.attachInternals()`, `ElementInternals`, static `formAssociated`
+admission, form ownership and lifecycle, and `setFormValue()` entry integration.
 
 ## Authored evidence and validation status
 

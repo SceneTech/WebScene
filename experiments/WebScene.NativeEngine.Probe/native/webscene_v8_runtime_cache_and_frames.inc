@@ -1778,7 +1778,11 @@
                       }
                       this.append(dirname, direction);
                     };
-                    for (const control of root.querySelectorAll('input,select,textarea,button')) {
+                    for (const control of root.querySelectorAll('*')) {
+                      if (globalThis.__webSceneAppendFormAssociatedEntry?.(
+                          control, this, form)) continue;
+                      if (!['INPUT', 'SELECT', 'TEXTAREA', 'BUTTON']
+                          .includes(control.tagName)) continue;
                       if (control.form !== form || control.matches(':disabled') || control.closest('datalist')) continue;
                       const tag = control.tagName;
                       const type = String(control.type || (tag === 'BUTTON' ? 'submit' : 'text')).toLowerCase();

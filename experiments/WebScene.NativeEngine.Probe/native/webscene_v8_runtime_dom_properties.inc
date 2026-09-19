@@ -4062,6 +4062,18 @@
                     node,previous_select_value_missing);
         };
         reset_subtree(reset_subtree, *form);
+        auto local_context=info.GetIsolate()->GetCurrentContext();
+        v8::Local<v8::Value> reset_custom_elements;
+        if(local_context->Global()->Get(
+                local_context,
+                js_string(info.GetIsolate(),
+                    "__webSceneResetFormAssociatedElements"))
+                .ToLocal(&reset_custom_elements)
+            && reset_custom_elements->IsFunction()) {
+            v8::Local<v8::Value> arguments[]={self->wrap_node(*form)};
+            static_cast<void>(reset_custom_elements.As<v8::Function>()->Call(
+                local_context,local_context->Global(),1,arguments));
+        }
         self->document.mark_dirty();
     }
 

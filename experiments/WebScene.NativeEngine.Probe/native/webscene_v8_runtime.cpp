@@ -3184,6 +3184,8 @@ struct v8_dom_runtime::implementation final {
             const constructorDefinitions = new Map();
             const pendingDefinitions = new Map();
             const elementStates = new WeakMap();
+            const attachedInternals = new WeakMap();
+            const internalsTargets = new WeakMap();
             const constructionStack = [];
             let registryActive = false;
             const reservedNames = new Set([
@@ -3263,6 +3265,112 @@ struct v8_dom_runtime::implementation final {
               else invokeElementReactions([element]);
             };
 
+            const formOwnerFor = element => {
+              const state = elementStates.get(element);
+              if (!state || !state.definition.formAssociated) return null;
+              const root = element.getRootNode();
+              if (element.hasAttribute('form')) {
+                const identifier = element.getAttribute('form') || '';
+                if (!identifier) return null;
+                if (root?.tagName === 'FORM'
+                    && root.getAttribute('id') === identifier) return root;
+                for (const candidate of root?.querySelectorAll?.('form') || []) {
+                  if (candidate.getAttribute('id') === identifier) return candidate;
+                }
+                return null;
+              }
+              for (let ancestor = element.parentElement;
+                  ancestor; ancestor = ancestor.parentElement) {
+                if (ancestor.tagName === 'FORM') return ancestor;
+              }
+              return null;
+            };
+            const disabledFor = element => {
+              if (element.hasAttribute('disabled')) return true;
+              for (let ancestor = element.parentElement;
+                  ancestor; ancestor = ancestor.parentElement) {
+                if (ancestor.tagName === 'FIELDSET'
+                    && ancestor.hasAttribute('disabled')) {
+                  const firstLegend = Array.from(ancestor.children)
+                    .find(child => child.tagName === 'LEGEND');
+                  if (!firstLegend || !firstLegend.contains(element)) return true;
+                }
+              }
+              return false;
+            };
+            const syncFormLifecycle = element => {
+              const state = elementStates.get(element);
+              if (!state || state.state !== 'custom'
+                  || !state.definition.formAssociated) return;
+              const owner = formOwnerFor(element);
+              if (state.formOwner !== owner) {
+                state.formOwner = owner;
+                enqueueReaction(
+                  element, state.definition.formAssociatedCallback, [owner]);
+              }
+              const disabled = disabledFor(element);
+              if (state.formDisabled !== disabled) {
+                state.formDisabled = disabled;
+                enqueueReaction(
+                  element, state.definition.formDisabledCallback, [disabled]);
+              }
+            };
+            const syncAllFormLifecycles = (root = document) => {
+              if (root?.nodeType === 1) syncFormLifecycle(root);
+              for (const element of root?.querySelectorAll?.('*') || []) {
+                syncFormLifecycle(element);
+              }
+            };
+
+            function WebSceneElementInternals() {
+              throw new TypeError('Illegal constructor');
+            }
+            Object.defineProperty(WebSceneElementInternals, 'name', {
+              value: 'ElementInternals', configurable: true
+            });
+            Object.defineProperties(WebSceneElementInternals.prototype, {
+              form: {
+                get() {
+                  const element = internalsTargets.get(this);
+                  if (!element) throw new TypeError('Illegal invocation');
+                  const state = elementStates.get(element);
+                  return state?.definition.formAssociated
+                    ? state.formOwner : null;
+                },
+                enumerable: true,
+                configurable: true
+              },
+              setFormValue: {
+                value(value, state = value) {
+                  const element = internalsTargets.get(this);
+                  if (!element) throw new TypeError('Illegal invocation');
+                  const elementState = elementStates.get(element);
+                  if (!elementState?.definition.formAssociated) {
+                    throw new DOMException(
+                      'The custom element is not form-associated',
+                      'NotSupportedError');
+                  }
+                  if (arguments.length < 1) {
+                    throw new TypeError('setFormValue requires a value');
+                  }
+                  const convert = candidate => {
+                    if (candidate === null
+                        || candidate instanceof globalThis.FormData
+                        || candidate instanceof globalThis.File) return candidate;
+                    return String(candidate);
+                  };
+                  const record = attachedInternals.get(element);
+                  record.submissionValue = convert(value);
+                  record.state = convert(state);
+                },
+                writable: true,
+                configurable: true
+              },
+              [Symbol.toStringTag]: {
+                value: 'ElementInternals', configurable: true
+              }
+            });
+
             function WebSceneHTMLElement() {
               if (!new.target) {
                 throw new TypeError(
@@ -3286,7 +3394,8 @@ struct v8_dom_runtime::implementation final {
                 nativeCreateElement, document, [definition.name]);
               Object.setPrototypeOf(element, definition.prototype);
               elementStates.set(element, {
-                definition, state: 'custom', connected: false
+                definition, state: 'custom', connected: false,
+                formOwner: null, formDisabled: false
               });
               return element;
             }
@@ -3313,13 +3422,41 @@ struct v8_dom_runtime::implementation final {
             Object.defineProperty(globalThis, 'HTMLElement', {
               value: HTMLElementConstructor, writable: true, configurable: true
             });
+            Object.defineProperty(HTMLElementConstructor.prototype, 'attachInternals', {
+              value() {
+                const state = elementStates.get(this);
+                const construction = constructionStack[constructionStack.length - 1];
+                if (!state || (state.state !== 'custom'
+                    && construction?.element !== this)) {
+                  throw new DOMException(
+                    'attachInternals is only available on custom elements',
+                    'NotSupportedError');
+                }
+                if (attachedInternals.has(this)) {
+                  throw new DOMException(
+                    'ElementInternals has already been attached',
+                    'NotSupportedError');
+                }
+                const internals = Object.create(WebSceneElementInternals.prototype);
+                attachedInternals.set(this, {
+                  object: internals, submissionValue: null, state: null
+                });
+                internalsTargets.set(internals, this);
+                return internals;
+              },
+              writable: true,
+              configurable: true
+            });
 
             const upgradeElement = (element, forcedDefinition = undefined) => {
               const known = elementStates.get(element);
               if (known) return known.state === 'custom' ? element : undefined;
               const definition = forcedDefinition || definitions.get(elementName(element));
               if (!definition) return undefined;
-              const state = { definition, state: 'failed', connected: false };
+              const state = {
+                definition, state: 'failed', connected: false,
+                formOwner: null, formDisabled: false
+              };
               elementStates.set(element, state);
               const construction = {
                 element, definition, constructed: false
@@ -3350,6 +3487,7 @@ struct v8_dom_runtime::implementation final {
                     [name, null, element.getAttribute(name), null]);
                 }
               }
+              syncFormLifecycle(element);
               return element;
             };)JS",
             R"JS(
@@ -3361,6 +3499,7 @@ struct v8_dom_runtime::implementation final {
               state.connected = true;
               enqueueReaction(
                 element, state.definition.connectedCallback, []);
+              syncFormLifecycle(element);
             };
             const disconnectElement = element => {
               const state = elementStates.get(element);
@@ -3368,31 +3507,51 @@ struct v8_dom_runtime::implementation final {
               state.connected = false;
               enqueueReaction(
                 element, state.definition.disconnectedCallback, []);
+              // Native structural hooks run before detachment. Queue the
+              // owner/disabled reset behind disconnectedCallback so it reads
+              // the tree produced by the completed operation.
+              enqueueReaction(element, function() {
+                syncFormLifecycle(this);
+              }, []);
             };
             const notifySubtree = (root, phase) => {
               if (phase === 'disconnected') {
                 walkElements(root, disconnectElement);
+                enqueueReaction(root, syncAllFormLifecycles, []);
                 return;
               }
               walkElements(root, element => {
                 upgradeElement(element);
                 if (element.isConnected) connectElement(element);
               });
+              syncAllFormLifecycles(root.getRootNode());
             };
             const notifyAttribute = (
               element, name, oldValue, newValue, namespace = null) => {
               const state = elementStates.get(element);
-              if (!state || state.state !== 'custom') return;
-              const definition = state.definition;
-              if (!definition.attributeChangedCallback
-                  || !definition.observedAttributeSet.has(name)) return;
+              const definition = state?.state === 'custom'
+                ? state.definition : null;
+              const observed = definition?.attributeChangedCallback
+                && definition.observedAttributeSet.has(name);
+              const localFormChange = definition?.formAssociated
+                && (name === 'form' || name === 'disabled');
+              const globalFormChange = namespace === null
+                && ((element.tagName === 'FORM' && name === 'id')
+                    || (element.tagName === 'FIELDSET' && name === 'disabled'));
+              if (!observed && !localFormChange && !globalFormChange) return;
               // Attribute APIs already notify after their style checkpoint.
               // Give them a nested reaction boundary even inside a structural
               // operation's argument conversion or custom-element callback.
               beginReactions();
               try {
-                enqueueReaction(element, definition.attributeChangedCallback,
-                  [name, oldValue, newValue, namespace]);
+                if (observed) {
+                  enqueueReaction(element, definition.attributeChangedCallback,
+                    [name, oldValue, newValue, namespace]);
+                }
+                if (localFormChange) syncFormLifecycle(element);
+                if (globalFormChange) {
+                  syncAllFormLifecycles(element.getRootNode());
+                }
               } finally { endReactions(); }
             };
 
@@ -3437,14 +3596,24 @@ struct v8_dom_runtime::implementation final {
                 const observedAttributes = attributeChangedCallback
                   ? Array.from(constructor.observedAttributes || [], String)
                   : [];
+                const formAssociated = Boolean(constructor.formAssociated);
                 const definition = {
                   name: normalized,
                   constructor,
                   prototype,
+                  formAssociated,
                   connectedCallback: callback('connectedCallback'),
                   disconnectedCallback: callback('disconnectedCallback'),
                   adoptedCallback: callback('adoptedCallback'),
                   attributeChangedCallback,
+                  formAssociatedCallback: formAssociated
+                    ? callback('formAssociatedCallback') : undefined,
+                  formDisabledCallback: formAssociated
+                    ? callback('formDisabledCallback') : undefined,
+                  formResetCallback: formAssociated
+                    ? callback('formResetCallback') : undefined,
+                  formStateRestoreCallback: formAssociated
+                    ? callback('formStateRestoreCallback') : undefined,
                   observedAttributes,
                   observedAttributeSet: new Set(observedAttributes)
                 };
@@ -3507,6 +3676,42 @@ struct v8_dom_runtime::implementation final {
                 return element;
               }, writable: true, configurable: true
             });
+            const appendFormAssociatedEntry = (element, destination, form) => {
+              const state = elementStates.get(element);
+              if (!state || state.state !== 'custom'
+                  || !state.definition.formAssociated) return false;
+              syncFormLifecycle(element);
+              if (state.formOwner !== form || state.formDisabled
+                  || element.closest('datalist')) return true;
+              const record = attachedInternals.get(element);
+              const value = record?.submissionValue;
+              if (value === null || value === undefined) return true;
+              if (value instanceof globalThis.FormData) {
+                for (const [name, entry, filename] of value._entries) {
+                  destination.append(name, entry, filename);
+                }
+                return true;
+              }
+              const name = element.getAttribute('name') || '';
+              if (name) destination.append(name, value);
+              return true;
+            };
+            const resetFormAssociatedElements = form => {
+              beginReactions();
+              try {
+                const root = form.getRootNode();
+                for (const element of root.querySelectorAll('*')) {
+                  syncFormLifecycle(element);
+                  const state = elementStates.get(element);
+                  if (state?.state === 'custom'
+                      && state.definition.formAssociated
+                      && state.formOwner === form) {
+                    enqueueReaction(
+                      element, state.definition.formResetCallback, []);
+                  }
+                }
+              } finally { endReactions(); }
+            };
             Object.defineProperties(globalThis, {
               __webSceneCustomElementsBeginReactions: {
                 value: beginReactions, configurable: true
@@ -3519,6 +3724,12 @@ struct v8_dom_runtime::implementation final {
               },
               __webSceneCustomElementsNotifyAttribute: {
                 value: notifyAttribute, configurable: true
+              },
+              __webSceneAppendFormAssociatedEntry: {
+                value: appendFormAssociatedEntry, configurable: true
+              },
+              __webSceneResetFormAssociatedElements: {
+                value: resetFormAssociatedElements, configurable: true
               }
             });
             Object.defineProperty(globalThis, 'customElements', {
@@ -3526,6 +3737,11 @@ struct v8_dom_runtime::implementation final {
             });
             Object.defineProperty(globalThis, 'CustomElementRegistry', {
               value: WebSceneCustomElementRegistry,
+              writable: true,
+              configurable: true
+            });
+            Object.defineProperty(globalThis, 'ElementInternals', {
+              value: WebSceneElementInternals,
               writable: true,
               configurable: true
             });
@@ -4380,7 +4596,11 @@ struct v8_dom_runtime::implementation final {
                     }
                     this.append(dirname, direction);
                   };
-                  for (const control of root.querySelectorAll('input,select,textarea,button')) {
+                  for (const control of root.querySelectorAll('*')) {
+                    if (globalThis.__webSceneAppendFormAssociatedEntry?.(
+                        control, this, form)) continue;
+                    if (!['INPUT', 'SELECT', 'TEXTAREA', 'BUTTON']
+                        .includes(control.tagName)) continue;
                     if (control.form !== form || control.matches(':disabled') || control.closest('datalist')) continue;
                     const tag = control.tagName;
                     const type = String(control.type || (tag === 'BUTTON' ? 'submit' : 'text')).toLowerCase();

@@ -30,7 +30,10 @@
         webscene_stylesheet_consumed_callback stylesheet_consumed_callback = nullptr,
         void* stylesheet_consumed_user_data = nullptr,
         webscene_webgpu_policy_callback webgpu_policy_callback = nullptr,
-        void* webgpu_policy_user_data = nullptr)
+        void* webgpu_policy_user_data = nullptr,
+        webscene_validation_message_format_callback_v1
+            validation_message_format_callback_v1 = nullptr,
+        void* validation_message_format_user_data_v1 = nullptr)
         : command_count_(command_count == 0U
               ? 0U
               : (command_count < minimum_command_count
@@ -54,6 +57,10 @@
         , stylesheet_consumed_user_data_(stylesheet_consumed_user_data)
         , webgpu_policy_callback_(webgpu_policy_callback)
         , webgpu_policy_user_data_(webgpu_policy_user_data)
+        , validation_message_format_callback_v1_(
+            validation_message_format_callback_v1)
+        , validation_message_format_user_data_v1_(
+            validation_message_format_user_data_v1)
         , scene_published_callback_(scene_published_callback)
         , scene_published_user_data_(scene_published_user_data)
         , host_request_available_callback_(host_request_available_callback)

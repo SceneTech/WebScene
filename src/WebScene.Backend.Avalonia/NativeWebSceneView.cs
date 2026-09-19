@@ -485,7 +485,8 @@ public sealed partial class NativeWebSceneView : ContentControl, IAsyncDisposabl
                 admitWebGpuDocument: _admitWebGpuDocument,
                 persistentStorageDirectory: options.PersistentStorageDirectory,
                 persistentStoragePartitionKey: options.PersistentStoragePartitionKey,
-                persistentStorageQuotaBytes: options.PersistentStorageQuotaBytes);
+                persistentStorageQuotaBytes: options.PersistentStorageQuotaBytes,
+                validationMessageFormatter: options.ValidationMessageFormatter);
             if (engine == IntPtr.Zero)
             {
                 throw new InvalidOperationException(

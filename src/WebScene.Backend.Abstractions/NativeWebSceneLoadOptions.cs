@@ -42,4 +42,10 @@ public sealed record NativeWebSceneLoadOptions
     /// backend's default resource loader is used.
     /// </summary>
     public IWebSceneResourceLoader? ResourceLoader { get; init; }
+
+    /// <summary>
+    /// Gets the optional formatter for browser-owned validation messages.
+    /// Custom validity messages are returned verbatim and bypass this callback.
+    /// </summary>
+    public WebSceneValidationMessageFormatter? ValidationMessageFormatter { get; init; }
 }

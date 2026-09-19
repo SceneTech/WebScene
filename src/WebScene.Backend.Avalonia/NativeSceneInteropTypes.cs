@@ -675,6 +675,19 @@ internal struct EngineOptions
     public IntPtr StoragePartitionKey;
     public nuint StoragePartitionKeyLength;
     public ulong StorageQuotaBytes;
+    public IntPtr ResourceLoadCallbackV5;
+    public IntPtr ResourceLoadV5UserData;
+    public IntPtr ValidationMessageFormatCallbackV1;
+    public IntPtr ValidationMessageFormatUserDataV1;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+internal struct NativeValidationMessageArgumentV1
+{
+    public uint StructSize;
+    public uint Kind;
+    public IntPtr ValueUtf8;
+    public nuint ValueLength;
 }
 
 [StructLayout(LayoutKind.Sequential)]

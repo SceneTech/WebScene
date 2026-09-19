@@ -7306,7 +7306,8 @@ v8_dom_runtime::v8_dom_runtime(
     file_grant_create_file_request_sink_v2 file_grant_create_file_request_sink,
     file_grant_create_directory_request_sink_v2
         file_grant_create_directory_request_sink,
-    file_grant_remove_request_sink_v2 file_grant_remove_request_sink)
+    file_grant_remove_request_sink_v2 file_grant_remove_request_sink,
+    validation_message_formatter validation_message_formatter)
     : impl_(std::make_unique<implementation>(
         document,
         std::move(viewport_provider),
@@ -7329,7 +7330,8 @@ v8_dom_runtime::v8_dom_runtime(
         std::move(file_grant_release_request_sink),
         std::move(file_grant_create_file_request_sink),
         std::move(file_grant_create_directory_request_sink),
-        std::move(file_grant_remove_request_sink)))
+        std::move(file_grant_remove_request_sink),
+        std::move(validation_message_formatter)))
 {
 }
 

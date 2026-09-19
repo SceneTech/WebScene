@@ -8,6 +8,7 @@
 #include <chrono>
 #include <functional>
 #include <memory>
+#include <span>
 #include <stop_token>
 #include <string>
 #include <utility>
@@ -386,6 +387,12 @@ public:
         std::function<bool(const webscene_file_grant_release_request_v2&)>;
     using inspector_message_sink =
         std::function<void(uint64_t, std::string_view)>;
+    struct validation_message_argument final {
+        uint32_t kind{};
+        std::string value;
+    };
+    using validation_message_formatter = std::function<std::string(
+        uint32_t, std::span<const validation_message_argument>)>;
 
     v8_dom_runtime(
         native_document& document,
@@ -417,7 +424,8 @@ public:
             file_grant_create_file_request_sink = {},
         file_grant_create_directory_request_sink_v2
             file_grant_create_directory_request_sink = {},
-        file_grant_remove_request_sink_v2 file_grant_remove_request_sink = {});
+        file_grant_remove_request_sink_v2 file_grant_remove_request_sink = {},
+        validation_message_formatter validation_message_formatter = {});
     ~v8_dom_runtime();
 
     v8_dom_runtime(const v8_dom_runtime&) = delete;

@@ -6,6 +6,7 @@ using System.Globalization;
 using System.Numerics;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 #if !WEBSCENE_UNO
@@ -91,6 +92,9 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
     private readonly Dictionary<string, SKTypeface> s_typefaces = new(StringComparer.Ordinal);
     private readonly Dictionary<string, SharedSvgPictureLease> s_svgPictures =
         new(StringComparer.Ordinal);
+    private readonly Dictionary<string, RasterMaskCacheEntry> _rasterMaskImages =
+        new(StringComparer.Ordinal);
+    private long _rasterMaskDecodedBytes;
     private NativeTextShaping.WebTypefaceRegistry? _webTypefaces;
     private IDisposable? _webTypefaceReference;
     private float _presenterDeviceScaleFactor = 1f;
@@ -1216,6 +1220,11 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
         string ViewBox,
         string Markup);
 
+    private readonly record struct RasterMaskCacheEntry(
+        int Width,
+        int Height,
+        SKImage Image);
+
     private readonly record struct DomBackgroundResource(
         string Image,
         string Repeat,
@@ -1562,10 +1571,23 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
                     if (layer.Image.TrimStart().StartsWith("url(",
                             StringComparison.OrdinalIgnoreCase))
                     {
-                        DrawDomSvgBackground(canvas,
-                            new DomSvgBackgroundResource(layer.ViewBox, layer.Repeat,
-                                layer.Position, layer.Size, layer.Markup),
-                            command, default, blendMode);
+                        if (layer.Markup.StartsWith(
+                                "webscene-raster-v2\t", StringComparison.Ordinal))
+                        {
+                            if (!DrawDomRasterMask(
+                                    canvas, layer, command, default, blendMode))
+                            {
+                                canvas.Clear(SKColors.Transparent, SKBlendMode.Src);
+                                break;
+                            }
+                        }
+                        else
+                        {
+                            DrawDomSvgBackground(canvas,
+                                new DomSvgBackgroundResource(layer.ViewBox, layer.Repeat,
+                                    layer.Position, layer.Size, layer.Markup),
+                                command, default, blendMode);
+                        }
                     }
                     else
                     {
@@ -2923,6 +2945,199 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
         }
     }
 
+    internal bool DrawDomRasterMaskForTest(
+        SKCanvas canvas,
+        string markup,
+        string repeat,
+        string position,
+        string size,
+        string viewBox,
+        in SceneCommand command,
+        SKBlendMode blendMode = SKBlendMode.SrcOver)
+        => DrawDomRasterMask(
+            canvas,
+            new DomMaskLayer(
+                "url()", repeat, position, size,
+                "match-source", "add", viewBox, markup),
+            command,
+            default,
+            blendMode);
+
+    internal int RasterMaskCacheCountForTest => _rasterMaskImages.Count;
+    internal long RasterMaskDecodedBytesForTest => _rasterMaskDecodedBytes;
+
+    private bool DrawDomRasterMask(
+        SKCanvas canvas,
+        in DomMaskLayer layer,
+        in SceneCommand command,
+        in DomCornerRadii radii,
+        SKBlendMode blendMode)
+    {
+        if (!TryDecodeRasterMaskResource(layer.Markup,
+                out var width, out var height, out var identity, out var payload))
+        {
+            return false;
+        }
+        var viewBox = ParseSvgNumbers(layer.ViewBox);
+        if (viewBox.Length != 4 || viewBox[0] != 0 || viewBox[1] != 0
+            || viewBox[2] != width || viewBox[3] != height)
+        {
+            return false;
+        }
+        if (!_rasterMaskImages.TryGetValue(identity, out var cached))
+        {
+            if (!TryDecodeRasterMaskImage(
+                    payload, identity, width, height, out var image))
+            {
+                return false;
+            }
+            var decodedBytes = checked((long)width * height * 4);
+            if (_rasterMaskImages.Count >= 256
+                || _rasterMaskDecodedBytes > 64L * 1024 * 1024 - decodedBytes)
+            {
+                foreach (var entry in _rasterMaskImages.Values) entry.Image.Dispose();
+                _rasterMaskImages.Clear();
+                _rasterMaskDecodedBytes = 0;
+            }
+            cached = new RasterMaskCacheEntry(width, height, image);
+            _rasterMaskImages.Add(identity, cached);
+            _rasterMaskDecodedBytes += decodedBytes;
+        }
+        else if (cached.Width != width || cached.Height != height)
+        {
+            return false;
+        }
+
+        ResolveDomSvgBackgroundSize(
+            layer.Size, command.Width, command.Height, width, height,
+            out var tileWidth, out var tileHeight);
+        if (!float.IsFinite(tileWidth) || !float.IsFinite(tileHeight)
+            || tileWidth <= 0 || tileHeight <= 0)
+        {
+            return false;
+        }
+        ResolveDomBackgroundPosition(
+            layer.Position, command.Width, command.Height,
+            tileWidth, tileHeight, out var offsetX, out var offsetY);
+        ResolveDomBackgroundRepeat(layer.Repeat, out var repeatX, out var repeatY);
+        var firstX = command.X + offsetX;
+        var firstY = command.Y + offsetY;
+        if (repeatX)
+        {
+            while (firstX > command.X) firstX -= tileWidth;
+            while (firstX + tileWidth <= command.X) firstX += tileWidth;
+        }
+        if (repeatY)
+        {
+            while (firstY > command.Y) firstY -= tileHeight;
+            while (firstY + tileHeight <= command.Y) firstY += tileHeight;
+        }
+        var columns = repeatX
+            ? checked((int)MathF.Ceiling(command.Width / tileWidth)) + 2 : 1;
+        var rows = repeatY
+            ? checked((int)MathF.Ceiling(command.Height / tileHeight)) + 2 : 1;
+        if (columns > 4096 || rows > 4096 || (long)columns * rows > 4096)
+        {
+            return false;
+        }
+
+        using var paint = new SKPaint
+        {
+            BlendMode = blendMode,
+            FilterQuality = SKFilterQuality.Medium,
+            IsAntialias = false
+        };
+        var restore = canvas.Save();
+        try
+        {
+            ClipDomBackground(canvas, command, radii);
+            var endX = repeatX ? command.X + command.Width : firstX + tileWidth;
+            var endY = repeatY ? command.Y + command.Height : firstY + tileHeight;
+            for (var y = firstY; y < endY; y += tileHeight)
+            {
+                for (var x = firstX; x < endX; x += tileWidth)
+                {
+                    canvas.DrawImage(cached.Image,
+                        new SKRect(x, y, x + tileWidth, y + tileHeight), paint);
+                    if (!repeatX) break;
+                }
+                if (!repeatY) break;
+            }
+        }
+        finally
+        {
+            canvas.RestoreToCount(restore);
+        }
+        return true;
+    }
+
+    private static bool TryDecodeRasterMaskResource(
+        string resource,
+        out int width,
+        out int height,
+        out string identity,
+        out string payload)
+    {
+        const string prefix = "webscene-raster-v2\t";
+        width = 0;
+        height = 0;
+        identity = string.Empty;
+        payload = string.Empty;
+        if (!resource.StartsWith(prefix, StringComparison.Ordinal)) return false;
+        var fields = resource[prefix.Length..].Split('\t', 4);
+        if (fields.Length != 4
+            || !int.TryParse(fields[0], NumberStyles.None,
+                CultureInfo.InvariantCulture, out width)
+            || !int.TryParse(fields[1], NumberStyles.None,
+                CultureInfo.InvariantCulture, out height)
+            || width is < 1 or > 16_384 || height is < 1 or > 16_384
+            || (long)width * height > 16 * 1024 * 1024
+            || fields[2].Length != 64
+            || fields[2].Any(character => character is not (>= '0' and <= '9')
+                and not (>= 'a' and <= 'f')))
+        {
+            return false;
+        }
+        identity = fields[2];
+        payload = fields[3];
+        return true;
+    }
+
+    private static bool TryDecodeRasterMaskImage(
+        string payload,
+        string identity,
+        int width,
+        int height,
+        out SKImage image)
+    {
+        image = null!;
+        byte[] encoded;
+        try
+        {
+            encoded = Convert.FromBase64String(payload);
+        }
+        catch (FormatException)
+        {
+            return false;
+        }
+        if (encoded.Length == 0 || encoded.Length > 2_621_440
+            || !Convert.ToHexString(SHA256.HashData(encoded)).Equals(
+                identity, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+        using var data = SKData.CreateCopy(encoded);
+        using var codec = SKCodec.Create(data);
+        if (codec is null
+            || codec.EncodedFormat is not (SKEncodedImageFormat.Png or SKEncodedImageFormat.Webp)
+            || codec.Info.Width != width || codec.Info.Height != height)
+        {
+            return false;
+        }
+        image = SKImage.FromEncodedData(data)!;
+        return image is not null;
+    }
+
     private static bool TryDecodeDomSvgTiledResource(
         string value,
         string prefix,
@@ -2954,6 +3169,20 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
         in DomCornerRadii radii,
         SKBlendMode blendMode = SKBlendMode.SrcOver)
     {
+        if (resource.Markup.StartsWith(
+                "webscene-raster-v2\t", StringComparison.Ordinal))
+        {
+            var layer = new DomMaskLayer(
+                "url()", resource.Repeat, resource.Position, resource.Size,
+                "match-source", "add", resource.ViewBox, resource.Markup);
+            if (!DrawDomRasterMask(canvas, layer, command, radii, blendMode)
+                && blendMode == SKBlendMode.DstIn)
+            {
+                ClearDomMaskRect(canvas, command.X, command.Y,
+                    command.Width, command.Height);
+            }
+            return;
+        }
         var viewBox = ParseSvgNumbers(resource.ViewBox);
         if (viewBox.Length < 4
             || viewBox[2] <= 0
@@ -4567,6 +4796,9 @@ internal sealed unsafe partial class NativeCanvasSceneRenderer
         s_typefaces.Clear();
         foreach (var svg in s_svgPictures.Values) svg.Dispose();
         s_svgPictures.Clear();
+        foreach (var raster in _rasterMaskImages.Values) raster.Image.Dispose();
+        _rasterMaskImages.Clear();
+        _rasterMaskDecodedBytes = 0;
         s_strings.Clear();
         _checkpointAttempts.Clear();
 #if !WEBSCENE_UNO

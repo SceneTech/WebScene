@@ -82,6 +82,12 @@ class _WebSceneViewState extends State<WebSceneView>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _projector.onNeedsSceneCheckpoint = () {
+      final engine = _engine;
+      if (mounted && engine != null && !engine.isDisposed) {
+        engine.requestCheckpoint();
+      }
+    };
     _controller = widget.controller ?? WebSceneController();
     unawaited(_start());
   }
@@ -407,7 +413,9 @@ class _WebSceneViewState extends State<WebSceneView>
     _stopEngine();
     _controller.setRuntimeState(WebSceneRuntimeState.disposed);
     _focusNode.dispose();
-    _projector.dispose();
+    _projector
+      ..onNeedsSceneCheckpoint = null
+      ..dispose();
     super.dispose();
   }
 

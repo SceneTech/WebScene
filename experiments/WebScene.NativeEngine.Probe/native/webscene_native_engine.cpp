@@ -384,6 +384,13 @@ struct webscene_engine final {
 #include "webscene_native_engine_interop_api.inc"
 #include "webscene_native_engine_diagnostics.inc"
 #include "webscene_native_engine_metrics.inc"
+    std::shared_ptr<const webscene_native::semantic_snapshot_data_v1>
+    acquire_semantic_snapshot_v1() {
+        semantic_snapshot_requested_.store(true, std::memory_order_release);
+        signal_worker();
+        return std::atomic_load_explicit(
+            &latest_semantic_snapshot_, std::memory_order_acquire);
+    }
     void set_work_available_callback(webscene_work_available_callback_v1 callback, void* data) {
         std::lock_guard lock(host_observer_mutex_);
         host_observer_ = callback;
@@ -702,6 +709,12 @@ private:
     std::atomic<uint64_t> interop_request_oversize_allocations_{0};
     std::atomic<uint64_t> next_interop_operation_id_{1U};
     std::shared_ptr<const scene> latest_{};
+    std::shared_ptr<const webscene_native::semantic_snapshot_data_v1>
+        latest_semantic_snapshot_{};
+    std::mutex semantic_snapshot_mutex_;
+    std::atomic<bool> semantic_snapshot_requested_{false};
+    std::atomic<uint64_t> semantic_document_epoch_{1U};
+    uint64_t next_semantic_snapshot_generation_{1U};
     std::atomic<bool> ordered_scene_consumer_{false};
     std::atomic<bool> producer_gpu_wait_consumer_{false};
 #if defined(WEBSCENE_NATIVE_ENGINE_ENABLE_GRAPHICS)
@@ -1862,6 +1875,59 @@ uint8_t webscene_engine_set_accessibility_preferences_v1(
         && engine->set_accessibility_preferences(preference_flags)
         ? 1U
         : 0U;
+}
+
+namespace {
+struct semantic_snapshot_lease_v1 final {
+    std::shared_ptr<const webscene_native::semantic_snapshot_data_v1> value;
+    webscene_semantic_snapshot_view_v1 view{};
+
+    explicit semantic_snapshot_lease_v1(
+        std::shared_ptr<const webscene_native::semantic_snapshot_data_v1> snapshot)
+        : value(std::move(snapshot))
+    {
+        view.struct_size = sizeof(view);
+        view.version = 1U;
+        view.snapshot_generation = value->snapshot_generation;
+        view.top_document_generation = value->top_document_generation;
+        view.layout_generation = value->layout_generation;
+        view.flags = value->flags;
+        view.focused_node_index = value->focused_node_index;
+        view.documents = value->documents.empty() ? nullptr : value->documents.data();
+        view.document_count = static_cast<uint32_t>(value->documents.size());
+        view.nodes = value->nodes.empty() ? nullptr : value->nodes.data();
+        view.node_count = static_cast<uint32_t>(value->nodes.size());
+        view.relationships = value->relationships.empty()
+            ? nullptr : value->relationships.data();
+        view.relationship_count = static_cast<uint32_t>(value->relationships.size());
+        view.string_bytes = value->strings.empty() ? nullptr : value->strings.data();
+        view.string_byte_count = static_cast<uint32_t>(value->strings.size());
+        view.lease_token = this;
+    }
+};
+} // namespace
+
+const webscene_semantic_snapshot_view_v1*
+webscene_engine_acquire_semantic_snapshot_v1(webscene_engine* engine)
+{
+    if (engine == nullptr) return nullptr;
+    try {
+        auto value = engine->acquire_semantic_snapshot_v1();
+        if (!value) return nullptr;
+        auto* lease = new semantic_snapshot_lease_v1(std::move(value));
+        return &lease->view;
+    } catch (...) {
+        return nullptr;
+    }
+}
+
+void webscene_semantic_snapshot_release_v1(
+    const webscene_semantic_snapshot_view_v1* snapshot)
+{
+    if (snapshot == nullptr || snapshot->version != 1U
+        || snapshot->struct_size < sizeof(*snapshot)
+        || snapshot->lease_token == nullptr) return;
+    delete static_cast<const semantic_snapshot_lease_v1*>(snapshot->lease_token);
 }
 
 namespace {

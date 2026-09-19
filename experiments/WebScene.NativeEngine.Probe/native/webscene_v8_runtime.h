@@ -3,6 +3,7 @@
 #include "webscene_native_engine.h"
 #include "webscene_file_panel_v2.hpp"
 #include "webscene_compiled_document.h"
+#include "webscene_semantic_snapshot.h"
 
 #include <chrono>
 #include <functional>
@@ -463,6 +464,8 @@ public:
     void refresh_pointer_cursor_after_layout();
     bool dispatch_transition_events();
     uint32_t current_cursor_kind() const noexcept;
+    std::shared_ptr<const semantic_snapshot_data_v1> build_semantic_snapshot_v1(
+        uint64_t snapshot_generation);
     void notify_low_memory();
     void signal_animation_frame(double timestamp_ms);
     bool advance_discrete_wheel_scroll(double timestamp_ms);

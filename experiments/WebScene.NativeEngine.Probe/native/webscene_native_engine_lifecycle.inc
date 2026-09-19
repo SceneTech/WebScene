@@ -372,6 +372,14 @@
 #if !defined(WEBSCENE_NATIVE_ENGINE_WITH_V8)
         return false;
 #else
+        {
+            std::lock_guard semantic_lock(semantic_snapshot_mutex_);
+            semantic_document_epoch_.fetch_add(1U, std::memory_order_acq_rel);
+            std::atomic_store_explicit(
+                &latest_semantic_snapshot_,
+                std::shared_ptr<const webscene_native::semantic_snapshot_data_v1>{},
+                std::memory_order_release);
+        }
         low_memory_requested_.store(true, std::memory_order_release);
         signal_worker();
         return true;
@@ -850,6 +858,17 @@
             set_last_error("Native document queue is full");
             return false;
         }
+        // A host must never keep observing semantic peers from the document
+        // being replaced while the worker admits the next navigation.
+        {
+            std::lock_guard semantic_lock(semantic_snapshot_mutex_);
+            semantic_document_epoch_.fetch_add(1U, std::memory_order_acq_rel);
+            std::atomic_store_explicit(
+                &latest_semantic_snapshot_,
+                std::shared_ptr<const webscene_native::semantic_snapshot_data_v1>{},
+                std::memory_order_release);
+        }
+        semantic_snapshot_requested_.store(true, std::memory_order_release);
         script_work_.emplace_back(url_request{
             std::string(value, length),
             std::move(scripts), viewport, std::move(compiled_name), std::move(compiled_package)});

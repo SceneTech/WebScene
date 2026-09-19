@@ -12,6 +12,7 @@ import 'package:path_drawing/path_drawing.dart';
 import 'package:vector_math/vector_math_64.dart';
 
 import 'native_bindings.dart';
+import 'svg_mask_resource.dart';
 
 const int _sceneCheckpoint = 1;
 const int _sceneDomReplacement = 2;
@@ -51,7 +52,7 @@ final class SceneApplyResult {
 final class WebSceneSceneProjector extends ChangeNotifier {
   final Map<int, _RetainedLayer> _layers = {};
   final Map<String, _SvgPictureEntry> _svgPictures = {};
-  final Map<String, _SvgMaskGeometry?> _svgMaskGeometry = {};
+  final SvgMaskResourceCache _svgMaskResources = SvgMaskResourceCache();
   final Map<String, _RasterMaskEntry> _rasterMaskImages = {};
   int _rasterMaskDecodedBytes = 0;
   final List<_DomSvgPlacement> _domSvgPlacements = [];
@@ -88,6 +89,24 @@ final class WebSceneSceneProjector extends ChangeNotifier {
 
   @visibleForTesting
   int get rasterMaskDecodedBytes => _rasterMaskDecodedBytes;
+
+  @visibleForTesting
+  int get cachedSvgMaskCount => _svgMaskResources.resourceCount;
+
+  @visibleForTesting
+  int get failedSvgMaskCount => _svgMaskResources.failedEntryCount;
+
+  @visibleForTesting
+  int get svgMaskLogicalBytes => _svgMaskResources.logicalBytes;
+
+  @visibleForTesting
+  int get svgMaskCacheHitCount => _svgMaskResources.cacheHits;
+
+  @visibleForTesting
+  int get svgMaskParseCount => _svgMaskResources.parseCount;
+
+  @visibleForTesting
+  int get svgMaskParseMicroseconds => _svgMaskResources.parseMicroseconds;
 
   @visibleForTesting
   Future<void> waitForPendingSvgLoads() => Future.wait(
@@ -239,7 +258,7 @@ final class WebSceneSceneProjector extends ChangeNotifier {
     _overlay = null;
     _domSvgPlacements.clear();
     _domBackdropEffects.clear();
-    _svgMaskGeometry.clear();
+    _svgMaskResources.clear();
     for (final layer in _layers.values) {
       layer.dispose();
     }
@@ -263,6 +282,7 @@ final class WebSceneSceneProjector extends ChangeNotifier {
     }
     _rasterMaskImages.clear();
     _rasterMaskDecodedBytes = 0;
+    _svgMaskResources.clear();
     super.dispose();
   }
 
@@ -1272,6 +1292,9 @@ final class WebSceneSceneProjector extends ChangeNotifier {
       tileWidth,
       tileHeight,
     );
+    if (!resolvedPosition.$1.isFinite || !resolvedPosition.$2.isFinite) {
+      return false;
+    }
     var firstX = command.x + resolvedPosition.$1;
     var firstY = command.y + resolvedPosition.$2;
     final repeatX = layer.repeat != 'no-repeat' && layer.repeat != 'repeat-y';
@@ -1578,8 +1601,9 @@ final class WebSceneSceneProjector extends ChangeNotifier {
     );
     var firstX = command.x + resolvedPosition.$1;
     var firstY = command.y + resolvedPosition.$2;
-    final repeatX = repeat != 'no-repeat' && repeat != 'repeat-y';
-    final repeatY = repeat != 'no-repeat' && repeat != 'repeat-x';
+    final resolvedRepeat = _resolveMaskRepeat(repeat);
+    final repeatX = resolvedRepeat.$1;
+    final repeatY = resolvedRepeat.$2;
     if (repeatX) {
       while (firstX > command.x) firstX -= tileWidth;
       while (firstX + tileWidth <= command.x) firstX += tileWidth;
@@ -1723,21 +1747,18 @@ final class WebSceneSceneProjector extends ChangeNotifier {
       _clearDomMaskBounds(canvas, command);
       return;
     }
-    final markup = fields.sublist(4).join('\t');
-    final geometry = _svgMaskGeometry.putIfAbsent(
-      markup,
-      () => _parseSvgMaskGeometry(markup),
-    );
-    if (geometry == null) {
-      _clearDomMaskBounds(canvas, command);
-      return;
-    }
     final viewBox = ui.Rect.fromLTWH(
       viewBoxValues[0],
       viewBoxValues[1],
       viewBoxValues[2],
       viewBoxValues[3],
     );
+    final markup = fields.sublist(4).join('\t');
+    final geometry = _svgMaskResources.acquire(markup, viewBox);
+    if (geometry == null) {
+      _clearDomMaskBounds(canvas, command);
+      return;
+    }
     final repeat = fields[1].trim().toLowerCase();
     final position = fields[2].trim();
     final size = fields[3].trim();
@@ -1750,7 +1771,8 @@ final class WebSceneSceneProjector extends ChangeNotifier {
     );
     final tileWidth = resolvedSize.$1;
     final tileHeight = resolvedSize.$2;
-    if (tileWidth <= 0 || tileHeight <= 0) {
+    if (!tileWidth.isFinite || !tileHeight.isFinite ||
+        tileWidth <= 0 || tileHeight <= 0) {
       _clearDomMaskBounds(canvas, command);
       return;
     }
@@ -1761,10 +1783,15 @@ final class WebSceneSceneProjector extends ChangeNotifier {
       tileWidth,
       tileHeight,
     );
+    if (!resolvedPosition.$1.isFinite || !resolvedPosition.$2.isFinite) {
+      _clearDomMaskBounds(canvas, command);
+      return;
+    }
     var firstX = command.x + resolvedPosition.$1;
     var firstY = command.y + resolvedPosition.$2;
-    final repeatX = repeat != 'no-repeat' && repeat != 'repeat-y';
-    final repeatY = repeat != 'no-repeat' && repeat != 'repeat-x';
+    final resolvedRepeat = _resolveMaskRepeat(repeat);
+    final repeatX = resolvedRepeat.$1;
+    final repeatY = resolvedRepeat.$2;
     if (repeatX) {
       while (firstX > command.x) firstX -= tileWidth;
       while (firstX + tileWidth <= command.x) firstX += tileWidth;
@@ -1772,6 +1799,12 @@ final class WebSceneSceneProjector extends ChangeNotifier {
     if (repeatY) {
       while (firstY > command.y) firstY -= tileHeight;
       while (firstY + tileHeight <= command.y) firstY += tileHeight;
+    }
+    final columns = repeatX ? (command.width / tileWidth).ceil() + 2 : 1;
+    final rows = repeatY ? (command.height / tileHeight).ceil() + 2 : 1;
+    if (columns > 4096 || rows > 4096 || columns * rows > 4096) {
+      _clearDomMaskBounds(canvas, command);
+      return;
     }
     final bounds = ui.Rect.fromLTWH(
       command.x,
@@ -1820,175 +1853,58 @@ final class WebSceneSceneProjector extends ChangeNotifier {
 
   static void _drawSvgMaskTile(
     ui.Canvas canvas,
-    _SvgMaskGeometry geometry,
+    SvgMaskResource geometry,
     ui.Rect viewBox,
     ui.Rect tile,
   ) {
-    final scale = math.min(
-      tile.width / viewBox.width,
-      tile.height / viewBox.height,
+    final mapping = _resolveSvgViewportTransform(
+      tile.width,
+      tile.height,
+      viewBox.width,
+      viewBox.height,
+      geometry.preserveAspectRatio,
     );
-    final renderedWidth = viewBox.width * scale;
-    final renderedHeight = viewBox.height * scale;
-    final offsetX = tile.left + (tile.width - renderedWidth) / 2;
-    final offsetY = tile.top + (tile.height - renderedHeight) / 2;
     canvas.save();
     try {
       canvas.clipRect(tile, doAntiAlias: false);
       canvas
-        ..translate(offsetX, offsetY)
-        ..scale(scale, scale)
-        ..translate(-viewBox.left, -viewBox.top);
-      for (final shape in geometry.shapes) {
-        canvas.drawPath(
-          shape.$1,
-          ui.Paint()
-            ..isAntiAlias = true
-            ..color = ui.Color.fromARGB(
-              (shape.$2.clamp(0.0, 1.0) * 255).round(),
-              255,
-              255,
-              255,
-            ),
-        );
-      }
+        ..translate(tile.left + mapping.$3, tile.top + mapping.$4)
+        ..scale(mapping.$1, mapping.$2)
+        ..translate(-viewBox.left, -viewBox.top)
+        ..drawPicture(geometry.picture);
     } finally {
       canvas.restore();
     }
   }
 
-  static _SvgMaskGeometry? _parseSvgMaskGeometry(String markup) {
-    if (RegExp(
-      r'<(?:defs|g|use|image|text|line|polyline)\b',
-      caseSensitive: false,
-    ).hasMatch(markup) || RegExp(
-      r'<(?:g|path|rect|circle|ellipse|polygon)\b[^>]*\btransform\s*=',
-      caseSensitive: false,
-    ).hasMatch(markup)) {
-      return null;
-    }
-    final hiddenClasses = <String>{};
-    for (final match in RegExp(
-      r'\.([_a-zA-Z][_a-zA-Z0-9-]*)\s*\{[^}]*\bfill\s*:\s*none\b[^}]*\}',
-      caseSensitive: false,
-    ).allMatches(markup)) {
-      hiddenClasses.add(match.group(1)!);
-    }
-    String? attribute(String source, String name) {
-      final match = RegExp(
-        "${RegExp.escape(name)}\\s*=\\s*([\"'])(.*?)\\1",
-        caseSensitive: false,
-        dotAll: true,
-      ).firstMatch(source);
-      return match?.group(2);
-    }
-    String? declaration(String source, String name) {
-      final style = attribute(source, 'style');
-      if (style == null) return null;
-      return RegExp(
-        '(?:^|;)\\s*${RegExp.escape(name)}\\s*:\\s*([^;]+)',
-        caseSensitive: false,
-      ).firstMatch(style)?.group(1)?.trim();
-    }
-    String? property(String source, String name) =>
-        attribute(source, name) ?? declaration(source, name);
-    double number(String? value, [double fallback = 0]) =>
-        value == null ? fallback : double.tryParse(value) ?? fallback;
-    final root = RegExp(
-      r'<svg\b([^>]*)>',
-      caseSensitive: false,
-      dotAll: true,
-    ).firstMatch(markup);
-    final rootFill = root == null
-        ? null
-        : property(root.group(1)!, 'fill')?.trim().toLowerCase();
-    bool hidden(String attributes) {
-      final fill = property(attributes, 'fill')?.trim().toLowerCase();
-      if (fill == 'none' || (fill == null && rootFill == 'none')) {
-        return true;
-      }
-      final classes = (attribute(attributes, 'class') ?? '').split(RegExp(r'\s+'));
-      return classes.any(hiddenClasses.contains);
-    }
-    double alpha(String attributes) {
-      final value = property(attributes, 'fill-opacity')
-          ?? property(attributes, 'opacity');
-      if (value == null) return 1;
-      final normalized = value.trim();
-      if (normalized.endsWith('%')) {
-        return (double.tryParse(
-          normalized.substring(0, normalized.length - 1),
-        ) ?? 100) / 100;
-      }
-      return double.tryParse(normalized) ?? 1;
-    }
-
-    final shapes = <(ui.Path, double)>[];
-    final elements = RegExp(
-      r'<(path|rect|circle|ellipse|polygon)\b([^>]*)>',
-      caseSensitive: false,
-      dotAll: true,
-    ).allMatches(markup);
-    try {
-      for (final element in elements) {
-        final tag = element.group(1)!.toLowerCase();
-        final attributes = element.group(2)!;
-        if (hidden(attributes)) continue;
-        if (attribute(attributes, 'transform') != null) return null;
-        final stroke = property(attributes, 'stroke')?.trim().toLowerCase();
-        if (stroke != null && stroke != 'none') return null;
-        final fillRule = property(attributes, 'fill-rule')?.trim().toLowerCase();
-        if (fillRule != null && fillRule != 'nonzero') return null;
-        final path = ui.Path();
-        switch (tag) {
-          case 'path':
-            final data = attribute(attributes, 'd');
-            if (data == null || data.trim().isEmpty) continue;
-            path.addPath(parseSvgPathData(data), ui.Offset.zero);
-          case 'rect':
-            final rect = ui.Rect.fromLTWH(
-              number(attribute(attributes, 'x')),
-              number(attribute(attributes, 'y')),
-              number(attribute(attributes, 'width')),
-              number(attribute(attributes, 'height')),
-            );
-            final rx = number(attribute(attributes, 'rx'));
-            final ry = number(attribute(attributes, 'ry'), rx);
-            if (rx > 0 || ry > 0) {
-              path.addRRect(ui.RRect.fromRectXY(rect, rx, ry));
-            } else {
-              path.addRect(rect);
-            }
-          case 'circle':
-            final radius = number(attribute(attributes, 'r'));
-            path.addOval(ui.Rect.fromCircle(
-              center: ui.Offset(
-                number(attribute(attributes, 'cx')),
-                number(attribute(attributes, 'cy')),
-              ),
-              radius: radius,
-            ));
-          case 'ellipse':
-            final cx = number(attribute(attributes, 'cx'));
-            final cy = number(attribute(attributes, 'cy'));
-            final rx = number(attribute(attributes, 'rx'));
-            final ry = number(attribute(attributes, 'ry'));
-            path.addOval(ui.Rect.fromLTRB(cx - rx, cy - ry, cx + rx, cy + ry));
-          case 'polygon':
-            final points = _numbers(attribute(attributes, 'points') ?? '');
-            if (points.length < 4 || points.length.isOdd) continue;
-            path.moveTo(points[0], points[1]);
-            for (var index = 2; index < points.length; index += 2) {
-              path.lineTo(points[index], points[index + 1]);
-            }
-            path.close();
-        }
-        shapes.add((path, alpha(attributes)));
-      }
-    } catch (_) {
-      return null;
-    }
-    return shapes.isEmpty ? null : _SvgMaskGeometry(shapes);
+  static (double, double, double, double) _resolveSvgViewportTransform(
+    double viewportWidth,
+    double viewportHeight,
+    double viewBoxWidth,
+    double viewBoxHeight,
+    String preserveAspectRatio,
+  ) {
+    final scaleX = viewportWidth / viewBoxWidth;
+    final scaleY = viewportHeight / viewBoxHeight;
+    final tokens = preserveAspectRatio
+        .split(RegExp(r'\s+'))
+        .where((token) => token.isNotEmpty)
+        .toList();
+    final index = tokens.isNotEmpty && tokens.first.toLowerCase() == 'defer' ? 1 : 0;
+    final alignment = index < tokens.length ? tokens[index].toLowerCase() : 'xmidymid';
+    if (alignment == 'none') return (scaleX, scaleY, 0, 0);
+    final slice = index + 1 < tokens.length &&
+        tokens[index + 1].toLowerCase() == 'slice';
+    final scale = slice ? math.max(scaleX, scaleY) : math.min(scaleX, scaleY);
+    final remainingWidth = viewportWidth - viewBoxWidth * scale;
+    final remainingHeight = viewportHeight - viewBoxHeight * scale;
+    final offsetX = alignment.startsWith('xmax')
+        ? remainingWidth
+        : alignment.startsWith('xmid') ? remainingWidth / 2 : 0.0;
+    final offsetY = alignment.endsWith('ymax')
+        ? remainingHeight
+        : alignment.endsWith('ymid') ? remainingHeight / 2 : 0.0;
+    return (scale, scale, offsetX, offsetY);
   }
 
   static (double, double) _resolveSvgMaskSize(
@@ -2013,14 +1929,7 @@ final class WebSceneSceneProjector extends ChangeNotifier {
     }
     double? resolve(String token, double available) {
       if (token == 'auto') return null;
-      if (token.endsWith('%')) {
-        final percentage = double.tryParse(token.substring(0, token.length - 1));
-        return percentage == null ? null : available * percentage / 100;
-      }
-      if (token.endsWith('px')) {
-        return double.tryParse(token.substring(0, token.length - 2));
-      }
-      return double.tryParse(token);
+      return _resolveMaskLength(token, available);
     }
     final resolvedWidth = resolve(first, width);
     final resolvedHeight = resolve(second, height);
@@ -2334,24 +2243,95 @@ final class WebSceneSceneProjector extends ChangeNotifier {
     double tileWidth,
     double tileHeight,
   ) {
-    final tokens = _splitCssTopLevel(value.trim(), ' ')
+    final tokens = _splitCssTopLevel(value.trim().toLowerCase(), ' ')
         .where((token) => token.isNotEmpty)
         .toList();
-    final first = tokens.isEmpty ? '0%' : tokens[0];
-    final second = tokens.length > 1 ? tokens[1] : '0%';
-    double resolve(String token, double remaining) {
-      if (token == 'center') return remaining / 2;
-      if (token == 'right' || token == 'bottom') return remaining;
-      if (token == 'left' || token == 'top') return 0;
-      if (token.endsWith('%')) {
-        return remaining * (double.tryParse(token.substring(0, token.length - 1)) ?? 0) / 100;
+    if (tokens.isEmpty) return (0, 0);
+    String horizontal = 'center';
+    String vertical = 'center';
+    String? horizontalOffset;
+    String? verticalOffset;
+    var horizontalSet = false;
+    var verticalSet = false;
+    for (var index = 0; index < tokens.length; index++) {
+      final token = tokens[index];
+      final hasOffset = index + 1 < tokens.length &&
+          !const {'left', 'right', 'top', 'bottom', 'center'}
+              .contains(tokens[index + 1]);
+      if (token == 'left' || token == 'right') {
+        if (horizontalSet) return (double.nan, double.nan);
+        horizontal = token;
+        horizontalSet = true;
+        if (hasOffset) horizontalOffset = tokens[++index];
+      } else if (token == 'top' || token == 'bottom') {
+        if (verticalSet) return (double.nan, double.nan);
+        vertical = token;
+        verticalSet = true;
+        if (hasOffset) verticalOffset = tokens[++index];
+      } else if (token == 'center') {
+        if (!horizontalSet) {
+          horizontalSet = true;
+        } else if (!verticalSet) {
+          verticalSet = true;
+        } else {
+          return (double.nan, double.nan);
+        }
+      } else if (!horizontalSet) {
+        horizontal = token;
+        horizontalSet = true;
+      } else if (!verticalSet) {
+        vertical = token;
+        verticalSet = true;
+      } else {
+        return (double.nan, double.nan);
       }
-      if (token.endsWith('px')) {
-        return double.tryParse(token.substring(0, token.length - 2)) ?? 0;
-      }
-      return 0;
     }
-    return (resolve(first, width - tileWidth), resolve(second, height - tileHeight));
+    double resolve(String anchor, String? offset, double remaining) {
+      if (anchor == 'center') return remaining / 2;
+      final amount = offset == null
+          ? 0.0
+          : _resolveMaskLength(offset, remaining) ?? double.nan;
+      if (anchor == 'right' || anchor == 'bottom') return remaining - amount;
+      if (anchor == 'left' || anchor == 'top') return amount;
+      return _resolveMaskLength(anchor, remaining) ?? double.nan;
+    }
+    return (
+      resolve(horizontal, horizontalOffset, width - tileWidth),
+      resolve(vertical, verticalOffset, height - tileHeight),
+    );
+  }
+
+  static (bool, bool) _resolveMaskRepeat(String value) {
+    final tokens = value.toLowerCase().split(RegExp(r'\s+'))
+        .where((token) => token.isNotEmpty)
+        .toList();
+    if (tokens.length == 1 && tokens[0] == 'repeat-x') return (true, false);
+    if (tokens.length == 1 && tokens[0] == 'repeat-y') return (false, true);
+    final horizontal = tokens.isEmpty ? 'repeat' : tokens[0];
+    final vertical = tokens.length > 1 ? tokens[1] : horizontal;
+    return (horizontal != 'no-repeat', vertical != 'no-repeat');
+  }
+
+  static double? _resolveMaskLength(String value, double available) {
+    final token = value.trim().toLowerCase();
+    final calc = RegExp(
+      r'^calc\(\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+))%\s*([-+])\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+))px\s*\)$',
+    ).firstMatch(token);
+    if (calc != null) {
+      final percentage = double.parse(calc.group(1)!);
+      final pixels = double.parse(calc.group(3)!);
+      return available * percentage / 100 +
+          (calc.group(2) == '-' ? -pixels : pixels);
+    }
+    if (token.endsWith('%')) {
+      final percentage = double.tryParse(token.substring(0, token.length - 1));
+      return percentage == null ? null : available * percentage / 100;
+    }
+    final source = token.endsWith('px')
+        ? token.substring(0, token.length - 2)
+        : token;
+    final parsed = double.tryParse(source);
+    return parsed != null && parsed.isFinite ? parsed : null;
   }
 
   static ui.Paint _domGroupPaint(WebSceneSceneCommand command) {
@@ -2625,12 +2605,6 @@ final class _RasterMaskEntry {
   Future<void>? pending;
   ui.Image? image;
   Object? error;
-}
-
-final class _SvgMaskGeometry {
-  const _SvgMaskGeometry(this.shapes);
-
-  final List<(ui.Path, double)> shapes;
 }
 
 final class _RetainedLayer {

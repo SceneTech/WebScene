@@ -43,9 +43,9 @@ unrelated selector rules and radios outside the group are not cascade targets.
 
 ## Deferred slices
 
-- Mutating `name`, `type`, `form`, `required`, a form owner's `id`, or DOM
-  membership can change multiple old/new radio groups. Those structural and
-  owner transitions need a separate old/new-group invalidation path.
+- Dynamic `name`, `type`, `form`, `required`, form-owner `id`, and DOM
+  membership transitions are covered by the companion
+  `css-radio-group-mutation-invalidation-20260919.md` source contract.
 - Checked content-attribute mutation after parsing still uses the generic
   attribute transition. The live `checked` IDL property and activation paths
   are covered here; content-default/reset interactions across a group remain a

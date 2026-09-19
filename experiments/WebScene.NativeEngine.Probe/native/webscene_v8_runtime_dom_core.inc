@@ -4237,6 +4237,11 @@
         const auto old_value = state->owner->attributes.contains(state->name)
             ? std::optional<std::string>(state->owner->attributes.at(state->name))
             : std::nullopt;
+        const auto radio_group_state=state->namespace_uri.empty()
+            && self->radio_group_attribute_may_change_membership(
+                *state->owner,state->name)
+            ? self->capture_radio_group_selector_state()
+            : std::vector<radio_group_selector_state>{};
         state->owner->attributes[state->name] = text;
         if (state->namespace_uri.empty()
             && state->owner->tag == "base" && state->name == "href") {
@@ -4246,11 +4251,11 @@
             reset_canvas_backing_store(*self, *state->owner);
         if (state->name == "id") state->owner->id_attribute = text;
         else if (state->name == "class") state->owner->class_name = text;
-        if (state->name == "class") {
-            self->recascade_dynamic_state_subject(*state->owner, "Attr.value-class");
-        } else {
-            self->document.mark_dirty();
-        }
+        if(state->namespace_uri.empty() && self->attribute_requires_recascade(state->name))
+            self->recascade_attribute_selector_transition(
+                *state->owner,state->name,old_value,text);
+        else self->document.mark_dirty();
+        self->recascade_radio_group_selector_state_changes(radio_group_state);
         self->notify_custom_element_attribute(
             *state->owner, state->name, old_value, text,
             state->namespace_uri.empty()
@@ -4313,6 +4318,11 @@
         const auto old_value = owner->attributes.contains(state->name)
             ? std::optional<std::string>(owner->attributes.at(state->name))
             : std::nullopt;
+        const auto radio_group_state=state->namespace_uri.empty()
+            && self->radio_group_attribute_may_change_membership(
+                *owner,state->name)
+            ? self->capture_radio_group_selector_state()
+            : std::vector<radio_group_selector_state>{};
         if (state->namespace_uri.empty()) {
             owner->attributes[state->name] = value;
         } else {
@@ -4332,11 +4342,11 @@
             reset_canvas_backing_store(*self, *owner);
         if (state->name == "id") owner->id_attribute = value;
         else if (state->name == "class") owner->class_name = value;
-        if (state->name == "class") {
-            self->recascade_dynamic_state_subject(*owner, "setAttributeNode-class");
-        } else {
-            self->document.mark_dirty();
-        }
+        if(state->namespace_uri.empty() && self->attribute_requires_recascade(state->name))
+            self->recascade_attribute_selector_transition(
+                *owner,state->name,old_value,value);
+        else self->document.mark_dirty();
+        self->recascade_radio_group_selector_state_changes(radio_group_state);
         self->notify_custom_element_attribute(
             *owner, state->name, old_value, value,
             state->namespace_uri.empty()
@@ -4366,6 +4376,11 @@
             return;
         }
         const auto old_value = owner->attributes.at(state->name);
+        const auto radio_group_state=state->namespace_uri.empty()
+            && self->radio_group_attribute_may_change_membership(
+                *owner,state->name)
+            ? self->capture_radio_group_selector_state()
+            : std::vector<radio_group_selector_state>{};
         owner->attributes.erase(state->name);
         if (state->namespace_uri.empty()
             && owner->tag == "base" && state->name == "href") {
@@ -4378,11 +4393,11 @@
         state->value = old_value;
         state->owner = nullptr;
         self->attached_attributes.erase(attribute_attachment_key(*owner, state->name));
-        if (state->name == "class") {
-            self->recascade_dynamic_state_subject(*owner, "removeAttributeNode-class");
-        } else {
-            self->document.mark_dirty();
-        }
+        if(state->namespace_uri.empty() && self->attribute_requires_recascade(state->name))
+            self->recascade_attribute_selector_transition(
+                *owner,state->name,old_value,std::nullopt);
+        else self->document.mark_dirty();
+        self->recascade_radio_group_selector_state_changes(radio_group_state);
         self->notify_custom_element_attribute(
             *owner, state->name, old_value, std::nullopt,
             state->namespace_uri.empty()
@@ -6651,6 +6666,7 @@
                 js_string(info.GetIsolate(), "appendChild requires a native node")));
             return;
         }
+        const auto radio_group_state=self->capture_radio_group_selector_state();
         if (parent != nullptr && child != nullptr && child->tag == "#document-fragment") {
             if (std::any_of(
                     child->children.begin(),
@@ -6692,6 +6708,7 @@
             // siblings with transient :last-child/:nth-child results.
             self->recascade_completed_child_list(*parent, children);
 #endif
+            self->recascade_radio_group_selector_state_changes(radio_group_state);
             for (auto* fragment_child : children) {
                 if (fragment_child == nullptr || fragment_child->parent != parent) continue;
                 self->activate_connected_stylesheet(*fragment_child);
@@ -6736,6 +6753,7 @@
         if (previous_parent != nullptr && previous_parent != parent)
             self->recascade_changed_child_list(*previous_parent);
         self->recascade_changed_child_list(*parent, child);
+        self->recascade_radio_group_selector_state_changes(radio_group_state);
         self->activate_connected_stylesheet(*child);
         self->enqueue_connected_resources_subtree(
             *child,
@@ -6786,6 +6804,7 @@
                 js_string(info.GetIsolate(), "removeChild requires a child of this native node")));
             return;
         }
+        const auto radio_group_state=self->capture_radio_group_selector_state();
         if (!self->blur_active_element_before_detach(*child)) return;
         if (self->is_connected(*child)) {
             self->notify_custom_elements_subtree(*child, "disconnected");
@@ -6796,6 +6815,7 @@
         std::erase(parent->children, child);
         child->parent = nullptr;
         self->recascade_changed_child_list(*parent);
+        self->recascade_radio_group_selector_state_changes(radio_group_state);
         self->weaken_detached_subtree_wrappers(*child);
         if (changes_base) self->invalidate_document_base(*parent);
         synchronize_textarea_value_from_children(*parent);
@@ -6824,6 +6844,7 @@
             info.GetReturnValue().Set(info[1]);
             return;
         }
+        const auto radio_group_state=self->capture_radio_group_selector_state();
         std::vector<dom_node*> previous_parents;
         std::vector<dom_node*> replacements;
         if (replacement->tag == "#document-fragment") {
@@ -6880,6 +6901,7 @@
                 candidate);
         }
         self->recascade_completed_child_list(*parent, replacements, previous_parents);
+        self->recascade_radio_group_selector_state_changes(radio_group_state);
         for (auto* candidate : replacements) {
             if (candidate == nullptr || candidate->parent != parent) continue;
             self->activate_connected_stylesheet(*candidate);
@@ -6907,6 +6929,7 @@
         auto* node = unwrap_node(info.This());
         if (node == nullptr || node->parent == nullptr) return;
         auto* parent = node->parent;
+        const auto radio_group_state=self->capture_radio_group_selector_state();
         if (!self->blur_active_element_before_detach(*node)) return;
         if (self->is_connected(*node)) {
             self->notify_custom_elements_subtree(*node, "disconnected");
@@ -6917,6 +6940,7 @@
         std::erase(node->parent->children, node);
         node->parent = nullptr;
         self->recascade_changed_child_list(*parent);
+        self->recascade_radio_group_selector_state_changes(radio_group_state);
         node->visible = false;
         self->weaken_detached_subtree_wrappers(*node);
         if (changes_base) self->invalidate_document_base(*parent);
@@ -6963,6 +6987,7 @@
 
         const auto html = to_utf8(info.GetIsolate(), info[1]);
         if (!html.empty() && !self->require_runtime_html()) return;
+        const auto radio_group_state=self->capture_radio_group_selector_state();
         auto& fragment = self->document.create_element("#document-fragment");
         fragment.visible = false;
         if (!html.empty()) self->parse_inner_html(fragment, html, parent);
@@ -6978,6 +7003,7 @@
                 child);
         }
         self->recascade_completed_child_list(*parent, children);
+        self->recascade_radio_group_selector_state_changes(radio_group_state);
         for (auto* child : children) {
             if (child == nullptr || child->parent != parent) continue;
             self->activate_connected_stylesheet(*child);
@@ -7024,6 +7050,7 @@
             throw_hierarchy_request(info.GetIsolate(), "insertAdjacentElement");
             return;
         }
+        const auto radio_group_state=self->capture_radio_group_selector_state();
         auto* previous_parent = child->parent;
         if (child->parent != nullptr) {
             if (self->is_connected(*child)) {
@@ -7046,6 +7073,7 @@
         if (previous_parent != nullptr && previous_parent != parent)
             self->recascade_changed_child_list(*previous_parent);
         self->recascade_changed_child_list(*parent, child);
+        self->recascade_radio_group_selector_state_changes(radio_group_state);
         self->activate_connected_stylesheet(*child);
         self->notify_custom_elements_subtree(*child, "connected");
         synchronize_textarea_value_from_children(*parent);
@@ -7093,6 +7121,7 @@
             ? unwrap_node(info[1].As<v8::Object>())
             : nullptr;
         if (parent == nullptr || child == nullptr) return;
+        const auto radio_group_state=self->capture_radio_group_selector_state();
         if (child->tag == "#document-fragment") {
             if (std::any_of(
                     child->children.begin(),
@@ -7127,6 +7156,7 @@
                     fragment_child);
             }
             self->recascade_completed_child_list(*parent, children);
+            self->recascade_radio_group_selector_state_changes(radio_group_state);
             for (auto* fragment_child : children) {
                 if (fragment_child == nullptr || fragment_child->parent != parent) continue;
                 self->activate_connected_stylesheet(*fragment_child);
@@ -7189,6 +7219,7 @@
                 if (previous_parent != nullptr && previous_parent != parent)
                     self->recascade_changed_child_list(*previous_parent);
                 self->recascade_changed_child_list(*parent, child);
+                self->recascade_radio_group_selector_state_changes(radio_group_state);
                 self->activate_connected_stylesheet(*child);
                 self->notify_custom_elements_subtree(*child, "connected");
                 if (self->subtree_contains_base(*child)) {
@@ -7211,6 +7242,7 @@
         if (previous_parent != nullptr && previous_parent != parent)
             self->recascade_changed_child_list(*previous_parent);
         self->recascade_changed_child_list(*parent, child);
+        self->recascade_radio_group_selector_state_changes(radio_group_state);
         self->activate_connected_stylesheet(*child);
         self->notify_custom_elements_subtree(*child, "connected");
         if (self->subtree_contains_base(*child)) {

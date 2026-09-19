@@ -6,6 +6,8 @@
 <style>
 .probe {padding-left:11px}
 .probe:invalid {padding-left:47px}
+.mutation {margin-left:13px}
+.mutation:invalid {margin-left:59px}
 </style>
 <form id="owner">
   <input id="a" class="probe" type="radio" name="plan" required>
@@ -62,4 +64,64 @@ test(()=>{
   assert_true(b.checked,'a same-name radio in another tree does not clear the light-tree group');
   assert_true(b.matches(':valid'));
 },'same-name radios in different trees have independent checkedness and validity');
+
+const mutationFixture=()=>{
+  const owner=document.createElement('form');owner.id='mutation-owner';
+  owner.innerHTML='<input class="mutation" type="radio" name="choice" required>'+
+    '<input class="mutation" type="radio" name="choice" checked>';
+  const external=document.createElement('input');
+  external.className='mutation';external.type='radio';external.name='choice';
+  external.setAttribute('form','mutation-owner');
+  document.body.append(owner,external);
+  return {owner,required:owner.firstElementChild,checked:owner.lastElementChild,
+    external,dispose:()=>{owner.remove();external.remove();}};
+};
+const invalidStyle=node=>[node.matches(':invalid'),getComputedStyle(node).marginLeft];
+
+test(()=>{
+  const f=mutationFixture();
+  assert_array_equals(invalidStyle(f.required),[false,'13px']);
+  f.checked.name='';
+  assert_array_equals(invalidStyle(f.required),[true,'59px']);
+  f.checked.name='choice';
+  assert_array_equals(invalidStyle(f.required),[false,'13px']);
+  f.checked.type='checkbox';
+  assert_array_equals(invalidStyle(f.required),[true,'59px']);
+  f.checked.type='radio';
+  assert_array_equals(invalidStyle(f.required),[false,'13px']);
+  f.required.removeAttribute('required');
+  assert_array_equals(invalidStyle(f.required),[false,'13px']);
+  f.checked.checked=false;f.required.setAttribute('required','');
+  assert_array_equals(invalidStyle(f.checked),[true,'59px']);
+  f.dispose();
+},'name, type, and required mutations invalidate the old and new radio groups');
+
+test(()=>{
+  const f=mutationFixture();f.checked.checked=false;f.external.checked=true;
+  assert_array_equals(invalidStyle(f.required),[false,'13px']);
+  f.external.setAttribute('form','missing');
+  assert_array_equals(invalidStyle(f.required),[true,'59px']);
+  f.external.setAttribute('form','mutation-owner');
+  assert_array_equals(invalidStyle(f.required),[false,'13px']);
+  f.owner.id='renamed-owner';
+  assert_array_equals(invalidStyle(f.required),[true,'59px']);
+  f.owner.id='mutation-owner';
+  assert_array_equals(invalidStyle(f.required),[false,'13px']);
+  f.dispose();
+},'form and form-owner id mutations invalidate both ownership partitions');
+
+test(()=>{
+  const f=mutationFixture();
+  const other=document.createElement('form');document.body.appendChild(other);
+  other.appendChild(f.checked);
+  assert_array_equals(invalidStyle(f.required),[true,'59px']);
+  f.owner.appendChild(f.checked);
+  assert_array_equals(invalidStyle(f.required),[false,'13px']);
+  const host=document.createElement('div');document.body.appendChild(host);
+  const shadow=host.attachShadow({mode:'open'});shadow.appendChild(f.checked);
+  assert_array_equals(invalidStyle(f.required),[true,'59px']);
+  f.owner.appendChild(f.checked);
+  assert_array_equals(invalidStyle(f.required),[false,'13px']);
+  other.remove();host.remove();f.dispose();
+},'ancestry and DOM-tree membership changes invalidate surviving group peers');
 </script>

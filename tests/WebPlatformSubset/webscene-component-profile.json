@@ -1320,9 +1320,9 @@
     {
       "path": "contracts/css-radio-required-group-validity.html",
       "type": "testharness",
-      "capabilities": ["radio-required-group-validity", "radio-group-checkedness-invalidation"],
+      "capabilities": ["radio-required-group-validity", "radio-group-checkedness-invalidation", "radio-group-membership-invalidation"],
       "evidence": ["wpt-constraint-validation-derived", "native-source-companion-contract"],
-      "reason": "Implementation-first candidate for WebScene #257. Required radio value-missing state aggregates requiredness and live checkedness for same-tree, same-name radios with the same form owner. The focused contract partitions another form and a shadow tree, includes an external form-associated member, and covers IDL, activation, and cancelled-activation transitions through compiled group-routed invalidation. Direct browser/native execution remains validation debt; dynamic membership and the wider constraint-validation API remain outside this slice."
+      "reason": "Implementation-first candidate for WebScene #257. Required radio value-missing state aggregates requiredness and live checkedness for same-tree, same-name radios with the same form owner. The focused contract partitions another form and a shadow tree, includes an external form-associated member, and covers IDL, activation, cancelled activation, group-defining attribute mutations, owner-id changes, and ancestry/tree moves through compiled group-routed invalidation. Direct browser/native execution remains validation debt; checked content-default/reset behavior and the wider constraint-validation API remain outside this slice."
     },
     {
       "path": "contracts/css-user-validity-state.html",

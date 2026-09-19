@@ -760,6 +760,10 @@
         const std::optional<std::string> old_value = previous == node->attributes.end()
             ? std::nullopt
             : std::optional<std::string>(previous->second);
+        const auto radio_group_state=
+            self->radio_group_attribute_may_change_membership(*node,name)
+            ? self->capture_radio_group_selector_state()
+            : std::vector<radio_group_selector_state>{};
         const auto previous_live_value = input_live_value_before_attribute_change(
             *node, name);
 #if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
@@ -852,6 +856,7 @@
         }
         self->finish_input_value_attribute_change(
             *node, previous_live_value, value);
+        self->recascade_radio_group_selector_state_changes(radio_group_state);
         self->notify_custom_element_attribute(*node, name, old_value, value);
     }
 
@@ -874,6 +879,10 @@
         const std::optional<std::string> old_value = previous == node->attributes.end()
             ? std::nullopt
             : std::optional<std::string>(previous->second);
+        const auto radio_group_state=(!namespace_uri || namespace_uri->empty())
+            && self->radio_group_attribute_may_change_membership(*node,name)
+            ? self->capture_radio_group_selector_state()
+            : std::vector<radio_group_selector_state>{};
         const auto previous_live_value = (!namespace_uri || namespace_uri->empty())
             ? input_live_value_before_attribute_change(*node, name)
             : std::nullopt;
@@ -904,6 +913,7 @@
         }
         self->finish_input_value_attribute_change(
             *node, previous_live_value, value);
+        self->recascade_radio_group_selector_state_changes(radio_group_state);
         self->notify_custom_element_attribute(
             *node, name, old_value, value, namespace_uri);
     }
@@ -920,6 +930,10 @@
             return;
         }
         const auto old_value = std::optional<std::string>(node->attributes.at(name));
+        const auto radio_group_state=
+            self->radio_group_attribute_may_change_membership(*node,name)
+            ? self->capture_radio_group_selector_state()
+            : std::vector<radio_group_selector_state>{};
         const auto previous_live_value = input_live_value_before_attribute_change(
             *node, name);
         self->detach_attr(*node, name, *old_value);
@@ -953,6 +967,7 @@
         }
         self->finish_input_value_attribute_change(
             *node, previous_live_value, std::nullopt);
+        self->recascade_radio_group_selector_state_changes(radio_group_state);
         self->notify_custom_element_attribute(
             *node, name, old_value, std::nullopt);
     }
@@ -1009,6 +1024,10 @@
         if (match == node->attributes.end()) return;
         const auto qualified_name = match->first;
         const auto old_value = std::optional<std::string>(match->second);
+        const auto radio_group_state=(!namespace_uri || namespace_uri->empty())
+            && self->radio_group_attribute_may_change_membership(*node,name)
+            ? self->capture_radio_group_selector_state()
+            : std::vector<radio_group_selector_state>{};
         const auto previous_live_value = (!namespace_uri || namespace_uri->empty())
             ? input_live_value_before_attribute_change(*node, name)
             : std::nullopt;
@@ -1046,6 +1065,7 @@
         }
         self->finish_input_value_attribute_change(
             *node, previous_live_value, std::nullopt);
+        self->recascade_radio_group_selector_state_changes(radio_group_state);
         self->notify_custom_element_attribute(
             *node, name, old_value, std::nullopt, namespace_uri);
     }
@@ -1063,6 +1083,10 @@
             : std::nullopt;
         const auto previous_live_value = input_live_value_before_attribute_change(
             *node, name);
+        const auto radio_group_state=
+            self->radio_group_attribute_may_change_membership(*node,name)
+            ? self->capture_radio_group_selector_state()
+            : std::vector<radio_group_selector_state>{};
         const bool force_present = info.Length() < 2 || info[1]->IsUndefined()
             ? !present
             : info[1]->BooleanValue(info.GetIsolate());
@@ -1106,6 +1130,7 @@
             force_present
                 ? std::optional<std::string>(std::string{})
                 : std::nullopt);
+        self->recascade_radio_group_selector_state_changes(radio_group_state);
         // Queue invalidation before author callbacks: they may synchronously
         // read styles or replace this attribute with another value.
         self->notify_custom_element_attribute(*node, name, old_value,

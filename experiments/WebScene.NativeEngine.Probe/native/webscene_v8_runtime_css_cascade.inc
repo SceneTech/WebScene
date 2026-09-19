@@ -1925,7 +1925,8 @@
         DependencyScope&& dependency_scope,
         UsePreviousState&& use_previous_state,
         RestoreCurrentState&& restore_current_state,
-        bool structural_change = false)
+        bool structural_change = false,
+        bool force_transition = false)
     {
         selector_match_batch_scope matching_scope(*this);
         const auto trace_transition =
@@ -2169,10 +2170,13 @@
                     transition.current.push_back(css_compound_selector_matches(
                         *anchor, *selector, nullptr, structural_change));
                 transition.previous.resize(transition.anchors.size());
+                if(force_transition)
+                    for(size_t i=0;i<transition.current.size();++i)
+                        transition.previous[i]=!transition.current[i];
                 transitions.emplace(selector, std::move(transition));
             }
         }
-        if (!transitions.empty() && !structural_change) {
+        if (!transitions.empty() && !structural_change && !force_transition) {
             use_previous_state();
             matching_scope.reset();
             for (auto& [selector, transition] : transitions) {
@@ -2544,6 +2548,85 @@
                 control.checkedness_initialized=true;
                 control.checkedness=current_checkedness;
             });
+    }
+
+    struct radio_group_selector_state final {
+        dom_node* radio{nullptr};
+        bool value_missing{false};
+        bool indeterminate{false};
+    };
+
+    std::vector<radio_group_selector_state> capture_radio_group_selector_state()
+    {
+        std::vector<radio_group_selector_state> result;
+        if(!css_invalidation_rules_by_attribute.contains(
+                "$live-form-radio-group-checkedness")) return result;
+        const auto visit=[&](const auto& recurse,dom_node& node)->void {
+            if(forms::input_type_is(node,"radio") && is_connected(node)) {
+                result.push_back({
+                    &node,
+                    forms::radio_group_value_missing(document,node),
+                    css::indeterminate_matches(document,node)});
+            }
+            for(auto* child:node.children)
+                if(child!=nullptr) recurse(recurse,*child);
+            const auto* shadow=document.shadow_dom(node);
+            if(shadow!=nullptr && shadow->root!=nullptr)
+                recurse(recurse,*shadow->root);
+        };
+        visit(visit,document.body());
+        return result;
+    }
+
+    bool radio_group_attribute_may_change_membership(
+        const dom_node& node,std::string_view name) const
+    {
+        return (node.tag=="input"
+                && (name=="name" || name=="type" || name=="form"
+                    || name=="required"))
+            || (node.tag=="form" && name=="id");
+    }
+
+    void recascade_radio_group_selector_state_changes(
+        const std::vector<radio_group_selector_state>& previous)
+    {
+        if(previous.empty()) return;
+        const auto indexed=css_invalidation_rules_by_attribute.find(
+            "$live-form-radio-group-checkedness");
+        if(indexed==css_invalidation_rules_by_attribute.end()) return;
+        const std::span<const size_t> changed_rules{indexed->second};
+        std::vector<dom_node*> changed;
+        for(const auto& state:previous) {
+            if(state.radio==nullptr || !is_connected(*state.radio)
+                || !forms::input_type_is(*state.radio,"radio")) continue;
+            const auto value_missing=forms::radio_group_value_missing(
+                document,*state.radio);
+            const auto indeterminate=css::indeterminate_matches(
+                document,*state.radio);
+            if(value_missing!=state.value_missing
+                || indeterminate!=state.indeterminate)
+                changed.push_back(state.radio);
+        }
+        std::ranges::sort(changed);
+        changed.erase(std::unique(changed.begin(),changed.end()),changed.end());
+        style_recascade_batch_scope style_batch(*this);
+        for(auto* radio:changed) {
+            recascade_selector_transition(
+                *radio,
+                changed_rules,
+                [](const css::css_compound_dependencies& dependencies) {
+                    css::css_invalidation_targets result;
+                    const auto found=dependencies.attributes.find(
+                        "$live-form-radio-group-checkedness");
+                    if(found!=dependencies.attributes.end())
+                        result.include(found->second);
+                    return result;
+                },
+                [] {},
+                [] {},
+                false,
+                true);
+        }
     }
 
     void recascade_class_selector_transition(

@@ -145,6 +145,49 @@ void test_live_form_state_selectors_and_scaling()
         "required radio validity did not follow group ownership and activation: "
             + radio_validity);
 
+    const auto radio_group_mutations = evaluate(engine, R"JS((() => {
+      const fixture=()=>{
+        const owner=document.createElement('form');owner.id='mutation-owner';
+        owner.innerHTML='<input class="probe" type="radio" name="choice" required>'+
+          '<input class="probe" type="radio" name="choice" checked>';
+        const external=document.createElement('input');external.className='probe';
+        external.type='radio';external.name='choice';external.setAttribute('form','mutation-owner');
+        document.body.append(owner,external);
+        return {owner,required:owner.firstElementChild,checked:owner.lastElementChild,external,
+          dispose:()=>{owner.remove();external.remove();}};
+      };
+      const snap=node=>[node.matches(':invalid'),getComputedStyle(node).paddingLeft];
+      const first=fixture(),attributes=[snap(first.required)];
+      first.checked.name='';attributes.push(snap(first.required));
+      first.checked.name='choice';attributes.push(snap(first.required));
+      first.checked.type='checkbox';attributes.push(snap(first.required));
+      first.checked.type='radio';attributes.push(snap(first.required));
+      first.required.removeAttribute('required');attributes.push(snap(first.required));
+      first.checked.checked=false;first.required.setAttribute('required','');
+      attributes.push(snap(first.checked));first.dispose();
+
+      const second=fixture(),ownership=[];second.checked.checked=false;second.external.checked=true;
+      ownership.push(snap(second.required));
+      second.external.setAttribute('form','missing');ownership.push(snap(second.required));
+      second.external.setAttribute('form','mutation-owner');ownership.push(snap(second.required));
+      second.owner.id='renamed-owner';ownership.push(snap(second.required));
+      second.owner.id='mutation-owner';ownership.push(snap(second.required));second.dispose();
+
+      const third=fixture(),ancestry=[];
+      const other=document.createElement('form');document.body.appendChild(other);
+      other.appendChild(third.checked);ancestry.push(snap(third.required));
+      third.owner.appendChild(third.checked);ancestry.push(snap(third.required));
+      const host=document.createElement('div');document.body.appendChild(host);
+      const shadow=host.attachShadow({mode:'open'});shadow.appendChild(third.checked);
+      ancestry.push(snap(third.required));
+      third.owner.appendChild(third.checked);ancestry.push(snap(third.required));
+      other.remove();host.remove();third.dispose();
+      return [attributes,ownership,ancestry];
+    })())JS", "required-radio-group-mutations.js");
+    require(radio_group_mutations == R"JSON([[[false,"19px"],[true,"47px"],[false,"19px"],[true,"47px"],[false,"19px"],[false,"19px"],[true,"47px"]],[[false,"19px"],[true,"47px"],[false,"19px"],[true,"47px"],[false,"19px"]],[[true,"47px"],[false,"19px"],[true,"47px"],[false,"19px"]]])JSON",
+        "radio validity did not invalidate old/new groups after membership mutations: "
+            + radio_group_mutations);
+
     const auto setup = evaluate(engine, R"JS((() => {
       document.body.innerHTML='<style>.scale:invalid{width:2px}.scale:placeholder-shown{height:3px}'+
         Array.from({length:1024},(_,i)=>'.noise-'+i+':hover{width:7px}').join('')+'</style>'+

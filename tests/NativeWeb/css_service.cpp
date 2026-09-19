@@ -591,7 +591,8 @@ int main(int argc,char** argv) {
     webscene_native::css::apply_animation_shorthand(animated.style,"none");
     webscene_native::css::configure_keyframes(animated.style,definitions);
     animated_document.update_style_animations(animated);
-    if(animated.animation_runtime() && animated.animation_runtime()->opacity_keyframe_animation_active) return 64;
+    if(animated.animation_runtime()
+        && !animated.animation_runtime()->keyframe_animations.empty()) return 64;
     webscene_native::node_style::pseudo_element generated;
     const auto apply_generated=[&](const std::string& name,const std::string& value) {
         return webscene_native::css::apply_pseudo_value(generated,0x123456FF,false,name,value);

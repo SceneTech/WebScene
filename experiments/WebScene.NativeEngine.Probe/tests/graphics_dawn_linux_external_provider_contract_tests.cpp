@@ -11,6 +11,7 @@ int main(){
     static_assert(WEBSCENE_DAWN_NATIVE_DEVICE_ABI_VERSION==1);
     static_assert(WEBSCENE_DAWN_NATIVE_DEVICE_ABI_VERSION_V1==1);
     static_assert(WEBSCENE_DAWN_NATIVE_DEVICE_ABI_VERSION_V2==2);
+    static_assert(WEBSCENE_DAWN_NATIVE_DEVICE_ABI_VERSION_V3==3);
     webscene_dawn_native_device_v1 query{};
     query.struct_size=sizeof(query);
     query.version=WEBSCENE_DAWN_NATIVE_DEVICE_ABI_VERSION;
@@ -39,6 +40,22 @@ int main(){
     query_v2.version=WEBSCENE_DAWN_NATIVE_DEVICE_ABI_VERSION_V1;
     require(websceneDawnQueryVulkanDeviceV2(first,&query_v2)==
         WEBSCENE_DAWN_NATIVE_DEVICE_INCOMPATIBLE_ABI_V2);
+    webscene_dawn_native_device_v3 query_v3{};
+    query_v3.struct_size=sizeof(query_v3);
+    query_v3.version=WEBSCENE_DAWN_NATIVE_DEVICE_ABI_VERSION_V3;
+    require(websceneDawnQueryVulkanDeviceV3(nullptr,&query_v3)==
+        WEBSCENE_DAWN_NATIVE_DEVICE_INVALID_ARGUMENT_V3);
+    require(websceneDawnQueryVulkanDeviceV3(first,&query_v3)==
+        WEBSCENE_DAWN_NATIVE_DEVICE_FOREIGN_DEVICE_V3);
+    webscene_dawn_vulkan_queue_access_v3 access{};
+    access.struct_size=sizeof(access);
+    access.version=WEBSCENE_DAWN_NATIVE_DEVICE_ABI_VERSION_V3;
+    require(websceneDawnAcquireVulkanQueueV3(nullptr,&access)==
+        WEBSCENE_DAWN_NATIVE_DEVICE_INVALID_ARGUMENT_V3);
+    require(websceneDawnAcquireVulkanQueueV3(first,&access)==
+        WEBSCENE_DAWN_NATIVE_DEVICE_FOREIGN_DEVICE_V3);
+    require(websceneDawnReleaseVulkanQueueV3(&access)==
+        WEBSCENE_DAWN_NATIVE_DEVICE_INVALID_ARGUMENT_V3);
     require(valid_dawn_linux_external_binding(first,first,first));
     require(!valid_dawn_linux_external_binding(nullptr,first,first));
     require(!valid_dawn_linux_external_binding(first,second,first));
@@ -54,6 +71,7 @@ int main(){
     device->vk_queue=reinterpret_cast<void*>(uintptr_t{5});
     device->vk_get_instance_proc_addr=&fake_instance_resolver;
     device->instance_capabilities=WEBSCENE_DAWN_VULKAN_XLIB_PRESENTATION_REQUIRED_V2;
+    device->queue_access_capabilities=WEBSCENE_DAWN_VULKAN_QUEUE_ACCESS_REQUIRED_V3;
     device->device_uuid[0]=1;
     device->driver_uuid[0]=2;device->dawn_queue_family=4;
     device->device_lost=std::make_shared<std::atomic<bool>>(false);
@@ -63,6 +81,10 @@ int main(){
     device->instance_capabilities=0;
     require(!same_dawn_linux_external_identity(device,device));
     device->instance_capabilities=capabilities;
+    const auto queue_access_capabilities=device->queue_access_capabilities;
+    device->queue_access_capabilities=0;
+    require(!same_dawn_linux_external_identity(device,device));
+    device->queue_access_capabilities=queue_access_capabilities;
     const auto resolver=device->vk_get_instance_proc_addr;
     device->vk_get_instance_proc_addr=nullptr;
     require(!same_dawn_linux_external_identity(device,device));

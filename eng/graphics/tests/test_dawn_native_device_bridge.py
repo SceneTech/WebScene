@@ -14,13 +14,57 @@ class DawnNativeDeviceBridgeTests(unittest.TestCase):
         self.assertLess(query.index("result->version"), query.index("find_device(token)"))
         self.assertLess(query.index("find_device(token)"), query.index("base->GetGuard()"))
 
+    def test_v3_query_and_acquire_validate_before_private_dereference(self):
+        source = (ROOT / "eng/graphics/dawn_native_device.cpp").read_text()
+        for signature in ("websceneDawnQueryVulkanDeviceV3(",
+                          "websceneDawnAcquireVulkanQueueV3("):
+            body = source.split(signature, 1)[1]
+            self.assertLess(body.index("!"), body.index("find_device("))
+            self.assertLess(body.index("struct_size"), body.index("find_device("))
+            self.assertLess(body.index("version"), body.index("find_device("))
+            self.assertLess(body.index("find_device("), body.index("base->GetGuard()"))
+
+    def test_v3_holds_dawns_device_guard_and_balanced_device_references(self):
+        source = (ROOT / "eng/graphics/dawn_native_device.cpp").read_text()
+        for token in (
+            "dawn::native::DeviceGuard guard",
+            "device_->APIAddRef()",
+            "device_->APIRelease()",
+            "thread_local queue_access_token* current_queue_access",
+            "QUEUE_ACCESS_NESTED_V3",
+            "QUEUE_ACCESS_WRONG_THREAD_V3",
+            "delete access",
+        ):
+            self.assertIn(token, source)
+
+    def test_cpp_wrapper_is_lexical_and_sdk_targets_publish_v3(self):
+        wrapper = (ROOT / "experiments/WebScene.NativeEngine.Probe/native/graphics/"
+                   "dawn_linux_external_provider.h").read_text()
+        for token in (
+            "class dawn_linux_external_queue_access final",
+            "with_dawn_linux_external_queue_access",
+            "websceneDawnAcquireVulkanQueueV3",
+            "websceneDawnReleaseVulkanQueueV3",
+            "dawn_linux_external_queue_access&&)=delete",
+        ):
+            self.assertIn(token, wrapper)
+        for path in (
+            "src/WebScene.Sdk/cmake/LinuxSDK.cmake",
+            "src/WebScene.Sdk/cmake/WebSceneLinuxSDK.cmake",
+            "src/WebScene.Sdk/cmake/WebSceneLinuxConfig.cmake",
+        ):
+            self.assertIn(
+                "WEBSCENE_DAWN_NATIVE_DEVICE_ABI_VERSION_V3=3",
+                (ROOT / path).read_text(),
+            )
+
     def test_registry_is_compatible_with_dawns_no_exception_build(self):
         source = (ROOT / "eng/graphics/dawn_native_device.cpp").read_text()
         self.assertIn("new(std::nothrow) live_devices::entry", source)
         self.assertNotIn("catch(", source.replace(" ", ""))
         self.assertNotIn("std::unordered_map", source)
 
-    def test_v1_and_v2_are_staged_hashed_and_exported_together(self):
+    def test_v1_v2_and_v3_are_staged_hashed_and_exported_together(self):
         header = (ROOT / "experiments/WebScene.NativeEngine.Probe/native/graphics/"
                   "webscene/dawn_native_device.h").read_text()
         symbols = (ROOT / "eng/graphics/DawnSymbolBoundary.cmake").read_text()
@@ -28,8 +72,13 @@ class DawnNativeDeviceBridgeTests(unittest.TestCase):
         builder = (ROOT / "eng/graphics/build.py").read_text()
         verifier = (ROOT / "eng/graphics/verify-sdk.py").read_text()
         cache = (ROOT / ".github/actions/graphics-sdk/action.yml").read_text()
-        for version in ("V1", "V2"):
+        for version in ("V1", "V2", "V3"):
             name = f"websceneDawnQueryVulkanDevice{version}"
+            self.assertIn(name, header)
+            self.assertIn(name, symbols)
+            self.assertIn(name, exports)
+        for name in ("websceneDawnAcquireVulkanQueueV3",
+                     "websceneDawnReleaseVulkanQueueV3"):
             self.assertIn(name, header)
             self.assertIn(name, symbols)
             self.assertIn(name, exports)

@@ -20,7 +20,7 @@ runs:
       name: Resolve graphics SDK cache identity
       shell: bash
       env:
-        SDK_INPUTS: ${{ hashFiles('eng/graphics/dependencies.lock.json', 'eng/graphics/windows-runtime.json', 'eng/graphics/build.py', 'eng/graphics/DawnSymbolBoundary.cmake', 'eng/graphics/dawn_exports.py', 'eng/graphics/dawn_native_device.cpp', 'eng/graphics/dawn_native_device_internal.h', 'experiments/WebScene.NativeEngine.Probe/native/graphics/webscene/dawn_native_device.h', 'eng/graphics/install-windows-sdk.ps1', '.github/actions/graphics-sdk/action.yml') }}
+        SDK_INPUTS: ${{ hashFiles('eng/graphics/dependencies.lock.json', 'eng/graphics/windows-runtime.json', 'eng/graphics/build.py', 'eng/graphics/DawnSymbolBoundary.cmake', 'eng/graphics/dawn_exports.py', 'eng/graphics/dawn_native_device.cpp', 'eng/graphics/dawn_native_device_internal.h', 'experiments/WebScene.NativeEngine.Probe/native/graphics/webscene/dawn_native_device.h', 'experiments/WebScene.NativeEngine.Probe/native/graphics/dawn_linux_external_provider.h', 'eng/graphics/install-windows-sdk.ps1', '.github/actions/graphics-sdk/action.yml') }}
       run: |
         set -euo pipefail
         {

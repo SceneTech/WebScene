@@ -844,6 +844,65 @@ void test_finite_rotation_keyframe_dispatches_animation_end(
         result == "true",
         "finite keyframe animationend did not expose browser-compatible event data: "
             + result);
+
+    execute_and_wait(engine, R"JS(
+        (() => {
+          document.body.innerHTML = `
+            <style>
+              @keyframes codicon-spin { to { transform: rotate(1turn); } }
+              #step-spinner {
+                width: 16px;
+                height: 16px;
+                animation: codicon-spin 1000ms steps(4, end) infinite;
+              }
+            </style>
+            <span id="step-spinner"></span>`;
+          void document.getElementById('step-spinner').offsetHeight;
+        })()
+    )JS", "step-timing-spinner-setup.js");
+    animation_frame_and_wait(engine, 3375.0, 7045U);
+    const auto step_metadata = evaluate(engine, R"JS(
+        (() => {
+          const style = getComputedStyle(document.getElementById('step-spinner'));
+          return [style.animationName, style.animationDuration,
+            style.animationTimingFunction, style.animationIterationCount];
+        })()
+    )JS", "step-timing-spinner-metadata.js");
+    require(
+        step_metadata == R"(["codicon-spin","1000ms","steps(4, end)","infinite"])" ,
+        "steps() was mistaken for the animation name: " + step_metadata);
+
+    const auto step_angle = R"JS(
+        (() => {
+          const value = getComputedStyle(document.getElementById('step-spinner'))
+            .getPropertyValue('transform');
+          const matrix = value.slice(7, -1).split(',').map(Number);
+          let angle = Math.atan2(matrix[1], matrix[0]) * 180 / Math.PI;
+          if (angle < 0) angle += 360;
+          return Math.round(angle * 1000) / 1000;
+        })()
+    )JS";
+    animation_frame_and_wait(engine, 3500.0, 7046U);
+    const auto before_first_jump = evaluate(
+        engine, step_angle, "step-timing-spinner-before-first-jump.js");
+    require(
+        std::abs(std::strtof(before_first_jump.c_str(), nullptr)) < 0.1F,
+        "steps(4, end) advanced before its first boundary: " + before_first_jump);
+    animation_frame_and_wait(engine, 3625.0, 7047U);
+    const auto first_jump = evaluate(
+        engine, step_angle, "step-timing-spinner-first-jump.js");
+    require(
+        std::abs(std::strtof(first_jump.c_str(), nullptr) - 90.0F) < 0.1F,
+        "steps(4, end) did not advance at its first boundary: " + first_jump);
+
+    execute_and_wait(
+        engine,
+        "document.body.innerHTML = '<div>step animation detached</div>'",
+        "step-timing-spinner-detach.js");
+    wait_for_animation_frame_demand(
+        engine,
+        false,
+        "detached step animation retained host-frame demand");
 }
 
 void test_cssom_paint_invalidation_does_not_force_layout(

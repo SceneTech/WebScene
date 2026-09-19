@@ -653,6 +653,7 @@
         }
 #endif
         if (!self->blur_active_descendant_before_replacing_children(*output)) return;
+        const auto radio_group_state=self->capture_radio_group_selector_state();
         self->detach_all_children(*output);
         output->text_content.clear();
         if (!html.empty()) self->parse_inner_html(*output, html, parent);
@@ -660,6 +661,7 @@
             synchronize_textarea_value_from_children(*output);
             self->recascade_changed_child_list(*output);
         }
+        self->recascade_radio_group_selector_state_changes(radio_group_state);
     }
 
     bool iframe_owner_allows_same_origin_access(dom_node& frame)

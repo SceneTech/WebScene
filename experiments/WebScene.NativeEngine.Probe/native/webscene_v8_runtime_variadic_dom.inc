@@ -43,6 +43,7 @@
             && parent->text_content.empty()) {
             return;
         }
+        const auto radio_group_state=self->capture_radio_group_selector_state();
 
         // Find a sibling which will survive conversion, even if the receiver
         // itself or surrounding siblings occur in the argument list.
@@ -177,6 +178,7 @@
                 if (!self->is_connected(*node)) stylesheets_changed |= self->deactivate_connected_stylesheets(*node, false);
             if (stylesheets_changed) self->recascade_after_stylesheet_change();
             for (auto* old_parent : previous_parents) self->recascade_changed_child_list(*old_parent);
+            self->recascade_radio_group_selector_state_changes(radio_group_state);
             if (!previous_parents.empty()) self->document.mark_dirty();
         };
         const auto invalid_parent = parent->kind != dom_node_kind::element
@@ -231,6 +233,7 @@
         parent->children.insert(position, nodes.begin(), nodes.end());
         self->document.mark_dirty();
         self->recascade_completed_child_list(*parent, nodes, previous_parents);
+        self->recascade_radio_group_selector_state_changes(radio_group_state);
         for (auto* node : nodes) {
             self->enqueue_connected_resources_subtree(*node, self->wrap_node(*node), context);
             self->enqueue_iframe_hydration_if_needed(*node);

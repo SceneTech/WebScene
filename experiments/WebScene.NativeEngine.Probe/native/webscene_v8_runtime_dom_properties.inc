@@ -37,9 +37,14 @@
                     *node, "id", old_value, text);
                 return;
             }
+            const auto radio_group_state=
+                self->radio_group_attribute_may_change_membership(*node,"id")
+                ? self->capture_radio_group_selector_state()
+                : std::vector<radio_group_selector_state>{};
             node->id_attribute = text;
             node->attributes["id"] = node->id_attribute;
             self->recascade_attribute_selector_transition(*node, "id", old_value, node->id_attribute);
+            self->recascade_radio_group_selector_state_changes(radio_group_state);
             self->notify_custom_element_attribute(
                 *node, "id", old_value, node->id_attribute);
         }
@@ -525,6 +530,7 @@
             return;
         }
         if (!self->blur_active_descendant_before_replacing_children(*node)) return;
+        const auto radio_group_state=self->capture_radio_group_selector_state();
         if (node->tag == "style") {
             self->erase_pending_stylesheet_replacement(node->id);
             self->stylesheet_cssom_sources.erase(node->id);
@@ -540,6 +546,7 @@
         if (node->tag == "textarea") synchronize_textarea_value_from_children(*node);
         self->activate_connected_stylesheet(*node);
         self->recascade_changed_child_list(*node);
+        self->recascade_radio_group_selector_state_changes(radio_group_state);
         self->document.mark_dirty();
     }
 
@@ -2660,8 +2667,19 @@
         auto* self = current(info.GetIsolate());
         auto* node = unwrap_node(info.Holder());
         if (node == nullptr) return;
-        node->attributes["type"] = to_utf8(info.GetIsolate(), value);
-        self->recascade_connected_subtree(*node);
+        const auto previous=node->attributes.find("type");
+        const auto old_value=previous==node->attributes.end()
+            ? std::optional<std::string>{}
+            : std::optional<std::string>{previous->second};
+        const auto radio_group_state=
+            self->radio_group_attribute_may_change_membership(*node,"type")
+            ? self->capture_radio_group_selector_state()
+            : std::vector<radio_group_selector_state>{};
+        const auto text=to_utf8(info.GetIsolate(),value);
+        node->attributes["type"]=text;
+        self->recascade_attribute_selector_transition(
+            *node,"type",old_value,text);
+        self->recascade_radio_group_selector_state_changes(radio_group_state);
     }
 
     static void get_reflected_string_attribute(
@@ -2695,8 +2713,16 @@
             ? std::nullopt
             : std::optional<std::string>(previous->second);
         const auto text = to_wtf8(info.GetIsolate(), value);
+        const auto radio_group_state=
+            self->radio_group_attribute_may_change_membership(*node,name)
+            ? self->capture_radio_group_selector_state()
+            : std::vector<radio_group_selector_state>{};
         node->attributes[name] = text;
-        self->document.mark_dirty();
+        if(self->attribute_requires_recascade(name))
+            self->recascade_attribute_selector_transition(
+                *node,name,old_value,text);
+        else self->document.mark_dirty();
+        self->recascade_radio_group_selector_state_changes(radio_group_state);
         self->notify_custom_element_attribute(*node, name, old_value, text);
     }
 
@@ -3538,9 +3564,14 @@
         auto* self = current(info.GetIsolate());
         auto* node = unwrap_node(info.Holder());
         if (node == nullptr) return;
+        const auto radio_group_state=
+            self->radio_group_attribute_may_change_membership(*node,name)
+            ? self->capture_radio_group_selector_state()
+            : std::vector<radio_group_selector_state>{};
         if (value->BooleanValue(info.GetIsolate())) node->attributes[name] = std::string{};
         else node->attributes.erase(name);
         self->recascade_connected_subtree(*node);
+        self->recascade_radio_group_selector_state_changes(radio_group_state);
     }
 
     static void get_checked(v8::Local<v8::Name>, const v8::PropertyCallbackInfo<v8::Value>& info)

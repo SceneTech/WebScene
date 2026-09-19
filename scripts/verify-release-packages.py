@@ -232,6 +232,39 @@ def validate_windows_cpp_sdk(
             )
 
 
+def validate_public_c_header(
+    archive: zipfile.ZipFile,
+    manifest: dict[str, object],
+    runtime_identifier: str,
+) -> None:
+    asset = "build/native/include/webscene_native_engine.h"
+    if asset not in archive.namelist():
+        raise RuntimeError(f"{runtime_identifier}: missing public C ABI header")
+    expected_hash = manifest.get("cHeaderSha256")
+    actual_hash = hashlib.sha256(archive.read(asset)).hexdigest()
+    if not isinstance(expected_hash, str) or actual_hash != expected_hash.lower():
+        raise RuntimeError(
+            f"{runtime_identifier}: public C ABI header does not match its manifest"
+        )
+    header = archive.read(asset).decode("utf-8")
+    for contract in ("WEBSCENE_GPU_LINUX_SHARED_ABI_VERSION",):
+        if contract not in header:
+            raise RuntimeError(
+                f"{runtime_identifier}: packaged public header omits {contract}"
+            )
+    if runtime_identifier.startswith("linux-"):
+        for symbol in (
+            "webscene_gpu_linux_acquire_shared_v3",
+            "webscene_gpu_linux_get_plane_v3",
+            "webscene_gpu_linux_get_producer_wait_v3",
+            "webscene_gpu_linux_release_shared_v3",
+        ):
+            if symbol not in header:
+                raise RuntimeError(
+                    f"{runtime_identifier}: packaged public header omits {symbol}"
+                )
+
+
 def validate_native_runtime(
     package: pathlib.Path,
     runtime_identifier: str,
@@ -245,6 +278,7 @@ def validate_native_runtime(
         if manifest_name not in archive.namelist():
             raise RuntimeError(f"{package}: missing {manifest_name}")
         manifest = json.loads(archive.read(manifest_name))
+        validate_public_c_header(archive, manifest, runtime_identifier)
         validate_windows_cpp_sdk(archive, manifest, runtime_identifier)
         native_readme = archive.read("README.md").decode("utf-8")
         for published_rid in sorted(DEFAULT_NATIVE_RIDS):
@@ -274,6 +308,7 @@ def validate_native_runtime(
         "schemaVersion": 2,
         "packageVersion": version,
         "runtimeIdentifier": runtime_identifier,
+        "cHeaderFileName": "webscene_native_engine.h",
         "configuration": "Release",
         "v8Revision": NATIVE_V8_REVISIONS[runtime_identifier],
         "htmlParser": "html5ever",

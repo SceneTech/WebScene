@@ -1139,6 +1139,169 @@ void execute_and_wait_for_wrapper_retention_scene(
 }
 #endif
 
+void test_identical_id_writes_do_not_schedule_selector_transitions()
+{
+    auto* engine = webscene_engine_create(0);
+    require(engine != nullptr, "id no-op engine creation failed");
+
+    const auto acknowledge_latest_scene = [engine](const char* failure) {
+        for (auto attempt = 0; attempt < 100; ++attempt) {
+            const auto* scene = webscene_engine_acquire_latest_scene(engine);
+            if (scene != nullptr) {
+                require(webscene_scene_acknowledge(scene) != 0, failure);
+                webscene_scene_release(scene);
+                return;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        fail(failure);
+    };
+    acknowledge_latest_scene("id no-op initial scene could not be acknowledged");
+
+    execute_and_wait(engine, R"JS(
+        (() => {
+          class IdNoopProbe extends HTMLElement {
+            static get observedAttributes() { return ['id']; }
+            constructor() {
+              super();
+              this.attributeNotifications = 0;
+              this.lastAttributeChange = null;
+            }
+            attributeChangedCallback(name, oldValue, newValue) {
+              ++this.attributeNotifications;
+              this.lastAttributeChange = [name, oldValue, newValue];
+            }
+          }
+          customElements.define('id-noop-probe', IdNoopProbe);
+          const style = document.createElement('style');
+          style.textContent = `
+            #code-oss-row-id {
+              display: block;
+              width: 120px;
+              height: 24px;
+            }
+          `;
+          document.head.appendChild(style);
+          const target = document.createElement('id-noop-probe');
+          target.id = 'code-oss-row-id';
+          document.body.appendChild(target);
+          globalThis.__idNoopTarget = target;
+        })()
+    )JS", "id-noop-setup.js");
+    require(
+        evaluate(engine, "__idNoopTarget.offsetWidth", "id-noop-ready.js") == "120",
+        "id no-op fixture did not complete initial layout");
+    acknowledge_latest_scene("id no-op setup scene could not be acknowledged");
+
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+    std::this_thread::sleep_for(std::chrono::milliseconds(275));
+    execute_and_wait_for_wrapper_retention_scene(engine,
+        "document.body.style.backgroundColor='rgb(1,2,3)'",
+        "id-noop-diagnostic-before.js");
+    acknowledge_latest_scene("id no-op baseline diagnostic scene could not be acknowledged");
+    const auto transitions_before = runtime_counter_diagnostic(
+        engine, "attribute-transition-schedule-requests");
+#endif
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    webscene_engine_metrics connected_before{};
+    webscene_engine_get_metrics(engine, &connected_before);
+    const auto connected = evaluate(engine, R"JS((() => {
+      const target = __idNoopTarget;
+      const notificationsBefore = target.attributeNotifications;
+      for (let index = 0; index < 4096; ++index) {
+        if (index & 1) target.id = 'code-oss-row-id';
+        else target.setAttribute('id', 'code-oss-row-id');
+      }
+      return [
+        target.attributeNotifications - notificationsBefore,
+        target.id,
+        target.getAttribute('id'),
+        target.lastAttributeChange
+      ];
+    })())JS", "id-noop-connected.js");
+    require(
+        connected == R"JSON([4096,"code-oss-row-id","code-oss-row-id",["id","code-oss-row-id","code-oss-row-id"]])JSON",
+        "identical connected id writes changed reflection or reaction semantics: "
+            + connected);
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    webscene_engine_metrics connected_after{};
+    webscene_engine_get_metrics(engine, &connected_after);
+    require(
+        connected_after.layout_passes == connected_before.layout_passes
+            && connected_after.published_scenes == connected_before.published_scenes,
+        "identical connected id writes scheduled layout or publication");
+
+#if defined(WEBSCENE_NATIVE_ENGINE_CERTIFICATION)
+    std::this_thread::sleep_for(std::chrono::milliseconds(275));
+    execute_and_wait_for_wrapper_retention_scene(engine,
+        "document.body.style.backgroundColor='rgb(3,2,1)'",
+        "id-noop-diagnostic-after.js");
+    acknowledge_latest_scene("id no-op result diagnostic scene could not be acknowledged");
+    require(
+        runtime_counter_diagnostic(
+            engine, "attribute-transition-schedule-requests")
+                == transitions_before,
+        "identical id writes entered the attribute selector transition planner");
+#endif
+
+    execute_and_wait(engine,
+        "__idNoopTarget.remove()",
+        "id-noop-detach.js");
+    acknowledge_latest_scene("id no-op detach scene could not be acknowledged");
+    std::this_thread::sleep_for(std::chrono::milliseconds(25));
+
+    webscene_engine_metrics detached_before{};
+    webscene_engine_get_metrics(engine, &detached_before);
+    const auto detached = evaluate(engine, R"JS((() => {
+      const target = __idNoopTarget;
+      const notificationsBefore = target.attributeNotifications;
+      for (let index = 0; index < 4096; ++index) {
+        if (index & 1) target.id = 'code-oss-row-id';
+        else target.setAttribute('id', 'code-oss-row-id');
+      }
+      return [target.attributeNotifications - notificationsBefore, target.isConnected];
+    })())JS", "id-noop-detached.js");
+    require(
+        detached == "[4096,false]",
+        "identical detached id writes changed reaction or lifecycle semantics: "
+            + detached);
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    webscene_engine_metrics detached_after{};
+    webscene_engine_get_metrics(engine, &detached_after);
+    require(
+        detached_after.layout_passes == detached_before.layout_passes
+            && detached_after.published_scenes == detached_before.published_scenes,
+        "identical detached id writes scheduled visual work");
+
+    execute_and_wait(engine,
+        "document.body.appendChild(__idNoopTarget)",
+        "id-noop-reattach.js");
+    webscene_engine_metrics reattached{};
+    for (auto attempt = 0; attempt < 100; ++attempt) {
+        webscene_engine_get_metrics(engine, &reattached);
+        if (reattached.published_scenes > detached_after.published_scenes) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    require(
+        evaluate(engine, R"JS((() => ({
+          reflected: __idNoopTarget.id,
+          attribute: __idNoopTarget.getAttribute('id'),
+          width: __idNoopTarget.offsetWidth,
+          connected: __idNoopTarget.isConnected,
+          indexed: document.getElementById('code-oss-row-id') === __idNoopTarget,
+          notifications: __idNoopTarget.attributeNotifications
+        }))())JS", "id-noop-reattach-result.js")
+            == R"JSON({"reflected":"code-oss-row-id","attribute":"code-oss-row-id","width":120,"connected":true,"indexed":true,"notifications":8193})JSON",
+        "id no-op state did not survive detach and reconnect");
+    webscene_engine_get_metrics(engine, &reattached);
+    require(
+        reattached.layout_passes == detached_after.layout_passes + 1U
+            && reattached.published_scenes == detached_after.published_scenes + 1U,
+        "id no-op reconnect escaped one layout/publication");
+    webscene_engine_destroy(engine);
+}
+
 void test_connected_style_recascade_skips_detached_wrapper_retention(
     webscene_engine* engine)
 {
@@ -1612,6 +1775,7 @@ void test_resize_event_coalesces_attribute_selector_recascades(
         delete globalThis.__resizeHasBatchRoot;
         delete globalThis.__resizeAttributeBatchResult;
     )JS", "native-resize-attribute-batching-cleanup.js");
+    test_identical_id_writes_do_not_schedule_selector_transitions();
 }
 
 void test_cross_frame_post_message_and_window_frames(webscene_engine* engine)

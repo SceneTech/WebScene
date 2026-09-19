@@ -31,6 +31,12 @@
                 previous == node->attributes.end()
                     ? std::nullopt
                     : std::optional<std::string>(previous->second);
+            if (node->id_attribute == text
+                && node->attributes.contains("id")) {
+                self->notify_custom_element_attribute(
+                    *node, "id", old_value, text);
+                return;
+            }
             node->id_attribute = text;
             node->attributes["id"] = node->id_attribute;
             self->recascade_attribute_selector_transition(*node, "id", old_value, node->id_attribute);

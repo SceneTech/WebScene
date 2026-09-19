@@ -128,6 +128,14 @@ inline std::vector<css_compound_dependencies> compile_invalidation_plan(
                     add(output.attributes["$live-form-select-selectedness"], route);
                     add(output.attributes["multiple"], route);
                     add(output.attributes["size"], route);
+                    add(output.attributes["pattern"], route);
+                    add(output.attributes["minlength"], route);
+                    add(output.attributes["maxlength"], route);
+                    add(output.attributes["readonly"], route);
+                    // Disabled fieldsets bar descendant controls from
+                    // constraint validation; the first legend exception is
+                    // already represented by the inherited route.
+                    add(output.attributes["disabled"], inherited_route);
                     // A non-dirty textarea derives its live value from its
                     // text children. Reuse the structural route machinery.
                     output.child_list_sensitive = true;

@@ -1332,6 +1332,13 @@
       "reason": "Implementation-first candidate for WebScene #257. Required select value-missing state follows live option selectedness, including no-selection, the empty direct first-option placeholder for a size-1 single select, multiple/size rules, content-default versus live selectedness, reset, and option value/text/tree mutations. A synthetic compiled dependency revisits the owning select without targeting unrelated selects or rules. Direct browser/native execution remains validation debt; constraint-validation IDL and external-owner reset traversal remain outside this slice."
     },
     {
+      "path": "contracts/css-text-constraint-validity.html",
+      "type": "testharness",
+      "capabilities": ["text-pattern-mismatch-validity", "email-url-type-mismatch-validity", "user-edited-min-max-length-validity", "barred-text-control-validity", "live-text-constraint-invalidation"],
+      "evidence": ["wpt-constraint-validation-derived", "native-source-companion-contract"],
+      "reason": "Implementation-first candidate for WebScene #257. Text-control :valid/:invalid state now consumes live pattern and applicable email/URL type mismatch plus user-edited UTF-16 minlength/maxlength state. Readonly, directly or fieldset-disabled, datalist-contained, and barred-type controls match neither selector. Attribute and live-value transitions use compiled subject/inherited routes; the native companion drives physical edits for length provenance. Direct browser/native execution remains validation debt; ValidityState IDL, HTML v-mode Unicode sets, and complete URL parsing remain outside this focused slice."
+    },
+    {
       "path": "contracts/css-user-validity-state.html",
       "type": "testharness",
       "capabilities": ["user-valid-selector", "user-invalid-selector", "live-user-validity-invalidation"],

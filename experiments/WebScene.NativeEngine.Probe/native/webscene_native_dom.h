@@ -1391,6 +1391,7 @@ struct dom_node final {
         bool indeterminate{false};
         bool value_initialized{false};
         bool dirty_value{false};
+        bool value_changed_by_user{false};
         bool user_validity_interacted{false};
         bool input_focused{false};
         bool caret_visible{false};

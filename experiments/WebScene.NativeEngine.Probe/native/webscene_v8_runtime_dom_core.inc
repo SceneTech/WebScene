@@ -5268,6 +5268,7 @@
             end = static_cast<size_t>(std::max(
                 0, info[2]->Int32Value(context).FromMaybe(0)));
         }
+        const auto previous_value = control.value;
         auto units = forms::utf16_units_from_utf8(control.value);
         start = std::min(start, units.size());
         end = std::min(end, units.size());
@@ -5317,7 +5318,13 @@
         control.selection_end_utf16_suboffset = end_offset.utf16_suboffset;
         control.selection_direction = text_selection_direction::none;
         control.selection_explicitly_set = true;
-        self->document.mark_dirty();
+        if(self->is_connected(*node)) {
+            self->recascade_form_value_selector_transition(
+                *node,previous_value,control.value,std::nullopt,false);
+        } else {
+            control.value_changed_by_user=false;
+            self->document.mark_dirty();
+        }
     }
 
     static void element_select(const v8::FunctionCallbackInfo<v8::Value>& info)

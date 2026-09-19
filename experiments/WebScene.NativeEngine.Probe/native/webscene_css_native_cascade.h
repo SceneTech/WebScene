@@ -81,6 +81,14 @@ bool apply_native_cascade(native_document& document,dom_node& node,
         if(node.style.after_pseudo().generated && previous.after_pseudo().generated)
             node.style.mutable_after_pseudo().layout=previous.after_pseudo().layout;
         configure_keyframes(node.style,sheets.state().opacity_keyframes);
+        if(node.style.has_pseudo_elements()) {
+            auto& before=node.style.mutable_before_pseudo();
+            auto& after=node.style.mutable_after_pseudo();
+            if(before.has_animation_data())
+                configure_keyframes(before.mutable_animations(),sheets.state().opacity_keyframes);
+            if(after.has_animation_data())
+                configure_keyframes(after.mutable_animations(),sheets.state().opacity_keyframes);
+        }
         document.update_style_animations(node);
     }
     const bool layout_changed=!computed_layout_style_equal(previous,node.style);

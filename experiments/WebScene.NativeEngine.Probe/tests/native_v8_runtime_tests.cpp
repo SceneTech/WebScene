@@ -1143,6 +1143,7 @@ int main()
             test_multiple_animation_lists_coordinate_bounded_tracks(focused_engine);
             test_zero_time_animation_tracks_settle_without_frame_demand(focused_engine);
             test_transform_keyframes_compose_retained_geometry_and_paint(focused_engine);
+            test_generated_pseudo_animations_share_owner_lifecycle(focused_engine);
             webscene_engine_destroy(focused_engine);
             return 0;
         }
@@ -1643,6 +1644,7 @@ int main()
     test_multiple_animation_lists_coordinate_bounded_tracks(engine);
     test_zero_time_animation_tracks_settle_without_frame_demand(engine);
     test_transform_keyframes_compose_retained_geometry_and_paint(engine);
+    test_generated_pseudo_animations_share_owner_lifecycle(engine);
     // This regression uses fixed host timestamps beginning at 2700 ms. Give it
     // a fresh timeline so earlier animation tests cannot make those frames stale.
     webscene_engine_destroy(engine);

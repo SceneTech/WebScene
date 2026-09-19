@@ -539,6 +539,35 @@ struct node_style final {
         bool align_self_specified{false};
         bool border_box{false};
         bool elliptical_border_radius{false};
+
+        const animation_data& animations() const noexcept
+        {
+            static const animation_data defaults;
+            return animation_state == nullptr ? defaults : *animation_state;
+        }
+
+        animation_data& mutable_animations()
+        {
+            if (animation_state == nullptr) {
+                animation_state = std::make_shared<animation_data>();
+            } else if (animation_state.use_count() != 1) {
+                animation_state = std::make_shared<animation_data>(*animation_state);
+            }
+            return *animation_state;
+        }
+
+        bool has_animation_data() const noexcept
+        {
+            return animation_state != nullptr;
+        }
+
+        const animation_data* animation_data_identity() const noexcept
+        {
+            return animation_state.get();
+        }
+
+    private:
+        std::shared_ptr<animation_data> animation_state;
     };
 
     struct pseudo_element_pair final {
@@ -1493,6 +1522,19 @@ struct dom_node final {
             bool filter_valid{false};
             bool end_event_sent{false};
         };
+        struct pseudo_animation_runtime final {
+            std::vector<keyframe_animation_runtime> keyframe_animations;
+            std::vector<retained_filter_function> painted_filter_functions;
+            css_length painted_translation_x{0, length_unit::pixels};
+            css_length painted_translation_y{0, length_unit::pixels};
+            float painted_scale_x{1};
+            float painted_scale_y{1};
+            float painted_rotation_degrees{0};
+            float painted_opacity{1};
+            bool opacity_override{false};
+            bool transform_override{false};
+            bool filter_override{false};
+        };
         css_length painted_transform_translate_x{};
         css_length painted_transform_translate_y{};
         css_length transform_animation_from_translate_x{};
@@ -1558,6 +1600,8 @@ struct dom_node final {
         bool opacity_animation_active{false};
         bool opacity_animation_start_event_sent{false};
         std::vector<keyframe_animation_runtime> keyframe_animations;
+        pseudo_animation_runtime before_pseudo;
+        pseudo_animation_runtime after_pseudo;
         bool keyframe_opacity_override{false};
         bool keyframe_translation_override{false};
         bool keyframe_scale_override{false};
@@ -2024,6 +2068,7 @@ public:
         std::string type;
         std::string animation_name;
         float elapsed_time_seconds{0};
+        std::string pseudo_element;
     };
 
     explicit native_document(

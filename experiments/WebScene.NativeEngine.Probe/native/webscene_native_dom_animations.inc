@@ -82,7 +82,13 @@ void native_document::signal_animation_frame(double timestamp_ms) noexcept
 
 void native_document::update_style_animations(dom_node& node)
 {
-    if (!node.has_animation_runtime() && !node.style.has_animation_data()) {
+    const auto has_pseudo_animation = node.style.has_pseudo_elements()
+        && ((node.style.before_pseudo().generated
+                && node.style.before_pseudo().has_animation_data())
+            || (node.style.after_pseudo().generated
+                && node.style.after_pseudo().has_animation_data()));
+    if (!node.has_animation_runtime() && !node.style.has_animation_data()
+        && !has_pseudo_animation) {
         return;
     }
     active_animation_demand_cache_valid_ = false;
@@ -298,7 +304,7 @@ void native_document::update_style_animations(dom_node& node)
     }
     if (keyframe_set_changed && animation_events_) {
         std::erase_if(*animation_events_, [&](const auto& event) {
-            return event.node_id == node.id;
+            return event.node_id == node.id && event.pseudo_element.empty();
         });
     }
     if (animation.keyframe_animations.size() > configured_keyframes.size()) {
@@ -403,6 +409,132 @@ void native_document::update_style_animations(dom_node& node)
             runtime.paused_at_ms = 0;
         }
     }
+
+    const auto update_pseudo_tracks = [&] (
+        const node_style::pseudo_element& pseudo,
+        dom_node::animation_runtime_data::pseudo_animation_runtime& pseudo_runtime,
+        std::string_view pseudo_name) {
+        static const std::vector<node_style::animation_data::keyframe_animation> empty;
+        const auto& configured = pseudo.generated && !pseudo.display_none
+                && pseudo.has_animation_data()
+            ? pseudo.animations().keyframe_animations : empty;
+        auto set_changed = pseudo_runtime.keyframe_animations.size() != configured.size();
+        auto phase_changed = set_changed;
+        for (size_t index = 0U; !set_changed && index < configured.size(); ++index) {
+            set_changed = pseudo_runtime.keyframe_animations[index].signature
+                != configured[index].signature;
+        }
+        for (size_t index = 0U; !phase_changed && index < configured.size(); ++index) {
+            const auto desired_pause = !configured[index].signature.empty()
+                && configured[index].play_state
+                    == node_style::animation_data::play_kind::paused;
+            phase_changed = pseudo_runtime.keyframe_animations[index].fill_mode
+                    != configured[index].fill_mode
+                || pseudo_runtime.keyframe_animations[index].paused != desired_pause;
+        }
+        if (phase_changed) {
+            last_animation_advance_timestamp_ms_ =
+                std::numeric_limits<double>::quiet_NaN();
+        }
+        if (set_changed && animation_events_) {
+            std::erase_if(*animation_events_, [&](const auto& event) {
+                return event.node_id == node.id
+                    && event.pseudo_element == pseudo_name;
+            });
+        }
+        pseudo_runtime.keyframe_animations.resize(configured.size());
+        if (configured.empty()) {
+            pseudo_runtime.opacity_override = false;
+            pseudo_runtime.transform_override = false;
+            pseudo_runtime.filter_override = false;
+            pseudo_runtime.painted_filter_functions.clear();
+            return;
+        }
+        for (size_t index = 0U; index < configured.size(); ++index) {
+            const auto& source = configured[index];
+            auto& runtime = pseudo_runtime.keyframe_animations[index];
+            const auto identity_changed = runtime.signature != source.signature;
+            const auto fill_changed = runtime.fill_mode != source.fill_mode;
+            const auto was_paused = runtime.paused;
+            const auto previous_pause_timestamp = runtime.paused_at_ms;
+            const auto desired_pause = !source.signature.empty()
+                && source.play_state == node_style::animation_data::play_kind::paused;
+            runtime.name = source.name;
+            runtime.fill_mode = source.fill_mode;
+            if (identity_changed) {
+                runtime.signature = source.signature;
+                runtime.started_ms = animation_frame_timestamp_ms_;
+                runtime.active = !source.signature.empty();
+                runtime.filled = false;
+                runtime.end_event_sent = false;
+                runtime.filter_valid = false;
+                runtime.filter_keyframes.clear();
+                runtime.filter_underlying.clear();
+                runtime.painted_filter_functions.clear();
+                runtime.painted_opacity = pseudo.opacity;
+                runtime.painted_translation_x = {0, length_unit::pixels};
+                runtime.painted_translation_y = {0, length_unit::pixels};
+                runtime.painted_scale_x = 1;
+                runtime.painted_scale_y = 1;
+                runtime.painted_rotation_degrees = 0;
+                if (!source.filter_keyframes.empty()) {
+                    auto valid = source.filter_keyframes.size() >= 2U;
+                    size_t longest = 0U;
+                    for (const auto& filter_source : source.filter_keyframes) {
+                        dom_node::animation_runtime_data::retained_filter_keyframe stop;
+                        stop.offset = filter_source.offset;
+                        valid = valid && parse_foreground_filters(
+                            node, filter_source.value, stop.functions);
+                        stop.authored_none = stop.functions.empty();
+                        runtime.filter_keyframes.push_back(std::move(stop));
+                        if (runtime.filter_keyframes.back().functions.size()
+                            > runtime.filter_keyframes[longest].functions.size()) {
+                            longest = runtime.filter_keyframes.size() - 1U;
+                        }
+                    }
+                    if (valid) {
+                        const auto canonical =
+                            runtime.filter_keyframes[longest].functions;
+                        for (auto& stop : runtime.filter_keyframes) {
+                            auto expected = canonical;
+                            if (!make_retained_filter_lists_compatible(
+                                    stop.functions, expected)) {
+                                valid = false;
+                                break;
+                            }
+                        }
+                    }
+                    runtime.filter_valid = valid;
+                    if (source.opacity_keyframes.size() < 2U
+                        && source.translation_keyframes.size() < 2U
+                        && source.scale_keyframes.size() < 2U
+                        && source.rotation_keyframes.size() < 2U && !valid) {
+                        runtime.active = false;
+                    }
+                }
+            } else if (fill_changed && !runtime.signature.empty()) {
+                runtime.active = true;
+                runtime.filled = false;
+            }
+            if (was_paused && (!desired_pause || identity_changed)) {
+                const auto held_duration = std::max(
+                    0.0, animation_frame_timestamp_ms_ - previous_pause_timestamp);
+                if (!identity_changed && runtime.active) {
+                    runtime.started_ms += held_duration;
+                }
+            }
+            runtime.paused = desired_pause;
+            if (desired_pause && (!was_paused || identity_changed)) {
+                runtime.paused_at_ms = animation_frame_timestamp_ms_;
+            } else if (source.signature.empty()) {
+                runtime.paused_at_ms = 0;
+            }
+        }
+    };
+    update_pseudo_tracks(
+        node.style.before_pseudo(), animation.before_pseudo, "::before");
+    update_pseudo_tracks(
+        node.style.after_pseudo(), animation.after_pseudo, "::after");
 
     if (animation.opacity_animation_active && node.style.animations().transition_property_value == "none") {
         transition_events_.push_back({node.id,"transitioncancel","opacity",
@@ -1369,6 +1501,249 @@ bool native_document::advance_animations() noexcept
                 animation.painted_filter_functions.clear();
             }
         }
+
+        const auto advance_pseudo = [&] (
+            const node_style::pseudo_element& pseudo,
+            dom_node::animation_runtime_data::pseudo_animation_runtime& pseudo_runtime,
+            std::string_view pseudo_name) {
+            if (!pseudo.generated || pseudo.display_none) {
+                pseudo_runtime.opacity_override = false;
+                pseudo_runtime.transform_override = false;
+                pseudo_runtime.filter_override = false;
+                pseudo_runtime.painted_filter_functions.clear();
+                return;
+            }
+            const auto& configured_tracks = pseudo.animations().keyframe_animations;
+            auto opacity_override = false;
+            auto transform_override = false;
+            auto filter_override = false;
+            auto winning_opacity = pseudo.opacity;
+            auto winning_translation_x = css_length{0, length_unit::pixels};
+            auto winning_translation_y = css_length{0, length_unit::pixels};
+            auto winning_scale_x = 1.0F;
+            auto winning_scale_y = 1.0F;
+            auto winning_rotation = 0.0F;
+            const std::vector<retained_filter_function>* winning_filter = nullptr;
+            for (size_t index = 0U;
+                 index < pseudo_runtime.keyframe_animations.size()
+                    && index < configured_tracks.size(); ++index) {
+                auto& runtime = pseudo_runtime.keyframe_animations[index];
+                const auto& configured = configured_tracks[index];
+                if (runtime.signature.empty()) continue;
+                auto contributes = false;
+                auto progress = 0.0F;
+                auto completed = false;
+                if (!runtime.active) {
+                    contributes = runtime.filled;
+                } else {
+                    const auto timestamp_ms = runtime.paused
+                        ? runtime.paused_at_ms : animation_frame_timestamp_ms_;
+                    const auto elapsed_ms = static_cast<float>(
+                        timestamp_ms - runtime.started_ms - configured.delay_ms);
+                    if (elapsed_ms < 0) {
+                        contributes = fills_before(configured.fill_mode);
+                        if (contributes) {
+                            progress = directed_keyframe_progress(
+                                0.0F, 0.0, configured.direction);
+                        }
+                    } else {
+                        const auto active_duration =
+                            keyframe_active_duration_ms(configured);
+                        const auto instantaneous = active_duration == 0;
+                        if (instantaneous || elapsed_ms >= active_duration) {
+                            contributes = fills_after(configured.fill_mode);
+                            if (contributes) {
+                                progress = terminal_keyframe_progress(
+                                    configured.iterations, configured.direction);
+                            }
+                            if (!runtime.paused || instantaneous) {
+                                runtime.active = false;
+                                runtime.filled = contributes;
+                                completed = true;
+                            }
+                        } else {
+                            contributes = true;
+                            runtime.filled = false;
+                            progress = active_keyframe_progress(
+                                elapsed_ms, configured.duration_ms,
+                                configured.direction);
+                        }
+                    }
+                }
+                const auto eased_segment = [&](float segment_progress) {
+                    return timing_value(
+                        segment_progress,
+                        configured.x1, configured.y1,
+                        configured.x2, configured.y2,
+                        configured.timing_kind,
+                        configured.step_count,
+                        configured.step_position);
+                };
+                if (contributes && configured.opacity_keyframes.size() >= 2U) {
+                    const auto& stops = configured.opacity_keyframes;
+                    auto right = std::lower_bound(
+                        stops.begin(), stops.end(), progress,
+                        [](const node_style::opacity_keyframe& stop, float value) {
+                            return stop.offset < value;
+                        });
+                    if (right == stops.begin()) runtime.painted_opacity = right->opacity;
+                    else if (right == stops.end()) {
+                        runtime.painted_opacity = stops.back().opacity;
+                    } else {
+                        const auto& from = *(right - 1);
+                        const auto span = std::max(0.0001F, right->offset - from.offset);
+                        const auto eased = eased_segment(std::clamp(
+                            (progress - from.offset) / span, 0.0F, 1.0F));
+                        runtime.painted_opacity = from.opacity
+                            + (right->opacity - from.opacity) * eased;
+                    }
+                    winning_opacity = runtime.painted_opacity;
+                    opacity_override = true;
+                }
+                if (contributes && configured.translation_keyframes.size() >= 2U) {
+                    const auto& stops = configured.translation_keyframes;
+                    auto right = std::lower_bound(
+                        stops.begin(), stops.end(), progress,
+                        [](const node_style::translation_keyframe& stop, float value) {
+                            return stop.offset < value;
+                        });
+                    if (right == stops.begin()) {
+                        runtime.painted_translation_x = right->x;
+                        runtime.painted_translation_y = right->y;
+                    } else if (right == stops.end()) {
+                        runtime.painted_translation_x = stops.back().x;
+                        runtime.painted_translation_y = stops.back().y;
+                    } else {
+                        const auto& from = *(right - 1);
+                        const auto span = std::max(0.0001F, right->offset - from.offset);
+                        const auto eased = eased_segment(std::clamp(
+                            (progress - from.offset) / span, 0.0F, 1.0F));
+                        runtime.painted_translation_x = interpolate_length(
+                            from.x, right->x, eased);
+                        runtime.painted_translation_y = interpolate_length(
+                            from.y, right->y, eased);
+                    }
+                    winning_translation_x = runtime.painted_translation_x;
+                    winning_translation_y = runtime.painted_translation_y;
+                    transform_override = true;
+                }
+                if (contributes && configured.scale_keyframes.size() >= 2U) {
+                    const auto& stops = configured.scale_keyframes;
+                    auto right = std::lower_bound(
+                        stops.begin(), stops.end(), progress,
+                        [](const node_style::scale_keyframe& stop, float value) {
+                            return stop.offset < value;
+                        });
+                    if (right == stops.begin()) {
+                        runtime.painted_scale_x = right->x;
+                        runtime.painted_scale_y = right->y;
+                    } else if (right == stops.end()) {
+                        runtime.painted_scale_x = stops.back().x;
+                        runtime.painted_scale_y = stops.back().y;
+                    } else {
+                        const auto& from = *(right - 1);
+                        const auto span = std::max(0.0001F, right->offset - from.offset);
+                        const auto eased = eased_segment(std::clamp(
+                            (progress - from.offset) / span, 0.0F, 1.0F));
+                        runtime.painted_scale_x = from.x + (right->x - from.x) * eased;
+                        runtime.painted_scale_y = from.y + (right->y - from.y) * eased;
+                    }
+                    winning_scale_x = runtime.painted_scale_x;
+                    winning_scale_y = runtime.painted_scale_y;
+                    transform_override = true;
+                }
+                if (contributes && configured.rotation_keyframes.size() >= 2U) {
+                    const auto& stops = configured.rotation_keyframes;
+                    auto right = std::lower_bound(
+                        stops.begin(), stops.end(), progress,
+                        [](const node_style::rotation_keyframe& stop, float value) {
+                            return stop.offset < value;
+                        });
+                    if (right == stops.begin()) {
+                        runtime.painted_rotation_degrees = right->degrees;
+                    } else if (right == stops.end()) {
+                        runtime.painted_rotation_degrees = stops.back().degrees;
+                    } else {
+                        const auto& from = *(right - 1);
+                        const auto span = std::max(0.0001F, right->offset - from.offset);
+                        const auto eased = eased_segment(std::clamp(
+                            (progress - from.offset) / span, 0.0F, 1.0F));
+                        runtime.painted_rotation_degrees = from.degrees
+                            + (right->degrees - from.degrees) * eased;
+                    }
+                    winning_rotation = runtime.painted_rotation_degrees;
+                    transform_override = true;
+                }
+                if (contributes && runtime.filter_valid
+                    && runtime.filter_keyframes.size() >= 2U) {
+                    const auto& stops = runtime.filter_keyframes;
+                    const auto assign_stop = [&](const auto& stop) {
+                        if (stop.authored_none) {
+                            runtime.painted_filter_functions.clear();
+                        } else {
+                            runtime.painted_filter_functions = stop.functions;
+                        }
+                    };
+                    auto right = std::lower_bound(
+                        stops.begin(), stops.end(), progress,
+                        [](const auto& stop, float value) {
+                            return stop.offset < value;
+                        });
+                    if (right == stops.begin()) assign_stop(*right);
+                    else if (right == stops.end()) assign_stop(stops.back());
+                    else if (std::abs(progress - right->offset) < 0.000001F) {
+                        assign_stop(*right);
+                    } else {
+                        const auto& from = *(right - 1);
+                        const auto span = std::max(0.0001F, right->offset - from.offset);
+                        const auto eased = eased_segment(std::clamp(
+                            (progress - from.offset) / span, 0.0F, 1.0F));
+                        runtime.painted_filter_functions = from.functions;
+                        for (size_t filter_index = 0U;
+                             filter_index < runtime.painted_filter_functions.size();
+                             ++filter_index) {
+                            const auto initial = from.functions[filter_index].amount;
+                            runtime.painted_filter_functions[filter_index].amount = initial
+                                + (right->functions[filter_index].amount - initial) * eased;
+                        }
+                    }
+                    winning_filter = &runtime.painted_filter_functions;
+                    filter_override = true;
+                }
+                advanced = advanced || (contributes && keyframe_paint_visible);
+                if (completed && !runtime.end_event_sent) {
+                    if (!animation_events_) {
+                        animation_events_ =
+                            std::make_unique<std::vector<animation_event_record>>();
+                    }
+                    animation_events_->push_back({
+                        node.id,
+                        "animationend",
+                        runtime.name,
+                        keyframe_active_duration_ms(configured) / 1000.0F,
+                        std::string(pseudo_name)});
+                    runtime.end_event_sent = true;
+                }
+            }
+            pseudo_runtime.opacity_override = opacity_override;
+            pseudo_runtime.transform_override = transform_override;
+            pseudo_runtime.filter_override = filter_override;
+            pseudo_runtime.painted_opacity = winning_opacity;
+            pseudo_runtime.painted_translation_x = winning_translation_x;
+            pseudo_runtime.painted_translation_y = winning_translation_y;
+            pseudo_runtime.painted_scale_x = winning_scale_x;
+            pseudo_runtime.painted_scale_y = winning_scale_y;
+            pseudo_runtime.painted_rotation_degrees = winning_rotation;
+            if (filter_override && winning_filter != nullptr) {
+                pseudo_runtime.painted_filter_functions = *winning_filter;
+            } else {
+                pseudo_runtime.painted_filter_functions.clear();
+            }
+        };
+        advance_pseudo(
+            node.style.before_pseudo(), animation.before_pseudo, "::before");
+        advance_pseudo(
+            node.style.after_pseudo(), animation.after_pseudo, "::after");
     }
     // Opacity, colors, filters, scale, and rotation are paint-only.
     // Their interpolated values are consumed directly by build_scene(), so they
@@ -1404,8 +1779,23 @@ bool native_document::has_active_animations() const noexcept
             animation->keyframe_animations.end(), [](const auto& track) {
                 return track.active && !track.paused;
             });
+        const auto pseudo_active = [](const auto& pseudo) {
+            return std::any_of(
+                pseudo.keyframe_animations.begin(),
+                pseudo.keyframe_animations.end(), [](const auto& track) {
+                    return track.active && !track.paused;
+                });
+        };
+        const auto generated_pseudo_active =
+            (node->style.before_pseudo().generated
+                && !node->style.before_pseudo().display_none
+                && pseudo_active(animation->before_pseudo))
+            || (node->style.after_pseudo().generated
+                && !node->style.after_pseudo().display_none
+                && pseudo_active(animation->after_pseudo));
         return transition_active
-            || (keyframe_active && intersects_visible_paint_area(*node));
+            || ((keyframe_active || generated_pseudo_active)
+                && intersects_visible_paint_area(*node));
     });
     active_animation_demand_cache_valid_ = true;
     return active_animation_demand_cache_;

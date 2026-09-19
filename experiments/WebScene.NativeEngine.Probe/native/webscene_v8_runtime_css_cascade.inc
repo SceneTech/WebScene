@@ -158,6 +158,24 @@
             if (track.filter_keyframes.size() >= 2U)
                 record_composition("css-filter-keyframe-animation",node.id);
         }
+        const auto configure_pseudo = [&](node_style::pseudo_element& pseudo) {
+            if (!pseudo.has_animation_data()) return;
+            css::configure_keyframes(pseudo.mutable_animations(), opacity_keyframes);
+            for (const auto& track : pseudo.animations().keyframe_animations) {
+                if (track.opacity_keyframes.size() >= 2U)
+                    record_composition("css-pseudo-opacity-keyframe-animation",node.id);
+                if (track.translation_keyframes.size() >= 2U
+                    || track.scale_keyframes.size() >= 2U
+                    || track.rotation_keyframes.size() >= 2U)
+                    record_composition("css-pseudo-transform-keyframe-animation",node.id);
+                if (track.filter_keyframes.size() >= 2U)
+                    record_composition("css-pseudo-filter-keyframe-animation",node.id);
+            }
+        };
+        if (node.style.has_pseudo_elements()) {
+            configure_pseudo(node.style.mutable_before_pseudo());
+            configure_pseudo(node.style.mutable_after_pseudo());
+        }
     }
 
     void recompute_cascaded_line_height(dom_node& node,const std::vector<const css_rule*>& rules)

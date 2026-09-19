@@ -1,6 +1,7 @@
 #pragma once
 #include "webscene_css_pseudo_values.h"
 #include "webscene_css_text_values.h"
+#include "webscene_css_transitions.h"
 #include "webscene_css_variables.h"
 
 namespace webscene_native::css {
@@ -122,6 +123,13 @@ void apply_pseudo_declaration(dom_node& node,node_style::pseudo_element& pseudo,
             && pseudo.font_family_important
             && !declaration.important) {
             decision.classification = "supported";
+            return;
+        }
+        if (name.starts_with("animation")
+            && apply_animation_property(pseudo.mutable_animations(), name, value)) {
+            decision.classification = "partially-supported";
+            decision.semantic_slice =
+                "bounded generated-pseudo keyframes on the originating element";
             return;
         }
         const auto result = css::apply_pseudo_value(

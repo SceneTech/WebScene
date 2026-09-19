@@ -11,9 +11,11 @@ as retired JavaScript invocation symbols:
 - `webscene_engine_complete_outbound_drag_v1`
 
 These APIs exchange drag and download host requests. They do not expose the
-retired JSON JavaScript invocation transport. The contract now lists them with
-the other independently versioned host services while preserving the broad
-fail-closed scan for unreviewed v1/v2 engine and interop symbols.
+retired JSON JavaScript invocation transport. Follow-up run `35430597424`
+proved that they are deliberately header-only rather than package exports. The
+contract now checks them in the public header, keeps exported host services
+required in the export manifest, and uses the union only for the broad
+fail-closed scan of unreviewed v1/v2 engine and interop symbols.
 
 Only `git diff --check` was run for this fast CI-recovery slice. Current-main
 CI remains the authoritative execution gate.

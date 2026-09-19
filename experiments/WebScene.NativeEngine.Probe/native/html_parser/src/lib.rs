@@ -1368,6 +1368,7 @@ mod selector_syntax {
     enum WebScenePseudoClass {
         Named(String),
         Functional(String, String),
+        State(String),
     }
 
     impl ToCss for WebScenePseudoClass {
@@ -1379,6 +1380,11 @@ mod selector_syntax {
                 Self::Named(name) => write!(destination, ":{name}"),
                 Self::Functional(name, argument) => {
                     write!(destination, ":{name}({argument})")
+                }
+                Self::State(name) => {
+                    destination.write_str(":state(")?;
+                    serialize_identifier(name, destination)?;
+                    destination.write_char(')')
                 }
             }
         }
@@ -1553,6 +1559,28 @@ mod selector_syntax {
             _after_part: bool,
         ) -> Result<WebScenePseudoClass, SelectorParseError<'i>> {
             let name = name.to_ascii_lowercase();
+            if name == "state" {
+                let argument = parser.expect_ident_cloned().map_err(|_| {
+                    parser.new_custom_error(
+                        SelectorParseErrorKind::UnsupportedPseudoClassOrElement(name.clone().into()),
+                    )
+                })?;
+                parser.expect_exhausted().map_err(|_| {
+                    parser.new_custom_error(
+                        SelectorParseErrorKind::UnsupportedPseudoClassOrElement(name.clone().into()),
+                    )
+                })?;
+                let folded = argument.to_ascii_lowercase();
+                if matches!(
+                    folded.as_str(),
+                    "default" | "initial" | "inherit" | "unset" | "revert" | "revert-layer"
+                ) {
+                    return Err(parser.new_custom_error(
+                        SelectorParseErrorKind::UnsupportedPseudoClassOrElement(name.into()),
+                    ));
+                }
+                return Ok(WebScenePseudoClass::State(argument.to_string()));
+            }
             if name != "lang" && name != "dir" {
                 return Err(parser.new_custom_error(
                     SelectorParseErrorKind::UnsupportedPseudoClassOrElement(name.into()),

@@ -864,6 +864,8 @@
                             "selector:pseudo-class:nth-child",
                             "partially-supported",
                             "integer, odd, even, and An+B forms without an of-selector");
+                    } else if (name == "state") {
+                        record_selector_feature("selector:pseudo-class:state");
                     } else {
                         record_selector_feature(
                             "selector:pseudo-class:" + name,
@@ -1839,6 +1841,13 @@
                 }
                 auto hash = to_utf8(isolate, hash_value);
                 return hash;
+    }
+    bool custom_state_matches(const dom_node& node, std::string_view state) const
+    {
+        const auto known = custom_states.find(node.id);
+        return known != custom_states.end()
+            && std::find(known->second.begin(), known->second.end(), state)
+                != known->second.end();
     }
     bool css_compound_selector_matches(const dom_node& node,const compiled_css_compound& selector,
         const dom_node* scope_root = nullptr, bool stable_features_only = false) const

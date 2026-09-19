@@ -159,6 +159,8 @@ inline std::vector<css_compound_dependencies> compile_invalidation_plan(
                 add(output.attributes["$live-form-value"], route);
                 output.child_list_sensitive = true;
                 add(output.child_list, route);
+            } else if (pseudo.name == "state" && !pseudo.argument.empty()) {
+                add(output.attributes["$custom-state:" + pseudo.argument], route);
             }
             const bool has = pseudo.name == "has";
             const bool selector_list = has || pseudo.name == "is"

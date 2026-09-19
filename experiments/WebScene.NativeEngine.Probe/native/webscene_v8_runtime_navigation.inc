@@ -342,6 +342,7 @@
         element_id_indexes.clear();
         element_named_indexes.clear();
         document_named_form_indexes.clear();
+        custom_states.clear();
 
         // Retire the disconnected native tree now that no old wrapper can
         // keep it alive. This also prevents a later idle collection from

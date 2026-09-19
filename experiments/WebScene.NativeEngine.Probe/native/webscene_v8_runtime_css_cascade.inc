@@ -2425,6 +2425,60 @@
         }
     }
 
+    void set_custom_state_membership(
+        uint32_t node_id,
+        const std::string& state,
+        bool present)
+    {
+        auto known = custom_states.find(node_id);
+        if (present) {
+            if (known == custom_states.end())
+                known = custom_states.emplace(node_id, std::vector<std::string>{}).first;
+            if (std::find(known->second.begin(), known->second.end(), state)
+                == known->second.end()) known->second.push_back(state);
+            return;
+        }
+        if (known == custom_states.end()) return;
+        std::erase(known->second, state);
+        if (known->second.empty()) custom_states.erase(known);
+    }
+
+    void recascade_custom_state_selector_transition(
+        dom_node& subject,
+        const std::string& state,
+        bool previous,
+        bool current)
+    {
+        if (previous == current) return;
+        document.mark_dirty();
+        if (!is_connected(subject)) {
+            set_custom_state_membership(subject.id, state, current);
+            return;
+        }
+        // Matching captures the post-mutation state first, then temporarily
+        // restores the previous state to discover exact transition targets.
+        set_custom_state_membership(subject.id, state, current);
+        const auto dependency = "$custom-state:" + state;
+        const auto indexed = css_invalidation_rules_by_attribute.find(dependency);
+        const std::span<const size_t> changed_rules = indexed ==
+                css_invalidation_rules_by_attribute.end()
+            ? std::span<const size_t>{}
+            : std::span<const size_t>{indexed->second};
+        recascade_selector_transition(
+            subject,
+            changed_rules,
+            [&](const css::css_compound_dependencies& dependencies) {
+                css::css_invalidation_targets result;
+                const auto found = dependencies.attributes.find(dependency);
+                if (found != dependencies.attributes.end())
+                    result.include(found->second);
+                return result;
+            },
+            [&] { set_custom_state_membership(subject.id, state, previous); },
+            [&] { set_custom_state_membership(subject.id, state, current); },
+            false);
+    }
+
     void recascade_form_value_selector_transition(
         dom_node& subject,
         std::string previous_value,

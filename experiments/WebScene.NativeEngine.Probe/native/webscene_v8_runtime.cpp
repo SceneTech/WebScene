@@ -3195,6 +3195,8 @@ struct v8_dom_runtime::implementation final {
               globalThis.__webSceneSetElementInternalsUserValidity;
             const validateElementInternals =
               globalThis.__webSceneValidateElementInternals;
+            const mutateCustomState = globalThis.__webSceneMutateCustomState;
+            const escapeCustomState = globalThis.CSS.escape.bind(globalThis.CSS);
             const NativeHTMLElement = globalThis.HTMLElement;
             const nativeCreateElement = document.createElement;
             const definitions = new Map();
@@ -3203,6 +3205,7 @@ struct v8_dom_runtime::implementation final {
             const elementStates = new WeakMap();
             const attachedInternals = new WeakMap();
             const internalsTargets = new WeakMap();
+            const customStateRecords = new WeakMap();
             const constructionStack = [];
             let registryActive = false;
             const reservedNames = new Set([
@@ -3382,6 +3385,144 @@ struct v8_dom_runtime::implementation final {
               return validity;
             };
 
+            const customStateRecordFor = object => {
+              const record = customStateRecords.get(object);
+              if (!record?.active) throw new TypeError('Illegal invocation');
+              return record;
+            };
+            const mutateState = (record, operation, value = undefined) => {
+              if (operation === 2) return mutateCustomState(record.element, operation);
+              const token = String(value);
+              const result = mutateCustomState(
+                record.element, operation, token, escapeCustomState(token));
+              if (result === -1) {
+                throw new DOMException(
+                  'Custom state must be a bounded CSS custom identifier',
+                  'SyntaxError');
+              }
+              if (result === -2) {
+                throw new DOMException('Custom state capacity exceeded', 'QuotaExceededError');
+              }
+              if (result === 0) throw new DOMException('Custom state is no longer active', 'InvalidStateError');
+              return result;
+            };
+            function WebSceneCustomStateSet() {
+              throw new TypeError('Illegal constructor');
+            }
+            Object.defineProperty(WebSceneCustomStateSet, 'name', {
+              value: 'CustomStateSet', configurable: true
+            });
+            const customStateValues = function values() {
+              return customStateRecordFor(this).values.values();
+            };
+            Object.defineProperties(WebSceneCustomStateSet.prototype, {
+              size: {
+                get() { return customStateRecordFor(this).values.size; },
+                enumerable: true,
+                configurable: true
+              },
+              add: {
+                value(value) {
+                  const record = customStateRecordFor(this);
+                  const token = String(value);
+                  mutateState(record, 0, token);
+                  record.values.add(token);
+                  return this;
+                },
+                writable: true,
+                enumerable: true,
+                configurable: true
+              },
+              delete: {
+                value(value) {
+                  const record = customStateRecordFor(this);
+                  const token = String(value);
+                  if (!record.values.has(token)) return false;
+                  mutateState(record, 1, token);
+                  record.values.delete(token);
+                  return true;
+                },
+                writable: true,
+                enumerable: true,
+                configurable: true
+              },
+              clear: {
+                value() {
+                  const record = customStateRecordFor(this);
+                  if (record.values.size === 0) return;
+                  mutateState(record, 2);
+                  record.values.clear();
+                },
+                writable: true,
+                enumerable: true,
+                configurable: true
+              },
+              has: {
+                value(value) {
+                  return customStateRecordFor(this).values.has(String(value));
+                },
+                writable: true,
+                enumerable: true,
+                configurable: true
+              },
+              entries: {
+                value() { return customStateRecordFor(this).values.entries(); },
+                writable: true,
+                enumerable: true,
+                configurable: true
+              },
+              keys: {
+                value: customStateValues,
+                writable: true,
+                enumerable: true,
+                configurable: true
+              },
+              values: {
+                value: customStateValues,
+                writable: true,
+                enumerable: true,
+                configurable: true
+              },
+              forEach: {
+                value(callback, thisArg = undefined) {
+                  const record = customStateRecordFor(this);
+                  record.values.forEach(value => {
+                    Reflect.apply(callback, thisArg, [value, value, this]);
+                  });
+                },
+                writable: true,
+                enumerable: true,
+                configurable: true
+              },
+              [Symbol.iterator]: {
+                value: customStateValues,
+                writable: true,
+                configurable: true
+              },
+              [Symbol.toStringTag]: {
+                value: 'CustomStateSet', configurable: true
+              }
+            });
+            const createCustomStateSet = element => {
+              const object = Object.create(WebSceneCustomStateSet.prototype);
+              customStateRecords.set(object, {
+                element, values: new Set(), active: true
+              });
+              return object;
+            };
+            const releaseElementInternals = element => {
+              const record = attachedInternals.get(element);
+              if (!record) return;
+              const states = customStateRecords.get(record.states);
+              if (states?.active) {
+                mutateCustomState(element, 2);
+                states.values.clear();
+                states.active = false;
+              }
+              internalsTargets.delete(record.object);
+              attachedInternals.delete(element);
+            };
+
             function WebSceneElementInternals() {
               throw new TypeError('Illegal constructor');
             }
@@ -3389,6 +3530,15 @@ struct v8_dom_runtime::implementation final {
               value: 'ElementInternals', configurable: true
             });
             Object.defineProperties(WebSceneElementInternals.prototype, {
+              states: {
+                get() {
+                  const element = internalsTargets.get(this);
+                  if (!element) throw new TypeError('Illegal invocation');
+                  return attachedInternals.get(element).states;
+                },
+                enumerable: true,
+                configurable: true
+              },
               form: {
                 get() {
                   const element = internalsTargets.get(this);
@@ -3590,10 +3740,11 @@ struct v8_dom_runtime::implementation final {
                     'NotSupportedError');
                 }
                 const internals = Object.create(WebSceneElementInternals.prototype);
+                const states = createCustomStateSet(this);
                 attachedInternals.set(this, {
                   object: internals, submissionValue: null, state: null,
                   validityFlags: 0, validationMessage: '',
-                  validationAnchor: null, validity: null
+                  validationAnchor: null, validity: null, states
                 });
                 internalsTargets.set(internals, this);
                 if (state.definition.formAssociated) {
@@ -3629,6 +3780,7 @@ struct v8_dom_runtime::implementation final {
                 }
                 state.state = 'custom';
               } catch (error) {
+                releaseElementInternals(element);
                 if (definition.formAssociated) {
                   registerFormAssociatedCustomElement(element, false);
                 }
@@ -3893,6 +4045,9 @@ struct v8_dom_runtime::implementation final {
               return true;
             };
             Object.defineProperties(globalThis, {
+              CustomStateSet: {
+                value: WebSceneCustomStateSet, writable: true, configurable: true
+              },
               __webSceneCustomElementsBeginReactions: {
                 value: beginReactions, configurable: true
               },
@@ -3998,6 +4153,9 @@ struct v8_dom_runtime::implementation final {
         install_native_bridge(
             "__webSceneValidateElementInternals",
             validate_element_internals);
+        install_native_bridge(
+            "__webSceneMutateCustomState",
+            mutate_custom_state);
         global->DefineOwnProperty(
             local_context,
             js_string(isolate, "__webSceneActivateCustomElements"),

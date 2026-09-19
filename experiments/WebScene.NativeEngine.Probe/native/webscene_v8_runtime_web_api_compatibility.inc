@@ -55,8 +55,10 @@
             local_context,
             "FileReader",
             fileReaderCompatibilityScript);
+        const auto css_compatibility_script =
+            join_embedded_source_parts(cssCompatibilityScriptParts);
         install_web_api_compatibility_script(
             local_context,
             "stylesheet CSSOM",
-            cssCompatibilityScript);
+            css_compatibility_script);
     }

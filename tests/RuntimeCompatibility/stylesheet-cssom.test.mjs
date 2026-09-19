@@ -5,8 +5,11 @@ import { performance as nodePerformance } from 'node:perf_hooks';
 import { createContext, runInContext } from 'node:vm';
 
 const header = readFileSync(new URL('../../experiments/WebScene.NativeEngine.Probe/native/webscene_stylesheet_cssom_compatibility.h', import.meta.url), 'utf8');
-const script = header.match(/cssCompatibilityScript = R"JS\(([\s\S]*?)\)JS";/)?.[1];
-assert.ok(script, 'native CSS compatibility script must be embedded');
+const scriptDeclaration = header.match(
+  /cssCompatibilityScriptParts\{([\s\S]*?)\};\nstatic_assert/)?.[1];
+assert.ok(scriptDeclaration, 'native CSS compatibility script parts must be embedded');
+const script = Array.from(scriptDeclaration.matchAll(/R"JS\(([\s\S]*?)\)JS"/g), match => match[1]).join('');
+assert.ok(script, 'native CSS compatibility script must be reconstructable');
 assert.equal(/<\/script/i.test(script), false, 'script must be safe to embed in HTML');
 
 function setup() {

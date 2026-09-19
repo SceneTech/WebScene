@@ -1335,7 +1335,7 @@
             js_string(isolate, "__webSceneFileSystemHandleState"),
             v8::Function::New(local_context, file_system_handle_state)
                 .ToLocalChecked()).Check();
-        constexpr std::string_view source = R"JS(
+        constexpr std::array<std::string_view, 4> source_parts{R"JS(
           (() => {
             const requestPanel = globalThis.__webSceneRequestFilePanel;
             const compareGrants = globalThis.__webSceneCompareFileGrants;
@@ -1564,7 +1564,8 @@
             };
             const queueWriterCommand = (stream, command) => {
               if (!writerStates.has(stream)) {
-                return Promise.reject(new TypeError('Illegal invocation'));
+)JS",
+        R"JS(                return Promise.reject(new TypeError('Illegal invocation'));
               }
               let writer;
               try { writer = WritableStream.prototype.getWriter.call(stream); }
@@ -1819,7 +1820,8 @@
                 value: keys },
               values: { enumerable: true, configurable: true, writable: true,
                 value: values },
-              [Symbol.asyncIterator]: { configurable: true, writable: true,
+)JS",
+        R"JS(              [Symbol.asyncIterator]: { configurable: true, writable: true,
                 value: entries },
               getFileHandle: { enumerable: true, configurable: true, writable: true,
                 value: getFileHandle },
@@ -2065,7 +2067,8 @@
                 return { description: String(type.description || ''), accept };
               });
             };
-            const normalize = (kind, options) => {
+)JS",
+        R"JS(            const normalize = (kind, options) => {
               if (options == null) options = {};
               if (typeof options !== 'object') throw new TypeError('Picker options must be an object');
               const types = kind === 2 ? [] : normalizeTypes(options.types);
@@ -2117,10 +2120,12 @@
                 writable: true, value: showSaveFilePicker }
             });
           })();
-        )JS";
+        )JS"};
+        static_assert(embedded_source_parts_are_portable(source_parts));
+        auto source = join_embedded_source_parts(source_parts);
         auto script = v8::Script::Compile(
             local_context,
-            js_string(isolate, std::string(source).c_str())).ToLocalChecked();
+            js_string(isolate, source.c_str())).ToLocalChecked();
         script->Run(local_context).ToLocalChecked();
     }
     static constexpr std::size_t maximum_file_system_handle_bindings = 16384U;

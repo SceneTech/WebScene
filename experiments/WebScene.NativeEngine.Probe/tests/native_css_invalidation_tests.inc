@@ -331,6 +331,52 @@ void test_live_form_state_selectors_and_scaling()
             "numeric-constraint-underflow.js") == R"(["-5",-5,true,true])",
         "native numeric edit did not transition from bad input to range underflow");
 
+    const auto date_time_constraint_validity = evaluate(engine, R"JS((() => {
+      const form=document.getElementById('form');
+      const state=node=>[node.value,node.valueAsNumber,node.matches(':valid'),
+        node.matches(':invalid'),node.matches(':in-range'),node.matches(':out-of-range'),
+        getComputedStyle(node).paddingLeft];
+      const date=document.createElement('input');date.className='probe';date.type='date';
+      date.min='2019-12-10';date.max='2019-12-20';date.step='2';
+      date.value='2019-12-12';form.appendChild(date);
+      const dateStates=[state(date)];date.value='2019-12-11';dateStates.push(state(date));
+      date.min='2019-12-11';dateStates.push(state(date));
+      date.max='2019-12-10';dateStates.push(state(date));
+      date.removeAttribute('min');date.removeAttribute('max');date.removeAttribute('step');
+      date.valueAsNumber=1456704000000;dateStates.push(state(date));
+      const month=document.createElement('input');month.className='probe';month.type='month';
+      month.min='1970-01';month.step='2';month.value='1970-03';form.appendChild(month);
+      const monthStates=[state(month)];month.value='1970-04';monthStates.push(state(month));
+      month.value='1970-03';month.max='1970-02';monthStates.push(state(month));
+      month.removeAttribute('min');month.removeAttribute('max');month.removeAttribute('step');
+      month.valueAsNumber=-1;monthStates.push(state(month));
+      const week=document.createElement('input');week.className='probe';week.type='week';
+      week.min='1970-W01';week.step='2';week.value='1970-W03';form.appendChild(week);
+      const weekStates=[state(week)];week.value='1970-W04';weekStates.push(state(week));
+      week.removeAttribute('min');week.removeAttribute('step');week.valueAsNumber=0;
+      weekStates.push(state(week));
+      const time=document.createElement('input');time.className='probe';time.type='time';
+      time.min='21:00';time.max='06:00';time.step='any';time.value='00:00';
+      form.appendChild(time);const timeStates=[state(time)];
+      time.value='13:00';timeStates.push(state(time));
+      time.removeAttribute('min');time.removeAttribute('max');time.removeAttribute('step');
+      time.value='12:00:30';timeStates.push(state(time));
+      time.step='.5';timeStates.push(state(time));time.valueAsNumber=-3600000;
+      timeStates.push(state(time));
+      const bad=document.createElement('input');bad.id='date-time-bad';bad.className='probe';
+      bad.type='date';form.appendChild(bad);bad.focus();
+      return [dateStates,monthStates,weekStates,timeStates,state(bad)];
+    })())JS", "date-time-constraint-validity.js");
+    require(date_time_constraint_validity == R"JSON([[["2019-12-12",1576108800000,true,false,true,false,"19px"],["2019-12-11",1576022400000,false,true,true,false,"47px"],["2019-12-11",1576022400000,true,false,true,false,"19px"],["2019-12-11",1576022400000,false,true,false,true,"47px"],["2016-02-29",1456704000000,true,false,false,false,"19px"]],[["1970-03",2,true,false,true,false,"19px"],["1970-04",3,false,true,true,false,"47px"],["1970-03",2,false,true,false,true,"47px"],["1969-12",-1,true,false,false,false,"19px"]],[["1970-W03",950400000,true,false,true,false,"19px"],["1970-W04",1555200000,false,true,true,false,"47px"],["1970-W01",-259200000,true,false,false,false,"19px"]],[["00:00",0,true,false,true,false,"19px"],["13:00",46800000,false,true,false,true,"47px"],["12:00:30",43230000,false,true,false,false,"47px"],["12:00:30",43230000,true,false,false,false,"19px"],["23:00",82800000,true,false,false,false,"19px"]],["",null,true,false,false,false,"19px"]])JSON",
+        "date/time value, conversion, bounds, step, or invalidation diverged: "
+            + date_time_constraint_validity);
+    keyboard_input(engine, WEBSCENE_INPUT_TEXT, 'x', 8U);
+    wait_for_consumed_inputs(engine, 8U, "bad date native edit was not consumed");
+    require(evaluate(engine,
+            "(()=>{const n=document.getElementById('date-time-bad');return [n.value,n.valueAsNumber,n.matches(':invalid'),getComputedStyle(n).paddingLeft]})()",
+            "date-time-constraint-bad-input.js") == R"(["x",null,true,"47px"])",
+        "native date edit did not establish bad-input state");
+
     const auto setup = evaluate(engine, R"JS((() => {
       document.body.innerHTML='<style>.scale:invalid{width:2px}.scale:placeholder-shown{height:3px}'+
         Array.from({length:1024},(_,i)=>'.noise-'+i+':hover{width:7px}').join('')+'</style>'+

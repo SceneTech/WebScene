@@ -1,0 +1,100 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Nested same-document history and reload lifecycle contract</title>
+<body>
+<script>
+  const state = globalThis.__webSceneWptState = {
+    complete: false, harness: null, results: [], errors: [], diagnostics: []
+  };
+  const record = (name, condition, detail = null) => state.results.push({
+    name, status: condition ? "PASS" : "FAIL",
+    message: condition ? null : String(detail || "Contract failed"), stack: null
+  });
+  const finish = error => {
+    if (state.complete) return;
+    if (error) state.errors.push(String(error && error.stack || error));
+    const failed = state.results.find(result => result.status !== "PASS");
+    state.harness = error || failed
+      ? { status: 1, message: error ? String(error) : failed.message, stack: null }
+      : { status: 0, message: null, stack: null };
+    state.complete = true;
+  };
+
+  const frame = document.createElement("iframe");
+  frame.setAttribute("sandbox", "allow-same-origin allow-scripts");
+  frame.src = "resources/iframe-nested-history-reload-source.html";
+  document.body.appendChild(frame);
+  const proxy = frame.contentWindow;
+  const lifecycle = [];
+  let outgoingDocument = null;
+  let staleTaskRan = false;
+  let loads = 0;
+
+  globalThis.__webSceneNestedHistoryLifecycle = (type, event, sourceDocument) => {
+    lifecycle.push(type);
+    record(`${type} keeps the outgoing nested document current`,
+      sourceDocument === outgoingDocument
+        && frame.contentWindow === proxy
+        && frame.contentDocument === outgoingDocument);
+  };
+  globalThis.__webSceneNestedHistoryStaleTask = () => { staleTaskRan = true; };
+
+  proxy.addEventListener("DOMContentLoaded", event => {
+    try {
+      ++loads;
+      if (loads === 1) {
+        outgoingDocument = event.target;
+        let popstates = 0;
+        let hashchanges = 0;
+        proxy.addEventListener("popstate", popEvent => {
+          ++popstates;
+          record("traversal publishes the cloned entry state",
+            popEvent.state.step === 1 && proxy.history.state.step === 1);
+          proxy.history.back();
+        });
+        proxy.addEventListener("hashchange", hashEvent => {
+          ++hashchanges;
+          record("same-document traversal preserves the active realm",
+            frame.contentWindow === proxy
+              && frame.contentDocument === outgoingDocument
+              && proxy.location.hash === "#one"
+              && lifecycle.length === 0);
+          record("traversal orders popstate before hashchange and blocks reentry",
+            popstates === 1 && hashchanges === 1
+              && hashEvent.oldURL.endsWith("#two")
+              && hashEvent.newURL.endsWith("#one"));
+          proxy.setTimeout(() => proxy.location.reload(), 0);
+        });
+        proxy.history.replaceState({ step: 1 }, "", "#one");
+        proxy.history.pushState({ step: 2 }, "", "#two");
+        proxy.history.back();
+        return;
+      }
+
+      record("explicit reload replaces the Document and preserves WindowProxy",
+        frame.contentWindow === proxy && event.target !== outgoingDocument
+          && event.target.querySelector("#load").textContent === "2"
+          && frame.getAttribute("src")
+            === "resources/iframe-nested-history-reload-source.html");
+      record("reload retains the current history entry and state",
+        proxy.location.hash === "#one" && proxy.history.length === 2
+          && proxy.history.state.step === 1);
+      record("reload runs the complete nested unload sequence",
+        lifecycle.join(",")
+          === "beforeunload,pagehide,visibilitychange,unload", lifecycle);
+      setTimeout(() => {
+        record("reload retires tasks from the outgoing realm", !staleTaskRan);
+        state.diagnostics.push({ lifecycle: [...lifecycle], loads });
+        delete globalThis.__webSceneNestedHistoryLifecycle;
+        delete globalThis.__webSceneNestedHistoryStaleTask;
+        frame.remove();
+        finish();
+      }, 0);
+    } catch (error) {
+      frame.remove();
+      finish(error);
+    }
+  });
+  setTimeout(() => finish(new Error("nested history/reload timed out")), 3000);
+</script>
+</body>

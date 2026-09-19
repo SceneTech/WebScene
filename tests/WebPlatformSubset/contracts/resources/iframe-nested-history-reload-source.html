@@ -1,0 +1,23 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Nested history reload source</title>
+<main id="load"></main>
+<script>
+  const load = Number(sessionStorage.getItem("nested-history-load") || 0) + 1;
+  sessionStorage.setItem("nested-history-load", String(load));
+  document.querySelector("#load").textContent = String(load);
+  if (load === 1) {
+    for (const type of ["beforeunload", "pagehide", "unload"]) {
+      addEventListener(type, event =>
+        parent.__webSceneNestedHistoryLifecycle(type, event, document));
+    }
+    document.addEventListener("visibilitychange", event =>
+      parent.__webSceneNestedHistoryLifecycle(
+        "visibilitychange", event, document));
+    addEventListener("unload", () => {
+      history.forward();
+      location.reload();
+      setTimeout(() => parent.__webSceneNestedHistoryStaleTask(), 0);
+    });
+  }
+</script>

@@ -1498,6 +1498,7 @@
             : std::string("http://127.0.0.1/")
                 + resource_root.filename().generic_string() + '/';
         set_context_location(local_context, global, frame_href);
+        restore_nested_reload_reflected_source(frame);
         if (iframe_owner_allows_same_origin_access(frame)) {
             const auto proxy_entry = frame_windows.find(frame.id);
             if (proxy_entry != frame_windows.end() && !proxy_entry->second.IsEmpty()) {

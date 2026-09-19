@@ -1165,6 +1165,41 @@
         return navigation_address_for_root(root);
     }
 
+    dom_node* active_nested_frame_for_context(
+        v8::Local<v8::Context> local_context)
+    {
+        if (local_context.IsEmpty() || context.IsEmpty()
+            || local_context == context.Get(isolate)) return nullptr;
+        for (const auto& [frame_id, frame_context_value] : actual_frame_contexts) {
+            if (frame_context_value.IsEmpty()
+                || frame_context_value.Get(isolate) != local_context) continue;
+            auto* frame = document.find_by_native_id(frame_id);
+            return frame != nullptr && frame->tag == "iframe"
+                    && frame->parent != nullptr
+                ? frame
+                : nullptr;
+        }
+        auto* root = static_cast<dom_node*>(
+            local_context->GetAlignedPointerFromEmbedderData(
+                1, v8::kEmbedderDataTypeTagDefault));
+        if (root == nullptr) return nullptr;
+        dom_node* frame = nullptr;
+        for (auto* ancestor = root->parent;
+             ancestor != nullptr; ancestor = ancestor->parent) {
+            if (ancestor->tag == "iframe") {
+                frame = ancestor;
+                break;
+            }
+        }
+        if (frame == nullptr || frame->parent == nullptr) return nullptr;
+        const auto active = actual_frame_contexts.find(frame->id);
+        return active != actual_frame_contexts.end()
+                && !active->second.IsEmpty()
+                && active->second.Get(isolate) == local_context
+            ? frame
+            : nullptr;
+    }
+
     v8::Local<v8::Context> context_for_node(const dom_node& node)
     {
         for (auto* ancestor = node.parent; ancestor != nullptr; ancestor = ancestor->parent) {
@@ -1268,6 +1303,11 @@
         v8::Local<v8::Context> local_context)
     {
         cancel_crypto_tasks_for_context(local_context);
+        std::erase_if(pending_fetches, [&](auto& fetch) {
+            if (fetch.context.Get(isolate) != local_context) return false;
+            if (fetch.cancel) fetch.cancel();
+            return true;
+        });
         uint64_t cancelled_animation_frames = 0;
         const auto cancelled_timers = std::erase_if(
             timers,
@@ -1329,6 +1369,14 @@
                 return observer != nullptr
                     && observer->context.Get(isolate) == local_context;
             });
+        for (auto& [type, listeners] : frame_event_listeners) {
+            static_cast<void>(type);
+            std::erase_if(listeners, [&](auto& listener) {
+                if (listener.context.Get(isolate) != local_context) return false;
+                clear_event_listener(listener);
+                return true;
+            });
+        }
         for (auto iterator = websocket_bindings.begin();
              iterator != websocket_bindings.end();) {
             if (iterator->second.context.Get(isolate) != local_context) {
@@ -2672,7 +2720,18 @@
         if (const auto outgoing = actual_frame_contexts.find(frame.id);
             outgoing != actual_frame_contexts.end()
             && !outgoing->second.IsEmpty()) {
-            cancel_detached_frame_context_tasks(outgoing->second.Get(isolate));
+            const auto outgoing_context = outgoing->second.Get(isolate);
+            cancel_detached_frame_context_tasks(outgoing_context);
+            retire_service_worker_clients(
+                std::vector<v8::Local<v8::Context>>{outgoing_context});
+        }
+        if (frame_reload_navigations.contains(frame.id)) {
+            if (auto history = nested_history_states.find(frame.id);
+                history != nested_history_states.end()) {
+                history->second.traversing = false;
+            }
+        } else {
+            nested_history_states.erase(frame.id);
         }
         {
             std::lock_guard lock(host_request_mutex);
@@ -2704,6 +2763,53 @@
         return true;
     }
 
+    bool reload_nested_context(v8::Local<v8::Context> local_context)
+    {
+        auto* frame = active_nested_frame_for_context(local_context);
+        if (frame == nullptr
+            || frame_beforeunload_dispatches.contains(frame->id)
+            || frame_unload_dispatches.contains(frame->id)) return false;
+        const auto history = nested_history_states.find(frame->id);
+        if (history != nested_history_states.end()
+            && history->second.traversing) return false;
+        auto* root = static_cast<dom_node*>(
+            local_context->GetAlignedPointerFromEmbedderData(
+                1, v8::kEmbedderDataTypeTagDefault));
+        const auto address = navigation_address_for_root(root);
+        if (address.empty()) return false;
+        const auto authored_source = frame->attributes.find("src");
+        frame_reload_reflected_sources.insert_or_assign(
+            frame->id,
+            authored_source == frame->attributes.end()
+                ? std::nullopt
+                : std::optional<std::string>{authored_source->second});
+        frame->attributes["src"] = address;
+        frame_reload_navigations.insert(frame->id);
+        if (!begin_iframe_navigation(*frame)) {
+            restore_nested_reload_reflected_source(*frame);
+            frame_reload_navigations.erase(frame->id);
+            return true;
+        }
+        enqueue_iframe_hydration_if_needed(*frame);
+        record_feature(
+            "web-api", "Location.reload", "partially-supported",
+            "same-origin nested reload uses guarded document replacement",
+            "web-api-binding");
+        return true;
+    }
+
+    void restore_nested_reload_reflected_source(dom_node& frame)
+    {
+        const auto known = frame_reload_reflected_sources.find(frame.id);
+        if (known == frame_reload_reflected_sources.end()) return;
+        if (known->second.has_value()) {
+            frame.attributes["src"] = *known->second;
+        } else {
+            frame.attributes.erase("src");
+        }
+        frame_reload_reflected_sources.erase(known);
+    }
+
     void retire_iframe_navigation(uint32_t frame_id)
     {
         {
@@ -2718,6 +2824,9 @@
             }
             pending_frame_preparations.erase(preparation);
         }
+        nested_history_states.erase(frame_id);
+        frame_reload_navigations.erase(frame_id);
+        frame_reload_reflected_sources.erase(frame_id);
     }
 
     void enqueue_iframe_hydration_if_needed(dom_node& node)
@@ -5635,6 +5744,64 @@
         }
     }
 
+    nested_history_state* nested_history_for_context(
+        v8::Local<v8::Context> local_context,
+        bool create)
+    {
+        auto* frame = active_nested_frame_for_context(local_context);
+        if (frame == nullptr) return nullptr;
+        auto known = nested_history_states.find(frame->id);
+        if (known != nested_history_states.end()) return &known->second;
+        if (!create) return nullptr;
+        auto address = navigation_address_for_root(static_cast<dom_node*>(
+            local_context->GetAlignedPointerFromEmbedderData(
+                1, v8::kEmbedderDataTypeTagDefault)));
+        auto inserted = nested_history_states.try_emplace(frame->id).first;
+        inserted->second.entries.push_back(
+            history_entry_state{std::move(address), std::nullopt});
+        return &inserted->second;
+    }
+
+    bool dispatch_same_document_history_event(
+        v8::Local<v8::Context> local_context,
+        std::string_view type,
+        v8::Local<v8::Value> state,
+        std::string_view old_url = {},
+        std::string_view new_url = {})
+    {
+        auto target = local_context->Global();
+        v8::Local<v8::Value> dispatcher;
+        if (!target->Get(local_context, js_string(isolate, "dispatchEvent"))
+                .ToLocal(&dispatcher)
+            || !dispatcher->IsFunction()) return false;
+        auto event = create_event_instance(local_context);
+        event->Set(local_context, js_string(isolate, "type"),
+            js_string(isolate, std::string(type).c_str())).Check();
+        event->Set(local_context, js_string(isolate, "bubbles"),
+            v8::False(isolate)).Check();
+        event->Set(local_context, js_string(isolate, "cancelable"),
+            v8::False(isolate)).Check();
+        if (type == "popstate") {
+            event->Set(local_context, js_string(isolate, "state"), state).Check();
+        } else if (type == "hashchange") {
+            event->Set(local_context, js_string(isolate, "oldURL"),
+                js_string(isolate, std::string(old_url).c_str())).Check();
+            event->Set(local_context, js_string(isolate, "newURL"),
+                js_string(isolate, std::string(new_url).c_str())).Check();
+        }
+        v8::TryCatch try_catch(isolate);
+        v8::Local<v8::Value> arguments[]{event};
+        static_cast<void>(dispatcher.As<v8::Function>()->Call(
+            local_context, target, 1, arguments));
+        perform_microtask_checkpoint();
+        if (!try_catch.HasCaught()) return true;
+        frame_last_error_value = "Nested history event dispatch failed: "
+            + describe_reported_exception(try_catch, local_context);
+        ++frame_script_error_count;
+        report_document_script_error(frame_last_error_value);
+        return false;
+    }
+
     static std::string strip_url_query_and_fragment(std::string value)
     {
         if (const auto suffix = value.find_first_of("?#"); suffix != std::string::npos) {
@@ -5670,6 +5837,10 @@
         v8::Local<v8::Context> local_context,
         const std::string& resolved)
     {
+        if (!context.IsEmpty() && local_context != context.Get(isolate)
+            && active_nested_frame_for_context(local_context) == nullptr) {
+            return false;
+        }
         auto* root = static_cast<dom_node*>(
             local_context->GetAlignedPointerFromEmbedderData(
                 1, v8::kEmbedderDataTypeTagDefault));
@@ -5705,6 +5876,22 @@
                 local_context, history_length_key(isolate)).FromMaybe(false)) {
             isolate->ThrowException(v8::Exception::TypeError(
                 js_string(isolate, "Illegal invocation")));
+            return;
+        }
+        auto* nested_frame = self->active_nested_frame_for_context(local_context);
+        if (!self->context.IsEmpty()
+            && local_context != self->context.Get(isolate)
+            && nested_frame == nullptr) {
+            throw_dom_exception(
+                info, "History realm is no longer active", "InvalidStateError");
+            return;
+        }
+        if (nested_frame != nullptr
+            && (self->frame_beforeunload_dispatches.contains(nested_frame->id)
+                || self->frame_unload_dispatches.contains(nested_frame->id))) {
+            throw_dom_exception(
+                info, "History mutation is unavailable while unloading",
+                "InvalidStateError");
             return;
         }
         const bool replace = info.Data()->IsTrue();
@@ -5767,17 +5954,47 @@
         }
 
         auto history = info.This();
+        auto* nested_history = self->nested_history_for_context(
+            local_context, true);
         v8::Local<v8::Value> length_value;
         uint32_t length = 1U;
         if (history->GetPrivate(
                 local_context, history_length_key(isolate)).ToLocal(&length_value)) {
             length = length_value->Uint32Value(local_context).FromMaybe(1U);
         }
-        constexpr uint32_t maximum_history_entries = 1024U;
-        if (!replace && length >= maximum_history_entries) {
+        constexpr size_t maximum_history_entries = 1024U;
+        constexpr size_t maximum_history_state_bytes = 16U * 1024U * 1024U;
+        const auto retained_nested_entries = nested_history == nullptr
+            ? 0U
+            : nested_history->index + 1U;
+        if (!replace
+            && (nested_history == nullptr
+                    ? length >= maximum_history_entries
+                    : retained_nested_entries >= maximum_history_entries)) {
             throw_dom_exception(
                 info, "History entry limit reached", "SecurityError");
             return;
+        }
+        size_t reclaimed_state_bytes = 0U;
+        if (nested_history != nullptr) {
+            const auto first_reclaimed = replace
+                ? nested_history->index
+                : retained_nested_entries;
+            for (auto index = first_reclaimed;
+                 index < nested_history->entries.size(); ++index) {
+                if (nested_history->entries[index].state.has_value()) {
+                    reclaimed_state_bytes += clone_packet_size(
+                        *nested_history->entries[index].state);
+                }
+            }
+            const auto packet_bytes = clone_packet_size(packet);
+            if (packet_bytes > maximum_history_state_bytes
+                || nested_history->state_bytes - reclaimed_state_bytes
+                        > maximum_history_state_bytes - packet_bytes) {
+                throw_dom_exception(
+                    info, "History state budget reached", "QuotaExceededError");
+                return;
+            }
         }
         if (!self->apply_same_document_history_url(local_context, resolved)) {
             throw_dom_exception(
@@ -5786,7 +6003,26 @@
         }
         history->SetPrivate(
             local_context, history_state_key(isolate), state).Check();
-        if (!replace) {
+        if (nested_history != nullptr) {
+            nested_history->state_bytes -= reclaimed_state_bytes;
+            if (replace) {
+                nested_history->entries[nested_history->index] =
+                    history_entry_state{resolved, std::move(packet)};
+            } else {
+                nested_history->entries.resize(retained_nested_entries);
+                nested_history->entries.push_back(
+                    history_entry_state{resolved, std::move(packet)});
+                nested_history->index = nested_history->entries.size() - 1U;
+            }
+            nested_history->state_bytes += clone_packet_size(
+                *nested_history->entries[nested_history->index].state);
+            history->SetPrivate(
+                local_context,
+                history_length_key(isolate),
+                v8::Integer::NewFromUnsigned(
+                    isolate,
+                    static_cast<uint32_t>(nested_history->entries.size()))).Check();
+        } else if (!replace) {
             history->SetPrivate(
                 local_context,
                 history_length_key(isolate),
@@ -5800,6 +6036,140 @@
                 ? "bounded same-document state and URL mutation without host navigation"
                 : "bounded same-document state and URL mutation; traversal is tracked separately",
             "web-api-binding");
+    }
+
+    static std::string url_fragment(std::string_view url)
+    {
+        const auto offset = url.find('#');
+        return offset == std::string_view::npos
+            ? std::string{}
+            : std::string(url.substr(offset));
+    }
+
+    void perform_nested_history_traversal(
+        v8::Local<v8::Context> local_context,
+        v8::Local<v8::Object> history_object,
+        int32_t delta)
+    {
+        auto* frame = active_nested_frame_for_context(local_context);
+        auto* history = nested_history_for_context(local_context, false);
+        if (frame == nullptr || history == nullptr || !history->traversing) return;
+        if (delta == 0) {
+            history->traversing = false;
+            reload_nested_context(local_context);
+            return;
+        }
+        const auto target = static_cast<int64_t>(history->index)
+            + static_cast<int64_t>(delta);
+        if (target < 0 || target >= static_cast<int64_t>(history->entries.size())) {
+            history->traversing = false;
+            return;
+        }
+
+        const auto frame_id = frame->id;
+        const auto old_url = current_navigation_address();
+        const auto entry = history->entries[static_cast<size_t>(target)];
+        v8::Local<v8::Value> state = v8::Null(isolate);
+        if (entry.state.has_value()
+            && !deserialize_clone(
+                isolate, local_context, *entry.state).ToLocal(&state)) {
+            history->traversing = false;
+            return;
+        }
+        history->index = static_cast<size_t>(target);
+        if (!apply_same_document_history_url(local_context, entry.url)) {
+            history->traversing = false;
+            return;
+        }
+        history_object->SetPrivate(
+            local_context, history_state_key(isolate), state).Check();
+        dispatch_same_document_history_event(
+            local_context, "popstate", state);
+        auto current = nested_history_states.find(frame_id);
+        if (current != nested_history_states.end()
+            && active_nested_frame_for_context(local_context) != nullptr
+            && url_fragment(old_url) != url_fragment(entry.url)) {
+            dispatch_same_document_history_event(
+                local_context,
+                "hashchange",
+                v8::Null(isolate),
+                old_url,
+                entry.url);
+            current = nested_history_states.find(frame_id);
+        }
+        if (current != nested_history_states.end()) {
+            current->second.traversing = false;
+        }
+        record_feature(
+            "web-api", "History.go", "partially-supported",
+            "bounded nested same-document traversal with popstate and hashchange",
+            "web-api-binding");
+    }
+
+    static void history_traversal_task(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        auto local_context = info.GetIsolate()->GetCurrentContext();
+        if (self == nullptr || !info.Data()->IsArray()) return;
+        auto data = info.Data().As<v8::Array>();
+        v8::Local<v8::Value> history_value;
+        v8::Local<v8::Value> delta_value;
+        if (!data->Get(local_context, 0U).ToLocal(&history_value)
+            || !history_value->IsObject()
+            || !data->Get(local_context, 1U).ToLocal(&delta_value)) return;
+        self->perform_nested_history_traversal(
+            local_context,
+            history_value.As<v8::Object>(),
+            delta_value->Int32Value(local_context).FromMaybe(0));
+    }
+
+    static void history_traverse(
+        const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        auto* self = current(info.GetIsolate());
+        auto* isolate = info.GetIsolate();
+        auto local_context = isolate->GetCurrentContext();
+        if (self == nullptr
+            || !info.This()->HasPrivate(
+                local_context, history_length_key(isolate)).FromMaybe(false)) {
+            isolate->ThrowException(v8::Exception::TypeError(
+                js_string(isolate, "Illegal invocation")));
+            return;
+        }
+        auto* frame = self->active_nested_frame_for_context(local_context);
+        auto* history = self->nested_history_for_context(local_context, false);
+        if (frame == nullptr || history == nullptr || history->traversing
+            || self->frame_beforeunload_dispatches.contains(frame->id)
+            || self->frame_unload_dispatches.contains(frame->id)) return;
+        int32_t delta = info.Data()->Int32Value(local_context).FromMaybe(0);
+        if (delta == 0 && info.Length() != 0) {
+            const auto number = info[0]->NumberValue(local_context);
+            if (number.IsNothing() || !std::isfinite(number.FromJust())) return;
+            const auto value = number.FromJust();
+            if (value > static_cast<double>(std::numeric_limits<int32_t>::max())
+                || value < static_cast<double>(std::numeric_limits<int32_t>::min())) {
+                return;
+            }
+            delta = static_cast<int32_t>(value);
+        }
+        auto data = v8::Array::New(isolate, 2);
+        data->Set(local_context, 0U, info.This()).Check();
+        data->Set(local_context, 1U, v8::Integer::New(isolate, delta)).Check();
+        auto callback = v8::Function::New(
+            local_context, history_traversal_task, data).ToLocalChecked();
+        v8::Local<v8::Value> timer_value;
+        auto global = local_context->Global();
+        if (!global->Get(local_context, js_string(isolate, "setTimeout"))
+                .ToLocal(&timer_value)
+            || !timer_value->IsFunction()) return;
+        history->traversing = true;
+        v8::Local<v8::Value> arguments[]{
+            callback, v8::Integer::New(isolate, 0)};
+        if (timer_value.As<v8::Function>()->Call(
+                local_context, global, 2, arguments).IsEmpty()) {
+            history->traversing = false;
+        }
     }
 
     void install_history(
@@ -5821,6 +6191,27 @@
             local_context,
             history_length_key(isolate),
             v8::Integer::New(isolate, 1)).Check();
+        if (auto* nested = nested_history_for_context(local_context, true);
+            nested != nullptr) {
+            history->SetPrivate(
+                local_context,
+                history_length_key(isolate),
+                v8::Integer::NewFromUnsigned(
+                    isolate,
+                    static_cast<uint32_t>(nested->entries.size()))).Check();
+            const auto& entry = nested->entries[nested->index];
+            v8::Local<v8::Value> state = v8::Null(isolate);
+            if (entry.state.has_value()) {
+                static_cast<void>(deserialize_clone(
+                    isolate, local_context, *entry.state).ToLocal(&state));
+            }
+            history->SetPrivate(
+                local_context, history_state_key(isolate), state).Check();
+            if (auto* frame = active_nested_frame_for_context(local_context);
+                frame != nullptr) {
+                frame_reload_navigations.erase(frame->id);
+            }
+        }
         history->SetNativeDataProperty(
             local_context,
             js_string(isolate, "state"),
@@ -5833,12 +6224,27 @@
             local_context,
             js_string(isolate, "scrollRestoration"),
             js_string(isolate, "auto")).Check();
-        for (const auto* name : {"back", "forward", "go"}) {
-            history->Set(
+        history->Set(
+            local_context,
+            js_string(isolate, "back"),
+            v8::Function::New(
                 local_context,
-                js_string(isolate, name),
-                v8::Function::New(local_context, no_op).ToLocalChecked()).Check();
-        }
+                history_traverse,
+                v8::Integer::New(isolate, -1)).ToLocalChecked()).Check();
+        history->Set(
+            local_context,
+            js_string(isolate, "forward"),
+            v8::Function::New(
+                local_context,
+                history_traverse,
+                v8::Integer::New(isolate, 1)).ToLocalChecked()).Check();
+        history->Set(
+            local_context,
+            js_string(isolate, "go"),
+            v8::Function::New(
+                local_context,
+                history_traverse,
+                v8::Integer::New(isolate, 0)).ToLocalChecked()).Check();
         history->Set(
             local_context,
             js_string(isolate, "pushState"),
@@ -5909,8 +6315,11 @@
     {
         auto* self = current(info.GetIsolate());
         auto local_context = info.GetIsolate()->GetCurrentContext();
-        if (self == nullptr || local_context != self->context.Get(info.GetIsolate()))
+        if (self == nullptr) return;
+        if (local_context != self->context.Get(info.GetIsolate())) {
+            self->reload_nested_context(local_context);
             return;
+        }
         if (!self->queue_top_level_window_action(
                 local_context, WEBSCENE_HOST_REQUEST_WINDOW_RELOAD_V1)) {
             info.GetIsolate()->ThrowException(v8::Exception::Error(

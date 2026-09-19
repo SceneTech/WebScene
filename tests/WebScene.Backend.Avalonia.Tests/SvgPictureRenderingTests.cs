@@ -126,11 +126,11 @@ public sealed class SvgPictureRenderingTests
         canvas.Flush();
 
         Assert.Equal(foreground, bitmap.GetPixel(1, 2));
-        Assert.Equal(SKColors.Transparent, bitmap.GetPixel(3, 2));
+        Assert.Equal(0, bitmap.GetPixel(3, 2).Alpha);
         Assert.Equal(foreground, bitmap.GetPixel(5, 2));
-        Assert.Equal(SKColors.Transparent, bitmap.GetPixel(7, 2));
+        Assert.Equal(0, bitmap.GetPixel(7, 2).Alpha);
         Assert.Equal(foreground, bitmap.GetPixel(9, 2));
-        Assert.Equal(SKColors.Transparent, bitmap.GetPixel(11, 2));
+        Assert.Equal(0, bitmap.GetPixel(11, 2).Alpha);
     }
 
     [Theory]

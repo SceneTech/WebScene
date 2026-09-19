@@ -823,6 +823,148 @@ void test_animation_fill_maps_before_after_and_preserves_timeline(
         engine, false, "detached fill animations retained host-frame demand");
 }
 
+void test_animation_play_state_holds_and_resumes_host_time(
+    webscene_engine* engine)
+{
+    animation_frame_and_wait(engine, 8000.0, 7110U);
+    execute_and_wait(engine, R"JS(
+        (() => {
+          document.body.innerHTML = `
+            <style>
+              @keyframes play-fade { from { opacity: 0; } to { opacity: 1; } }
+              @keyframes play-all {
+                from { opacity: 0; transform: rotate(0); filter: brightness(.5); }
+                to { opacity: 1; transform: rotate(180deg); filter: brightness(1.5); }
+              }
+              #delayed {
+                animation: play-fade 1000ms linear 500ms 1 normal both paused; }
+              #negative {
+                animation: play-fade 1000ms linear -250ms 1 normal both;
+                animation-play-state: paused, running; }
+              #active { opacity: .8; filter: brightness(2);
+                animation: play-all 1000ms linear 0ms 1 reverse both;
+                animation-play-state: running, paused; }
+            </style>
+            <div id="delayed"></div><div id="negative"></div><div id="active"></div>`;
+          globalThis.__playStateEndCount = 0;
+          document.getElementById('active').addEventListener(
+            'animationend', () => ++globalThis.__playStateEndCount);
+          void document.body.offsetHeight;
+        })()
+    )JS", "animation-play-state-setup.js");
+
+    animation_frame_and_wait(engine, 8250.0, 7111U);
+    const auto initial = evaluate(engine, R"JS(
+        (() => {
+          const close = (left, right) => Math.abs(left - right) < .001;
+          const opacity = id => Number(getComputedStyle(
+            document.getElementById(id)).opacity);
+          const active = document.getElementById('active');
+          const matrix = getComputedStyle(active).transform
+            .slice(7, -1).split(',').map(Number);
+          let angle = Math.atan2(matrix[1], matrix[0]) * 180 / Math.PI;
+          if (angle < 0) angle += 360;
+          const brightness = Number((getComputedStyle(active).filter
+            .match(/brightness\(([-.\d]+)/) || [0, NaN])[1]);
+          const states = ['delayed', 'negative', 'active'].map(id =>
+            getComputedStyle(document.getElementById(id)).animationPlayState);
+          return JSON.stringify(states)
+              === '["paused","paused, running","running, paused"]'
+            && getComputedStyle(document.getElementById('delayed'))
+              .animation.includes('paused')
+            && getComputedStyle(document.getElementById('negative'))
+              .getPropertyValue('animation-play-state') === 'paused, running'
+            && close(opacity('delayed'), 0) && close(opacity('negative'), .25)
+            && close(opacity('active'), .75) && close(angle, 135)
+            && close(brightness, 1.25) && __playStateEndCount === 0;
+        })()
+    )JS", "animation-play-state-initial.js");
+    require(initial == "true",
+        "initial play state did not hold delay/negative-delay/directed samples");
+
+    execute_and_wait(engine, R"JS(
+        (() => {
+          const active = document.getElementById('active');
+          active.style.animationPlayState = 'paused';
+          return active.style.animationPlayState;
+        })()
+    )JS", "animation-play-state-pause.js");
+    animation_frame_and_wait(engine, 8750.0, 7112U);
+    const auto held = evaluate(engine, R"JS(
+        (() => {
+          const close = (left, right) => Math.abs(left - right) < .001;
+          const active = document.getElementById('active');
+          const matrix = getComputedStyle(active).transform
+            .slice(7, -1).split(',').map(Number);
+          let angle = Math.atan2(matrix[1], matrix[0]) * 180 / Math.PI;
+          if (angle < 0) angle += 360;
+          const brightness = Number((getComputedStyle(active).filter
+            .match(/brightness\(([-.\d]+)/) || [0, NaN])[1]);
+          return getComputedStyle(active).animationPlayState === 'paused'
+            && close(Number(getComputedStyle(active).opacity), .75)
+            && close(angle, 135) && close(brightness, 1.25)
+            && __playStateEndCount === 0;
+        })()
+    )JS", "animation-play-state-held.js");
+    require(held == "true", "paused keyframes advanced on a later host timestamp");
+    wait_for_animation_frame_demand(
+        engine, false, "paused keyframes retained host-frame demand");
+
+    execute_and_wait(engine, R"JS(
+        (() => {
+          document.getElementById('active').style.animationPlayState = '';
+          document.getElementById('negative').style.animationPlayState = 'running';
+        })()
+    )JS", "animation-play-state-resume.js");
+    animation_frame_and_wait(engine, 9000.0, 7113U);
+    const auto resumed = evaluate(engine, R"JS(
+        (() => {
+          const close = (left, right) => Math.abs(left - right) < .001;
+          const active = document.getElementById('active');
+          const matrix = getComputedStyle(active).transform
+            .slice(7, -1).split(',').map(Number);
+          let angle = Math.atan2(matrix[1], matrix[0]) * 180 / Math.PI;
+          if (angle < 0) angle += 360;
+          const brightness = Number((getComputedStyle(active).filter
+            .match(/brightness\(([-.\d]+)/) || [0, NaN])[1]);
+          return getComputedStyle(active).animationPlayState === 'running, paused'
+            && close(Number(getComputedStyle(active).opacity), .5)
+            && close(Number(getComputedStyle(
+              document.getElementById('negative')).opacity), .5)
+            && close(angle, 90) && close(brightness, 1)
+            && __playStateEndCount === 0;
+        })()
+    )JS", "animation-play-state-resumed.js");
+    require(resumed == "true",
+        "resumed keyframes restarted or included held host-clock time");
+
+    animation_frame_and_wait(engine, 9500.0, 7114U);
+    const auto completed = evaluate(engine, R"JS(
+        (() => {
+          const close = (left, right) => Math.abs(left - right) < .001;
+          const active = document.getElementById('active');
+          const matrix = getComputedStyle(active).transform
+            .slice(7, -1).split(',').map(Number);
+          const angle = Math.abs(Math.atan2(matrix[1], matrix[0]) * 180 / Math.PI);
+          return close(Number(getComputedStyle(active).opacity), 0)
+            && close(Number(getComputedStyle(
+              document.getElementById('negative')).opacity), 1)
+            && close(angle, 0) && getComputedStyle(active).filter === 'brightness(0.5)'
+            && __playStateEndCount === 1;
+        })()
+    )JS", "animation-play-state-completed.js");
+    require(completed == "true",
+        "resumed keyframes missed directed fill or exactly-once completion");
+    wait_for_animation_frame_demand(
+        engine, false, "completed play-state animations retained host-frame demand");
+
+    execute_and_wait(engine,
+        "document.body.innerHTML = '<div>play-state animations detached</div>'",
+        "animation-play-state-detach.js");
+    wait_for_animation_frame_demand(
+        engine, false, "detached play-state animations retained host-frame demand");
+}
+
 void test_filter_keyframes_use_host_clock_and_retained_paint(
     webscene_engine* engine)
 {

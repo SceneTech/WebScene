@@ -187,6 +187,11 @@ bool apply_decoration_value(dom_node& node,const std::string& name,const std::st
             decision.semantic_slice =
                 "first animation; none, forwards, backwards, both";
             return true;
+        } else if (name == "animation-play-state") {
+            node.style.mutable_animations().animation_play_state_value = value;
+            decision.classification = "partially-supported";
+            decision.semantic_slice = "first animation; running, paused";
+            return true;
         } else if (property_mask(name) == inline_border
             && is_inline(inline_border)) {
             return true;

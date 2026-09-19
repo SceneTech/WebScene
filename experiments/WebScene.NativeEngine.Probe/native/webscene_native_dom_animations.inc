@@ -259,6 +259,16 @@ void native_document::update_style_animations(dom_node& node)
             != node.style.animations().filter_keyframe_animation_signature;
     const auto fill_mode_changed = animation.keyframe_fill_mode
         != node.style.animations().keyframe_fill_mode;
+    const auto has_configured_keyframes =
+        !node.style.animations().opacity_keyframe_animation_signature.empty()
+        || !node.style.animations().rotation_keyframe_animation_signature.empty()
+        || !node.style.animations().filter_keyframe_animation_signature.empty();
+    const auto desired_keyframe_pause = has_configured_keyframes
+        && node.style.animations().keyframe_play_state
+            == node_style::animation_data::play_kind::paused;
+    const auto was_keyframe_paused = animation.keyframe_animation_paused;
+    const auto previous_pause_timestamp =
+        animation.keyframe_animation_paused_at_ms;
     animation.keyframe_fill_mode = node.style.animations().keyframe_fill_mode;
     if (opacity_keyframe_changed || rotation_keyframe_changed
         || filter_keyframe_changed) {
@@ -365,6 +375,32 @@ void native_document::update_style_animations(dom_node& node)
             animation.filter_keyframe_animation_active =
                 animation.filter_keyframe_animation_valid;
         }
+    }
+    const auto keyframe_identity_changed = opacity_keyframe_changed
+        || rotation_keyframe_changed || filter_keyframe_changed;
+    if (was_keyframe_paused
+        && (!desired_keyframe_pause || keyframe_identity_changed)) {
+        const auto held_duration = std::max(
+            0.0, animation_frame_timestamp_ms_ - previous_pause_timestamp);
+        if (!opacity_keyframe_changed
+            && animation.opacity_keyframe_animation_active) {
+            animation.opacity_keyframe_animation_started_ms += held_duration;
+        }
+        if (!rotation_keyframe_changed
+            && animation.rotation_keyframe_animation_active) {
+            animation.rotation_keyframe_animation_started_ms += held_duration;
+        }
+        if (!filter_keyframe_changed
+            && animation.filter_keyframe_animation_active) {
+            animation.filter_keyframe_animation_started_ms += held_duration;
+        }
+    }
+    animation.keyframe_animation_paused = desired_keyframe_pause;
+    if (desired_keyframe_pause
+        && (!was_keyframe_paused || keyframe_identity_changed)) {
+        animation.keyframe_animation_paused_at_ms = animation_frame_timestamp_ms_;
+    } else if (!has_configured_keyframes) {
+        animation.keyframe_animation_paused_at_ms = 0;
     }
 
     if (animation.opacity_animation_active && node.style.animations().transition_property_value == "none") {
@@ -1052,6 +1088,9 @@ bool native_document::advance_animations() noexcept
         }
 
         auto keyframe_animation_completed = false;
+        const auto keyframe_timestamp_ms = animation.keyframe_animation_paused
+            ? animation.keyframe_animation_paused_at_ms
+            : animation_frame_timestamp_ms_;
         if (animation.opacity_keyframe_animation_active) {
             const auto sample_opacity = [&](float cycle_progress) {
                 const auto& stops = node.style.animations().opacity_keyframes;
@@ -1084,7 +1123,7 @@ bool native_document::advance_animations() noexcept
                 }
             };
             const auto elapsed_ms = static_cast<float>(
-                animation_frame_timestamp_ms_
+                keyframe_timestamp_ms
                 - animation.opacity_keyframe_animation_started_ms
                 - node.style.animations().opacity_keyframe_delay_ms);
             if (elapsed_ms < 0) {
@@ -1110,8 +1149,10 @@ bool native_document::advance_animations() noexcept
                     } else {
                         animation.painted_opacity = node.style.opacity;
                     }
-                    animation.opacity_keyframe_animation_active = false;
-                    keyframe_animation_completed = true;
+                    if (!animation.keyframe_animation_paused) {
+                        animation.opacity_keyframe_animation_active = false;
+                        keyframe_animation_completed = true;
+                    }
                     advanced = advanced || keyframe_paint_visible;
                 } else {
                     sample_opacity(active_keyframe_progress(
@@ -1154,7 +1195,7 @@ bool native_document::advance_animations() noexcept
                 }
             };
             const auto elapsed_ms = static_cast<float>(
-                animation_frame_timestamp_ms_
+                keyframe_timestamp_ms
                 - animation.rotation_keyframe_animation_started_ms
                 - node.style.animations().opacity_keyframe_delay_ms);
             if (elapsed_ms < 0) {
@@ -1184,8 +1225,10 @@ bool native_document::advance_animations() noexcept
                             node.style.transform_rotate_degrees;
                         animation.rotation_keyframe_animation_filled = false;
                     }
-                    animation.rotation_keyframe_animation_active = false;
-                    keyframe_animation_completed = true;
+                    if (!animation.keyframe_animation_paused) {
+                        animation.rotation_keyframe_animation_active = false;
+                        keyframe_animation_completed = true;
+                    }
                     advanced = advanced || keyframe_paint_visible;
                 } else {
                     sample_rotation(active_keyframe_progress(
@@ -1242,7 +1285,7 @@ bool native_document::advance_animations() noexcept
                 }
             };
             const auto elapsed_ms = static_cast<float>(
-                animation_frame_timestamp_ms_
+                keyframe_timestamp_ms
                 - animation.filter_keyframe_animation_started_ms
                 - node.style.animations().opacity_keyframe_delay_ms);
             if (elapsed_ms < 0) {
@@ -1272,8 +1315,10 @@ bool native_document::advance_animations() noexcept
                             animation.filter_keyframe_underlying;
                         animation.filter_keyframe_animation_filled = false;
                     }
-                    animation.filter_keyframe_animation_active = false;
-                    keyframe_animation_completed = true;
+                    if (!animation.keyframe_animation_paused) {
+                        animation.filter_keyframe_animation_active = false;
+                        keyframe_animation_completed = true;
+                    }
                     advanced = advanced || keyframe_paint_visible;
                 } else {
                     sample_filter(active_keyframe_progress(
@@ -1344,7 +1389,8 @@ bool native_document::has_active_animations() const noexcept
             || animation->rotation_keyframe_animation_active
             || animation->filter_keyframe_animation_active;
         return transition_active
-            || (keyframe_active && intersects_visible_paint_area(*node));
+            || (keyframe_active && !animation->keyframe_animation_paused
+                && intersects_visible_paint_area(*node));
     });
     active_animation_demand_cache_valid_ = true;
     return active_animation_demand_cache_;

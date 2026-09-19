@@ -211,6 +211,10 @@ struct node_style final {
             backwards,
             both
         };
+        enum class play_kind : uint8_t {
+            running,
+            paused
+        };
         std::string transition_property_value{"all"};
         std::string transition_duration_value{"0s"};
         std::string transition_delay_value{"0s"};
@@ -229,6 +233,7 @@ struct node_style final {
         std::string animation_iteration_count_value{"1"};
         std::string animation_direction_value{"normal"};
         std::string animation_fill_mode_value{"none"};
+        std::string animation_play_state_value{"running"};
         std::string opacity_keyframe_animation_signature;
         std::vector<opacity_keyframe> opacity_keyframes;
         std::string rotation_keyframe_animation_signature;
@@ -240,6 +245,7 @@ struct node_style final {
         float opacity_keyframe_iterations{1};
         direction_kind keyframe_direction{direction_kind::normal};
         fill_kind keyframe_fill_mode{fill_kind::none};
+        play_kind keyframe_play_state{play_kind::running};
         float opacity_keyframe_x1{0.25F};
         float opacity_keyframe_y1{0.1F};
         float opacity_keyframe_x2{0.25F};
@@ -1530,6 +1536,8 @@ struct dom_node final {
         bool filter_keyframe_animation_filled{false};
         node_style::animation_data::fill_kind keyframe_fill_mode{
             node_style::animation_data::fill_kind::none};
+        bool keyframe_animation_paused{false};
+        double keyframe_animation_paused_at_ms{0};
         bool keyframe_animation_end_event_sent{false};
         uint32_t painted_foreground_rgba{0};
         uint32_t color_animation_from_rgba{0};

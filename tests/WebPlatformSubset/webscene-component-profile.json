@@ -1889,6 +1889,13 @@
       "reason": "WPT-aligned single-animation reduction for normal, reverse, alternate, and alternate-reverse cycle mapping. It covers longhand and shorthand metadata, negative delay, even/odd iteration parity, bounded host-frame samples, and direction-aware fractional forwards fill."
     },
     {
+      "path": "contracts/css-animation-play-state.html",
+      "type": "contract",
+      "capabilities": ["animation-play-state-longhand", "animation-play-state-shorthand", "paused-delay-and-active-time", "resume-timeline-continuity", "opacity-rotation-filter-pause", "exactly-once-animation-end", "paused-zero-frame-demand"],
+      "evidence": ["css-animation-play-state-665-242"],
+      "reason": "WPT-aligned single-animation reduction for running/paused metadata, positive- and negative-delay holds, mid-active pause and resume continuity, direction-aware supported-property paint, exactly-once completion, cleanup, and settled scheduling."
+    },
+    {
       "path": "contracts/css-filter-keyframes-temporal.html",
       "type": "contract",
       "capabilities": ["keyframes-filter", "filter-identity-interpolation", "compound-filter-order", "host-frame-clock", "bounded-frame-samples", "finite-filter-fill", "animationend-event", "filter-lifecycle-cleanup"],

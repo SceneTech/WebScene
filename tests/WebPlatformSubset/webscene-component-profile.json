@@ -1910,6 +1910,14 @@
       "reason": "WPT-aligned bounded reduction for zero active duration, directed opacity/rotation/filter fill, delayed and paused phases, ordered completion, CSSOM mutation, cleanup, and settled scheduling."
     },
     {
+      "path": "contracts/css-animation-transform-components.html",
+      "type": "reftest",
+      "reference": "contracts/css-animation-transform-components-ref.html",
+      "capabilities": ["translate-keyframes", "scale-keyframes", "length-and-percentage-translation", "transform-replace-composition", "retained-transform-geometry", "transform-midpoint-pixels"],
+      "evidence": ["css-animation-transform-components-675-242"],
+      "reason": "WPT-aligned bounded pixel and geometry reduction for a stable paused midpoint composed from retained translate, scale, and rotation keyframe components."
+    },
+    {
       "path": "contracts/css-filter-keyframes-temporal.html",
       "type": "contract",
       "capabilities": ["keyframes-filter", "filter-identity-interpolation", "compound-filter-order", "host-frame-clock", "bounded-frame-samples", "finite-filter-fill", "animationend-event", "filter-lifecycle-cleanup"],

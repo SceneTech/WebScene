@@ -150,6 +150,9 @@
         for (const auto& track : node.style.animations().keyframe_animations) {
             if (track.opacity_keyframes.size() >= 2U)
                 record_composition("css-opacity-keyframe-animation",node.id);
+            if (track.translation_keyframes.size() >= 2U
+                || track.scale_keyframes.size() >= 2U)
+                record_composition("css-transform-keyframe-animation",node.id);
             if (track.rotation_keyframes.size() >= 2U)
                 record_composition("css-rotation-keyframe-animation",node.id);
             if (track.filter_keyframes.size() >= 2U)

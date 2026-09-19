@@ -1,0 +1,34 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Translate scale and rotation keyframes retain their midpoint pixels</title>
+<link rel="match" href="css-animation-transform-components-ref.html">
+<style>
+  html, body { margin: 0; background: white; }
+  .target {
+    position: absolute;
+    top: 80px;
+    width: 80px;
+    height: 48px;
+    transform-origin: 0 0;
+    background: linear-gradient(90deg, #1468d4 0 50%, #24b45a 50%);
+    animation: transform-components 1000ms linear -500ms both paused;
+  }
+  #pixels { left: 100px; }
+  #percent { left: 360px; }
+  @keyframes transform-components {
+    from { transform: translate(0, 0) rotate(0) scale(1); }
+    to { transform: translate(40px, 50%) rotate(180deg) scale(2, .5); }
+  }
+</style>
+<div id="pixels" class="target"></div>
+<div id="percent" class="target"></div>
+<script>
+  const close = (left, right) => Math.abs(left - right) < .01;
+  const matrix = getComputedStyle(pixels).transform.slice(7, -1).split(',').map(Number);
+  const bounds = pixels.getBoundingClientRect();
+  document.documentElement.dataset.contract = matrix.length === 6
+    && close(matrix[0], 0) && close(matrix[1], 1.5)
+    && close(matrix[2], -.75) && close(matrix[3], 0)
+    && close(matrix[4], 20) && close(matrix[5], 12)
+    && close(bounds.width, 36) && close(bounds.height, 120) ? 'pass' : 'fail';
+</script>

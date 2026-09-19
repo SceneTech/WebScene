@@ -1196,6 +1196,115 @@ void test_zero_time_animation_tracks_settle_without_frame_demand(
         engine, false, "detached zero-time animations retained frame demand");
 }
 
+void test_transform_keyframes_compose_retained_geometry_and_paint(
+    webscene_engine* engine)
+{
+    animation_frame_and_wait(engine, 12500.0, 7140U);
+    execute_and_wait(engine, R"JS(
+        (() => {
+          document.body.innerHTML = `
+            <style>
+              @keyframes move-scale-turn {
+                from { transform: translate(0, 0) rotate(0) scale(1); }
+                to { transform: translate(40px, 50%) rotate(180deg) scale(2, .5); }
+              }
+              @keyframes replace-transform {
+                from, to { transform: translateX(8px) scaleX(3) rotate(0); }
+              }
+              .box { position: fixed; left: 100px; top: 80px; width: 40px;
+                height: 40px; transform-origin: 0 0; background: rgb(18, 210, 74); }
+              #active { animation: move-scale-turn 1000ms linear both; }
+              #paused { left: 240px;
+                animation: move-scale-turn 1000ms linear -500ms both paused; }
+              #replace { left: 380px; animation: move-scale-turn 1000ms linear both,
+                replace-transform 1000ms linear both; }
+              #instant { left: 520px; transform: translateX(3px) scale(1.2);
+                animation: move-scale-turn 0s linear 1 reverse both; }
+            </style>
+            <div id="active" class="box"></div><div id="paused" class="box"></div>
+            <div id="replace" class="box"></div><div id="instant" class="box"></div>`;
+          void document.body.offsetHeight;
+        })()
+    )JS", "transform-keyframes-setup.js");
+
+    animation_frame_and_wait(engine, 13000.0, 7141U);
+    const auto midpoint = evaluate(engine, R"JS(
+        (() => {
+          const matrix = id => getComputedStyle(document.getElementById(id)).transform
+            .slice(7, -1).split(',').map(Number);
+          const close = (left, right) => Math.abs(left - right) < .001;
+          const active = matrix('active');
+          const paused = matrix('paused');
+          const replace = matrix('replace');
+          const instant = matrix('instant');
+          const rect = document.getElementById('active').getBoundingClientRect();
+          return active.length === 6 && close(active[0], 0)
+            && close(active[1], 1.5) && close(active[2], -.75)
+            && close(active[3], 0) && close(active[4], 20) && close(active[5], 10)
+            && paused.every((value, index) => close(value, active[index]))
+            && close(replace[0], 3) && close(replace[1], 0)
+            && close(replace[2], 0) && close(replace[3], 1)
+            && close(replace[4], 8) && close(replace[5], 0)
+            && close(instant[0], 1) && close(instant[3], 1)
+            && close(instant[4], 0) && close(instant[5], 0)
+            && close(rect.width, 30) && close(rect.height, 60);
+        })()
+    )JS", "transform-keyframes-midpoint.js");
+    require(midpoint == "true",
+        "translate/scale keyframes missed retained tuple composition or geometry");
+
+    webscene_engine_request_scene_checkpoint(engine);
+    auto retained_scale = false;
+    auto retained_rotation = false;
+    for (auto attempt = 0; attempt < 100 && (!retained_scale || !retained_rotation);
+         ++attempt) {
+        const auto* scene = webscene_engine_acquire_latest_scene(engine);
+        if (scene != nullptr) {
+            if (scene->header.consumed_input_sequence >= 7141U) {
+                for (uint32_t index = 0U; index < scene->header.command_count; ++index) {
+                    const auto& command = scene->commands[index];
+                    retained_scale = retained_scale || (command.kind == 15U
+                        && std::abs(command.width - 1.5F) < 0.001F
+                        && std::abs(command.height - .75F) < 0.001F);
+                    retained_rotation = retained_rotation || (command.kind == 19U
+                        && std::abs(command.stroke_width - 90.0F) < 0.001F);
+                }
+            }
+            webscene_scene_acknowledge(scene);
+            webscene_scene_release(scene);
+        }
+        if (!retained_scale || !retained_rotation) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+    }
+    require(retained_scale && retained_rotation,
+        "translate/scale/rotation midpoint did not reach retained scene paint");
+
+    animation_frame_and_wait(engine, 13500.0, 7142U);
+    wait_for_animation_frame_demand(
+        engine, false, "filled transform keyframes retained host-frame demand");
+    execute_and_wait(engine, R"JS(
+        (() => {
+          const active = document.getElementById('active');
+          active.style.animationName = 'none';
+          document.getElementById('paused').remove();
+          document.getElementById('replace').style.animation = 'none';
+        })()
+    )JS", "transform-keyframes-cleanup.js");
+    animation_frame_and_wait(engine, 13500.0, 7143U);
+    const auto cleaned = evaluate(engine, R"JS(
+        (() => getComputedStyle(document.getElementById('active')).transform === 'none'
+          && getComputedStyle(document.getElementById('replace')).transform === 'none')()
+    )JS", "transform-keyframes-cleanup-result.js");
+    require(cleaned == "true",
+        "transform animation identity mutation retained a stale tuple");
+    execute_and_wait(engine,
+        "document.body.innerHTML = '<div>transform animations detached</div>'",
+        "transform-keyframes-detach.js");
+    wait_for_animation_frame_demand(
+        engine, false, "detached transform keyframes retained frame demand");
+}
+
 void test_filter_keyframes_use_host_clock_and_retained_paint(
     webscene_engine* engine)
 {

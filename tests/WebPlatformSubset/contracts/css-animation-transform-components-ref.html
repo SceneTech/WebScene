@@ -1,0 +1,19 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Translate scale and rotation keyframe midpoint reference</title>
+<style>
+  html, body { margin: 0; background: white; }
+  .target {
+    position: absolute;
+    top: 80px;
+    width: 80px;
+    height: 48px;
+    transform-origin: 0 0;
+    transform: translate(20px, 25%) rotate(90deg) scale(1.5, .75);
+    background: linear-gradient(90deg, #1468d4 0 50%, #24b45a 50%);
+  }
+  #pixels { left: 100px; }
+  #percent { left: 360px; }
+</style>
+<div id="pixels" class="target"></div>
+<div id="percent" class="target"></div>

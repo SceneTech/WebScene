@@ -331,6 +331,10 @@ void native_document::update_style_animations(dom_node& node)
             runtime.filter_underlying.clear();
             runtime.painted_filter_functions.clear();
             runtime.painted_opacity = node.style.opacity;
+            runtime.painted_translation_x = node.style.transform_translate_x;
+            runtime.painted_translation_y = node.style.transform_translate_y;
+            runtime.painted_scale_x = node.style.transform_scale_x;
+            runtime.painted_scale_y = node.style.transform_scale_y;
             runtime.painted_rotation_degrees = node.style.transform_rotate_degrees;
             if (!configured.filter_keyframes.empty()) {
                 auto valid = configured.filter_keyframes.size() >= 2U;
@@ -361,6 +365,8 @@ void native_document::update_style_animations(dom_node& node)
                 }
                 runtime.filter_valid = valid;
                 if (configured.opacity_keyframes.size() < 2U
+                    && configured.translation_keyframes.size() < 2U
+                    && configured.scale_keyframes.size() < 2U
                     && configured.rotation_keyframes.size() < 2U && !valid) {
                     runtime.active = false;
                 }
@@ -1084,14 +1090,24 @@ bool native_document::advance_animations() noexcept
 
         const auto previous_opacity_override =
             animation.keyframe_opacity_override;
+        const auto previous_translation_override =
+            animation.keyframe_translation_override;
+        const auto previous_scale_override =
+            animation.keyframe_scale_override;
         const auto previous_rotation_override =
             animation.keyframe_rotation_override;
         const auto previous_filter_override =
             animation.keyframe_filter_override;
         animation.keyframe_opacity_override = false;
+        animation.keyframe_translation_override = false;
+        animation.keyframe_scale_override = false;
         animation.keyframe_rotation_override = false;
         animation.keyframe_filter_override = false;
         auto winning_opacity = node.style.opacity;
+        auto winning_translation_x = node.style.transform_translate_x;
+        auto winning_translation_y = node.style.transform_translate_y;
+        auto winning_scale_x = node.style.transform_scale_x;
+        auto winning_scale_y = node.style.transform_scale_y;
         auto winning_rotation = node.style.transform_rotate_degrees;
         const std::vector<retained_filter_function>* winning_filter = nullptr;
         const std::vector<retained_filter_function>* filter_underlying = nullptr;
@@ -1181,6 +1197,60 @@ bool native_document::advance_animations() noexcept
                 winning_opacity = runtime.painted_opacity;
                 animation.keyframe_opacity_override = true;
             }
+            if (contributes && configured.translation_keyframes.size() >= 2U) {
+                const auto& stops = configured.translation_keyframes;
+                auto right = std::lower_bound(
+                    stops.begin(), stops.end(), progress,
+                    [](const node_style::translation_keyframe& stop, float value) {
+                        return stop.offset < value;
+                    });
+                if (right == stops.begin()) {
+                    runtime.painted_translation_x = right->x;
+                    runtime.painted_translation_y = right->y;
+                } else if (right == stops.end()) {
+                    runtime.painted_translation_x = stops.back().x;
+                    runtime.painted_translation_y = stops.back().y;
+                } else {
+                    const auto& from = *(right - 1);
+                    const auto span = std::max(0.0001F, right->offset - from.offset);
+                    const auto local = std::clamp(
+                        (progress - from.offset) / span, 0.0F, 1.0F);
+                    const auto eased = eased_segment(local);
+                    runtime.painted_translation_x = interpolate_length(
+                        from.x, right->x, eased);
+                    runtime.painted_translation_y = interpolate_length(
+                        from.y, right->y, eased);
+                }
+                winning_translation_x = runtime.painted_translation_x;
+                winning_translation_y = runtime.painted_translation_y;
+                animation.keyframe_translation_override = true;
+            }
+            if (contributes && configured.scale_keyframes.size() >= 2U) {
+                const auto& stops = configured.scale_keyframes;
+                auto right = std::lower_bound(
+                    stops.begin(), stops.end(), progress,
+                    [](const node_style::scale_keyframe& stop, float value) {
+                        return stop.offset < value;
+                    });
+                if (right == stops.begin()) {
+                    runtime.painted_scale_x = right->x;
+                    runtime.painted_scale_y = right->y;
+                } else if (right == stops.end()) {
+                    runtime.painted_scale_x = stops.back().x;
+                    runtime.painted_scale_y = stops.back().y;
+                } else {
+                    const auto& from = *(right - 1);
+                    const auto span = std::max(0.0001F, right->offset - from.offset);
+                    const auto local = std::clamp(
+                        (progress - from.offset) / span, 0.0F, 1.0F);
+                    const auto eased = eased_segment(local);
+                    runtime.painted_scale_x = from.x + (right->x - from.x) * eased;
+                    runtime.painted_scale_y = from.y + (right->y - from.y) * eased;
+                }
+                winning_scale_x = runtime.painted_scale_x;
+                winning_scale_y = runtime.painted_scale_y;
+                animation.keyframe_scale_override = true;
+            }
             if (contributes && configured.rotation_keyframes.size() >= 2U) {
                 const auto& stops = configured.rotation_keyframes;
                 auto right = std::lower_bound(
@@ -1260,6 +1330,29 @@ bool native_document::advance_animations() noexcept
             animation.painted_opacity = winning_opacity;
         } else if (previous_opacity_override) {
             animation.painted_opacity = node.style.opacity;
+        }
+        const auto previous_translation_x = animation.painted_transform_translate_x;
+        const auto previous_translation_y = animation.painted_transform_translate_y;
+        if (animation.keyframe_translation_override) {
+            animation.painted_transform_translate_x = winning_translation_x;
+            animation.painted_transform_translate_y = winning_translation_y;
+        } else if (previous_translation_override) {
+            animation.painted_transform_translate_x = node.style.transform_translate_x;
+            animation.painted_transform_translate_y = node.style.transform_translate_y;
+        }
+        if (animation.keyframe_translation_override || previous_translation_override) {
+            layout_changed = layout_changed
+                || !length_equal(
+                    previous_translation_x, animation.painted_transform_translate_x)
+                || !length_equal(
+                    previous_translation_y, animation.painted_transform_translate_y);
+        }
+        if (animation.keyframe_scale_override) {
+            animation.painted_transform_scale_x = winning_scale_x;
+            animation.painted_transform_scale_y = winning_scale_y;
+        } else if (previous_scale_override) {
+            animation.painted_transform_scale_x = node.style.transform_scale_x;
+            animation.painted_transform_scale_y = node.style.transform_scale_y;
         }
         if (animation.keyframe_rotation_override) {
             animation.painted_transform_rotate_degrees = winning_rotation;

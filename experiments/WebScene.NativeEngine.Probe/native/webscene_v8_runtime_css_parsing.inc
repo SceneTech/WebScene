@@ -1088,92 +1088,11 @@
                 std::string_view(css).substr(cursor, open - cursor));
             const auto declarations = parse_css_declarations(
                 std::string_view(css).substr(open + 1U, close - open - 1U));
-            const auto opacity = std::find_if(
-                declarations.begin(), declarations.end(), [](const auto& declaration) {
-                    return declaration.name == "opacity";
-                });
-            const auto transform = std::find_if(
-                declarations.begin(), declarations.end(), [](const auto& declaration) {
-                    return declaration.name == "transform";
-                });
-            const auto filter = std::find_if(
-                declarations.begin(), declarations.end(), [](const auto& declaration) {
-                    return declaration.name == "filter";
-                });
-            const auto rotation_degrees = [&]() -> std::optional<float> {
-                if (transform == declarations.end()) return std::nullopt;
-                auto value = lower_html_name(trim_css(transform->value));
-                const auto rotate = value.find("rotate(");
-                if (rotate == std::string::npos) return std::nullopt;
-                const auto close = value.find(')', rotate + 7U);
-                if (close == std::string::npos) return std::nullopt;
-                auto angle = trim_css(value.substr(rotate + 7U, close - rotate - 7U));
-                auto multiplier = 1.0F;
-                if (angle.ends_with("turn")) {
-                    angle.resize(angle.size() - 4U);
-                    multiplier = 360.0F;
-                } else if (angle.ends_with("deg")) {
-                    angle.resize(angle.size() - 3U);
-                } else if (angle.ends_with("rad")) {
-                    angle.resize(angle.size() - 3U);
-                    multiplier = 57.29577951308232F;
-                } else return std::nullopt;
-                return std::strtof(angle.c_str(), nullptr) * multiplier;
-            }();
-            for (auto component : split_css_component_list(selector, ',')) {
-                component = lower_html_name(trim_css(std::move(component)));
-                float offset = -1;
-                if (component == "from") offset = 0;
-                else if (component == "to") offset = 1;
-                else if (component.ends_with('%')) {
-                    component.pop_back();
-                    offset = std::strtof(component.c_str(), nullptr) / 100.0F;
-                }
-                if (offset < 0 || offset > 1) continue;
-                if (opacity != declarations.end()) {
-                    definition.opacity_stops.push_back({
-                        offset,
-                        std::clamp(std::strtof(opacity->value.c_str(), nullptr), 0.0F, 1.0F)});
-                }
-                if (rotation_degrees.has_value()) {
-                    definition.rotation_stops.push_back({offset, *rotation_degrees});
-                }
-                if (filter != declarations.end()) {
-                    definition.filter_stops.push_back({offset, filter->value});
-                }
-            }
+            css::append_keyframe(definition, selector, declarations);
             cursor = close + 1U;
         }
-        const auto normalize = [](auto& stops) {
-            std::stable_sort(
-                stops.begin(), stops.end(),
-                [](const auto& left, const auto& right) { return left.offset < right.offset; });
-            using stop_type = typename std::decay_t<decltype(stops)>::value_type;
-            std::vector<stop_type> unique;
-            for (const auto& stop : stops) {
-                if (!unique.empty()
-                    && std::abs(unique.back().offset - stop.offset) < 0.0001F) {
-                    unique.back() = stop;
-                } else {
-                    unique.push_back(stop);
-                }
-            }
-            stops = std::move(unique);
-        };
-        normalize(definition.opacity_stops);
-        normalize(definition.rotation_stops);
-        normalize(definition.filter_stops);
-        if (definition.rotation_stops.size() == 1U
-            && definition.rotation_stops.front().offset > 0) {
-            definition.rotation_stops.insert(
-                definition.rotation_stops.begin(), {0, 0});
-        }
-        if (definition.opacity_stops.size() >= 2U
-            || definition.rotation_stops.size() >= 2U
-            || definition.filter_stops.size() >= 2U) {
-            opacity_keyframes[lower_html_name(trim_css(std::move(name)))] =
-                std::move(definition);
-        }
+        css::finish_keyframes(
+            opacity_keyframes, trim_css(std::move(name)), std::move(definition));
     }
 
     void append_parsed_css_style_rule(

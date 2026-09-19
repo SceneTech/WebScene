@@ -1314,6 +1314,175 @@ void test_collapsed_single_select_native_activation(webscene_engine* engine)
         "Escape cancellation committed the pending highlight");
 }
 
+void test_collapsed_select_principal_scene_contract(webscene_engine* engine)
+{
+    resize(engine, 720, 150, 780U);
+    execute(engine, R"JS(
+        (() => {
+          document.body.innerHTML = '';
+          document.body.style.cssText = 'margin:0;background:#ffffff;color:#111111';
+          const makeOption = (value, text) => {
+            const option = document.createElement('option');
+            option.value = value;
+            option.text = text;
+            return option;
+          };
+          const light = document.createElement('select');
+          light.id = 'light-select-principal';
+          light.style.cssText = [
+            'position:fixed', 'z-index:4', 'left:20px', 'top:20px',
+            'box-sizing:border-box', 'width:320px', 'height:26px',
+            'padding:2px 6px', 'border:0', 'border-radius:3px',
+            'font:13px/20px Arial,sans-serif',
+            'background:#f4f5f6', 'color:#242424'
+          ].join(';');
+          light.add(makeOption('delay',
+            'After delay with a deliberately long selected value that must be clipped'));
+          light.add(makeOption('focus', 'On focus change'));
+          document.body.appendChild(light);
+
+          const dark = document.createElement('select');
+          dark.id = 'dark-select-principal';
+          dark.style.cssText = [
+            'position:absolute', 'left:380px', 'top:20px',
+            'box-sizing:border-box', 'width:240px', 'height:26px',
+            'padding:2px 6px', 'border:0', 'border-radius:3px',
+            'font:13px/20px Arial,sans-serif',
+            'background:#313131', 'color:#f0f0f0'
+          ].join(';');
+          dark.add(makeOption('dark', 'Dark choice'));
+          document.body.appendChild(dark);
+          globalThis.__selectPrincipalLight = light;
+          globalThis.__selectPrincipalDark = dark;
+        })()
+    )JS", "native-select-principal-scene-setup.js");
+    require(
+        evaluate(engine, R"JS((() => {
+          const light = __selectPrincipalLight.getBoundingClientRect();
+          const dark = __selectPrincipalDark.getBoundingClientRect();
+          const lightStyle = getComputedStyle(__selectPrincipalLight);
+          const darkStyle = getComputedStyle(__selectPrincipalDark);
+          return light.width === 320 && light.height === 26
+            && dark.width === 240 && dark.height === 26
+            && lightStyle.backgroundColor === 'rgb(244, 245, 246)'
+            && lightStyle.color === 'rgb(36, 36, 36)'
+            && darkStyle.backgroundColor === 'rgb(49, 49, 49)'
+            && darkStyle.color === 'rgb(240, 240, 240)'
+            && document.elementFromPoint(light.left + 20, light.top + 13)
+              === __selectPrincipalLight
+            && document.elementFromPoint(dark.left + 20, dark.top + 13)
+              === __selectPrincipalDark;
+        })())JS", "native-select-principal-scene-ready.js") == "true",
+        "collapsed select principal fixture lost computed style, geometry, or hit ownership");
+
+    webscene_engine_request_scene_checkpoint(engine);
+    auto observed_contract = false;
+    for (auto attempt = 0; attempt < 100 && !observed_contract; ++attempt) {
+        const auto* scene = webscene_engine_acquire_latest_scene(engine);
+        if (scene != nullptr) {
+            uint32_t light_id = 0U;
+            uint32_t dark_id = 0U;
+            for (uint32_t index = 0; index < scene->header.command_count; ++index) {
+                const auto& command = scene->commands[index];
+                if (command.kind == 10U && command.rgba == 0xF4F5F6FFU
+                    && std::abs(command.width - 320.0F) < 0.01F
+                    && std::abs(command.height - 26.0F) < 0.01F) {
+                    light_id = command.node_id;
+                }
+                if (command.kind == 7U && command.rgba == 0x313131FFU
+                    && std::abs(command.width - 240.0F) < 0.01F
+                    && std::abs(command.height - 26.0F) < 0.01F) {
+                    dark_id = command.node_id;
+                }
+            }
+
+            auto light_clip_begin = scene->header.command_count;
+            auto light_text = scene->header.command_count;
+            auto light_clip_end = scene->header.command_count;
+            auto light_clip_begin_count = 0U;
+            auto light_clip_end_count = 0U;
+            auto light_text_count = 0U;
+            auto light_arrow_count = 0U;
+            auto dark_text = false;
+            auto dark_clip_begin_count = 0U;
+            auto dark_clip_end_count = 0U;
+            auto dark_text_count = 0U;
+            auto dark_arrow_count = 0U;
+            auto background_arrow = false;
+            for (uint32_t index = 0; index < scene->header.command_count; ++index) {
+                const auto& command = scene->commands[index];
+                if (command.node_id != light_id && command.node_id != dark_id) continue;
+                if (command.kind == 2U) background_arrow = true;
+                if (command.node_id == light_id) {
+                    if (command.kind == 12U
+                        && std::abs(command.height - 26.0F) < 0.01F
+                        && command.width > 0.0F && command.width < 320.0F) {
+                        light_clip_begin = index;
+                        ++light_clip_begin_count;
+                    } else if (command.kind == 3U
+                        && command.rgba == 0x242424FFU
+                        && command.flags < scene->string_count) {
+                        const auto& descriptor = scene->strings[command.flags];
+                        const std::string_view resource(
+                            scene->string_bytes + descriptor.byte_offset,
+                            descriptor.byte_length);
+                        if (resource.ends_with(
+                                "\tAfter delay with a deliberately long selected value that must be clipped")) {
+                            light_text = index;
+                            ++light_text_count;
+                        }
+                    } else if (command.kind == 13U && light_text < index) {
+                        light_clip_end = index;
+                        ++light_clip_end_count;
+                    } else if (command.kind == 14U
+                        && command.rgba == 0x242424FFU) {
+                        ++light_arrow_count;
+                    }
+                } else if (command.node_id == dark_id) {
+                    if (command.kind == 12U
+                        && std::abs(command.height - 26.0F) < 0.01F
+                        && command.width > 0.0F && command.width < 240.0F) {
+                        ++dark_clip_begin_count;
+                    } else if (command.kind == 3U
+                        && command.rgba == 0xF0F0F0FFU
+                        && command.flags < scene->string_count) {
+                        const auto& descriptor = scene->strings[command.flags];
+                        const std::string_view resource(
+                            scene->string_bytes + descriptor.byte_offset,
+                            descriptor.byte_length);
+                        if (resource.ends_with("\tDark choice")) {
+                            dark_text = true;
+                            ++dark_text_count;
+                        }
+                    } else if (command.kind == 13U && dark_text) {
+                        ++dark_clip_end_count;
+                    } else if (command.kind == 14U
+                        && command.rgba == 0xF0F0F0FFU) {
+                        ++dark_arrow_count;
+                    }
+                }
+            }
+            observed_contract = light_id != 0U && dark_id != 0U
+                && light_clip_begin < light_text && light_text < light_clip_end
+                && light_clip_begin_count == 1U && light_text_count == 1U
+                && light_clip_end_count == 1U
+                && light_arrow_count == 2U
+                && dark_text && dark_clip_begin_count == 1U
+                && dark_text_count == 1U && dark_clip_end_count == 1U
+                && dark_arrow_count == 2U
+                && !background_arrow;
+            webscene_scene_acknowledge(scene);
+            webscene_scene_release(scene);
+        }
+        if (!observed_contract) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+    }
+    require(
+        observed_contract,
+        "collapsed select did not publish its principal background, clipped selected value, and foreground vector arrow");
+}
+
 
 void test_controlled_switch_native_activation_matches_browser_semantics()
 {

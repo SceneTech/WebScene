@@ -2524,6 +2524,20 @@ void native_document::append_scene(
             0.0F,
             node.layout.width - padding_left - padding_right - affordance_width);
         if (const auto* selected = selected_option_for(node); selected != nullptr) {
+            // A collapsed SELECT is a replaced control: its selected label is
+            // clipped to the principal content slot rather than painting
+            // through the disclosure affordance or outside the control. Text
+            // commands deliberately live on the DOM foreground plane, so the
+            // clip must bracket both retained presenter planes.
+            commands.push_back(webscene_scene_command{
+                12U,
+                0U,
+                text_x,
+                node.layout.y,
+                text_width,
+                node.layout.height,
+                0U,
+                node.id});
             std::ostringstream resource;
             resource << font_size << '\t' << line_height << '\t'
                 << resolved_font_weight(node) << '\t' << "start" << '\t'
@@ -2543,18 +2557,23 @@ void native_document::append_scene(
                 0,
                 0,
                 0});
+            commands.push_back(webscene_scene_command{
+                13U, 0U, 0, 0, 0, 0, 0U, node.id});
         }
         const auto center_x = node.layout.x + node.layout.width
             - padding_right - affordance_width * 0.5F;
         const auto center_y = node.layout.y + node.layout.height * 0.5F;
         const auto arrow_color = with_opacity(resolved_foreground(node));
+        // The disclosure affordance is principal foreground content. Kind 2
+        // is composited with DOM backgrounds and is hidden by this control's
+        // own opaque kind 9/10 background in an elevated stacking context.
         commands.push_back(webscene_scene_command{
-            2U, 100U,
+            14U, 100U,
             center_x - 3.5F, center_y - 1.5F,
             center_x, center_y + 2.0F,
             arrow_color, node.id});
         commands.push_back(webscene_scene_command{
-            2U, 100U,
+            14U, 100U,
             center_x, center_y + 2.0F,
             center_x + 3.5F, center_y - 1.5F,
             arrow_color, node.id});

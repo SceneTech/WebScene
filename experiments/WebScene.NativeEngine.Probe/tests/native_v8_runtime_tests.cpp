@@ -436,6 +436,13 @@ int main()
             webscene_engine_destroy(focused_engine);
             return 0;
         }
+        if (selected == "select-principal-scene") {
+            auto* focused_engine = webscene_engine_create(0);
+            require(focused_engine != nullptr, "select principal scene engine creation failed");
+            test_collapsed_select_principal_scene_contract(focused_engine);
+            webscene_engine_destroy(focused_engine);
+            return 0;
+        }
         if (selected == "async-save-publication") { test_async_save_acknowledgement_publishes_without_pointer_input(); return 0; }
         if (selected == "youtube-embed") { test_youtube_embed_fallback(); return 0; }
         if (selected == "table-cell-copy") { test_table_cell_click_copies_text_to_host(); return 0; }
@@ -1532,6 +1539,7 @@ int main()
     test_dom_selector_apis_throw_syntax_error_for_invalid_selectors(engine);
     test_positional_selector_sibling_semantics(engine);
     test_dropdown_runtime_primitives(engine);
+    test_collapsed_select_principal_scene_contract(engine);
     test_collapsed_single_select_native_activation(engine);
     test_input_dispatch_failures_are_attributed_and_consumable(engine);
     test_animation_frame_dispatch_is_attributed();

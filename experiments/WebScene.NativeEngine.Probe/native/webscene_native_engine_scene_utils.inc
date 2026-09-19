@@ -147,7 +147,7 @@ webscene_damage_rect command_damage_bounds(
     auto top = command.y;
     auto right = command.x + command.width;
     auto bottom = command.y + command.height;
-    if (command.kind == 2U) {
+    if (command.kind == 2U || command.kind == 14U) {
         left = std::min(command.x, command.width);
         top = std::min(command.y, command.height);
         right = std::max(command.x, command.width);

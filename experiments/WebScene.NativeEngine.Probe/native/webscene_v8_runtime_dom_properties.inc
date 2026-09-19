@@ -2301,6 +2301,7 @@
             return item_start - viewport_start;
         };
 
+        auto* document_root = self->css_cascade_root_for_node(*node);
         for (auto* ancestor = self->document.composed_parent(*node);
             ancestor != nullptr;
             ancestor = self->document.composed_parent(*ancestor)) {
@@ -2345,9 +2346,11 @@
                 changed = changed || std::abs(next - ancestor->scroll_top) > 0.01F;
                 ancestor->scroll_top = next;
             }
-            if (!changed) continue;
-            self->document.mark_dirty();
-            self->ensure_layout();
+            if (changed) {
+                self->document.mark_dirty();
+                self->ensure_layout();
+            }
+            if (ancestor == document_root) break;
         }
     }
 

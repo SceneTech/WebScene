@@ -5864,16 +5864,106 @@ struct v8_dom_runtime::implementation final {
 
 #include "webscene_v8_runtime_files.inc"
 
-    bool queue_external_navigation(dom_node& target)
+    bool queue_external_navigation(dom_node& target, uint32_t activation_flags = 0U)
     {
         if (file_service_enabled.load() && target.tag == "input"
             && target.attributes["type"] == "file") return queue_file_request(target, false);
+        auto* document_root = css_cascade_root_for_node(target);
         auto* anchor = &target;
-        while (anchor != nullptr && anchor->tag != "a") anchor = anchor->parent;
+        while (anchor != nullptr && anchor->tag != "a") {
+            if (anchor == document_root) return true;
+            anchor = anchor->parent;
+        }
         if (anchor == nullptr) return true;
         v8::Context::Scope navigation_context_scope(context_for_node(*anchor));
         const auto authored = anchor->attributes.find("href");
         if (authored == anchor->attributes.end() || authored->second.empty()) return true;
+
+        if (const auto target_attribute = anchor->attributes.find("target");
+            target_attribute != anchor->attributes.end()) {
+            const auto target_name = lower_html_name(target_attribute->second);
+            if (!target_name.empty() && target_name != "_self"
+                && target_name != "_parent" && target_name != "_top") {
+                activation_flags |= WEBSCENE_HOST_REQUEST_EXTERNAL_NEW_CONTEXT_V1;
+            }
+        }
+
+        const auto& base = current_base_address();
+        const auto resolved = resolve_resource_url(authored->second, base);
+        const auto fragment = resolved.find('#');
+        const auto base_fragment = base.find('#');
+        const auto same_document_fragment = fragment != std::string::npos
+            && resolved.substr(0U, fragment)
+                == base.substr(0U, base_fragment);
+        if (!anchor->attributes.contains("download")
+            && same_document_fragment
+            && (activation_flags & WEBSCENE_HOST_REQUEST_EXTERNAL_NEW_CONTEXT_V1) == 0U) {
+            const auto fragment_id = resolved.substr(fragment + 1U);
+            auto decoded_fragment = std::string{};
+            decoded_fragment.reserve(fragment_id.size());
+            const auto hex = [](char value) -> int {
+                if (value >= '0' && value <= '9') return value - '0';
+                if (value >= 'a' && value <= 'f') return value - 'a' + 10;
+                if (value >= 'A' && value <= 'F') return value - 'A' + 10;
+                return -1;
+            };
+            for (size_t index = 0U; index < fragment_id.size(); ++index) {
+                if (fragment_id[index] == '%' && index + 2U < fragment_id.size()) {
+                    const auto high = hex(fragment_id[index + 1U]);
+                    const auto low = hex(fragment_id[index + 2U]);
+                    if (high >= 0 && low >= 0) {
+                        decoded_fragment.push_back(static_cast<char>((high << 4) | low));
+                        index += 2U;
+                        continue;
+                    }
+                }
+                decoded_fragment.push_back(fragment_id[index]);
+            }
+            const auto find_fragment = [&](const auto& recurse, dom_node& node) -> dom_node* {
+                if (node.id_attribute == fragment_id
+                    || node.id_attribute == decoded_fragment) return &node;
+                for (auto* child : node.children) {
+                    if (child == nullptr) continue;
+                    if (auto* match = recurse(recurse, *child); match != nullptr) return match;
+                }
+                return nullptr;
+            };
+            auto* scroll_target = document_root == nullptr
+                ? nullptr : find_fragment(find_fragment, *document_root);
+            auto local_context = isolate->GetCurrentContext();
+            if (scroll_target != nullptr) {
+                auto wrapper = wrap_node(*scroll_target);
+                v8::Local<v8::Value> method;
+                if (!wrapper->Get(
+                        local_context,
+                        js_string(isolate, "scrollIntoView")).ToLocal(&method)
+                    || !method->IsFunction()
+                    || method.As<v8::Function>()->Call(
+                        local_context, wrapper, 0, nullptr).IsEmpty()) {
+                    return false;
+                }
+            } else if (fragment_id.empty()
+                || lower_html_name(decoded_fragment) == "top") {
+                auto global = local_context->Global();
+                v8::Local<v8::Value> method;
+                if (!global->Get(
+                        local_context,
+                        js_string(isolate, "scrollTo")).ToLocal(&method)
+                    || !method->IsFunction()) return false;
+                v8::Local<v8::Value> arguments[]{
+                    v8::Number::New(isolate, 0),
+                    v8::Number::New(isolate, 0)};
+                if (method.As<v8::Function>()->Call(
+                        local_context, global, 2, arguments).IsEmpty()) return false;
+            }
+            record_feature(
+                "html",
+                "anchor-fragment-navigation",
+                "supported",
+                "same-document anchor activation remains inside its browsing context",
+                "default-action");
+            return true;
+        }
         if (anchor->attributes.contains("download")) {
             if (file_service_enabled.load()) return queue_file_request(*anchor, true);
             auto local_context = frame_context.IsEmpty()
@@ -5951,10 +6041,13 @@ struct v8_dom_runtime::implementation final {
                 "default-action");
             return enqueue_host_request(local_context, request);
         }
-        return queue_external_url(authored->second);
+        return queue_external_url(authored->second, activation_flags, anchor->id);
     }
 
-    bool queue_external_url(const std::string& authored)
+    bool queue_external_url(
+        const std::string& authored,
+        uint32_t flags = 0U,
+        uint64_t target_node_id = 0U)
     {
         constexpr size_t maximum_external_url_bytes = 8192U;
         if (authored.size() > maximum_external_url_bytes) return false;
@@ -5966,6 +6059,8 @@ struct v8_dom_runtime::implementation final {
 
         auto request = std::make_unique<native_host_request>();
         request->view.kind = WEBSCENE_HOST_REQUEST_OPEN_EXTERNAL_URL_V1;
+        request->view.flags = flags;
+        request->view.target_node_id = target_node_id;
         request->url = resolved;
         record_feature(
             "html",

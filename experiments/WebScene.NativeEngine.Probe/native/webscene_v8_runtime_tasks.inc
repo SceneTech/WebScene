@@ -3966,16 +3966,51 @@
                 && select_popup_is_candidate(*activated_form_control)) {
                 static_cast<void>(open_select_popup(*activated_form_control));
             }
-            if (!click_default_prevented && !queue_external_navigation(*click_target)) {
+            auto activation_flags = uint32_t{0U};
+            const auto new_context_modifier =
+                (input.flags & (WEBSCENE_INPUT_POINTER_MODIFIER_CONTROL
+                    | WEBSCENE_INPUT_POINTER_MODIFIER_META
+                    | WEBSCENE_INPUT_POINTER_MODIFIER_SHIFT)) != 0U;
+            if (new_context_modifier) {
+                activation_flags |= WEBSCENE_HOST_REQUEST_EXTERNAL_NEW_CONTEXT_V1;
+            }
+            if ((input.flags & (WEBSCENE_INPUT_POINTER_MODIFIER_CONTROL
+                    | WEBSCENE_INPUT_POINTER_MODIFIER_META)) != 0U
+                && (input.flags & WEBSCENE_INPUT_POINTER_MODIFIER_SHIFT) == 0U) {
+                activation_flags |= WEBSCENE_HOST_REQUEST_EXTERNAL_BACKGROUND_V1;
+            }
+            if (!click_default_prevented
+                && !queue_external_navigation(*click_target, activation_flags)) {
                 last_error = "Native external navigation host request could not be queued";
                 return false;
             }
         }
-        if (auxiliary_click_target != nullptr
-            && !dispatch_input_event_type(input, "auxclick", *auxiliary_click_target)) {
-            last_error = "Native auxiliary click dispatch failed: "
-                + describe_reported_exception(try_catch, local_context);
-            return false;
+        if (auxiliary_click_target != nullptr) {
+            bool auxiliary_click_default_prevented = false;
+            if (!dispatch_input_event_type(
+                    input,
+                    "auxclick",
+                    *auxiliary_click_target,
+                    &auxiliary_click_default_prevented)) {
+                last_error = "Native auxiliary click dispatch failed: "
+                    + describe_reported_exception(try_catch, local_context);
+                return false;
+            }
+            if (changed_button == 1 && !auxiliary_click_default_prevented) {
+                auto activation_flags =
+                    WEBSCENE_HOST_REQUEST_EXTERNAL_NEW_CONTEXT_V1;
+                if ((input.flags & WEBSCENE_INPUT_POINTER_MODIFIER_SHIFT) == 0U) {
+                    activation_flags |=
+                        WEBSCENE_HOST_REQUEST_EXTERNAL_BACKGROUND_V1;
+                }
+                if (!queue_external_navigation(
+                        *auxiliary_click_target,
+                        activation_flags)) {
+                    last_error =
+                        "Native auxiliary external navigation host request could not be queued";
+                    return false;
+                }
+            }
         }
         if (activate_label_control_after_click && !click_default_prevented) {
             // A label owns the visual hit area for many custom switches;

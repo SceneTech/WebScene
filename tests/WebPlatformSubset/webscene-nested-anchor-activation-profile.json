@@ -1,0 +1,30 @@
+{
+  "profile": "webscene-nested-anchor-activation-1",
+  "wptRevision": "2c705104a295c48053eeddf7fe0170d790a4e853",
+  "runtime": "v8",
+  "viewport": {
+    "width": 800,
+    "height": 600,
+    "deviceScaleFactor": 1
+  },
+  "required": [
+    {
+      "path": "contracts/nested-anchor-activation-handoff.html",
+      "type": "contract",
+      "capabilities": [
+        "trusted-nested-anchor-activation",
+        "child-fragment-default-action",
+        "primary-link-modifiers",
+        "anchor-target-semantics",
+        "cancellable-middle-anchor-activation",
+        "bounded-external-link-handoff"
+      ],
+      "evidence": [
+        "code-oss-webview-click-and-auxclick"
+      ],
+      "reason": "Chrome/native oracle for the unchanged Code OSS webview click and auxclick listeners plus WebScene's document-bounded fragment default and typed HTTP(S)-only external handoff."
+    }
+  ],
+  "harnessBlocked": [],
+  "excluded": []
+}

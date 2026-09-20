@@ -2,7 +2,7 @@
   "schemaVersion": 2,
   "revisions": {
     "codeOss": "645f29cc3176500b4b5762ba887cf2a7f0ffdf2c",
-    "webScene": "5ca0e542d9b16b9132924101b00ca818fac32427",
+    "webScene": "d5b7670e5e8522220cc2bdaab7487986726c5c4a",
     "appScene": "773e94e26b58eac423ca24d5e47bea172965c94c",
     "wpt": "2c705104a295c48053eeddf7fe0170d790a4e853"
   },
@@ -40,11 +40,15 @@
       "reachable": true,
       "state": "blocked",
       "issues": [
-        "WebScene#263"
+        "WebScene#263",
+        "WebScene#766"
       ],
       "evidence": [],
-      "limits": [],
-      "reason": "Cancellation and teardown remain unqualified across every accepted Code OSS scenario and realm.",
+      "limits": [
+        "Static abort, timeout, any, branded main/iframe signals, bounded composition ownership, and lifecycle gates are authored but unexecuted under the active implementation-throughput directive.",
+        "Installed Code OSS request/fetch cancellation and teardown acceptance remains pending across the release platforms."
+      ],
+      "reason": "AbortSignal static composition, branded EventTarget behavior, asynchronous timeout delivery, bounded fan-in, dependent-listener cleanup, and realm retirement are implemented with authored native/browser gates at WebScene d5b7670e; those gates and packaged Code OSS acceptance have not yet run.",
       "platforms": [
         "linux-x64",
         "macos-arm64",

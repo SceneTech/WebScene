@@ -120,6 +120,7 @@ uint8_t measure_baseline_fixture_text(
 #include "native_css_invalidation_tests.inc"
 #include "native_youtube_embed_tests.inc"
 #include "native_v8_runtime_browser_dom_tests.inc"
+#include "native_v8_runtime_abort_signal_tests.inc"
 #include "native_v8_runtime_broadcast_channel_tests.inc"
 #include "native_v8_runtime_resize_observer_tests.inc"
 #include "native_v8_runtime_rendering_metrics_tests.inc"
@@ -1644,6 +1645,7 @@ int main()
     test_session_storage_in_outer_and_frame_contexts(engine);
     test_window_post_message_is_queued(engine);
     test_window_post_message_coalesces_style_recascade(engine);
+    test_abort_signal_composition_contract();
     test_origin_partitioned_broadcast_channel_contract();
     test_resize_event_coalesces_attribute_selector_recascades(engine);
     test_cross_frame_post_message_and_window_frames(engine);

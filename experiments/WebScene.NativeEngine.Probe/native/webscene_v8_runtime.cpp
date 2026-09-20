@@ -5319,6 +5319,7 @@ struct v8_dom_runtime::implementation final {
         install_editor_web_platform_globals(local_context);
         install_message_channel(local_context);
         install_broadcast_channel(local_context);
+        install_abort_globals(local_context);
         install_tree_walker_platform(local_context);
         install_custom_elements_platform(local_context);
         local_context->Global()->Set(local_context,js_string(isolate,"__webSceneRevokeObjectUrl"),v8::Function::New(local_context,revoke_object_url).ToLocalChecked()).Check();
@@ -7484,6 +7485,7 @@ struct v8_dom_runtime::implementation final {
 
 #include "webscene_v8_runtime_clone.inc"
 #include "webscene_v8_runtime_broadcast_channel.inc"
+#include "webscene_v8_runtime_abort.inc"
 #include "webscene_v8_runtime_indexeddb.inc"
 #include "webscene_v8_runtime_modules.inc"
 #include "webscene_v8_runtime_workers.inc"

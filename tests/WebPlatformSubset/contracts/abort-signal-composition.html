@@ -1,0 +1,113 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>AbortSignal composition and timeout contract</title>
+<body>
+<iframe id="peer" srcdoc="<!doctype html><title>abort peer</title>"></iframe>
+<script>
+  const state = window.__webSceneWptState = {
+    complete: false, harness: null, results: [], errors: [], diagnostics: []
+  };
+  const assert = (condition, message) => {
+    if (!condition) throw new Error(message);
+  };
+  const test = (name, body) => {
+    try {
+      body();
+      state.results.push({ name, status: "PASS", message: null, stack: null });
+    } catch (error) {
+      state.results.push({
+        name, status: "FAIL", message: String(error.message || error),
+        stack: error.stack || null
+      });
+    }
+  };
+  const finish = () => {
+    const failure = state.results.find(result => result.status !== "PASS");
+    state.harness = failure
+      ? { status: 1, message: failure.message, stack: failure.stack }
+      : { status: 0, message: null, stack: null };
+    state.complete = true;
+  };
+
+  addEventListener("load", () => {
+    test("AbortSignal has the browser-shaped EventTarget surface in both realms", () => {
+      const controller = new AbortController();
+      assert(controller.signal instanceof AbortSignal, "signal brand mismatch");
+      assert(controller.signal instanceof EventTarget, "EventTarget inheritance missing");
+      assert(Object.prototype.toString.call(controller.signal) === "[object AbortSignal]",
+        "AbortSignal toStringTag changed");
+      assert(Object.prototype.toString.call(controller) === "[object AbortController]",
+        "AbortController toStringTag changed");
+      assert(typeof AbortSignal.abort === "function"
+        && typeof AbortSignal.timeout === "function"
+        && typeof AbortSignal.any === "function", "static helpers missing");
+      assert(typeof peer.contentWindow.AbortSignal.timeout === "function",
+        "iframe AbortSignal helpers missing");
+      assert(new peer.contentWindow.AbortController().signal
+        instanceof peer.contentWindow.AbortSignal, "iframe signal brand mismatch");
+      let illegal = null;
+      try { new AbortSignal(); } catch (error) { illegal = error.name; }
+      assert(illegal === "TypeError", `AbortSignal constructor error was ${illegal}`);
+    });
+
+    test("abort and any preserve reasons, order, and iterator closing", () => {
+      const defaultSignal = AbortSignal.abort();
+      const custom = { marker: 7 };
+      const customSignal = AbortSignal.abort(custom);
+      assert(defaultSignal.reason.name === "AbortError", "default AbortError missing");
+      assert(customSignal.reason === custom, "custom abort reason changed");
+      let thrown = null;
+      try { customSignal.throwIfAborted(); } catch (error) { thrown = error; }
+      assert(thrown === custom, "throwIfAborted changed the reason");
+      assert(AbortSignal.any([
+        AbortSignal.abort("first"), AbortSignal.abort("second")
+      ]).reason === "first", "first already-aborted reason lost");
+      let iteratorClosed = false;
+      function* invalid() {
+        try { yield defaultSignal; yield {}; }
+        finally { iteratorClosed = true; }
+      }
+      let invalidName = null;
+      try { AbortSignal.any(invalid()); } catch (error) { invalidName = error.name; }
+      assert(iteratorClosed && invalidName === "TypeError",
+        "invalid iterable input did not close with TypeError");
+    });
+
+    const first = new AbortController();
+    const second = new AbortController();
+    const combined = AbortSignal.any([first.signal, second.signal, first.signal]);
+    const timed = AbortSignal.timeout(0);
+    let combinedEvents = 0;
+    let timedEvents = 0;
+    combined.onabort = () => ++combinedEvents;
+    timed.addEventListener("abort", () => ++timedEvents);
+    second.abort("second");
+    first.abort("first");
+    test("any settles once from the first future source", () => {
+      assert(combined.aborted && combined.reason === "second",
+        "combined reason changed");
+      assert(combinedEvents === 1, `combined event count was ${combinedEvents}`);
+    });
+    test("timeout does not settle synchronously", () => {
+      assert(!timed.aborted && timedEvents === 0, "timeout settled synchronously");
+    });
+
+    const deadline = performance.now() + 2000;
+    const poll = () => {
+      if (!timed.aborted && performance.now() < deadline) {
+        setTimeout(poll, 5);
+        return;
+      }
+      test("timeout settles asynchronously with TimeoutError", () => {
+        assert(timed.aborted, "timeout did not settle");
+        assert(timed.reason.name === "TimeoutError",
+          `timeout reason was ${timed.reason && timed.reason.name}`);
+        assert(timedEvents === 1, `timeout event count was ${timedEvents}`);
+      });
+      state.diagnostics.push(JSON.stringify({ combinedEvents, timedEvents }));
+      finish();
+    };
+    poll();
+  }, { once: true });
+</script>
+</body>

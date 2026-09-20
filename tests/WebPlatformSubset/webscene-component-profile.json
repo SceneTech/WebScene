@@ -2678,6 +2678,13 @@
       "reason": "Candidate contract for WebScene #764. It covers the API shape, sender exclusion, cloned FIFO delivery to a same-realm peer and same-origin iframe, MessageEvent metadata, DataCloneError, idempotent close, InvalidStateError after close, and explicit teardown. The native companion adds separate runtime instances, process-registry retirement, storage-partition matching, and bounded queue/fanout ownership. Current installed-package acceptance remains under #81/#264."
     },
     {
+      "path": "contracts/abort-signal-composition.html",
+      "type": "contract",
+      "capabilities": ["abort-signal-branding", "abort-signal-static-abort", "abort-signal-timeout", "abort-signal-any", "abort-signal-lifecycle"],
+      "evidence": ["dom-abort-signal-derived", "vscode-oss-browser-request-abort-any-timeout"],
+      "reason": "Candidate contract for WebScene #766. It covers main/iframe API shape, EventTarget branding, default and custom reasons, throwIfAborted, already/future-aborted first-reason ordering, duplicate inputs, iterator closing, invalid input, asynchronous TimeoutError delivery, dependent-listener cleanup, and pending-state runtime retirement. Current installed-package request/fetch acceptance remains under #263/#81/#264."
+    },
+    {
       "path": "contracts/service-worker-registration-control-plane.html",
       "type": "contract",
       "capabilities": ["service-worker-container-idl", "service-worker-registration-matching", "service-worker-script-admission", "service-worker-update-and-unregister"],

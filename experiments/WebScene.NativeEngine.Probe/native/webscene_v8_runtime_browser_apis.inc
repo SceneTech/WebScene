@@ -9,6 +9,14 @@
             "web-api-binding");
         if (info.Length() < 1 || !info[0]->IsFunction()) return;
         auto* self = current(info.GetIsolate());
+        if (self == nullptr) return;
+        if (self->timers.size() >= maximum_timer_tasks) {
+            throw_dom_exception(
+                info,
+                "Animation frame task capacity exhausted",
+                "QuotaExceededError");
+            return;
+        }
         if (self->work_metrics_enabled.load(std::memory_order_relaxed)) {
             ++self->work.animation_frames_requested;
         }
@@ -44,6 +52,14 @@
     {
         if (info.Length() < 1 || !info[0]->IsFunction()) return;
         auto* self = current(info.GetIsolate());
+        if (self == nullptr) return;
+        if (self->timers.size() >= maximum_timer_tasks) {
+            throw_dom_exception(
+                info,
+                "Timer task capacity exhausted",
+                "QuotaExceededError");
+            return;
+        }
         self->record_feature(
             "web-api",
             repeating ? "Window.setInterval" : "Window.setTimeout",
@@ -601,7 +617,7 @@
                     return;
                 }
                 if (!signal->IsUndefined()) {
-                    if (!signal->IsObject() || signal->IsNull()) {
+                    if (!is_abort_signal(local_context, signal)) {
                         info.GetIsolate()->ThrowException(v8::Exception::TypeError(
                             js_string(info.GetIsolate(),
                                 "Failed to execute 'addEventListener': signal is not an AbortSignal")));
@@ -1236,140 +1252,6 @@
         observer->Set(local_context, js_string(isolate, "disconnect"), no_op).Check();
         observer->Set(local_context, js_string(isolate, "takeRecords"), v8::Function::New(local_context, empty_array).ToLocalChecked()).Check();
         info.GetReturnValue().Set(observer);
-    }
-
-    static void abort_signal_throw_if_aborted(
-        const v8::FunctionCallbackInfo<v8::Value>& info)
-    {
-        auto local_context = info.GetIsolate()->GetCurrentContext();
-        v8::Local<v8::Value> aborted;
-        if (!info.This()->Get(
-                local_context,
-                js_string(info.GetIsolate(), "aborted")).ToLocal(&aborted)
-            || !aborted->BooleanValue(info.GetIsolate())) {
-            return;
-        }
-        v8::Local<v8::Value> reason;
-        if (info.This()->Get(
-                local_context,
-                js_string(info.GetIsolate(), "reason")).ToLocal(&reason)) {
-            info.GetIsolate()->ThrowException(reason);
-        }
-    }
-
-    static void abort_controller_abort(const v8::FunctionCallbackInfo<v8::Value>& info)
-    {
-        auto* self = current(info.GetIsolate());
-        if (self == nullptr || !info.Data()->IsObject()) return;
-        auto local_context = info.GetIsolate()->GetCurrentContext();
-        auto signal = info.Data().As<v8::Object>();
-        v8::Local<v8::Value> aborted;
-        if (!signal->Get(
-                local_context,
-                js_string(info.GetIsolate(), "aborted")).ToLocal(&aborted)
-            || aborted->BooleanValue(info.GetIsolate())) {
-            return;
-        }
-
-        const auto default_reason = info.Length() == 0 || info[0]->IsUndefined();
-        auto reason = default_reason
-            ? v8::Exception::Error(
-                js_string(info.GetIsolate(), "This operation was aborted"))
-            : info[0];
-        if (default_reason && reason->IsObject()) {
-            reason.As<v8::Object>()->Set(
-                local_context,
-                js_string(info.GetIsolate(), "name"),
-                js_string(info.GetIsolate(), "AbortError")).Check();
-        }
-        signal->Set(
-            local_context,
-            js_string(info.GetIsolate(), "aborted"),
-            v8::True(info.GetIsolate())).Check();
-        signal->Set(
-            local_context,
-            js_string(info.GetIsolate(), "reason"),
-            reason).Check();
-
-        const auto remove_aborted = [&](auto& registrations) {
-            for (auto& registration : registrations) {
-                if (registration.signal.IsEmpty()) continue;
-                auto registered_signal = registration.signal.Get(info.GetIsolate());
-                if (!registered_signal->StrictEquals(signal)) continue;
-                self->clear_event_listener(registration);
-            }
-        };
-        for (auto& [type, registrations] : self->frame_event_listeners) {
-            static_cast<void>(type);
-            remove_aborted(registrations);
-        }
-        remove_aborted(self->resize_listeners);
-        self->refresh_message_port_reachability();
-
-        auto event = self->create_event_instance(local_context);
-        event->Set(
-            local_context,
-            js_string(info.GetIsolate(), "type"),
-            js_string(info.GetIsolate(), "abort")).Check();
-        v8::Local<v8::Value> dispatcher;
-        if (signal->Get(
-                local_context,
-                js_string(info.GetIsolate(), "dispatchEvent")).ToLocal(&dispatcher)
-            && dispatcher->IsFunction()) {
-            v8::Local<v8::Value> arguments[] = {event};
-            static_cast<void>(dispatcher.As<v8::Function>()->Call(
-                local_context, signal, 1, arguments));
-        }
-    }
-
-    static void abort_controller_constructor(const v8::FunctionCallbackInfo<v8::Value>& info)
-    {
-        auto* self = current(info.GetIsolate());
-        if (self == nullptr) return;
-        if (!info.IsConstructCall()) {
-            info.GetIsolate()->ThrowException(v8::Exception::TypeError(
-                js_string(info.GetIsolate(),
-                    "Failed to construct 'AbortController': Please use the 'new' operator")));
-            return;
-        }
-        self->record_feature(
-            "web-api",
-            "AbortController.constructor",
-            "partially-supported",
-            "abort state, reason, listener delivery, and EventTarget listener cleanup; static AbortSignal composition helpers are not implemented",
-            "web-api-binding");
-        auto isolate = info.GetIsolate();
-        auto local_context = isolate->GetCurrentContext();
-        auto controller = info.This();
-        v8::Local<v8::Value> event_target_value;
-        if (!local_context->Global()->Get(
-                local_context,
-                js_string(isolate, "EventTarget")).ToLocal(&event_target_value)
-            || !event_target_value->IsFunction()) {
-            isolate->ThrowException(v8::Exception::TypeError(
-                js_string(isolate, "AbortController requires EventTarget")));
-            return;
-        }
-        auto signal = event_target_value.As<v8::Function>()->NewInstance(
-            local_context, 0, nullptr).ToLocalChecked();
-        signal->Set(local_context, js_string(isolate, "aborted"), v8::False(isolate)).Check();
-        signal->Set(local_context, js_string(isolate, "reason"), v8::Undefined(isolate)).Check();
-        signal->Set(local_context, js_string(isolate, "onabort"), v8::Null(isolate)).Check();
-        signal->Set(
-            local_context,
-            js_string(isolate, "throwIfAborted"),
-            v8::Function::New(
-                local_context,
-                abort_signal_throw_if_aborted).ToLocalChecked()).Check();
-        controller->Set(local_context, js_string(isolate, "signal"), signal).Check();
-        controller->Set(
-            local_context,
-            js_string(isolate, "abort"),
-            v8::Function::New(
-                local_context,
-                abort_controller_abort,
-                signal).ToLocalChecked()).Check();
-        info.GetReturnValue().Set(controller);
     }
 
     static media_query_list_state* media_query_list(

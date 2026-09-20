@@ -243,6 +243,16 @@
         std::vector<std::weak_ptr<broadcast_channel_endpoint>> endpoints;
     };
 
+    struct abort_signal_composition_binding final {
+        v8::Global<v8::Context> context;
+        v8::Global<v8::Object> signal;
+        std::vector<v8::Global<v8::Object>> sources;
+        std::vector<v8::Global<v8::Function>> listeners;
+        std::weak_ptr<message_port_runtime_wake> wake;
+        bool garbage_collected{false};
+        bool reclaimed{false};
+    };
+
     struct pending_window_message final {
         v8::Global<v8::Context> target_context;
         v8::Global<v8::Context> source_context;

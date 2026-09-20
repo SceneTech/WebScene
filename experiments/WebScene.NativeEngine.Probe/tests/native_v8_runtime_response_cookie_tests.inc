@@ -185,6 +185,112 @@ void test_response_header_cookie_contracts()
     webscene_engine_destroy(engine);
 }
 
+struct connected_http_status_server final {
+    std::atomic<uint32_t> missing_script_requests{0U};
+    std::atomic<uint32_t> missing_style_requests{0U};
+};
+
+size_t load_connected_http_status_resource_v4(
+    void* user_data,
+    uint32_t,
+    const char* url,
+    size_t url_length,
+    const char*,
+    size_t,
+    int64_t,
+    const webscene_resource_request_context_v4*,
+    webscene_resource_response_v4* response,
+    char* destination,
+    size_t destination_capacity)
+{
+    auto& server = *static_cast<connected_http_status_server*>(user_data);
+    const std::string_view address(url, url_length);
+    static constexpr std::string_view document = R"HTML(
+      <!doctype html><body><div id="target">unchanged</div><script>
+      globalThis.__connectedHttpStatus = {
+        scriptExecuted: false, scriptLoad: 0, scriptError: 0,
+        styleLoad: 0, styleError: 0, fetchDone: false
+      };
+      const script = document.createElement('script');
+      script.src = '/missing.js';
+      script.onload = () => ++globalThis.__connectedHttpStatus.scriptLoad;
+      script.onerror = () => ++globalThis.__connectedHttpStatus.scriptError;
+      document.head.appendChild(script);
+      const link = document.createElement('link');
+      link.rel = 'stylesheet';
+      link.href = '/missing.css';
+      link.onload = () => ++globalThis.__connectedHttpStatus.styleLoad;
+      link.onerror = () => ++globalThis.__connectedHttpStatus.styleError;
+      document.head.appendChild(link);
+      fetch('/missing.js').then(async response => {
+        globalThis.__connectedHttpStatus.fetchStatus = response.status;
+        globalThis.__connectedHttpStatus.fetchBody = await response.text();
+        globalThis.__connectedHttpStatus.fetchDone = true;
+      });
+      </script></body>)HTML";
+    static constexpr std::string_view missing_script =
+        "globalThis.__connectedHttpStatus.scriptExecuted = true;";
+    static constexpr std::string_view missing_style =
+        "#target { color: rgb(255, 0, 0); }";
+    const auto script = address.ends_with("/missing.js");
+    const auto style = address.ends_with("/missing.css");
+    if (script) server.missing_script_requests.fetch_add(1U, std::memory_order_relaxed);
+    if (style) server.missing_style_requests.fetch_add(1U, std::memory_order_relaxed);
+    const auto body = script ? missing_script : style ? missing_style : document;
+    if (response != nullptr) {
+        response->status = script ? 404U : style ? 500U : 200U;
+        response->status_text = script ? "Not Found" : style ? "Server Error" : "OK";
+        response->status_text_length = std::strlen(response->status_text);
+    }
+    constexpr size_t header_size = 2U + sizeof(uint32_t) + sizeof(int64_t) * 2U;
+    const auto required = header_size + body.size();
+    if (destination == nullptr || destination_capacity < required) return required;
+    std::memset(destination, 0, header_size);
+    destination[0] = 1;
+    std::copy(body.begin(), body.end(), destination + header_size);
+    return required;
+}
+
+void test_connected_resources_reject_unsuccessful_http_status()
+{
+    connected_http_status_server server;
+    webscene_engine_options options{};
+    options.struct_size = sizeof(options);
+    options.resource_load_callback_v4 = load_connected_http_status_resource_v4;
+    options.resource_load_v4_user_data = &server;
+    auto* engine = webscene_engine_create_with_options(&options);
+    require(engine != nullptr, "connected HTTP status engine creation failed");
+    constexpr std::string_view address{"https://connected-status.test/index.html"};
+    require(webscene_engine_load_url(engine, address.data(), address.size()) != 0U,
+        "connected HTTP status navigation failed");
+    std::string result;
+    for (auto attempt = 0; attempt < 500; ++attempt) {
+        result = evaluate(engine, R"JS((() => ({
+          ...globalThis.__connectedHttpStatus,
+          color: getComputedStyle(document.getElementById('target')).color
+        }))())JS", "connected-http-status.js");
+        if (result.find("\"scriptError\":1") != std::string::npos
+            && result.find("\"styleError\":1") != std::string::npos
+            && result.find("\"fetchDone\":true") != std::string::npos) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    require(result.find("\"scriptExecuted\":false") != std::string::npos
+            && result.find("\"scriptLoad\":0") != std::string::npos
+            && result.find("\"scriptError\":1") != std::string::npos,
+        "404 script body executed or reported a successful load: " + result);
+    require(result.find("\"styleLoad\":0") != std::string::npos
+            && result.find("\"styleError\":1") != std::string::npos
+            && result.find("\"color\":\"rgb(0, 0, 0)\"") != std::string::npos,
+        "500 stylesheet body entered the document cascade: " + result);
+    require(result.find("\"fetchStatus\":404") != std::string::npos
+            && result.find("scriptExecuted = true") != std::string::npos,
+        "Fetch did not preserve the 404 Response status and body: " + result);
+    require(server.missing_script_requests.load(std::memory_order_relaxed) == 2U
+            && server.missing_style_requests.load(std::memory_order_relaxed) == 1U,
+        "connected and Fetch requests did not remain independently observable");
+    webscene_engine_destroy(engine);
+}
+
 struct request_header_v5_server final {
     std::mutex mutex;
     std::vector<std::pair<std::string, std::string>> headers;

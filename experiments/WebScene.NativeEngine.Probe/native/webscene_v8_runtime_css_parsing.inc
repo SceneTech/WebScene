@@ -1400,7 +1400,7 @@
     }
 
 #if defined(WEBSCENE_NATIVE_ENGINE_CSSPARSER)
-    void register_custom_property(registered_custom_property property)
+    void register_custom_property(css::registered_custom_property property)
     {
         if (registered_custom_properties.size() >= 64U
             && !registered_custom_properties.contains(property.name)) return;

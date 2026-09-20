@@ -132,6 +132,10 @@ int main()
         require(property_id(name) == css_property_id::unknown,
             "storage-only name is not silently promoted to a typed property", name);
     }
+    require(is_storage_only("animation-direction")
+            && is_storage_only("animation-fill-mode")
+            && is_storage_only("animation-play-state"),
+        "retained animation controls preserve their storage-only classification");
 
     for (const auto& entry : cssom_supported_property_catalog) {
         const auto typed = is_typed(entry.css_name);
@@ -210,7 +214,7 @@ int main()
             "generated simple grammar dispatch agrees with specified-value implementation");
     }
 #if !defined(WEBSCENE_TEST_LEGACY_SPECIFIED_VALUE)
-    static_assert(specified_property_samples.size() == 161U);
+    static_assert(specified_property_samples.size() == 158U);
     std::array<bool, static_cast<size_t>(css_property_id::touch_action) + 1U> sampled{};
     for (const auto& sample : specified_property_samples) {
         const auto property = property_id(sample.name);

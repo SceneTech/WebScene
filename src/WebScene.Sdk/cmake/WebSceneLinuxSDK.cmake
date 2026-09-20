@@ -1,4 +1,5 @@
-# Native-only Linux producer. The existing macOS Runtime profile is unchanged.
+# Linux producer. Runtime remains opt-in so the native-only package and its
+# dependency closure stay unchanged for existing consumers.
 if(NOT CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64)$")
   message(FATAL_ERROR "The Linux SDK profile currently targets x86_64")
 endif()
@@ -10,8 +11,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 option(WEBSCENE_SDK_WEBGPU "Include pinned Dawn/Vulkan native authoring support" ON)
 option(WEBSCENE_SDK_RUNTIME "Include the optional JavaScript Runtime component" OFF)
-if(WEBSCENE_SDK_RUNTIME)
-  message(FATAL_ERROR "This Linux SDK profile is Native-only; Runtime/hybrid is not qualified")
+if(WEBSCENE_SDK_RUNTIME AND NOT WEBSCENE_SDK_WEBGPU)
+  message(FATAL_ERROR
+    "The Linux Runtime profile requires WEBSCENE_SDK_WEBGPU=ON")
 endif()
 set(BUILD_TESTING OFF CACHE BOOL "Validate through installed SDK consumers" FORCE)
 set(WEBSCENE_NATIVE_WEB_SDK_BUILD ON)
@@ -53,8 +55,51 @@ if(WEBSCENE_SDK_WEBGPU)
   install(FILES "${WEBSCENE_GRAPHICS_SDK_ROOT}/dawn/webscene-graphics-package.json"
     "${WEBSCENE_ROOT}/eng/graphics/dependencies.lock.json" DESTINATION share/webscene/dependencies)
 endif()
+if(WEBSCENE_SDK_RUNTIME)
+  set(WEBSCENE_NATIVE_ENGINE_STATIC ON CACHE BOOL "" FORCE)
+  set(WEBSCENE_NATIVE_ENGINE_ENABLE_V8 ON CACHE BOOL "" FORCE)
+  set(WEBSCENE_NATIVE_ENGINE_ENABLE_GRAPHICS ON CACHE BOOL "" FORCE)
+  set(WEBSCENE_COMPILED_APPLICATION_MODULE "" CACHE FILEPATH
+    "SDK Runtime never contains application code" FORCE)
+  add_subdirectory(
+    "${WEBSCENE_ROOT}/experiments/WebScene.NativeEngine.Probe" runtime)
+  add_library(WebScene::Runtime ALIAS webscene_native_engine)
+
+  install(TARGETS webscene_native_engine webscene_media ixwebsocket
+    mbedcrypto ARCHIVE DESTINATION lib)
+  install(FILES
+    "${WEBSCENE_V8_OUTPUT_ROOT}/obj/libv8_monolith.a"
+    DESTINATION lib)
+  install(FILES
+    "${WEBSCENE_V8_OUTPUT_ROOT}/icudtl.dat"
+    "${CMAKE_CURRENT_BINARY_DIR}/runtime/webscene_bootstrap_snapshot.bin"
+    "${CMAKE_CURRENT_BINARY_DIR}/runtime/webscene_bootstrap_snapshot.meta"
+    DESTINATION share/webscene/runtime)
+  install(FILES
+    "${WEBSCENE_GRAPHICS_SDK_ROOT}/${WEBSCENE_GRAPHICS_ANGLE_VARIANT}/lib/libEGL${CMAKE_SHARED_LIBRARY_SUFFIX}"
+    "${WEBSCENE_GRAPHICS_SDK_ROOT}/${WEBSCENE_GRAPHICS_ANGLE_VARIANT}/lib/libGLESv2${CMAKE_SHARED_LIBRARY_SUFFIX}"
+    DESTINATION lib)
+  install(FILES
+    "${WEBSCENE_V8_ROOT}/LICENSE"
+    DESTINATION share/licenses/WebScene RENAME V8-LICENSE)
+  install(FILES
+    "${CMAKE_BINARY_DIR}/webscene-miniaudio-LICENSE"
+    DESTINATION share/licenses/WebScene)
+  install(FILES
+    "${CMAKE_BINARY_DIR}/_deps/webscene_ixwebsocket-src/LICENSE.txt"
+    DESTINATION share/licenses/WebScene RENAME IXWebSocket-LICENSE)
+  install(FILES
+    "${CMAKE_BINARY_DIR}/_deps/webscene_mbedtls-src/LICENSE"
+    DESTINATION share/licenses/WebScene RENAME MbedTLS-LICENSE)
+  install(DIRECTORY
+    "${WEBSCENE_GRAPHICS_SDK_ROOT}/${WEBSCENE_GRAPHICS_ANGLE_VARIANT}/licenses/"
+    DESTINATION share/licenses/WebScene/ANGLE)
+  install(PROGRAMS
+    "${WEBSCENE_ROOT}/eng/sdk/verify-linux-runtime-package.py"
+    DESTINATION share/webscene/tools)
+endif()
 file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/WebSceneLinuxProfile.cmake"
-  "set(WebScene_SDK_PLATFORM Linux)\nset(WebScene_SDK_PROCESSOR x86_64)\nset(WebScene_SDK_WEBGPU ${WEBSCENE_SDK_WEBGPU})\nset(WebScene_SDK_RUNTIME OFF)\n")
+  "set(WebScene_SDK_PLATFORM Linux)\nset(WebScene_SDK_PROCESSOR x86_64)\nset(WebScene_SDK_WEBGPU ${WEBSCENE_SDK_WEBGPU})\nset(WebScene_SDK_RUNTIME ${WEBSCENE_SDK_RUNTIME})\n")
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/WebSceneLinuxProfile.cmake" DESTINATION lib/cmake/WebScene)
 install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/cmake/" DESTINATION lib/cmake/WebScene)
 include(CMakePackageConfigHelpers)

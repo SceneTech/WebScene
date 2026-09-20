@@ -1027,6 +1027,37 @@ bool resolved_white_space_wraps(const dom_node& node)
     return true;
 }
 
+std::string_view resolved_word_break(const dom_node& node)
+{
+    for (auto* current = &node; current != nullptr; current = current->parent) {
+        const auto& value = current->style.textual().word_break;
+        if (value.empty() || value == "inherit" || value == "unset") continue;
+        return value == "initial" || value == "revert"
+            ? std::string_view{"normal"} : std::string_view{value};
+    }
+    return "normal";
+}
+
+std::string_view resolved_overflow_wrap(const dom_node& node)
+{
+    for (auto* current = &node; current != nullptr; current = current->parent) {
+        const auto& value = current->style.textual().overflow_wrap;
+        if (value.empty() || value == "inherit" || value == "unset") continue;
+        return value == "initial" || value == "revert"
+            ? std::string_view{"normal"} : std::string_view{value};
+    }
+    return "normal";
+}
+
+bool breaks_inside_words(const dom_node& node, bool token_exceeds_line)
+{
+    const auto word_break = resolved_word_break(node);
+    if (word_break == "break-all" || word_break == "break-word") return true;
+    const auto overflow_wrap = resolved_overflow_wrap(node);
+    return token_exceeds_line
+        && (overflow_wrap == "anywhere" || overflow_wrap == "break-word");
+}
+
 bool has_visible_text(const std::string& value)
 {
     return std::any_of(value.begin(), value.end(), [](unsigned char character) {

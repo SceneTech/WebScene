@@ -28,7 +28,8 @@ public static class CssMutationInvalidationPlanner
         "font-size", "font-style", "font-variant", "font-weight", "letter-spacing", "line-height",
         "list-style", "list-style-position", "list-style-type",
         "pointer-events", "stroke", "stroke-linecap", "stroke-linejoin", "stroke-opacity", "stroke-width",
-        "text-align", "text-indent", "text-transform", "visibility", "white-space", "word-spacing"
+        "text-align", "text-indent", "text-transform", "visibility", "white-space", "word-break",
+        "overflow-wrap", "word-wrap", "word-spacing"
     };
 
     private static readonly HashSet<string> s_layoutProperties = new(StringComparer.OrdinalIgnoreCase)
@@ -39,7 +40,8 @@ public static class CssMutationInvalidationPlanner
         "grid-template-columns", "grid-template-rows", "grid-template-areas", "grid-area", "grid-row",
         "grid-row-start", "grid-row-end", "grid-column", "grid-column-start", "grid-column-end",
         "align-content", "align-items", "align-self", "justify-content",
-        "gap", "list-style", "list-style-position", "list-style-type", "order", "row-gap", "column-gap", "z-index", "white-space"
+        "gap", "list-style", "list-style-position", "list-style-type", "order", "row-gap", "column-gap", "z-index", "white-space",
+        "word-break", "overflow-wrap", "word-wrap"
     };
 
     internal static IReadOnlySet<string> InheritedProperties => s_inheritedProperties;

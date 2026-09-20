@@ -223,6 +223,14 @@ inline void apply_all_unset(
         reset.mutable_textual().white_space =
             previous.textual().white_space;
     }
+    if (has_inline({"word-break"})) {
+        reset.mutable_textual().word_break =
+            previous.textual().word_break;
+    }
+    if (has_inline({"overflow-wrap", "word-wrap"})) {
+        reset.mutable_textual().overflow_wrap =
+            previous.textual().overflow_wrap;
+    }
 
     // These modeled properties do not yet have dedicated inline-mask
     // bits, so preserve their applied values by authored declaration.

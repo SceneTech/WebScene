@@ -2815,6 +2815,13 @@
       "capabilities": ["css-starting-style-rule", "entry-transition-cascade", "display-none-reentry", "allow-discrete-display", "host-clock-opacity-transform-transition"],
       "evidence": ["native-parser-contract", "v8-free-native-cascade-contract", "focused-live-runtime-contract", "unchanged-code-oss-645f29c-inventory"],
       "reason": "Implementation-first WebScene #749 contract for the two @starting-style groups used by unchanged Code OSS. It checks grouping-rule CSSOM, deterministic starting values, discrete display deferral, re-entry, bounded lifecycle state, and host-clock settlement. Direct browser/native profile execution and exact product pixels remain qualification debt."
+    },
+    {
+      "path": "contracts/css-word-breaking.html",
+      "type": "testharness",
+      "capabilities": ["word-break-layout", "overflow-wrap-layout", "word-wrap-alias", "unicode-break-boundaries", "inherited-line-breaking"],
+      "evidence": ["focused-native-contract-authored", "direct-chromium-contract-authored", "unchanged-code-oss-645f29c-inventory"],
+      "reason": "Implementation-first WebScene #787 contract for retained long-token wrapping used by unchanged Code OSS Markdown preview, dialogs, notifications, hovers, hints, quick input, REPL and editor placeholders. It covers computed CSSOM, the legacy alias, inheritance, mutation/removal, geometry, and a supplementary-plane character. Direct browser/native execution, complete international line breaking, hyphenation, exact product pixels, and performance evidence remain qualification debt."
     }
   ],
   "harnessBlocked": [],

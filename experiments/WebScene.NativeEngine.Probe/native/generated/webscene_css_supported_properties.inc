@@ -195,6 +195,7 @@ inline constexpr std::array cssom_supported_property_catalog{
     cssom_supported_property_metadata{"outline-style", "outlineStyle"},
     cssom_supported_property_metadata{"outline-width", "outlineWidth"},
     cssom_supported_property_metadata{"overflow", "overflow"},
+    cssom_supported_property_metadata{"overflow-wrap", "overflowWrap"},
     cssom_supported_property_metadata{"overflow-x", "overflowX"},
     cssom_supported_property_metadata{"overflow-y", "overflowY"},
     cssom_supported_property_metadata{"padding", "padding"},
@@ -241,9 +242,11 @@ inline constexpr std::array cssom_supported_property_catalog{
     cssom_supported_property_metadata{"white-space", "whiteSpace"},
     cssom_supported_property_metadata{"widows", "widows"},
     cssom_supported_property_metadata{"width", "width"},
+    cssom_supported_property_metadata{"word-break", "wordBreak"},
     cssom_supported_property_metadata{"word-spacing", "wordSpacing"},
+    cssom_supported_property_metadata{"word-wrap", "wordWrap"},
     cssom_supported_property_metadata{"z-index", "zIndex"},
     cssom_supported_property_metadata{"zoom", "zoom"},
 };
 
-inline constexpr auto cssom_style_template_property_accessor_count = 435U;
+inline constexpr auto cssom_style_template_property_accessor_count = 441U;

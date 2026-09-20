@@ -280,6 +280,9 @@ void apply_declaration(native_document& document,dom_node& node,
         normalized=authored;normalized->name="transform";
     } else if(authored.name=="grid-gap" || authored.name=="grid-row-gap" || authored.name=="grid-column-gap") {
         normalized=authored;normalized->name=canonical_property_name(authored.name);
+    } else if (authored.name == "word-wrap") {
+        normalized = authored;
+        normalized->name = "overflow-wrap";
     }
     const auto& declaration=normalized?*normalized:authored;
     if(declaration.name.starts_with("--")) {

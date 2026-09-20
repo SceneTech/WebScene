@@ -522,6 +522,7 @@ public static class CssStylesheetCompiler
             "grid-gap" => "gap",
             "grid-row-gap" => "row-gap",
             "grid-column-gap" => "column-gap",
+            "word-wrap" => "overflow-wrap",
             var normalized => normalized
         };
     }

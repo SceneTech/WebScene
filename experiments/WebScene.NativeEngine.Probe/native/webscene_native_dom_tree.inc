@@ -191,6 +191,54 @@ size_t native_document::text_caret_offset_at_x(
     return utf16_offset;
 }
 
+std::vector<std::pair<size_t, size_t>> native_document::break_text_segments(
+    std::string_view value,
+    float available_width,
+    const dom_node& node) const
+{
+    std::vector<std::pair<size_t, size_t>> result;
+    if (value.empty()) return result;
+
+    std::vector<size_t> boundaries;
+    boundaries.reserve(value.size() + 1U);
+    boundaries.push_back(0U);
+    for (size_t offset = 0U; offset < value.size();) {
+        const auto lead = static_cast<uint8_t>(value[offset]);
+        size_t length = 1U;
+        if ((lead & 0xE0U) == 0xC0U) length = 2U;
+        else if ((lead & 0xF0U) == 0xE0U) length = 3U;
+        else if ((lead & 0xF8U) == 0xF0U) length = 4U;
+        offset += std::min(length, value.size() - offset);
+        boundaries.push_back(offset);
+    }
+
+    const auto limit = std::max(0.0F, available_width);
+    for (size_t first = 0U; first + 1U < boundaries.size();) {
+        auto last = first + 1U;
+        auto approximate_width = measure_text_width(
+            value.substr(boundaries[first], boundaries[last] - boundaries[first]), node);
+        while (last + 1U < boundaries.size()) {
+            const auto next_width = measure_text_width(
+                value.substr(boundaries[last], boundaries[last + 1U] - boundaries[last]), node);
+            if (approximate_width + next_width > limit && last > first) break;
+            approximate_width += next_width;
+            ++last;
+        }
+        auto exact_width = measure_text_width(
+            value.substr(boundaries[first], boundaries[last] - boundaries[first]), node);
+        while (last > first + 1U && exact_width > limit) {
+            --last;
+            exact_width = measure_text_width(
+                value.substr(boundaries[first], boundaries[last] - boundaries[first]), node);
+        }
+        // Always make progress. A single glyph may be wider than the box, but
+        // splitting its UTF-8 sequence would corrupt text and source ranges.
+        result.emplace_back(boundaries[first], boundaries[last]);
+        first = last;
+    }
+    return result;
+}
+
 std::vector<std::string> native_document::wrap_text_lines(
     const std::string& value,
     float available_width,
@@ -243,11 +291,52 @@ std::vector<std::string> native_document::wrap_text_lines(
     std::string current;
     std::string word;
     while (source >> word) {
+        const auto word_width = measure_text_width(word, node);
+        const auto break_all = resolved_word_break(node) == "break-all";
+        const auto break_word = breaks_inside_words(
+            node, word_width > available_width);
         if (current.empty()) {
-            current = std::move(word);
+            if (break_word && word_width > available_width) {
+                const auto segments = break_text_segments(word, available_width, node);
+                for (size_t index = 0; index < segments.size(); ++index) {
+                    const auto [start, end] = segments[index];
+                    auto segment = word.substr(start, end - start);
+                    if (index + 1U == segments.size()) current = std::move(segment);
+                    else lines.push_back(std::move(segment));
+                }
+            } else {
+                current = std::move(word);
+            }
         } else if (measure_text_width(current + " " + word, node) <= available_width) {
             current.push_back(' ');
             current += word;
+        } else if (break_all || (break_word && word_width > available_width)) {
+            const auto space_width = measure_text_width(current + " ", node);
+            const auto remaining = std::max(0.0F, available_width - space_width);
+            const auto first_segments = break_text_segments(word, remaining, node);
+            size_t consumed = 0U;
+            if (!first_segments.empty() && remaining > 0.0F) {
+                const auto [start, end] = first_segments.front();
+                const auto segment = word.substr(start, end - start);
+                if (measure_text_width(segment, node) <= remaining) {
+                    current.push_back(' ');
+                    current += segment;
+                    consumed = end;
+                }
+            }
+            lines.push_back(std::move(current));
+            current.clear();
+            if (consumed < word.size()) {
+                const auto remaining_word = std::string_view(word).substr(consumed);
+                const auto segments = break_text_segments(
+                    remaining_word, available_width, node);
+                for (size_t index = 0; index < segments.size(); ++index) {
+                    const auto [start, end] = segments[index];
+                    auto segment = std::string(remaining_word.substr(start, end - start));
+                    if (index + 1U == segments.size()) current = std::move(segment);
+                    else lines.push_back(std::move(segment));
+                }
+            }
         } else {
             lines.push_back(std::move(current));
             current = std::move(word);

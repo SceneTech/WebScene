@@ -1671,6 +1671,67 @@ void native_document::layout_children(dom_node& parent)
                     auto word_width = measure_text_width(word, *run);
                     auto space_width = pending_space && cursor_x > 0
                         ? measure_text_width(" ", *run) : 0.0F;
+                    const auto break_all = resolved_word_break(*run) == "break-all";
+                    const auto break_word = breaks_inside_words(
+                        *run, word_width > content.width);
+                    const auto split_inside_word = allow_wrap
+                        && ((break_all
+                                && cursor_x + space_width + word_width > content.width)
+                            || (!break_all && break_word && word_width > content.width));
+                    if (split_inside_word) {
+                        auto available = std::max(
+                            0.0F, content.width - cursor_x - space_width);
+                        auto first_segments = break_text_segments(word, available, *run);
+                        if (!first_segments.empty()) {
+                            auto [first_start, first_end] = first_segments.front();
+                            auto first_text = word.substr(
+                                first_start, first_end - first_start);
+                            const auto first_width = measure_text_width(first_text, *run);
+                            if (cursor_x > 0 && first_width > available) {
+                                start_new_line();
+                                space_width = 0;
+                                available = content.width;
+                                first_segments = break_text_segments(word, available, *run);
+                                std::tie(first_start, first_end) = first_segments.front();
+                                first_text = word.substr(
+                                    first_start, first_end - first_start);
+                            } else if (space_width > 0) {
+                                append_fragment(
+                                    pending_space_run != nullptr ? *pending_space_run : *run,
+                                    " ",
+                                    space_width,
+                                    pending_space_start,
+                                    pending_space_end);
+                            }
+                            append_fragment(
+                                *run,
+                                first_text,
+                                measure_text_width(first_text, *run),
+                                word_start + first_start,
+                                word_start + first_end);
+                            auto consumed = first_end;
+                            if (consumed < word.size()) {
+                                const auto remainder = std::string_view(word).substr(consumed);
+                                const auto segments = break_text_segments(
+                                    remainder, content.width, *run);
+                                for (const auto [start, end] : segments) {
+                                    start_new_line();
+                                    const auto segment = std::string(
+                                        remainder.substr(start, end - start));
+                                    append_fragment(
+                                        *run,
+                                        segment,
+                                        measure_text_width(segment, *run),
+                                        word_start + consumed + start,
+                                        word_start + consumed + end);
+                                }
+                            }
+                        }
+                        word.clear();
+                        pending_space = false;
+                        pending_space_run = nullptr;
+                        return;
+                    }
                     // Intrinsic sizing and the incremental word/space shaper can
                     // differ at styled inline boundaries. An auto-sized flex item
                     // is using that intrinsic contribution as its main size, so it
@@ -4223,6 +4284,20 @@ float native_document::min_content_inline_size(
             resolved_text_transform(node, node.text_content));
         if (!resolved_white_space_wraps(node)) {
             return constrain(padding + measure_text_width(text, node));
+        }
+        const auto word_break = resolved_word_break(node);
+        const auto overflow_wrap = resolved_overflow_wrap(node);
+        if (word_break == "break-all" || word_break == "break-word"
+            || overflow_wrap == "anywhere") {
+            auto widest_code_point = 0.0F;
+            for (const auto [start, end] : break_text_segments(text, 0, node)) {
+                widest_code_point = std::max(
+                    widest_code_point,
+                    measure_text_width(
+                        std::string_view{text}.substr(start, end - start),
+                        node));
+            }
+            return constrain(padding + widest_code_point);
         }
         auto widest_segment = 0.0F;
         size_t start = 0U;

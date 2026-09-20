@@ -224,6 +224,8 @@ inline void reset_cascaded_style(dom_node& node,
             if ((node.style.inline_property_mask & inline_white_space) == 0U) {
                 textual->white_space.clear();
             }
+            textual->word_break.clear();
+            textual->overflow_wrap.clear();
         }
         if ((node.style.inline_property_mask & inline_font_weight) == 0U) node.style.font_weight = 0;
         if ((node.style.inline_property_mask & inline_line_height) == 0U) node.style.line_height = -1;

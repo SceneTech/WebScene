@@ -196,6 +196,12 @@ inline constexpr std::array native_typed_property_identity_catalog{
     native_typed_property_identity{"texttransform", css_property_id::text_transform},
     native_typed_property_identity{"white-space", css_property_id::white_space},
     native_typed_property_identity{"whitespace", css_property_id::white_space},
+    native_typed_property_identity{"word-break", css_property_id::word_break},
+    native_typed_property_identity{"wordbreak", css_property_id::word_break},
+    native_typed_property_identity{"overflow-wrap", css_property_id::overflow_wrap},
+    native_typed_property_identity{"word-wrap", css_property_id::overflow_wrap},
+    native_typed_property_identity{"overflowwrap", css_property_id::overflow_wrap},
+    native_typed_property_identity{"wordwrap", css_property_id::overflow_wrap},
     native_typed_property_identity{"list-style", css_property_id::list_style},
     native_typed_property_identity{"list-style-position", css_property_id::list_style_position},
     native_typed_property_identity{"list-style-type", css_property_id::list_style_type},
@@ -414,6 +420,8 @@ inline constexpr std::array native_modeled_property_mask_catalog{
     false,
     false,
     false,
+    false,
+    false,
     true,
     true,
     true,
@@ -432,7 +440,7 @@ inline constexpr bool generated_property_has_modeled_mask(
         && native_modeled_property_mask_catalog[index];
 }
 
-inline constexpr std::array<std::string_view, 20> native_inherited_property_catalog{
+inline constexpr std::array<std::string_view, 22> native_inherited_property_catalog{
     "-webkit-font-smoothing",
     "all",
     "color",
@@ -448,10 +456,12 @@ inline constexpr std::array<std::string_view, 20> native_inherited_property_cata
     "list-style",
     "list-style-position",
     "list-style-type",
+    "overflow-wrap",
     "text-align",
     "text-transform",
     "visibility",
     "white-space",
+    "word-break",
     "word-spacing",
 };
 
@@ -600,6 +610,8 @@ inline constexpr std::array native_property_grammar_catalog{
     native_property_grammar::length,
     native_property_grammar::length,
     native_property_grammar::length,
+    native_property_grammar::keyword,
+    native_property_grammar::keyword,
     native_property_grammar::keyword,
     native_property_grammar::keyword,
     native_property_grammar::keyword,
@@ -818,6 +830,12 @@ inline css_property_id generated_property_id_lowercase(std::string_view name) no
     if (name == "texttransform") return css_property_id::text_transform;
     if (name == "white-space") return css_property_id::white_space;
     if (name == "whitespace") return css_property_id::white_space;
+    if (name == "word-break") return css_property_id::word_break;
+    if (name == "wordbreak") return css_property_id::word_break;
+    if (name == "overflow-wrap") return css_property_id::overflow_wrap;
+    if (name == "word-wrap") return css_property_id::overflow_wrap;
+    if (name == "overflowwrap") return css_property_id::overflow_wrap;
+    if (name == "wordwrap") return css_property_id::overflow_wrap;
     if (name == "list-style") return css_property_id::list_style;
     if (name == "list-style-position") return css_property_id::list_style_position;
     if (name == "list-style-type") return css_property_id::list_style_type;

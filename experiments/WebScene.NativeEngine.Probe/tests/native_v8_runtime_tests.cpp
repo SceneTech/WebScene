@@ -373,6 +373,22 @@ int main()
             test_modal_backdrop_scene(focused_engine);
             webscene_engine_destroy(focused_engine);return 0;
         }
+        if (selected == "word-wrap") {
+            auto* focused_engine = webscene_engine_create(0);
+            require(focused_engine != nullptr,
+                "word-break/overflow-wrap engine creation failed");
+            test_word_break_and_overflow_wrap_layout(focused_engine);
+            webscene_engine_destroy(focused_engine);
+            return 0;
+        }
+        if (selected == "word-wrap-performance") {
+            auto* focused_engine = webscene_engine_create(0);
+            require(focused_engine != nullptr,
+                "word-break performance engine creation failed");
+            test_word_break_layout_performance_gate(focused_engine);
+            webscene_engine_destroy(focused_engine);
+            return 0;
+        }
         if(selected=="placeholder-pseudo") {
             auto* focused_engine=webscene_engine_create(0);
             require(focused_engine!=nullptr,"placeholder pseudo engine creation failed");
@@ -1389,6 +1405,7 @@ int main()
     test_dimension_custom_property_inheritance(engine);
     test_geometry_variable_positions(engine);
     test_modal_backdrop_scene(engine);
+    test_word_break_and_overflow_wrap_layout(engine);
     test_placeholder_pseudo_color_and_opacity_reach_scene(engine);
     test_details_content_pseudo_static_open_close_layout(engine);
     test_details_content_keyword_size_transition(engine);

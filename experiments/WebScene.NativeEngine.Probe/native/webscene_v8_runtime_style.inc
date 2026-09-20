@@ -36,6 +36,21 @@
         return std::string(css::effect_initial_value(name));
     }
 
+    static std::string resolved_line_break_property(
+        const dom_node& node,
+        bool overflow_wrap)
+    {
+        for (auto* current = &node; current != nullptr; current = current->parent) {
+            const auto& value = overflow_wrap
+                ? current->style.textual().overflow_wrap
+                : current->style.textual().word_break;
+            if (!value.empty() && value != "inherit" && value != "unset") {
+                return value == "initial" || value == "revert" ? "normal" : value;
+            }
+        }
+        return "normal";
+    }
+
     static bool clear_inline_style(dom_node& node, const std::string& name)
     {
         const auto canonical_name = canonical_css_property_name(name);
@@ -399,6 +414,15 @@
                 textual->white_space.clear();
             }
             node.style.inline_property_mask &= ~inline_white_space;
+        } else if (name == "wordBreak" || name == "word-break") {
+            if (auto* textual = node.style.mutable_textual_if_present()) {
+                textual->word_break.clear();
+            }
+        } else if (name == "overflowWrap" || name == "overflow-wrap"
+            || name == "wordWrap" || name == "word-wrap") {
+            if (auto* textual = node.style.mutable_textual_if_present()) {
+                textual->overflow_wrap.clear();
+            }
         } else {
             return false;
         }
@@ -1083,6 +1107,12 @@
         } else if (name == "white-space") {
             node->style.mutable_textual().white_space = value;
             node->style.inline_property_mask |= inline_white_space;
+        } else if (name == "word-break") {
+            node->style.mutable_textual().word_break =
+                value == "inherit" || value == "unset" ? std::string{} : value;
+        } else if (name == "overflow-wrap") {
+            node->style.mutable_textual().overflow_wrap =
+                value == "inherit" || value == "unset" ? std::string{} : value;
         }
         self->recompute_inline_font_relative_metrics(*node);
         sync_style_attribute(*node);
@@ -1513,6 +1543,10 @@
                 value = computed_effect_value(*node, name);
             } else if (name == "white-space") {
                 value = node->style.textual().white_space;
+            } else if (name == "word-break") {
+                value = resolved_line_break_property(*node, false);
+            } else if (name == "overflow-wrap") {
+                value = resolved_line_break_property(*node, true);
             } else if (name == "cursor") {
                 value = resolved_cursor(*node);
             } else if (name == "font-size") {
@@ -2220,6 +2254,14 @@
             value = node->style.textual().text_align;
         } else if (name == "whiteSpace") {
             value = node->style.textual().white_space;
+        } else if (name == "wordBreak") {
+            value = computed
+                ? resolved_line_break_property(*node, false)
+                : node->style.textual().word_break;
+        } else if (name == "overflowWrap" || name == "wordWrap") {
+            value = computed
+                ? resolved_line_break_property(*node, true)
+                : node->style.textual().overflow_wrap;
         } else if (name == "visibility") {
             auto* current = node;
             while (current != nullptr && !current->style.visibility_specified) {
@@ -2717,6 +2759,12 @@
         } else if (name == "whiteSpace") {
             node->style.mutable_textual().white_space = value;
             node->style.inline_property_mask |= inline_white_space;
+        } else if (name == "wordBreak") {
+            node->style.mutable_textual().word_break =
+                value == "inherit" || value == "unset" ? std::string{} : value;
+        } else if (name == "overflowWrap" || name == "wordWrap") {
+            node->style.mutable_textual().overflow_wrap =
+                value == "inherit" || value == "unset" ? std::string{} : value;
         }
         self->recompute_inline_font_relative_metrics(*node);
         sync_style_attribute(*node);

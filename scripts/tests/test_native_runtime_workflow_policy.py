@@ -139,6 +139,34 @@ class NativeRuntimeWorkflowPolicyTests(unittest.TestCase):
         self.assertEqual(restore_keys.count("matrix.rid != 'win-x64'"), 2)
         self.assertNotIn("\n          webscene-v8-sdk-", restore_keys)
 
+    def test_linux_crash_diagnostics_honor_the_selected_v8_root(self) -> None:
+        wrapper = (
+            ROOT / "scripts/build-native-engine-runtime-linux-container.sh"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('--v8-root) v8_root="${arguments[++index]:-}"', wrapper)
+        self.assertIn(
+            'build_variant="-$html_parser-$css_parser-$selector_parser-'
+            '$dom_bindings-$v8_snapshot"',
+            wrapper,
+        )
+        self.assertIn('build_variant+=-inspector', wrapper)
+        self.assertIn(
+            'build_dir="$repo_root/artifacts/native-engine-runtime-build/'
+            'linux-x64$build_variant"',
+            wrapper,
+        )
+        self.assertIn(
+            'icu_data="$v8_root/out/x64/$v8_configuration/icudtl.dat"',
+            wrapper,
+        )
+        diagnostic = wrapper.split('native_test_status=0', 1)[1]
+        self.assertIn('if [[ -d "$build_dir" ]]', diagnostic)
+        self.assertNotIn(
+            'if [[ -f "$icu_data" && -d "$build_dir" ]]', diagnostic
+        )
+        self.assertIn('thread apply all bt', diagnostic)
+
     def test_release_package_gate_covers_every_supported_rid(self) -> None:
         package_workflow = self.workflows[
             ROOT / ".github/workflows/native-runtime-packages.yml"

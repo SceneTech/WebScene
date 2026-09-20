@@ -1,6 +1,6 @@
     static bool web_animation_property(v8::Local<v8::Context> context,
         v8::Local<v8::Object> object,const char* name,v8::Local<v8::Value>& value)
-    { return object->Get(context,js_string(context->GetIsolate(),name)).ToLocal(&value); }
+    { return object->Get(context,js_string(v8::Isolate::GetCurrent(),name)).ToLocal(&value); }
 
     static void create_web_animation(const v8::FunctionCallbackInfo<v8::Value>& info)
     {

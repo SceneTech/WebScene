@@ -14,10 +14,9 @@
     static highlight_binding* unwrap_highlight(v8::Local<v8::Object> object)
     {
         if (object.IsEmpty() || object->InternalFieldCount() == 0) return nullptr;
-        auto field = object->GetInternalField(0);
-        return field->IsExternal()
-            ? static_cast<highlight_binding*>(field.As<v8::External>()->Value())
-            : nullptr;
+        return static_cast<highlight_binding*>(
+            object->GetAlignedPointerFromInternalField(
+                0, v8::kEmbedderDataTypeTagDefault));
     }
 
     bool highlight_binding_is_live(const highlight_binding& binding) const
@@ -82,7 +81,7 @@
                     const auto background = declaration.name == "background-color";
                     if (!foreground && !background) continue;
                     auto resolved = declaration.value.find("var(") != std::string::npos
-                        ? resolve_value(*root, declaration.value, css_variables)
+                        ? css::resolve_value(*root, declaration.value, css_variables)
                         : declaration.value;
                     const auto color = native_document::parse_color(resolved);
                     if (!css::is_explicit_color_token(resolved, color)) continue;
@@ -204,7 +203,7 @@
                             const auto background = declaration.name == "background-color";
                             if (!foreground && !background) return;
                             auto resolved = declaration.value.find("var(") != std::string::npos
-                                ? resolve_value(*origin_node, declaration.value, css_variables)
+                                ? css::resolve_value(*origin_node, declaration.value, css_variables)
                                 : declaration.value;
                             const auto color = native_document::parse_color(resolved);
                             if (!css::is_explicit_color_token(resolved, color)) return;
@@ -320,7 +319,8 @@
             binding->range_wrappers.emplace_back(info.GetIsolate(), wrapper);
         }
         auto* raw = binding.get();
-        info.This()->SetInternalField(0, v8::External::New(info.GetIsolate(), raw));
+        info.This()->SetAlignedPointerInInternalField(
+            0, raw, v8::kEmbedderDataTypeTagDefault);
         raw->wrapper.Reset(info.GetIsolate(), info.This());
         raw->wrapper.SetWeak(raw, highlight_collected, v8::WeakCallbackType::kParameter);
         self->highlight_bindings.push_back(std::move(binding));
@@ -511,7 +511,9 @@
     {
         if (object.IsEmpty() || object->InternalFieldCount() == 0) return 0U;
         const auto field = object->GetInternalField(0);
-        return field->IsUint32() ? field.As<v8::Uint32>()->Value() : 0U;
+        if (!field->IsValue()) return 0U;
+        const auto value = field.As<v8::Value>();
+        return value->IsUint32() ? value.As<v8::Uint32>()->Value() : 0U;
     }
 
     highlight_registry_state* highlight_registry_for(v8::Local<v8::Object> object)
@@ -676,12 +678,12 @@
             if (found == registry->entries.end()) continue;
             auto highlight = found->second.wrapper.Get(info.GetIsolate());
             if (kind == 0) {
-                array->Set(local_context, output_index++, js_string(info.GetIsolate(), name)).Check();
+                array->Set(local_context, output_index++, js_dom_string(info.GetIsolate(), name)).Check();
             } else if (kind == 1) {
                 array->Set(local_context, output_index++, highlight).Check();
             } else {
                 auto pair = v8::Array::New(info.GetIsolate(), 2);
-                pair->Set(local_context, 0U, js_string(info.GetIsolate(), name)).Check();
+                pair->Set(local_context, 0U, js_dom_string(info.GetIsolate(), name)).Check();
                 pair->Set(local_context, 1U, highlight).Check();
                 array->Set(local_context, output_index++, pair).Check();
             }
@@ -724,7 +726,7 @@
             if (found == registry->entries.end()) continue;
             auto highlight = found->second.wrapper.Get(info.GetIsolate());
             v8::Local<v8::Value> arguments[]{
-                highlight, js_string(info.GetIsolate(), name), info.This()};
+                highlight, js_dom_string(info.GetIsolate(), name), info.This()};
             if (info[0].As<v8::Function>()->Call(
                     local_context, receiver, 3, arguments).IsEmpty()) return;
         }

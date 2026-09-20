@@ -26,7 +26,7 @@
         if (!value->IsObject()) return false;
         v8::Local<v8::Value> brand;
         return value.As<v8::Object>()->GetPrivate(
-                realm, abort_signal_brand_private(realm->GetIsolate()))
+                realm, abort_signal_brand_private(v8::Isolate::GetCurrent()))
                     .ToLocal(&brand)
             && brand->IsTrue();
     }
@@ -38,7 +38,7 @@
         if (!is_abort_signal(realm, value)) return {};
         v8::Local<v8::Value> state;
         if (!value.As<v8::Object>()->GetPrivate(
-                realm, abort_signal_state_private(realm->GetIsolate()))
+                realm, abort_signal_state_private(v8::Isolate::GetCurrent()))
                     .ToLocal(&state)
             || !state->IsObject()) {
             return {};
@@ -51,7 +51,7 @@
         const char* message,
         const char* name)
     {
-        auto* isolate = realm->GetIsolate();
+        auto* isolate = v8::Isolate::GetCurrent();
         v8::Local<v8::Value> constructor;
         if (realm->Global()->Get(
                 realm, js_string(isolate, "DOMException")).ToLocal(&constructor)
@@ -75,7 +75,7 @@
     v8::MaybeLocal<v8::Object> create_abort_signal(
         v8::Local<v8::Context> realm)
     {
-        auto* local_isolate = realm->GetIsolate();
+        auto* local_isolate = v8::Isolate::GetCurrent();
         v8::Local<v8::Value> event_target_value;
         if (!realm->Global()->Get(
                 realm, js_string(local_isolate, "EventTarget"))
@@ -127,9 +127,9 @@
         if (!abort_signal_state(realm, signal).ToLocal(&state)) return false;
         v8::Local<v8::Value> aborted;
         return state->Get(
-                realm, js_string(realm->GetIsolate(), "aborted"))
+                realm, js_string(v8::Isolate::GetCurrent(), "aborted"))
                     .ToLocal(&aborted)
-            && aborted->BooleanValue(realm->GetIsolate());
+            && aborted->BooleanValue(v8::Isolate::GetCurrent());
     }
 
     static v8::Local<v8::Value> abort_signal_reason(
@@ -140,11 +140,11 @@
         v8::Local<v8::Value> reason;
         if (abort_signal_state(realm, signal).ToLocal(&state)
             && state->Get(
-                realm, js_string(realm->GetIsolate(), "reason"))
+                realm, js_string(v8::Isolate::GetCurrent(), "reason"))
                     .ToLocal(&reason)) {
             return reason;
         }
-        return v8::Undefined(realm->GetIsolate());
+        return v8::Undefined(v8::Isolate::GetCurrent());
     }
 
     bool abort_signal_abort_object(
@@ -701,7 +701,7 @@
 
     void install_abort_globals(v8::Local<v8::Context> realm)
     {
-        auto* local_isolate = realm->GetIsolate();
+        auto* local_isolate = v8::Isolate::GetCurrent();
         auto signal_constructor = v8::Function::New(
             realm, abort_signal_constructor).ToLocalChecked();
         signal_constructor->SetName(js_string(local_isolate, "AbortSignal"));

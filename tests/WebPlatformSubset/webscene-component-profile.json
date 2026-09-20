@@ -1382,6 +1382,13 @@
       "reason": "Implementation-first WebScene #237/#781 slice for standard and legacy placeholder selectors in unchanged Code OSS core CSS. The browser-shaped contract adds the Chromium-reachable ::-webkit-input-placeholder alias; the native companion covers both WebKit and Mozilla aliases with distinct colors/opacities, class recascade, live-value suppression, and empty-value restoration. All aliases reuse the standard retained paint path without layout, generated nodes, or frame demand. Direct browser/native profile execution remains validation debt; additional placeholder properties remain outside this bounded candidate."
     },
     {
+      "path": "contracts/css-webkit-details-marker-display.html",
+      "type": "reftest",
+      "capabilities": ["webkit-details-marker-display-none", "retained-summary-marker-suppression", "details-marker-layout-invalidation"],
+      "evidence": ["css-pseudo-elements-derived", "native-retained-list-marker-contract", "vscode-oss-645f29c-details-marker-ledger"],
+      "reason": "Implementation-first WebScene #783 slice for the two unchanged Code OSS Chat disclosure rules. The pseudo-hidden result matches the established list-style:none reference while reusing one retained marker representation. Native companion coverage requires initial visibility, hide/restore, classifier origin, layout equality, and a non-summary zero-allocation guard. Direct browser/native pixels, dynamic mutation, 4,096-summary performance/lifecycle, and package execution remain validation debt."
+    },
+    {
       "path": "contracts/css-checkbox-required-validity.html",
       "type": "testharness",
       "capabilities": ["checkbox-required-validity", "live-checkedness-validity-invalidation"],

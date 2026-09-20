@@ -863,8 +863,11 @@
                 if (pseudo_element) {
                     const auto supported = name == "before" || name == "after"
                         || name == "selection" || name == "placeholder"
+                        || name == "-webkit-input-placeholder"
+                        || name == "-moz-placeholder"
                         || name == "highlight"
                         || name == "details-content"
+                        || name == "-webkit-details-marker"
                         || name == "backdrop" || name == "-webkit-scrollbar"
                         || name == "-webkit-scrollbar-thumb"
                         || name == "-webkit-scrollbar-track"

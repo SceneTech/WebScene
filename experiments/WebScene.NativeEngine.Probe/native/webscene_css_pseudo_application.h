@@ -36,6 +36,7 @@ inline int split_pseudo_element_selector(const std::string& selector, std::strin
         if (const auto kind = split_suffix("::-moz-placeholder", 8); kind != 0) return kind;
         if (const auto kind = split_suffix("::placeholder", 8); kind != 0) return kind;
         if (const auto kind = split_suffix("::details-content", 9); kind != 0) return kind;
+        if (const auto kind = split_suffix("::-webkit-details-marker", 10); kind != 0) return kind;
         if (const auto kind = split_suffix("::backdrop", 7); kind != 0) return kind;
         if (const auto kind = split_suffix("::-webkit-scrollbar-thumb", 4); kind != 0) return kind;
         if (const auto kind = split_suffix("::-webkit-scrollbar-track", 5); kind != 0) return kind;
@@ -69,6 +70,35 @@ inline bool split_custom_highlight_selector(
     origin = trim_value(selector.substr(0U, marker));
     name = raw_name;
     return true;
+}
+
+template<typename Decision>
+void apply_details_marker_declaration(
+    dom_node& node,
+    const css_declaration& declaration,
+    const std::unordered_map<std::string,std::string>& variables,
+    Decision& decision)
+{
+    decision.classification = "unsupported";
+    if (node.tag != "summary" || declaration.name != "display") return;
+    const auto contains_variable = declaration.value.find("var(") != std::string::npos;
+    auto resolved_value = std::string{};
+    const auto& value = contains_variable
+        ? (resolved_value = resolve_value(node, declaration.value, variables))
+        : declaration.value;
+    if (value.empty() && contains_variable) {
+        decision.classification = "invalid-authoring";
+        return;
+    }
+    const auto lower = ascii_lower(trim_value(value));
+    if (lower == "none") {
+        node.style.mutable_details_marker_hidden() = true;
+        decision.classification = "supported";
+    } else if (lower == "initial" || lower == "unset" || lower == "revert"
+        || lower == "inline" || lower == "list-item") {
+        node.style.mutable_details_marker_hidden() = false;
+        decision.classification = "supported";
+    }
 }
 
 inline bool split_selection_selector(

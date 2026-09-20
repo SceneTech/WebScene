@@ -617,6 +617,7 @@ struct node_style final {
         pseudo_element after;
         placeholder_element placeholder;
         details_content_element details_content;
+        bool details_marker_hidden{false};
     };
 
     const pseudo_element& before_pseudo() const noexcept
@@ -665,6 +666,17 @@ struct node_style final {
     {
         ensure_unique_pseudo_elements();
         return pseudo_elements->details_content;
+    }
+
+    bool details_marker_hidden() const noexcept
+    {
+        return pseudo_elements != nullptr && pseudo_elements->details_marker_hidden;
+    }
+
+    bool& mutable_details_marker_hidden()
+    {
+        ensure_unique_pseudo_elements();
+        return pseudo_elements->details_marker_hidden;
     }
 
     void clear_pseudo_elements() noexcept

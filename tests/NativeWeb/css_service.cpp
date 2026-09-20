@@ -723,6 +723,7 @@ int main(int argc,char** argv) {
         {".base::backdrop",7},{".base::placeholder",8},
         {".base::-webkit-input-placeholder",8},{".base::-moz-placeholder",8},
         {".base::details-content",9},
+        {".base::-webkit-details-marker",10},
         {".base[data-label='::before']",0}
     };
     for(const auto& [selector,kind]:classified_selectors) {
@@ -1105,6 +1106,21 @@ int main(int argc,char** argv) {
     if(!details_content.present || !details_content.block_size_zero
         || details_content.opacity!=.4F
         || details_content.padding_inline_start.value!=12.0F) return 180;
+    auto& summary=ordered_document.create_element("summary");
+    summary.style.display=webscene_native::display_mode::list_item;
+    if(webscene_native::list_marker_text(summary).empty()) return 194;
+    webscene_native::css::apply_details_marker_declaration(
+        summary,{"display","none",false},variable_root,pseudo_result);
+    if(!summary.style.details_marker_hidden()
+        || !webscene_native::list_marker_text(summary).empty()) return 195;
+    webscene_native::css::apply_details_marker_declaration(
+        summary,{"display","initial",false},variable_root,pseudo_result);
+    if(summary.style.details_marker_hidden()
+        || webscene_native::list_marker_text(summary).empty()) return 196;
+    auto& marker_miss=ordered_document.create_element("div");
+    webscene_native::css::apply_details_marker_declaration(
+        marker_miss,{"display","none",false},variable_root,pseudo_result);
+    if(marker_miss.style.has_pseudo_elements()) return 197;
     webscene_native::css::apply_scrollbar_declaration(ordered_node,3,{"display","none",true},variable_root);
     webscene_native::css::apply_scrollbar_declaration(ordered_node,3,{"display","block",false},variable_root);
     if(!ordered_node.style.scrollbar_hidden || ordered_node.style.display==webscene_native::display_mode::none) return 131;

@@ -802,6 +802,9 @@ struct node_style final {
         // Empty is `auto`; used-value resolution walks ancestors only during
         // the uncommon native text-selection default action.
         std::string user_select;
+        // Retain only authored hints. The hot record stores the derived
+        // stacking-context decision used by every paint/hit traversal.
+        std::string will_change;
         // Scroll-chain policy is consulted only while a wheel default action
         // walks exhausted scroll containers, so keep both axes in cold style.
         overscroll_behavior overscroll_x{overscroll_behavior::automatic};
@@ -1040,6 +1043,7 @@ struct node_style final {
     // CSS isolation is consulted on every retained paint-order walk, so keep
     // it in the existing packed hot flags rather than a token map lookup.
     bool isolation_stacking_context : 1 {false};
+    bool will_change_stacking_context : 1 {false};
     bool content_visibility_hidden : 1 {false};
     bool interpolate_size_allow_keywords : 1 {false};
     // Margin parsing passes these four flags by reference, so unlike the other

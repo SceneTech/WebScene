@@ -232,6 +232,8 @@ inline constexpr std::array native_typed_property_identity_catalog{
     native_typed_property_identity{"overscroll-behavior-y", css_property_id::overscroll_behavior_y},
     native_typed_property_identity{"overscrollbehaviory", css_property_id::overscroll_behavior_y},
     native_typed_property_identity{"isolation", css_property_id::isolation},
+    native_typed_property_identity{"will-change", css_property_id::will_change},
+    native_typed_property_identity{"willchange", css_property_id::will_change},
 };
 
 inline constexpr std::array<std::string_view, 62> native_storage_only_property_catalog{
@@ -456,6 +458,7 @@ inline constexpr std::array native_modeled_property_mask_catalog{
     false,
     false,
     false,
+    false,
 };
 
 inline constexpr bool generated_property_has_modeled_mask(
@@ -654,6 +657,7 @@ inline constexpr std::array native_property_grammar_catalog{
     native_property_grammar::complex,
     native_property_grammar::keyword,
     native_property_grammar::component_list,
+    native_property_grammar::keyword,
     native_property_grammar::keyword,
     native_property_grammar::keyword,
     native_property_grammar::keyword,
@@ -899,5 +903,7 @@ inline css_property_id generated_property_id_lowercase(std::string_view name) no
     if (name == "overscroll-behavior-y") return css_property_id::overscroll_behavior_y;
     if (name == "overscrollbehaviory") return css_property_id::overscroll_behavior_y;
     if (name == "isolation") return css_property_id::isolation;
+    if (name == "will-change") return css_property_id::will_change;
+    if (name == "willchange") return css_property_id::will_change;
     return css_property_id::unknown;
 }

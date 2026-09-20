@@ -1,5 +1,6 @@
 #pragma once
 #include "webscene_css_property_mask.h"
+#include <cctype>
 #include <sstream>
 #include <utility>
 
@@ -129,6 +130,78 @@ bool apply_isolation_value(dom_node& node,const std::string& name,
         return true;
     }
     node.style.isolation_stacking_context = value == "isolate";
+    return true;
+}
+
+inline std::optional<std::string> normalize_will_change_value(
+    std::string_view raw_value)
+{
+    auto value = ascii_lower(trim_value(raw_value));
+    if (value == "auto") return std::string{};
+    if (value.empty() || value.size() > 256U) return std::nullopt;
+    std::string result;
+    auto start = size_t{0};
+    auto count = size_t{0};
+    while (start <= value.size()) {
+        const auto comma = value.find(',', start);
+        const auto token = trim_value(value.substr(
+            start, comma == std::string::npos ? std::string::npos : comma - start));
+        if (token.empty() || token.size() > 64U || ++count > 8U) return std::nullopt;
+        const auto reserved = token == "auto" || token == "none"
+            || token == "default" || token == "initial" || token == "inherit"
+            || token == "unset" || token == "revert" || token == "revert-layer";
+        const auto identifier = std::all_of(token.begin(), token.end(), [](unsigned char c) {
+            return std::isalnum(c) != 0 || c == '-' || c == '_';
+        }) && (std::isalpha(static_cast<unsigned char>(token.front())) != 0
+            || token.front() == '-' || token.front() == '_');
+        if (reserved || !identifier) return std::nullopt;
+        if (!result.empty()) result += ", ";
+        result += token;
+        if (comma == std::string::npos) break;
+        start = comma + 1U;
+    }
+    return result;
+}
+
+inline bool will_change_establishes_stacking_context(std::string_view value)
+{
+    auto start = size_t{0};
+    while (start <= value.size()) {
+        const auto comma = value.find(',', start);
+        const auto token = trim_value(value.substr(
+            start, comma == std::string::npos ? std::string::npos : comma - start));
+        if (token == "transform" || token == "opacity" || token == "filter"
+            || token == "perspective" || token == "clip-path"
+            || token == "mask" || token == "mask-image"
+            || token == "backdrop-filter") return true;
+        if (comma == std::string::npos) break;
+        start = comma + 1U;
+    }
+    return false;
+}
+
+template<typename Decision>
+bool apply_will_change_value(dom_node& node,const std::string& name,
+    const std::string& raw_value,Decision& decision)
+{
+    if (canonical_property_name(name) != "will-change") return false;
+    auto value = ascii_lower(trim_value(raw_value));
+    if (value == "inherit") {
+        value = node.parent == nullptr
+            ? std::string{} : node.parent->style.textual().will_change;
+    } else if (value == "initial" || value == "unset" || value == "revert"
+        || value == "revert-layer") {
+        value = "auto";
+    }
+    const auto normalized = normalize_will_change_value(value.empty() ? "auto" : value);
+    if (!normalized.has_value()) {
+        decision.classification = "invalid-authoring";
+        return true;
+    }
+    node.style.will_change_stacking_context =
+        will_change_establishes_stacking_context(*normalized);
+    if (normalized->empty() && !node.style.has_textual_data()) return true;
+    node.style.mutable_textual().will_change = *normalized;
     return true;
 }
 } // namespace webscene_native::css

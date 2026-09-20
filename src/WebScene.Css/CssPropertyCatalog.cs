@@ -91,6 +91,7 @@ public static class CssPropertyCatalog
                 => normalizedValue is "auto" or "contain" or "none",
             "overscroll-behavior" => IsOverscrollBehavior(normalizedValue),
             "isolation" => normalizedValue is "auto" or "isolate",
+            "will-change" => IsWillChange(normalizedValue),
             "font-size" => IsFontSize(normalizedValue),
             "color-scheme" => normalizedValue is "normal" or "light" or "dark"
                 or "light dark" or "dark light" or "only light" or "only dark",
@@ -167,6 +168,27 @@ public static class CssPropertyCatalog
             StringSplitOptions.RemoveEmptyEntries);
         return tokens.Length is 1 or 2
             && tokens.All(static token => token is "auto" or "contain" or "none");
+    }
+
+    private static bool IsWillChange(string value)
+    {
+        if (value == "auto") return true;
+        if (value.Length is 0 or > 256) return false;
+        var tokens = value.Split(',', StringSplitOptions.TrimEntries);
+        if (tokens.Length is 0 or > 8) return false;
+        foreach (var token in tokens)
+        {
+            if (token.Length is 0 or > 64
+                || token is "auto" or "none" or "default" or "initial" or "inherit"
+                    or "unset" or "revert" or "revert-layer"
+                || !(char.IsLetter(token[0]) || token[0] is '-' or '_')
+                || token.Any(static character =>
+                    !(char.IsLetterOrDigit(character) || character is '-' or '_')))
+            {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static bool IsObjectPosition(string value)

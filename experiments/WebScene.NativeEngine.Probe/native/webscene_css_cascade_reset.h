@@ -229,11 +229,13 @@ inline void reset_cascaded_style(dom_node& node,
             textual->object_fit.clear();
             textual->object_position.clear();
             textual->user_select.clear();
+            textual->will_change.clear();
             textual->overscroll_x = overscroll_behavior::automatic;
             textual->overscroll_y = overscroll_behavior::automatic;
         }
         if ((node.style.inline_property_mask & inline_font_weight) == 0U) node.style.font_weight = 0;
         node.style.isolation_stacking_context = false;
+        node.style.will_change_stacking_context = false;
         if ((node.style.inline_property_mask & inline_line_height) == 0U) node.style.line_height = -1;
         if ((node.style.inline_property_mask & inline_letter_spacing) == 0U) {
             node.style.letter_spacing = 0;

@@ -103,10 +103,11 @@ int main()
     static_assert(static_cast<uint16_t>(css_property_id::overscroll_behavior_x) == 151U);
     static_assert(static_cast<uint16_t>(css_property_id::overscroll_behavior_y) == 152U);
     static_assert(static_cast<uint16_t>(css_property_id::isolation) == 153U);
-    static_assert(native_typed_property_identity_catalog.size() == 227U);
+    static_assert(static_cast<uint16_t>(css_property_id::will_change) == 154U);
+    static_assert(native_typed_property_identity_catalog.size() == 229U);
     static_assert(native_storage_only_property_catalog.size() == 62U);
-    static_assert(cssom_supported_property_catalog.size() == 253U);
-    static_assert(cssom_style_template_property_accessor_count == 462U);
+    static_assert(cssom_supported_property_catalog.size() == 254U);
+    static_assert(cssom_style_template_property_accessor_count == 463U);
 
     for (const auto& entry : native_typed_property_identity_catalog) {
         require(property_id(entry.name) == entry.id, "typed name maps to its generated id", entry.name);

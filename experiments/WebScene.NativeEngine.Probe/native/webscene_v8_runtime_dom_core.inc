@@ -743,6 +743,7 @@
             std::string_view{"object-position"},
             std::string_view{"user-select"},
             std::string_view{"isolation"},
+            std::string_view{"will-change"},
             std::string_view{"pointer-events"},
             std::string_view{"visibility"},
             std::string_view{"-webkit-font-smoothing"}

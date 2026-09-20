@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "revisions": {
     "codeOss": "645f29cc3176500b4b5762ba887cf2a7f0ffdf2c",
-    "webScene": "45d7f522e3d0f1abec60a50227f80e9575aa2882",
-    "appScene": "9f434e0deea632fe28962ce32e2f4ddede4aa14c",
+    "webScene": "5ca0e542d9b16b9132924101b00ca818fac32427",
+    "appScene": "773e94e26b58eac423ca24d5e47bea172965c94c",
     "wpt": "2c705104a295c48053eeddf7fe0170d790a4e853"
   },
   "cssSlice": {
@@ -73,11 +73,15 @@
       "reachable": true,
       "state": "blocked",
       "issues": [
-        "WebScene#81"
+        "WebScene#81",
+        "WebScene#764"
       ],
       "evidence": [],
-      "limits": [],
-      "reason": "Cross-realm ordering, clone, teardown, queue, and product evidence are incomplete.",
+      "limits": [
+        "Implementation and regression gates are authored but unexecuted under the active implementation-throughput directive.",
+        "Installed Code OSS Markdown diff-preview, profile, IndexedDB file-change, and voice ownership scenarios remain unaccepted."
+      ],
+      "reason": "Origin-partitioned structured-clone routing, FIFO delivery, bounded queues, and teardown are implemented with authored native/browser gates at WebScene 5ca0e542; those gates and packaged Code OSS acceptance have not yet run.",
       "platforms": [
         "linux-x64",
         "macos-arm64",
@@ -92,8 +96,10 @@
         "WebScene#266"
       ],
       "evidence": [],
-      "limits": [],
-      "reason": "CacheStorage is required by webview resources and remains scheduled in the webview stack.",
+      "limits": [
+        "Authored component and product-fixture gates have not been promoted as accepted evidence in this ledger."
+      ],
+      "reason": "Bounded CacheStorage and service-worker resource contracts are implemented and authored; cross-platform packaged webview acceptance remains unrecorded.",
       "platforms": [
         "linux-x64",
         "macos-arm64",
@@ -174,7 +180,7 @@
       ],
       "evidence": [],
       "limits": [],
-      "reason": "Explorer/editor drag data, cancellation, focus, native input, and teardown evidence is incomplete.",
+      "reason": "Drag/drop primitives and focused contracts exist; Explorer/editor end-to-end behavior, cancellation, native input, and cross-platform package evidence remain unaccepted.",
       "platforms": [
         "linux-x64",
         "macos-arm64",
@@ -189,8 +195,10 @@
         "WebScene#266"
       ],
       "evidence": [],
-      "limits": [],
-      "reason": "Webview request admission, streaming, cancellation, origin policy, and product evidence remain scheduled.",
+      "limits": [
+        "The ledger intentionally remains blocked until the current revision is exercised by the accepted product scenarios."
+      ],
+      "reason": "Fetch, controlled-resource admission, streaming, abort, range, and origin-policy slices are implemented with authored gates; accepted cross-platform packaged evidence remains missing.",
       "platforms": [
         "linux-x64",
         "macos-arm64",
@@ -223,7 +231,7 @@
       ],
       "evidence": [],
       "limits": [],
-      "reason": "Typed grants, picker handles, revocation, and installed-package qualification are not complete.",
+      "reason": "Typed host grants, picker handles, directory iteration, and lifecycle work exist; installed-package open-folder/file qualification and cross-platform evidence remain incomplete.",
       "platforms": [
         "linux-x64",
         "macos-arm64",
@@ -240,7 +248,7 @@
       ],
       "evidence": [],
       "limits": [],
-      "reason": "Keyboard, focus restoration, hidden/inert content, selection, and accessibility exposure are not fully qualified.",
+      "reason": "Focus, selection, input, and accessibility slices have focused implementations; complete Code OSS keyboard/focus restoration and packaged accessibility qualification remain open.",
       "platforms": [
         "linux-x64",
         "macos-arm64",
@@ -256,7 +264,7 @@
       ],
       "evidence": [],
       "limits": [],
-      "reason": "Multipart serialization and webview resource transport need bounded browser/native/product evidence.",
+      "reason": "FormData and multipart transport support exist in the runtime; bounded cross-platform webview/product evidence has not been accepted.",
       "platforms": [
         "linux-x64",
         "macos-arm64",
@@ -312,11 +320,10 @@
         }
       ],
       "limits": [
-        "Wave 0 proves sandbox token reflection, script gating, opaque-origin parent denial, and wrapper cleanup only.",
-        "Browser evidence is macOS Chromium 153; native runner evidence is Linux x64.",
-        "ServiceWorker control, resources/cache/streams, nested navigation, interaction, and packaged Markdown remain blocked."
+        "Recorded evidence covers the earlier sandbox Wave 0 revision only.",
+        "Current service-worker/resource/nested-frame stacks and packaged Markdown must still be promoted with revision-pinned results."
       ],
-      "reason": "Sandbox Wave 0 is evidenced, while #265-#268 and accepted packaged webview scenarios remain incomplete.",
+      "reason": "Sandbox and nested-frame implementation stacks are present, while accepted packaged Markdown/webview interaction and cross-platform evidence remain incomplete.",
       "platforms": [
         "linux-x64",
         "macos-arm64",
@@ -348,8 +355,10 @@
         "WebScene#81"
       ],
       "evidence": [],
-      "limits": [],
-      "reason": "Transfer, structured clone, ordering, close/error, backpressure, and product qualification remain open.",
+      "limits": [
+        "Current implementation evidence has not yet been recorded as an accepted cross-platform run."
+      ],
+      "reason": "Structured-clone transfer, ordering, close/error, queue bounds, and lifecycle support are implemented with focused gates; packaged product qualification remains open.",
       "platforms": [
         "linux-x64",
         "macos-arm64",
@@ -394,11 +403,14 @@
       "reachable": true,
       "state": "blocked",
       "issues": [
-        "WebScene#265"
+        "WebScene#265",
+        "WebScene#266"
       ],
       "evidence": [],
-      "limits": [],
-      "reason": "Controller, registration, Clients, origin, lifecycle, update, and teardown support is scheduled.",
+      "limits": [
+        "No current-revision accepted product result is recorded for all release platforms."
+      ],
+      "reason": "Registration, lifecycle, Clients, messaging, fetch/resource routing, update, and teardown stacks are implemented with authored gates; current packaged Code OSS acceptance remains unrecorded.",
       "platforms": [
         "linux-x64",
         "macos-arm64",
@@ -430,8 +442,10 @@
         "WebScene#266"
       ],
       "evidence": [],
-      "limits": [],
-      "reason": "Readable and writable stream backpressure, cancellation, errors, transfer, and webview evidence are scheduled.",
+      "limits": [
+        "Current revision has not been promoted through the packaged Markdown/webview gate."
+      ],
+      "reason": "Readable, writable, and transform-stream paths, backpressure, cancellation, errors, and webview broker contracts are implemented with authored gates; accepted product evidence remains missing.",
       "platforms": [
         "linux-x64",
         "macos-arm64",
@@ -448,7 +462,7 @@
       ],
       "evidence": [],
       "limits": [],
-      "reason": "Parsing coverage exists while native-host navigation and object-URL lifetime qualification remain incomplete.",
+      "reason": "URL parsing, native-host navigation, localhost mapping, and object-URL lifetime slices exist; complete installed-package and cross-platform qualification remains incomplete.",
       "platforms": [
         "linux-x64",
         "macos-arm64",
@@ -479,8 +493,10 @@
         "WebScene#81"
       ],
       "evidence": [],
-      "limits": [],
-      "reason": "Editor workers run, but complete module/classic worker, nested realm, messaging, termination, memory, and product qualification is open.",
+      "limits": [
+        "The ledger has no accepted current-revision cross-platform product evidence."
+      ],
+      "reason": "Editor, classic/module, service-worker, nested-realm, messaging, termination, and bounded queue paths are implemented with focused gates; current packaged product qualification remains open.",
       "platforms": [
         "linux-x64",
         "macos-arm64",

@@ -717,8 +717,8 @@ size_t native_document::erase_detached_subtrees(
         });
         if (animation_events_->empty()) animation_events_.reset();
     }
-    if (web_animation_auxiliary_) {
-        std::erase_if(web_animation_auxiliary_->nodes, [&](const auto& entry) {
+    if (auxiliary_nodes_) {
+        std::erase_if(auxiliary_nodes_->web_animation_nodes, [&](const auto& entry) {
             return entry.second == 0U
                 || entry.second > native_id_index_.size()
                 || native_id_index_[entry.second - 1U] == nullptr;
@@ -1078,7 +1078,6 @@ void native_document::clear()
     node_pool_.release();
     transition_events_.clear();
     animation_events_.reset();
-    web_animation_auxiliary_.reset();
     last_animation_advance_timestamp_ms_ =
         std::numeric_limits<double>::quiet_NaN();
     next_node_id_ = 1;

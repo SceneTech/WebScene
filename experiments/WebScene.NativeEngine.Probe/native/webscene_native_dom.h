@@ -2895,6 +2895,8 @@ private:
         std::vector<dom_node*> media;
         std::optional<validation_message_state> validation_message;
         std::vector<custom_highlight_range> custom_highlights;
+        std::vector<web_animation_event_record> web_animation_events;
+        std::unordered_map<uint32_t, uint32_t> web_animation_nodes;
     };
     std::unique_ptr<auxiliary_nodes> auxiliary_nodes_;
     std::span<const modal_dialog_entry> modal_dialogs() const noexcept {
@@ -2926,14 +2928,10 @@ private:
     // every document, including documents that never run an animation.
     std::unique_ptr<std::vector<animation_event_record>> animation_events_;
     static constexpr size_t maximum_live_web_animations = 1024U;
-    struct web_animation_auxiliary_storage final {
-        std::vector<web_animation_event_record> events;
-        std::unordered_map<uint32_t, uint32_t> nodes;
-    };
     // Script-created animations are opt-in. Keep their event queue and direct
     // ID index behind one lazy allocation so ordinary documents pay neither
-    // heap storage nor another pointer in the native document shell.
-    std::unique_ptr<web_animation_auxiliary_storage> web_animation_auxiliary_;
+    // heap storage nor another pointer in the native document shell. They
+    // share the existing document auxiliary allocation.
     webscene_text_measure_callback text_measure_callback_{nullptr};
     void* text_measure_user_data_{nullptr};
     mutable std::unordered_map<

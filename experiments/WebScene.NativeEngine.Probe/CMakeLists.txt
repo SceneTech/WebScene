@@ -1148,6 +1148,12 @@ if(WEBSCENE_NATIVE_ENGINE_ENABLE_V8)
             ENVIRONMENT "WEBSCENE_NATIVE_ENGINE_TEST_FILTER=resource-cache-prefetch"
             LABELS "native;resource;cache;security;lifecycle;performance"
             TIMEOUT 90)
+        add_test(NAME webscene_native_connected_http_status
+            COMMAND webscene_native_engine_tests)
+        set_tests_properties(webscene_native_connected_http_status PROPERTIES
+            ENVIRONMENT "WEBSCENE_NATIVE_ENGINE_TEST_FILTER=connected-http-status"
+            LABELS "native;resource;http;script;css;fetch;security"
+            TIMEOUT 30)
         add_test(NAME webscene_native_host_close_decision COMMAND webscene_native_engine_tests)
         add_test(NAME webscene_native_service_worker_parser_resources
             COMMAND webscene_native_engine_tests)

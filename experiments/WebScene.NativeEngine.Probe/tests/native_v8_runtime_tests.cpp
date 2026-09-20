@@ -562,6 +562,10 @@ int main()
         if (selected == "table-cell-copy") { test_table_cell_click_copies_text_to_host(); return 0; }
         if (selected == "primary-middle-paste") { test_primary_selection_middle_paste(nullptr); return 0; }
         if (selected == "resource-failure-diagnostics") { test_resource_failure_diagnostics(); return 0; }
+        if (selected == "connected-http-status") {
+            test_connected_resources_reject_unsuccessful_http_status();
+            return 0;
+        }
         if (selected == "response-header-cookie") {
             test_response_header_cookie_contracts();
             test_durable_profile_restart_contract();

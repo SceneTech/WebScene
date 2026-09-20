@@ -956,6 +956,18 @@
                     }
                     return true;
                 }
+                if (response->has_http_metadata
+                    && (response->status < 200U || response->status >= 300U)) {
+                    // A completed HTTP exchange is transport success, but
+                    // document-owned resources only consume successful HTTP
+                    // responses. Fetch keeps its separate Response path and
+                    // may expose 4xx/5xx status and body bytes to script.
+                    remove_resource_cache(cache_key);
+                    record_feature(
+                        "resource", "load:http-status-failed", "unsupported", {},
+                        "resource-loader");
+                    return false;
+                }
                 auto shared_content = immutable_text_source::from_string(
                     std::shared_ptr<const std::string>(
                         response,

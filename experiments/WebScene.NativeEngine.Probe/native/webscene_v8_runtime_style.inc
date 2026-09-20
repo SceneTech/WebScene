@@ -19,12 +19,6 @@
                     node.painted_filter_functions_value());
             }
         }
-        const auto authored = node.authored_style().declarations.find(name);
-        if (authored != node.authored_style().declarations.end()) {
-            if (const auto normalized = css::normalize_effect_value(name, authored->second)) {
-                if (*normalized != "inherit") return *normalized;
-            }
-        }
         for (auto* current = &node; current != nullptr; current = current->parent) {
             const auto effect = current->style.textual().effect_values.find(name);
             if (effect == current->style.textual().effect_values.end()) {
@@ -1256,8 +1250,9 @@
             self->document.mark_dirty();
             return;
         }
-        if (has_important_rule) self->apply_css_rules(*node);
-        else {
+        if (has_important_rule || property_mask == 0U) {
+            self->apply_css_rules(*node);
+        } else {
             self->configure_style_keyframe_animation(*node);
             self->document.update_style_animations(*node);
             self->detect_css_compositions(*node);
@@ -3071,8 +3066,9 @@
             self->document.mark_dirty();
             return;
         }
-        if (has_important_rule) self->apply_css_rules(*node);
-        else {
+        if (has_important_rule || property_mask == 0U) {
+            self->apply_css_rules(*node);
+        } else {
             self->configure_style_keyframe_animation(*node);
             self->document.update_style_animations(*node);
             self->detect_css_compositions(*node);

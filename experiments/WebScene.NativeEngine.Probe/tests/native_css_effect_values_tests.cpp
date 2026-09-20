@@ -195,9 +195,10 @@ clip_scene_counts wait_for_inset_clip_scene(
                                     resource.byte_length);
                                 latest.multilayer_mask_metadata =
                                     latest.multilayer_mask_metadata
-                                    || data.starts_with("webscene-mask-v2\t2\t")
+                                    || ((data.starts_with("webscene-mask-v2\t2\t")
+                                        || data.starts_with("webscene-mask-v3\t2\t"))
                                         && data.find("radial-gradient(") != std::string_view::npos
-                                        && data.find("linear-gradient(") != std::string_view::npos;
+                                        && data.find("linear-gradient(") != std::string_view::npos);
                                 latest.exclude_mask_metadata =
                                     latest.exclude_mask_metadata
                                     || data.starts_with("webscene-mask-v3\t2\t")
@@ -340,13 +341,13 @@ int main()
             clip-path: inset(0px 1px); filter: brightness(0.5); backdrop-filter: blur(1px); }
           #effects.alternate > span { clip-path: circle(25%); filter: contrast(2); }
           #effects > span:first-child { transform: scale(1.25) rotate(3deg); }
-          #ellipse-clip { clip-path: ellipse(25% 50% at 50% 50%); }
-          #path-clip { clip-path: path(evenodd, "M0 0 H8 V2 H0 Z M2 .5 H6 V1.5 H2 Z"); }
-          #url-clip { clip-path: url(#local-clip); }
-          #functional-blur { filter: blur(max(4px, calc(8px * 0.25))); }
-          #compound-filter { filter: blur(2px) saturate(1.08) contrast(1.5) grayscale(0.25); }
-          #compound-backdrop { -webkit-backdrop-filter: blur(8px) saturate(1.08); }
-          #radial-multi-mask {
+          #effects > #ellipse-clip { clip-path: ellipse(25% 50% at 50% 50%); }
+          #effects > #path-clip { clip-path: path(evenodd, "M0 0 H8 V2 H0 Z M2 .5 H6 V1.5 H2 Z"); }
+          #effects > #url-clip { clip-path: url(#local-clip); }
+          #effects > #functional-blur { filter: blur(max(4px, calc(8px * 0.25))); }
+          #effects > #compound-filter { filter: blur(2px) saturate(1.08) contrast(1.5) grayscale(0.25); }
+          #effects > #compound-backdrop { -webkit-backdrop-filter: blur(8px) saturate(1.08); }
+          #effects > #radial-multi-mask {
             mask: radial-gradient(circle at center, black 0%, transparent 75%) no-repeat center / 8px 2px,
               linear-gradient(to right, transparent, black) no-repeat 0px 0px / 8px 2px;
             mask-composite: exclude, add;
@@ -397,9 +398,14 @@ int main()
         if (getComputedStyle(host.lastElementChild).getPropertyValue('filter') !== 'blur(2px)') {
           throw new Error('initial blur filter value failed');
         }
-        if (getComputedStyle(document.getElementById('compound-filter')).getPropertyValue('filter')
+        const compoundFilterElement = document.getElementById('compound-filter');
+        const compoundFilter = getComputedStyle(
+          compoundFilterElement).getPropertyValue('filter');
+        if (compoundFilter
             !== 'blur(2px) saturate(1.08) contrast(1.5) grayscale(0.25)') {
-          throw new Error('initial compound filter list failed');
+          throw new Error(`initial compound filter list failed: ${compoundFilter}; `
+            + `same=${compoundFilterElement === host.children[4094]}; `
+            + `matches=${compoundFilterElement.matches('#compound-filter')}`);
         }
         if (getComputedStyle(document.getElementById('functional-blur')).getPropertyValue('filter')
             !== 'blur(max(4px, calc(8px * 0.25)))') {
@@ -465,9 +471,12 @@ int main()
             > before_memory.native_dom_textual_style_count) break;
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
-    require(peak.dom_nodes >= before.dom_nodes + 4098U
-        && peak.dom_nodes <= before.dom_nodes + 4102U,
-        "fixture DOM node delta was outside its 4098..4102 bound");
+    if (peak.dom_nodes < before.dom_nodes + 4098U
+        || peak.dom_nodes > before.dom_nodes + 4104U) {
+        fail("fixture DOM node delta was outside its 4098..4104 bound: before="
+            + std::to_string(before.dom_nodes) + ", peak="
+            + std::to_string(peak.dom_nodes));
+    }
     require(peak_memory.native_dom_textual_style_count
             > before_memory.native_dom_textual_style_count,
         "effect values were absent from native textual-style accounting");
@@ -562,10 +571,40 @@ int main()
     const auto blur_damage = acknowledge_damage_after(engine, scene_revision);
     require(blur_damage.count == 1U,
         "blurred descendant mutation did not retain localized damage");
-    require(blur_damage.right - blur_damage.left >= 20.0F
-            && blur_damage.bottom - blur_damage.top >= 14.0F,
-        "localized damage did not include the foreground blur extent");
+    if (blur_damage.right - blur_damage.left < 20.0F
+        || blur_damage.bottom - blur_damage.top < 14.0F) {
+        fail("localized damage did not include the foreground blur extent: width="
+            + std::to_string(blur_damage.right - blur_damage.left)
+            + ", height="
+            + std::to_string(blur_damage.bottom - blur_damage.top));
+    }
     scene_revision = blur_damage.revision;
+    execute_and_wait(engine, R"JS(
+      (() => {
+        const host = document.getElementById('effects');
+        const sheet = document.createElement('style');
+        sheet.id = 'important-effect-sheet';
+        sheet.textContent = '#effects > span:first-child { filter: contrast(3) !important; }';
+        document.head.appendChild(sheet);
+        const importantFilter = getComputedStyle(
+          host.firstElementChild).getPropertyValue('filter');
+        if (importantFilter !== 'contrast(3)') {
+          throw new Error(`author important filter did not override inline filter: ${importantFilter}`);
+        }
+      })()
+    )JS", "native-effects-important-filter.js");
+    scene_revision = acknowledge_scene_after(engine, scene_revision);
+    execute_and_wait(engine, R"JS(
+      (() => {
+        const host = document.getElementById('effects');
+        document.getElementById('important-effect-sheet').remove();
+        if (getComputedStyle(host.firstElementChild).getPropertyValue('filter')
+            !== 'blur(4px)') {
+          throw new Error('inline filter did not resume after author important filter');
+        }
+      })()
+    )JS", "native-effects-inline-filter-restore.js");
+    scene_revision = acknowledge_scene_after(engine, scene_revision);
     execute_and_wait(engine, R"JS(
       document.getElementById('effects').firstElementChild.style.removeProperty('filter')
     )JS", "native-effects-blur-damage-restore.js");

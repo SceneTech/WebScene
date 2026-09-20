@@ -289,6 +289,7 @@
         resize_listeners.clear();
         media_query_lists.clear();
         timers.clear();
+        cancel_pending_terminal_host_requests();
         pending_file_reading_tasks.clear();
         pending_window_messages.clear();
         pending_window_message_bytes = 0U;

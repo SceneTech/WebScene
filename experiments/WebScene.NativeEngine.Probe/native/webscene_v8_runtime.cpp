@@ -7021,6 +7021,100 @@ struct v8_dom_runtime::implementation final {
         return true;
     }
 
+    void cancel_pending_terminal_host_requests()
+    {
+        std::lock_guard lock(host_request_mutex);
+        const auto count = pending_terminal_host_requests.size();
+        pending_terminal_host_requests.clear();
+        terminal_host_request_timer_cutoff.reset();
+        reserved_host_request_count = count > reserved_host_request_count
+            ? 0U : reserved_host_request_count - count;
+    }
+
+    bool defer_reserved_terminal_host_request(
+        std::unique_ptr<native_host_request> request)
+    {
+        if (!request) return false;
+        std::lock_guard lock(host_request_mutex);
+        if (reserved_host_request_count == 0U) return false;
+        if (pending_terminal_host_requests.empty()) {
+            // Every zero-delay timer scheduled by beforeunload/pagehide or by
+            // their microtasks has an earlier deadline. Timers created by one
+            // of those tasks receive a later deadline and cannot indefinitely
+            // postpone a terminal navigation.
+            terminal_host_request_timer_cutoff =
+                std::chrono::steady_clock::now();
+        }
+        pending_terminal_host_requests.push_back(std::move(request));
+        return true;
+    }
+
+    bool queue_terminal_host_request(
+        v8::Local<v8::Context> local_context,
+        std::unique_ptr<native_host_request> request)
+    {
+        // A navigation requested recursively by its own lifecycle listener is
+        // coalesced into the outer handoff.
+        if (window_close_lifecycle_dispatching) return true;
+        if (!reserve_typed_host_request_capacity()) return false;
+        struct lifecycle_dispatch_guard final {
+            bool& dispatching;
+            explicit lifecycle_dispatch_guard(bool& value) : dispatching(value)
+            {
+                dispatching = true;
+            }
+            ~lifecycle_dispatch_guard() { dispatching = false; }
+        } dispatch_guard(window_close_lifecycle_dispatching);
+        const auto disposition =
+            request_window_close_in_current_realm(local_context);
+        if (disposition != WEBSCENE_WINDOW_CLOSE_ALLOW_V1) {
+            release_typed_host_request_capacity();
+            return disposition == WEBSCENE_WINDOW_CLOSE_VETO_V1;
+        }
+        if (defer_reserved_terminal_host_request(std::move(request))) return true;
+        release_typed_host_request_capacity();
+        return false;
+    }
+
+    bool has_lifecycle_timer_before_terminal_handoff() const noexcept
+    {
+        if (pending_terminal_host_requests.empty()
+            || !terminal_host_request_timer_cutoff.has_value()) return false;
+        const auto cutoff = *terminal_host_request_timer_cutoff;
+        return std::any_of(timers.begin(), timers.end(), [&](const auto& timer) {
+            return !timer.animation_frame && timer.deadline <= cutoff;
+        });
+    }
+
+    bool drain_terminal_host_request_task()
+    {
+        auto notify = false;
+        {
+            std::lock_guard lock(host_request_mutex);
+            if (pending_terminal_host_requests.empty()) {
+                terminal_host_request_timer_cutoff.reset();
+                return true;
+            }
+            while (!pending_terminal_host_requests.empty()) {
+                if (reserved_host_request_count == 0U) {
+                    last_error =
+                        "Deferred terminal navigation lost its host-request reservation";
+                    pending_terminal_host_requests.clear();
+                    terminal_host_request_timer_cutoff.reset();
+                    return false;
+                }
+                --reserved_host_request_count;
+                typed_host_requests.push_back(
+                    std::move(pending_terminal_host_requests.front()));
+                pending_terminal_host_requests.pop_front();
+                notify = true;
+            }
+            terminal_host_request_timer_cutoff.reset();
+        }
+        if (notify && host_request_available) host_request_available();
+        return true;
+    }
+
     std::unique_ptr<native_host_request> take_typed_host_request()
     {
         std::lock_guard lock(host_request_mutex);
@@ -7368,14 +7462,12 @@ struct v8_dom_runtime::implementation final {
         uint32_t kind)
     {
         if (local_context != context.Get(isolate)) return true;
-        if (kind == WEBSCENE_HOST_REQUEST_WINDOW_RELOAD_V1) {
-            const auto disposition =
-                request_window_close_in_current_realm(local_context);
-            if (disposition == WEBSCENE_WINDOW_CLOSE_ERROR_V1) return false;
-            if (disposition == WEBSCENE_WINDOW_CLOSE_VETO_V1) return true;
-        }
         auto request = std::make_unique<native_host_request>();
         request->view.kind = kind;
+        if (kind == WEBSCENE_HOST_REQUEST_WINDOW_RELOAD_V1) {
+            return queue_terminal_host_request(
+                local_context, std::move(request));
+        }
         return enqueue_typed_host_request(std::move(request));
     }
 
@@ -7398,10 +7490,6 @@ struct v8_dom_runtime::implementation final {
         }
         const auto scheme = resource_scheme(resolved);
         if (scheme != "http" && scheme != "https") return false;
-        const auto disposition =
-            request_window_close_in_current_realm(local_context);
-        if (disposition == WEBSCENE_WINDOW_CLOSE_ERROR_V1) return false;
-        if (disposition == WEBSCENE_WINDOW_CLOSE_VETO_V1) return true;
         auto request = std::make_unique<native_host_request>();
         request->view.kind = WEBSCENE_HOST_REQUEST_WINDOW_NAVIGATE_V1;
         request->view.flags = replace
@@ -7413,7 +7501,7 @@ struct v8_dom_runtime::implementation final {
             "supported",
             "same-origin top-level navigation through the bounded native host request queue",
             "web-api-binding");
-        return enqueue_typed_host_request(std::move(request));
+        return queue_terminal_host_request(local_context, std::move(request));
     }
 
     static void window_close(const v8::FunctionCallbackInfo<v8::Value>& info)
@@ -8393,6 +8481,7 @@ bool v8_dom_runtime::has_pending_tasks() const noexcept
 #endif
 #endif
     return impl_->has_pending_detached_dom_collection()
+        || !impl_->pending_terminal_host_requests.empty()
         || impl_->indexeddb_work_ready.load(std::memory_order_acquire)
         || impl_->websocket_transport.has_pending_events()
         || !impl_->pending_file_reading_tasks.empty()

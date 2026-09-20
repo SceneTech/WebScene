@@ -827,6 +827,13 @@
         // compilation and optimization work. An embedder must service that
         // queue; otherwise hot application code remains on its initial tier.
         pump_v8_platform_tasks();
+        // A top-level navigation is a browser task, not a synchronous tail of
+        // beforeunload/pagehide. Preserve timer-source order for zero-delay
+        // lifecycle work, then expose every bounded terminal request together.
+        if (!pending_terminal_host_requests.empty()
+            && !has_lifecycle_timer_before_terminal_handoff()) {
+            return drain_terminal_host_request_task();
+        }
         const auto timer_due = has_due_timer();
         // Browser task-source selection is implementation-defined, but it
         // cannot permanently strand one ready source. Alternate a due timer

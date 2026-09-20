@@ -346,6 +346,14 @@
     std::mutex host_request_mutex;
     std::deque<std::string> host_requests;
     std::deque<std::unique_ptr<native_host_request>> typed_host_requests;
+    // Top-level reload/navigation is published from a later browser task so
+    // lifecycle listeners can finish zero-delay persistence work before the
+    // host retires this realm. Entries consume reserved host-request capacity
+    // while they wait, keeping the combined queue bounded.
+    std::deque<std::unique_ptr<native_host_request>>
+        pending_terminal_host_requests;
+    std::optional<std::chrono::steady_clock::time_point>
+        terminal_host_request_timer_cutoff;
     bool primary_selection_publication_dirty{};
     std::deque<std::unique_ptr<native_download_request>> download_requests;
     std::deque<std::unique_ptr<native_outbound_drag_request>>

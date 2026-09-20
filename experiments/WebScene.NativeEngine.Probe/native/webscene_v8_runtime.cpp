@@ -8052,6 +8052,7 @@ void v8_dom_runtime::notify_low_memory()
 {
     if (impl_->isolate == nullptr) return;
     impl_->request_worker_low_memory();
+    impl_->request_service_worker_low_memory();
     impl_->compact_retained_native_capacity();
     auto isolate_locker = impl_->lock_shared_isolate();
     v8::Isolate::Scope isolate_scope(impl_->isolate);

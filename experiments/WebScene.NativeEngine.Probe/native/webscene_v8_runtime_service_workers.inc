@@ -1315,6 +1315,7 @@
                 for (;;) {
                     std::optional<service_worker_message> message;
                     std::shared_ptr<service_worker_fetch_request> fetch_request;
+                    bool low_memory_requested = false;
                     {
                         std::unique_lock lock(state->mutex);
                         state->ready.wait_for(
@@ -1324,9 +1325,12 @@
                                 : std::chrono::milliseconds(1),
                             [&] {
                             return state->stopped || !state->incoming.empty()
-                                || !state->fetches.empty();
+                                || !state->fetches.empty()
+                                || state->low_memory_requested;
                         });
                         if (state->stopped) break;
+                        low_memory_requested = state->low_memory_requested;
+                        state->low_memory_requested = false;
                         if (!state->incoming.empty()) {
                             message = std::move(state->incoming.front());
                             state->incoming.pop_front();
@@ -1343,6 +1347,10 @@
                     v8::HandleScope handles(child->isolate);
                     auto realm = child->context.Get(child->isolate);
                     v8::Context::Scope context_scope(realm);
+                    if (low_memory_requested) {
+                        child->compact_retained_native_capacity();
+                        child->isolate->LowMemoryNotification();
+                    }
                     if (fetch_request != nullptr) {
                         service_worker_fetch_result failure;
                         failure.handled = true;
@@ -2690,6 +2698,7 @@
             std::make_shared<service_worker_cache_storage>()};
         std::function<void()> notify_client;
         bool stopped{false};
+        bool low_memory_requested{false};
         bool activated{false};
         bool claimed{false};
         std::string error;
@@ -2728,3 +2737,21 @@
 
         ~service_worker_runtime_state() { stop(); }
     };
+
+    void request_service_worker_low_memory()
+    {
+        for (const auto& [scope, registration] : service_worker_registrations) {
+            static_cast<void>(scope);
+            const auto& runtime = registration.runtime;
+            if (runtime == nullptr) continue;
+            auto notify = false;
+            {
+                std::lock_guard lock(runtime->mutex);
+                if (!runtime->stopped && runtime->running_isolate != nullptr) {
+                    runtime->low_memory_requested = true;
+                    notify = true;
+                }
+            }
+            if (notify) runtime->ready.notify_one();
+        }
+    }

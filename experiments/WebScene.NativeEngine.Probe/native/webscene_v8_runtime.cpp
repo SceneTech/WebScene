@@ -3980,7 +3980,8 @@ struct v8_dom_runtime::implementation final {
                 }
                 walkElements(root, upgradeElement);
               }, writable: true, configurable: true }
-            });
+            });)JS",
+            R"JS(
 
             Object.defineProperty(document, 'createElement', {
               value(...args) {

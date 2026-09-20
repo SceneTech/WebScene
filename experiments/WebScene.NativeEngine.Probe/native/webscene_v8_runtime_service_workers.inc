@@ -1118,7 +1118,8 @@
                           }
                         }
                         const caches = Object.create(CacheStorage.prototype);
-                        cacheStorageState.set(caches, {wrappers:new Map()});
+                        cacheStorageState.set(caches, {wrappers:new Map()});)JS",
+                        R"JS(
                         function Client() { throw new TypeError('Illegal constructor'); }
                         function WindowClient() { throw new TypeError('Illegal constructor'); }
                         function Clients() { throw new TypeError('Illegal constructor'); }

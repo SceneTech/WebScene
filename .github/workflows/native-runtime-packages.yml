@@ -35,6 +35,7 @@ on:
     - 'scripts/tests/test_prepare_dotnet_install.py'
     - 'scripts/tests/test_prepare_runner_disk.py'
     - 'scripts/tests/test_verify_cross_rid_compatibility.py'
+    - 'scripts/tests/test_v8_bootstrap_literals.py'
     - 'scripts/tests/test_v8_windows_environment.ps1'
     - 'scripts/verify-release-packages.py'
     - 'src/WebScene.Backend.Abstractions/**'
@@ -76,7 +77,8 @@ jobs:
           scripts/tests/test_native_runtime_workflow_policy.py \
           scripts/tests/test_prepare_dotnet_install.py \
           scripts/tests/test_prepare_runner_disk.py \
-          scripts/tests/test_verify_cross_rid_compatibility.py
+          scripts/tests/test_verify_cross_rid_compatibility.py \
+          scripts/tests/test_v8_bootstrap_literals.py
     - name: Repair incomplete .NET install
       shell: bash
       env:

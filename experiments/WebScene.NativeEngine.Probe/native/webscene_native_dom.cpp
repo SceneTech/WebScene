@@ -68,6 +68,8 @@ std::string resolved_list_style(const dom_node& node, bool position)
     return node.parent != nullptr && node.parent->tag == "ol" ? "decimal" : "disc";
 }
 
+} // namespace
+
 std::string list_marker_text(const dom_node& node)
 {
     if (node.tag != "li" && node.style.display != display_mode::list_item) {
@@ -103,6 +105,8 @@ std::string list_marker_text(const dom_node& node)
     marker << value << ". ";
     return marker.str();
 }
+
+namespace {
 
 dom_node make_list_marker_layout_node(const dom_node& originating, std::string content)
 {

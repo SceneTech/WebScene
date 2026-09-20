@@ -2,7 +2,7 @@
   "schemaVersion": 2,
   "revisions": {
     "codeOss": "645f29cc3176500b4b5762ba887cf2a7f0ffdf2c",
-    "webScene": "24c18362906da7314eeda6e1af12f7eafb7afad5",
+    "webScene": "b50fbf3018c52a3b48dec8c7179a5f2ef2515649",
     "appScene": "773e94e26b58eac423ca24d5e47bea172965c94c",
     "wpt": "2c705104a295c48053eeddf7fe0170d790a4e853"
   },
@@ -345,6 +345,27 @@
       "evidence": [],
       "limits": [],
       "reason": "Engine contracts exist, but Code OSS origin durability, quota, failure recovery, and package evidence are incomplete.",
+      "platforms": [
+        "linux-x64",
+        "macos-arm64",
+        "windows-x64"
+      ]
+    },
+    {
+      "id": "media-capture",
+      "reachable": true,
+      "state": "blocked",
+      "issues": [
+        "WebScene#770",
+        "AppScene#289",
+        "WebScene#261"
+      ],
+      "evidence": [],
+      "limits": [
+        "WebScene does not expose MediaDevices microphone/display capture, MediaStreamAudioSourceNode, or the AudioWorklet PCM path reached by unchanged Code OSS.",
+        "AppScene does not yet provide a typed permission, private device-enumeration, and bounded native PCM capture contract."
+      ],
+      "reason": "Unchanged Code OSS has 43 statically reachable media-capture references across 10 files. Microphone enumeration/capture, PCM worklet delivery, display screenshots, permissions, device loss, and exact-package Chat/host acceptance remain unimplemented or unqualified.",
       "platforms": [
         "linux-x64",
         "macos-arm64",

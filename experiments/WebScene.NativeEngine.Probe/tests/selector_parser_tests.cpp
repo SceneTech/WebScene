@@ -388,9 +388,9 @@ void test_compiled_css_invalidation_plans()
     require(link_subject[0].attributes.at("href").scope==invalidation_subject,
         "any-link must compile href mutation to its subject");
     const auto link_descendant=compile(".navigation:link > .label");
-    require(link_descendant[0].attributes.at("href").routes
-            ==std::vector<css_invalidation_route>{{css_invalidation_step::children}},
-        "link must route href mutation to child subjects");
+    require(link_descendant[0].attributes.at("href").scope==invalidation_subject
+        &&link_descendant[0].attributes.at("href").routes.empty(),
+        "link href must invalidate its trigger before runtime child traversal");
     const auto link_relational=compile(".shell:has(> a:any-link)");
     require(link_relational[0].attributes.at("href").routes
             ==std::vector<css_invalidation_route>{{css_invalidation_step::parent}},
@@ -402,19 +402,21 @@ void test_compiled_css_invalidation_plans()
             ==invalidation_subject,
         "local-link must retain both href and document URL subject routes");
     const auto local_link_sibling=compile("a:local-link + .marker");
-    require(local_link_sibling[0].attributes.at("$local-link-document").routes
-            ==std::vector<css_invalidation_route>{{css_invalidation_step::next_sibling}},
-        "local-link document changes must retain the following-sibling route");
+    require(local_link_sibling[0].attributes.at("$local-link-document").scope
+            ==invalidation_subject
+        &&local_link_sibling[0].attributes.at("$local-link-document").routes.empty(),
+        "local-link document changes must invalidate the trigger before runtime sibling traversal");
     const auto local_link_relational=compile(".shell:has(> a:local-link)");
     require(local_link_relational[0].attributes.at("$local-link-document").routes
             ==std::vector<css_invalidation_route>{{css_invalidation_step::parent}},
         "nested local-link must retain its reverse relational document route");
     const auto local_link_depth=compile("a:is(:local-link(2)) + .marker");
-    require(local_link_depth[0].attributes.at("href").routes
-            ==std::vector<css_invalidation_route>{{css_invalidation_step::next_sibling}}
-        &&local_link_depth[0].attributes.at("$local-link-document").routes
-            ==std::vector<css_invalidation_route>{{css_invalidation_step::next_sibling}},
-        "functional local-link must inherit nested href/document sibling routes");
+    require(local_link_depth[0].attributes.at("href").scope==invalidation_subject
+        &&local_link_depth[0].attributes.at("href").routes.empty()
+        &&local_link_depth[0].attributes.at("$local-link-document").scope
+            ==invalidation_subject
+        &&local_link_depth[0].attributes.at("$local-link-document").routes.empty(),
+        "functional local-link must preserve trigger-scoped href/document invalidation");
     const auto target_within=compile(".branch:target-within");
     for(const auto* dependency:{"id","$target-document"})
         require((target_within[0].attributes.at(dependency).scope
@@ -427,15 +429,13 @@ void test_compiled_css_invalidation_plans()
             ==(invalidation_subject|invalidation_ancestors),
         "target-within must route tree transitions to the changed parent chain");
     const auto target_sibling=compile(".branch:target-within + .marker");
-    const auto& target_routes=target_sibling[0].attributes.at(
-        "$target-document").routes;
-    require(std::find(target_routes.begin(),target_routes.end(),
-            css_invalidation_route{css_invalidation_step::next_sibling})
-            !=target_routes.end()
-        &&std::find(target_routes.begin(),target_routes.end(),
-            css_invalidation_route{css_invalidation_step::ancestors,
-                css_invalidation_step::next_sibling})!=target_routes.end(),
-        "target-within must retain inclusive following-sibling routes");
+    const auto& target_sibling_dependency=target_sibling[0].attributes.at(
+        "$target-document");
+    require((target_sibling_dependency.scope
+            &(invalidation_subject|invalidation_ancestors))
+            ==(invalidation_subject|invalidation_ancestors)
+        &&target_sibling_dependency.routes.empty(),
+        "target-within must invalidate inclusive triggers before runtime sibling traversal");
 
     std::vector<css_child_list_bucket> buckets;
     const auto index = [&](size_t id, std::string_view text) {

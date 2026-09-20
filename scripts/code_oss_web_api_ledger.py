@@ -45,6 +45,7 @@ API_HINTS = {
     "form-data": ("FormData",),
     "iframe": ("IFrame", "contentWindow", "contentDocument", "sandbox"),
     "indexeddb": ("indexedDB", "IDB"),
+    "media-capture": ("mediaDevices", "getUserMedia", "getDisplayMedia", "MediaStream", "AudioWorkletNode"),
     "message-port": ("MessageChannel", "MessagePort"),
     "observers": ("Observer",),
     "performance-timing": ("performance.", "PerformanceEntry"),

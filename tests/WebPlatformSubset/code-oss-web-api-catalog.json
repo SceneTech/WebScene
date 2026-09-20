@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "catalogRevision": "2026-09-17",
+  "catalogRevision": "2026-09-20",
   "description": "Static reachability probes for browser-shaped APIs referenced by unchanged Code OSS. Matches are evidence of source reachability, not runtime support.",
   "apis": [
     {"id":"abort","category":"lifecycle","patterns":["\\bAbortController\\b","\\bAbortSignal\\b"]},
@@ -19,13 +19,14 @@
     {"id":"form-data","category":"network","patterns":["\\bFormData\\b"]},
     {"id":"iframe","category":"realm","patterns":["\\bHTMLIFrameElement\\b","\\.contentWindow\\b","\\.contentDocument\\b","\\.sandbox\\b"]},
     {"id":"indexeddb","category":"storage","patterns":["\\bindexedDB\\b","\\bIDB(?:Database|Transaction|ObjectStore|Request|KeyRange)\\b"]},
+    {"id":"media-capture","category":"media","patterns":["navigator\\.mediaDevices","\\b(?:getUserMedia|getDisplayMedia|enumerateDevices)\\s*\\(","\\bMediaStream(?:Track|AudioSourceNode)?\\b","\\bAudioWorkletNode\\b"]},
     {"id":"message-port","category":"messaging","patterns":["\\bMessageChannel\\b","\\bMessagePort\\b"]},
     {"id":"observers","category":"dom","patterns":["\\b(?:Resize|Intersection|Performance)Observer\\b"]},
     {"id":"performance-timing","category":"timing","patterns":["performance\\.(?:now|mark|measure|getEntries)","\\bPerformanceEntry\\b"]},
     {"id":"service-worker","category":"realm","patterns":["navigator\\.serviceWorker","\\bServiceWorker(?:Registration|Container)?\\b"]},
     {"id":"storage","category":"storage","patterns":["\\b(?:localStorage|sessionStorage)\\b","navigator\\.storage"]},
     {"id":"streams","category":"resource","patterns":["\\b(?:Readable|Writable|Transform)Stream\\b"]},
-    {"id":"url","category":"resource","patterns":["\\bURLSearchParams\\b","\\bURL\\.(?:createObjectURL|revokeObjectURL)\\s*\\("]},
+    {"id":"url","category":"resource","patterns":["\\bURLSearchParams\\b","\\bURL\\.(?:createObjectURL|revokeObjectURL|parse|canParse)\\s*\\("]},
     {"id":"websocket","category":"network","patterns":["\\bWebSocket\\b"]},
     {"id":"worker","category":"realm","patterns":["\\b(?:Worker|SharedWorker)\\s*\\(","\\bWorkerGlobalScope\\b"]}
   ]

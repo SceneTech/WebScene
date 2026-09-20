@@ -24,7 +24,9 @@ def inspect_exports(library, rid):
                        "websceneDawnQueryVulkanDeviceV3",
                        "websceneDawnAcquireVulkanQueueV3",
                        "websceneDawnReleaseVulkanQueueV3"}
-                      if rid.startswith("linux-") else set())
+                      if rid.startswith("linux-") else
+                      {"websceneDawnQueryD3D12DeviceV1"}
+                      if rid.startswith("win-") else set())
     unexpected = [name for name in symbols
                   if not re.fullmatch(r"wgpu[A-Z][A-Za-z0-9]*", name)
                   and name not in allowed_bridge]

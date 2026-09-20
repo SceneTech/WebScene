@@ -160,7 +160,48 @@ typedef struct webscene_dawn_vulkan_queue_access_v3 {
     void* access_token;
 } webscene_dawn_vulkan_queue_access_v3;
 
-#if defined(_WIN32)
+typedef uint32_t webscene_dawn_d3d12_device_status_v1;
+#define WEBSCENE_DAWN_D3D12_DEVICE_ABI_VERSION_V1 1U
+enum {
+    WEBSCENE_DAWN_D3D12_DEVICE_SUCCESS_V1 = 0,
+    WEBSCENE_DAWN_D3D12_DEVICE_INVALID_ARGUMENT_V1 = 1,
+    WEBSCENE_DAWN_D3D12_DEVICE_INCOMPATIBLE_ABI_V1 = 2,
+    WEBSCENE_DAWN_D3D12_DEVICE_FOREIGN_DEVICE_V1 = 3,
+    WEBSCENE_DAWN_D3D12_DEVICE_NOT_D3D12_V1 = 4,
+    WEBSCENE_DAWN_D3D12_DEVICE_LOST_V1 = 5,
+    WEBSCENE_DAWN_D3D12_DEVICE_INVALID_IDENTITY_V1 = 6
+};
+
+enum {
+    WEBSCENE_DAWN_D3D12_EXACT_DEVICE_V1 = 1U << 0,
+    WEBSCENE_DAWN_D3D12_DIRECT_QUEUE_V1 = 1U << 1,
+    WEBSCENE_DAWN_D3D12_ADAPTER_LUID_V1 = 1U << 2,
+    WEBSCENE_DAWN_D3D12_REQUIRED_V1 =
+        WEBSCENE_DAWN_D3D12_EXACT_DEVICE_V1 |
+        WEBSCENE_DAWN_D3D12_DIRECT_QUEUE_V1 |
+        WEBSCENE_DAWN_D3D12_ADAPTER_LUID_V1
+};
+
+/* Exact D3D12 identities borrowed from one live Dawn WGPUDevice. The caller
+ * retains that public device while using the returned device and direct queue,
+ * never releases the native COM objects, and serializes native queue work with
+ * its own Dawn submissions. Failure leaves the result unchanged. */
+typedef struct webscene_dawn_d3d12_device_v1 {
+    uint32_t struct_size;
+    uint32_t version;
+    WGPUAdapter adapter;
+    WGPUDevice device;
+    void* d3d12_device;
+    void* d3d12_direct_queue;
+    uint32_t adapter_luid_low;
+    int32_t adapter_luid_high;
+    uint32_t capabilities;
+    uint32_t reserved;
+} webscene_dawn_d3d12_device_v1;
+
+#if defined(_WIN32) && defined(WEBSCENE_DAWN_NATIVE_DEVICE_IMPLEMENTATION)
+#define WEBSCENE_DAWN_NATIVE_DEVICE_EXPORT __declspec(dllexport)
+#elif defined(_WIN32)
 #define WEBSCENE_DAWN_NATIVE_DEVICE_EXPORT __declspec(dllimport)
 #elif defined(__GNUC__)
 #define WEBSCENE_DAWN_NATIVE_DEVICE_EXPORT __attribute__((visibility("default")))
@@ -168,6 +209,7 @@ typedef struct webscene_dawn_vulkan_queue_access_v3 {
 #define WEBSCENE_DAWN_NATIVE_DEVICE_EXPORT
 #endif
 
+#if !defined(_WIN32)
 /* result must carry sizeof(webscene_dawn_native_device_v1) and ABI version 1.
  * Failure leaves the caller's result unchanged. Foreign tokens are rejected
  * from a live-device registry before Dawn object memory is dereferenced. */
@@ -199,6 +241,16 @@ websceneDawnAcquireVulkanQueueV3(
 WEBSCENE_DAWN_NATIVE_DEVICE_EXPORT webscene_dawn_native_device_status_v3
 websceneDawnReleaseVulkanQueueV3(
     webscene_dawn_vulkan_queue_access_v3* access);
+#endif
+
+#if defined(_WIN32)
+/* result must carry sizeof(webscene_dawn_d3d12_device_v1) and version 1.
+ * Foreign tokens are rejected from the live registry before Dawn private
+ * object memory is dereferenced. */
+WEBSCENE_DAWN_NATIVE_DEVICE_EXPORT webscene_dawn_d3d12_device_status_v1
+websceneDawnQueryD3D12DeviceV1(
+    WGPUDevice device, webscene_dawn_d3d12_device_v1* result);
+#endif
 
 #undef WEBSCENE_DAWN_NATIVE_DEVICE_EXPORT
 

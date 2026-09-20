@@ -11,13 +11,20 @@
 #include "src/dawn/native/Adapter.h"
 #include "src/dawn/native/Device.h"
 #include "src/dawn/native/PhysicalDevice.h"
+#if defined(_WIN32)
+#include "src/dawn/native/d3d12/DeviceD3D12.h"
+#include "src/dawn/native/d3d12/Forward.h"
+#else
 #include "src/dawn/native/vulkan/DeviceVk.h"
 #include "src/dawn/native/vulkan/Forward.h"
 #include "src/dawn/native/vulkan/PhysicalDeviceVk.h"
 #include "src/dawn/native/vulkan/QueueVk.h"
+#endif
 
 namespace {
+#if !defined(_WIN32)
 struct queue_access_token;
+#endif
 
 struct live_devices {
     std::mutex mutex;
@@ -27,9 +34,12 @@ struct live_devices {
         entry* next;
     };
     entry* first{};
+#if !defined(_WIN32)
     queue_access_token* first_access{};
+#endif
 };
 
+#if !defined(_WIN32)
 class external_device_reference final {
   public:
     explicit external_device_reference(dawn::native::DeviceBase* device) noexcept
@@ -64,6 +74,7 @@ struct queue_access_token final {
 };
 
 thread_local queue_access_token* current_queue_access{};
+#endif
 
 live_devices& devices() {
     // Construct in static storage without registering a destructor. Dawn
@@ -84,6 +95,7 @@ dawn::Ref<dawn::native::DeviceBase> find_device(WGPUDevice token) noexcept {
     return {};
 }
 
+#if !defined(_WIN32)
 bool nonzero_uuid(const uint8_t* value) noexcept {
     for(size_t index=0;index<VK_UUID_SIZE;++index)if(value[index])return true;
     return false;
@@ -107,6 +119,7 @@ uint32_t instance_capabilities(dawn::native::vulkan::Device* device) noexcept {
 #endif
     return capabilities;
 }
+#endif
 }
 
 namespace webscene::dawn_bridge {
@@ -147,6 +160,7 @@ void unregister_device(dawn::native::DeviceBase* device) noexcept {
 }
 }
 
+#if !defined(_WIN32)
 extern "C" webscene_dawn_native_device_status_v1 websceneDawnQueryVulkanDeviceV1(
     WGPUDevice token,webscene_dawn_native_device_v1* result) {
     if(!token||!result)return WEBSCENE_DAWN_NATIVE_DEVICE_INVALID_ARGUMENT_V1;
@@ -379,3 +393,41 @@ extern "C" webscene_dawn_native_device_status_v3 websceneDawnReleaseVulkanQueueV
     return lost ? WEBSCENE_DAWN_NATIVE_DEVICE_LOST_OR_CLOSING_V3
                 : WEBSCENE_DAWN_NATIVE_DEVICE_SUCCESS_V3;
 }
+#else
+extern "C" webscene_dawn_d3d12_device_status_v1
+websceneDawnQueryD3D12DeviceV1(
+    WGPUDevice token,webscene_dawn_d3d12_device_v1* result) {
+    if(!token||!result)
+        return WEBSCENE_DAWN_D3D12_DEVICE_INVALID_ARGUMENT_V1;
+    if(result->struct_size<sizeof(webscene_dawn_d3d12_device_v1)||
+        result->version!=WEBSCENE_DAWN_D3D12_DEVICE_ABI_VERSION_V1)
+        return WEBSCENE_DAWN_D3D12_DEVICE_INCOMPATIBLE_ABI_V1;
+    auto base=find_device(token);
+    if(!base)return WEBSCENE_DAWN_D3D12_DEVICE_FOREIGN_DEVICE_V1;
+    auto guard=base->GetGuard();
+    if(base->GetState()!=dawn::native::DeviceBase::State::Alive||!base->GetQueue())
+        return WEBSCENE_DAWN_D3D12_DEVICE_LOST_V1;
+    if(base->GetPhysicalDevice()->GetBackendType()!=wgpu::BackendType::D3D12)
+        return WEBSCENE_DAWN_D3D12_DEVICE_NOT_D3D12_V1;
+
+    auto* device=dawn::native::d3d12::ToBackend(base.Get());
+    auto queue=device->GetD3D12CommandQueue();
+    auto* native_device=device->GetD3D12Device();
+    const auto luid=native_device?native_device->GetAdapterLuid():LUID{};
+    if(!native_device||!queue||(luid.LowPart==0U&&luid.HighPart==0))
+        return WEBSCENE_DAWN_D3D12_DEVICE_INVALID_IDENTITY_V1;
+
+    webscene_dawn_d3d12_device_v1 value{};
+    value.struct_size=sizeof(value);
+    value.version=WEBSCENE_DAWN_D3D12_DEVICE_ABI_VERSION_V1;
+    value.adapter=dawn::native::ToAPI(base->GetAdapter());
+    value.device=token;
+    value.d3d12_device=native_device;
+    value.d3d12_direct_queue=queue.Get();
+    value.adapter_luid_low=luid.LowPart;
+    value.adapter_luid_high=luid.HighPart;
+    value.capabilities=WEBSCENE_DAWN_D3D12_REQUIRED_V1;
+    *result=value;
+    return WEBSCENE_DAWN_D3D12_DEVICE_SUCCESS_V1;
+}
+#endif

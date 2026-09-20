@@ -1100,6 +1100,29 @@
         binding_callback_timer binding_timer(self->profile(binding_category::dom_property));
         auto isolate = info.GetIsolate();
         auto* node = unwrap_node(info.Holder());
+        if (node != nullptr) {
+            const auto owner = self->node_document_roots.find(node->id);
+            auto* root = owner == self->node_document_roots.end()
+                ? nullptr : self->document.find_by_native_id(owner->second);
+            if (root != nullptr && self->detached_document_roots.contains(root->id)) {
+                info.GetReturnValue().Set(wrap_detached_document(
+                    *self,
+                    *root,
+                    isolate->GetCurrentContext(),
+                    "about:blank"));
+                return;
+            }
+            if (root != nullptr && root->parent != nullptr
+                && root->parent->tag == "iframe") {
+                auto* frame = root->parent;
+                const auto actual = self->actual_frame_documents.find(frame->id);
+                info.GetReturnValue().Set(
+                    actual != self->actual_frame_documents.end()
+                        ? actual->second.Get(isolate)
+                        : self->frame_document(*frame));
+                return;
+            }
+        }
         for (auto* ancestor = node; ancestor != nullptr; ancestor = ancestor->parent) {
             if (self->detached_document_roots.contains(ancestor->id)) {
                 info.GetReturnValue().Set(wrap_detached_document(
@@ -1976,6 +1999,33 @@
         return root == nullptr ? &active_root() : root;
     }
 
+    uint32_t document_root_id_for_node(const dom_node& node)
+    {
+        for (auto* current_node = &node; current_node != nullptr;
+             current_node = document.dom_parent(*current_node)) {
+            if (const auto known = node_document_roots.find(current_node->id);
+                known != node_document_roots.end()) {
+                return known->second;
+            }
+            if (detached_document_roots.contains(current_node->id)) {
+                return current_node->id;
+            }
+            if (current_node == &active_root()) return current_node->id;
+            if (const auto* parent = document.dom_parent(*current_node);
+                parent != nullptr && parent->tag == "iframe") {
+                return current_node->id;
+            }
+        }
+        return 0U;
+    }
+
+    void bind_node_to_document(dom_node& node, const dom_node& root)
+    {
+        visit_subtree(node, [&](dom_node& descendant) {
+            node_document_roots[descendant.id] = root.id;
+        });
+    }
+
     bool range_binding_is_live(const range_binding& binding) const
     {
         return !binding.released
@@ -1985,8 +2035,9 @@
             && document.find_by_native_id(binding.root_id) != nullptr;
     }
 
-    bool range_node_is_in_root(const dom_node& root, const dom_node& node) const
+    bool range_node_is_in_root(const dom_node& root, const dom_node& node)
     {
+        if (document_root_id_for_node(node) == root.id) return true;
         for (auto* current_node = &node; current_node != nullptr;
              current_node = document.dom_parent(*current_node)) {
             if (current_node == &root) return true;
@@ -2354,9 +2405,15 @@
     static void range_create_contextual_fragment(const v8::FunctionCallbackInfo<v8::Value>& info)
     {
         auto* self = current(info.GetIsolate());
+        auto* binding = self == nullptr ? nullptr : self->require_live_range(info);
+        if (binding == nullptr) return;
         const auto html = info.Length() > 0 ? to_utf8(info.GetIsolate(), info[0]) : std::string{};
         if (!html.empty() && !self->require_runtime_html()) return;
         auto& fragment_root = self->document.create_element("#fragment");
+        if (const auto* root = self->document.find_by_native_id(binding->root_id);
+            root != nullptr) {
+            self->bind_node_to_document(fragment_root, *root);
+        }
         self->parse_inner_html(fragment_root, html);
         // A contextual fragment is a real queryable DOM node. Reuse the native
         // node wrapper so querySelector(All), children and removeChild all have

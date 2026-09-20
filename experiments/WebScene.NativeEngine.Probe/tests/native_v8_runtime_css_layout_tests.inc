@@ -2203,6 +2203,30 @@ void test_live_range_boundary_contract(webscene_engine* engine)
             parsedRange.endContainer === parsedTarget,
             parsedRange.endOffset
           ];
+          // Monaco creates this resting node with document.createElement(),
+          // never connects it, and selects it from _detachRange() in finally.
+          const restingSpot = document.createElement('div');
+          const monacoRange = document.createRange();
+          monacoRange.selectNodeContents(restingSpot);
+          const detachedMainSelected = [
+            restingSpot.ownerDocument === document,
+            monacoRange.startContainer === restingSpot,
+            monacoRange.startOffset,
+            monacoRange.endContainer === restingSpot,
+            monacoRange.endOffset
+          ];
+          const parsedRestingSpot = parsed.createElement('div');
+          parsedRestingSpot.textContent = 'rest';
+          parsedRange.selectNodeContents(parsedRestingSpot);
+          const detachedParsedSelected = [
+            parsedRestingSpot.ownerDocument === parsed,
+            parsedRange.startContainer === parsedRestingSpot,
+            parsedRange.endContainer === parsedRestingSpot,
+            parsedRange.endOffset
+          ];
+          let detachedWrongDocument = '';
+          try { monacoRange.selectNodeContents(parsedRestingSpot); }
+          catch (error) { detachedWrongDocument = error.name; }
           const reuseStarted = performance.now();
           for (let cycle = 0; cycle < 10000; ++cycle) {
             parsedRange.setStart(parsedText, cycle % 4);
@@ -2214,13 +2238,14 @@ void test_live_range_boundary_contract(webscene_engine* engine)
           return {
             cross, marker, selected, collapsedForward, collapsedBackward,
             invalid, parsedBefore, wrongDocument, parsedAtomic, parsedSelected,
+            detachedMainSelected, detachedParsedSelected, detachedWrongDocument,
             reuseCycles: 10000,
             reuseWithinBudget: reuseDuration <= 2000
           };
         })()
     )JS", "native-live-range-boundaries.js");
     require(
-        result == R"({"cross":[true,true,1,true,3,true,false],"marker":[true,2,true,3],"selected":[0,5,false],"collapsedForward":true,"collapsedBackward":true,"invalid":"IndexSizeError","parsedBefore":[true,1,true,7],"wrongDocument":"WrongDocumentError","parsedAtomic":true,"parsedSelected":[true,0,true,1],"reuseCycles":10000,"reuseWithinBudget":true})",
+        result == R"({"cross":[true,true,1,true,3,true,false],"marker":[true,2,true,3],"selected":[0,5,false],"collapsedForward":true,"collapsedBackward":true,"invalid":"IndexSizeError","parsedBefore":[true,1,true,7],"wrongDocument":"WrongDocumentError","parsedAtomic":true,"parsedSelected":[true,0,true,1],"detachedMainSelected":[true,true,0,true,0],"detachedParsedSelected":[true,true,true,1],"detachedWrongDocument":"WrongDocumentError","reuseCycles":10000,"reuseWithinBudget":true})",
         "live Range boundary contract regressed: " + result);
     std::cout << "Range document-owner reuse gate: cycles=10000 durationMs="
               << evaluate(engine, "__rangeDocumentOwnerReuseDuration",

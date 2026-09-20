@@ -44,3 +44,17 @@ existing targeted highlight repaint behavior.
 Exact packaged Code OSS verification remains required after this focused PR is
 merged and the WebScene pin is advanced. That run owns the final zero-error
 Monaco trace and editor geometry comparison.
+
+## Exact-package follow-up
+
+The first exact package after #866 reached the extension-host Ready and
+Initialized states, but Monaco still raised `WrongDocumentError` when
+`_detachRange()` selected its `_textRangeRestingSpot`. That node is created by
+`document.createElement('div')` and deliberately never connected. WebScene had
+been treating connectivity to the document root as document ownership.
+
+Document factory calls now record the receiver document independently of the
+parent tree. Range validation follows that identity, so a never-connected node
+and its descendants remain valid endpoints while a node created by another
+Document still fails atomically. Detached-subtree collection and navigation
+clear the ownership records with the corresponding native nodes.

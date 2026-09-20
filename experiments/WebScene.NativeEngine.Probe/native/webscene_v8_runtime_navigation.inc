@@ -356,6 +356,7 @@
         next_adopted_stylesheet_owner_id = 0xf0000000U;
         detached_documents.clear();
         detached_document_roots.clear();
+        node_document_roots.clear();
         node_wrappers.clear();
         attr_wrappers.clear();
         attached_attributes.clear();

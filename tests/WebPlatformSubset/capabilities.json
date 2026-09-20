@@ -464,6 +464,14 @@
       "productEvidence": ["Code OSS EditContext text-area cursor", "Code OSS editor cursor theme color"],
       "coverage": ["contracts/css-caret-color.html", "test_native_text_input_focus_events_and_caret", "css-caret-color-performance"],
       "gap": "Issue #804 implements the caret-color slice used by unchanged Code OSS. The inherited token is stored only in sparse cold style state and drives the existing kind-14 retained caret command independently from text foreground, with no extra scene node. Direct browser/native execution, exact editor pixels, package regions, memory, lifecycle, and performance evidence remain qualification debt."
+    },
+    {
+      "family": "css-touch-action",
+      "required": ["touch-action CSSOM", "mouse/touch/pen identity", "stable pointer IDs", "frozen ancestor policy", "axis-qualified retained panning", "capture/cancel teardown"],
+      "candidate": ["unchanged Code OSS touch surfaces", "cross-RID native contact qualification"],
+      "productEvidence": ["52 declarations across 27 unchanged Code OSS files", "tabs/editors/split views/sliders/terminal/Chat interaction surfaces"],
+      "coverage": ["contracts/css-touch-action.html", "test_touch_action_pointer_device_and_pan", "css-touch-action-performance", "webscene_pointer_input_metadata_tests"],
+      "gap": "Issue #799 implements the unchanged Code OSS auto/none/manipulation/pan-x/pan-y slice with versioned AppScene #298 pointer metadata and fixed per-contact gesture state. Direct macOS/Windows/Linux contact hardware, exact product pixels, package regions, accessibility, memory, and full performance evidence remain qualification debt."
     }
   ]
 }

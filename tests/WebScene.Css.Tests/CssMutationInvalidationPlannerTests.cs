@@ -13,6 +13,7 @@ public sealed class CssMutationInvalidationPlannerTests
     [InlineData("flex-wrap:wrap", CssMutationInvalidationScope.Target | CssMutationInvalidationScope.Layout)]
     [InlineData("text-wrap:nowrap", CssMutationInvalidationScope.Target | CssMutationInvalidationScope.Descendants | CssMutationInvalidationScope.Layout)]
     [InlineData("caret-color:red", CssMutationInvalidationScope.Target | CssMutationInvalidationScope.Descendants)]
+    [InlineData("touch-action:none", CssMutationInvalidationScope.Target)]
     [InlineData("background:red", CssMutationInvalidationScope.Target)]
     [InlineData("broken", CssMutationInvalidationScope.Target)]
     public void InlineStylePlanClassifiesPortableScope(string style, CssMutationInvalidationScope expected)

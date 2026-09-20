@@ -727,7 +727,18 @@
     uint32_t persistent_writes_since_prune{0};
     uint64_t input_event_dispatch_count{0};
     uint64_t input_callback_invocation_count{0};
+    struct touch_pan_gesture final {
+        uint32_t horizontal_target_id{0U};
+        uint32_t vertical_target_id{0U};
+        double last_x{0};
+        double last_y{0};
+        bool active{false};
+    };
+    // Pointer IDs are ABI-bounded to 1..15. Fixed per-contact gesture state
+    // keeps panning and teardown free of allocation and hash scans.
+    std::array<touch_pan_gesture, 16U> touch_pan_gestures{};
     dom_node* pointer_capture_target{nullptr};
+    uint32_t pointer_capture_id{0U};
     dom_node* pointer_down_target{nullptr};
     uint32_t pointer_selection_root_id{0U};
     bool pointer_text_selection_active{false};

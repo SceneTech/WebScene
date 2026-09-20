@@ -723,7 +723,8 @@
     {
         if (canonical_property_name == "overscroll-behavior"
             || canonical_property_name == "overscroll-behavior-x"
-            || canonical_property_name == "overscroll-behavior-y") {
+            || canonical_property_name == "overscroll-behavior-y"
+            || canonical_property_name == "touch-action") {
             return;
         }
         // These properties affect painting or interaction, but never box
@@ -2104,7 +2105,16 @@
             });
         }
         if (nodes.contains(active_element)) active_element = nullptr;
-        if (nodes.contains(pointer_capture_target)) pointer_capture_target = nullptr;
+        if (nodes.contains(pointer_capture_target)) {
+            pointer_capture_target = nullptr;
+            pointer_capture_id = 0U;
+        }
+        for (auto& gesture : touch_pan_gestures) {
+            if (node_ids.contains(gesture.horizontal_target_id))
+                gesture.horizontal_target_id = 0U;
+            if (node_ids.contains(gesture.vertical_target_id))
+                gesture.vertical_target_id = 0U;
+        }
         if (nodes.contains(pointer_down_target)) pointer_down_target = nullptr;
         if (middle_paste_target_id != 0U
             && node_ids.contains(middle_paste_target_id)) {

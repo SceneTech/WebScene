@@ -66,40 +66,39 @@ class CssPropertyMetadataTests(unittest.TestCase):
 
     def test_catalog_preserves_known_ids_and_unifies_supported_names(self):
         catalog = GENERATOR.load_catalog(GENERATOR.DEFAULT_INPUT)
-        self.assertEqual(106, len(catalog.managed_known_properties))
+        self.assertEqual(119, len(catalog.managed_known_properties))
         self.assertEqual("align-content", catalog.managed_known_properties[0])
-        self.assertEqual("grid-template-areas", catalog.managed_known_properties[104])
+        self.assertEqual("touch-action", catalog.managed_known_properties[-1])
         self.assertEqual(
-            "fc4d77c515998b6df1f119ff7e09b0b82cc812744c34f1c44c6fd142067b1fb2",
+            "e7e0aed213f767dbc84f70ba35f9348c1ba705dd9363eeed634928364f8f36ee",
             hashlib.sha256("\n".join(
-                catalog.managed_known_properties[:105]).encode()).hexdigest(),
+                catalog.managed_known_properties).encode()).hexdigest(),
         )
-        self.assertEqual(["aspect-ratio"], catalog.managed_known_properties[105:])
-        self.assertEqual(239, len(GENERATOR.supported_names(catalog)))
+        self.assertEqual(257, len(GENERATOR.supported_names(catalog)))
         self.assertEqual(
-            "d259d18039fda1e0666700e232ca20a821a1118babebc37c4f4c5999eb15feff",
+            "fe13b91ddf2c8ab38f18445e6efe6084a576b9d4ac5d69b49076fa68cb2046d5",
             hashlib.sha256("\n".join(
                 GENERATOR.supported_names(catalog)).encode()).hexdigest(),
         )
-        self.assertEqual(147, len(catalog.native_property_ids))
+        self.assertEqual(160, len(catalog.native_property_ids))
         self.assertEqual(62, len(catalog.native_storage_only_properties))
         native_ids = [entry["id"] for entry in catalog.native_property_ids]
         self.assertEqual(
-            "b17b1cd0520ae5e36fd875ed8226b1818508bbe41be9a32540ef58a1b31da036",
-            hashlib.sha256("\n".join(native_ids[:146]).encode()).hexdigest(),
+            "c72e585041c378389948483a534bec02fd150ebadab9360773083d0d698dd824",
+            hashlib.sha256("\n".join(native_ids).encode()).hexdigest(),
         )
-        self.assertEqual(["aspect_ratio"], native_ids[146:])
+        self.assertEqual("touch_action", native_ids[-1])
         native_pairs = [
             f'{name}:{entry["id"]}'
             for entry in catalog.native_property_ids
             for name in GENERATOR.native_property_names(entry)
         ]
-        self.assertEqual(202, len(native_pairs))
+        self.assertEqual(235, len(native_pairs))
         self.assertEqual(
-            "10bc777d9724b11b8872131e36b8b6eb4b5ae53becdea23f3f1f3e71302bd7f3",
-            hashlib.sha256("\n".join(native_pairs[:201]).encode()).hexdigest(),
+            "80f3c32a9c29b64cfc893b0cef327512d07ffe968aad846ba801a4c64cd4090e",
+            hashlib.sha256("\n".join(native_pairs).encode()).hexdigest(),
         )
-        self.assertEqual(["aspect-ratio:aspect_ratio"], native_pairs[201:])
+        self.assertEqual("touchaction:touch_action", native_pairs[-1])
         self.assertEqual(
             "3f5f3616586fd121b580531538674b9002752a94d7c6d01610dc4c43125933c2",
             hashlib.sha256("\n".join(
@@ -116,24 +115,24 @@ class CssPropertyMetadataTests(unittest.TestCase):
         ]
         self.assertEqual(
             {
-                "keyword": 29,
-                "componentList": 15,
+                "keyword": 40,
+                "componentList": 16,
                 "length": 34,
                 "lengthList4": 5,
                 "lengthList2": 10,
                 "color": 9,
-                "complex": 43,
+                "complex": 44,
             },
             {family: len(ids) for family, ids in catalog.native_grammar_families.items()},
         )
         self.assertEqual(
-            "9087fb17d192ba0eb6848adcfbc46c9b88eed9903e1619d9684de53ea90ce724",
+            "f2fde1b185ddac76bb95618bcede6220beb93614aa62268a866500e92991a666",
             hashlib.sha256("\n".join(grammar_rows).encode()).hexdigest(),
         )
-        self.assertEqual(20, len(catalog.native_inherited_properties))
-        self.assertEqual(25, len(catalog.native_maskless_property_ids))
+        self.assertEqual(24, len(catalog.native_inherited_properties))
+        self.assertEqual(38, len(catalog.native_maskless_property_ids))
         self.assertEqual(
-            "23bd3c8d7cd6527e45f5ed7f972c4f65504ae4b16e3054e2fb637526822551ed",
+            "36e7c460403184a993e4011932282a264d6a32b8144f91ac1c77f844e0210a35",
             hashlib.sha256("\n".join(
                 catalog.native_maskless_property_ids).encode()).hexdigest(),
         )
@@ -141,7 +140,7 @@ class CssPropertyMetadataTests(unittest.TestCase):
         self.assertEqual("MozTransform", GENERATOR.css_idl_name("-moz-transform"))
         self.assertEqual("cssFloat", GENERATOR.css_idl_name("float"))
         self.assertIn(
-            "cssom_style_template_property_accessor_count = 435U",
+            "cssom_style_template_property_accessor_count = 470U",
             GENERATOR.generate_native_supported(catalog),
         )
 

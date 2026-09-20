@@ -290,6 +290,8 @@
         canvas_states.clear();
 
         pointer_capture_target = nullptr;
+        pointer_capture_id = 0U;
+        touch_pan_gestures = {};
         pointer_down_target = nullptr;
         middle_paste_target_id = 0U;
         active_pointer_target = nullptr;

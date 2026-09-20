@@ -166,6 +166,15 @@ enum class overscroll_behavior : uint8_t {
     none
 };
 
+enum class touch_action : uint8_t {
+    automatic,
+    none,
+    manipulation,
+    pan_x,
+    pan_y,
+    pan_x_y
+};
+
 enum class float_mode : uint8_t {
     none,
     left,
@@ -812,6 +821,9 @@ struct node_style final {
         // walks exhausted scroll containers, so keep both axes in cold style.
         overscroll_behavior overscroll_x{overscroll_behavior::automatic};
         overscroll_behavior overscroll_y{overscroll_behavior::automatic};
+        // Native gesture admission is consulted only for active touch/pen
+        // contacts, so keep the non-inherited policy in cold style storage.
+        touch_action touch_action_value{touch_action::automatic};
         std::string contain_value;
         std::string container_type{"normal"};
         std::string container_name{"none"};

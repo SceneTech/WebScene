@@ -846,22 +846,42 @@
     {
         auto* self = current(info.GetIsolate());
         auto* node = unwrap_node(info.This());
-        if (node != nullptr) self->pointer_capture_target = node;
+        const auto pointer_id = info.Length() > 0
+            ? info[0]->Uint32Value(info.GetIsolate()->GetCurrentContext())
+                .FromMaybe(0U)
+            : 0U;
+        if (node != nullptr && pointer_id > 0U && pointer_id <= 15U) {
+            self->pointer_capture_target = node;
+            self->pointer_capture_id = pointer_id;
+        }
     }
 
     static void release_pointer_capture(const v8::FunctionCallbackInfo<v8::Value>& info)
     {
         auto* self = current(info.GetIsolate());
         auto* node = unwrap_node(info.This());
-        if (self->pointer_capture_target == node) self->pointer_capture_target = nullptr;
+        const auto pointer_id = info.Length() > 0
+            ? info[0]->Uint32Value(info.GetIsolate()->GetCurrentContext())
+                .FromMaybe(0U)
+            : 0U;
+        if (self->pointer_capture_target == node
+            && self->pointer_capture_id == pointer_id) {
+            self->pointer_capture_target = nullptr;
+            self->pointer_capture_id = 0U;
+        }
     }
 
     static void has_pointer_capture(const v8::FunctionCallbackInfo<v8::Value>& info)
     {
         auto* self = current(info.GetIsolate());
         auto* node = unwrap_node(info.This());
+        const auto pointer_id = info.Length() > 0
+            ? info[0]->Uint32Value(info.GetIsolate()->GetCurrentContext())
+                .FromMaybe(0U)
+            : 0U;
         info.GetReturnValue().Set(
             self->pointer_capture_target == node
+                && self->pointer_capture_id == pointer_id
                 ? v8::True(info.GetIsolate())
                 : v8::False(info.GetIsolate()));
     }

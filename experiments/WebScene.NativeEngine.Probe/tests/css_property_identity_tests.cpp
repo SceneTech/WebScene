@@ -106,10 +106,11 @@ int main()
     static_assert(static_cast<uint16_t>(css_property_id::will_change) == 154U);
     static_assert(static_cast<uint16_t>(css_property_id::text_wrap) == 155U);
     static_assert(static_cast<uint16_t>(css_property_id::caret_color) == 156U);
-    static_assert(native_typed_property_identity_catalog.size() == 233U);
+    static_assert(static_cast<uint16_t>(css_property_id::touch_action) == 159U);
+    static_assert(native_typed_property_identity_catalog.size() == 235U);
     static_assert(native_storage_only_property_catalog.size() == 62U);
-    static_assert(cssom_supported_property_catalog.size() == 256U);
-    static_assert(cssom_style_template_property_accessor_count == 468U);
+    static_assert(cssom_supported_property_catalog.size() == 257U);
+    static_assert(cssom_style_template_property_accessor_count == 470U);
 
     for (const auto& entry : native_typed_property_identity_catalog) {
         require(property_id(entry.name) == entry.id, "typed name maps to its generated id", entry.name);
@@ -152,7 +153,7 @@ int main()
             && !variable_collection_contains(indexed_variables, std::string{"--missing"}),
         "variable membership supports ordered and indexed containers");
 
-    std::array<bool, static_cast<size_t>(css_property_id::caret_color) + 1U>
+    std::array<bool, static_cast<size_t>(css_property_id::touch_action) + 1U>
         audited_mask_ids{};
     for (const auto& entry : native_typed_property_identity_catalog) {
         const auto index = static_cast<size_t>(entry.id);
@@ -171,6 +172,7 @@ int main()
             && generated_property_inherits_by_default("caret-color")
             && generated_property_inherits_by_default("-webkit-font-smoothing")
             && !generated_property_inherits_by_default("display")
+            && !generated_property_inherits_by_default("touch-action")
             && !generated_property_inherits_by_default("width"),
         "generated inheritance lookup preserves inherited and non-inherited sentinels");
     for (const auto& entry : effective_property_metadata_catalog) {
@@ -208,8 +210,8 @@ int main()
             "generated simple grammar dispatch agrees with specified-value implementation");
     }
 #if !defined(WEBSCENE_TEST_LEGACY_SPECIFIED_VALUE)
-    static_assert(specified_property_samples.size() == 148U);
-    std::array<bool, 146U> sampled{};
+    static_assert(specified_property_samples.size() == 161U);
+    std::array<bool, static_cast<size_t>(css_property_id::touch_action) + 1U> sampled{};
     for (const auto& sample : specified_property_samples) {
         const auto property = property_id(sample.name);
         const auto index = static_cast<size_t>(property);

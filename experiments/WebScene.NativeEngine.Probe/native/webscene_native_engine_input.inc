@@ -24,6 +24,7 @@
         case WEBSCENE_INPUT_POINTER_DOWN:
         case WEBSCENE_INPUT_POINTER_UP:
         case WEBSCENE_INPUT_POINTER_LEAVE:
+        case WEBSCENE_INPUT_POINTER_CANCEL:
             pointer_x_ = event.x;
             pointer_y_ = event.y;
 #if defined(WEBSCENE_NATIVE_ENGINE_WITH_V8)

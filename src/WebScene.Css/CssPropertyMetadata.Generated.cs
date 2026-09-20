@@ -123,6 +123,7 @@ internal static class CssGeneratedPropertyMetadata
         "will-change",
         "text-wrap",
         "caret-color",
+        "touch-action",
     ];
 
     internal static readonly string[] SupportedNames =
@@ -361,6 +362,7 @@ internal static class CssGeneratedPropertyMetadata
         "text-transform",
         "text-wrap",
         "top",
+        "touch-action",
         "transform",
         "transform-origin",
         "transition",
@@ -507,6 +509,7 @@ internal static class CssGeneratedPropertyMetadata
             "will-change" => 115,
             "text-wrap" => 116,
             "caret-color" => 117,
+            "touch-action" => 118,
             _ => -1,
         };
         return id >= 0;

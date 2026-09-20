@@ -239,6 +239,7 @@ inline constexpr std::array cssom_supported_property_catalog{
     cssom_supported_property_metadata{"text-transform", "textTransform"},
     cssom_supported_property_metadata{"text-wrap", "textWrap"},
     cssom_supported_property_metadata{"top", "top"},
+    cssom_supported_property_metadata{"touch-action", "touchAction"},
     cssom_supported_property_metadata{"transform", "transform"},
     cssom_supported_property_metadata{"transform-origin", "transformOrigin"},
     cssom_supported_property_metadata{"transition", "transition"},
@@ -263,4 +264,4 @@ inline constexpr std::array cssom_supported_property_catalog{
     cssom_supported_property_metadata{"zoom", "zoom"},
 };
 
-inline constexpr auto cssom_style_template_property_accessor_count = 468U;
+inline constexpr auto cssom_style_template_property_accessor_count = 470U;

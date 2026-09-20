@@ -2871,6 +2871,13 @@
       "capabilities": ["caret-color-cssom", "inherited-caret-color", "currentcolor-caret", "retained-caret-paint"],
       "evidence": ["focused-native-scene-contract-authored", "direct-chromium-contract-authored", "unchanged-code-oss-645f29c-inventory"],
       "reason": "Implementation-first WebScene #804 contract for the unchanged Code OSS EditContext caret color. It covers inheritance, auto/currentColor, computed CSSOM, mutation/removal, and a distinct retained caret scene color without adding a second caret node. Direct browser/native execution, exact editor pixels, package regions, accessibility, performance, memory, and lifecycle evidence remain qualification debt."
+    },
+    {
+      "path": "contracts/css-touch-action.html",
+      "type": "testharness",
+      "capabilities": ["touch-action-cssom", "non-inherited-touch-policy", "axis-policy", "mutation-removal"],
+      "evidence": ["focused-native-input-contract-authored", "direct-chromium-contract-authored", "unchanged-code-oss-645f29c-inventory"],
+      "reason": "Implementation-first WebScene #799 contract for 52 touch-action declarations across 27 unchanged Code OSS files. Native contracts cover versioned mouse/touch/pen identity, stable pointer IDs, frozen gesture policy, axis panning, capture, cancellation, and bounded fixed storage. Direct hardware, exact product pixels, package regions, accessibility, memory, and full performance evidence remain qualification debt."
     }
   ],
   "harnessBlocked": [],

@@ -302,6 +302,10 @@
                     textual->overscroll_y = overscroll_behavior::automatic;
                 }
             }
+        } else if (name == "touchAction" || name == "touch-action") {
+            if (auto* textual = node.style.mutable_textual_if_present()) {
+                textual->touch_action_value = touch_action::automatic;
+            }
         } else if (name == "isolation") {
             node.style.isolation_stacking_context = false;
         } else if (name == "willChange" || name == "will-change") {
@@ -1032,6 +1036,12 @@
                 std::string semantic_slice;
             } decision;
             css::apply_overscroll_behavior_value(*node, name, value, decision);
+        } else if (name == "touch-action") {
+            struct interaction_decision final {
+                std::string classification{"supported"};
+                std::string semantic_slice;
+            } decision;
+            css::apply_touch_action_value(*node, name, value, decision);
         } else if (name == "isolation") {
             struct interaction_decision final {
                 std::string classification{"supported"};
@@ -1681,6 +1691,9 @@
             } else if (name == "overscroll-behavior-y") {
                 value = css::serialize_overscroll_behavior(
                     node->style.textual().overscroll_y);
+            } else if (name == "touch-action") {
+                value = css::serialize_touch_action(
+                    node->style.textual().touch_action_value);
             } else if (name == "isolation") {
                 value = node->style.isolation_stacking_context ? "isolate" : "auto";
             } else if (name == "will-change") {
@@ -2171,6 +2184,9 @@
         } else if (name == "overscrollBehaviorY") {
             value = css::serialize_overscroll_behavior(
                 node->style.textual().overscroll_y);
+        } else if (name == "touchAction") {
+            value = css::serialize_touch_action(
+                node->style.textual().touch_action_value);
         } else if (name == "isolation") {
             value = node->style.isolation_stacking_context ? "isolate" : "auto";
         } else if (name == "willChange") {
@@ -2787,6 +2803,13 @@
                     ? std::string{"overscroll-behavior-x"}
                     : std::string{"overscroll-behavior-y"};
             css::apply_overscroll_behavior_value(*node, property, value, decision);
+        } else if (name == "touchAction") {
+            struct interaction_decision final {
+                std::string classification{"supported"};
+                std::string semantic_slice;
+            } decision;
+            css::apply_touch_action_value(
+                *node, std::string{"touch-action"}, value, decision);
         } else if (name == "isolation") {
             struct interaction_decision final {
                 std::string classification{"supported"};

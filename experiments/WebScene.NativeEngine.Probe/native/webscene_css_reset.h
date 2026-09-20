@@ -251,6 +251,10 @@ inline void apply_all_unset(
     if (has_inline({"overscroll-behavior", "overscroll-behavior-y"})) {
         reset.mutable_textual().overscroll_y = previous.textual().overscroll_y;
     }
+    if (has_inline({"touch-action"})) {
+        reset.mutable_textual().touch_action_value =
+            previous.textual().touch_action_value;
+    }
     if (has_inline({"isolation"})) {
         reset.isolation_stacking_context = previous.isolation_stacking_context;
     }

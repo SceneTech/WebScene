@@ -260,6 +260,7 @@ void apply_resolved_declaration(native_document& document,dom_node& node,
         } else if (css::apply_replaced_value(node,name,value,decision)) {
         } else if (css::apply_user_select_value(node,name,value,decision)) {
         } else if (css::apply_overscroll_behavior_value(node,name,value,decision)) {
+        } else if (css::apply_touch_action_value(node,name,value,decision)) {
         } else if (css::apply_isolation_value(node,name,value,decision)) {
         } else if (css::apply_will_change_value(node,name,value,decision)) {
         } else if (css::apply_text_value(node,name,value,decision,is_inline)) {

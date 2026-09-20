@@ -163,6 +163,7 @@
         fullscreen_element = nullptr;
         document_fullscreen = false;
         { std::lock_guard lock(host_request_mutex); host_requests.clear(); }
+        cancel_pending_terminal_host_requests();
         {
             std::lock_guard lock(host_request_mutex);
             typed_host_requests.clear();

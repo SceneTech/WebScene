@@ -104,7 +104,7 @@
         // to create fresh timers, transports, workers, promises, and object
         // URLs; collecting and stopping subsystems must therefore happen only
         // after the old tree has finished disconnecting.
-        detach_all_children(document.body());
+        detach_all_children(document.body(), false);
 
         // Stop context-bound work before dropping persistent handles. Native
         // completions may still arrive, but their missing IDs/bindings make

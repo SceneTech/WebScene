@@ -50,10 +50,39 @@ endif()
 
 get_filename_component(_webscene_prefix "${CMAKE_CURRENT_LIST_DIR}/../../.." ABSOLUTE)
 get_filename_component(_webscene_package_root "${_webscene_prefix}/../.." ABSOLUTE)
+set(_webscene_runtime_directories
+  "${_webscene_prefix}/bin"
+  "${_webscene_package_root}/runtimes/${WebScene_PACKAGE_RID}/native")
+set(_webscene_complete_runtime_directories)
+foreach(_webscene_runtime_candidate IN LISTS _webscene_runtime_directories)
+  set(_webscene_candidate_library
+    "${_webscene_runtime_candidate}/webscene_native_engine.dll")
+  set(_webscene_candidate_manifest
+    "${_webscene_runtime_candidate}/webscene-native-runtime.json")
+  if(EXISTS "${_webscene_candidate_library}"
+      AND EXISTS "${_webscene_candidate_manifest}")
+    list(APPEND _webscene_complete_runtime_directories
+      "${_webscene_runtime_candidate}")
+  elseif(EXISTS "${_webscene_candidate_library}"
+      OR EXISTS "${_webscene_candidate_manifest}")
+    message(FATAL_ERROR
+      "The WebScene Windows C/C++ Runtime layout is incomplete at "
+      "${_webscene_runtime_candidate}; the DLL and manifest must move together.")
+  endif()
+endforeach()
+list(LENGTH _webscene_complete_runtime_directories
+  _webscene_complete_runtime_directory_count)
+if(NOT _webscene_complete_runtime_directory_count EQUAL 1)
+  message(FATAL_ERROR
+    "The WebScene Windows C/C++ package must contain exactly one complete "
+    "Runtime layout (flattened installed SDK or NuGet); found "
+    "${_webscene_complete_runtime_directory_count}.")
+endif()
+list(GET _webscene_complete_runtime_directories 0 _webscene_runtime_directory)
 set(_webscene_runtime
-  "${_webscene_package_root}/runtimes/${WebScene_PACKAGE_RID}/native/webscene_native_engine.dll")
+  "${_webscene_runtime_directory}/webscene_native_engine.dll")
 set(_webscene_manifest
-  "${_webscene_package_root}/runtimes/${WebScene_PACKAGE_RID}/native/webscene-native-runtime.json")
+  "${_webscene_runtime_directory}/webscene-native-runtime.json")
 set(_webscene_implib "${_webscene_prefix}/lib/webscene_native_engine.lib")
 set(_webscene_header "${_webscene_prefix}/include/webscene_native_engine.h")
 foreach(_webscene_required IN ITEMS
@@ -113,8 +142,12 @@ set_target_properties(WebScene::Runtime PROPERTIES
   INTERFACE_INCLUDE_DIRECTORIES "${_webscene_prefix}/include")
 
 set(WebScene_SDK_ROOT "${_webscene_prefix}")
-set(WebScene_RUNTIME_DIRECTORY
-  "${_webscene_package_root}/runtimes/${WebScene_PACKAGE_RID}/native")
+set(WebScene_RUNTIME_DIRECTORY "${_webscene_runtime_directory}")
+if(_webscene_runtime_directory STREQUAL "${_webscene_prefix}/bin")
+  set(WebScene_RUNTIME_LAYOUT "installed-sdk")
+else()
+  set(WebScene_RUNTIME_LAYOUT "nuget")
+endif()
 set(WebScene_RUNTIME_RID "${WebScene_PACKAGE_RID}")
 set(WebScene_RUNTIME_ARCHITECTURE "${WebScene_PACKAGE_ARCHITECTURE}")
 set(WebScene_RUNTIME_ABI_VERSION "${WebScene_PACKAGE_ABI_VERSION}")
@@ -140,4 +173,11 @@ unset(_webscene_package_root)
 unset(_webscene_prefix)
 unset(_webscene_required)
 unset(_webscene_runtime)
+unset(_webscene_runtime_candidate)
+unset(_webscene_runtime_directories)
+unset(_webscene_runtime_directory)
+unset(_webscene_complete_runtime_directories)
+unset(_webscene_complete_runtime_directory_count)
+unset(_webscene_candidate_library)
+unset(_webscene_candidate_manifest)
 unset(_webscene_runtime_sha256)

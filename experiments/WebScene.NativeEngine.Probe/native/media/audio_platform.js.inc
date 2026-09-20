@@ -95,7 +95,8 @@ class MediaDevices extends EventTarget {
  async enumerateDevices(){
   const response=await native('enumerateDevices');
   const malformed=()=>new DOMException('The native media-device response is invalid','DataError');
-  if(!response||response.type!=='application/vnd.webscene.media-devices+json'||!(response.bytes instanceof Uint8Array)||response.bytes.byteLength>262144)throw malformed();
+)AUDIOJS"
+R"AUDIOJS(  if(!response||response.type!=='application/vnd.webscene.media-devices+json'||!(response.bytes instanceof Uint8Array)||response.bytes.byteLength>262144)throw malformed();
   let payload;try{payload=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(response.bytes));}catch{throw malformed();}
   if(!payload||payload.version!==1||!Array.isArray(payload.devices)||payload.devices.length>64)throw malformed();
   const ids=new Set(),records=[];

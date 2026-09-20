@@ -721,6 +721,7 @@ int main(int argc,char** argv) {
         {".base::-webkit-scrollbar",3},{".base::-webkit-scrollbar-thumb",4},
         {".base::-webkit-scrollbar-track",5},{".base::-webkit-scrollbar-corner",6},
         {".base::backdrop",7},{".base::placeholder",8},
+        {".base::-webkit-input-placeholder",8},{".base::-moz-placeholder",8},
         {".base::details-content",9},
         {".base[data-label='::before']",0}
     };

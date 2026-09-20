@@ -28,6 +28,12 @@ inline int split_pseudo_element_selector(const std::string& selector, std::strin
         };
         if (const auto kind = split_suffix("::before", 1); kind != 0) return kind;
         if (const auto kind = split_suffix("::after", 2); kind != 0) return kind;
+        // Preserve the legacy aliases still authored by unchanged desktop web
+        // applications. They intentionally share the standard placeholder
+        // kind so cascade, invalidation, retained state and paint stay on one
+        // implementation path.
+        if (const auto kind = split_suffix("::-webkit-input-placeholder", 8); kind != 0) return kind;
+        if (const auto kind = split_suffix("::-moz-placeholder", 8); kind != 0) return kind;
         if (const auto kind = split_suffix("::placeholder", 8); kind != 0) return kind;
         if (const auto kind = split_suffix("::details-content", 9); kind != 0) return kind;
         if (const auto kind = split_suffix("::backdrop", 7); kind != 0) return kind;

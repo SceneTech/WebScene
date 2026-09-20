@@ -59,6 +59,10 @@ class MediaStreamAudioDestinationNode extends AudioNode {
  constructor(context){super(context,4,undefined,nodeToken);this.stream=new MediaStream([new MediaStreamTrack(trackToken,native('capture',ctx(context).id,nodes.get(this).id))]);}
  get numberOfOutputs(){return 0;}
 }
+class MediaStreamAudioSourceNode extends AudioNode {
+ constructor(context,options){if(!(options?.mediaStream instanceof MediaStream))throw new TypeError('MediaStream required');const track=options.mediaStream.getAudioTracks().slice().sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0)[0];if(!track||track.readyState==='ended')throw invalid('MediaStream has no live audio track');super(context,5,undefined,nodeToken);this.mediaStream=options.mediaStream;native('trackSource',ctx(context).id,nodes.get(this).id,track);}
+ get numberOfInputs(){return 0;}
+}
 const mediaDeviceToken={};
 class MediaDeviceInfo {
  constructor(token,record){if(token!==mediaDeviceToken)throw new TypeError('Illegal constructor');Object.defineProperties(this,{deviceId:{value:record.deviceId,enumerable:true},kind:{value:record.kind,enumerable:true},label:{value:record.label,enumerable:true},groupId:{value:record.groupId,enumerable:true}});}
@@ -121,11 +125,12 @@ class AudioContext extends EventTarget {
  async close(){const c=ctx(this);c.closedTime=this.currentTime;native('close',c.id);c.state='closed';this.dispatchEvent(new Event('statechange'));}
  createGain(){return new GainNode(this);}createAnalyser(){return new AnalyserNode(this);}
  createMediaElementSource(element){return new MediaElementAudioSourceNode(this,{mediaElement:element});}
+ createMediaStreamSource(stream){return new MediaStreamAudioSourceNode(this,{mediaStream:stream});}
  createMediaStreamDestination(){return new MediaStreamAudioDestinationNode(this);}
  createBuffer(channels,length,rate){return new AudioBuffer({numberOfChannels:channels,length,sampleRate:rate});}
  decodeAudioData(data,success,error){ctx(this);let pending;try{pending=native('decode',data,this.sampleRate);}catch(e){pending=Promise.reject(e);}const promise=pending.catch(error=>{if(error instanceof TypeError)throw error;throw new DOMException(error.message,'EncodingError');}).then(result=>{const buffer=Object.create(AudioBuffer.prototype);buffers.set(buffer,{channels:result.channels,rate:result.sampleRate,length:result.channels[0].length});return buffer;});if(typeof success==='function'||typeof error==='function')promise.then(success,error);return promise;}
 }
-for(const ctor of [AudioContext,AudioBuffer,AudioNode,AudioParam,GainNode,AnalyserNode,MediaElementAudioSourceNode,MediaStreamAudioDestinationNode,MediaStream,MediaStreamTrack,MediaDeviceInfo,InputDeviceInfo,MediaDevices])Object.defineProperty(ctor.prototype,Symbol.toStringTag,{value:ctor.name,configurable:true});
-Object.assign(globalThis,{AudioContext,AudioBuffer,AudioNode,AudioParam,GainNode,AnalyserNode,MediaElementAudioSourceNode,MediaStreamAudioDestinationNode,MediaStream,MediaStreamTrack,MediaDeviceInfo,InputDeviceInfo,MediaDevices});
+for(const ctor of [AudioContext,AudioBuffer,AudioNode,AudioParam,GainNode,AnalyserNode,MediaElementAudioSourceNode,MediaStreamAudioDestinationNode,MediaStreamAudioSourceNode,MediaStream,MediaStreamTrack,MediaDeviceInfo,InputDeviceInfo,MediaDevices])Object.defineProperty(ctor.prototype,Symbol.toStringTag,{value:ctor.name,configurable:true});
+Object.assign(globalThis,{AudioContext,AudioBuffer,AudioNode,AudioParam,GainNode,AnalyserNode,MediaElementAudioSourceNode,MediaStreamAudioDestinationNode,MediaStreamAudioSourceNode,MediaStream,MediaStreamTrack,MediaDeviceInfo,InputDeviceInfo,MediaDevices});
 })();
 )AUDIOJS"

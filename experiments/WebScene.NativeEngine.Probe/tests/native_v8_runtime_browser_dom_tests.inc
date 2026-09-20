@@ -5863,11 +5863,18 @@ void test_media_capture_track_host_handoff()
         },video:false}).then(stream => {
           globalThis.__captureStream = stream;
           globalThis.__captureTrack = stream.getAudioTracks()[0];
+          globalThis.__captureContext = new AudioContext({sampleRate:48000});
+          globalThis.__captureSource = __captureContext.createMediaStreamSource(stream);
+          globalThis.__captureAnalyser = __captureContext.createAnalyser();
+          __captureSource.connect(__captureAnalyser);
           __mediaCaptureState = JSON.stringify({
             stream:Object.prototype.toString.call(stream),
             track:Object.prototype.toString.call(__captureTrack),
             label:__captureTrack.label,settings:__captureTrack.getSettings(),
-            ready:__captureTrack.readyState,muted:__captureTrack.muted
+            ready:__captureTrack.readyState,muted:__captureTrack.muted,
+            source:Object.prototype.toString.call(__captureSource),
+            sourceInputs:__captureSource.numberOfInputs,
+            sourceOutputs:__captureSource.numberOfOutputs
           });
         }, error => { __mediaCaptureState = error.name; });
     )JS", "native-media-capture-open.js");
@@ -5895,7 +5902,11 @@ void test_media_capture_track_host_handoff()
                 && result.find(R"(\"label\":\"Desk Mic\")") != std::string::npos
                 && result.find(R"(\"sampleRate\":48000)") != std::string::npos
                 && result.find(R"(\"channelCount\":1)") != std::string::npos
-                && result.find(R"(\"ready\":\"live\")") != std::string::npos,
+                && result.find(R"(\"ready\":\"live\")") != std::string::npos
+                && result.find(R"(\"source\":\"[object MediaStreamAudioSourceNode]\")")
+                    != std::string::npos
+                && result.find(R"(\"sourceInputs\":0)") != std::string::npos
+                && result.find(R"(\"sourceOutputs\":1)") != std::string::npos,
         "media-capture track shape was inconsistent: " + result);
 
     const float samples[] = {0.25F, -0.25F, 0.5F, -0.5F};
@@ -5994,6 +6005,8 @@ void test_media_capture_track_host_handoff()
     require(evaluate(engine, "__badCaptureState",
                 "native-media-capture-malformed-result.js") == R"("DataError")",
         "malformed capture descriptor did not fail closed");
+    execute(engine, "__captureContext.close();",
+        "native-media-capture-context-close.js");
     webscene_engine_destroy(engine);
 }
 

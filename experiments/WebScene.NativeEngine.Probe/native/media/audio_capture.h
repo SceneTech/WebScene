@@ -19,6 +19,7 @@ class audio_capture {
     std::array<frame, capacity> data_{};
     std::atomic<uint64_t> end_{};
     std::atomic<bool> ended_{};
+    std::atomic<bool> muted_{};
     uint32_t rate_;
 
   public:
@@ -31,6 +32,8 @@ class audio_capture {
     uint64_t end_frame() const noexcept { return end_.load(std::memory_order_acquire); }
     bool ended() const noexcept { return ended_.load(std::memory_order_acquire); }
     void end() noexcept { ended_.store(true, std::memory_order_release); }
+    void set_muted(bool value) noexcept { muted_.store(value, std::memory_order_release); }
+    bool muted() const noexcept { return muted_.load(std::memory_order_acquire); }
     void write(std::span<const float> stereo) noexcept {
         auto end = end_.load(std::memory_order_relaxed);
         for (size_t i = 0; i < stereo.size() / 2; ++i) {
@@ -79,6 +82,8 @@ class audio_capture {
             stereo[out.frames * 2 + 1] = right;
         }
         cursor += out.frames;
+        if (muted())
+            std::fill_n(stereo.begin(), out.frames * 2, 0.f);
         return out;
     }
 };
@@ -102,14 +107,22 @@ class audio_track {
     }
     void stop() noexcept { stopped_ = true; }
     bool ended() const noexcept { return stopped_.load() || source_->ended(); }
+    bool silent() const noexcept {
+        return ended() || source_->muted() || !enabled.load();
+    }
     uint32_t sample_rate() const noexcept { return source_->sample_rate(); }
-    audio_capture::result read(std::span<float> stereo) noexcept {
+    uint64_t reader_cursor() const noexcept { return source_->end_frame(); }
+    audio_capture::result read_at(uint64_t& cursor,
+                                  std::span<float> stereo) const noexcept {
         if (stopped_)
-            return {cursor_, 0, 0, true};
-        auto result = source_->read(cursor_, stereo);
+            return {cursor, 0, 0, true};
+        auto result = source_->read(cursor, stereo);
         if (!enabled)
             std::fill_n(stereo.begin(), result.frames * 2, 0.f);
         return result;
+    }
+    audio_capture::result read(std::span<float> stereo) noexcept {
+        return read_at(cursor_, stereo);
     }
 };
 } // namespace webscene::media

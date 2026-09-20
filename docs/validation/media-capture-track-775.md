@@ -47,7 +47,7 @@ format drift, packet replays, and queue pressure return explicit status codes.
   realtime-safe bounded transport before this serialized consumer API.
 
 These gates are authored but were not executed under the active rapid-integration
-directive. Evidence remains zero. #776 must connect microphone tracks to
+directive. Evidence remains zero. #776 connects microphone tracks to
 `MediaStreamAudioSourceNode`; #777 must supply the Code OSS AudioWorklet PCM path.
 AppScene #294 and #295 must add Windows and Linux providers. Physical-device,
 installed Code OSS Chat, long-duration memory/CPU, denial, device-loss, and

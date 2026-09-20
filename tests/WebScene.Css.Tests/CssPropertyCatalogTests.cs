@@ -55,6 +55,9 @@ public sealed class CssPropertyCatalogTests
     [InlineData("object-position")]
     [InlineData("userSelect")]
     [InlineData("webkitUserSelect")]
+    [InlineData("overscrollBehavior")]
+    [InlineData("overscrollBehaviorX")]
+    [InlineData("overscrollBehaviorY")]
     public void ExposesSupportedCssomProperties(string name)
         => Assert.True(CssPropertyCatalog.IsSupported(name));
 
@@ -115,6 +118,10 @@ public sealed class CssPropertyCatalogTests
     [InlineData("user-select", "none", true)]
     [InlineData("-webkit-user-select", "text", true)]
     [InlineData("user-select", "toggle", false)]
+    [InlineData("overscroll-behavior", "contain none", true)]
+    [InlineData("overscroll-behavior-x", "contain", true)]
+    [InlineData("overscroll-behavior", "contain auto none", false)]
+    [InlineData("overscroll-behavior-y", "bounce", false)]
     public void ValidatesCssomValuesWithoutFrameworkKnowledge(string name, string value, bool expected)
         => Assert.Equal(expected, CssPropertyCatalog.IsValidCssomValue(name, value));
 }

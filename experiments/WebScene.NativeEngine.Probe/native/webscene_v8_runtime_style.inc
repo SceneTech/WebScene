@@ -265,6 +265,20 @@
             if (auto* textual = node.style.mutable_textual_if_present()) {
                 textual->user_select.clear();
             }
+        } else if (name == "overscrollBehavior" || name == "overscroll-behavior"
+            || name == "overscrollBehaviorX" || name == "overscroll-behavior-x"
+            || name == "overscrollBehaviorY" || name == "overscroll-behavior-y") {
+            if (auto* textual = node.style.mutable_textual_if_present()) {
+                if (name == "overscrollBehavior" || name == "overscroll-behavior") {
+                    textual->overscroll_x = overscroll_behavior::automatic;
+                    textual->overscroll_y = overscroll_behavior::automatic;
+                } else if (name == "overscrollBehaviorX"
+                    || name == "overscroll-behavior-x") {
+                    textual->overscroll_x = overscroll_behavior::automatic;
+                } else {
+                    textual->overscroll_y = overscroll_behavior::automatic;
+                }
+            }
         } else if (name == "boxSizing" || name == "box-sizing") {
             node.style.border_box = false;
             node.style.inline_property_mask &= ~inline_box_sizing;
@@ -971,6 +985,14 @@
                 std::string semantic_slice;
             } decision;
             css::apply_user_select_value(*node, name, value, decision);
+        } else if (name == "overscroll-behavior"
+            || name == "overscroll-behavior-x"
+            || name == "overscroll-behavior-y") {
+            struct interaction_decision final {
+                std::string classification{"supported"};
+                std::string semantic_slice;
+            } decision;
+            css::apply_overscroll_behavior_value(*node, name, value, decision);
         } else if (name == "box-sizing") {
             node->style.border_box = value == "border-box";
             node->style.inline_property_mask |= inline_box_sizing;
@@ -1582,6 +1604,14 @@
             } else if (name == "user-select") {
                 value = node->style.textual().user_select.empty()
                     ? "auto" : node->style.textual().user_select;
+            } else if (name == "overscroll-behavior") {
+                value = css::serialize_overscroll_shorthand(node->style);
+            } else if (name == "overscroll-behavior-x") {
+                value = css::serialize_overscroll_behavior(
+                    node->style.textual().overscroll_x);
+            } else if (name == "overscroll-behavior-y") {
+                value = css::serialize_overscroll_behavior(
+                    node->style.textual().overscroll_y);
             } else if (name == "cursor") {
                 value = resolved_cursor(*node);
             } else if (name == "font-size") {
@@ -2050,6 +2080,14 @@
             || name == "MsUserSelect") {
             value = node->style.textual().user_select.empty()
                 ? "auto" : node->style.textual().user_select;
+        } else if (name == "overscrollBehavior") {
+            value = css::serialize_overscroll_shorthand(node->style);
+        } else if (name == "overscrollBehaviorX") {
+            value = css::serialize_overscroll_behavior(
+                node->style.textual().overscroll_x);
+        } else if (name == "overscrollBehaviorY") {
+            value = css::serialize_overscroll_behavior(
+                node->style.textual().overscroll_y);
         } else if (name == "boxSizing") {
             value = node->style.border_box ? "border-box" : "content-box";
         } else if (name == "borderRadius") {
@@ -2637,6 +2675,18 @@
                 std::string semantic_slice;
             } decision;
             css::apply_user_select_value(*node, "user-select", value, decision);
+        } else if (name == "overscrollBehavior"
+            || name == "overscrollBehaviorX" || name == "overscrollBehaviorY") {
+            struct interaction_decision final {
+                std::string classification{"supported"};
+                std::string semantic_slice;
+            } decision;
+            const auto property = name == "overscrollBehavior"
+                ? std::string{"overscroll-behavior"}
+                : name == "overscrollBehaviorX"
+                    ? std::string{"overscroll-behavior-x"}
+                    : std::string{"overscroll-behavior-y"};
+            css::apply_overscroll_behavior_value(*node, property, value, decision);
         } else if (name == "boxSizing") {
             node->style.border_box = value == "border-box";
             node->style.inline_property_mask |= inline_box_sizing;

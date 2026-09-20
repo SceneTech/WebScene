@@ -87,6 +87,9 @@ public static class CssPropertyCatalog
             "user-select" or "-webkit-user-select" or "webkit-user-select"
                 or "-ms-user-select" or "ms-user-select"
                 => normalizedValue is "auto" or "text" or "none" or "all",
+            "overscroll-behavior-x" or "overscroll-behavior-y"
+                => normalizedValue is "auto" or "contain" or "none",
+            "overscroll-behavior" => IsOverscrollBehavior(normalizedValue),
             "font-size" => IsFontSize(normalizedValue),
             "color-scheme" => normalizedValue is "normal" or "light" or "dark"
                 or "light dark" or "dark light" or "only light" or "only dark",
@@ -156,6 +159,14 @@ public static class CssPropertyCatalog
         => double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var numeric)
            && double.IsFinite(numeric)
            && numeric != 0;
+
+    private static bool IsOverscrollBehavior(string value)
+    {
+        var tokens = value.Split([' ', '\t', '\r', '\n'],
+            StringSplitOptions.RemoveEmptyEntries);
+        return tokens.Length is 1 or 2
+            && tokens.All(static token => token is "auto" or "contain" or "none");
+    }
 
     private static bool IsObjectPosition(string value)
     {

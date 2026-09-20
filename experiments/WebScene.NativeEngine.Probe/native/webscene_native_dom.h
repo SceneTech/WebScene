@@ -160,6 +160,12 @@ enum class overflow_mode : uint8_t {
     scroll
 };
 
+enum class overscroll_behavior : uint8_t {
+    automatic,
+    contain,
+    none
+};
+
 enum class float_mode : uint8_t {
     none,
     left,
@@ -796,6 +802,10 @@ struct node_style final {
         // Empty is `auto`; used-value resolution walks ancestors only during
         // the uncommon native text-selection default action.
         std::string user_select;
+        // Scroll-chain policy is consulted only while a wheel default action
+        // walks exhausted scroll containers, so keep both axes in cold style.
+        overscroll_behavior overscroll_x{overscroll_behavior::automatic};
+        overscroll_behavior overscroll_y{overscroll_behavior::automatic};
         std::string contain_value;
         std::string container_type{"normal"};
         std::string container_name{"none"};

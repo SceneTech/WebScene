@@ -203,6 +203,9 @@ inline constexpr std::array cssom_supported_property_catalog{
     cssom_supported_property_metadata{"overflow-wrap", "overflowWrap"},
     cssom_supported_property_metadata{"overflow-x", "overflowX"},
     cssom_supported_property_metadata{"overflow-y", "overflowY"},
+    cssom_supported_property_metadata{"overscroll-behavior", "overscrollBehavior"},
+    cssom_supported_property_metadata{"overscroll-behavior-x", "overscrollBehaviorX"},
+    cssom_supported_property_metadata{"overscroll-behavior-y", "overscrollBehaviorY"},
     cssom_supported_property_metadata{"padding", "padding"},
     cssom_supported_property_metadata{"padding-block", "paddingBlock"},
     cssom_supported_property_metadata{"padding-block-end", "paddingBlockEnd"},
@@ -256,4 +259,4 @@ inline constexpr std::array cssom_supported_property_catalog{
     cssom_supported_property_metadata{"zoom", "zoom"},
 };
 
-inline constexpr auto cssom_style_template_property_accessor_count = 455U;
+inline constexpr auto cssom_style_template_property_accessor_count = 461U;

@@ -1979,6 +1979,54 @@ void wheel_input(
     require(webscene_engine_enqueue(engine, &input) != 0, "wheel input was rejected");
 }
 
+void test_overscroll_behavior_wheel_chaining(webscene_engine* engine)
+{
+    resize(engine, 400, 240, 79'300U);
+    execute(engine, R"JS(
+      document.body.innerHTML = `<style>
+        body { margin:0; width:400px; height:240px; overflow:auto; }
+        #outer-content { height:900px; }
+        #inner { width:200px; height:100px; overflow:auto;
+          overscroll-behavior:contain; }
+        #inner-content { height:300px; }
+      </style><div id="outer-content"><div id="inner"><div id="inner-content"></div></div></div>`;
+      globalThis.overscrollInner = document.getElementById('inner');
+      overscrollInner.scrollTop = 200;
+      document.body.scrollTop = 0;
+    )JS", "native-overscroll-setup.js");
+    auto consumed = consumed_input_count(engine);
+    wheel_input(engine, 50, 50, 80, 79'301U, WEBSCENE_INPUT_WHEEL_PRECISE);
+    wait_for_consumed_inputs(engine, ++consumed,
+        "contained overscroll wheel was not consumed");
+    require(evaluate(engine, "document.body.scrollTop",
+            "native-overscroll-contain.js") == "0",
+        "overscroll-behavior:contain chained into the outer scroller");
+
+    execute(engine, R"JS(
+      overscrollInner.style.overscrollBehavior = 'auto';
+      overscrollInner.scrollTop = 200;
+      document.body.scrollTop = 0;
+    )JS", "native-overscroll-auto-setup.js");
+    wheel_input(engine, 50, 50, 80, 79'302U, WEBSCENE_INPUT_WHEEL_PRECISE);
+    wait_for_consumed_inputs(engine, ++consumed,
+        "automatic overscroll wheel was not consumed");
+    require(std::stod(evaluate(engine, "document.body.scrollTop",
+            "native-overscroll-auto.js")) > 0.0,
+        "overscroll-behavior:auto did not chain into the outer scroller");
+
+    execute(engine, R"JS(
+      overscrollInner.style.overscrollBehavior = 'none';
+      overscrollInner.scrollTop = 200;
+      document.body.scrollTop = 0;
+    )JS", "native-overscroll-none-setup.js");
+    wheel_input(engine, 50, 50, 80, 79'303U, WEBSCENE_INPUT_WHEEL_PRECISE);
+    wait_for_consumed_inputs(engine, ++consumed,
+        "none overscroll wheel was not consumed");
+    require(evaluate(engine, "document.body.scrollTop",
+            "native-overscroll-none.js") == "0",
+        "overscroll-behavior:none chained into the outer scroller");
+}
+
 void test_discrete_wheel_scroll_uses_bounded_frame_animation()
 {
     auto* engine = webscene_engine_create(0);

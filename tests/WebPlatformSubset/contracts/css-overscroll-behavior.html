@@ -1,0 +1,28 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Overscroll behavior retains browser-shaped CSSOM</title>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<style>
+  #target { overscroll-behavior: contain none; }
+</style>
+<div id="target"></div>
+<script>
+  test(() => {
+    const computed = getComputedStyle(target);
+    assert_equals(computed.overscrollBehavior, 'contain none');
+    assert_equals(computed.overscrollBehaviorX, 'contain');
+    assert_equals(computed.overscrollBehaviorY, 'none');
+  }, 'shorthand and longhands expose the retained per-axis policy');
+
+  test(() => {
+    target.style.overscrollBehavior = 'none contain';
+    assert_equals(target.style.overscrollBehavior, 'none contain');
+    assert_equals(getComputedStyle(target).overscrollBehaviorX, 'none');
+    assert_equals(getComputedStyle(target).overscrollBehaviorY, 'contain');
+    target.style.overscrollBehaviorX = 'invalid';
+    assert_equals(target.style.overscrollBehaviorX, 'none');
+    target.style.removeProperty('overscroll-behavior');
+    assert_equals(getComputedStyle(target).overscrollBehavior, 'contain none');
+  }, 'mutation, invalid writes, and removal preserve the cascade');
+</script>

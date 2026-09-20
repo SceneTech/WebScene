@@ -218,6 +218,13 @@
       "gap": "WebScene #791 authors the bounded native pointer-selection default action over existing Selection/Range and retained highlight paint. Direct native/browser execution, multiline and bidirectional exact pixels, package interaction, accessibility, memory/lifecycle, and the 4,096-node performance gate remain qualification debt. Touch selection handles and platform-native context selection UI remain outside this bounded slice."
     },
     {
+      "family": "overscroll-chain-containment",
+      "required": ["overscroll-behavior auto/contain/none", "physical axis longhands", "one/two-value shorthand", "wheel boundary chain containment", "interaction-only mutation"],
+      "productEvidence": ["workbench root bounce suppression", "Markdown preview containment", "Chat and question carousels", "sessions/mobile overlay views"],
+      "coverage": ["contracts/css-overscroll-behavior.html", "test_overscroll_behavior_wheel_chaining", "test_overscroll_behavior_performance_gate"],
+      "gap": "WebScene #793 authors compact per-axis policy and boundary wheel-chain containment. Direct browser/native execution, exact mixed-axis and nested-frame interaction, platform affordance behavior, package regions, accessibility, memory/lifecycle, and the 4,096-node performance gate remain qualification debt. WebScene currently has no rubber-band affordance, so contain and none intentionally share the chain-stopping behavior in this slice."
+    },
+    {
       "family": "svg-presentation-paint",
       "required": ["presentation attributes below author rules in the cascade", "inherited fill and stroke properties", "currentColor resolution against the painted element", "scene invalidation after inherited color and class changes"],
       "productEvidence": ["Volume three-dot submenu chevrons", "axis-scale Labels and Lines submenu chevrons", "sidebar and toolbar currentColor icons"],
